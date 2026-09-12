@@ -19,7 +19,12 @@ from pydantic import BaseModel
 import pytest
 
 from app.core.app_factory import create_app
-from app.schemas.errors import ERROR_RESPONSES, ErrorEnvelope
+from app.schemas.errors import (
+    ERROR_RESPONSES,
+    HTML_ROUTE_ERROR_RESPONSES,
+    ErrorEnvelope,
+    error_responses,
+)
 from app.utils.errors import AppError, create_error
 
 
@@ -227,3 +232,27 @@ class TestOneEnvelope:
         for status in ("4XX", "5XX"):
             ref = responses[status]["content"]["application/json"]["schema"]["$ref"]
             assert ref == "#/components/schemas/ErrorEnvelope"
+
+
+@pytest.mark.unit
+class TestRouteErrorDeclarations:
+    def test_error_responses_declares_the_envelope_model_with_each_description(self) -> None:
+        assert error_responses({400: "Bad token", 404: "Not found"}) == {
+            400: {"model": ErrorEnvelope, "description": "Bad token"},
+            404: {"model": ErrorEnvelope, "description": "Not found"},
+        }
+
+    def test_error_responses_with_no_descriptions_is_empty(self) -> None:
+        assert error_responses({}) == {}
+
+    def test_html_routes_spell_out_the_json_envelope_content(self) -> None:
+        json_envelope = {
+            "content": {
+                "application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}
+            }
+        }
+        assert {
+            422: json_envelope,
+            "4XX": json_envelope,
+            "5XX": json_envelope,
+        } == HTML_ROUTE_ERROR_RESPONSES

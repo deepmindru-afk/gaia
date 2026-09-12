@@ -84,6 +84,8 @@ class TestGetConfigOptions:
         assert len(result) == 1
         assert result[0].value == "db1"
         assert result[0].label == "My Database"
+        svc.get_tool.assert_called_once_with("NOTION_FETCH_DATA", user_id="u1")
+        mock_tool.invoke.assert_called_once_with({"fetch_type": "databases", "page_size": 100})
 
     @pytest.mark.asyncio
     @patch("app.services.triggers.handlers.notion.get_composio_service")
@@ -116,6 +118,7 @@ class TestGetConfigOptions:
             )
 
         assert result[0].value == "pg1"
+        mock_tool.invoke.assert_called_once_with({"fetch_type": "pages", "page_size": 100})
 
     @pytest.mark.asyncio
     @patch("app.services.triggers.handlers.notion.get_composio_service")
@@ -144,6 +147,38 @@ class TestGetConfigOptions:
             )
 
         assert result == []
+        mock_tool.invoke.assert_called_once_with({"fetch_type": "all", "page_size": 100})
+
+    @pytest.mark.asyncio
+    @patch("app.services.triggers.handlers.notion.get_composio_service")
+    async def test_search_is_forwarded_as_the_query(self, mock_get_svc: MagicMock) -> None:
+        handler = _make_handler()
+
+        mock_data = MagicMock()
+        mock_data.get_items.return_value = []
+
+        mock_tool = MagicMock()
+        mock_tool.invoke.return_value = {"successful": True, "data": {}}
+
+        svc = MagicMock()
+        svc.get_tool.return_value = mock_tool
+        mock_get_svc.return_value = svc
+
+        with patch("app.services.triggers.handlers.notion.NotionFetchDataData") as mock_cls:
+            mock_cls.model_validate.return_value = mock_data
+            await handler.get_config_options(
+                TriggerOptionsQuery(
+                    trigger_name="notion_new_page_in_db",
+                    field_name="database_id",
+                    user_id="u1",
+                    integration_id="notion",
+                    search="roadmap",
+                )
+            )
+
+        mock_tool.invoke.assert_called_once_with(
+            {"fetch_type": "databases", "page_size": 100, "query": "roadmap"}
+        )
 
     @pytest.mark.asyncio
     @patch("app.services.triggers.handlers.notion.get_composio_service")
@@ -163,6 +198,7 @@ class TestGetConfigOptions:
             )
         )
         assert result == []
+        svc.get_tool.assert_called_once_with("NOTION_FETCH_DATA", user_id="u1")
 
     @pytest.mark.asyncio
     @patch("app.services.triggers.handlers.notion.get_composio_service")

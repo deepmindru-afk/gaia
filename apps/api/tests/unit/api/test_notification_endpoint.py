@@ -458,7 +458,7 @@ class TestRegisterDevice:
             },
         )
         assert response.status_code == 200
-        assert response.json()["success"] is True
+        assert response.json() == {"success": True, "message": "Device registered successfully"}
 
     async def test_register_device_invalid_token(self, client: AsyncClient):
         response = await client.post(
@@ -525,7 +525,7 @@ class TestUnregisterDevice:
             json={"token": "ExponentPushToken[abc123]"},
         )
         assert response.status_code == 200
-        assert response.json()["success"] is True
+        assert response.json() == {"success": True, "message": "Device unregistered successfully"}
 
     @patch("app.api.v1.endpoints.notification.get_device_token_service")
     async def test_unregister_device_not_found(
@@ -539,7 +539,7 @@ class TestUnregisterDevice:
             json={"token": "ExponentPushToken[abc123]"},
         )
         assert response.status_code == 200
-        assert response.json()["success"] is False
+        assert response.json() == {"success": False, "message": "Device token not found"}
 
     @patch("app.api.v1.endpoints.notification.get_device_token_service")
     async def test_unregister_device_error(self, mock_svc_factory: MagicMock, client: AsyncClient):

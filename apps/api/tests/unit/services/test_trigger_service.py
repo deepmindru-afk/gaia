@@ -1044,6 +1044,7 @@ class TestSlackTriggerHandler:
         )
         assert len(result) >= 1
         assert result[0].value == "C001"
+        mock_composio.get_tool.assert_called_once_with("SLACK_LIST_ALL_CHANNELS", user_id=USER_ID)
 
     @patch("app.services.triggers.handlers.slack.get_composio_service")
     async def test_get_config_options_tool_not_found(self, mock_get_composio):
@@ -1087,17 +1088,42 @@ class TestSlackTriggerHandler:
         )
         assert result == []
 
-    async def test_get_config_options_unknown_field(self):
+    @pytest.mark.parametrize(
+        ("trigger_name", "field_name"),
+        [("slack_new_message", "unknown_field"), ("slack_channel_created", "channel_ids")],
+    )
+    @patch("app.services.triggers.handlers.slack.get_composio_service")
+    async def test_get_config_options_unknown_field(
+        self, mock_get_composio, trigger_name: str, field_name: str
+    ):
+        # Channels are only listed for slack_new_message's channel_ids — even
+        # when Slack would happily return some.
+        mock_tool = MagicMock()
+        mock_tool.invoke = MagicMock(
+            return_value={
+                "successful": True,
+                "data": {
+                    "channels": [{"id": "C001", "name": "general", "is_channel": True}],
+                    "response_metadata": {},
+                },
+                "error": None,
+            }
+        )
+        mock_composio = MagicMock()
+        mock_composio.get_tool = MagicMock(return_value=mock_tool)
+        mock_get_composio.return_value = mock_composio
+
         handler = SlackTriggerHandler()
         result = await handler.get_config_options(
             TriggerOptionsQuery(
-                trigger_name="slack_new_message",
-                field_name="unknown_field",
+                trigger_name=trigger_name,
+                field_name=field_name,
                 user_id=USER_ID,
                 integration_id="slack",
             )
         )
         assert result == []
+        mock_tool.invoke.assert_not_called()
 
     @patch("app.services.triggers.handlers.slack.get_composio_service")
     async def test_get_config_options_exception_returns_empty(self, mock_get_composio):
@@ -1952,6 +1978,9 @@ class TestLinearTriggerHandler:
         assert len(result) == 2
         assert result[0].value == "team_1"
         assert result[0].label == "Engineering"
+        mock_composio.get_tool.assert_called_once_with(
+            "LINEAR_GET_ALL_LINEAR_TEAMS", user_id=USER_ID
+        )
 
     @patch("app.services.triggers.handlers.linear.get_composio_service")
     async def test_get_config_options_team_id_with_search(self, mock_get_composio):
