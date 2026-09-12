@@ -832,6 +832,17 @@ jobs:
           python3 tools/lints/check_plr_complexity.py
           echo "::endgroup::"
           echo "plr-complexity-ratchet: OK"
+      - name: Typed-boundaries ratchet (touch a grandfathered file, fix it now)
+        id: typed-boundaries
+        continue-on-error: true
+        # No dict[str, Any] signature and no value["key"] read outside the
+        # boundary modules -- the debt is grandfathered per file until a PR
+        # touches that file. See tools/lints/README.md#typed-boundaries.
+        run: |
+          echo "::group::typed-boundaries ratchet"
+          python3 tools/lints/check_typed_boundaries.py
+          echo "::endgroup::"
+          echo "typed-boundaries: OK"
       - name: Complexity scan (max-absolute F, max-modules E, max-average B)
         id: xenon
         continue-on-error: true
@@ -920,6 +931,7 @@ jobs:
           CUSTOM_LINTS: ${{ steps.custom-lints.outcome }}
           IGNORE_WHYS: ${{ steps.ignore-whys.outcome }}
           PLR_COMPLEXITY: ${{ steps.plr-complexity.outcome }}
+          TYPED_BOUNDARIES: ${{ steps.typed-boundaries.outcome }}
           XENON: ${{ steps.xenon.outcome }}
           INTERROGATE: ${{ steps.interrogate.outcome }}
           BANDIT: ${{ steps.bandit.outcome }}
@@ -931,6 +943,7 @@ jobs:
             "custom-lints=$CUSTOM_LINTS" \
             "ignore-whys=$IGNORE_WHYS" \
             "plr-complexity=$PLR_COMPLEXITY" \
+            "typed-boundaries=$TYPED_BOUNDARIES" \
             "xenon=$XENON" \
             "interrogate=$INTERROGATE" \
             "bandit=$BANDIT" \

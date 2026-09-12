@@ -1,0 +1,60 @@
+"""Behaviour tests for tools/lints/check_typed_boundaries.py.
+
+The scan is exercised directly on throwaway modules; the ratchet mechanics it
+runs under are covered by test_check_plr_complexity.py through _ratchet.py.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))
+
+from check_typed_boundaries import LOOSE_ANNOTATION, STRING_KEY_READ, scan
+
+
+def _rule_lines(tmp_path: Path, source: str) -> dict[str, list[int]]:
+    module = tmp_path / "apps" / "api" / "app" / "services" / "probe.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(source)
+    found = scan([module])
+    return {rule: lines for (_, rule), lines in found.items()}
+
+
+def test_loose_annotations_are_the_any_and_bare_dict_ones(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    source = (
+        "from typing import Any\n"
+        "def a(x: dict[str, Any]) -> None: ...\n"
+        "def b(x: dict[str, int]) -> list[dict]: ...\n"
+        "def c(x: Any, *args: str, **kw: dict[str, str]) -> dict[str, list[Any]]: ...\n"
+        "def d(x: int) -> str: ...\n"
+    )
+    assert _rule_lines(tmp_path, source)[LOOSE_ANNOTATION] == [2, 3, 4, 4]
+
+
+def test_string_key_reads_are_get_and_subscript_loads(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    source = (
+        "from typing import Literal\n"
+        "def f(payload, request, os):\n"
+        "    a = payload.get('id')\n"
+        "    b = payload['id']\n"
+        "    payload['id'] = 1\n"
+        "    c = request.headers['authorization']\n"
+        "    d = request.query_params.get('page')\n"
+        "    e = os.environ['HOME']\n"
+        "    g: Literal['x'] = 'x'\n"
+        "    return payload.get(a)\n"
+    )
+    assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [3, 4]
+
+
+def test_boundary_modules_are_not_scanned(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    module = tmp_path / "apps" / "api" / "app" / "patches" / "vendored.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("def f(x: dict) -> dict: return x['a']\n")
+    assert scan([module]) == {}
