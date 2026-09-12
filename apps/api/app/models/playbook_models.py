@@ -5,13 +5,13 @@ and replayed by a script-driven subagent instead of being re-reasoned from
 scratch. The document is YAML the agent reads and edits; these models are the
 parsed form the runner executes.
 
-The grammar is deliberately three keys — ``description``, ``steps`` and
-``result_brief``. It carries no BRANCHING: a run whose order depends on what it
+The grammar is deliberately three keys — description, steps and
+result_brief. It carries no BRANCHING: a run whose order depends on what it
 finds is not compilable and stays on the agent path, which is the correct
 outcome rather than a gap to fill with conditionals.
 
-Bounded repetition is not branching, and ``for_each`` is where that line is
-drawn. A step may repeat over a list, capped by ``max_items``, with ``$item``
+Bounded repetition is not branching, and for_each is where that line is
+drawn. A step may repeat over a list, capped by max_items, with $item
 addressing the element. The order of steps is still fixed and known before the
 run; only how many times one of them repeats varies. Without it the commonest
 workflow shape GAIA has — fetch the mail, then act on the ones that need it —
@@ -19,7 +19,7 @@ was unfreezable, and declined as "the call order depends on what the fetch
 finds" when the order never changed at all.
 
 Text a model has to write at replay has no section of its own: it lives inline,
-as ``{"$ask": "what to write"}`` standing where the argument's value goes. That
+as {"$ask": "what to write"} standing where the argument's value goes. That
 is not cosmetic. A slot declared in its own table can be declared and then
 referenced by nothing — five of the eight asks ever written in production were
 dead that way, filled by a model call and thrown away — and an inline slot is
@@ -81,11 +81,11 @@ class DeclineKind(str, Enum):
     and which the check brief already says is not a reason. Prose could spell
     that; an enum cannot, because no member means it. The same goes for a run
     whose only variation was how MANY times one call repeated: that is what a
-    ``for_each`` step is for, so it has no member either and the tool redirects.
+    for_each step is for, so it has no member either and the tool redirects.
 
-    The ``BLOCKED_*`` members are not really declines at all. They say the run
+    The BLOCKED_* members are not really declines at all. They say the run
     never got to do the work, so there was no sequence to judge — see
-    :data:`BLOCKED_DECLINE_KINDS`.
+    :data:BLOCKED_DECLINE_KINDS.
     """
 
     #: The workflow needs an integration the user has never connected. The run
@@ -177,8 +177,8 @@ class PlaybookRunStatus(str, Enum):
 
     Kept on the playbook rather than the execution record because it answers a
     question about the playbook: is the frozen sequence still carrying the
-    workflow, or did it break and need re-authoring? ``NOT_RUN`` is a playbook
-    written but not yet replayed. ``SUSPECT`` is a replay that completed but
+    workflow, or did it break and need re-authoring? NOT_RUN is a playbook
+    written but not yet replayed. SUSPECT is a replay that completed but
     whose results the runner did not trust.
     """
 
@@ -266,7 +266,7 @@ def is_time_slot(value: object) -> TypeGuard[Mapping[str, Any]]:
 def is_ask_slot(value: object) -> TypeGuard[Mapping[str, Any]]:
     """Whether a value stands for text a model writes, rather than being data.
 
-    A ``TypeGuard`` rather than a plain ``bool`` so the callers that go on to
+    A TypeGuard rather than a plain bool so the callers that go on to
     read the slot's keys — the validator naming what a bad one contains — get
     the mapping type from the check they already make.
     """
@@ -354,9 +354,9 @@ class PlaybookAskFill(BaseModel):
 def _nulls_are_unset(data: object) -> object:
     """Documents written before the step variants existed carry every field.
 
-    The old single model defaulted ``tool``/``handoff``/``for_each``/``max_items``
-    to ``None`` and ``steps`` to ``[]``, and those defaults are on every stored
-    playbook. Under ``extra="forbid"`` they would refuse the variant they belong
+    The old single model defaulted tool/handoff/for_each/max_items
+    to None and steps to [], and those defaults are on every stored
+    playbook. Under extra="forbid" they would refuse the variant they belong
     to, so a null (or an empty child list) is read as the field being unset,
     which is exactly what it meant when it was written.
     """
@@ -389,7 +389,7 @@ class _CallStep(BaseModel):
         return self.id or self.tool
 
     def arg_ask_slots(self, prefix: str) -> list[LocatedAsk]:
-        """The slots inside this step's arguments, keyed under ``prefix``.
+        """The slots inside this step's arguments, keyed under prefix.
 
         The prefix is a parameter because a repeating step fills its arguments
         once per element, and two elements' answers must not share a key: the
@@ -427,7 +427,7 @@ class ToolStep(_CallStep):
 
 
 class ForEachStep(_CallStep):
-    """One tool call, replayed once per element of a list, ``$item`` addressing
+    """One tool call, replayed once per element of a list, $item addressing
     the element.
 
     Bounded repetition is not branching: the order of steps is still fixed and
@@ -447,7 +447,7 @@ class ForEachStep(_CallStep):
     def _names_a_list(cls, value: str | AskSlot) -> str | AskSlot:
         """A placeholder woven into prose resolves to a STRING, and a string is
         not a list. Seen on the first real authoring run:
-        ``for_each: overdue-items-from-$steps.list``. Refused here, at the write,
+        for_each: overdue-items-from-$steps.list. Refused here, at the write,
         rather than on the replay a whole agentic run later."""
         if isinstance(value, AskSlot) or PLACEHOLDER_TOKEN.fullmatch(value):
             return value
@@ -459,7 +459,7 @@ class ForEachStep(_CallStep):
 
     @property
     def source_key(self) -> str:
-        """The key the loop source answers to when it is an ``$ask``."""
+        """The key the loop source answers to when it is an $ask."""
         return ask_slot_key(self.label, (FOR_EACH_ASK_PATH,))
 
     def ask_slots(self, prefix: str) -> list[LocatedAsk]:
@@ -483,7 +483,7 @@ class ForEachStep(_CallStep):
 
 
 def _call_shape(value: object) -> str:
-    """Which call variant a value is: the one that carries ``for_each``."""
+    """Which call variant a value is: the one that carries for_each."""
     if isinstance(value, ForEachStep):
         return "for_each"
     if isinstance(value, ToolStep):
@@ -541,9 +541,9 @@ class HandoffStep(BaseModel):
 def _step_shape(value: object) -> str:
     """Which variant a value is, read off its shape.
 
-    No ``kind`` key is stored or rendered: the documents already in Mongo and
+    No kind key is stored or rendered: the documents already in Mongo and
     the YAML the agent reads carry none, and the shape says it anyway. A
-    ``handoff`` key is a handoff; a ``for_each`` key is a repeating call; the
+    handoff key is a handoff; a for_each key is a repeating call; the
     rest is a plain call.
     """
     if isinstance(value, HandoffStep):
@@ -701,7 +701,7 @@ class PlaybookHandoffStepInput(_CallInput):
 
     Flat by design: playbooks are depth-1, so a handoff's children are always
     calls. Modelling that here instead of reusing the step union keeps the
-    tool's JSON Schema free of the self-``$ref`` that several function-calling
+    tool's JSON Schema free of the self-$ref that several function-calling
     providers mishandle.
     """
 
@@ -790,7 +790,7 @@ def playbook_body_from_input(
 class PlaybookDocument(PlaybookBody, MongoDocument):
     """A playbook as stored in Mongo.
 
-    Identity is the business key ``playbook_id``; one active playbook per
+    Identity is the business key playbook_id; one active playbook per
     workflow. The structured body is the only stored form: the YAML the agent
     reads back is rendered from it on demand, so there is no second copy to
     drift out of sync with the steps that actually replay.

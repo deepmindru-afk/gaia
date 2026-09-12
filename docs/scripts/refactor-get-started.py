@@ -2,7 +2,7 @@
 """
 Script to refactor repeated "Get Started with GAIA" sections into a reusable snippet.
 This extracts the section to snippets/get-started.mdx and replaces all occurrences
-with <Snippet file="get-started.mdx" />
+with <Snippet file="get-started.mdx" />.
 """
 
 from pathlib import Path

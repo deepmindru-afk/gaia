@@ -63,9 +63,9 @@ from shared.py.wide_events import log
 class AgentRunOptions:
     """The optional settings of one agent run, shared by every entry point.
 
-    ``trigger_context`` is the workflow/todo/trigger data of a background run;
-    ``usage_metadata_callback`` collects token usage; ``source`` names the
-    surface the turn came from; the two ``langfuse_*`` fields seed the trace.
+    trigger_context is the workflow/todo/trigger data of a background run;
+    usage_metadata_callback collects token usage; source names the
+    surface the turn came from; the two langfuse_* fields seed the trace.
     """
 
     usage_metadata_callback: UsageMetadataCallbackHandler | None = None
@@ -372,7 +372,7 @@ async def call_agent_silent(
 
     When that delegation was queued behind an in-flight run for the same
     conversation, nothing ran this turn and the result carries the queued
-    ``task_id`` — read off the stream's session before it is torn down, since
+    task_id — read off the stream's session before it is torn down, since
     the session is this function's own and no caller can reach it.
     """
     options = options or AgentRunOptions()

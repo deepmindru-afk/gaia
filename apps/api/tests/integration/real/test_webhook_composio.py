@@ -24,7 +24,7 @@ def _endpoint():
     """The webhook endpoint module, imported lazily.
 
     Importing it at test-module scope makes it the first thing to touch
-    ``app.services.triggers`` and trips a pre-existing circular import there;
+    app.services.triggers and trips a pre-existing circular import there;
     by test time the app has already imported it. Patching the module object
     beats patching by dotted string, which resolves through the package
     attribute and is not reliably present.
@@ -55,11 +55,11 @@ def _make_connection_payload(
     toolkit: str = "NOTION",
     user_id: str = "507f1f77bcf86cd799439011",
 ) -> dict:
-    """A `composio.connected_account.expired` delivery.
+    """A composio.connected_account.expired delivery.
 
-    Mirrors the SDK's ``ConnectionExpiredEvent`` / raw snake_case
-    ``SingleConnectedAccountDetailedResponse``. Note it carries NONE of the
-    trigger identifiers ``ComposioWebhookEvent`` types as required ``str`` —
+    Mirrors the SDK's ConnectionExpiredEvent / raw snake_case
+    SingleConnectedAccountDetailedResponse. Note it carries NONE of the
+    trigger identifiers ComposioWebhookEvent types as required str —
     that is exactly why the endpoint must branch before building that model.
     """
     return {
@@ -347,10 +347,10 @@ class TestComposioWebhookRouting:
 
 @pytest.mark.service
 class TestComposioConnectionEvents:
-    """`composio.connected_account.expired` routing.
+    """composio.connected_account.expired routing.
 
     Before this path existed the endpoint 500'd on every connection event —
-    `ComposioWebhookEvent` requires four trigger identifiers a connection event
+    ComposioWebhookEvent requires four trigger identifiers a connection event
     does not carry — so Composio retried the same delivery forever.
     """
 

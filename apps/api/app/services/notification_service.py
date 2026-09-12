@@ -18,7 +18,7 @@ from app.utils.notification.orchestrator import NotificationOrchestrator
 
 # Service Factory
 class NotificationService:
-    """Main notification service - facade for the entire system"""
+    """Main notification service - facade for the entire system."""
 
     def __init__(self) -> None:
         self.orchestrator = NotificationOrchestrator()
@@ -48,7 +48,7 @@ class NotificationService:
         return await self.orchestrator.get_user_notifications(user_id, query)
 
     async def get_notification(self, notification_id: str, user_id: str) -> NotificationView | None:
-        """Get a specific notification by ID for a user"""
+        """Get a specific notification by ID for a user."""
         return await self.orchestrator.get_notification(
             notification_id=notification_id,
             user_id=user_id,
@@ -60,7 +60,7 @@ class NotificationService:
         status: NotificationStatus | None = None,
         channel_type: str | None = None,
     ) -> int:
-        """Get the count of notifications for a user"""
+        """Get the count of notifications for a user."""
         return await self.orchestrator.storage.get_notification_count(user_id, status, channel_type)
 
     async def bulk_actions(

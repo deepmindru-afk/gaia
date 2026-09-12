@@ -71,8 +71,8 @@ class ExtractedProfile(TypedDict):
 class PlatformProcessResult(TypedDict, total=False):
     """Outcome of processing one platform.
 
-    ``total=False`` because the two outcomes are disjoint: success carries
-    ``platform``/``url``/``discovery_task``, every skip carries only ``error``.
+    total=False because the two outcomes are disjoint: success carries
+    platform/url/discovery_task, every skip carries only error.
     """
 
     success: bool
@@ -91,10 +91,10 @@ class ProfileExtractionResult(TypedDict, total=False):
 
 
 class GmailProcessingStats(TypedDict, total=False):
-    """Stats returned by :func:`process_gmail_to_memory`.
+    """Stats returned by :func:process_gmail_to_memory.
 
-    ``total=False`` because the already-processed short-circuit returns only
-    ``already_processed``/``processing_complete`` and the zeroed counters.
+    total=False because the already-processed short-circuit returns only
+    already_processed/processing_complete and the zeroed counters.
     """
 
     total: int
@@ -258,17 +258,17 @@ async def fetch_emails_for_onboarding(
     into: list[dict[str, Any]] | None = None,
     options: OnboardingFetchOptions | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch the last `months` months of emails for onboarding.
+    """Fetch the last months months of emails for onboarding.
 
     Uses Gmail metadata format by default (no body) so batches can be 100 wide.
     Callers that need bodies (social profile regex) pass
     options=OnboardingFetchOptions(fmt="full").
-    `include_sent` widens the scan to the sent mailbox as well, which is what
+    include_sent widens the scan to the sent mailbox as well, which is what
     makes each message's SENT label — and any ownership signal derived from it —
     observable at all. Inbox triage leaves it off so the user's own outgoing
     mail is not scored as something needing their attention.
     on_batch receives (running_count, latest_sender_display_name_or_None).
-    If `into` is provided, batches are appended to it live so concurrent
+    If into is provided, batches are appended to it live so concurrent
     consumers can observe partial progress.
     """
     opts = options or OnboardingFetchOptions()

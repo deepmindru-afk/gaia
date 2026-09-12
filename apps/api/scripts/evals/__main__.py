@@ -279,7 +279,7 @@ def _load_failure(error: Exception) -> str:
     """Say whether the run is misconfigured or the cases are broken.
 
     A settings failure reported as "could not load cases" sends the reader
-    hunting through YAML for an hour. Pydantic raises ``ValidationError`` for a
+    hunting through YAML for an hour. Pydantic raises ValidationError for a
     bad env var, and it may arrive wrapped, so the whole cause chain is checked.
     """
     chain: list[BaseException] = []

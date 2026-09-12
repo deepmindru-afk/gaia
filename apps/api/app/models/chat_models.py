@@ -19,19 +19,19 @@ class ToolDataEntry(TypedDict):
     """Unified structure for tool execution data.
 
     Every key an emitter can stamp must be declared here. This TypedDict is the
-    element type of ``MessageModel.tool_data``, and Pydantic drops undeclared
-    keys on ``model_dump()`` — which is how a message reaches Mongo. An emitted
+    element type of MessageModel.tool_data, and Pydantic drops undeclared
+    keys on model_dump() — which is how a message reaches Mongo. An emitted
     key missing from this shape therefore survives the live SSE frame (the
     frontend parses those against its own loose schema) and silently vanishes
     from the stored turn, so the bug only ever appears on reload.
 
-    ``data`` is deliberately open: every tool owns the shape it puts here (a
+    data is deliberately open: every tool owns the shape it puts here (a
     calendar option list, an email thread, a rendered artifact), so the only
     honest constraint is "JSON the frontend's per-tool card knows how to read".
     Everything around it is closed.
 
-    The frontend mirror is ``ToolDataEntrySchema`` in
-    ``libs/shared/ts/src/chat/schema.ts``.
+    The frontend mirror is ToolDataEntrySchema in
+    libs/shared/ts/src/chat/schema.ts.
     """
 
     tool_name: str
@@ -166,7 +166,7 @@ class ConversationSource(str, Enum):
 class SourceCategory(str, Enum):
     """Generalized origin of a graph invocation.
 
-    Coarser than ``ConversationSource``: every specific channel rolls up to one
+    Coarser than ConversationSource: every specific channel rolls up to one
     of these so traces and tools can branch on "where did this run come from"
     without enumerating every platform.
     """
@@ -177,9 +177,9 @@ class SourceCategory(str, Enum):
 
     @classmethod
     def from_source(cls, source: "ConversationSource | str | None") -> "SourceCategory":
-        """Map a specific ``ConversationSource`` to its category.
+        """Map a specific ConversationSource to its category.
 
-        Unknown / unset sources fall back to ``BG`` — the only callers that
+        Unknown / unset sources fall back to BG — the only callers that
         leave the source blank are the silent background paths.
         """
         channel = ConversationSource.coerce(source)

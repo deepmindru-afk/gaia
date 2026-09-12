@@ -1,8 +1,8 @@
-"""Unit tests for the subagent registry (`app.agents.core.subagents.registry`).
+"""Unit tests for the subagent registry (app.agents.core.subagents.registry).
 
-These tests cover `all_subagents()` (OAuth-derived + builtins) and
-`get_subagent_by_id()`. Moved here from `test_subagent_runner.py` after the
-refactor that introduced the `Subagent` dataclass and centralized lookups in
+These tests cover all_subagents() (OAuth-derived + builtins) and
+get_subagent_by_id(). Moved here from test_subagent_runner.py after the
+refactor that introduced the Subagent dataclass and centralized lookups in
 the registry module.
 """
 
@@ -49,9 +49,9 @@ def _make_real_oauth_integration(
     provider: str = "github",
     mcp_config: MCPConfig | None = None,
 ) -> OAuthIntegration:
-    """Build a real `OAuthIntegration` instance (not a MagicMock).
+    """Build a real OAuthIntegration instance (not a MagicMock).
 
-    Used in `_from_oauth` and identity-check tests where a real Pydantic
+    Used in _from_oauth and identity-check tests where a real Pydantic
     model is required so attribute access goes through field validation.
     """
     return OAuthIntegration(
@@ -124,7 +124,7 @@ FAKE_INTEGRATIONS = [
 
 
 def _clear_registry_cache() -> None:
-    """`all_subagents()` is `@functools.cache`d, and so is everything derived
+    """all_subagents() is @functools.cached, and so is everything derived
     from it. Tests that patch OAUTH_INTEGRATIONS or BUILTIN_SUBAGENTS must clear
     the caches first."""
     all_subagents.cache_clear()

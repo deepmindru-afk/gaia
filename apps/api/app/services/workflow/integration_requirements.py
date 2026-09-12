@@ -73,9 +73,9 @@ def build_integration_refs(
     required: set[str],
     status_map: dict[str, bool],
 ) -> tuple[list[IntegrationRef], list[IntegrationRef]]:
-    """Split `required` into (all required refs, missing refs) against a connection
+    """Split required into (all required refs, missing refs) against a connection
     status map. Pure — the caller owns the (cached) status fetch, so a workflow list
-    resolves every row from a single `get_all_integrations_status` call."""
+    resolves every row from a single get_all_integrations_status call."""
     name_map = _integration_name_map()
     required_refs = [
         IntegrationRef(id=iid, name=name_map.get(iid, iid)) for iid in sorted(required)
@@ -97,7 +97,7 @@ async def compute_missing_integrations(
 
 
 async def confirm_disconnected(user_id: str, integration_ids: Sequence[str]) -> list[str]:
-    """The subset of ``integration_ids`` the user genuinely has not connected.
+    """The subset of integration_ids the user genuinely has not connected.
 
     Unlike everything else in this module, the ids here do not come from the
     workflow's declared steps — they come from a run reporting what it actually

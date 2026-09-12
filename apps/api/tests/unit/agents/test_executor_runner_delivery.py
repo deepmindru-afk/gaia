@@ -1,6 +1,6 @@
 """Unit tests for background-executor message delivery.
 
-Two invariants, both owned by ``result_delivery.py``:
+Two invariants, both owned by result_delivery.py:
 
 * a background result is delivered over EXACTLY ONE transport, chosen by the
   conversation's own source — bot conversations to their platform, everything
@@ -78,7 +78,7 @@ async def _deliver(
     """Run deliver_result with all I/O boundaries mocked.
 
     Returns (save_mock, platform_mock, ws_mock) for assertions. The real
-    is_bot_platform routing logic runs unmocked against ``conv_source``.
+    is_bot_platform routing logic runs unmocked against conv_source.
     """
     with (
         patch.object(
@@ -141,7 +141,7 @@ class TestDeliverResultRouting:
         assert event["message"]["response"] == "result text"
 
     async def test_the_save_is_attributed_to_the_runs_owner(self) -> None:
-        """update_messages scopes the write by ``user`` — an unattributed save
+        """update_messages scopes the write by user — an unattributed save
         lands on nobody's conversation, so the delivered message is lost."""
         save, _platform, _ws = await _deliver(ConversationSource.WEB)
 
@@ -158,7 +158,7 @@ class TestDeliverResultRouting:
 class TestDeliveryOutcomeIsOnTheWideEvent:
     """A finished run whose answer never reached the user still saved that answer
     to the conversation, so nothing about the run looks wrong: the executor_run
-    event reads ``outcome: success`` either way. Only the delivery verdict tells
+    event reads outcome: success either way. Only the delivery verdict tells
     the two apart, so it has to be ON the event — a bare INFO line is not
     queryable, and that is how a Telegram turn ended in silence with a green
     wide event.
@@ -176,7 +176,7 @@ class TestDeliveryOutcomeIsOnTheWideEvent:
         assert log.get()["result_delivery"]["source"] == "telegram"
 
     async def test_a_failed_platform_send_raises_the_events_level(self) -> None:
-        """``delivered: false`` is only half the signal — an operator scanning for
+        """delivered: false is only half the signal — an operator scanning for
         broken runs filters on severity, so the drop must also be an error."""
         await _deliver(ConversationSource.TELEGRAM, platform_delivered=False)
 
@@ -214,7 +214,7 @@ class TestDeliveryOutcomeIsOnTheWideEvent:
 
     async def test_the_narration_fallback_is_visible_separately_from_delivery(self) -> None:
         """Comms failing and the send failing are different faults with the same
-        symptom (a useless message), so ``narrated`` is its own field."""
+        symptom (a useless message), so narrated is its own field."""
         await _deliver(ConversationSource.TELEGRAM, comms_text="", result_text="raw output")
 
         assert log.get()["result_delivery"]["narrated"] is False
@@ -277,7 +277,7 @@ class TestGetConversationSource:
     """The authoritative routing key: the conversation's persisted source.
 
     Coercion of a stored string into the enum now lives in the repository's
-    ``get_source`` (covered by the repository contract tests); here we assert the
+    get_source (covered by the repository contract tests); here we assert the
     delivery wrapper passes it through, scopes by owner, and fails soft.
     """
 
@@ -354,7 +354,7 @@ class TestDeliverResultToolDataOwnership:
     """deliver_result attaches the cards its caller snapshotted, and keys queued
     messages on task_id so sync dedups against the placeholder.
 
-    A live run arrives with ``tool_data=None`` — its cards belong to the comms
+    A live run arrives with tool_data=None — its cards belong to the comms
     stream, and a second copy here would render every card twice.
     """
 
@@ -539,9 +539,9 @@ class TestRunLifecycleAnalytics:
         }
 
     async def test_a_run_with_no_user_id_captures_nothing(self) -> None:
-        """`run.user` with no id must produce no events at all.
+        """run.user with no id must produce no events at all.
 
-        The guard is `if executor_user_id:` over a `""` default — swap that
+        The guard is if executor_user_id: over a "" default — swap that
         default for any truthy string and every user-less run starts emitting
         events attributed to a garbage id.
         """
@@ -563,9 +563,9 @@ class TestRunLifecycleAnalytics:
 
 
 class TestDeliverResultHilResume:
-    """A HIL-resumed run (``run.bot_message_id`` set) merges its result onto the
+    """A HIL-resumed run (run.bot_message_id set) merges its result onto the
     ORIGINAL live turn's message in place, instead of appending a rival one —
-    the same class of trap ``_persist_follow_up_actions`` already guards
+    the same class of trap _persist_follow_up_actions already guards
     against for follow-ups (see its docstring)."""
 
     async def _deliver_resumed(self, run: ExecutorRun, *, existing_tool_data=None, tool_data=None):
@@ -1219,7 +1219,7 @@ class TestReconcileLooksUpTheRightRecord:
 
 class TestMergeResumedResultFailsClosed:
     async def test_a_run_without_a_user_id_scopes_to_empty_not_none(self) -> None:
-        """``user_id=None`` in a Mongo filter matches documents with no owner
+        """user_id=None in a Mongo filter matches documents with no owner
         rather than nothing — the scoping has to fail closed."""
         existing = MessageModel(type="bot", response="old", date="2026-01-01")
         bot_message = MessageModel(type="bot", response="new", date="2026-01-01")
@@ -1479,10 +1479,10 @@ class TestDeferredFollowUpPush:
 
 
 def _logged(mock, level: str) -> tuple[str, dict]:
-    """(message, kwargs) of the last call at ``level``, message asserted real.
+    """(message, kwargs) of the last call at level, message asserted real.
 
     warning/error/critical/exception put BOTH halves on the wide event —
-    wide_events._append stores ``{"msg": message, **kwargs}`` — so a blanked or
+    wide_events._append stores {"msg": message, **kwargs} — so a blanked or
     dropped message is a real regression in errors[]/warnings[], not prose. The
     wording is deliberately not pinned; that it exists at all is.
     """
@@ -1622,7 +1622,7 @@ class TestDeletedConversationIsNotAnError:
 
 class TestBuildFollowUpActions:
     """The executor-final follow-up one-shot: what it is asked, and under which
-    routing key. Every caller mocks ``generate_follow_up_actions``, so nothing
+    routing key. Every caller mocks generate_follow_up_actions, so nothing
     else asserts the arguments it is handed."""
 
     async def _build(
@@ -1770,8 +1770,8 @@ class TestNarrateResultCallContract:
 
 
 class TestBuildBotMessageShape:
-    """The saved-and-delivered bubble. The client renders on ``type`` and orders
-    the thread on ``date``, so both are load-bearing well past this function."""
+    """The saved-and-delivered bubble. The client renders on type and orders
+    the thread on date, so both are load-bearing well past this function."""
 
     def test_it_is_a_bot_bubble_carrying_the_voiced_text(self) -> None:
         message = rd._build_bot_message(_run(), "voiced", None, is_hil_resume=False)
@@ -1818,7 +1818,7 @@ class TestAttachReplyQuoteLookup:
         assert result == (True, "what I asked")
 
     async def test_a_run_with_no_user_id_scopes_to_empty_not_none(self) -> None:
-        """``user_id=None`` is an unscoped read in the repository layer; the
+        """user_id=None is an unscoped read in the repository layer; the
         empty string matches nothing, which is the safe miss."""
         _result, get, _bot_message = await self._attach(_quoting_run(user={}))
 
@@ -1928,7 +1928,7 @@ class TestSpawnDeferredFollowUps:
 
 
 class TestDeliveryContextIsThreadedWhole:
-    """``_narrate_and_deliver`` is the one place the run is unpacked into the
+    """_narrate_and_deliver is the one place the run is unpacked into the
     values every downstream helper works from. A field lost here is lost for
     the rest of delivery, and every one of them reads as a working send."""
 
@@ -1955,7 +1955,7 @@ class TestDeliveryContextIsThreadedWhole:
 
     async def test_the_push_is_addressed_to_the_runs_owner(self) -> None:
         """The broadcast is a per-user fan-out: a blank owner reaches nobody
-        while every log line still reads ``delivered``."""
+        while every log line still reads delivered."""
         ws, _spawn = await self._deliver_queued()
 
         assert ws.await_args.args[0] == "user-1"
@@ -2021,7 +2021,7 @@ class TestWorkflowNotificationRef:
         )
 
     async def test_a_silent_workflow_stays_silent_through_the_hand_off(self) -> None:
-        """``notify_on_completion`` defaults to True on ``_WorkflowRef``, so a
+        """notify_on_completion defaults to True on _WorkflowRef, so a
         silent workflow whose flag is lost here starts notifying — the exact
         setting the user turned off."""
         notify = await self._deliver_workflow(notify_on_completion=False)
@@ -2035,8 +2035,8 @@ class TestRunBoundaryCarriesTheOriginatingSurface:
     """The executor run stamps the turn's surface on its own wide event.
 
     An auxiliary call made INSIDE this run (a follow-up, a memory write) is
-    handed a bare config with no ``conversation_source``, so without this stamp
-    the ledger records a user's web turn as ``system`` — and executor turns are
+    handed a bare config with no conversation_source, so without this stamp
+    the ledger records a user's web turn as system — and executor turns are
     the expensive ones, so the under-count lands exactly where COGS-by-channel
     is read.
     """
@@ -2082,8 +2082,8 @@ class TestRunBoundaryCarriesTheOriginatingSurface:
 
 @pytest.mark.regression
 class TestRunBoundaryCarriesWorkflowExecution:
-    """``run_executor_background`` opens its own wide-event boundary. The
-    workflow task stamped ``workflow.execution_id`` on ITS boundary, so unless
+    """run_executor_background opens its own wide-event boundary. The
+    workflow task stamped workflow.execution_id on ITS boundary, so unless
     the run carries it across, every model call inside the executor lands in
     the ledger with a workflow but no execution — which is exactly what
     happened: $8 of a $10 workflow day was attributed to no run at all."""

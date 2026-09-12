@@ -21,7 +21,7 @@ from tests._harness.context_sources import (
 
 def _resolve(dotted: str) -> Callable[..., Any]:
     """Resolve a patch target, which may name a class attribute rather than a
-    module-level one (``pkg.mod.Class.method``)."""
+    module-level one (pkg.mod.Class.method)."""
     parts = dotted.split(".")
     for split in range(len(parts) - 1, 0, -1):
         try:

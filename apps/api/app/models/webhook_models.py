@@ -1,6 +1,4 @@
-"""
-Clean webhook models for Dodo Payments based on actual webhook format.
-"""
+"""Clean webhook models for Dodo Payments based on actual webhook format."""
 
 from datetime import datetime
 from enum import Enum, StrEnum
@@ -178,11 +176,11 @@ class DodoWebhookEvent(BaseModel):
 class WebhookProcessingStatus(StrEnum):
     """What GAIA did with a delivery, and what the sender is owed as a result.
 
-    ``PROCESSED`` and ``IGNORED`` are both final — the delivery is recorded
-    under its webhook id and acknowledged with a 200. ``FAILED`` is not: the
+    PROCESSED and IGNORED are both final — the delivery is recorded
+    under its webhook id and acknowledged with a 200. FAILED is not: the
     state change the event carried never landed and a retry can still land
     it, so the claim is handed back and the sender is asked to retry.
-    ``ABANDONED`` is a failure no retry can fix (no GAIA user behind the
+    ABANDONED is a failure no retry can fix (no GAIA user behind the
     subscription, a row that never arrived in the time it had, a body that
     does not validate): it is acknowledged so Dodo stops redelivering, the
     claim is released so a human can redeliver it by hand once the cause is

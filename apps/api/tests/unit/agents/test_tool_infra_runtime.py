@@ -409,7 +409,7 @@ async def _spawn_graph_agent_kwargs(
     runtime: ToolRuntimeConfig,
     llm: Any = None,
 ) -> dict[str, Any]:
-    """The kwargs ``_build_spawn_graph`` hands to ``create_agent`` for this config.
+    """The kwargs _build_spawn_graph hands to create_agent for this config.
 
     Store, checkpointer and agent builder are stubbed because they are the
     boundaries; the scoping under test is the real production code between them.
@@ -803,7 +803,7 @@ async def test_base_subagent_hands_create_agent_the_exact_agent_config():
 
 @pytest.mark.asyncio
 async def test_provider_subagent_defaults_tool_space_to_general():
-    """``tool_space`` defaults to "general" — the literal string, not "GENERAL"
+    """tool_space defaults to "general" — the literal string, not "GENERAL"
     or any other spelling — and that default must actually reach the
     middleware that scopes what the subagent (and anything it spawns) may call."""
     provider_tool = normal_tool
@@ -895,9 +895,9 @@ async def test_base_subagent_direct_mode_propagates_child_direct_runtime():
 async def _run_factory_recording_wiring(*, config: SubAgentToolConfig) -> dict[str, Any]:
     """Run the factory with every collaborator recorded.
 
-    Returns a dict with: create_agent kwargs (``agent_kwargs``), the middleware
-    factory kwargs (``middleware_kwargs``), the todo-tool/hook factory calls
-    (``todo_calls``), and the worker_pre_model_hooks stand-in (``worker``).
+    Returns a dict with: create_agent kwargs (agent_kwargs), the middleware
+    factory kwargs (middleware_kwargs), the todo-tool/hook factory calls
+    (todo_calls), and the worker_pre_model_hooks stand-in (worker).
     """
     full_tools = {"normal_tool": normal_tool, "vfs_read": vfs_read}
     dummy_registry = _DummyRegistry([normal_tool], full_tools)
@@ -1008,7 +1008,7 @@ async def test_the_todo_hook_reaches_hooks_config_through_worker_pre_model_hooks
 
 @pytest.mark.asyncio
 async def test_missing_declared_tools_warn_under_their_exact_declaration_kind():
-    """The warning's ``declaration`` label is how an operator tells an
+    """The warning's declaration label is how an operator tells an
     auto_bind gap from an extra_initial gap; a mangled kind reads as the other
     config surface's fault."""
     with patch("app.agents.core.subagents.base_subagent.log") as log:
@@ -1480,7 +1480,7 @@ async def _query(store, *, tool_space: str = "general"):
 
 @pytest.mark.asyncio
 async def test_a_dead_index_warns_operators_even_in_the_general_namespace():
-    """This dropped its `and tool_space != "general"` guard. General is the
+    """This dropped its and tool_space != "general" guard. General is the
     namespace every executor searches, so an index that wrote no docs there was
     the outage the warning exists for — and the one case it stayed silent for."""
     _result, log = await _query(_FakeStore({}))

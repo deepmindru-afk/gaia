@@ -138,7 +138,7 @@ class TestDualDelivery:
 
 
 class TestTheOutcomeSettlesTheCard:
-    """The card is live UI, published ``pending`` BEFORE the run parks on interrupt().
+    """The card is live UI, published pending BEFORE the run parks on interrupt().
 
     When the decision lands and the run resumes, the same card has to be republished in
     its settled state. Skip it and the action really happens — or is really refused —
@@ -189,7 +189,7 @@ class TestTheOutcomeSettlesTheCard:
 
 
 class TestTheDecisionSettlesThePersistedFrame:
-    """``publish_decision`` also writes the decided status straight onto the stored
+    """publish_decision also writes the decided status straight onto the stored
     message. Final delivery reconciles too, but a run can pause again on a LATER gate
     before it ever gets there — and a revisit in that window re-renders an Approve/Deny
     prompt for something the user already decided, inviting them to decide it twice.

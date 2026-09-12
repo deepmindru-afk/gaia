@@ -27,10 +27,10 @@ def _graph_run(
     *,
     expired: bool = False,
 ) -> Iterator[MagicMock]:
-    """Run the prompt as if inside a graph run of ``category``, yielding its stream writer.
+    """Run the prompt as if inside a graph run of category, yielding its stream writer.
 
-    ``category=None`` simulates no runnable context at all (get_config raises).
-    ``expired`` is the stored connection status the prompt reads to tell a dead
+    category=None simulates no runnable context at all (get_config raises).
+    expired is the stored connection status the prompt reads to tell a dead
     grant from one that was never set up.
 
     The status lookup answers from the arguments it is handed rather than a fixed
@@ -151,7 +151,7 @@ class TestExpiredConnectionPrompt:
         return payload
 
     async def test_card_carries_the_expired_flag_both_ways(self) -> None:
-        """The streamed payload is the renderers' contract — `expired` is what lets
+        """The streamed payload is the renderers' contract — expired is what lets
         the card read as a re-login instead of a first-time connect."""
         with _graph_run("ui", expired=True) as writer:
             await request_integration_connection("gmail", "Gmail", "user1")

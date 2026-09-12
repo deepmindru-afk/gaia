@@ -693,7 +693,7 @@ class TestUpdateUserIntegrationStatus:
 
 
 def _async_find_cursor(docs: list[dict]) -> MagicMock:
-    """Mock a ``collection.find(...)`` result iterated with ``async for``."""
+    """Mock a collection.find(...) result iterated with async for."""
 
     async def aiter_docs(*args, **kwargs):
         for doc in docs:
@@ -1052,7 +1052,7 @@ class TestCapabilitiesPayloadAndArguments:
         }
 
     async def test_a_tool_without_a_description_carries_an_empty_string(self) -> None:
-        """The follow-up prompt reads `description` off every entry — a None there
+        """The follow-up prompt reads description off every entry — a None there
         renders as the word "None" in the model's context."""
         with (
             patch(

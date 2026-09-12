@@ -2,15 +2,15 @@
 
 The order below is the whole cache contract in one place. Before this module it
 was an emergent property: emitters stamped marker strings and hoped, and
-``manage_system_prompts_node`` re-derived the ordering from a hand-rolled scan
+manage_system_prompts_node re-derived the ordering from a hand-rolled scan
 that nothing else could see. Adding a slot meant editing a scan, an assignment
 block and an append sequence, in agreement, from memory.
 
 Two constraints fix the order, and neither is negotiable:
 
-* ``langchain-google-genai`` promotes a ``SystemMessage`` to ``system_instruction``
+* langchain-google-genai promotes a SystemMessage to system_instruction
   only while the system block is leading and CONTIGUOUS. The first non-system
-  message ends the block and every later ``SystemMessage`` is silently dropped —
+  message ends the block and every later SystemMessage is silently dropped —
   so everything system-ish sorts ahead of the conversation.
 * Implicit prompt caching matches on longest common prefix. So within the system
   block, byte-stable slots come first and per-turn churn sorts to the tail, and
@@ -20,7 +20,7 @@ Two constraints fix the order, and neither is negotiable:
 The first constraint is Gemini's alone. Every OpenAI-wire provider accepts a
 system message anywhere in the list, which buys a strictly better layout: the
 per-turn slots move BEHIND the conversation, so the cacheable prefix covers the
-history instead of stopping at the stable block. ``request_slot_order`` is where
+history instead of stopping at the stable block. request_slot_order is where
 that choice is made, and the enum below is the Gemini-safe order it starts from.
 """
 
@@ -111,18 +111,18 @@ TAIL_VOLATILE_PROVIDERS: frozenset[LLMProviderName] = frozenset(
 
 
 def request_slot_order(provider: str | None) -> tuple[PromptSlot, ...]:
-    """The slot order a request bound for ``provider`` is emitted in.
+    """The slot order a request bound for provider is emitted in.
 
     Gemini gets the declaration order — everything system-ish ahead of the
     conversation, because anything after it is dropped on the floor — and its
-    cache can therefore only ever cover ``[static, dynamic_stable]``.
+    cache can therefore only ever cover [static, dynamic_stable].
 
     On the OpenAI wire the per-turn slots move after the conversation, making the
-    stable prefix ``[static, dynamic_stable, ...conversation]``, because the
+    stable prefix [static, dynamic_stable, ...conversation], because the
     conversation then joins the cached prefix instead of re-sending in full every
     turn. The A/B against the leading-block layout measured 35.2% -> 94.9% on the
     isolated harness and ~45% -> 80-85% steady-state end to end; methodology and
-    charts are in ``docs/llm-cache-measurements.md``.
+    charts are in docs/llm-cache-measurements.md.
     """
     if provider not in TAIL_VOLATILE_PROVIDERS:
         return tuple(PromptSlot)
@@ -139,10 +139,10 @@ def request_slot_order(provider: str | None) -> tuple[PromptSlot, ...]:
 
 
 def has_marker(message: AnyMessage, name: str) -> bool:
-    """Whether ``message`` carries marker ``name``.
+    """Whether message carries marker name.
 
-    Checks ``additional_kwargs`` (where LangChain persists custom kwargs) and
-    falls back to ``model_extra``, because a marker passed as a bare constructor
+    Checks additional_kwargs (where LangChain persists custom kwargs) and
+    falls back to model_extra, because a marker passed as a bare constructor
     kwarg lands there — and checkpoints written before the markers moved still
     replay through here.
     """
@@ -153,18 +153,18 @@ def has_marker(message: AnyMessage, name: str) -> bool:
 
 
 def mark(message: M, *names: str) -> M:
-    """Stamp slot markers on ``message`` so its slot survives checkpointing."""
+    """Stamp slot markers on message so its slot survives checkpointing."""
     for name in names:
         message.additional_kwargs[name] = True
     return message
 
 
 def slot_of(message: AnyMessage) -> PromptSlot:
-    """Which slot ``message`` belongs in.
+    """Which slot message belongs in.
 
     Order of the checks is load-bearing where markers overlap: the legacy
-    combined message carries ``dynamic_context`` *and* ``memory_message``, and a
-    volatile block must be read as ``MEMORY_RECALL`` even if a future emitter
+    combined message carries dynamic_context *and* memory_message, and a
+    volatile block must be read as MEMORY_RECALL even if a future emitter
     also stamps it dynamic.
     """
     if message.type != "system":

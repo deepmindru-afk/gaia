@@ -144,7 +144,7 @@ class _Harness:
         self.extra: list = []
 
     def playbook_event(self) -> dict[str, object]:
-        """The ``playbook`` wide-event namespace this fire stamped.
+        """The playbook wide-event namespace this fire stamped.
 
         The namespace is the only way to tell from production why a run took the
         path it did, so it is asserted as a contract, not as incidental logging.
@@ -512,7 +512,7 @@ def _suspect_replay(
 
 
 def _recorded(playbook: PlaybookDocument, streak: int) -> PlaybookDocument:
-    """The document ``record_run_outcome`` hands back after a suspect run."""
+    """The document record_run_outcome hands back after a suspect run."""
     return playbook.model_copy(
         update={"last_run_status": PlaybookRunStatus.SUSPECT, "suspect_streak": streak}
     )
@@ -743,7 +743,7 @@ class TestSuspectReplay:
 class TestPlaybookWideEvent:
     """What each path stamps on the run's wide event.
 
-    ``mode``, ``reason`` and ``llm_calls`` are how anyone answers "why did this
+    mode, reason and llm_calls are how anyone answers "why did this
     workflow not replay?" from production, and how the cost saving is measured
     at all. Wrong or missing values are invisible in review and in the UI, so
     they are pinned here rather than left as incidental logging.
@@ -990,7 +990,7 @@ class TestReplayCompletionNotification:
     """A finished replay is delivered the way an agent run is delivered.
 
     The executor path pushes the result into the user's linked platforms and
-    then sends the in-app heads-up, gated on ``notify_on_completion``. A replay
+    then sends the in-app heads-up, gated on notify_on_completion. A replay
     used to write the conversation turn and stop, so a user who asked to be
     notified stopped hearing from the workflow the moment a playbook was
     written, and the review label never reached them.
@@ -1239,7 +1239,7 @@ class TestHealAttemptsAreBounded:
 class TestExecutionRecordSummary:
     """The execution record says how the fire completed, not just that it did.
 
-    Every replay used to be recorded as ``summary="Workflow executed"``, so a
+    Every replay used to be recorded as summary="Workflow executed", so a
     flagged replay was indistinguishable from a clean agent run in the history.
     """
 
@@ -1287,7 +1287,7 @@ class TestExecutionRecordSummary:
 
 @pytest.mark.asyncio
 class TestOutcomeIsScopedToTheReplayedRevision:
-    """``playbook_id`` survives a rewrite, so the id alone never guarded anything."""
+    """playbook_id survives a rewrite, so the id alone never guarded anything."""
 
     async def test_the_outcome_carries_the_revision_the_worker_read(self) -> None:
         workflow = _workflow()
@@ -2059,7 +2059,7 @@ class TestATrustedReplayWritesTheTurnAndTellsTheUser:
     async def test_an_outcome_the_playbook_no_longer_matches_is_reported_not_swallowed(
         self,
     ) -> None:
-        """``record_run_outcome`` answering None means the body changed mid-run.
+        """record_run_outcome answering None means the body changed mid-run.
         Without the warning naming the revision, that is invisible."""
         workflow = _workflow()
         harness = _Harness(workflow)
@@ -2239,7 +2239,7 @@ class TestAnUntrustedReplayHandsOverWithItsRecord:
 @pytest.mark.asyncio
 class TestTheReplayCompletionNotificationEdges:
     async def test_a_workflow_with_no_id_still_notifies_under_an_empty_id(self) -> None:
-        """``workflow.id`` is optional on the model; the notification contract
+        """workflow.id is optional on the model; the notification contract
         is a string, so the empty string — not a stand-in — is what it gets."""
         workflow = _workflow().model_copy(update={"id": None})
         completion = AsyncMock()
@@ -2299,7 +2299,7 @@ class TestTheReplayRunsAsTheWorkflowsOwnerInItsOwnConversation:
     async def test_the_replay_carries_the_playbook_the_profile_and_the_trigger(
         self,
     ) -> None:
-        """The replay's ``$now``/``$today`` come from this bag: a wrong zone or a
+        """The replay's $now/$today come from this bag: a wrong zone or a
         blanked profile silently runs the user's day at the wrong hour."""
         workflow = _workflow()
         harness = _LockedReplayHarness(workflow, lock_free=True)
@@ -2332,7 +2332,7 @@ class TestTheReplayRunsAsTheWorkflowsOwnerInItsOwnConversation:
     async def test_a_profile_with_no_name_or_mail_replays_with_empty_strings(
         self,
     ) -> None:
-        """``PlaybookUser`` is a string contract — None would reach the prompt
+        """PlaybookUser is a string contract — None would reach the prompt
         renderer as the literal "None"."""
         workflow = _workflow()
         harness = _LockedReplayHarness(workflow, lock_free=True)
@@ -2376,8 +2376,8 @@ class TestTheReplayRunsAsTheWorkflowsOwnerInItsOwnConversation:
         ]
 
     async def test_an_unknown_holder_is_recorded_as_an_empty_string(self) -> None:
-        """``get_lock_holder`` answers None once the lock lapses mid-check; the
-        overlap signal's ``holder`` is a string, so None must not travel."""
+        """get_lock_holder answers None once the lock lapses mid-check; the
+        overlap signal's holder is a string, so None must not travel."""
         workflow = _workflow()
         harness = _LockedReplayHarness(workflow, lock_free=False)
         harness.get_for_workflow = AsyncMock(return_value=_playbook(workflow))
@@ -2394,7 +2394,7 @@ class TestTheReplayRunsAsTheWorkflowsOwnerInItsOwnConversation:
 
 @pytest.mark.asyncio
 class TestTheZoneAWorkflowRunsIn:
-    """Both run paths read ``$now``/``$today`` off this bag, and there is no
+    """Both run paths read $now/$today off this bag, and there is no
     request header in a worker — a silent UTC fallback runs someone's morning
     briefing in the middle of their night."""
 
@@ -2470,7 +2470,7 @@ class TestTheDisabledFlagStartsFalseNotUnset:
     async def test_a_suspect_replay_whose_outcome_write_missed_still_reports_not_disabled(
         self,
     ) -> None:
-        """``record_run_outcome`` answers None when the body changed mid-run, so
+        """record_run_outcome answers None when the body changed mid-run, so
         the streak is unknown and nothing is dropped. The event must still say
         the shortcut is alive, not leave the field unset."""
         workflow = _workflow()
@@ -2662,7 +2662,7 @@ class TestANarrationFailureIsADeliveredRunNotAFailedOne:
 
 @pytest.mark.asyncio
 class TestADiscardedShortcutLeavesARecordOnTheWorkflow:
-    """``wf_0d05167369cf`` lost a working playbook and nothing said why: the log
+    """wf_0d05167369cf lost a working playbook and nothing said why: the log
     line ages out, and the workflow itself never knew it had one."""
 
     async def test_a_stale_shortcut_records_the_hash_reason(self) -> None:

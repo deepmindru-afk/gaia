@@ -5,14 +5,14 @@ the array before every call, and the hook output — not the seed — is the
 request. Asserting on the seed therefore cannot see a mis-slotted message, which
 is exactly the class of defect this harness exists to catch.
 
-``execute_hooks`` is a plain async function over a plain dict, so the whole chain
+execute_hooks is a plain async function over a plain dict, so the whole chain
 runs with no compiled graph, no checkpointer, no LLM and no network:
 
     messages = await effective_context(
         AgentTier.PROVIDER_SUBAGENT, ContextSeed(query="...")
     )
 
-Every external read the sections perform is pinned by ``fake_context_sources``
+Every external read the sections perform is pinned by fake_context_sources
 and the clients beneath them are fenced, so a section that grows a new read
 fails loudly instead of quietly reaching a real store.
 """
@@ -113,7 +113,7 @@ def slots_of(messages: list[AnyMessage]) -> list[PromptSlot]:
 
 
 def message_in_slot(messages: list[AnyMessage], slot: PromptSlot) -> AnyMessage | None:
-    """The single message occupying ``slot``, or ``None``.
+    """The single message occupying slot, or None.
 
     Raises when a singleton slot holds more than one message — that is the
     collapse invariant failing, and silently returning the first would hide it.
@@ -167,14 +167,14 @@ async def build_configurable(
     user: HarnessUser,
     overrides: AgentConfigurable | None = None,
 ) -> tuple[RunnableConfig, AgentConfigurable]:
-    """The run config a tier would carry, with ``overrides`` applied last.
+    """The run config a tier would carry, with overrides applied last.
 
     Overrides land on the finished bag rather than riding in as a parent
-    configurable, so a test can also *remove* a key (``{"vfs_session_id": None}``)
+    configurable, so a test can also *remove* a key ({"vfs_session_id": None})
     — inheritance only ever fills blanks and could not express that.
 
-    Passes ``user_preferences``/``writing_style`` straight into
-    ``build_agent_config`` the way every real root call site does (comms,
+    Passes user_preferences/writing_style straight into
+    build_agent_config the way every real root call site does (comms,
     background narration, the dev direct-invoke entrypoint) — the harness
     always builds as if it IS that root, so it must feed the same data a real
     one would rather than leaving worker tiers looking blind to it.
@@ -293,7 +293,7 @@ async def _seed_comms(
 async def _seed_workflow(
     *, user: HarnessUser, query: str, configurable: AgentConfigurable
 ) -> list[AnyMessage]:
-    """Mirrors the seed built inside ``WorkflowSubagentRunner.execute``."""
+    """Mirrors the seed built inside WorkflowSubagentRunner.execute."""
     system_message = SystemMessage(
         content=WORKFLOW_AGENT_SYSTEM_PROMPT,
         additional_kwargs={"visible_to": {"workflow_agent"}},
@@ -335,9 +335,9 @@ class ContextSeed:
 
 
 async def effective_context(tier: AgentTier, seed: ContextSeed | None = None) -> list[AnyMessage]:
-    """Seed ``tier`` and run it through that tier's real pre-model hooks.
+    """Seed tier and run it through that tier's real pre-model hooks.
 
-    ``ContextSeed.prior_messages`` are prepended to the seed to model a
+    ContextSeed.prior_messages are prepended to the seed to model a
     checkpointed thread — the multi-turn shape, where stale copies of each slot
     accumulate and the hook chain has to collapse them.
     """

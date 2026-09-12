@@ -66,9 +66,9 @@ async def _get_user_tz(user_id: str) -> str:
 
 
 def _compute_first_fire_from_cron(cron_expr: str, tz_name: str) -> datetime:
-    """Next fire of a cron in ``tz_name``, returned as UTC.
+    """Next fire of a cron in tz_name, returned as UTC.
 
-    Thin wrapper over the canonical ``get_next_run_time`` so todo recurrence and
+    Thin wrapper over the canonical get_next_run_time so todo recurrence and
     reminder/workflow recurrence share one cron-in-timezone implementation.
     """
     return get_next_run_time(cron_expr, tz=Timezone.parse(tz_name))
@@ -273,7 +273,7 @@ def _build_scheduled_at_update(
 
 
 def _validate_recurrence_format(recurrence: str) -> str | None:
-    """Return a user-facing error if `recurrence` is neither a valid cron nor a known shortcut.
+    """Return a user-facing error if recurrence is neither a valid cron nor a known shortcut.
 
     _is_cron_expression is defined as "not a known shortcut", so the two cases
     are exhaustive: anything that isn't a shortcut is validated as a cron
@@ -471,7 +471,7 @@ def _render_catalog(trigger_name: str) -> str:
 
 
 def _patch_canvas_section(current: str, section: str, content: str) -> str:
-    """Replace (or append) a `## {section}` block within a canvas markdown string."""
+    """Replace (or append) a ## {section} block within a canvas markdown string."""
     heading = f"## {section}"
     head_end: int | None = None
     search_start = 0

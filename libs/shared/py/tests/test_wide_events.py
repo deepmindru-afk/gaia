@@ -294,9 +294,9 @@ class TestTraceId:
 def _emitted_event(mock_loguru: MagicMock) -> dict:
     """The event the boundary actually emitted.
 
-    Read this instead of ``log.get()`` after a boundary exits. A boundary
+    Read this instead of log.get() after a boundary exits. A boundary
     restores the enclosing accumulator on exit, so once it has closed there is
-    deliberately nothing left to read — asserting on ``log.get()`` afterwards
+    deliberately nothing left to read — asserting on log.get() afterwards
     only passed while boundaries leaked their state outward, which was the bug.
     """
     return dict(mock_loguru.bind.call_args.kwargs)

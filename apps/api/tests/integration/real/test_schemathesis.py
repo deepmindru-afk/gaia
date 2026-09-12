@@ -1,42 +1,42 @@
 """Schemathesis contract gate for the real API, driven over HTTP.
 
-Boots the REAL GAIA app as a subprocess (``uvicorn app.main:app``) with real
+Boots the REAL GAIA app as a subprocess (uvicorn app.main:app) with real
 Postgres/Redis/Mongo/Chroma in Docker and the dev-auth bypass, then fuzzes a
 small set of core operations from the live OpenAPI schema — asserting no 5xx,
 schema-valid responses, and no undocumented status codes on those paths. The
 server owns its event loop and lifespan, so lazy providers register and the
 process-global Motor client never latches onto a stale loop (the failure modes
-of the old in-process ``from_asgi`` harness).
+of the old in-process from_asgi harness).
 
-GREEN SCOPE (verified passing): ``SCOPED_OPERATIONS`` below. The gate is a
+GREEN SCOPE (verified passing): SCOPED_OPERATIONS below. The gate is a
 narrow but real regression net for those paths.
 
-DOCUMENTED FINDINGS (full-schema exploratory fuzz, ``SCHEMA_FUZZ_FULL=1``) —
+DOCUMENTED FINDINGS (full-schema exploratory fuzz, SCHEMA_FUZZ_FULL=1) —
 real contract drift, reported not silenced, tracked for the API-hardening
 follow-up:
 
-- **Undocumented 429 plan-gates**: ``GET /api/v1/token`` (and other
-  ``@tiered_rate_limit`` endpoints) return 429 ``{"error":"rate_limit_exceeded",
-  "plan_required":"pro"}`` for free users — the schema documents only
-  200/401/500/422. Needs ``responses={429: ...}`` on the rate-limited routes.
-- **405-vs-422 route shadowing**: parameterized routes (``/todos/{todo_id}``
-  etc.) shadow literal siblings (``/counts``, ``/bulk``, ``/search``) so
+- **Undocumented 429 plan-gates**: GET /api/v1/token (and other
+  @tiered_rate_limit endpoints) return 429 {"error":"rate_limit_exceeded",
+  "plan_required":"pro"} for free users — the schema documents only
+  200/401/500/422. Needs responses={429: ...} on the rate-limited routes.
+- **405-vs-422 route shadowing**: parameterized routes (/todos/{todo_id}
+  etc.) shadow literal siblings (/counts, /bulk, /search) so
   undocumented methods return 422 instead of 405 — same family as the fixed
-  ``/todos/bulk`` ordering bug. Needs literal-before-parameterized routing.
+  /todos/bulk ordering bug. Needs literal-before-parameterized routing.
 - **Undocumented 403**: Gmail/Calendar endpoints 403 for users without the
   integration connected; 403 absent from the schema.
 - **Undocumented 307/410/404**: OAuth login/callback redirects (307),
-  ``POST /api/v1/desktop/tool-result`` (410), and ``{id}`` not-found paths
+  POST /api/v1/desktop/tool-result (410), and {id} not-found paths
   (404) are reachable but undocumented.
 - **Server wedge under pathological generated input**: after some fuzzed
   requests the single event loop stops responding (subsequent ops time out at
-  30s even for plain ``GET /api/v1/todos/counts``). Not reproducible with
+  30s even for plain GET /api/v1/todos/counts). Not reproducible with
   hand-written curl of the same inputs — needs a server-side hardening pass
   (per-request timeouts on external calls, bounded query params) before the
   full schema can be fuzzed safely.
 
-Run the full exploratory pass: ``SCHEMA_FUZZ_FULL=1`` sets
-``SCHEMA_FUZZ_EXAMPLES`` high and adds no scoping (see ``_operations_to_run``).
+Run the full exploratory pass: SCHEMA_FUZZ_FULL=1 sets
+SCHEMA_FUZZ_EXAMPLES high and adds no scoping (see _operations_to_run).
 """
 
 from __future__ import annotations
@@ -147,15 +147,15 @@ def _tail(log_path: Path, limit: int = 20000) -> str:
 def _seeded_startup_requirements(mongodb_url: str) -> Iterator[None]:
     """Satisfy the app's own startup gate before booting it.
 
-    ``app/services/startup_validation.py`` aborts boot when the
-    ``subscription_plans`` collection is empty, deliberately: a deployment
+    app/services/startup_validation.py aborts boot when the
+    subscription_plans collection is empty, deliberately: a deployment
     missing its plans should fail loudly rather than serve. CI's Mongo is
     empty and nothing seeds it, so the real server could never start there —
     which is why this suite failed only in CI, while a developer's Mongo let it
     pass locally.
 
     The seeded row exists to clear that gate, nothing more: no operation in
-    ``SCOPED_OPERATIONS`` reads the collection. Only ever inserted into an
+    SCOPED_OPERATIONS reads the collection. Only ever inserted into an
     EMPTY collection, and only what we inserted is removed afterwards, so a
     developer's real catalog is never touched.
     """
@@ -195,14 +195,14 @@ def _make_fuzz_user_pro(
 ) -> tuple[MongoClient, object]:
     """Give the fuzz user a real active subscription, and return it for cleanup.
 
-    Every gated route now 402s a non-PRO caller (``EntitlementMiddleware``), so a
+    Every gated route now 402s a non-PRO caller (EntitlementMiddleware), so a
     free fuzz user turns the whole contract gate into a sweep of 402s that proves
     nothing about the operations it claims to cover. 402 is deliberately NOT
     accepted as a documented status instead: the point of the gate is to fuzz the
     handlers, and a paywall response never reaches one.
 
-    Seeded rather than bypassed. The plan is resolved from the ``subscriptions``
-    collection (``subscription_repository.get_active_for_user`` — any active row
+    Seeded rather than bypassed. The plan is resolved from the subscriptions
+    collection (subscription_repository.get_active_for_user — any active row
     means PRO), so this is the same data a real subscriber has, and it exercises
     the gate for real instead of switching it off. A test-only env override would
     be a paywall bypass shipped in production code for the sake of a test.
@@ -233,7 +233,7 @@ def _fail_if_parallel() -> None:
     """Refuse to run under xdist, naming the cause.
 
     This test owns a whole uvicorn process and must not compete with xdist
-    workers for the runner's cores. pytest.ini's addopts carry ``-n 4``, so the
+    workers for the runner's cores. pytest.ini's addopts carry -n 4, so the
     "isolated" CI step silently ran four workers — three of them paying the
     ~10s app import while the fourth tried to boot the server — and the boot
     timed out. Failing here beats a timeout 5 minutes later that looks like a
@@ -252,7 +252,7 @@ def _fail_if_parallel() -> None:
 def _uvicorn_process(log_path: Path) -> Iterator[subprocess.Popen[bytes]]:
     """Run the real app under uvicorn, terminated on the way out.
 
-    The server's output goes to a file rather than ``subprocess.PIPE``: nothing
+    The server's output goes to a file rather than subprocess.PIPE: nothing
     drains a pipe during the readiness poll, so once the app's startup logging
     filled the 64 KiB pipe buffer the server would block mid-boot and never
     bind — a hang that looks identical to a slow start. A file also means every
@@ -286,7 +286,7 @@ def _uvicorn_process(log_path: Path) -> Iterator[subprocess.Popen[bytes]]:
 
 
 def _wait_until_serving(proc: subprocess.Popen[bytes], url: str, log_path: Path) -> None:
-    """Poll ``/openapi.json`` until the server answers, or explain why it never did."""
+    """Poll /openapi.json until the server answers, or explain why it never did."""
     deadline = time.monotonic() + BOOT_TIMEOUT
     while time.monotonic() < deadline:
         if proc.poll() is not None:

@@ -21,8 +21,8 @@ from openrouter.errors import (
 
 class LLMNotConfiguredError(RuntimeError):
     """No provider key is configured for the requested model (e.g. the default
-    Gemini model without ``GOOGLE_API_KEY``). Typed so degrade-gracefully callers
-    can catch exactly this instead of every ``RuntimeError``."""
+    Gemini model without GOOGLE_API_KEY). Typed so degrade-gracefully callers
+    can catch exactly this instead of every RuntimeError."""
 
 
 # OpenRouter SDK (the ``openrouter`` package used by ``langchain-openrouter``)

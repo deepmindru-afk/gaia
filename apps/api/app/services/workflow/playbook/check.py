@@ -37,15 +37,15 @@ from shared.py.wide_events import log
 async def playbook_check_brief(
     workflow_id: str, user_id: str, *, fallback_note: str | None = None
 ) -> str:
-    """The ``<playbook_check>`` block for this run, or ``""`` to stay silent.
+    """The <playbook_check> block for this run, or "" to stay silent.
 
     The check brief when the workflow has no playbook at all, unless earlier
-    runs have declined it ``PLAYBOOK_DECLINE_LIMIT`` times for the workflow as
+    runs have declined it PLAYBOOK_DECLINE_LIMIT times for the workflow as
     it stands. The heal brief, carrying the recorded reason, when it has one
     whose last replay stopped or finished with a result that was not trusted.
     Silent when a playbook ran cleanly or has not been tried yet.
 
-    ``fallback_note`` is the record of a replay that stopped partway in THIS
+    fallback_note is the record of a replay that stopped partway in THIS
     fire. It is merged into the heal brief verbatim, so the executor reads
     "these steps already ran" next to "do the work yourself" instead of only
     the second.
@@ -113,7 +113,7 @@ def frozen_on_empty(playbook: PlaybookDocument, trace: Sequence[RecordedCall]) -
     check reads the previous run: an attempt that came back empty and a retry
     that found items is discovery, and the retry is what was frozen.
 
-    "Nothing in it" is :func:`carries_no_data`, not an empty list somewhere in
+    "Nothing in it" is :func:carries_no_data, not an empty list somewhere in
     the result. A write tool answers with the record it just created, and that
     record's own empty attributes are not the call returning nothing.
     """

@@ -2,16 +2,16 @@
 
 One executor runs per conversation. A workflow whose agentic run takes longer
 than its own cron period fires again while the previous run still holds that
-conversation's busy lock, so ``call_executor`` puts the new fire on the queue
+conversation's busy lock, so call_executor puts the new fire on the queue
 and answers with an acknowledgement instead of running anything. The comms agent
 treats that acknowledgement as its result and the fire completed in ~15s with
-``status="success"``, ``summary="Workflow executed"`` and a trace holding one
-``call_executor`` call — with a */5 cron over a five-minute run, EVERY record
+status="success", summary="Workflow executed" and a trace holding one
+call_executor call — with a */5 cron over a five-minute run, EVERY record
 after the first was a fake success, and the record the next run reads as its own
 history said the workflow had done its job.
 
-These tests drive the real ``execute_workflow_by_id`` → ``_run_workflow`` →
-``execute_workflow_as_chat`` path with only its I/O edges mocked, so the queued
+These tests drive the real execute_workflow_by_id → _run_workflow →
+execute_workflow_as_chat path with only its I/O edges mocked, so the queued
 outcome is decided by the production code, not by the harness.
 """
 
@@ -87,7 +87,7 @@ class _Harness:
         )
 
     def workflow_event(self) -> dict[str, object]:
-        """The merged ``workflow`` wide-event namespace this fire stamped.
+        """The merged workflow wide-event namespace this fire stamped.
 
         Production can only tell a queued fire from a real one by this
         namespace, so it is asserted as a contract, not as incidental logging.
@@ -235,7 +235,7 @@ SCHEDULED_FOR = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
 
 
 async def _fire_at_a_fixed_occurrence(harness: _Harness) -> str:
-    """The same scheduled fire as ``_fire``, pinned to a known occurrence."""
+    """The same scheduled fire as _fire, pinned to a known occurrence."""
     with ExitStack() as stack:
         for patcher in harness.patches():
             stack.enter_context(patcher)

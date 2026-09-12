@@ -32,7 +32,7 @@ StreamWriterCallable = Callable[[dict[str, Any]], None]
 def strip_internal_agent_tags(text: str) -> str:
     """Remove internal channel tags an agent may have echoed into user text.
 
-    Tags like ``<executor_result>`` frame the payload handed to comms for
+    Tags like <executor_result> frame the payload handed to comms for
     re-voicing; they are context for the agent, never part of the user-facing
     reply. A weak model occasionally parrots them verbatim, so strip them
     deterministically as a hard backstop before delivery. Only the tags go — the
@@ -255,7 +255,7 @@ _SPECIAL_TOOLS: dict[str, tuple[str, str | None, bool]] = {
 async def _special_tool_display(
     tool_name_raw: str, tool_call: ToolCall
 ) -> tuple[str, str | None, bool]:
-    """Category, display name and show_category for a tool in ``_SPECIAL_TOOLS``."""
+    """Category, display name and show_category for a tool in _SPECIAL_TOOLS."""
     tool_category, tool_display_name, show_category = _SPECIAL_TOOLS[tool_name_raw]
 
     if tool_name_raw == "handoff":
@@ -416,12 +416,12 @@ async def _resolve_mcp_icon_name(integration_id: str) -> tuple[str | None, str |
 
 
 def format_sse_response(content: str) -> str:
-    """Wrap text content as a JSON-encoded SSE ``data:`` line."""
+    """Wrap text content as a JSON-encoded SSE data: line."""
     return f"data: {json.dumps(ResponseFrame(response=content).model_dump())}\n\n"
 
 
 def format_sse_data(data: dict[str, Any]) -> str:
-    """Wrap a dict as a JSON-encoded SSE ``data:`` line."""
+    """Wrap a dict as a JSON-encoded SSE data: line."""
     return f"data: {json.dumps(data)}\n\n"
 
 

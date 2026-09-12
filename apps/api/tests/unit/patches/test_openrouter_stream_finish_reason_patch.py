@@ -1,16 +1,16 @@
 """Tests for the streaming finish_reason patch.
 
-The OpenRouter SDK types ``ChatStreamChoice.finish_reason`` as required, but
+The OpenRouter SDK types ChatStreamChoice.finish_reason as required, but
 OpenAI-compatible gateways omit it on intermediate reasoning deltas — one such
 chunk killed whole streams with a pydantic Unmarshaller error. The patch gives
-the field a ``None`` default; a present value must parse exactly as before.
+the field a None default; a present value must parse exactly as before.
 
-These call ``apply()`` themselves against a field reset to REQUIRED, rather
-than asserting the state ``app.patches.__init__`` already installed at import.
+These call apply() themselves against a field reset to REQUIRED, rather
+than asserting the state app.patches.__init__ already installed at import.
 The patch mutates a global third-party class, so once anything has applied it
 the effect is process-wide and permanent: a test that only validates a chunk
 passes whether or not this module's code runs at all, and would keep passing if
-``apply()`` were emptied out. Resetting the field first is what makes these
+apply() were emptied out. Resetting the field first is what makes these
 tests able to fail.
 """
 

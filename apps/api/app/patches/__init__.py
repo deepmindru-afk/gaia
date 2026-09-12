@@ -1,6 +1,4 @@
-"""
-This module contains patches for various components to ensure compatibility and fix issues.
-"""
+"""This module contains patches for various components to ensure compatibility and fix issues."""
 
 from . import (
     composio_custom_tool_patch,

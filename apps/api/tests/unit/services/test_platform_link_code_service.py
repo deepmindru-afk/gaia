@@ -103,8 +103,8 @@ class TestMintPeekDiscard:
         self, fake_store: dict[str, tuple[object, int | None]]
     ) -> None:
         """What lands in Redis, exactly: the code's own key, the full binding as
-        plain JSON types, and the bounded TTL. The needs must be `str`, not
-        `OnboardingNeed` members — an enum instance handed to the cache is a
+        plain JSON types, and the bounded TTL. The needs must be str, not
+        OnboardingNeed members — an enum instance handed to the cache is a
         value only this process knows how to write."""
         prefs = OnboardingPreferences(
             profession="founder", needs=[OnboardingNeed.INBOX, OnboardingNeed.CALENDAR]

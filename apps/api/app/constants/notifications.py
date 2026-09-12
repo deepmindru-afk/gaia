@@ -1,6 +1,4 @@
-"""
-Push Notification Constants
-"""
+"""Push Notification Constants."""
 
 import re
 
@@ -84,7 +82,7 @@ WORKFLOW_DONE_COPY: tuple[tuple[str, str], ...] = (
 def pick_workflow_done_copy(workflow_id: str, title: str, salt: str) -> tuple[str, str]:
     """Pick one human completion title/body, rotating per run, no RNG.
 
-    ``salt`` (a per-run value such as a timestamp) only seeds the rotation so the
+    salt (a per-run value such as a timestamp) only seeds the rotation so the
     same workflow doesn't always read identically; it is never shown to the user.
     """
     seed = sum(ord(c) for c in f"{workflow_id}{salt}")

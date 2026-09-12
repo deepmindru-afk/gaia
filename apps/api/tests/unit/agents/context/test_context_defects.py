@@ -1,12 +1,12 @@
 """The defects the harness exposed, each pinned before it was fixed.
 
-None of these could be written before ``effective_context`` existed: every one
+None of these could be written before effective_context existed: every one
 of them is invisible at the seed and only shows up in the array the model
 actually receives. That is the whole reason they survived in production.
 
 Every test here was written and observed RED before its fix, and the invariants
-they rest on are mutation-checked (see ``test_context_invariants.py``). They
-deliberately carry no ``@pytest.mark.regression`` marker: that gate re-runs
+they rest on are mutation-checked (see test_context_invariants.py). They
+deliberately carry no @pytest.mark.regression marker: that gate re-runs
 marked tests against the base revision, and these import a harness the same
 change introduces, so on base they do not fail — they fail to *collect*. An
 error is not proof, and claiming the marker would assert a proof the gate
@@ -53,12 +53,12 @@ WORKER_TIERS = [
 
 @pytest.mark.unit
 class TestVolatileContentIsNotInTheCacheablePrefix:
-    """``create_agent_context_message`` stamped ``dynamic_context`` and never
-    ``memory_recall``, so every subagent's per-turn content — recalled memories,
+    """create_agent_context_message stamped dynamic_context and never
+    memory_recall, so every subagent's per-turn content — recalled memories,
     skills, provider metadata, run banners — landed in the byte-stable slot at
     index 1. That is inside the region the implicit cache keys on, so each new
     query moved the cache boundary to the top of the prompt: exactly the failure
-    ``manage_system_prompts_node`` exists to prevent.
+    manage_system_prompts_node exists to prevent.
     """
 
     @pytest.mark.parametrize("tier", WORKER_TIERS)
@@ -127,7 +127,7 @@ class TestEveryTierKnowsTheDate:
 
 @pytest.mark.unit
 class TestSeedOrderIsAlreadyCanonical:
-    """Comms emitted ``[…, human, time]`` and every other tier ``[…, time, human]``.
+    """Comms emitted […, human, time] and every other tier […, time, human].
     Harmless only because the hook chain reordered it — the invariant was enforced
     in one place and violated in another, which is how it stays broken."""
 
@@ -145,8 +145,8 @@ class TestSeedOrderIsAlreadyCanonical:
         Asserted on the Gemini lane, which is the layout the seed is written in.
         The OpenAI wire's tail layout IS a deliberate reorder by the hook — the
         one thing a tier cannot do itself, because the seed is built before the
-        provider is known to it (pinned in ``test_context_invariants``:
-        ``TestTheTailLayoutOnTheOpenAIWire``).
+        provider is known to it (pinned in test_context_invariants:
+        TestTheTailLayoutOnTheOpenAIWire).
         """
         seed = slots_of(await seed_only(tier, sources=VOLATILE_SOURCES))
         effective = slots_of(
@@ -216,8 +216,8 @@ class TestAQueryChangeMovesOnlyTheVolatileSlot:
 
 @pytest.mark.unit
 class TestOnboardingPromptDoesNotEvictIdentity:
-    """``construct_langchain_messages`` appended the onboarding prompt carrying
-    ``memory_message=True`` *after* the stable dynamic-context message, and the
+    """construct_langchain_messages appended the onboarding prompt carrying
+    memory_message=True *after* the stable dynamic-context message, and the
     node keeps only the latest holder of that marker — so on every onboarding
     turn the user's name, timezone, preferences and connected-integrations
     manifest silently never reached the model. Onboarding is precisely when

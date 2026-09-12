@@ -135,9 +135,9 @@ class TestTheResumeSlotIsExclusive:
     together must not start two concurrent LangGraph runs on it — that corrupts the
     checkpoint and can double-execute whatever the run was mid-way through.
 
-    The whole guarantee is one Redis ``SETNX``. Every other test in this file mocks
-    ``claim_resume_dispatch`` to a constant, so the exclusivity itself was never executed;
-    a plain ``SET`` would hand the slot to every caller with the suite still green. These
+    The whole guarantee is one Redis SETNX. Every other test in this file mocks
+    claim_resume_dispatch to a constant, so the exclusivity itself was never executed;
+    a plain SET would hand the slot to every caller with the suite still green. These
     run the real function against a real (in-memory) Redis, so the claim has to actually
     be atomic.
     """

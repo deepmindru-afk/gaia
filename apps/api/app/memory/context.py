@@ -1,6 +1,6 @@
 """Hot-path core context — the memory injected into every system prompt.
 
-``get_core_context`` is a single Redis hit on the steady state (plan F1,
+get_core_context is a single Redis hit on the steady state (plan F1,
 sub-5ms budget). On a miss it assembles the user's core documents plus
 today's and yesterday's journal lines from Postgres and re-caches. Every
 ingestion (and any core-document write) invalidates the key, so the TTL is
@@ -136,7 +136,7 @@ def _format_recent_activity(episodes: list[MemoryEpisode], today: date_type) -> 
     "+N more entries today" counter changed N every turn; both sat inside the
     volatile tail where every changed byte costs prompt-cache hit rate. The
     static note keeps the emitted bytes identical between entry additions.
-    The full journal stays available via ``search_journal``.
+    The full journal stays available via search_journal.
     """
     blocks: list[str] = []
     for episode in episodes:

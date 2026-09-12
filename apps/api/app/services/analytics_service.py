@@ -232,9 +232,9 @@ def capture_event(
     properties: dict[str, Any] | None = None,
     dedupe_key: str | None = None,
 ) -> None:
-    """Capture an analytics event in PostHog, attributed to ``user_id``.
+    """Capture an analytics event in PostHog, attributed to user_id.
 
-    ``dedupe_key`` makes the capture idempotent: pass a value derived from the
+    dedupe_key makes the capture idempotent: pass a value derived from the
     thing that happened (a run id, a user plus a phase) and PostHog collapses
     repeats of it into one event. Anything emitted from a retryable worker task
     needs one — an ARQ retry re-runs the whole body, and without a key the

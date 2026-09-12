@@ -4,8 +4,8 @@ The judge is an LLM, and LLM judges are measurably lenient. Everything here assu
 model says "allow" and asks whether the code around it still refuses. A test that only
 proves a well-behaved verdict is honoured proves nothing about this module.
 
-The LLM is mocked at ``ainvoke_structured`` — the network boundary. ``_accept``,
-``_is_grounded`` and the no-turns guard are the production code under test and run for real.
+The LLM is mocked at ainvoke_structured — the network boundary. _accept,
+_is_grounded and the no-turns guard are the production code under test and run for real.
 """
 
 from typing import Any

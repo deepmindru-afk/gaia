@@ -1,7 +1,7 @@
 """Unit tests for my_integrations (the user's personalized integration catalog).
 
 The merge of platform config + connection status + custom integrations is
-the unit under test; `get_integration_tools` authorization is tested too.
+the unit under test; get_integration_tools authorization is tested too.
 """
 
 from datetime import UTC, datetime

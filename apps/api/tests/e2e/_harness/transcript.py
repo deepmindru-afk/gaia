@@ -1,18 +1,18 @@
 """Parse a chat stream into typed frames a test can assert on.
 
-The chat SSE vocabulary has no ``type`` discriminator — the single top-level
-JSON key of each ``data:`` line *is* the discriminator (see
-``app/models/stream_events.py``). The one exception is the identity frame,
+The chat SSE vocabulary has no type discriminator — the single top-level
+JSON key of each data: line *is* the discriminator (see
+app/models/stream_events.py). The one exception is the identity frame,
 which carries several keys at once; it is recognised by its id fields.
 
 Tool visibility is the reason this module exists. A tool call reaches the
-client as a ``tool_data`` frame whose ``tool_name`` is always the literal
-``"tool_calls_data"``; the tool the model actually called is nested at
-``data.tool_name`` and its arguments at ``data.inputs``. The result arrives
-later as a separate ``tool_output`` frame joined only by ``tool_call_id`` —
+client as a tool_data frame whose tool_name is always the literal
+"tool_calls_data"; the tool the model actually called is nested at
+data.tool_name and its arguments at data.inputs. The result arrives
+later as a separate tool_output frame joined only by tool_call_id —
 exactly the join the frontend performs in
-``libs/shared/ts/src/chat/streaming.ts`` (``mergeToolOutputIntoToolData``).
-``Transcript`` performs that same join so a test can assert a tool's arguments
+libs/shared/ts/src/chat/streaming.ts (mergeToolOutputIntoToolData).
+Transcript performs that same join so a test can assert a tool's arguments
 and its result together, and so a broken join fails here rather than silently
 rendering a tool card that never fills in.
 """
@@ -52,7 +52,7 @@ class TranscriptError(AssertionError):
 
 @dataclass(frozen=True)
 class Frame:
-    """One ``data:`` line, discriminated by its single top-level key."""
+    """One data: line, discriminated by its single top-level key."""
 
     kind: str
     data: Any
@@ -84,7 +84,7 @@ class ToolOutput:
 
 
 def _split_frame(block: str) -> tuple[str | None, str]:
-    """Split an optional ``id:`` line off a frame, returning (id, body)."""
+    """Split an optional id: line off a frame, returning (id, body)."""
     if not block.startswith(ID_PREFIX):
         return None, block
     id_line, _, rest = block.partition("\n")
@@ -108,8 +108,8 @@ def _classify(payload: dict[str, Any]) -> str:
 class Transcript:
     """A parsed chat stream, queried by frame kind and by tool.
 
-    Build it with :meth:`from_chunks` (the strings ``execute_graph_streaming``
-    yields) or :meth:`from_sse` (a raw HTTP response body).
+    Build it with :meth:from_chunks (the strings execute_graph_streaming
+    yields) or :meth:from_sse (a raw HTTP response body).
     """
 
     def __init__(
@@ -126,21 +126,21 @@ class Transcript:
 
     @classmethod
     def from_chunks(cls, chunks: Iterable[str]) -> Transcript:
-        """Parse the chunk strings yielded by ``execute_graph_streaming``.
+        """Parse the chunk strings yielded by execute_graph_streaming.
 
         Each yield is exactly one frame, so chunks are parsed individually —
-        joining them first would glue the ``nostream:`` marker (which has no
+        joining them first would glue the nostream: marker (which has no
         blank-line terminator) onto the frame that follows it.
         """
         return cls._build(list(chunks))
 
     @classmethod
     def from_events(cls, payloads: Iterable[dict[str, Any]]) -> Transcript:
-        """Parse the dicts handed to a ``stream_writer``.
+        """Parse the dicts handed to a stream_writer.
 
         Subagents and the background executor do not yield SSE — they call a
-        writer, which serializes each dict as ``data: {json}\\n\\n`` verbatim
-        (``background/redis_writer.py``). So a writer payload *is* a frame, and
+        writer, which serializes each dict as data: {json}\\n\\n verbatim
+        (background/redis_writer.py). So a writer payload *is* a frame, and
         the same assertions apply on both sides of that boundary.
         """
         return cls._build([f"{DATA_PREFIX}{json.dumps(p)}\n\n" for p in payloads])
@@ -192,7 +192,7 @@ class Transcript:
         return [f.kind for f in self._frames]
 
     def of_kind(self, kind: str) -> list[Any]:
-        """The ``data`` values of every frame with this top-level key."""
+        """The data values of every frame with this top-level key."""
         return [f.data for f in self._frames if f.kind == kind]
 
     def raw(self) -> list[str]:
@@ -208,10 +208,10 @@ class Transcript:
     def tool_calls(self) -> list[ToolCall]:
         """Every tool call visible in the stream, in emission order.
 
-        Unwraps the ``tool_calls_data`` envelope: ``data.tool_name`` is the tool
-        the model called, ``tool_name`` on the entry itself is always the
-        literal envelope marker. Non-tool-call ``tool_data`` variants
-        (``mcp_app``, ``todo_progress``, ``approval_request``) are skipped.
+        Unwraps the tool_calls_data envelope: data.tool_name is the tool
+        the model called, tool_name on the entry itself is always the
+        literal envelope marker. Non-tool-call tool_data variants
+        (mcp_app, todo_progress, approval_request) are skipped.
         """
         calls: list[ToolCall] = []
         for index, frame in enumerate(self._frames):
@@ -244,7 +244,7 @@ class Transcript:
         return [c.name for c in self.tool_calls()]
 
     def tool_call(self, name: str) -> ToolCall:
-        """The single call to ``name``; fails loud on zero or several."""
+        """The single call to name; fails loud on zero or several."""
         matches = [c for c in self.tool_calls() if c.name == name]
         if len(matches) != 1:
             raise TranscriptError(
@@ -269,9 +269,9 @@ class Transcript:
         ]
 
     def result_for(self, name: str) -> str | None:
-        """The result text for ``name``, joined to its call by ``tool_call_id``.
+        """The result text for name, joined to its call by tool_call_id.
 
-        ``None`` when no output frame carries that id — the same condition that
+        None when no output frame carries that id — the same condition that
         leaves the frontend's tool card stuck without a result.
         """
         call = self.tool_call(name)
@@ -285,7 +285,7 @@ class Transcript:
     # -- text ---------------------------------------------------------------
 
     def final_text(self) -> str:
-        """The assistant reply as assembled from the ``response`` deltas."""
+        """The assistant reply as assembled from the response deltas."""
         return "".join(self.of_kind("response"))
 
     def reasoning_text(self) -> str:
@@ -297,7 +297,7 @@ class Transcript:
     # -- internal control markers (never reach the client) ------------------
 
     def nostream(self) -> list[dict[str, Any]]:
-        """The ``nostream:`` markers, consumed by the chat service before the wire."""
+        """The nostream: markers, consumed by the chat service before the wire."""
         return list(self._nostream)
 
     def complete_message(self) -> str:

@@ -349,7 +349,7 @@ class TestRecurrenceRuleToRruleString:
 
 
 class TestUntilRruleValueUnparseableFallbacks:
-    """The RFC 5545 formatter's fallbacks for `until` values that slip past
+    """The RFC 5545 formatter's fallbacks for until values that slip past
     validation (e.g. constructed via model_construct): a bare date degrades to
     its compact form, an unparseable datetime is passed through verbatim."""
 

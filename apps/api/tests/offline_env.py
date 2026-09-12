@@ -1,9 +1,9 @@
-"""Boot the API with no services and no vault, before any ``app`` import.
+"""Boot the API with no services and no vault, before any app import.
 
-Shared by the test suite's root conftest and ``scripts/export_openapi.py``:
-both need ``create_app()`` to resolve settings from fake, hermetic values and
+Shared by the test suite's root conftest and scripts/export_openapi.py:
+both need create_app() to resolve settings from fake, hermetic values and
 never dial Infisical. Everything here runs at import time by design — the
-settings singleton is built the moment ``app.config.settings`` is imported,
+settings singleton is built the moment app.config.settings is imported,
 so the environment has to be in place first.
 """
 

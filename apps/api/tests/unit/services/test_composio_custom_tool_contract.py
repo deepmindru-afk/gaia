@@ -45,17 +45,17 @@ class TestNoToolIsAsync:
     def test_every_custom_tool_is_a_sync_function(self, registered):
         """The one that silently corrupts results.
 
-        ``CustomTool.invoke_trusted`` calls ``self.f(...)`` and returns without
-        awaiting. An ``async def`` tool therefore registers fine, "executes"
+        CustomTool.invoke_trusted calls self.f(...) and returns without
+        awaiting. An async def tool therefore registers fine, "executes"
         with no error, and hands back an un-awaited coroutine wrapped as
-        ``successful: True`` — the model reads a coroutine repr as its result
+        successful: True — the model reads a coroutine repr as its result
         and the real API call never happens. The only runtime signal is a
         RuntimeWarning nobody is watching.
 
-        The SDK does reject async tools, but on the ``experimental.tool`` /
-        tool-router class — a different path. ``composio.tools.custom_tool``,
+        The SDK does reject async tools, but on the experimental.tool /
+        tool-router class — a different path. composio.tools.custom_tool,
         which is what this app uses, has no such guard. Anyone grepping for
-        ``iscoroutinefunction`` finds those hits and concludes it is handled.
+        iscoroutinefunction finds those hits and concludes it is handled.
         """
         tools, _ = registered
 
@@ -82,8 +82,8 @@ class TestNoToolIsAsync:
 
 class TestSignatures:
     def test_every_toolkit_tool_takes_the_parameters_the_sdk_passes(self, registered):
-        """``invoke_trusted`` calls toolkit-bound tools with exactly
-        ``request``, ``execute_request`` and ``auth_credentials`` as keywords.
+        """invoke_trusted calls toolkit-bound tools with exactly
+        request, execute_request and auth_credentials as keywords.
         A tool that renames or omits one raises TypeError the first time a user
         triggers it — never at registration, never in CI."""
         tools, _ = registered
@@ -99,7 +99,7 @@ class TestSignatures:
         assert wrong == {}, f"custom tools with a signature the SDK cannot call: {wrong}"
 
     def test_every_tool_declares_a_request_model(self, registered):
-        """``invoke_trusted`` validates the LLM's arguments through it. Without
+        """invoke_trusted validates the LLM's arguments through it. Without
         one there is nothing between model-authored JSON and the provider."""
         tools, _ = registered
 
@@ -109,7 +109,7 @@ class TestSignatures:
 class TestRegistryAgreesWithReality:
     def test_every_declared_tool_name_actually_registered(self, registered):
         """Each register function returns a hardcoded list of slugs, and that
-        list is what ``get_tools`` asks Composio for. A name that drifts from
+        list is what get_tools asks Composio for. A name that drifts from
         its decorated function — a rename, a typo — is requested forever and
         never found, so the integration loses that action with no error."""
         tools, registry = registered
@@ -167,7 +167,7 @@ class TestRegistryAgreesWithReality:
         assert empty == [], f"toolkits that registered no custom tools: {empty}"
 
     def test_initialization_is_idempotent(self, registered):
-        """``initialize`` runs on every ComposioService construction. If it
+        """initialize runs on every ComposioService construction. If it
         re-registered, slugs would collide with themselves and the count would
         drift upward across the process lifetime."""
         tools, registry = registered

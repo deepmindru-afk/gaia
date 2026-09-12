@@ -23,9 +23,9 @@ from app.services.workflow.trigger_service import TriggerService
 
 
 class LoguruErrorSpy:
-    """Records every real-time error line with the ``exception=`` flag it carried.
+    """Records every real-time error line with the exception= flag it carried.
 
-    ``log.error(..., exc_info=True)`` pops ``exc_info`` before the wide event
+    log.error(..., exc_info=True) pops exc_info before the wide event
     sees it, so whether the traceback is attached to the line is observable
     only at the loguru sink — and a swallowed failure without its traceback is
     exactly the one nobody can diagnose.

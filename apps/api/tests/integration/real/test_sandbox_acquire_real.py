@@ -2,25 +2,25 @@
 
 The multi-instance invariant the sandbox pool exists for: N replicas acquiring a
 sandbox for the SAME user must end up with ONE E2B sandbox, not N. A replica's
-in-process pool cache — and its in-process ``asyncio.Lock`` — are private to its
+in-process pool cache — and its in-process asyncio.Lock — are private to its
 process, so a second replica arrives cold and has only two shared things to
 coordinate through: the Redis lease and the Mongo record. If either fails to do
-its job, both replicas run ``_create_fresh_sandbox`` and the user gets a second
+its job, both replicas run _create_fresh_sandbox and the user gets a second
 sandbox: wasted spend, an orphaned box no one pauses, and a split workspace.
 
 Two replicas are simulated faithfully by giving each acquire its OWN
-``SandboxPool`` (via a per-task contextvar), so the only coordination they share
+SandboxPool (via a per-task contextvar), so the only coordination they share
 is Redis — exactly as two separate processes would. Using the module singleton
-instead would let its in-process ``asyncio.Lock`` serialize them, masking a
+instead would let its in-process asyncio.Lock serialize them, masking a
 broken Redis lease.
 
-The cold private cache is simulated by stubbing ``_reuse_cached_entry`` to None
+The cold private cache is simulated by stubbing _reuse_cached_entry to None
 (a replica never sees another replica's warm entry). Everything E2B (create /
 resume), the JuiceFS host writes (subtree seed, artifact watcher), the creation
 rate-limit and the idle-pause scheduler are the external boundary and are
 stubbed. What stays real is the whole coordination under test: the distributed
-lock in ``acquire_sandbox`` and the get_for_user → create-or-resume →
-record_acquisition decision in ``_acquire_or_create``.
+lock in acquire_sandbox and the get_for_user → create-or-resume →
+record_acquisition decision in _acquire_or_create.
 """
 
 from __future__ import annotations

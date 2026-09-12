@@ -691,7 +691,7 @@ class TestMalformedPartDoesNotAbortTheMessage:
         assert names == ["report.pdf"]
 
     def test_synthesized_part_drops_the_source_wire_transfer_encoding(self):
-        """``set_content`` stores already-decoded text and stamps its own encoding,
+        """set_content stores already-decoded text and stamps its own encoding,
         so carrying the source part's wire encoding across describes the body
         wrongly — and on an empty part it is what sent the stdlib down its base64
         branch with nothing to decode."""
@@ -730,10 +730,10 @@ class TestMalformedPartDoesNotAbortTheMessage:
 def _stamp_wire_encoding(parser: GmailMessageParser, content_type: str) -> None:
     """Put a walked part back into the undecodable state, on the real MIME tree.
 
-    ``_copy_headers`` no longer lets the parser build this itself, so the state is
-    restored on the parsed ``EmailMessage``: an empty part whose headers claim
-    base64. Nothing is mocked — the stdlib genuinely raises ``UnboundLocalError``
-    from ``get_payload(decode=True)`` on the way through, which is the failure the
+    _copy_headers no longer lets the parser build this itself, so the state is
+    restored on the parsed EmailMessage: an empty part whose headers claim
+    base64. Nothing is mocked — the stdlib genuinely raises UnboundLocalError
+    from get_payload(decode=True) on the way through, which is the failure the
     extraction guards have to absorb. What this does NOT prove is that a Gmail
     payload can still reach that state through the parser's own construction; with
     the header fix in place it cannot.

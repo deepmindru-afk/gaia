@@ -70,7 +70,7 @@ def _hermetic_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def recorded_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     """Run two fake 'tests' under coverage with dynamic contexts.
 
-    ``alpha.py`` is touched by both, ``beta.py`` by only the second — the
+    alpha.py is touched by both, beta.py by only the second — the
     asymmetry is the whole point of the map.
     """
     from coverage import Coverage

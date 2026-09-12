@@ -20,7 +20,7 @@ from shared.py.wide_events import log
 
 
 class ProfileCrawlResult(TypedDict):
-    """Outcome of one profile crawl. Exactly one of ``content``/``error`` is set."""
+    """Outcome of one profile crawl. Exactly one of content/error is set."""
 
     url: str
     platform: str

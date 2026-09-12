@@ -2,7 +2,7 @@
 
 Pairing follows RFC 8628 (device authorization grant): the daemon starts a
 request and polls; the user approves it in a signed-in browser by its short
-``user_code``. On approval a :class:`Device` row is created and a long-lived
+user_code. On approval a :class:Device row is created and a long-lived
 refresh credential is issued. The daemon exchanges that credential (rotating it
 each time) for short-lived connect JWTs.
 """
@@ -121,7 +121,7 @@ async def start_pairing(
 
 
 async def lookup_pending_by_user_code(user_code: str) -> dict | None:
-    """Resolve a browser-typed ``user_code`` to its pending pairing record."""
+    """Resolve a browser-typed user_code to its pending pairing record."""
     mapping = await get_cache(_user_code_key(user_code.strip().upper()))
     if not isinstance(mapping, dict):
         return None
@@ -135,13 +135,13 @@ async def lookup_pending_by_user_code(user_code: str) -> dict | None:
 
 
 async def approve_pairing(user_id: str, user_code: str) -> tuple[str, str]:
-    """Approve a pending pairing for ``user_id``; create the device + refresh token.
+    """Approve a pending pairing for user_id; create the device + refresh token.
 
-    Returns ``(device_id, name)`` rather than the ``Device`` row itself: both
+    Returns (device_id, name) rather than the Device row itself: both
     values are already known locally (they're what we just inserted), and the
     row would come back detached — accessing its attributes after the session
-    below closes raises ``DetachedInstanceError`` (``session.commit()``
-    expires every mapped attribute; see ``rotate_refresh_token``'s identical
+    below closes raises DetachedInstanceError (session.commit()
+    expires every mapped attribute; see rotate_refresh_token's identical
     capture-before-return pattern).
     """
     normalized = user_code.strip().upper()
@@ -181,7 +181,7 @@ async def approve_pairing(user_id: str, user_code: str) -> tuple[str, str]:
 
 
 async def poll_pairing(device_code: str) -> PollPairingResponse:
-    """Daemon poll. On ``approved`` the pairing is consumed and won't poll again."""
+    """Daemon poll. On approved the pairing is consumed and won't poll again."""
     record = await get_cache(_pairing_key(device_code))
     if not isinstance(record, dict):
         return PollPairingResponse(status="expired")
@@ -200,12 +200,12 @@ async def poll_pairing(device_code: str) -> PollPairingResponse:
 
 
 async def rotate_refresh_token(refresh_token: str) -> tuple[str, str, str]:
-    """Validate + rotate a refresh credential. Returns ``(device_id, user_id, new_refresh_token)``.
+    """Validate + rotate a refresh credential. Returns (device_id, user_id, new_refresh_token).
 
-    Reuse detection: a token matching ``previous_refresh_token_hash`` (already
+    Reuse detection: a token matching previous_refresh_token_hash (already
     rotated away) means it was captured and replayed — the device is revoked and
     the exchange rejected. A brief post-rotation grace window (see
-    ``REFRESH_TOKEN_RETRY_GRACE_SECONDS``) exempts the common lost-response case:
+    REFRESH_TOKEN_RETRY_GRACE_SECONDS) exempts the common lost-response case:
     the daemon exchanges on every dial and persists the new token only after the
     HTTP response lands, so a dropped response (or a crash before persist) leaves
     it holding the old token. Within the window the just-consumed credential is

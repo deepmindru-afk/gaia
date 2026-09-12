@@ -3,8 +3,8 @@
 Scaffolding for the context-assembly refactor, not the deliverable: a snapshot
 records whatever the code does, so it cannot fail meaningfully on its own. Its
 job is to make a structural change reviewable — every movement in
-``__snapshots__/`` must be attributable to a named test in
-``test_context_invariants.py`` or ``test_context_defects.py``.
+__snapshots__/ must be attributable to a named test in
+test_context_invariants.py or test_context_defects.py.
 """
 
 import pytest

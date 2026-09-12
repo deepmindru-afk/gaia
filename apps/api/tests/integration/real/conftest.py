@@ -5,15 +5,15 @@ The approach: patch the app's singletons to point at real test containers,
 then call production functions directly. No rewriting production logic.
 
 Root conftest.py globally patches _get_mongodb_instance to MagicMock. We work
-around that through one seam: ``app.db.repositories.base.get_async_collection``,
-which every repository resolves on each call — patching it (see ``mongo_db``)
+around that through one seam: app.db.repositories.base.get_async_collection,
+which every repository resolves on each call — patching it (see mongo_db)
 points the whole repository layer at a real per-test Motor client. Redis gets a
 real connection patched into redis_cache the same way.
 
-The shared DB connection fixtures (``mongodb_url``, ``redis_url``,
-``postgres_url``, ``mongo_db``, ``real_redis``, ``hil_approvals_collection``)
-live in ``tests/integration/real/db_fixtures.py`` — the e2e suite's
-real-infra tests (``tests/e2e/test_hil_*_e2e.py``) import the same fixtures.
+The shared DB connection fixtures (mongodb_url, redis_url,
+postgres_url, mongo_db, real_redis, hil_approvals_collection)
+live in tests/integration/real/db_fixtures.py — the e2e suite's
+real-infra tests (tests/e2e/test_hil_*_e2e.py) import the same fixtures.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ async def _autouse_hil_approvals_collection(hil_approvals_collection) -> None:
     The chat stream reads it on *every* turn — it checks whether the user's
     message answers a pending approval before running the agent — so any test
     that streams a message touches it. The shared fixture stays opt-in in
-    ``db_fixtures.py``; this suite applies it to all tests.
+    db_fixtures.py; this suite applies it to all tests.
     """
 
 
@@ -79,7 +79,7 @@ async def _autouse_hil_approvals_collection(hil_approvals_collection) -> None:
 
 @pytest.fixture
 async def conversations_collection(mongo_db):
-    """The real ``conversations`` collection production code will read, emptied
+    """The real conversations collection production code will read, emptied
     around each test so seeded documents can be asserted on exactly."""
     coll = mongo_db["conversations"]
     await coll.delete_many({})
@@ -167,7 +167,7 @@ def _create_live_app() -> FastAPI:
 class LiveApiServer:
     """A real uvicorn server bound to a real localhost port, running the real
     GAIA app in-process (background asyncio task) so an external process — the
-    real ``gaia bridge`` daemon — can dial into it over an actual WebSocket.
+    real gaia bridge daemon — can dial into it over an actual WebSocket.
     """
 
     def __init__(self, port: int, app: FastAPI) -> None:
@@ -204,10 +204,10 @@ async def live_api_server(
     before the app (and its listeners) start.
 
     The mongo_db dependency is load-bearing, not decoration: the client cached in
-    ``app.db.mongodb.collections`` is process-global and latches onto the first
+    app.db.mongodb.collections is process-global and latches onto the first
     event loop it is used from, so without the rebind the device register path
     (create integration -> resolve -> add_user_integration) hits an earlier
-    test's closed loop and raises ``RuntimeError: Event loop is closed``.
+    test's closed loop and raises RuntimeError: Event loop is closed.
     """
     from app.services.device import device_service
 
@@ -256,10 +256,10 @@ def make_conversation(conversations_collection):
     """Factory to seed a conversation document in real MongoDB.
 
     Writes the legacy camelCase timestamp pair exactly as production does —
-    ``createdAt`` an ISO string, ``updatedAt`` a BSON date (see
-    ``ConversationDocument``). Callers may pass a ``datetime`` for ``createdAt``
+    createdAt an ISO string, updatedAt a BSON date (see
+    ConversationDocument). Callers may pass a datetime for createdAt
     so they can do date arithmetic; it is normalized here. Seeding a raw
-    ``datetime`` would make the repository's read-boundary validation reject the
+    datetime would make the repository's read-boundary validation reject the
     row, which is not a shape any production writer can produce.
     """
 
@@ -290,16 +290,16 @@ async def make_pro_subscription(mongo_db, real_redis: Redis):
     Writes both halves of the state a paying user actually has, because in this
     suite only one of them is readable:
 
-    * the ``subscriptions`` row — what makes a user PRO in production
-      (``subscription_repository.get_active_for_user``: any active row resolves
-      to ``PlanType.PRO``);
-    * the Redis plan cache entry ``subscription:<user_id>`` — the value
-      ``get_cached_plan_type`` reads FIRST, written by production itself on
+    * the subscriptions row — what makes a user PRO in production
+      (subscription_repository.get_active_for_user: any active row resolves
+      to PlanType.PRO);
+    * the Redis plan cache entry subscription:<user_id> — the value
+      get_cached_plan_type reads FIRST, written by production itself on
       every cache miss.
 
     The cache entry is not an optimization here, it is the only thing the gate
-    can see: the root ``conftest.py`` patches
-    ``payment_service.get_user_subscription_status`` to a FREE stub for the
+    can see: the root conftest.py patches
+    payment_service.get_user_subscription_status to a FREE stub for the
     whole session (on the shared service singleton, so every caller gets it),
     which is what a cache miss would fall through to. The row is still seeded —
     it is the real state, it is what any unpatched reader resolves, and a

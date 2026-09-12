@@ -1,7 +1,7 @@
 """The hook chains each tier runs before every LLM call.
 
 The ORDER is the whole subject. Every hook here appends or rewrites messages,
-and ``manage_system_prompts_node`` is what places the result into the canonical
+and manage_system_prompts_node is what places the result into the canonical
 slot order — so it has to run last, or whatever an earlier hook appended trails
 the system block instead of sitting inside it. That was previously spelled out
 at three separate graph builders and enforced by nothing.
@@ -24,8 +24,8 @@ def _todo_hook(state: dict[str, object]) -> dict[str, object]:
 @pytest.mark.unit
 class TestTheChainsAreExactlyThese:
     """Spelled out end to end. Every weaker assertion — "contains", "ends with",
-    a length check — leaves room for an extra hook, a missing one, or a ``None``
-    slipped into the list, and a ``None`` in a hook chain is a crash on the next
+    a length check — leaves room for an extra hook, a missing one, or a None
+    slipped into the list, and a None in a hook chain is a crash on the next
     LLM call rather than anything the type checker would catch."""
 
     def test_comms(self) -> None:
@@ -53,9 +53,9 @@ class TestTheChainsAreExactlyThese:
 
 @pytest.mark.unit
 class TestTheSlotterRunsLast:
-    """``manage_system_prompts_node`` places messages by ``PromptSlot``. Anything
+    """manage_system_prompts_node places messages by PromptSlot. Anything
     appended after it keeps whatever position it was inserted at, which is the
-    defect that made ``todo_context`` land in a different place depending on
+    defect that made todo_context land in a different place depending on
     which other slots the turn happened to fill."""
 
     def test_comms_ends_with_the_slotter(self) -> None:

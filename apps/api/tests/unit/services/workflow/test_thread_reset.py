@@ -22,7 +22,7 @@ OTHER_CONV = "9a9a9a9a-1111-2222-3333-444444444444"
 class _FakeCursor:
     """Evaluates the module's two queries against an in-memory thread table.
 
-    ``threads`` maps thread_id -> whether a write is parked on its head
+    threads maps thread_id -> whether a write is parked on its head
     checkpoint (an in-flight or interrupted run).
     """
 
@@ -277,8 +277,8 @@ class TestTheQueriesItSends:
     """The two statements, exactly as Postgres receives them.
 
     This function deletes checkpoint rows, so the predicate is the whole safety
-    argument: an anchored ``right()`` comparison rather than a LIKE (the ids are
-    full of underscores, and an unescaped ``_`` matches any character), and an
+    argument: an anchored right() comparison rather than a LIKE (the ids are
+    full of underscores, and an unescaped _ matches any character), and an
     in-flight check anchored to each thread's own head checkpoint. A predicate
     that drifts is silent in production and takes another conversation's history
     with it, so both statements are pinned character for character.

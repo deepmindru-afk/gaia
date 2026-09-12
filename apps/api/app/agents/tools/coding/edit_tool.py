@@ -1,4 +1,4 @@
-"""Persistent `edit` tool — exact-string replacement on workspace files."""
+"""Persistent edit tool — exact-string replacement on workspace files."""
 
 from __future__ import annotations
 
@@ -91,10 +91,10 @@ async def edit(
 
 
 async def _read_editable_content(sbx: AsyncSandbox, abs_path: str) -> tuple[str | None, str]:
-    """Read a workspace file's UTF-8 content. Returns ``(content, error)``.
+    """Read a workspace file's UTF-8 content. Returns (content, error).
 
-    On success ``error`` is empty; on failure ``content`` is ``None`` and
-    ``error`` holds the user-facing message.
+    On success error is empty; on failure content is None and
+    error holds the user-facing message.
     """
     # Native filesystem read, binary-safe — no base64/quoting. A missing file
     # raises NotFoundException rather than returning a sentinel.

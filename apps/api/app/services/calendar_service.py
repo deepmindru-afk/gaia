@@ -51,9 +51,9 @@ async def _proxy(
 ) -> object:
     """Wrapper that converts Composio proxy errors to FastAPI HTTPException.
 
-    Returns Google's raw JSON as ``object`` — this is the provider boundary and
+    Returns Google's raw JSON as object — this is the provider boundary and
     the shape varies per endpoint, so the type stays opaque and every caller
-    feeds it straight into a ``model_validate`` rather than reading fields off it.
+    feeds it straight into a model_validate rather than reading fields off it.
 
     Calendar callers (FastAPI endpoints, custom tools) historically expect
     HTTPException-shaped failures, so we normalize AppError here.

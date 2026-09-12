@@ -75,7 +75,7 @@ def hung_esp_call():
 
 
 def _stamps(mock_stamp: AsyncMock) -> list[tuple[str, SignupDelivery]]:
-    """Every ``(user, delivery)`` pair stamped across all calls, flattened.
+    """Every (user, delivery) pair stamped across all calls, flattened.
 
     The row being stamped matters as much as the delivery: a stamp written
     against the wrong user retires a debt that was never paid, and the real
@@ -87,8 +87,8 @@ def _stamps(mock_stamp: AsyncMock) -> list[tuple[str, SignupDelivery]]:
 
 
 class _DedupingPool:
-    """Stands in for ``ArqRedis`` enforcing the one rule this depends on: an
-    enqueue whose ``_job_id`` is already known is dropped and returns ``None``."""
+    """Stands in for ArqRedis enforcing the one rule this depends on: an
+    enqueue whose _job_id is already known is dropped and returns None."""
 
     def __init__(self) -> None:
         self.job_ids: list[str] = []
@@ -329,7 +329,7 @@ class TestDeliverSignupEmails:
     async def test_a_cancelled_delivery_does_not_strand_the_other_one(
         self, stored_user, mock_stamp, mock_send_welcome_email, mock_add_marketing_contact
     ):
-        """Cancellation is the one failure a delivery's own ``except Exception``
+        """Cancellation is the one failure a delivery's own except Exception
         cannot catch, so it reaches the gather. Propagated, it ends the job on
         the spot and the second round-trip is dropped mid-flight; collected,
         both still finish and the job is not recorded as a casualty."""

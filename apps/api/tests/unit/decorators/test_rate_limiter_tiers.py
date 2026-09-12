@@ -1,9 +1,9 @@
 """The tiered limiter's plan decision logic, with the real constants.
 
-The root conftest pins ``tiered_limiter.check_and_increment`` to a mock that
-always returns ``{}``, so no test exercises the real plan-to-limit decision or
-the limit-exceeded signal. These tests run the real ``TieredRateLimiter`` with
-the real ``FEATURE_LIMITS`` / ``get_limits_for_plan`` — only the Redis storage
+The root conftest pins tiered_limiter.check_and_increment to a mock that
+always returns {}, so no test exercises the real plan-to-limit decision or
+the limit-exceeded signal. These tests run the real TieredRateLimiter with
+the real FEATURE_LIMITS / get_limits_for_plan — only the Redis storage
 seam is mocked, following tests/unit/api/test_tiered_rate_limiter.py.
 """
 
@@ -312,9 +312,9 @@ class TestRateLimitHitAnalytics:
 
 
 class TestEnforceTieredLimit:
-    """``enforce_tiered_limit`` is what non-decorated callers (bot endpoints,
+    """enforce_tiered_limit is what non-decorated callers (bot endpoints,
     background paths) use to meter a feature, so the arguments it forwards to
-    the limiter are the whole contract — a dropped ``feature_key`` silently
+    the limiter are the whole contract — a dropped feature_key silently
     meters the wrong bucket."""
 
     @pytest.mark.asyncio

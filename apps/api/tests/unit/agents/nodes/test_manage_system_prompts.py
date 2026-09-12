@@ -3,7 +3,7 @@
 The node now keeps exactly ONE static main prompt and ONE dynamic-context
 prompt. Stacking every turn's timestamped dynamic-context message would
 shatter the implicit-cache prefix, so older ones are dropped. The legacy
-``memory_message=True`` marker is still recognised as a dynamic-context flag
+memory_message=True marker is still recognised as a dynamic-context flag
 for back-compat with older persisted state.
 """
 
@@ -101,11 +101,11 @@ class TestManageSystemPrompts:
         """Kept system messages must appear BEFORE any human/ai message for
         providers that only promote a leading system run (Gemini).
 
-        On 4.2.0 ``langchain-google-genai``'s ``_parse_chat_history`` collects
-        every ``SystemMessage`` into ``system_instruction`` whatever its
+        On 4.2.0 langchain-google-genai's _parse_chat_history collects
+        every SystemMessage into system_instruction whatever its
         position, so this is no longer about content loss (an older comment
         here claimed it was). It is about keeping ONE canonical order: the node
-        rewrites the list as ``[static, dynamic, ...non_system...]`` so the
+        rewrites the list as [static, dynamic, ...non_system...] so the
         cached prefix is the same bytes every turn rather than depending on
         where a hook happened to append.
         """
@@ -126,8 +126,8 @@ class TestManageSystemPrompts:
     def test_volatile_slots_move_to_tail_for_openai_wire(self) -> None:
         """OpenAI-wire providers (OpenRouter / custom — the production default
         route) accept system messages anywhere, so the per-turn slots move AFTER
-        the conversation: ``[static, dynamic, ...conversation, todo,
-        memory_recall, time]``. The conversation then joins the provider's
+        the conversation: [static, dynamic, ...conversation, todo,
+        memory_recall, time]. The conversation then joins the provider's
         implicit-cache prefix instead of re-sending uncached every turn.
         """
         msgs = [
@@ -155,7 +155,7 @@ class TestManageSystemPrompts:
 
     def test_leading_layout_preserved_for_gemini(self) -> None:
         """Gemini only promotes a leading contiguous run of SystemMessages to
-        ``system_instruction`` and silently drops the rest — so on that lane the
+        system_instruction and silently drops the rest — so on that lane the
         volatile slots must stay in the leading block even though it costs the
         conversation its place in the cached prefix."""
         msgs = [
@@ -219,9 +219,9 @@ class TestManageSystemPrompts:
 
 
 class _PromptPruning(TypedDict):
-    """The ``prompt_pruning`` wide-event payload these tests assert on.
+    """The prompt_pruning wide-event payload these tests assert on.
 
-    Named rather than ``dict[str, Any]`` so a renamed or dropped field breaks
+    Named rather than dict[str, Any] so a renamed or dropped field breaks
     type-check here instead of silently making every assertion below vacuous —
     the failure mode of a diagnostic nobody notices has stopped working.
     """
@@ -236,7 +236,7 @@ class _PromptPruning(TypedDict):
 
 
 class TestPromptPruningWideEvent:
-    """``tail_layout`` is the field a cache-hit-rate drop is diagnosed with, so
+    """tail_layout is the field a cache-hit-rate drop is diagnosed with, so
     both its name and its polarity are part of the node's contract."""
 
     def _pruning_for(
@@ -258,7 +258,7 @@ class TestPromptPruningWideEvent:
         assert self._prompt_pruning("gemini")["tail_layout"] is False
 
     def test_slot_sizes_report_each_slot_s_real_length(self) -> None:
-        """``slot_chars`` exists to rank slots by how many bytes they cost on
+        """slot_chars exists to rank slots by how many bytes they cost on
         every call, so a size that is not the slot's real length ranks them
         wrongly and points the next investigation at the wrong slot."""
         pruning = self._pruning_for(

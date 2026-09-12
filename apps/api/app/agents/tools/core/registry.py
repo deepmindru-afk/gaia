@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
 def get_composio_service() -> "ComposioService":
     """Resolve the Composio service at call time. Importing
-    ``app.services.composio.composio_service`` at module level drags the
-    Composio SDK, ``app.patches`` and every custom tool in behind it (~4s of
+    app.services.composio.composio_service at module level drags the
+    Composio SDK, app.patches and every custom tool in behind it (~4s of
     import per process/xdist worker) into everything that merely imports the
     tool registry; the registry only needs the service inside the async
     provider-registration paths."""
@@ -104,9 +104,9 @@ class _CatalogToolMeta:
     """Lightweight provider-tool metadata (name + description) used to index the
     Composio catalog at warmup *without* materializing a StructuredTool.
 
-    Duck-types the ``.name``/``.description`` access that ``index_tools_to_store``
+    Duck-types the .name/.description access that index_tools_to_store
     needs, so it flows through the existing ChromaDB indexing path. The executable
-    StructuredTool is built lazily, per provider, in ``register_provider_tools``
+    StructuredTool is built lazily, per provider, in register_provider_tools
     when that provider's subagent is first created.
     """
 
@@ -146,7 +146,7 @@ class Tool:
 class CategoryOptions:
     """Category-level placement and visibility metadata.
 
-    Grouped so ``ToolCategory`` and ``ToolRegistry._add_category`` describe the
+    Grouped so ToolCategory and ToolRegistry._add_category describe the
     same cluster of settings with one object instead of five parallel arguments.
     """
 
@@ -167,8 +167,8 @@ class CategoryOptions:
 class CategoryRisk:
     """Curated HIL classification sets for a category's tools.
 
-    ``destructive_tools`` is the curated risk set (see ``ToolCategory.add_tools``);
-    ``always_gate_tools`` names members that ask in every HIL mode.
+    destructive_tools is the curated risk set (see ToolCategory.add_tools);
+    always_gate_tools names members that ask in every HIL mode.
     """
 
     destructive_tools: set[str] | None = None
@@ -226,11 +226,11 @@ class ToolCategory:
     ) -> None:
         """Add multiple tools to this category.
 
-        ``destructive_tools`` is a curated set of tool names: when provided,
+        destructive_tools is a curated set of tool names: when provided,
         every tool is stamped destructive by membership (so an empty set marks
-        the whole category reviewed-safe); when ``None`` the tools stay
+        the whole category reviewed-safe); when None the tools stay
         unclassified and fall to the HIL LLM classifier at gate time.
-        ``always_gate_tools`` stamps forced-ask members (see ``Tool.always_gate``).
+        always_gate_tools stamps forced-ask members (see Tool.always_gate).
         """
         gated = always_gate_tools or set()
         for tool in tools:
@@ -283,12 +283,12 @@ class ToolRegistry:
     ) -> None:
         """Helper to create and register a category.
 
-        ``risk.destructive_tools`` is the curated HIL risk set for this category
-        (see ``ToolCategory.add_tools``). Every internal category MUST pass an
+        risk.destructive_tools is the curated HIL risk set for this category
+        (see ToolCategory.add_tools). Every internal category MUST pass an
         explicit set (empty if none are destructive) so in-repo tools are never
-        left unclassified; ``None`` is reserved for uncurated (custom MCP /
+        left unclassified; None is reserved for uncurated (custom MCP /
         provider) tools that the HIL LLM classifier resolves at gate time.
-        ``risk.always_gate_tools`` names members that ask in every HIL mode.
+        risk.always_gate_tools names members that ask in every HIL mode.
         """
         options = options or CategoryOptions()
         risk = risk or CategoryRisk()
@@ -344,10 +344,10 @@ class ToolRegistry:
         """Initialize core tool categories. Provider tools are loaded lazily.
 
         HIL INVARIANT: every internal category passes an explicit
-        ``destructive_tools`` set (empty when none are destructive) so no in-repo
+        destructive_tools set (empty when none are destructive) so no in-repo
         tool is ever left unclassified. The three destructive built-ins are
-        code-reviewed: ``send_notification`` (external delivery),
-        ``execute_workflow`` (autonomous run-now), ``connect_integration``
+        code-reviewed: send_notification (external delivery),
+        execute_workflow (autonomous run-now), connect_integration
         (connects an external account). Everything else is reversible /
         user-owned / read-only / sandbox-local and therefore safe.
         """
@@ -603,7 +603,7 @@ class ToolRegistry:
           3. store name+description in Mongo so the /tools listing is complete.
 
         Executable tools are built lazily, per provider, when that provider's
-        subagent is first created (``register_provider_tools``), so a process
+        subagent is first created (register_provider_tools), so a process
         only ever holds the working set of tools it actually uses.
         """
         # index_tools_to_store lives in chroma_tools_store, which imports
@@ -709,7 +709,7 @@ class ToolRegistry:
         Delegates all caching and diff logic to index_tools_to_store(),
         which uses namespace-based cache keys for consistency.
 
-        All tools in a category share the same `space` (namespace) by design —
+        All tools in a category share the same space (namespace) by design —
         _add_category assigns a single space to the entire category, so
         index_tools_to_store always receives a homogeneous list.
         """
@@ -783,7 +783,7 @@ class ToolRegistry:
         return entry[0] if entry else "unknown"
 
     def get_tool_meta(self, tool_name: str) -> Tool | None:
-        """Return the registry ``Tool`` wrapper for a tool name, or None.
+        """Return the registry Tool wrapper for a tool name, or None.
 
         Served from the name index — this sits on the HIL gate's per-tool-call
         path, where a scan over every category × tool is measurable waste.
@@ -865,7 +865,7 @@ class ToolRegistry:
 
 def integration_destructive_tools(name: str) -> set[str] | None:
     """Curated HIL destructive tools for an integration, matched by id or (for
-    Composio) toolkit. ``None`` (uncurated) leaves the tools unclassified so the
+    Composio) toolkit. None (uncurated) leaves the tools unclassified so the
     HIL LLM classifier resolves them at gate time (fail closed)."""
     for integration in OAUTH_INTEGRATIONS:
         toolkit = integration.composio_config.toolkit if integration.composio_config else None

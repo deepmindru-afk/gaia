@@ -5,7 +5,7 @@ directly with a mock WebSocket: the real handler logic (auth gate, subprotocol
 accept, connection registration, disconnect/server-error cleanup) runs against
 a stubbed transport. Connection bookkeeping is covered here; broadcast delivery
 and the fan-out belong to the manager and live in
-``tests/unit/core/test_websocket_manager.py``.
+tests/unit/core/test_websocket_manager.py.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -141,7 +141,7 @@ class TestWebsocketAccept:
 
 
 class TestConnectionBookkeeping:
-    """WebSocketManager.add_connection / remove_connection"""
+    """WebSocketManager.add_connection / remove_connection."""
 
     def test_add_connection_groups_by_user(self):
         ws_a = MagicMock()

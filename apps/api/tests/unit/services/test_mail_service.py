@@ -395,12 +395,12 @@ class TestSendEmail:
 
 
 class TestAttachmentsSurviveArgumentValidation:
-    """``attachment`` is Gmail's own param, and only the tool's own schema has it.
+    """attachment is Gmail's own param, and only the tool's own schema has it.
 
     Shaping the parameter correctly is not enough: LangChain validates the call
     against the schema the tool was bound with and silently drops anything that
     schema does not declare. Under the agent-facing schema — where the modifier
-    has replaced ``attachment`` with the reference-based ``attachments`` — the
+    has replaced attachment with the reference-based attachments — the
     file is dropped between here and Composio and the mail sends without it.
     """
 
@@ -1041,7 +1041,7 @@ class TestCreateDraft:
         assert params["bcc"] == ["bcc@example.com"]
 
     async def test_passes_body_through_without_html_flag(self, mock_invoke_gmail_tool):
-        """``is_html`` no longer exists on the service — bodies are converted
+        """is_html no longer exists on the service — bodies are converted
         to HTML by the Composio before-hook, so the service just forwards
         whatever body it was given and never sets an html param itself."""
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate({"successful": True})

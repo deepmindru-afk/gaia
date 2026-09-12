@@ -138,7 +138,7 @@ def _config_for(user_id: str) -> RunnableConfig:
 
 class _FakeWorkflowStore:
     """A workflow lookup that is scoped per user, exactly as the repository is,
-    and that keeps the flat ``$set`` writes the decline bookkeeping makes.
+    and that keeps the flat $set writes the decline bookkeeping makes.
 
     A MagicMock that answers for anybody cannot show a tenant leak; this can.
     """
@@ -253,7 +253,7 @@ class TestWritePlaybook:
     async def test_a_step_carrying_keys_the_schema_never_asked_for_is_still_written(
         self, store: _FakePlaybookStore, workflows: MagicMock
     ) -> None:
-        """A stray ``goal``/``task``/``note`` beside a correct call is dropped,
+        """A stray goal/task/note beside a correct call is dropped,
         not refused.
 
         Measured in production: 17 of 57 authoring attempts were thrown away
@@ -929,7 +929,7 @@ class TestPlaybookStorageDetails:
         self, store: _FakePlaybookStore, workflows: MagicMock
     ) -> None:
         """A fresh playbook has never been revised, so "written" and "updated"
-        are the same instant. A read reports ``updated_at`` back to the agent as
+        are the same instant. A read reports updated_at back to the agent as
         when the document was written."""
         before = datetime.now(UTC)
         with (
@@ -1224,10 +1224,10 @@ class TestWritePlaybookBoundary:
     """
 
     def test_the_schema_asks_for_three_things_and_no_ask_section(self) -> None:
-        """``ask`` was a separate table the model had to reason about, and five
+        """ask was a separate table the model had to reason about, and five
         of the eight asks ever written were referenced by no step. The slot now
         lives inside the argument, so there is nothing at the top level to get
-        wrong; a reappearing ``ask`` property is that mistake coming back.
+        wrong; a reappearing ask property is that mistake coming back.
         """
         schema = write_playbook.tool_call_schema.model_json_schema()
 
@@ -1237,9 +1237,9 @@ class TestWritePlaybookBoundary:
         assert "workflow_id" not in schema["properties"]
 
     def test_the_step_schema_does_not_forbid_extra_keys(self) -> None:
-        """``additionalProperties: false`` is what a provider renders as "no
+        """additionalProperties: false is what a provider renders as "no
         other keys allowed", and it is what turned a step annotated with a
-        ``goal`` into a refused write. Its absence is the leniency, expressed
+        goal into a refused write. Its absence is the leniency, expressed
         where the model actually reads it."""
         schema = write_playbook.tool_call_schema.model_json_schema()
 
@@ -1278,8 +1278,8 @@ class TestWritePlaybookBoundary:
         arguments: dict[str, Any],
         expected_problems: str,
     ) -> None:
-        """langchain raises before the coroutine runs, so without the tool's
-        ``handle_validation_error`` hook the model gets a framework traceback
+        """Langchain raises before the coroutine runs, so without the tool's
+        handle_validation_error hook the model gets a framework traceback
         rather than the tool's own envelope. If this fails, a shape mistake stops
         being recoverable: the model cannot tell what to fix, and nothing says
         the playbook was not written.
@@ -1320,7 +1320,7 @@ class TestReadPlaybookYaml:
         self, store: _FakePlaybookStore
     ) -> None:
         """The YAML is the document the agent reads before revising, so it has to
-        be the shape write_playbook takes. A stray top-level ``ask:`` would teach
+        be the shape write_playbook takes. A stray top-level ask: would teach
         the agent to write back a section the tool no longer has."""
         now = datetime.now(UTC)
         store.documents[(WORKFLOW_ID, USER_ID)] = PlaybookDocument(
@@ -1375,7 +1375,7 @@ def _run_state(*calls: tuple[str, dict[str, Any], object]) -> dict[str, Any]:
     """Graph state whose messages are the run's calls and the answers to them.
 
     Built as real messages rather than as a results list, because reading the
-    run out of ``state["messages"]`` — pairing each AIMessage tool call with the
+    run out of state["messages"] — pairing each AIMessage tool call with the
     ToolMessage that answers its id — is half of what is under test.
     """
     messages: list[Any] = []
@@ -1399,7 +1399,7 @@ FETCH_STEP: dict[str, Any] = {
 class TestWritePlaybookAgainstTheAuthoringRun:
     """The run's own results, injected as state, decide the write.
 
-    ``pb_c7d357db77dd`` froze ``$steps.fetch_msgs.threadId`` on a tool that does
+    pb_c7d357db77dd froze $steps.fetch_msgs.threadId on a tool that does
     not return one and broke on its first replay; two more were frozen from
     calls that came back empty. In every case the result was in this same
     conversation when write_playbook was called.
@@ -1493,7 +1493,7 @@ class TestWritePlaybookAgainstTheAuthoringRun:
         assert len(store.documents[(WORKFLOW_ID, USER_ID)].steps) == 2
 
     def test_the_run_state_is_injected_and_never_shown_to_the_model(self) -> None:
-        """``state`` is filled by the graph. If it appeared in the schema the
+        """state is filled by the graph. If it appeared in the schema the
         model would be asked to write its own transcript back as an argument,
         and the checks would read whatever it invented."""
         schema = write_playbook.tool_call_schema.model_json_schema()
@@ -1550,7 +1550,7 @@ class TestTheRunTheWriteIsCheckedAgainst:
         assert _run_results(state) == []
 
     def test_a_call_still_in_flight_is_skipped_and_the_ones_beside_it_are_kept(self) -> None:
-        """``write_playbook`` itself is unanswered in every real run. Stopping at
+        """write_playbook itself is unanswered in every real run. Stopping at
         it throws away the calls the playbook is being written from."""
         state = {
             "messages": [
@@ -1576,7 +1576,7 @@ class TestTheRunTheWriteIsCheckedAgainst:
     async def test_a_write_records_how_many_of_the_runs_calls_it_was_checked_against(
         self, store: _FakePlaybookStore, workflows: MagicMock
     ) -> None:
-        """``None`` and ``0`` are different answers — no graph state reached the
+        """None and 0 are different answers — no graph state reached the
         tool at all, versus a run that genuinely made no calls — and this count
         is the only field that tells them apart in production."""
         state = _run_state(
@@ -1887,7 +1887,7 @@ class TestDeclineKindArguments:
         assert workflows.workflow.playbook_declines == 0, "a refused decline is not a decline"
 
     async def test_there_is_no_kind_for_arguments_varying(self) -> None:
-        """``args_vary`` is unspellable by construction — the enum has no member
+        """args_vary is unspellable by construction — the enum has no member
         for it, so the model cannot offer the reason that was wrong ~15 times in
         two days, concentrated in the most expensive workflows."""
         assert "args_vary" not in {k.value for k in DeclineKind}
@@ -2148,8 +2148,8 @@ class TestSubagentResults:
 async def test_a_shape_the_body_cannot_take_is_a_refusal_not_an_exception(
     store: _FakePlaybookStore, workflows: MagicMock
 ) -> None:
-    """``for_each`` without ``max_items`` is an authoring error like any other.
-    It used to escape ``playbook_body_from_input`` as a ValueError, land in the
+    """for_each without max_items is an authoring error like any other.
+    It used to escape playbook_body_from_input as a ValueError, land in the
     catch-all, and be logged as a tool exception with a traceback."""
     steps = [
         {"id": "ls", "tool": "list_events", "args": {}},

@@ -2,12 +2,12 @@
 
 WHAT THIS TESTS (REAL GAIA CODE):
 - The five account mutation tools exactly as registered for the executor.
-- The real ``create_agent`` graph (bigtool) dispatching LLM tool calls into
+- The real create_agent graph (bigtool) dispatching LLM tool calls into
   them, with config threading (user_id) intact end to end.
 - The real global ToolRegistry stamps: the settings tools carry
-  ``always_gate`` and ``manage_linked_account`` does not — plus the REAL
-  ``resolve_policy`` returning ``ask`` for them under an ``always_allow`` user.
-- The write tool refusing ``account/**`` paths inside a graph turn, naming the
+  always_gate and manage_linked_account does not — plus the REAL
+  resolve_policy returning ask for them under an always_allow user.
+- The write tool refusing account/** paths inside a graph turn, naming the
   owning mutation tool, without touching the sandbox.
 
 Mock surfaces:
@@ -16,8 +16,8 @@ Mock surfaces:
 - Repository/service seams (Mongo, ElevenLabs, platform links): patched at the
   boundary the tools own
 
-DELETE ``app/agents/tools/account_tools.py`` → these tests FAIL.
-DELETE ``app/agents/tools/core/mutations.py`` → these tests FAIL.
+DELETE app/agents/tools/account_tools.py → these tests FAIL.
+DELETE app/agents/tools/core/mutations.py → these tests FAIL.
 """
 
 import asyncio

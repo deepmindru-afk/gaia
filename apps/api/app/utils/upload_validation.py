@@ -2,7 +2,7 @@
 Upload validation — size / filename / MIME / magic-byte checks.
 
 Prevents oversize uploads from exhausting memory, blocks double-extension
-polyglots (e.g. `shell.php.png`), and rejects files whose client-claimed
+polyglots (e.g. shell.php.png), and rejects files whose client-claimed
 Content-Type does not match the actual bytes.
 """
 

@@ -73,10 +73,10 @@ _MCP_INITIALIZE_PROBE_REQUEST: dict[str, Any] = JSONRPCRequest(
 
 
 def oauth_token_expiry(expires_in: int | None) -> datetime | None:
-    """Absolute tz-aware UTC expiry for an OAuth token's ``expires_in`` seconds.
+    """Absolute tz-aware UTC expiry for an OAuth token's expires_in seconds.
 
     Single source of truth for token-expiry so the callback and refresh paths
-    can't drift. Returns None when the server omits ``expires_in``.
+    can't drift. Returns None when the server omits expires_in.
     """
     if not expires_in:
         return None
@@ -143,7 +143,7 @@ def is_localhost_url(url: str) -> bool:
 
 
 def validate_oauth_endpoints(as_metadata: OAuthMetadata, allow_localhost: bool = True) -> None:
-    """Validate that every OAuth endpoint in ``as_metadata`` uses HTTPS."""
+    """Validate that every OAuth endpoint in as_metadata uses HTTPS."""
     endpoints = {
         "authorization_endpoint": as_metadata.authorization_endpoint,
         "token_endpoint": as_metadata.token_endpoint,
@@ -162,10 +162,10 @@ def validate_oauth_endpoints(as_metadata: OAuthMetadata, allow_localhost: bool =
 
 
 def parse_rejected_scopes(error_description: str | None) -> set[str]:
-    """Extract the scope names an auth server rejected with ``invalid_scope``.
+    """Extract the scope names an auth server rejected with invalid_scope.
 
     OAuth servers are inconsistent in how they report the offending scope, so we
-    prefer quoted tokens (e.g. ``... not allowed to request scope 'user:org:read'``)
+    prefer quoted tokens (e.g. ... not allowed to request scope 'user:org:read')
     and fall back to the single scope-like token following the word "scope".
     Returns an empty set when nothing parseable is found.
     """
@@ -183,7 +183,7 @@ async def extract_auth_challenge(server_url: str) -> McpAuthChallenge:
     Probe MCP server and parse full WWW-Authenticate challenge per MCP spec.
 
     Per MCP Authorization spec Phase 1:
-    - Client issues an MCP `initialize` POST to the server
+    - Client issues an MCP initialize POST to the server
     - Server returns 401 with WWW-Authenticate header when auth is required
     - Header may contain: resource_metadata, scope, error, error_description
 
@@ -334,7 +334,7 @@ async def fetch_protected_resource_metadata(prm_url: str) -> ProtectedResourceMe
     """
     Fetch and parse Protected Resource Metadata (RFC 9728).
 
-    Returns the validated :class:`ProtectedResourceMetadata` model.
+    Returns the validated :class:ProtectedResourceMetadata model.
     """
     # Include MCP protocol version header per MCP spec
     headers = {"MCP-Protocol-Version": MCP_PROTOCOL_VERSION}
@@ -509,9 +509,9 @@ async def introspect_token(
 ) -> dict[str, Any] | None:
     """Introspect an OAuth token per RFC 7662.
 
-    Returns the introspection response dict (with an ``active`` field), or None
-    if introspection failed. Stays ``dict[str, Any]``: RFC 7662 fixes only
-    ``active`` and lets the authorization server add any claims it likes, so the
+    Returns the introspection response dict (with an active field), or None
+    if introspection failed. Stays dict[str, Any]: RFC 7662 fixes only
+    active and lets the authorization server add any claims it likes, so the
     body is an unmodelled provider payload (Type Safety item 8).
     """
     log.set(
@@ -615,7 +615,7 @@ def parse_oauth_error_response(response: httpx.Response) -> OAuthErrorResponse:
 
 
 def get_client_metadata_document_url(base_url: str) -> str:
-    """Build the client metadata document URL from ``base_url``.
+    """Build the client metadata document URL from base_url.
 
     Per draft-ietf-oauth-client-id-metadata-document, the client_id can be a
     URL pointing to this document.

@@ -3,16 +3,16 @@
 Why this exists
 ---------------
 Every chat turn fans out into a handful of FS-shaped operations: a new
-conversation creates session dirs (`ensure_session_dirs`), every coding tool
-call resolves into a sandbox `commands.run` round-trip, the artifact watcher
-does a `list_artifacts`, and so on. Each one is cheap on its own; together they
+conversation creates session dirs (ensure_session_dirs), every coding tool
+call resolves into a sandbox commands.run round-trip, the artifact watcher
+does a list_artifacts, and so on. Each one is cheap on its own; together they
 quietly dominate end-to-end latency once the cache misses or the meta DB
 takes a coffee break.
 
 We need to see *where the milliseconds go* without N+1 emission of one log
 line per FS call. So this module accumulates per-op stats into a ContextVar
-for the lifetime of a request / `wide_task`, then ships a single structured
-``fs={...}`` field on the canonical wide event at the end. LogQL can split
+for the lifetime of a request / wide_task, then ships a single structured
+fs={...} field on the canonical wide event at the end. LogQL can split
 on op name, count, total_ms, max_ms across users / hosts / time.
 
 Wire contract
@@ -31,47 +31,47 @@ The wide event field is::
     }
 
 Op names are stable, lowercased, snake_cased identifiers — keep them stable
-because dashboards will pivot on them. The list lives in ``FsOps`` below as
+because dashboards will pivot on them. The list lives in FsOps below as
 the source of truth; adding a new op = add a constant here first.
 
 Prometheus export
 -----------------
-Every call to ``record_fs_op`` (and ``add_fs_bytes`` for byte volume) emits to
+Every call to record_fs_op (and add_fs_bytes for byte volume) emits to
 the following Prometheus collectors, all registered on the default registry:
 
-- ``fs_op_duration_seconds`` (Histogram, labels ``operation, mode, status``).
-  Standard latency view. ``mode`` carries the acquire-path label for
-  ``sbx_acquire`` and defaults to ``"none"`` elsewhere.
-- ``fs_op_bytes_total`` (Counter, label ``operation``). Only incremented when
+- fs_op_duration_seconds (Histogram, labels operation, mode, status).
+  Standard latency view. mode carries the acquire-path label for
+  sbx_acquire and defaults to "none" elsewhere.
+- fs_op_bytes_total (Counter, label operation). Only incremented when
   an op reports a non-zero byte count.
-- ``fs_op_total`` (Counter, labels ``operation, mode, status``). Lifetime
+- fs_op_total (Counter, labels operation, mode, status). Lifetime
   count — never decays. Backs lifetime-totals dashboard panels.
-- ``fs_op_last_seen_unix_seconds`` (Gauge, label ``operation``). Wall-clock
+- fs_op_last_seen_unix_seconds (Gauge, label operation). Wall-clock
   timestamp of the most recent observation. Drives "last seen N minutes ago"
   columns.
-- ``fs_op_in_flight`` (Gauge, label ``operation``). Maintained by ``fs_timer``:
+- fs_op_in_flight (Gauge, label operation). Maintained by fs_timer:
   inc on enter, dec in finally. Exposes contention + stuck operations.
-- ``sandbox_pool_size`` (Gauge, labels ``kind, shard``). Set by the sandbox
-  pool on add/remove via :func:`set_sandbox_pool_size`. ``kind`` is
-  ``"user"`` or ``"warm"``.
+- sandbox_pool_size (Gauge, labels kind, shard). Set by the sandbox
+  pool on add/remove via :func:set_sandbox_pool_size. kind is
+  "user" or "warm".
 
-Bash exit-code distribution lives in ``apps/api/app/agents/tools/coding/
-bash_tool.py`` as ``tool_bash_exit_code_total`` (Counter, label ``exit_code``
-bucketed into ``0``, ``1-126``, ``127``, ``128-254``, ``255``, ``timeout``).
+Bash exit-code distribution lives in apps/api/app/agents/tools/coding/
+bash_tool.py as tool_bash_exit_code_total (Counter, label exit_code
+bucketed into 0, 1-126, 127, 128-254, 255, timeout).
 
 Label discipline: the labels above are the *complete* allowed set. Adding a
-label requires updating the matching OpenSpec capability (``fs-metrics-
-prometheus`` for the original two, ``fs-metrics-coverage`` for the rest)
+label requires updating the matching OpenSpec capability (fs-metrics-
+prometheus for the original two, fs-metrics-coverage for the rest)
 because dashboards pivot on these names.
 
-The API process exposes everything via ``/metrics`` mounted by
-``prometheus-fastapi-instrumentator``. The ARQ worker re-registers the same
+The API process exposes everything via /metrics mounted by
+prometheus-fastapi-instrumentator. The ARQ worker re-registers the same
 collector instances on its custom registry inside
-``apps/api/app/workers/metrics.py`` so the worker's ``/metrics`` endpoint
+apps/api/app/workers/metrics.py so the worker's /metrics endpoint
 mirrors the API.
 
 Grafana panels live in
-``infra/docker/observability/grafana/provisioning/dashboards/fs-ops.json``.
+infra/docker/observability/grafana/provisioning/dashboards/fs-ops.json.
 
 Usage
 -----
@@ -84,12 +84,12 @@ Usage
     # or, when the caller already has a duration:
     record_fs_op(FsOps.WRITE_SESSION_FILE, duration_ms=4.2, byte_count=size)
 
-At the end of a `wide_task`, call::
+At the end of a wide_task, call::
 
     log.set(fs=flush_fs_metrics())
 
 to attach the aggregate to the wide event. The aggregate ContextVar is
-isolated per task (same mechanism as ``shared.py.wide_events``), so there is
+isolated per task (same mechanism as shared.py.wide_events), so there is
 no cross-request leakage.
 """
 
@@ -148,9 +148,9 @@ _CollectorT = TypeVar("_CollectorT")
 def _register_once(name: str, factory: Callable[[], _CollectorT]) -> _CollectorT:
     """Register a Prometheus collector at module load, tolerating re-imports.
 
-    `uvicorn --reload` and some test fixtures import this module twice in the
-    same process. The second registration raises ``ValueError("Duplicated
-    timeseries...")``. We catch that and return the previously-registered
+    uvicorn --reload and some test fixtures import this module twice in the
+    same process. The second registration raises ValueError("Duplicated
+    timeseries..."). We catch that and return the previously-registered
     collector, so the same instance is used across imports.
     """
     try:
@@ -219,11 +219,11 @@ _SANDBOX_POOL_SIZE = _register_once(
 
 
 def set_sandbox_pool_size(kind: str, shard: str, n: int) -> None:
-    """Publish the current pool size for ``(kind, shard)``.
+    """Publish the current pool size for (kind, shard).
 
-    ``kind`` is ``"user"`` (per-user pooled sandboxes) or ``"warm"`` (warm
-    pre-created sandboxes). ``shard`` is the stringified shard id. The
-    underlying ``sandbox_pool_size`` gauge supports ``set`` semantics —
+    kind is "user" (per-user pooled sandboxes) or "warm" (warm
+    pre-created sandboxes). shard is the stringified shard id. The
+    underlying sandbox_pool_size gauge supports set semantics —
     last-writer-wins per (kind, shard), which matches the desired "current
     count" view.
 
@@ -242,9 +242,9 @@ def set_sandbox_pool_size(kind: str, shard: str, n: int) -> None:
 
 
 class OpStatsSnapshot(TypedDict):
-    """One op's counters as they appear under ``fs.<op>`` on the wide event.
+    """One op's counters as they appear under fs.<op> on the wide event.
 
-    The ``NotRequired`` keys are the conditionally-emitted ones documented in the
+    The NotRequired keys are the conditionally-emitted ones documented in the
     module's wire contract — absent, not zero, when the op never reported them.
     """
 
@@ -372,13 +372,13 @@ def record_fs_op(
 ) -> None:
     """Record one completed FS op.
 
-    ``error`` if non-None bumps the error counter and stamps the type. Labels
-    are merged into the op's ``labels`` dict on a last-write-wins basis — use
+    error if non-None bumps the error counter and stamps the type. Labels
+    are merged into the op's labels dict on a last-write-wins basis — use
     them for very low-cardinality identifiers (role, mount status). High-
     cardinality values (conv_id, path) belong in the wide event, not here.
 
     Additionally emits to the Prometheus collectors declared at module scope.
-    Prometheus emit is wrapped in ``try/except`` so a registry bug never breaks
+    Prometheus emit is wrapped in try/except so a registry bug never breaks
     the wide event flush — the ContextVar bucket update above is the canonical
     record, the Prometheus emit is a parallel surface.
     """
@@ -419,7 +419,7 @@ def add_fs_bytes(op: str, n: int) -> None:
 
     Useful when the byte size is only known after a timed operation completes
     (e.g. a write where the payload is computed inside the timer body).
-    Records nothing if ``n`` is zero or negative.
+    Records nothing if n is zero or negative.
     """
     if n <= 0:
         return
@@ -438,17 +438,17 @@ def add_fs_bytes(op: str, n: int) -> None:
 
 @contextlib.asynccontextmanager
 async def fs_timer(op: str, **labels: str) -> AsyncIterator[None]:
-    """Async context manager that records the wall-clock duration of ``op``.
+    """Async context manager that records the wall-clock duration of op.
 
-    On exception, the op is still recorded (with ``error=<exception>``) so we
+    On exception, the op is still recorded (with error=<exception>) so we
     can see the latency cost of a failure path in the same dashboard. The
     exception is then re-raised; never swallow.
 
-    Also maintains the ``fs_op_in_flight`` Prometheus gauge: incremented on
-    entry, decremented in ``finally``. The increment is wrapped in
+    Also maintains the fs_op_in_flight Prometheus gauge: incremented on
+    entry, decremented in finally. The increment is wrapped in
     try/except so a registry bug never breaks the yield; the decrement is
     similarly guarded so a paired-state inconsistency never blocks
-    ``record_fs_op`` from running.
+    record_fs_op from running.
     """
     start = time.monotonic()
     err: BaseException | None = None
@@ -484,12 +484,12 @@ async def fs_timer(op: str, **labels: str) -> AsyncIterator[None]:
 def flush_fs_metrics() -> dict[str, OpStatsSnapshot]:
     """Return the accumulated metrics as a serializable dict, and clear the bucket.
 
-    Call from inside a ``wide_task`` / request middleware just before emitting
+    Call from inside a wide_task / request middleware just before emitting
     the canonical log line::
 
         log.set(fs=flush_fs_metrics())
 
-    Returns ``{}`` if nothing was recorded — safe to attach unconditionally.
+    Returns {} if nothing was recorded — safe to attach unconditionally.
     """
     bucket = _metrics_var.get()
     if not bucket:

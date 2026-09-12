@@ -1,6 +1,4 @@
-"""
-Payment and billing constants.
-"""
+"""Payment and billing constants."""
 
 from datetime import timedelta
 

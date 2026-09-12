@@ -1,8 +1,8 @@
 """Repository for the notifications collection.
 
-Identity is the UUID ``id`` field, not Mongo's ``_id`` — updates and lookups key
+Identity is the UUID id field, not Mongo's _id — updates and lookups key
 on it. Updates are free-form field patches (an action result may set arbitrary
-fields), so they go through ``update_fields`` rather than a rigid update model.
+fields), so they go through update_fields rather than a rigid update model.
 """
 
 from app.constants.cache import REPO_GLOBAL_SCOPE
@@ -33,7 +33,7 @@ class NotificationRepository(MongoRepository[NotificationRecord, NotificationUpd
         return await self._find_one(filter_)
 
     async def update_fields(self, notification_id: str, **fields: object) -> None:
-        """Apply a free-form field patch. ``updated_at`` is auto-stamped by the base."""
+        """Apply a free-form field patch. updated_at is auto-stamped by the base."""
         await self._apply_raw_update(
             {"id": notification_id},
             {"$set": dict(fields)},

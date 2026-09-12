@@ -1,6 +1,5 @@
 import os
 
-import cloudinary
 import cloudinary.exceptions
 import cloudinary.uploader
 from fastapi import HTTPException

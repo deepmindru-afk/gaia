@@ -4,7 +4,6 @@ import json
 import re
 import uuid
 
-import cloudinary
 import cloudinary.uploader
 from fastapi import HTTPException, UploadFile
 
@@ -108,7 +107,7 @@ async def api_generate_image(message: str, improve_prompt: bool = True) -> Image
 
 
 async def image_to_text_endpoint(message: str, file: UploadFile) -> ImageToTextResponse:
-    """Describe an uploaded image, answering ``message`` about it."""
+    """Describe an uploaded image, answering message about it."""
     log.set(component="image_service", operation="image_to_text")
     try:
         response = await convert_image_to_text(file, message)
@@ -143,9 +142,9 @@ async def generate_image_stream(query_text: str) -> AsyncGenerator[str, None]:
         str: Formatted response lines for streaming
 
     The body runs while the response streams — after the request's
-    ``http_request`` event has emitted — so it needs its own boundary or the
+    http_request event has emitted — so it needs its own boundary or the
     generation outcome is silently discarded. The generator body inherits the
-    request's context, so ``get_trace_id()`` still returns the request's
+    request's context, so get_trace_id() still returns the request's
     trace_id.
     """
     async with log_context(

@@ -1,7 +1,7 @@
 """Schema for the outbound message envelope published to the bot queues.
 
-Mirrors ``OutboundMessageEnvelope`` in
-``libs/shared/ts/src/bots/consumer/envelope.ts``. ``text`` is raw CommonMark —
+Mirrors OutboundMessageEnvelope in
+libs/shared/ts/src/bots/consumer/envelope.ts. text is raw CommonMark —
 the bot consumer converts it to the platform's native formatting before sending.
 """
 

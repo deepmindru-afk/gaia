@@ -8,12 +8,12 @@ identity last (so a re-login cannot resurrect the account mid-teardown):
 
 1. Composio      — revoke OAuth grants (Gmail/Calendar/... access is cut first)
 2. E2B           — kill the user's sandboxes
-3. MongoDB       — every collection with a matching ``user_id`` (+ GridFS,
-                   ``support_requests`` by email, ``bot_sessions`` by platform
-                   link, ``users`` doc last)
+3. MongoDB       — every collection with a matching user_id (+ GridFS,
+                   support_requests by email, bot_sessions by platform
+                   link, users doc last)
 4. PostgreSQL    — memory graph, OAuth/MCP credentials, bridge devices, and the
                    LangGraph checkpoint threads of the user's conversations
-5. ChromaDB      — every collection, ``where={"user_id": ...}``
+5. ChromaDB      — every collection, where={"user_id": ...}
 6. JuiceFS       — the user's workspace directory (propagates to R2)
 7. Redis         — keys containing the uid (rate limits, caches, budgets)
 8. Resend        — marketing-audience contact
@@ -21,7 +21,7 @@ identity last (so a re-login cannot resurrect the account mid-teardown):
 
 PostHog person deletion is a manual follow-up: the server only holds the
 capture token, not the personal API key that deletion requires. Langfuse traces
-keyed by ``user_id`` are likewise not covered here.
+keyed by user_id are likewise not covered here.
 
 Usage (inside the dockered API, with Infisical bootstrap creds in env)::
 
@@ -30,10 +30,10 @@ Usage (inside the dockered API, with Infisical bootstrap creds in env)::
     uv run python -m app.scripts.delete_user_account <email> \
         --execute --uid <24-hex-uid> --confirm-email <email>       # delete
 
-Safety: execute mode refuses to run unless ``--uid`` matches the id the email
+Safety: execute mode refuses to run unless --uid matches the id the email
 resolves to *now* (guards against the email resolving to a different user
-between dry-run and execute) and ``--confirm-email`` matches exactly. Every
-delete filters on exact ``user_id`` equality — no regex or wildcard matching
+between dry-run and execute) and --confirm-email matches exactly. Every
+delete filters on exact user_id equality — no regex or wildcard matching
 against user-owned data. The run ends with a verification sweep and exits
 non-zero if any step failed or any remnant survived.
 """

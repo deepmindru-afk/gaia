@@ -118,7 +118,7 @@ class TestThePlaybookDiscardAWorkflowRemembers:
         assert _stored_workflow().last_playbook_discard is None
 
     def test_the_update_carries_it_as_a_set_field(self) -> None:
-        """``$set`` is built from the fields the caller actually set, so a discard
+        """$set is built from the fields the caller actually set, so a discard
         written through anything but this field never reaches Mongo."""
         update = WorkflowUpdate(last_playbook_discard=self.DISCARD)
 

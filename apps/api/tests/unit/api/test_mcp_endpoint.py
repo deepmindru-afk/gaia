@@ -63,7 +63,7 @@ def _callback_seams(
 
 
 class TestMCPOAuthCallback:
-    """GET /api/v1/mcp/oauth/callback"""
+    """GET /api/v1/mcp/oauth/callback."""
 
     async def test_success_redirects_to_the_frontend_with_the_quoted_name(
         self, client: AsyncClient

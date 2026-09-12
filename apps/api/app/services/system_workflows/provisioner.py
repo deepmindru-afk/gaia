@@ -1,5 +1,5 @@
 """
-SystemWorkflowProvisioner
+SystemWorkflowProvisioner.
 
 Auto-creates GAIA-managed workflows when users connect integrations.
 Called from handle_oauth_connection() as a background task.
@@ -60,7 +60,7 @@ async def provision_system_workflows(
 
     Called as a background task from handle_oauth_connection().
     Idempotent: checks system_workflow_key to avoid duplicates on reconnect.
-    ``notify`` is set False during onboarding so provisioning is silent (the
+    notify is set False during onboarding so provisioning is silent (the
     onboarding UI surfaces the workflows itself).
     """
     log.set(
@@ -251,7 +251,7 @@ async def _reregister_triggers_for_reset(
 ) -> list[str] | None:
     """Register fresh triggers for a reset. Registers old still active if this fails.
 
-    Returns the new trigger ids, ``[]`` when no re-registration is needed, or ``None``
+    Returns the new trigger ids, [] when no re-registration is needed, or None
     when registration failed and the caller must abort the reset.
     """
     if trigger_config.type != TriggerType.INTEGRATION or not trigger_config.trigger_name:

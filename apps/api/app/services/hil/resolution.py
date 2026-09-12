@@ -2,11 +2,11 @@
 
 The single entry point for every decision source — approval buttons, a bot's
 interactive component, the conversational resolver, and the timeout sweep. Each
-supplies a ``DecisionKind``; everything else is identical.
+supplies a DecisionKind; everything else is identical.
 
 Two guarantees:
 
-* **Exactly once.** The ``pending -> decided`` transition is a conditional Mongo
+* **Exactly once.** The pending -> decided transition is a conditional Mongo
   update. A double click, a racing bot callback, and a sweep firing against an
   approval the user just answered all lose the race and resolve nothing.
 * **The run always continues.** Whatever the decision, the paused thread is
@@ -88,7 +88,7 @@ class ApprovalRequestForbiddenError(AppError):
 class ApprovalNotResumableError(AppError):
     """Raised (503) when the paused run's re-dispatch context is missing.
 
-    The record stays ``pending`` — committing the decision without a resumable
+    The record stays pending — committing the decision without a resumable
     run would tell the user "approved" about an action that can never execute.
     The sweep expires the record instead.
     """
@@ -186,17 +186,17 @@ async def abandon_conversation_approvals(
 async def cancel_conversation_approvals(conversation_id: str, user_id: str) -> list[str]:
     """Close a cancelled run's pending approvals so nothing can restart it.
 
-    ``cancel_executor`` stops the run and drops the conversation's busy lock, but the
+    cancel_executor stops the run and drops the conversation's busy lock, but the
     approval records are the *decision* state, and they outlive both: left pending, a
     later "Approve" — or the timeout sweep, with no user involved at all — re-dispatches
     the very run the user stopped, on a fresh stream the cancel flag does not cover.
     Deciding them here is what makes a cancel stick.
 
     Deliberately does NOT resume, which is the whole difference from
-    ``abandon_conversation_approvals``: there the run must wake up to release the lock,
-    here it is already gone. ``mark_decided`` runs first because it is the exactly-once
+    abandon_conversation_approvals: there the run must wake up to release the lock,
+    here it is already gone. mark_decided runs first because it is the exactly-once
     mutex — only the caller that wins the transition owns the record and may clear its
-    ``resume_item``, so a decision landing at the same instant can never lose its
+    resume_item, so a decision landing at the same instant can never lose its
     re-dispatch context.
     """
     cancelled: list[str] = []
@@ -231,7 +231,7 @@ async def _resolve_or_close(
 ) -> None:
     """Resolve a record, or close it in place when no run can be resumed.
 
-    A record with no ``resume_item`` never had its pause registered — the executor died
+    A record with no resume_item never had its pause registered — the executor died
     between publishing the card and recording how to restart it. There is nothing to
     resume, so resolving it would only raise. Closing it is what matters: a record left
     pending goes on hijacking every later message in the conversation via the
@@ -322,11 +322,11 @@ async def _dispatch_resume(
 ) -> None:
     """Re-dispatch the executor thread this approval paused.
 
-    ``prepare_run_from_item`` seizes the conversation's busy lock (the original
+    prepare_run_from_item seizes the conversation's busy lock (the original
     owner's process is long gone) and gives the resumed run its own stream, so the
-    frontend can watch it finish. ``mark_resumed`` stamps the record so the sweep
+    frontend can watch it finish. mark_resumed stamps the record so the sweep
     knows this decision made it to a run; a crash before the stamp is re-dispatched
-    by the sweep from ``resume_item``.
+    by the sweep from resume_item.
 
     At most one resume runs per conversation: a batch pause has several approvals
     sharing one executor thread, and two decisions landing close together must not
@@ -384,11 +384,11 @@ async def sweep_approvals() -> dict[str, int]:
     """Resolve expired approvals and re-dispatch crashed resumes. Cron-driven.
 
     Two passes:
-    - pending past ``expires_at`` → resolved as timeout (the run resumes and is
+    - pending past expires_at → resolved as timeout (the run resumes and is
       told the request expired). Records that never got resume context — the
       executor died before registering the pause — are closed directly.
     - decided but never resumed (crash between the decided-transition and the
-      run spawn) → re-dispatched from the record's ``resume_item``.
+      run spawn) → re-dispatched from the record's resume_item.
     """
     expired = 0
     for record in await list_expired_pending():

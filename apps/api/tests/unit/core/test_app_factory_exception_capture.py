@@ -1,13 +1,13 @@
 """PostHog attribution of unhandled exceptions.
 
-``PostHogRequestContextMiddleware`` identifies inside ``with new_context():``
-wrapped around ``call_next``. An exception propagating out of it unwinds that
-context *before* the handler in ``ServerErrorMiddleware`` runs, so a capture
+PostHogRequestContextMiddleware identifies inside with new_context():
+wrapped around call_next. An exception propagating out of it unwinds that
+context *before* the handler in ServerErrorMiddleware runs, so a capture
 that relies on the context lands on a fresh anonymous profile — a crash nobody
 can trace to the user who hit it. These pin the explicit attribution.
 
-The provider goes through the real ``providers`` registry rather than a patch:
-the lookup key ``"posthog"`` is part of what is under test — under any other
+The provider goes through the real providers registry rather than a patch:
+the lookup key "posthog" is part of what is under test — under any other
 key the registry finds nothing and every crash goes uncaptured.
 """
 
@@ -32,7 +32,7 @@ async def _noop_lifespan(app: FastAPI):
 def _cors_only_middleware(app: FastAPI) -> None:
     """The conftest's hermetic stack: no Redis, no WorkOS.
 
-    `create_app()` raw installs Redis-backed middleware, so on a runner without
+    create_app() raw installs Redis-backed middleware, so on a runner without
     Redis a ConnectionError surfaces before the route is reached and the handler
     under test sees the wrong exception entirely.
     """
@@ -58,7 +58,7 @@ def _app_with_boom_route(user: dict[str, Any] | None) -> FastAPI:
     """An app whose only route authenticates, then raises.
 
     The user is set inside the ROUTE, not an outer middleware:
-    ``WorkOSAuthMiddleware`` resets ``request.state.user = None`` at the top of
+    WorkOSAuthMiddleware resets request.state.user = None at the top of
     its dispatch (auth.py:148), so anything seeded outside it is wiped before
     the route runs. Setting it here is also the faithful model — an
     authenticated request that then crashes.

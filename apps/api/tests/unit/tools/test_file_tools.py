@@ -3,7 +3,7 @@
 Locks: conversation-scoped semantic search (file_id filter intersection with
 the conversation's own files, k=5), the no-client / no-files / out-of-scope
 short-circuits, and the content construction from the different
-``page_wise_summary`` shapes (str / list / dict / None).
+page_wise_summary shapes (str / list / dict / None).
 """
 
 from datetime import UTC, datetime
@@ -23,9 +23,9 @@ def _config() -> dict[str, Any]:
     """The configurable as the executor actually sees it.
 
     The tool is bound to the executor, which runs on the derived
-    ``executor_<conversation_id>`` thread — so ``thread_id`` names a conversation
+    executor_<conversation_id> thread — so thread_id names a conversation
     that owns no files, and the two ids are deliberately different here. A
-    lookup that reads ``thread_id`` must not find "conv-1".
+    lookup that reads thread_id must not find "conv-1".
     """
     return {
         "configurable": {

@@ -1,8 +1,8 @@
 """What a specialized subagent is actually built with.
 
 A provider subagent declares the tools it always needs bound up front —
-`auto_bind_tools` and `extra_initial_tools` in `oauth_config.py`. Gmail, for
-instance, declares six Composio tools plus `query_json`/`grep`, and those
+auto_bind_tools and extra_initial_tools in oauth_config.py. Gmail, for
+instance, declares six Composio tools plus query_json/grep, and those
 declarations are the whole reason a handoff to Gmail can read an inbox without
 first paying for a retrieval round-trip.
 
@@ -78,7 +78,7 @@ class TestScopedToolDict:
 
 
 class TestDeclaredToolResolution:
-    """``resolve_declared_tools`` is the one place a declaration meets reality."""
+    """resolve_declared_tools is the one place a declaration meets reality."""
 
     def test_declared_tools_that_exist_are_kept_in_order(self):
         scoped = {"a": object(), "b": object(), "c": object()}

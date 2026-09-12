@@ -2,7 +2,7 @@
 subagents). Centralized here so build_graph.py and base_subagent.py share one
 configuration.
 
-Summarization and compaction receive the graph's own ``chat_llm`` and invoke it
+Summarization and compaction receive the graph's own chat_llm and invoke it
 inside the graph, where the ambient request config routes them to the same
 model the conversation is using."""
 
@@ -65,7 +65,7 @@ LOOP_GUARD_HARD_STOP = False
 
 @dataclass(frozen=True)
 class AccountingOptions:
-    """LLMAccountingMiddleware knobs; ``enabled=False`` leaves it out."""
+    """LLMAccountingMiddleware knobs; enabled=False leaves it out."""
 
     enabled: bool = True
     recursion_limit: int = AGENT_RECURSION_LIMIT
@@ -73,9 +73,9 @@ class AccountingOptions:
 
 @dataclass(frozen=True)
 class SubagentStackOptions:
-    """SubagentMiddleware wiring; ``enabled=False`` leaves it out.
+    """SubagentMiddleware wiring; enabled=False leaves it out.
 
-    ``join`` adds SubagentJoinMiddleware (executor only), which rewrites a
+    join adds SubagentJoinMiddleware (executor only), which rewrites a
     turn-ending response into a wait_for_subagents call while background
     subagents are uncollected.
     """
@@ -94,8 +94,8 @@ class SubagentStackOptions:
 class ContextOptions:
     """Summarization and compaction knobs.
 
-    ``summarize`` / ``compact`` include the respective middleware; summarization
-    is also skipped, with a warning, when the stack has no ``chat_llm``.
+    summarize / compact include the respective middleware; summarization
+    is also skipped, with a warning, when the stack has no chat_llm.
     """
 
     summarize: bool = True
@@ -111,7 +111,7 @@ class ContextOptions:
 
 @dataclass(frozen=True)
 class LoopGuardOptions:
-    """LoopGuardMiddleware knobs; warn-only unless ``hard_stop``."""
+    """LoopGuardMiddleware knobs; warn-only unless hard_stop."""
 
     enabled: bool = True
     hard_stop: bool = LOOP_GUARD_HARD_STOP
@@ -366,15 +366,15 @@ def create_subagent_middleware(
     SubagentMiddleware itself which excludes spawn_subagent from child tools).
 
     Args:
-        agent_name: The subagent's own name, used to attribute its ``llm_call``
+        agent_name: The subagent's own name, used to attribute its llm_call
             events. Without it every one of the ~35 integration subagents meters
-            under a single ``provider_subagent`` bucket, so per-subagent cost and
+            under a single provider_subagent bucket, so per-subagent cost and
             cache behaviour cannot be told apart.
-        subagent: The spawn wiring. ``llm`` is both the subagent's own model
+        subagent: The spawn wiring. llm is both the subagent's own model
             (its summarization and compaction ride it) and the model its spawned
-            sub-subagents run on; ``tools``/``registry``/``excluded_tools``/
-            ``tool_space``/``tool_runtime_config`` shape what those sub-subagents
-            may reach. ``enabled=False`` leaves out the spawn_subagent middleware,
+            sub-subagents run on; tools/registry/excluded_tools/
+            tool_space/tool_runtime_config shape what those sub-subagents
+            may reach. enabled=False leaves out the spawn_subagent middleware,
             for authoring-only subagents that must not spawn or execute.
 
     Returns:

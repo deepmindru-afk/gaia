@@ -1,6 +1,4 @@
-"""
-Workflow generation prompts for GAIA workflow system.
-"""
+"""Workflow generation prompts for GAIA workflow system."""
 
 # =============================================================================
 # WHAT A WORKFLOW'S EXECUTION PROMPT MAY CONTAIN

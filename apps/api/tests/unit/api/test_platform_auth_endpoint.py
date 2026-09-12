@@ -52,7 +52,7 @@ class _FakeAsyncClient:
 
 
 class TestPlatformOAuthCallback:
-    """GET /api/v1/platform-auth/{platform}/callback"""
+    """GET /api/v1/platform-auth/{platform}/callback."""
 
     async def test_discord_callback_captures_connected_event(self, client: AsyncClient) -> None:
         completion = PlatformLinkCompletion(
@@ -321,7 +321,7 @@ class _RecordingGetClient(_FakeAsyncClient):
 
 
 class _RecordingExtractor:
-    """An ``extract_user_id`` that records exactly how it was called."""
+    """An extract_user_id that records exactly how it was called."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -348,7 +348,7 @@ def _config_with(extractor: _RecordingExtractor, *, user_info_url: str | None):
 
 
 class TestExchangeCodeSlackEnvelope:
-    """Slack answers 200 with an ``ok`` flag; the flag, not the status, decides."""
+    """Slack answers 200 with an ok flag; the flag, not the status, decides."""
 
     def setup_method(self) -> None:
         _RecordingClient.posts = []

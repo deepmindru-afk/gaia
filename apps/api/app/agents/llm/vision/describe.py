@@ -19,15 +19,15 @@ async def describe_image(
 ) -> str | None:
     """Describe an image with a one-off call on the dedicated vision model.
 
-    The canonical fallback for lanes that can't take pixels — the `read` tool and
-    the desktop screenshot tool both route through here. Returns ``None`` when
+    The canonical fallback for lanes that can't take pixels — the read tool and
+    the desktop screenshot tool both route through here. Returns None when
     the vision call fails, so a caller degrades to telling the user it couldn't
     look rather than failing the whole tool.
 
-    Uses :func:`get_vision_llm`, never the default model: callers reach here
+    Uses :func:get_vision_llm, never the default model: callers reach here
     precisely BECAUSE the active lane cannot see, so describing with that same
     lane would return nothing. Callers that are lane-dependent gate on
-    ``model_can_view_images`` first (see ``vision/tool_media.py``) so a
+    model_can_view_images first (see vision/tool_media.py) so a
     vision-capable lane never pays for a description it does not need.
     """
     try:

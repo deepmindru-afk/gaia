@@ -112,7 +112,7 @@ class TestVerbatimRequestComesFromTheServer:
     Routing it through the model made it a model output: asked to emit the full
     task AND re-transcribe a request that may run to MAX_MESSAGE_LENGTH, the
     comms model degenerates — repeating tokens and spilling the schema's own key
-    names into `acceptance_criteria`. The server already holds the user's words,
+    names into acceptance_criteria. The server already holds the user's words,
     so the model is no longer asked for them.
     """
 
@@ -129,7 +129,7 @@ class TestVerbatimRequestComesFromTheServer:
         assert "verbatim_request" not in call_executor.args
 
     async def test_a_long_request_is_carried_unclipped(self):
-        """`user_messages` is clipped to HIL_JUDGE_MAX_TURN_CHARS (800); the verbatim
+        """user_messages is clipped to HIL_JUDGE_MAX_TURN_CHARS (800); the verbatim
         backstop must not be, or long asks — exactly the ones that broke the model —
         silently lose their tail."""
         long_request = "archive the promo from " + ", ".join(

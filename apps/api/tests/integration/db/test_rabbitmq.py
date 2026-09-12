@@ -1,15 +1,15 @@
 """Integration tests for RabbitMQPublisher.
 
-Patches `aio_pika.connect_robust` at the AMQP boundary so no real broker
+Patches aio_pika.connect_robust at the AMQP boundary so no real broker
 connection is ever made.  All other code paths — idempotency guards, delivery
 mode, auto-connect, auto-declare, retry logic — run through the real
 RabbitMQPublisher implementation.
 
 Design invariants (tests are written to enforce these):
-- Removing the `if self.connection is None` guard  → test_connect_is_idempotent FAILS
-- Removing `durable=True`                          → test_declare_queue_creates_queue FAILS
-- Removing the `if queue_name not in …` guard      → test_declare_queue_is_idempotent FAILS
-- Removing `delivery_mode=PERSISTENT`              → test_publish_message_is_persistent FAILS
+- Removing the if self.connection is None guard  → test_connect_is_idempotent FAILS
+- Removing durable=True                          → test_declare_queue_creates_queue FAILS
+- Removing the if queue_name not in … guard      → test_declare_queue_is_idempotent FAILS
+- Removing delivery_mode=PERSISTENT              → test_publish_message_is_persistent FAILS
 """
 
 from unittest.mock import AsyncMock, call, patch
@@ -103,7 +103,7 @@ class TestConnect:
     ):
         """Calling connect() twice must only call connect_robust once.
 
-        This test MUST fail if the `if self.connection is None` guard is
+        This test MUST fail if the if self.connection is None guard is
         removed from RabbitMQPublisher.connect().
         """
         with patch(
@@ -132,7 +132,7 @@ class TestDeclareQueue:
         """declare_queue() must call channel.declare_queue with the correct
         name and durable=True.
 
-        This test MUST fail if `durable=True` is removed from the production
+        This test MUST fail if durable=True is removed from the production
         declare_queue() call.
         """
         with _patch_connect_robust(mock_connection):
@@ -150,7 +150,7 @@ class TestDeclareQueue:
         """Declaring the same queue twice must call channel.declare_queue
         exactly once.
 
-        This test MUST fail if the `if queue_name not in self.declared_queues`
+        This test MUST fail if the if queue_name not in self.declared_queues
         guard is removed from the production implementation.
         """
         with _patch_connect_robust(mock_connection):
@@ -220,7 +220,7 @@ class TestPublish:
     ):
         """The Message passed to publish() must use PERSISTENT delivery mode.
 
-        This test MUST fail if `delivery_mode=aio_pika.DeliveryMode.PERSISTENT`
+        This test MUST fail if delivery_mode=aio_pika.DeliveryMode.PERSISTENT
         is removed from the production publish() implementation.
         """
         with _patch_connect_robust(mock_connection):

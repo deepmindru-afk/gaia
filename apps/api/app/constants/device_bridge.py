@@ -1,7 +1,7 @@
 """Constants for the device bridge — the outbound tunnel from a user's machine.
 
-A paired device (the ``gaia bridge`` CLI daemon) holds one outbound WebSocket to
-``/ws/device`` and relays MCP JSON-RPC over it. These constants govern pairing,
+A paired device (the gaia bridge CLI daemon) holds one outbound WebSocket to
+/ws/device and relays MCP JSON-RPC over it. These constants govern pairing,
 device connect-token lifetime, and the Redis routing channels that let any worker
 reach the pod that owns a device's socket.
 """

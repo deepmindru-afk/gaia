@@ -695,9 +695,9 @@ class TestGetComposioService:
 
 
 class TestAuthHeaders:
-    """The `_auth_headers` helper was removed in the Composio proxy migration.
+    """The _auth_headers helper was removed in the Composio proxy migration.
 
-    Gmail tools now route every request through `proxy_request_sync`, which
+    Gmail tools now route every request through proxy_request_sync, which
     Composio authenticates server-side. Bearer-token construction is no longer
     a Gmail-tools concern, so the helper and its tests no longer exist.
     See test_composio_gmail_tools.py for the replacement coverage.

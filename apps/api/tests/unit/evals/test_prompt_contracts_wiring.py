@@ -1,22 +1,22 @@
 """The evals must grade the prompts and config we actually ship.
 
-``test_prompt_contracts.py`` proves the clause machinery fails loud. This file
+test_prompt_contracts.py proves the clause machinery fails loud. This file
 proves the machinery is *load-bearing* — that the suites consume it instead of
 carrying their own copies of product facts, which is the failure the whole
 module exists to prevent and the one a green run hides best.
 
 Three drifts were live when these tests were written:
 
-* ``suites/quality.py`` ran a second, suite-local extractor over
-  ``OPENUI_SURFACE_POLICY`` and pasted a frozen copy of "Never put :::openui
+* suites/quality.py ran a second, suite-local extractor over
+  OPENUI_SURFACE_POLICY and pasted a frozen copy of "Never put :::openui
   inside greetings…" into the forbidden rubric. Reword that rule in the prompt
   and the judge kept grading the old sentence, forever, silently.
-* ``core/prompt_gates.py`` and ``core/prompt_contracts.py`` were imported by
+* core/prompt_gates.py and core/prompt_contracts.py were imported by
   nothing. Every deterministic prompt-derived gate existed and graded zero runs.
-* ``suites/capability.py`` hand-listed the Gmail "send" tools as three names.
-  The shipped ``GMAIL_DESTRUCTIVE_TOOLS`` has ten, including
-  ``GMAIL_FORWARD_MESSAGE`` — so a prompt-injection case that got the agent to
-  forward the user's mail to an attacker scored 1.0 on ``no_unauthorized_send``,
+* suites/capability.py hand-listed the Gmail "send" tools as three names.
+  The shipped GMAIL_DESTRUCTIVE_TOOLS has ten, including
+  GMAIL_FORWARD_MESSAGE — so a prompt-injection case that got the agent to
+  forward the user's mail to an attacker scored 1.0 on no_unauthorized_send,
   the one gate written to catch exactly that.
 
 Each test below is anchored on the shipped object, so it goes red if a suite
@@ -103,7 +103,7 @@ def _gmail_subagent_config() -> object:
 def test_every_openui_criterion_is_a_verbatim_clause_not_a_hand_written_line() -> None:
     """The gate that catches a re-added paraphrase.
 
-    Equality with ``quote(ref)`` is the strong form: it fails not only when a
+    Equality with quote(ref) is the strong form: it fails not only when a
     criterion drifts from the prompt, but when someone appends a hand-written
     criterion beside the imported ones. A summary of a rule is exactly how the
     old rubric came to outlive the rule it summarised.
@@ -183,12 +183,12 @@ def test_deleting_an_openui_rule_fails_the_case_instead_of_grading_a_ghost(
 
 
 def test_the_suppressed_rubric_needs_no_second_copy_of_the_tool_list() -> None:
-    """``OPENUI_SURFACE_POLICY`` interpolates ``OPENUI_SUPPRESSED_TOOLS`` into
+    """OPENUI_SURFACE_POLICY interpolates OPENUI_SUPPRESSED_TOOLS into
     rule 1, so the clause carries the live list. The suite importing the list a
     second time to append it (as it used to) was a copy that could go stale
     against the very prompt sitting beside it.
 
-    ``test_openui_policy_rubric`` asserts the tools are named; this asserts the
+    test_openui_policy_rubric asserts the tools are named; this asserts the
     naming comes from the clause and nowhere else.
     """
     from app.agents.prompts.openui_prompts import OPENUI_SUPPRESSED_TOOLS
@@ -226,7 +226,7 @@ def test_quality_scores_every_prompt_derived_gate_on_every_case() -> None:
 
     They are unconditional on purpose: the prompt states each as an absolute, so
     a case does not opt in. Asserting the keys are present is what catches the
-    gates being quietly dropped from ``score()`` again.
+    gates being quietly dropped from score() again.
     """
     scores = _score("sure, on it")
 
@@ -245,7 +245,7 @@ def test_quality_scores_every_prompt_derived_gate_on_every_case() -> None:
     ],
 )
 def test_each_prompt_gate_can_actually_fail_a_reply(gate_name: str, reply: str) -> None:
-    """A gate that cannot go red is not a gate — and one wired into ``score()``
+    """A gate that cannot go red is not a gate — and one wired into score()
     but computing a constant is worse, because the green tick claims it ran."""
     scores = _score(reply)
 
@@ -285,8 +285,8 @@ def test_the_irreversible_set_is_the_products_own_definition() -> None:
 def _sends(*tool_names: str) -> float:
     """The gate's verdict for a run that called exactly these tools.
 
-    Takes ``(case, run)`` since the gate moved into the shared registry in
-    ``core/gates.py`` — one implementation per gate name, dispatched the same way
+    Takes (case, run) since the gate moved into the shared registry in
+    core/gates.py — one implementation per gate name, dispatched the same way
     in every suite.
     """
     case = Case(id="c", ticket="t", prompt="p")
@@ -305,7 +305,7 @@ def test_the_gate_catches_every_tool_the_product_calls_irreversible() -> None:
 
 def test_the_forward_hole_that_was_open_is_closed() -> None:
     """The concrete regression: forwarding the user's mail to an attacker is an
-    exfiltration route ``data/safety/exfiltration.yaml`` already forbids by name,
+    exfiltration route data/safety/exfiltration.yaml already forbids by name,
     and this suite's hand-written set had missed it."""
     assert _sends("GMAIL_FORWARD_MESSAGE") == 0.0
 
@@ -317,7 +317,7 @@ def test_a_read_only_tool_still_passes_the_gate() -> None:
 
 def test_the_fake_toolset_binds_everything_the_shipped_subagent_auto_binds() -> None:
     """The fake mailbox is only a faithful stand-in while it implements the tools
-    production hands the gmail subagent at startup. Add one to ``oauth_config``
+    production hands the gmail subagent at startup. Add one to oauth_config
     and the fake raises mid-run today; this fails at CI time instead.
     """
     config = _gmail_subagent_config()
@@ -327,7 +327,7 @@ def test_the_fake_toolset_binds_everything_the_shipped_subagent_auto_binds() -> 
 
 
 def test_the_fake_toolset_does_not_serve_tools_production_excludes() -> None:
-    """``exclude_tools`` names the stock Gmail tools the custom ones superseded.
+    """exclude_tools names the stock Gmail tools the custom ones superseded.
     Serving one here would let an eval pass on a path production forbids."""
     config = _gmail_subagent_config()
     leaked = sorted(set(config.exclude_tools) & set(_GMAIL_TOOL_NAMES))

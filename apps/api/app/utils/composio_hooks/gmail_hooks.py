@@ -79,14 +79,14 @@ def _primary(entries: Sequence[_PersonField]) -> _PersonField | None:
 
 
 def _display_name(name: GooglePersonName | None) -> str | None:
-    """``displayName`` off the primary name, or "Unknown" when People omitted it."""
+    """displayName off the primary name, or "Unknown" when People omitted it."""
     if name is None or "display_name" not in name.model_fields_set:
         return "Unknown"
     return name.display_name
 
 
 def _entry_value(entry: GooglePersonValue | None) -> str | None:
-    """``value`` off an email/phone entry, or "" when People omitted it."""
+    """value off an email/phone entry, or "" when People omitted it."""
     if entry is None or "value" not in entry.model_fields_set:
         return ""
     return entry.value
@@ -95,11 +95,11 @@ def _entry_value(entry: GooglePersonValue | None) -> str | None:
 def _contact_card(person: GooglePerson) -> ContactCard:
     """Flatten a People API person to the primary name/email/phone the UI shows.
 
-    Every fallback keys off ``model_fields_set``, not on the value being None,
-    because that is what the original ``.get(key, default)`` did: the default
+    Every fallback keys off model_fields_set, not on the value being None,
+    because that is what the original .get(key, default) did: the default
     fires only when People omitted the key, while a key sent as an explicit
-    ``null`` stays ``None``. The web client and the LLM have always received that
-    ``None``, so normalizing it here would change a live payload.
+    null stays None. The web client and the LLM have always received that
+    None, so normalizing it here would change a live payload.
     """
     return {
         "name": _display_name(_primary(person.names)),
@@ -146,11 +146,11 @@ def gmail_send_email_schema_modifier(tool: str, toolkit: str, schema: Tool) -> T
 
 @register_schema_modifier(tools=list(_GMAIL_COMPOSE_TOOLS))
 def gmail_compose_hide_is_html_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """Hide the ``is_html`` parameter from the agent-facing schema.
+    """Hide the is_html parameter from the agent-facing schema.
 
     The before-hook always converts the body to HTML and sets the flag, so
     exposing it to the agent just invites bad choices (agent picks False,
-    writes Markdown, Gmail renders ``**bold**`` as literal asterisks). The
+    writes Markdown, Gmail renders **bold** as literal asterisks). The
     agent writes Markdown — everything else is our problem.
     """
     # `input_parameters` is typed as a Dict by Composio's SDK, but callers in practice
@@ -170,10 +170,10 @@ def gmail_compose_hide_is_html_schema_modifier(tool: str, toolkit: str, schema: 
 
 @register_schema_modifier(tools=["GMAIL_SEND_EMAIL", "GMAIL_CREATE_EMAIL_DRAFT"])
 def gmail_compose_require_subject_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """Make ``subject`` a required, non-empty field for email composition.
+    """Make subject a required, non-empty field for email composition.
 
     A blank subject line reads as spam and gets buried — the agent must always
-    write a clear, specific subject. Marking it required with ``minLength`` means
+    write a clear, specific subject. Marking it required with minLength means
     the function-calling / args-validation layer rejects a call that omits or
     blanks it, before the tool ever runs (before-hook exceptions are swallowed,
     so schema-level enforcement is the only hard guarantee).
@@ -210,10 +210,10 @@ def gmail_fetch_message_schema_modifier(tool: str, toolkit: str, schema: Tool) -
 
 @register_schema_modifier(toolkits=["gmail"])
 def gmail_hide_user_id_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """Strip ``user_id`` from every Gmail tool's agent-facing schema.
+    """Strip user_id from every Gmail tool's agent-facing schema.
 
-    The mailbox is fixed by the connected account, so the Gmail ``userId`` must
-    always be ``"me"``. Exposing it baits the agent into passing the literal
+    The mailbox is fixed by the connected account, so the Gmail userId must
+    always be "me". Exposing it baits the agent into passing the literal
     address, which returns zero results; removing it forces Composio's default.
     """
     input_params: object = schema.input_parameters
@@ -246,7 +246,7 @@ def _normalize_compose_body(arguments: dict[str, Any]) -> None:
 
 
 def _compose_recipient_ready(tool: str, arguments: dict[str, Any]) -> bool:
-    """Map ``to`` -> ``recipient_email`` and confirm a SEND/DRAFT call is streamable.
+    """Map to -> recipient_email and confirm a SEND/DRAFT call is streamable.
 
     Non-compose tools (reply/forward) are always ready. Returns False (and logs) when
     a SEND/DRAFT call is missing a recipient or any content, so streaming is skipped.
@@ -306,7 +306,7 @@ def _stream_compose_preview(
     needs the draft id Gmail only returns once the tool has run. Streaming the
     card here would render one whose Send falls back to composing a fresh mail
     from the card's fields, silently dropping every attachment, so the draft
-    card is handed to ``gmail_create_draft_after_hook`` instead.
+    card is handed to gmail_create_draft_after_hook instead.
     """
     card = _compose_card(tool, arguments, attachment_display)
     if tool == "GMAIL_CREATE_EMAIL_DRAFT":

@@ -1,7 +1,7 @@
 """The harness-owned completion predicates, tested directly.
 
-``tests/integration/agents/test_harness_completion.py`` proves the graph wiring
-— that ``should_continue`` routes to ``nudge_continue`` and that the nudge is
+tests/integration/agents/test_harness_completion.py proves the graph wiring
+— that should_continue routes to nudge_continue and that the nudge is
 bounded. It never exercises the predicates' own boundaries, so this file does:
 where the delegation boundary falls, what counts as a promise, and the exact
 tool-call floor.
@@ -43,7 +43,7 @@ pytestmark = pytest.mark.unit
 
 
 def _task(text: str = "do the thing") -> HumanMessage:
-    """The per-delegation task turn ``build_initial_messages`` appends."""
+    """The per-delegation task turn build_initial_messages appends."""
     return HumanMessage(content=text)
 
 
@@ -63,7 +63,7 @@ def _tool_result(text: str = "result") -> ToolMessage:
 
 
 def _worked(count: int) -> list[AnyMessage]:
-    """``count`` completed tool round-trips."""
+    """count completed tool round-trips."""
     messages: list[AnyMessage] = []
     for _ in range(count):
         messages.extend([AIMessage(content=""), _tool_result()])
@@ -152,7 +152,7 @@ class TestCurrentDelegation:
 
     def test_a_state_without_a_messages_channel_yields_nothing(self) -> None:
         """The predicates run against partially-built states (the graph's own
-        ``state.get`` contract), so an absent channel must read as empty rather
+        state.get contract), so an absent channel must read as empty rather
         than raise into the executor's routing decision."""
         assert current_delegation({}) == []
 
@@ -218,7 +218,7 @@ class TestReplyPromisesFutureWork:
         assert reply_promises_future_work(state) is False
 
     def test_text_blocks_are_searched_too(self) -> None:
-        """Multimodal replies arrive as a block list; reading only ``str`` content
+        """Multimodal replies arrive as a block list; reading only str content
         would let a promise through unnoticed."""
         state = make_state(
             messages=[_task(), AIMessage(content=[{"type": "text", "text": "hang tight"}])]

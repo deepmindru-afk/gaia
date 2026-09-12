@@ -72,12 +72,12 @@ def pick_chat_channel(
     linked: Mapping[str, PlatformLinkEntry],
     preferences: Mapping[str, bool],
 ) -> ChatChannel | None:
-    """The first platform in ``priority`` that is linked, enabled and reachable.
+    """The first platform in priority that is linked, enabled and reachable.
 
     Pure so the ordering rules are provable without a database. A platform the
     user switched off in notification settings is skipped, as is one linked
     without an account id (a legacy row); the order then falls through to the
-    next. ``None`` means no bot platform is usable: the caller sends on the web
+    next. None means no bot platform is usable: the caller sends on the web
     only and never falls back to every platform.
     """
     for platform in priority:
@@ -93,7 +93,7 @@ def pick_chat_channel(
 
 
 async def resolve_chat_channel(user_id: str) -> ChatChannel | None:
-    """The one chat platform for ``user_id``, from a single read of their document."""
+    """The one chat platform for user_id, from a single read of their document."""
     user = await user_repository.get(user_id)
     if user is None:
         return None

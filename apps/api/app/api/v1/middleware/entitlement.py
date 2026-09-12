@@ -1,13 +1,13 @@
 """Deny-by-default paid-only gate for every authenticated HTTP request.
 
-The per-route ``@require_subscription()`` decorator this replaced was opt-in: a route was
+The per-route @require_subscription() decorator this replaced was opt-in: a route was
 paywalled only if someone remembered to decorate it, and it failed *open* when
 it could not resolve a caller. Every new endpoint was free until noticed. This
 middleware inverts that — a route is paywalled unless it is named in
-``entitlement_allowlist.FREE_PATH_PREFIXES``.
+entitlement_allowlist.FREE_PATH_PREFIXES.
 
-Runs immediately inside ``WorkOSAuthMiddleware`` so ``request.state.user`` is
-already resolved (see ``app.core.middleware.configure_middleware`` for the
+Runs immediately inside WorkOSAuthMiddleware so request.state.user is
+already resolved (see app.core.middleware.configure_middleware for the
 ordering, which is load-bearing). Unauthenticated requests pass straight
 through: auth is the route's own job, and 402ing an anonymous caller would tell
 the world which paths exist.
@@ -39,7 +39,7 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
     """402 every authenticated non-PRO request that is not explicitly free.
 
     A plan read that cannot be answered at all is a 503, not a 402 — see the
-    ``except`` branch in ``dispatch``.
+    except branch in dispatch.
     """
 
     async def dispatch(
@@ -94,7 +94,7 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
         """Render the exact body the app's HTTPException handler would emit.
 
         The web's axios interceptor and the chat-stream client both match on
-        ``code == "subscription_required"``; rendering the same envelope the
+        code == "subscription_required"; rendering the same envelope the
         generic handler does keeps that contract byte-identical whether a 402
         comes from here or from an imperative in-handler gate.
         """
@@ -104,8 +104,8 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
     def _entitlement_unavailable() -> JSONResponse:
         """503 for a plan read that could not be answered at all.
 
-        ``Retry-After`` is what makes this recoverable without a reload: the
-        gate runs before ``call_next``, so nothing was executed and a retry is
+        Retry-After is what makes this recoverable without a reload: the
+        gate runs before call_next, so nothing was executed and a retry is
         safe on every method, not just the idempotent ones.
         """
         return error_response(

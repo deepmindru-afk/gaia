@@ -35,15 +35,15 @@ from app.services.chat.stream import run_chat_stream_background
 
 
 def _created_conversation(conversation_id: str, description: str) -> ConversationModel:
-    """The real `create_conversation` return value — mock it with nothing looser."""
+    """The real create_conversation return value — mock it with nothing looser."""
     return ConversationModel(conversation_id=conversation_id, description=description)
 
 
 def _usage_callback_class() -> MagicMock:
-    """Stand-in for LangChain's `UsageMetadataCallbackHandler`.
+    """Stand-in for LangChain's UsageMetadataCallbackHandler.
 
-    The real handler exposes `usage_metadata` as a dict, and the stream feeds it
-    straight into `MainResponseCompleteFrame`. A bare `MagicMock()` would hand the
+    The real handler exposes usage_metadata as a dict, and the stream feeds it
+    straight into MainResponseCompleteFrame. A bare MagicMock() would hand the
     frame a Mock instead, so the stand-in must carry the real attribute type.
     """
     return MagicMock(return_value=MagicMock(usage_metadata={}))
@@ -499,9 +499,9 @@ class TestRunChatStreamBackground:
     def _no_pending_approval(self) -> Iterator[None]:
         """Stub conversational HIL resolution to "nothing pending".
 
-        ``run_chat_stream_background`` now checks Mongo for a pending approval at
+        run_chat_stream_background now checks Mongo for a pending approval at
         the top of each turn. These tests exercise the normal turn and don't stub
-        Redis, so without this the real ``redis_cache`` singleton is reached and
+        Redis, so without this the real redis_cache singleton is reached and
         raises "Event loop is closed" under xdist's per-test event loops.
         """
         with patch(
@@ -512,18 +512,18 @@ class TestRunChatStreamBackground:
 
     @pytest.fixture(autouse=True)
     def _no_live_artifact_forwarder(self) -> Iterator[None]:
-        """Force ``ArtifactForwarder`` onto its "Redis unavailable" fast path.
+        """Force ArtifactForwarder onto its "Redis unavailable" fast path.
 
-        ``run_chat_stream_background`` spawns ``forward_artifact_events`` as a
-        background task for every turn with a ``user_id``. Its ``run()`` reads
-        the process-wide ``redis_cache`` singleton directly (not ``stream_manager``,
+        run_chat_stream_background spawns forward_artifact_events as a
+        background task for every turn with a user_id. Its run() reads
+        the process-wide redis_cache singleton directly (not stream_manager,
         which the tests below already mock) — in a hermetic dev/test env
-        ``redis_cache.redis`` is ``None`` and it no-ops, but under CI's live-services
-        job (real Redis running, ``REDIS_URL`` pointing at it) it subscribes to a
-        real pub/sub channel and blocks in ``pubsub.listen()`` for the rest of the
-        turn, relying entirely on ``_finalize_stream``'s ``artifact_task.cancel()``
-        landing before test/CI timeouts to unblock it. ``tests/unit/`` must be fully
-        mocked and I/O-free (see ``tests/CLAUDE.md``), so pin the fast path here
+        redis_cache.redis is None and it no-ops, but under CI's live-services
+        job (real Redis running, REDIS_URL pointing at it) it subscribes to a
+        real pub/sub channel and blocks in pubsub.listen() for the rest of the
+        turn, relying entirely on _finalize_stream's artifact_task.cancel()
+        landing before test/CI timeouts to unblock it. tests/unit/ must be fully
+        mocked and I/O-free (see tests/CLAUDE.md), so pin the fast path here
         instead of depending on ambient Redis connectivity/scheduling.
         """
         with patch("app.services.chat.artifact_forwarder.redis_cache.redis", None):
@@ -655,7 +655,7 @@ class TestRunChatStreamBackground:
         }
 
     async def test_source_is_carried_onto_the_terminal_event(self, test_user, existing_conv_body):
-        """`source` is what lets one event name span web, desktop and bots.
+        """source is what lets one event name span web, desktop and bots.
 
         Every other test leaves it None, so the branch that attaches it never
         ran with a value — key and value were both free to drift.

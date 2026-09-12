@@ -4,7 +4,6 @@ import asyncio
 from datetime import UTC, datetime
 import uuid
 
-import cloudinary
 import cloudinary.uploader
 from fastapi import HTTPException, UploadFile
 

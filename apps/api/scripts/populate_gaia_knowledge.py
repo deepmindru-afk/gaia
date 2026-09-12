@@ -1,7 +1,5 @@
 #!/usr/bin/env python
-"""
-Populate GAIA's knowledge base in ChromaDB from content.md file.
-"""
+"""Populate GAIA's knowledge base in ChromaDB from content.md file."""
 
 import argparse
 import asyncio

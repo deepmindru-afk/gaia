@@ -1,27 +1,27 @@
-"""User-todos VFS catalog materialization for ``/workspace/todos/``.
+"""User-todos VFS catalog materialization for /workspace/todos/.
 
 This is the USER's own todo list (the one in the UI) — NOT GAIA's
-institutional memory (which lives at ``/workspace/gaia-tasks/``).
+institutional memory (which lives at /workspace/gaia-tasks/).
 
 Lighter than the gaia-tasks materializer:
 
-* Only ``meta.json`` per todo (no canvas / log).
+* Only meta.json per todo (no canvas / log).
 * 7-day completion window (vs 30 for gaia-tasks) — user todos are
   high-churn, completed items rarely need re-reading.
-* ``index.md`` carries a due-date suffix + a priority glyph because
+* index.md carries a due-date suffix + a priority glyph because
   the agent uses this view as a quick "what's on the user's plate".
 
-Layout under ``<user_root>/todos/``::
+Layout under <user_root>/todos/::
 
     GUIDE.md                          hand-authored, mode 0644
     index.md                          generated summary, mode 0644
     <slug>-<shortid>/
         meta.json                     mode 0444
 
-Marker scheme + folder naming mirror :mod:`gaia_tasks_vfs` — same
-``<slug>-<shortid>`` shape so the agent reads the two areas the same
+Marker scheme + folder naming mirror :mod:gaia_tasks_vfs — same
+<slug>-<shortid> shape so the agent reads the two areas the same
 way. Shared FS / hashing / slug helpers live in
-:mod:`app.services.storage._vfs_common`.
+:mod:app.services.storage._vfs_common.
 """
 
 from __future__ import annotations
@@ -138,7 +138,7 @@ def _index_lines(docs: list[UserTodoProjection]) -> str:
 
 
 def materialize_user_todos(user_root: Path, docs: list[UserTodoProjection], guide_md: str) -> int:
-    """Idempotently project ``docs`` into ``<user_root>/todos/``.
+    """Idempotently project docs into <user_root>/todos/.
 
     Returns the number of meta bodies rewritten (excluding GUIDE / index).
     """
@@ -177,7 +177,7 @@ def _write_changed_docs(
 
 
 def _remove_stale_folders(todos_root: Path, expected: set[str]) -> None:
-    """Remove subdirectories of ``todos_root`` not in ``expected``."""
+    """Remove subdirectories of todos_root not in expected."""
     for child in todos_root.iterdir():
         if child.is_dir() and child.name not in expected:
             remove_tree(child)

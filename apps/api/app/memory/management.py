@@ -129,9 +129,9 @@ async def list_memories(
     category: str | None = None,
     include_subfolders: bool = False,
 ) -> MemoryListResponse:
-    """One page of memories, newest first. ``category`` is an EXACT folder
+    """One page of memories, newest first. category is an EXACT folder
     match by default so tree expansion shows only a folder's own memories;
-    pass ``include_subfolders=True`` for whole-subtree listings."""
+    pass include_subfolders=True for whole-subtree listings."""
     rows, total = await pg_store.list_memories(
         user_id,
         page=page,
@@ -172,14 +172,14 @@ class MemoryNotFoundError(AppError):
 
 
 async def _resolve_live_head(memory_id: str, user_id: str) -> MemoryRecord:
-    """The live head of the chain ``memory_id`` belongs to.
+    """The live head of the chain memory_id belongs to.
 
     A model correcting a memory routinely hands back an id it saw in an older
     recall, which by then has been superseded. That id still names a real
     chain, so resolve it to the chain's live head rather than refusing — the
     correction the user asked for is unambiguous either way.
 
-    Raises ``MemoryNotFoundError`` when the id names nothing at all (a typo, a
+    Raises MemoryNotFoundError when the id names nothing at all (a typo, a
     hallucination, another user's memory) or when the chain has no live head.
     That has to be an exception, not a string: the tool returned
     "Error: ... not found or already superseded" as its result and the model
@@ -210,10 +210,10 @@ async def update_memory(user_id: str, memory_id: str, content: str) -> MemoryEnt
 
     A superseded id resolves to the head of its chain, so a correction never
     fails just because the model quoted an older version. The old row stays as
-    history (``is_latest=False``); the new row inherits folder, kind, shelf
+    history (is_latest=False); the new row inherits folder, kind, shelf
     life, expiry, importance and entity links.
 
-    Raises ``MemoryNotFoundError`` when no live memory can be resolved.
+    Raises MemoryNotFoundError when no live memory can be resolved.
     """
     old = await _resolve_live_head(memory_id, user_id)
     memory_id = str(old.id)

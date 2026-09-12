@@ -70,7 +70,7 @@ def _make_refresh_result(
     MagicMock stores its attributes in __dict__, so setting mock attributes
     before overriding __dict__ is lost.  Instead we use a SimpleNamespace-like
     approach: build a plain object whose __dict__ contains exactly what the
-    production code reads via ``refresh_dict = refresh_result.__dict__``.
+    production code reads via refresh_dict = refresh_result.__dict__.
     """
 
     class _RefreshResult:

@@ -1141,7 +1141,7 @@ async def create_e2b_sandbox_indexes() -> None:
 
 
 async def create_llm_call_indexes() -> None:
-    """Create indexes for the ``llm_calls`` ledger — one document per model call.
+    """Create indexes for the llm_calls ledger — one document per model call.
 
     Five query indexes and no more: this is the highest-write collection in the
     system, and every extra index is paid on every insert. Each one below names

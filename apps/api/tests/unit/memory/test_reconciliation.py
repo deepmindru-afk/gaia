@@ -1,4 +1,4 @@
-"""Unit tests for ``app.memory.reconciliation`` — dedupe/supersession verdicts.
+"""Unit tests for app.memory.reconciliation — dedupe/supersession verdicts.
 
 Chroma similarity, Postgres hydration and the reconcile LLM are mocked seams;
 the similarity banding, exact-duplicate collapse and candidate liveness
@@ -78,7 +78,7 @@ async def _reconcile_one(
     similarity: float = 0.99,
     llm: AsyncMock | None = None,
 ) -> tuple[list[reconciliation.ReconciledFact], AsyncMock]:
-    """Run ``reconcile`` for one fact whose only Chroma hit hydrates to ``row``."""
+    """Run reconcile for one fact whose only Chroma hit hydrates to row."""
     llm_mock = llm if llm is not None else AsyncMock(return_value=ReconcileBatchResult())
     with (
         patch.object(

@@ -7,7 +7,7 @@ which is the only way to tell that a replay still gates every call now that the
 runner no longer calls the gate itself.
 
 A replay makes one model call when the playbook has no asks (the end-of-run
-result and verdict), plus one ask fill for each step that carries ``$ask`` slots,
+result and verdict), plus one ask fill for each step that carries $ask slots,
 made immediately before that step so the slots are written from what has actually
 run. The scripted model's turns are not model calls and never reach a provider.
 """
@@ -223,7 +223,7 @@ def _narration(result: str = "Twelve events, mail sent.") -> PlaybookNarration:
 def _slot(prompt: str, max_tokens: int | None = None) -> dict[str, Any]:
     """An ask slot as it is authored: the instruction, standing in the argument.
 
-    Written as a plain dict rather than through ``AskSlot`` because that is what
+    Written as a plain dict rather than through AskSlot because that is what
     a stored playbook holds and what the runner has to recognise.
     """
     slot: dict[str, Any] = {"$ask": prompt}
@@ -233,7 +233,7 @@ def _slot(prompt: str, max_tokens: int | None = None) -> dict[str, Any]:
 
 
 def _ask_fill(asks: dict[str, str] | None = None) -> PlaybookAskFill:
-    """What one ask call answers, keyed by each slot's ``<step>.<arg>`` key."""
+    """What one ask call answers, keyed by each slot's <step>.<arg> key."""
     return PlaybookAskFill(
         asks=[PlaybookAskAnswer(name=name, text=text) for name, text in (asks or {}).items()]
     )
@@ -253,7 +253,7 @@ def _result_prompt(llm: AsyncMock) -> str:
 def _gate_policy(policy: str) -> Iterator[AsyncMock]:
     """Run the REAL HIL gate with only its preference lookup replaced.
 
-    ``resolve_policy`` is the gate's one I/O dependency (the user's HIL
+    resolve_policy is the gate's one I/O dependency (the user's HIL
     preferences and the tool's destructive classification). Everything after it
     — the pausability check, the refusal message, the fail-closed behaviour of a
     background run — is the production gate.
@@ -265,7 +265,7 @@ def _gate_policy(policy: str) -> Iterator[AsyncMock]:
 
 @dataclass(frozen=True)
 class _Seams:
-    """The mocked seams a test may hold on to; see ``_run``."""
+    """The mocked seams a test may hold on to; see _run."""
 
     subagent: _FakeSubagent | None = None
     runnable: MagicMock | None = None
@@ -283,12 +283,12 @@ async def _run(
 ) -> tuple[PlaybookRunResult, AsyncMock]:
     """Run the playbook with mocked seams; hands back the result and the LLM mock.
 
-    ``narration`` is what the end-of-run call returns; ``ask_fill`` is what the
+    narration is what the end-of-run call returns; ask_fill is what the
     ask call returns, and giving one makes the model answer the ask call first
     and the narration second, in that order — so it fits a playbook whose slots
     all sit on one step. A playbook with slots on several steps makes an ask
-    call per step and scripts them through ``seams.llm`` instead. ``runnable``,
-    ``find_previous`` and ``llm`` let a test hold on to the seam it is asserting
+    call per step and scripts them through seams.llm instead. runnable,
+    find_previous and llm let a test hold on to the seam it is asserting
     about: how a model call is built, what the previous execution's trace was
     looked up with, and what the model calls do.
     """
@@ -414,9 +414,9 @@ async def test_resolved_arguments_reach_the_tool() -> None:
 async def test_a_replayed_tool_resolves_the_run_user() -> None:
     """Regression: the runner used to hand-build the tool config and got it wrong.
 
-    A replayed ``list_todos`` came back "User authentication required" with zero
-    items while the agent path returned 38, because ``get_user_id_from_config``
-    reads ``config["metadata"]`` and only ``configurable`` was set. The graph is
+    A replayed list_todos came back "User authentication required" with zero
+    items while the agent path returned 38, because get_user_id_from_config
+    reads config["metadata"] and only configurable was set. The graph is
     what copies one into the other, so running inside one is the fix.
     """
     recorder = _Recorder()
@@ -610,7 +610,7 @@ async def test_a_handoff_child_runs_in_the_subagents_scoped_tool_space() -> None
 
 
 async def test_a_handoff_child_calling_a_tool_outside_that_scope_fails_the_step() -> None:
-    """``send_email`` exists at top level and is not in the calendar subagent's space."""
+    """send_email exists at top level and is not in the calendar subagent's space."""
     recorder = _Recorder()
     registry = _FakeRegistry(_tools(recorder), spaces={"calendar": ["list_events"]})
     playbook = _playbook(
@@ -690,8 +690,8 @@ async def test_a_handoff_child_may_run_a_tool_the_users_mcp_client_provides() ->
 
 
 async def test_a_step_that_raises_stops_the_run_with_the_completed_steps_on_record() -> None:
-    """An exception out of the step's graph used to escape ``run_playbook``
-    before any result existed, so the worker never saw ``ok=False`` and the
+    """An exception out of the step's graph used to escape run_playbook
+    before any result existed, so the worker never saw ok=False and the
     trace of the steps that had already run — with their side effects — was
     lost with it."""
     recorder = _Recorder()
@@ -787,7 +787,7 @@ async def test_a_narration_that_raises_after_every_step_is_still_a_completed_run
 
 
 async def test_a_narration_failure_still_counts_the_ask_call_that_did_return() -> None:
-    """``llm_calls`` is the replay's cost line: the ask fill was billed, the
+    """llm_calls is the replay's cost line: the ask fill was billed, the
     narration that raised was not."""
     recorder = _Recorder()
     registry = _FakeRegistry(_tools(recorder))
@@ -818,7 +818,7 @@ async def test_a_narration_failure_still_counts_the_ask_call_that_did_return() -
 
 
 async def test_a_mid_run_ask_fill_that_raises_stops_before_the_step_that_needed_it() -> None:
-    """A step addressing ``$ask`` triggers the ask fill first. If that raises,
+    """A step addressing $ask triggers the ask fill first. If that raises,
     the step must not run with the ask unfilled, and no result call follows."""
     recorder = _Recorder()
     registry = _FakeRegistry(_tools(recorder))
@@ -1013,7 +1013,7 @@ class TestNarrationCall:
     async def test_a_mid_run_ask_fill_is_told_what_has_not_happened_yet(self) -> None:
         """An ask written before the last step has to know what it is for.
 
-        The ask fill fires as soon as a step needs a ``$ask``, which can be the
+        The ask fill fires as soon as a step needs a $ask, which can be the
         first step. Without the steps still to come in the prompt, the model
         writes the field as if the run ended there.
         """
@@ -1112,7 +1112,7 @@ class TestRunContext:
     """
 
     async def test_the_previous_runs_results_are_addressable_by_tool_name(self) -> None:
-        """``$last_run`` is how a cursor survives between fires.
+        """$last_run is how a cursor survives between fires.
 
         It is looked up for this workflow and this user; a lookup that drifts off
         either one silently resolves the placeholder to nothing and the run
@@ -1144,9 +1144,9 @@ class TestRunContext:
         assert recorder.calls[0][1]["body"] == "Last time 7"
 
     async def test_the_user_and_the_users_clock_reach_the_step(self) -> None:
-        """``$now`` is the workflow's own zone, not the worker's.
+        """$now is the workflow's own zone, not the worker's.
 
-        A worker in UTC resolving a Berlin workflow's ``$now`` sends a digest
+        A worker in UTC resolving a Berlin workflow's $now sends a digest
         stamped an hour off, or on the wrong day either side of midnight.
         """
         recorder = _Recorder()
@@ -1167,7 +1167,7 @@ class TestRunContext:
 
 
 async def test_a_finished_run_reports_every_step_it_completed() -> None:
-    """``completed`` is what a fallback agent is told it must not do again.
+    """completed is what a fallback agent is told it must not do again.
 
     An empty list on a run that really did send the mail is how a workflow sends
     twice.
@@ -1187,10 +1187,10 @@ async def test_a_finished_run_reports_every_step_it_completed() -> None:
 async def test_a_run_that_stops_after_the_ask_fill_still_reports_the_call_it_made() -> None:
     """The ask fill is spent whether or not the run finished.
 
-    ``llm_calls`` is the replay's cost line. A stopped run that already filled
+    llm_calls is the replay's cost line. A stopped run that already filled
     its asks and reports zero makes the replay look free exactly when it was
     not. The result call does not follow: a stopped run reports through
-    ``failure``, not through a result.
+    failure, not through a result.
     """
     recorder = _Recorder()
     registry = _FakeRegistry(_tools(recorder, failing="list_events"))
@@ -1312,7 +1312,7 @@ class TestReplayGraphContract:
 
 
 def _prompt_block(prompt: str, tag: str) -> str:
-    """The text inside one ``<tag>`` section of a model call's prompt."""
+    """The text inside one <tag> section of a model call's prompt."""
     return prompt.split(f"<{tag}>\n", 1)[1].split(f"\n</{tag}>", 1)[0]
 
 
@@ -1662,7 +1662,7 @@ class TestTrace:
     """What lands on the durable record, and under what identity.
 
     The trace is what stops the fallback agent from repeating a side effect and
-    what a later run's ``$last_run`` reads. A call recorded under the wrong
+    what a later run's $last_run reads. A call recorded under the wrong
     category, without its arguments, or with the handoff's identity missing is a
     record that cannot be replayed or audited afterwards.
     """
@@ -1722,7 +1722,7 @@ class TestTrace:
         self,
     ) -> None:
         """The record was built outside the step's guard, so a digest the model
-        refused raised out of ``run_playbook`` and the steps already on the
+        refused raised out of run_playbook and the steps already on the
         trace were lost with it. The run always comes back as a result."""
         recorder = _Recorder()
         registry = _FakeRegistry(_tools(recorder))
@@ -1894,7 +1894,7 @@ class TestNonStringResults:
         """A tool that only updates state answers nothing, and the run must not guess.
 
         Treating "no result" as an empty success records a call that returned
-        nothing as if it had returned something, and every later ``$steps``
+        nothing as if it had returned something, and every later $steps
         reference resolves against a hole.
         """
         recorder = _Recorder()
@@ -1961,9 +1961,9 @@ async def test_a_handoff_child_can_carry_a_slot() -> None:
 def test_a_scripted_turn_is_a_bare_tool_call_and_nothing_else() -> None:
     """The exact shape of the turn the agent loop is handed.
 
-    ``content`` must be empty: a scripted turn is a call, not an answer, and any
+    content must be empty: a scripted turn is a call, not an answer, and any
     text on it is prose the run never produced that still reaches the message
-    history and the user-facing stream. The call's ``type`` is what LangChain
+    history and the user-facing stream. The call's type is what LangChain
     routes on, so a tool call carrying anything else is dropped on the floor and
     the step silently never runs.
     """
@@ -1986,7 +1986,7 @@ def test_a_scripted_turn_is_a_bare_tool_call_and_nothing_else() -> None:
 
 
 def _previous_run(*calls: RecordedCall) -> AsyncMock:
-    """One previous execution's trace, as ``find_recent_with_trace`` hands it back."""
+    """One previous execution's trace, as find_recent_with_trace hands it back."""
     previous = MagicMock()
     previous.trace = list(calls)
     return AsyncMock(return_value=[previous])
@@ -2039,7 +2039,7 @@ class TestErrorEnvelope:
         assert "rate limited" in (result.failure or "")
 
     async def test_a_bare_success_false_still_names_a_reason(self) -> None:
-        """An envelope that says only ``success: false`` has no words of its own.
+        """An envelope that says only success: false has no words of its own.
 
         The report is the whole handover, so the runner supplies the one fact it
         does have rather than passing an empty reason to the agent.
@@ -2081,7 +2081,7 @@ class TestErrorEnvelope:
 
 
 class TestSuspectVerdict:
-    """A run that completes can still be wrong. ``suspect`` says why, without
+    """A run that completes can still be wrong. suspect says why, without
     stopping anything: every step runs, the result is written, and the worker
     decides what a distrusted result is worth."""
 
@@ -2134,8 +2134,8 @@ class TestSuspectVerdict:
         """That early return is a full result, not a stub.
 
         The agent finishes this fire from it: without the trace it repeats the
-        send whose side effect already happened, without ``completed`` it does
-        not know which steps those were, and without ``llm_calls`` the ask fill
+        send whose side effect already happened, without completed it does
+        not know which steps those were, and without llm_calls the ask fill
         the run already paid for reads as free.
         """
         recorder = _Recorder()
@@ -2197,9 +2197,9 @@ class TestSuspectVerdict:
         assert [name for name, _ in recorder.calls] == ["list_events", "send_email"]
 
     async def test_an_empty_list_inside_a_result_envelope_counts_as_empty(self) -> None:
-        """GAIA tools answer in envelopes: the list is at ``data.messages``, not
+        """GAIA tools answer in envelopes: the list is at data.messages, not
         at the top. Seen live: a Gmail fetch of nothing is
-        ``{"data": {"fetched_count": 0, "messages": []}}``."""
+        {"data": {"fetched_count": 0, "messages": []}}."""
         recorder = _Recorder()
         registry = _FakeRegistry(
             _tools(recorder, events_result='{"data": {"fetched_count": 0, "messages": []}}')
@@ -2262,7 +2262,7 @@ class TestSuspectVerdict:
         )
 
     async def test_the_previous_runs_last_call_of_the_tool_is_the_one_compared(self) -> None:
-        """``$last_run`` resolves a tool called twice to its LAST result (the
+        """$last_run resolves a tool called twice to its LAST result (the
         attempt that worked); the empty-result check read the FIRST, so a retry
         that had items after an empty first attempt was never compared."""
         recorder = _Recorder()
@@ -2701,7 +2701,7 @@ async def test_each_fill_fires_at_its_own_step_and_no_earlier() -> None:
 
 
 async def test_a_slot_is_filled_before_the_placeholder_beside_it_is_resolved() -> None:
-    """Filling runs first, so a slot and a ``$steps`` reference in one argument
+    """Filling runs first, so a slot and a $steps reference in one argument
     both arrive resolved.
 
     The order is load-bearing in both directions: resolution first would meet the
@@ -2857,7 +2857,7 @@ class TestTheStepGraphInvocation:
 
 
 class TestTheArgumentsTheNarrationSees:
-    """The rendered arguments on each ``completed`` line.
+    """The rendered arguments on each completed line.
 
     They are the model's only view of what a call actually ran with, and the
     line is built AFTER the call, so a renderer that raises loses a run whose
@@ -2953,7 +2953,7 @@ async def test_the_ask_fill_adds_to_the_runs_llm_count_rather_than_resetting_it(
 
 
 def _bare_run(registry: Any = None) -> _Run:
-    """A ``_Run`` at the first position, for calling one internal directly."""
+    """A _Run at the first position, for calling one internal directly."""
     return _Run(
         registry=registry or _FakeRegistry({}),
         base=RunContext(
@@ -2977,7 +2977,7 @@ def _bare_run(registry: Any = None) -> _Run:
 class TestGuardsOnStatesTheModelsRuleOut:
     """Branches a valid document cannot currently reach, asserted directly.
 
-    ``PlaybookStep`` enforces exactly one of ``tool``/``handoff``, a playbook
+    PlaybookStep enforces exactly one of tool/handoff, a playbook
     carries at least one step, and a run the record already distrusted returns
     before the narration is ever written. Each guard below is what happens when
     one of those stops holding — a document written by an older schema, a
@@ -3077,7 +3077,7 @@ class TestForEach:
         assert [args["to"] for name, args in recorder.calls if name == "send_email"] == ["a", "b"]
 
     async def test_the_run_reports_how_many_elements_the_source_held_not_how_many_ran(self) -> None:
-        """Seen live: a source of six under a cap of one logged ``items: 1``, so
+        """Seen live: a source of six under a cap of one logged items: 1, so
         the cap was invisible and a for_each looked like a one-item day."""
         recorder = _Recorder()
         registry = _FakeRegistry(
@@ -3096,8 +3096,8 @@ class TestForEach:
 
     async def test_an_id_less_step_still_reports_how_many_times_it_ran(self) -> None:
         """Seen on the real model: it writes for_each steps without ids, and
-        ``ran`` was counted off the id-keyed results, so a loop that ran once
-        logged ``ran: 0`` and read as a quiet day."""
+        ran was counted off the id-keyed results, so a loop that ran once
+        logged ran: 0 and read as a quiet day."""
         recorder = _Recorder()
         registry = _FakeRegistry(_tools(recorder, events_result='{"ids": ["a", "b"]}'))
         steps = [
@@ -3338,8 +3338,8 @@ class TestForEachShape:
 
 
 class TestAskAnswerShape:
-    """``text`` had to become optional so a for_each source could answer with
-    ``items``. That opened a hole: an answer with neither landed in the answers
+    """text had to become optional so a for_each source could answer with
+    items. That opened a hole: an answer with neither landed in the answers
     table as an empty string, the missing-slot warning could not see it, and
     the empty string went into a real tool argument. The model rejects it now,
     so the ask call raises and the run stops instead of calling a tool blind.
@@ -3386,7 +3386,7 @@ class TestAskAnswerShape:
 
 
 class TestNarrationSeesTheSelection:
-    """The narration is shown every element's call in ``completed``. It also has
+    """The narration is shown every element's call in completed. It also has
     to be told those calls were a SELECTION, and what was picked, or it writes
     the result as if the loop had covered everything the fetch returned."""
 
@@ -3425,9 +3425,9 @@ class TestNarrationSeesTheSelection:
 
 
 async def test_a_narration_that_answers_without_the_schema_falls_back_to_the_record() -> None:
-    """The structured runnable hands back ``None`` when the model writes prose
+    """The structured runnable hands back None when the model writes prose
     instead of the schema. That used to surface as a RuntimeError out of
-    ``run_playbook`` after every step had run, failing the fire and sending the
+    run_playbook after every step had run, failing the fire and sending the
     next one to a heal run against a sequence that had just done its job."""
     recorder = _Recorder()
     registry = _FakeRegistry(_tools(recorder))
@@ -3514,7 +3514,7 @@ async def test_the_baseline_lookup_asks_for_the_whole_window() -> None:
 
 class TestAnEmptySelectionIsAnAnswer:
     """Seen on a scheduled fire with the real model: it answered the for_each
-    $ask with ``items: []`` because nothing qualified that day, and the answer
+    $ask with items: [] because nothing qualified that day, and the answer
     was refused as neither text nor items. A quiet day became a stopped replay
     and spent a heal attempt on a body that was right."""
 

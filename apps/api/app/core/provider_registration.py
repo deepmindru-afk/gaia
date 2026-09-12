@@ -17,10 +17,10 @@ This module does two distinct things:
 
 Gotchas:
 - Background warmup failures do not crash the server; they are logged.
-- While warmup is running, request handlers may still call `providers.aget(...)`.
-  This is safe: `LazyLoader` uses per-provider locks so concurrent calls join
+- While warmup is running, request handlers may still call providers.aget(...).
+  This is safe: LazyLoader uses per-provider locks so concurrent calls join
   the same initialization work rather than double-initializing.
-- Always use `providers.aget(...)` for async providers; `providers.get(...)`
+- Always use providers.aget(...) for async providers; providers.get(...)
   is only for sync providers.
 """
 
@@ -162,13 +162,13 @@ def register_lazy_providers(context: Literal["main_app", "arq_worker"]) -> None:
     """Register all lazy providers (dormant until first access).
 
     Always fast — no I/O, just decorator bookkeeping — so it's safe to call on
-    every process start. Split out from `unified_startup` so callers that only
+    every process start. Split out from unified_startup so callers that only
     need the provider registry populated (e.g. a test harness exercising one
     feature that doesn't want the full eager-service startup, which requires
     RabbitMQ/Mongo/etc. to be live) can do so without the rest of startup.
 
-    Gotcha: many providers are authored as `async def` and decorated with
-    `@lazy_provider(...)`. The decorator replaces the async function with a
+    Gotcha: many providers are authored as async def and decorated with
+    @lazy_provider(...). The decorator replaces the async function with a
     sync registration function, so these calls are intentionally NOT awaited.
     """
     log.info(f"{LogTag.STARTUP} Registering lazy providers for ...", context=context)

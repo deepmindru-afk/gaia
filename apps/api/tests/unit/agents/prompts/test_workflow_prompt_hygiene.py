@@ -1,7 +1,7 @@
-"""A workflow's `prompt` is instructions, not a copy of its own config.
+"""A workflow's prompt is instructions, not a copy of its own config.
 
 The scheduler has already fired the run and the trigger data is already handed
-over by the time the executor reads `prompt`, so "Every morning at 9am:" and
+over by the time the executor reads prompt, so "Every morning at 9am:" and
 "When a new email arrives in Gmail:" are inert text the run cannot act on. Two
 separate LLMs write that field, and they had drifted: the editor's generator
 banned schedule and trigger language outright while the chat assistant said
@@ -50,7 +50,7 @@ TRIGGER_TELLS = (
 
 
 def _finalized_example_prompts(system_prompt: str) -> list[str]:
-    """The `prompt` value of every finalized workflow the prompt demonstrates."""
+    """The prompt value of every finalized workflow the prompt demonstrates."""
     prompts: list[str] = []
     for block in re.findall(r"```json\s*(.*?)```", system_prompt, re.DOTALL):
         try:

@@ -1,7 +1,7 @@
 """A misconfigured machine must not read as a clean bill of health.
 
-Two defects, one incident. `E2B_DOMAIN` is injected empty by Infisical, so
-`DevelopmentSettings` rejects it the moment a suite's loader touches app
+Two defects, one incident. E2B_DOMAIN is injected empty by Infisical, so
+DevelopmentSettings rejects it the moment a suite's loader touches app
 settings. That surfaced as:
 
     [verify] quality: could not load cases: ValueError: quality-openui-...:

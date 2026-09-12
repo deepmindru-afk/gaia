@@ -292,7 +292,7 @@ class TestStreamMetadata:
         assert error_data["error"] == "LLM rate limit exceeded"
 
     async def test_cleanup_removes_redis_keys(self, real_redis):
-        """cleanup deletes progress/signal/active keys but keeps the replay log."""
+        """Cleanup deletes progress/signal/active keys but keeps the replay log."""
         sid = _stream_id()
         await StreamManager.start_stream(sid, "conv-clean", "user-clean")
 

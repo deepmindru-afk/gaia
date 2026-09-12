@@ -181,7 +181,7 @@ def test_an_estimate_of_the_question_is_not_a_measurement() -> None:
 
 
 def test_a_meter_that_never_fired_is_caught_too() -> None:
-    """regression journaled 0 tokens for every case: it read a per-provider total
+    """Regression journaled 0 tokens for every case: it read a per-provider total
     under a provider name the tracker never used."""
     report = check_records([_worked_for(f"reg-{i}", 0, 5.4) for i in range(5)])
     assert not report.ok
@@ -225,7 +225,7 @@ def test_a_real_measurement_is_never_called_too_small() -> None:
 
 
 def test_an_outage_graded_as_a_wrong_answer_blocks_the_run() -> None:
-    """164 GAIA cases were journaled `failed` carrying an HTTP 500 from a dead
+    """164 GAIA cases were journaled failed carrying an HTTP 500 from a dead
     API, with no transcript and no scores, and were averaged into accuracy."""
     outage = [
         {
@@ -247,7 +247,7 @@ def test_an_outage_graded_as_a_wrong_answer_blocks_the_run() -> None:
 
 
 def test_the_same_outage_recorded_honestly_publishes() -> None:
-    """`errored` is the honest status — unscored, out of the denominator. It is
+    """errored is the honest status — unscored, out of the denominator. It is
     the grading of a fault as a wrong answer that must stop a run, not the fault."""
     honest = [
         {

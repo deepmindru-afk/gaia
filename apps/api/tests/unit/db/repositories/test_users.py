@@ -1,12 +1,12 @@
-"""Hermetic unit tests for ``UserRepository``'s raw-update writes — the write-miss
+"""Hermetic unit tests for UserRepository's raw-update writes — the write-miss
 cache eviction, and the activation checklist's collapse.
 
 A user document deleted from Mongo while its entity cache entry was still live
 kept authenticating: reads were served from cache while every write matched no
-document (``PATCH /onboarding/preferences`` answered 404 "user not found"). The
+document (PATCH /onboarding/preferences answered 404 "user not found"). The
 base raw-update seam now evicts the targeted entity key when the write matches
 nothing, so the next auth read misses, re-reads Mongo and 401s honestly. The
-driver is mocked at ``app.db.repositories.base.get_async_collection``, the single
+driver is mocked at app.db.repositories.base.get_async_collection, the single
 seam every read and write in the base repository goes through.
 """
 
@@ -94,14 +94,14 @@ class TestUpdateOnboardingPreferences:
 
 
 def _update_call(collection: MagicMock) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """The single ``find_one_and_update`` call's filter, update document and kwargs."""
+    """The single find_one_and_update call's filter, update document and kwargs."""
     collection.find_one_and_update.assert_awaited_once()
     args, kwargs = collection.find_one_and_update.await_args
     return args[0], args[1], kwargs
 
 
 class TestSetFirstStepsCollapsed:
-    """``set_first_steps_collapsed`` — the checklist's only persisted state.
+    """set_first_steps_collapsed — the checklist's only persisted state.
 
     The service tier mocks this method away, so what it writes and what its
     boolean means are only visible here. The return value is the 404 signal:
@@ -130,7 +130,7 @@ class TestSetFirstStepsCollapsed:
     async def test_expanding_clears_the_timestamp_rather_than_leaving_the_old_one(
         self, repo: UserRepository, collection: MagicMock
     ) -> None:
-        """A stale ``collapsed_at`` under ``collapsed: False`` would read as a
+        """A stale collapsed_at under collapsed: False would read as a
         checklist collapsed at a time it was open."""
         collection.find_one_and_update = AsyncMock(return_value=_raw())
 
@@ -174,7 +174,7 @@ class TestSetFirstStepsCollapsed:
     async def test_asks_the_base_for_the_before_image_with_a_real_boolean(
         self, repo: UserRepository, collection: MagicMock
     ) -> None:
-        """``_apply_raw_update`` declares ``return_document: bool`` and branches on
+        """_apply_raw_update declares return_document: bool and branches on
         it twice — the image the driver returns, and store-vs-evict on the entity
         cache. A non-boolean rides on those two branches happening to agree about
         truthiness, which is not what the signature promises and not what the
@@ -206,7 +206,7 @@ class TestSetFirstStepsCollapsed:
 
 class _Cursor:
     """A Motor cursor over raw documents: chainable, awaitable to a list,
-    async-iterable — the shapes ``_find`` and ``_find_lenient`` each use."""
+    async-iterable — the shapes _find and _find_lenient each use."""
 
     def __init__(self, docs: list[dict[str, Any]]) -> None:
         self._docs = docs
@@ -254,7 +254,7 @@ def _good(email: str) -> dict[str, Any]:
 async def test_a_cohort_read_skips_one_malformed_row_and_keeps_the_rest(
     repo: UserRepository, collection: MagicMock, read: Callable[[UserRepository], Awaitable[Any]]
 ) -> None:
-    """A legacy ``onboarding`` value of the wrong type raised inside the
+    """A legacy onboarding value of the wrong type raised inside the
     repository call — above every per-user try/except in the nurture and
     inactivity sweeps — so one bad row meant nobody in the cohort got mail."""
     legacy = {**_good("legacy@example.com"), "onboarding": "completed"}

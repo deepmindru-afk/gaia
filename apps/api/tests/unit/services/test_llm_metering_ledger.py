@@ -1,6 +1,6 @@
-"""The ``llm_calls`` ledger write, at the one seam every priced call passes through.
+"""The llm_calls ledger write, at the one seam every priced call passes through.
 
-``record_llm_call`` is the single place a model call is priced and recorded, so
+record_llm_call is the single place a model call is priced and recorded, so
 it is the single place the ledger row is built. These tests hold the three
 things that make the ledger trustworthy: exactly one row per call, carrying the
 call's real identity, and never carrying message text — plus the one thing that
@@ -158,7 +158,7 @@ async def test_the_row_holds_no_prompt_or_completion_text() -> None:
 
 
 async def test_a_table_priced_call_says_so() -> None:
-    """``cost_source`` is what makes provider-price coverage measurable; a table
+    """cost_source is what makes provider-price coverage measurable; a table
     guess recorded as a provider price would overstate coverage."""
     with patch("app.services.llm_metering.calculate_token_cost", return_value={"total_cost": 0.25}):
         doc = await _record(provider_cost=None)
@@ -235,7 +235,7 @@ async def test_a_ledger_failure_never_fails_the_metered_call() -> None:
 @pytest.mark.parametrize("reported", ["openrouter", "OpenRouter", "", None])
 def test_the_aggregators_own_name_is_not_recorded_as_the_upstream(reported: str | None) -> None:
     """OpenRouter routes one model id across upstreams whose rates differ by more
-    than 10x, so ``provider`` exists to tell them apart. Recording the aggregator
+    than 10x, so provider exists to tell them apart. Recording the aggregator
     would make every row claim the same provider and answer the question wrong."""
     message = AIMessage(content="hi", response_metadata={PROVIDER_NAME_METADATA_KEY: reported})
 
@@ -244,9 +244,9 @@ def test_the_aggregators_own_name_is_not_recorded_as_the_upstream(reported: str 
 
 @pytest.mark.parametrize("upstream", ["Baidu", "StreamLake", "Fireworks"])
 def test_the_upstream_the_patch_restored_is_recorded_verbatim(upstream: str) -> None:
-    """``openrouter_provider_name_patch`` puts the real serving upstream on the
-    reply under ``PROVIDER_NAME_METADATA_KEY``; ChatOpenRouter itself drops it.
-    Reading that key is what turns ``provider`` from a column that was always
+    """openrouter_provider_name_patch puts the real serving upstream on the
+    reply under PROVIDER_NAME_METADATA_KEY; ChatOpenRouter itself drops it.
+    Reading that key is what turns provider from a column that was always
     null into the one that makes the >10x per-upstream rate spread queryable."""
     message = AIMessage(content="hi", response_metadata={PROVIDER_NAME_METADATA_KEY: upstream})
 
@@ -262,7 +262,7 @@ def test_a_reply_the_patch_never_stamped_records_no_upstream() -> None:
 
 async def test_the_ledger_row_records_the_upstream_that_served_the_call() -> None:
     """End to end through the metering seam: the name the patch stamped is what
-    lands in the row, so ``group by provider`` over the ledger answers which
+    lands in the row, so group by provider over the ledger answers which
     upstream the money actually went to."""
     doc = await _record(
         context=replace(CONTEXT, provider=extract_message_provider(_served_by("StreamLake")))
@@ -328,8 +328,8 @@ async def test_a_call_outside_any_boundary_invents_no_worker_identity() -> None:
 
 
 async def test_a_non_mapping_workflow_field_does_not_crash_the_metered_call() -> None:
-    """``log.set`` takes arbitrary values, and some call sites stamp
-    ``workflow=<id string>``. Reaching into that for ``execution_id`` would raise
+    """log.set takes arbitrary values, and some call sites stamp
+    workflow=<id string>. Reaching into that for execution_id would raise
     inside the metering path of a call that already succeeded."""
     log.reset()
     log.set(workflow="wf-1")
@@ -363,7 +363,7 @@ async def test_the_ledger_write_is_detached_from_the_users_turn() -> None:
 
 
 async def test_the_rows_timestamp_is_timezone_aware_utc() -> None:
-    """``created_at`` is the TTL key. A naive datetime is interpreted as UTC by
+    """created_at is the TTL key. A naive datetime is interpreted as UTC by
     Mongo but compares wrong against every tz-aware value in the codebase, so a
     ledger query by time would silently skew by the server's offset."""
     doc = await _record()
@@ -396,8 +396,8 @@ async def test_a_child_lane_with_no_conversation_id_recovers_it_from_the_thread(
     "source", ["web", "desktop", "mobile", "discord", "slack", "telegram", "whatsapp", "imessage"]
 )
 def test_the_surface_the_turn_came_from_is_recorded_verbatim(source: str) -> None:
-    """``conversation_source`` is set by the entry point — the chat endpoint's
-    ``X-Client-Type`` header or the bot endpoint's platform — and inherited by
+    """conversation_source is set by the entry point — the chat endpoint's
+    X-Client-Type header or the bot endpoint's platform — and inherited by
     every child agent, so an executor call reports its root turn's surface."""
     assert resolve_channel({"conversation_source": source}) == source
 
@@ -415,7 +415,7 @@ def test_other_background_work_is_system() -> None:
 
 def test_background_work_with_no_surface_is_system() -> None:
     """The documented rule. Live, 11 background rows (memory:*, chatbot) came
-    out ``null`` instead — their configurable carries neither a source nor a
+    out null instead — their configurable carries neither a source nor a
     source_category, so the rule never applied and COGS-by-channel could not
     account for them at all."""
     assert resolve_channel({}, background=True) == "system"
@@ -424,7 +424,7 @@ def test_background_work_with_no_surface_is_system() -> None:
 
 def test_a_call_inside_an_executor_run_keeps_the_turns_surface() -> None:
     """Live defect: a comms/follow-up call made INSIDE an executor run was
-    labelled ``system`` though the turn came from web. The executor opens its
+    labelled system though the turn came from web. The executor opens its
     own wide-event boundary, and an auxiliary call there gets a bare config —
     so the surface has to come from the boundary the run stamped, or
     COGS-by-channel under-counts web on exactly the expensive turns."""
@@ -448,7 +448,7 @@ def test_the_runs_own_configurable_still_wins_over_the_boundary() -> None:
 
 
 def test_a_bag_with_no_surface_at_all_records_none() -> None:
-    """Auxiliary one-shots built from a bare ``{"user_id": ...}`` config have no
+    """Auxiliary one-shots built from a bare {"user_id": ...} config have no
     originating surface. None is the honest answer, not a default."""
     assert resolve_channel({}) is None
     assert resolve_channel({"user_id": "u1"}) is None
@@ -472,7 +472,7 @@ def test_the_finish_reason_is_read_from_the_streamed_reply() -> None:
 
 
 def test_the_native_finish_reason_is_the_fallback() -> None:
-    """The non-streaming path leaves ``finish_reason`` in generation_info, which
+    """The non-streaming path leaves finish_reason in generation_info, which
     never reaches an AIMessage — only the upstream's own value is copied on."""
     message = AIMessage(content="hi", response_metadata={"native_finish_reason": "STOP"})
 

@@ -28,7 +28,7 @@ def _make_stuck_user(
 
 
 def _logged_last_updates(mock_log: MagicMock) -> list[str]:
-    """The `last_update` field the task stamped on its wide-event log lines."""
+    """The last_update field the task stamped on its wide-event log lines."""
     return [
         c.kwargs["last_update"] for c in mock_log.info.call_args_list if "last_update" in c.kwargs
     ]

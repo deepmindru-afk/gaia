@@ -56,7 +56,7 @@ def _get_agent_branch_ends(builder) -> dict:
     Extract the 'ends' dict from the agent node's BranchSpec in a StateGraph builder.
 
     builder.branches["agent"] is a dict keyed by branch condition name.
-    Each value is a BranchSpec NamedTuple with field `ends: dict[Hashable, str] | None`.
+    Each value is a BranchSpec NamedTuple with field ends: dict[Hashable, str] | None.
     We merge all ends dicts from all branches on 'agent' into one mapping.
     """
     agent_branches = builder.branches.get("agent", {})
@@ -348,10 +348,10 @@ class TestShouldContinueBehavior:
 class TestCompletionNudgeWiring:
     """The executor's harness-owned completion, from the graph's side.
 
-    ``tests/unit/agents/middleware/test_completion.py`` proves the predicates and
-    ``tests/integration/agents/test_harness_completion.py`` proves the end-to-end
-    journey. Neither pins the wiring in ``create_agent`` that connects them: that a
-    ``nudge_continue`` node exists, that its edge loops back to the agent, and that
+    tests/unit/agents/middleware/test_completion.py proves the predicates and
+    tests/integration/agents/test_harness_completion.py proves the end-to-end
+    journey. Neither pins the wiring in create_agent that connects them: that a
+    nudge_continue node exists, that its edge loops back to the agent, and that
     the nudge is only reachable for an executor with work left. A rename or a
     dropped edge here leaves the guard inert while every other tier stays green.
     """
@@ -509,7 +509,7 @@ class TestCompletionNudgeWiring:
         assert self._nudges(result) == []
 
     def test_the_sync_graph_path_nudges_too(self):
-        """``invoke`` runs the sync twins of the nudge node and the routing closure.
+        """invoke runs the sync twins of the nudge node and the routing closure.
         A graph wired only for the async path leaves every synchronous caller — the
         dev direct-invocation endpoints, scripts — with the guard switched off."""
         graph = self._compile_executor(
@@ -527,7 +527,7 @@ class TestCompletionNudgeWiring:
 
     @pytest.mark.asyncio
     async def test_the_guard_is_off_unless_an_agent_opts_in(self):
-        """``require_finish_to_end`` defaults to off. Flipping the default would put
+        """require_finish_to_end defaults to off. Flipping the default would put
         every comms turn through the executor's completion check."""
         from langgraph.checkpoint.memory import MemorySaver
 
@@ -587,11 +587,11 @@ class TestCompletionNudgeWiring:
 
 
 class TestRetrievedToolDiscoveryRendering:
-    """``select_tools`` turns a retrieve_tools call into the ToolMessage the model
-    reads next. This PR added ``response_text``: a block the retriever pre-renders
+    """select_tools turns a retrieve_tools call into the ToolMessage the model
+    reads next. This PR added response_text: a block the retriever pre-renders
     so the discovery listing reaches the model verbatim instead of being rebuilt
     from ids. Nothing exercised that path, so every mutation of the accumulation
-    and the hand-off to ``format_selected_tools`` survived.
+    and the hand-off to format_selected_tools survived.
     """
 
     @staticmethod
@@ -691,8 +691,8 @@ class TestRetrievedToolDiscoveryRendering:
         assert "dummy_tool" in self._discovery_message(result)
 
     def test_the_sync_graph_path_renders_the_prerendered_block_too(self):
-        """``select_tools`` is the sync twin of ``aselect_tools`` and is what
-        ``graph.invoke`` runs. The two assemble the same ToolMessage, so a fix
+        """select_tools is the sync twin of aselect_tools and is what
+        graph.invoke runs. The two assemble the same ToolMessage, so a fix
         applied to one and not the other splits the discovery listing by caller."""
         from langgraph.checkpoint.memory import MemorySaver
         from langgraph.store.memory import InMemoryStore
@@ -749,7 +749,7 @@ class TestRetrievedToolDiscoveryRendering:
 
     @pytest.mark.asyncio
     async def test_a_non_string_prerendered_block_is_refused(self):
-        """The retriever is pluggable, so ``response_text`` can come back any shape.
+        """The retriever is pluggable, so response_text can come back any shape.
         Anything that is not a string must fall back to the built listing rather
         than be handed to ToolMessage, which would put a dict where the model
         expects prose."""

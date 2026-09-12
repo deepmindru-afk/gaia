@@ -146,7 +146,7 @@ class TestPaidOnlyGateBlocksFreeUsers:
 class TestTheBlockReachesTheFunnel:
     """A skipped run is a paywall block like any other, and must be countable.
 
-    This gate cannot go through ``require_active_subscription`` — that raises,
+    This gate cannot go through require_active_subscription — that raises,
     and a worker must skip and re-arm — so the event it would have fired has to
     be fired here. Without it, "how many users lost a workflow run to the wall"
     is unanswerable while every HTTP and bot surface answers it.
@@ -258,8 +258,8 @@ class TestPaidOnlyGateLetsProUsersThrough:
 class TestTheGateNeverDestroys:
     """Found in review: the gate deactivated every workflow the user owned off a
     five-minute-stale cache read. Deactivation belongs to the billing webhook;
-    the gate only skips (``is_paid`` asks the database before it does — see
-    ``TestTheGateReadsTheRowWhenTheCacheSaysFree``)."""
+    the gate only skips (is_paid asks the database before it does — see
+    TestTheGateReadsTheRowWhenTheCacheSaysFree)."""
 
     async def test_a_skipped_scheduled_run_is_re_armed_not_deactivated(self) -> None:
         workflow = _make_workflow(user_id="user-free-4")

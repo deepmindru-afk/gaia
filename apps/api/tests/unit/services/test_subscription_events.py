@@ -1,4 +1,4 @@
-"""``apply_subscription_event`` — the one writer of subscription state.
+"""apply_subscription_event — the one writer of subscription state.
 
 Every source of a subscription change (the Dodo webhooks, the user-initiated
 cancel, payment verification's reconciliation) lands here, so the rules
@@ -84,8 +84,8 @@ class TestOrdering:
     async def test_an_event_older_than_the_rows_last_change_is_a_no_op(
         self, webhook_service, mock_webhook_subscription_repository, mock_track_subscription
     ) -> None:
-        """Dodo retries out of order: a delayed ``on_hold`` can land after the
-        ``active`` that recovered the same subscription. Applying it would put
+        """Dodo retries out of order: a delayed on_hold can land after the
+        active that recovered the same subscription. Applying it would put
         a paying user back on hold until the next event happened to arrive."""
         mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(
             return_value=_row(last_event_at=datetime.fromisoformat(RECOVERED_AT))
@@ -130,8 +130,8 @@ class TestIdempotency:
         self, webhook_service, mock_webhook_subscription_repository, mock_track_subscription
     ) -> None:
         """The user's own cancel request records the flag first; Dodo's
-        ``subscription.cancelled`` then reports the same state. One
-        cancellation, one ``subscription:cancelled``."""
+        subscription.cancelled then reports the same state. One
+        cancellation, one subscription:cancelled."""
         mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(
             return_value=_row(cancel_at_next_billing_date=True)
         )
@@ -159,7 +159,7 @@ class TestRecovery:
     ) -> None:
         """The row existing is not the row being active. Recovery used to
         restore the workflows and drop the cache, but never wrote the status
-        back — so ``get_active_for_user`` kept filtering the row out and the
+        back — so get_active_for_user kept filtering the row out and the
         customer kept reading FREE — and never carried the new billing dates."""
         mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(
             return_value=_row(
@@ -229,9 +229,9 @@ class TestScheduledCancelNeverDowngradesEarly:
         mock_webhook_subscription_repository,
         mock_track_subscription,
     ) -> None:
-        """``cancel_subscription`` used to mirror whatever status Dodo returned.
+        """cancel_subscription used to mirror whatever status Dodo returned.
         The webhook path already refused to do that — a cancel scheduled for
-        period end keeps the user on Pro until ``subscription.expired`` — and
+        period end keeps the user on Pro until subscription.expired — and
         the two paths must agree, or the same cancel downgrades a user early
         depending only on which path recorded it first."""
         service = DodoPaymentService()
@@ -397,7 +397,7 @@ class TestActivationCreatesTheRow:
 
 @pytest.mark.unit
 class TestTransitionsDriveTheSideEffects:
-    """Workflows follow the status: crossing into ``active`` restores them,
+    """Workflows follow the status: crossing into active restores them,
     leaving it pauses them, and anything else leaves them alone."""
 
     async def test_a_lapse_pauses_the_workflows_and_a_recovery_restores_them(
@@ -535,7 +535,7 @@ class TestTransitionsDriveTheSideEffects:
         mock_subscription_plan_cache_drop,
         mock_activation_workflow_reactivation,
     ) -> None:
-        """``None`` in the update would be written as null over a good value."""
+        """None in the update would be written as null over a good value."""
         mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(
             return_value=_row(status="on_hold", last_event_at=None)
         )
@@ -664,7 +664,7 @@ class TestResolveSubscriptionOwner:
 @pytest.mark.unit
 class TestDesiredState:
     """What each event kind says the row should now have — the exact fields,
-    because the repository writes exactly these as ``$set``."""
+    because the repository writes exactly these as $set."""
 
     def test_activation_and_renewal_carry_the_billing_dates(self) -> None:
         for kind in (SubscriptionEventKind.ACTIVATED, SubscriptionEventKind.RENEWED):

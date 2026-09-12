@@ -1,11 +1,11 @@
 """Replay a playbook: run its recorded sequence for real, without a model driving it.
 
-Each step runs inside a real agent graph (``create_agent``) driven by
-``ScriptedModel``, which emits the recorded call and nothing else. That is what
+Each step runs inside a real agent graph (create_agent) driven by
+ScriptedModel, which emits the recorded call and nothing else. That is what
 makes a replay use the same machinery an agentic run uses — the pregel runtime,
 the stream writer, the metadata copy, the middleware stack and the HIL gate —
 rather than a hand-supplied imitation of it. What a replay does NOT do is think.
-Its model calls are one ask call per step that carries a ``$ask`` slot, plus the
+Its model calls are one ask call per step that carries a $ask slot, plus the
 narration at the end that writes the user-facing result and judges the run. Each
 ask call fires immediately before its own step, so a slot whose instruction
 depends on an earlier step's result is written from that result rather than from
@@ -14,7 +14,7 @@ because the result and the verdict can only be written once every step has run;
 a verdict written mid-run judges steps that have not happened yet.
 
 A step is its own graph invocation because a playbook step addresses the results
-of the steps before it (``$steps.x.y``), so the call to emit is not known until
+of the steps before it ($steps.x.y), so the call to emit is not known until
 its predecessor has answered.
 
 Two properties are load-bearing:
@@ -238,10 +238,10 @@ async def run_playbook(
     conversation_id: str,
     trigger: Mapping[str, object],
 ) -> PlaybookRunResult:
-    """Replay ``playbook`` and report what happened.
+    """Replay playbook and report what happened.
 
-    ``trigger`` is the fire's own context (the webhook payload, the batched
-    events), addressable as ``$trigger.<path>``.
+    trigger is the fire's own context (the webhook payload, the batched
+    events), addressable as $trigger.<path>.
     """
     registry = await get_tool_registry()
     recent = await workflow_executions_repository.find_recent_with_trace(
@@ -394,7 +394,7 @@ async def _replay_one(
     prefix: str,
     item: object,
 ) -> _StepFailure | None:
-    """Fill, resolve and replay one call. ``prefix`` addresses its ask slots."""
+    """Fill, resolve and replay one call. prefix addresses its ask slots."""
     tool_name = step.tool
     position = run.position
     try:
@@ -429,7 +429,7 @@ async def _run_for_each(
     Each element's call is recorded on its own, so the trace and the narration
     see what actually ran rather than one entry standing for many. The step's own
     result is the list of what its elements returned, which is what a later
-    ``$steps.<id>`` has to mean when the step ran more than once.
+    $steps.<id> has to mean when the step ran more than once.
     """
     found, failure = await _for_each_items(playbook, step, run, pending=pending)
     if failure is not None:
@@ -473,7 +473,7 @@ def _items_not_in_results(items: Sequence[str], run: _Run) -> list[str]:
 
 @dataclass(frozen=True, slots=True)
 class _ForEachItems:
-    """What a ``for_each`` source held: the elements that run (capped) and how many there were."""
+    """What a for_each source held: the elements that run (capped) and how many there were."""
 
     elements: list[object]
     total: int
@@ -489,7 +489,7 @@ async def _for_each_items(
     *,
     pending: Sequence[str],
 ) -> tuple[_ForEachItems, _StepFailure | None]:
-    """The elements this step repeats over, capped at its ``max_items``."""
+    """The elements this step repeats over, capped at its max_items."""
     source = step.for_each
     if isinstance(source, AskSlot):
         failure = await _fill_asks_or_fail(
@@ -623,14 +623,14 @@ def _shown_args(args: dict[str, Any]) -> str:
 
 
 async def _replay_call(call: ScriptedCall, run: _Run, space: ToolSpace) -> ToolMessage | None:
-    """Run one recorded call through its own scripted graph; ``None`` if it produced none.
+    """Run one recorded call through its own scripted graph; None if it produced none.
 
     Everything a tool needs at runtime — the pregel runtime behind
-    ``get_stream_writer()``, the middleware chain, the HIL gate and the per-call
+    get_stream_writer(), the middleware chain, the HIL gate and the per-call
     timeout — comes from the graph, exactly as it does for an agent turn. Only
-    ``metadata`` is still set by hand, for the same reason ``build_agent_config``
-    sets it on every agent run: LangGraph does not derive it from ``configurable``
-    and ``get_user_id_from_config`` reads only ``metadata``.
+    metadata is still set by hand, for the same reason build_agent_config
+    sets it on every agent run: LangGraph does not derive it from configurable
+    and get_user_id_from_config reads only metadata.
 
     Retrieval is off because a replay never discovers tools — it runs calls a real
     run already made — so the space's whole tool set is bound from the start. So
@@ -677,7 +677,7 @@ async def _replay_call(call: ScriptedCall, run: _Run, space: ToolSpace) -> ToolM
 
 
 def _envelope_failure(value: object) -> str | None:
-    """What a JSON envelope says went wrong, or ``None`` when it reports no failure."""
+    """What a JSON envelope says went wrong, or None when it reports no failure."""
     if not isinstance(value, dict):
         return None
     error = value.get("error")
@@ -694,13 +694,13 @@ def _empty_where_previous_had_items(
 
     An empty list is a legitimate answer (no mail today) right up until the
     replay before it had a full one, at which point it is far more likely a
-    silent auth or filter failure than a quiet day. ``recent`` is newest first
+    silent auth or filter failure than a quiet day. recent is newest first
     and the baseline is the newest replayed call of the tool that carried data:
     the fire right before this one is not enough, because a suspect replay is
     followed by heal runs, which are agent runs that replay nothing, and a body
     that comes back empty after them has to be measured against the last replay
     that did not. Within one run the record is read LAST match first, the same
-    way ``last_run_index`` resolves ``$last_run``: a tool called twice in one
+    way last_run_index resolves $last_run: a tool called twice in one
     run is compared against the attempt that worked.
     """
     if not carries_no_data(value):
@@ -752,7 +752,7 @@ def _record(
 async def _subagent_space(
     subagent_id: str, user_id: str, registry: ToolRegistry
 ) -> ToolSpace | None:
-    """The tool space a handoff's children run in, or ``None`` for an unknown id."""
+    """The tool space a handoff's children run in, or None for an unknown id."""
     # The same resolution AND the same construction the validator used when this
     # playbook was written. If the two ever diverge, a playbook is accepted and
     # then replayed against a tool space that never had the tool it recorded.
@@ -773,8 +773,8 @@ def _configurable_for(run: _Run, space: ToolSpace) -> dict[str, Any]:
 def _context(run: _Run, *, item: object = NO_ITEM) -> RunContext:
     """The run's fixed context plus everything it has produced so far.
 
-    ``item`` is the element a for_each step is on; outside one it stays the
-    sentinel, and ``$item`` raises rather than resolving to a stray value.
+    item is the element a for_each step is on; outside one it stays the
+    sentinel, and $item raises rather than resolving to a stray value.
     """
     base = run.base
     return RunContext(
@@ -815,7 +815,7 @@ async def _narrate_or_fail(
 
     Positioned at the last step, so the reason still says every step had
     completed by the time the model call died. The caller turns it into a
-    completed run, not a stopped one — see ``_narration_fallback``.
+    completed run, not a stopped one — see _narration_fallback.
     """
     try:
         return await _narrate(playbook, run)
@@ -846,12 +846,12 @@ async def _fill_asks(
 ) -> PlaybookAskFill:
     """The model call for one step's ask slots, made just before that step runs.
 
-    Scoped to ``step`` rather than the whole playbook because a slot's
+    Scoped to step rather than the whole playbook because a slot's
     instruction may only be answerable from what ran before it ("summarise the
     events fetched above"): filling every slot at the first one would write a
-    later step's argument from a run that had not reached it. ``ask_slots`` is
+    later step's argument from a run that had not reached it. ask_slots is
     called with the single step so the keys are spelled by the one rule the
-    evaluator looks them back up by. ``pending`` names the steps that have not
+    evaluator looks them back up by. pending names the steps that have not
     run yet, so the model knows what its answers are about to be used for. The
     result and the verdict are deliberately not written here: they would
     describe a run whose outcome is not known yet.
@@ -910,7 +910,7 @@ _Structured = TypeVar("_Structured", PlaybookAskFill, PlaybookNarration)
 class ModelWroteNothing(RuntimeError):
     """A structured model call answered without the object it was asked for.
 
-    The structured runnable hands back ``None`` when the model replies in prose
+    The structured runnable hands back None when the model replies in prose
     instead of the schema. That is the same event as the call raising, so it
     takes the same path: the ask fill stops the step, the narration falls back
     to the record of what ran.
@@ -925,7 +925,7 @@ async def _structured_call(
     *,
     label: str,
 ) -> _Structured:
-    """One metered structured call; ``None`` from the runnable is a failure, not a value."""
+    """One metered structured call; None from the runnable is a failure, not a value."""
     config = metered_config(playbook.user_id)
     reply: _Structured | None = await ainvoke_llm(
         background_structured_runnable(schema, config=config), prompt, label=label, config=config
@@ -992,7 +992,7 @@ def _narration_fallback(run: _Run, failure: _StepFailure) -> PlaybookRunResult:
     sequence that had just done its job. The steps' own record is a worse result
     than the narration's sentence and a far better one than silence.
 
-    ``suspect`` stays unset: the narration is what produces a verdict, and it
+    suspect stays unset: the narration is what produces a verdict, and it
     never spoke. An unwritten verdict is not a clean one.
     """
     return PlaybookRunResult(

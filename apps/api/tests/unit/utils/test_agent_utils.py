@@ -1,4 +1,4 @@
-"""Tests for app/utils/agent_utils.py"""
+"""Tests for app/utils/agent_utils.py."""
 
 import json
 from typing import Any
@@ -367,9 +367,9 @@ def _no_known_handoff_target() -> Any:
 
 
 class TestSpecialToolDisplay:
-    """A ``handoff`` card names the target agent. The args it reads come straight
-    off the model's tool call, so both the missing-``args`` and the
-    missing-``subagent_id`` shapes are routine, not malformed input."""
+    """A handoff card names the target agent. The args it reads come straight
+    off the model's tool call, so both the missing-args and the
+    missing-subagent_id shapes are routine, not malformed input."""
 
     @pytest.mark.asyncio
     async def test_a_handoff_with_no_args_at_all_still_renders(self) -> None:
@@ -515,7 +515,7 @@ class TestRegistryMcpUiMetadata:
         assert _registry_mcp_ui_metadata(registry, "ui_tool") == (None, None)
 
     def test_a_tool_carrying_no_metadata_is_normal_and_not_logged_as_a_failure(self) -> None:
-        """A plain platform tool simply has no ``metadata``. Reading that as a
+        """A plain platform tool simply has no metadata. Reading that as a
         registry outage buries the real outages in noise."""
 
         class _PlainTool:
@@ -532,7 +532,7 @@ class TestRegistryMcpUiMetadata:
 
     def test_metadata_that_is_not_a_dict_is_ignored_rather_than_duck_typed(self) -> None:
         """Only a real dict is metadata. Anything else that happens to expose
-        ``.get`` would otherwise hand the frontend an arbitrary object as mcp_ui."""
+        .get would otherwise hand the frontend an arbitrary object as mcp_ui."""
 
         class _LooksLikeAMapping:
             def get(self, key: str) -> str:
@@ -727,6 +727,6 @@ class TestStripInternalAgentTags:
 
     @pytest.mark.parametrize("tag", list(AgentTag))
     def test_every_declared_tag_is_covered_by_the_strip(self, tag: AgentTag) -> None:
-        """Drift guard: a tag added to ``AgentTag`` extends the backstop for free.
+        """Drift guard: a tag added to AgentTag extends the backstop for free.
         A hand-listed pattern would leak the new tag on its first use."""
         assert strip_internal_agent_tags(wrap_agent_payload(tag, "payload")) == "payload"

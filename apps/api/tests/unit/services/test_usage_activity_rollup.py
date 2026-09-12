@@ -1,19 +1,19 @@
-"""The durable usage rollup: what ``record_cost`` books, and what ``get_activity`` shows.
+"""The durable usage rollup: what record_cost books, and what get_activity shows.
 
 Two invariants, both of them money:
 
 1. Charged work and auxiliary background work must land in disjoint fields.
-   ``cost``/``*_tokens`` are the exact durable mirror of the Redis windows the
-   budget wall enforces; ``aux_*`` is COGS the user is never charged for. A
+   cost/*_tokens are the exact durable mirror of the Redis windows the
+   budget wall enforces; aux_* is COGS the user is never charged for. A
    crossed wire either eats a user's allowance for work they never asked for,
    or hides real spend from the wall.
-2. Tokens must survive a pricing failure. ``record_llm_call`` books
-   ``cost_usd=0`` when the pricing lookup misses, so gating the rollup on cost
+2. Tokens must survive a pricing failure. record_llm_call books
+   cost_usd=0 when the pricing lookup misses, so gating the rollup on cost
    alone would silently drop the raw usage the call has to be re-priced from.
 
-The repository is the seam (its own ``$inc`` semantics are proven against real
-Mongo in ``tests/contracts/test_usage_daily_repository.py``); everything inside
-``usage_activity`` runs for real.
+The repository is the seam (its own $inc semantics are proven against real
+Mongo in tests/contracts/test_usage_daily_repository.py); everything inside
+usage_activity runs for real.
 """
 
 from collections.abc import Iterator
@@ -45,7 +45,7 @@ def _row(date: str, **fields: object) -> UsageDailyDocument:
 
 @pytest.fixture(autouse=True)
 def frozen_clock() -> Iterator[None]:
-    """Both functions read ``datetime.now(UTC)`` to decide which day a write or
+    """Both functions read datetime.now(UTC) to decide which day a write or
     a window belongs to, so the day boundary has to be pinned."""
     with time_machine.travel(FROZEN, tick=False):
         yield
@@ -190,7 +190,7 @@ class TestRecordCost:
     ) -> None:
         """The row key is a UTC day and every reader joins on that — the
         heatmap, the percentile window, and the true-cost backfill, which reads
-        the day straight off the ``llm_call`` event's UTC timestamp. A worker
+        the day straight off the llm_call event's UTC timestamp. A worker
         reading its own local clock files the same call under a different day,
         so the durable history and the logs stop lining up for anyone outside
         UTC. CI runs in UTC, which is exactly why this needs saying out loud."""

@@ -1,11 +1,11 @@
 """Direct unit tests for the two trigger-handling helpers extracted from
-``reset_system_workflow_to_default`` during the PLR0912 complexity refactor
-(commit 58a9f12fa5's follow-up): ``_reregister_triggers_for_reset`` and
-``_unregister_old_triggers_for_reset`` in
-``app/services/system_workflows/provisioner.py``.
+reset_system_workflow_to_default during the PLR0912 complexity refactor
+(commit 58a9f12fa5's follow-up): _reregister_triggers_for_reset and
+_unregister_old_triggers_for_reset in
+app/services/system_workflows/provisioner.py.
 
-``test_system_workflows.py`` exercises both only indirectly through the full
-``reset_system_workflow_to_default`` flow — this drives each branch directly
+test_system_workflows.py exercises both only indirectly through the full
+reset_system_workflow_to_default flow — this drives each branch directly
 with exact-value assertions on return values and log calls.
 """
 

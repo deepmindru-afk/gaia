@@ -2,7 +2,7 @@
 
 Pins the payload validation, the in-app notification wiring, and — the fix for
 reminders being invisible to later turns — the delivery of a fired reminder into
-the user's chat platforms via the shared ``deliver_result_to_platforms`` path,
+the user's chat platforms via the shared deliver_result_to_platforms path,
 which records it into the conversation's langgraph thread.
 """
 
@@ -117,7 +117,7 @@ async def test_reminder_failure_does_not_capture() -> None:
 async def test_a_failed_reminder_names_the_user_it_failed_for() -> None:
     """A reminder failure nobody can attribute to a user is close to useless.
 
-    Every other line in this handler carries ``user_id``; the error path is the
+    Every other line in this handler carries user_id; the error path is the
     one that gets read during an incident, and "some reminder failed" does not
     let you tell whether one account is broken or the provider is.
     """
@@ -148,9 +148,9 @@ async def test_a_failed_reminder_names_the_user_it_failed_for() -> None:
 async def test_a_reminder_with_no_id_is_refused_and_named_in_the_wide_event() -> None:
     """An id-less reminder is unfireable, and the event is the only way to find it.
 
-    ``execute_reminder_by_agent`` raises before the gate, so nothing downstream
+    execute_reminder_by_agent raises before the gate, so nothing downstream
     ever sees this reminder — no notification, no status write, no analytics.
-    ``log.error`` writes message AND kwargs into the event's ``errors[]``
+    log.error writes message AND kwargs into the event's errors[]
     (libs/shared/py/wide_events.py), and the reminder has no id to search by, so
     the owner and the agent are the only handles an operator has on it.
     """
@@ -184,7 +184,7 @@ async def test_a_reminder_with_no_id_is_refused_and_named_in_the_wide_event() ->
 
 class TestReminderReachesChatPlatforms:
     """A fired reminder must be delivered into the user's chat platforms through
-    the SAME path a finished workflow uses (``deliver_result_to_platforms``), which
+    the SAME path a finished workflow uses (deliver_result_to_platforms), which
     records the delivery into the conversation's langgraph thread. Before this fix
     the reminder was sent only as a notification and left no trace in the thread,
     so a later turn had no memory it fired and could not backtrack to it."""

@@ -1,8 +1,8 @@
 """Which cases a run actually executes.
 
-``--only-failed`` shipped selecting zero cases in both of its modes — it ran
-after ``--resume`` had already dropped every finished case, and without
-``--resume`` it read a journal that did not exist yet. It printed "cases=0" and
+--only-failed shipped selecting zero cases in both of its modes — it ran
+after --resume had already dropped every finished case, and without
+--resume it read a journal that did not exist yet. It printed "cases=0" and
 exited 0 either way, so every retry since has silently been a full re-run.
 Selection is therefore pinned here, against a real journal on disk.
 """
@@ -48,7 +48,7 @@ def test_only_failed_does_not_silently_select_nothing(tmp_path: Path) -> None:
 
 def test_only_failed_ignores_errored_cases(tmp_path: Path) -> None:
     """An errored case never produced an answer, so there is no verdict to retry
-    — ``--resume`` already picks those up."""
+    — --resume already picks those up."""
     journal = _journal(tmp_path, {"a": "errored"})
     opts = RunOptions(suite="demo", resume="run-1", only_failed=True)
     with pytest.raises(SystemExit, match="no failed cases"):

@@ -1,17 +1,17 @@
 """Surface an approval request to the user's clients, and remember declines.
 
-The gate pauses its run with LangGraph's ``interrupt()``; nothing here waits. This
+The gate pauses its run with LangGraph's interrupt(); nothing here waits. This
 module only *publishes*: it records the pending approval durably, pushes the
-``approval_request`` tool_data card onto the turn's SSE stream, and wakes clients
+approval_request tool_data card onto the turn's SSE stream, and wakes clients
 that aren't watching it. The decision arrives out-of-band and is applied by
-``app/services/hil/resolution.py``, which resumes the paused thread.
+app/services/hil/resolution.py, which resumes the paused thread.
 
-Frame delivery mirrors ``make_redis_stream_writer``: every frame is both published
+Frame delivery mirrors make_redis_stream_writer: every frame is both published
 to the replayable stream event log (live + reload) AND appended to the stream
 session's tool-event collector so the executor drain path persists it. The gate
 only fires inside the detached executor/subagent (comms holds no gated tools),
-where ``get_stream_writer`` is unavailable — so this dual write, keyed purely by
-``stream_id``, is what makes the card work at every nesting depth.
+where get_stream_writer is unavailable — so this dual write, keyed purely by
+stream_id, is what makes the card work at every nesting depth.
 """
 
 from dataclasses import dataclass
@@ -100,9 +100,9 @@ async def publish_decision(
 ) -> None:
     """Settle this approval's card, on the stream the user is watching NOW.
 
-    Never ``record.stream_id``: that is the stream the request was raised on, and a run
-    that paused resumes on a fresh one (``prepare_run_from_item``), leaving the original
-    closed. The client follows the new stream via ``executor.stream_started``, so a card
+    Never record.stream_id: that is the stream the request was raised on, and a run
+    that paused resumes on a fresh one (prepare_run_from_item), leaving the original
+    closed. The client follows the new stream via executor.stream_started, so a card
     settled on the old one resolves where nobody is looking.
     """
     await _publish_entry(
@@ -221,11 +221,11 @@ def build_summary(tool_name: str, args: dict[str, Any], integration_name: str | 
 def build_action_detail(summary: str, args: dict[str, Any]) -> str:
     """Richer rendering of a gated call for the conversational classifier.
 
-    The card's one-line ``summary`` (tool + integration identity, truncated args)
+    The card's one-line summary (tool + integration identity, truncated args)
     as the label, plus every argument up to a bound with non-scalar values as
     compact JSON — so the classifier sees the full content (recipient, subject,
     body, ...) the summary omits. The total is capped by
-    ``HIL_CLASSIFIER_MAX_DETAIL_CHARS``; the per-value clip only stops one
+    HIL_CLASSIFIER_MAX_DETAIL_CHARS; the per-value clip only stops one
     pathological arg from eating the whole budget. No LLM here."""
     lines = [summary]
     arg_lines = []
@@ -260,10 +260,10 @@ def _schedule_pending_notification(
 async def _publish_entry(stream_id: str, entry: ApprovalRequestEntry) -> None:
     """Deliver a frame live (replayable event log) AND record it for persistence.
 
-    The session append mirrors ``make_redis_stream_writer`` so the executor
+    The session append mirrors make_redis_stream_writer so the executor
     drain path persists the card; the SSE publish reaches live/reloaded clients.
     Both carry the same plain-dict frame the rest of the tool_data pipeline
-    (``stream_utils``, the bot bridge, the frontend parser) reads.
+    (stream_utils, the bot bridge, the frontend parser) reads.
     """
     frame = {"tool_data": entry.model_dump()}
     await stream_manager.publish_chunk(stream_id, f"data: {json.dumps(frame)}\n\n")
@@ -301,7 +301,7 @@ def _approval_entry(
 
 
 def _summary_arg_parts(args: dict[str, Any]) -> list[str]:
-    """A few short ``key: value`` scalars for the card's one-line summary."""
+    """A few short key: value scalars for the card's one-line summary."""
     parts: list[str] = []
     for key, value in (args or {}).items():
         if len(parts) >= HIL_SUMMARY_MAX_ARGS:

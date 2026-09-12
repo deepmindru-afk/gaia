@@ -2,18 +2,18 @@
 
 Two ways it did not:
 
-* ``--resume`` with a mistyped run id created an empty run directory (the
+* --resume with a mistyped run id created an empty run directory (the
   journal makes its directory unconditionally) and then died pages later on
-  ``NoneType has no attribute 'suite'`` — a message that says nothing about the
-  typo, and a stray directory left behind for ``sweep`` and ``cost`` to read.
+  NoneType has no attribute 'suite' — a message that says nothing about the
+  typo, and a stray directory left behind for sweep and cost to read.
 * A concurrent run returned from its own branch *before* the interrupt handler
-  and the finalize block. Ctrl-C on one propagated out of ``run_suite`` with the
-  traces unflushed and ``run.json`` still saying ``running`` — the state
-  ``--resume``, ``sweep`` and ``ingest`` all read as "a run still in flight".
+  and the finalize block. Ctrl-C on one propagated out of run_suite with the
+  traces unflushed and run.json still saying running — the state
+  --resume, sweep and ingest all read as "a run still in flight".
 
-Ctrl-C reaches an asyncio program at the ``await`` the main coroutine is
+Ctrl-C reaches an asyncio program at the await the main coroutine is
 sitting on, so the concurrent case injects it there rather than inside a case:
-a ``KeyboardInterrupt`` raised inside a Task is re-raised into the event loop by
+a KeyboardInterrupt raised inside a Task is re-raised into the event loop by
 design and can never be caught by the awaiting coroutine, which would test the
 opposite of what a real interrupt does.
 """
@@ -38,7 +38,7 @@ PROJECT = "gaia-smoke"
 
 
 class _InterruptingSuite(Suite):
-    """Answers ``case-0``, then raises the interrupt on ``case-1``."""
+    """Answers case-0, then raises the interrupt on case-1."""
 
     name = SUITE_NAME
     project = PROJECT

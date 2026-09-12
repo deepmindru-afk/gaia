@@ -30,7 +30,7 @@ def user() -> str:
     """A user nobody has cached anything for.
 
     Both sections under test sit behind a per-user cache — the manifest under
-    ``@Cacheable``, the todo summary under its own Redis key — and these tests
+    @Cacheable, the todo summary under its own Redis key — and these tests
     mock the store one layer BELOW that. A fixed id would make the result
     depend on whatever Redis happened to be holding, which is how this file
     passed once and then failed against the same code.
@@ -48,7 +48,7 @@ def _section(section_id: str) -> Section:
 
 @pytest.mark.integration
 class TestConnectedIntegrationsManifest:
-    """Runs the real ``get_connected_integrations_named`` — the status filter and
+    """Runs the real get_connected_integrations_named — the status filter and
     the custom-MCP name resolution — over mocked integration records."""
 
     @staticmethod
@@ -99,7 +99,7 @@ class TestConnectedIntegrationsManifest:
 
 @pytest.mark.integration
 class TestTrackedTodosSummary:
-    """Runs the real ``get_active_tracked_summary`` — the pin, the ordering and
+    """Runs the real get_active_tracked_summary — the pin, the ordering and
     the line rendering — over mocked todo documents."""
 
     @staticmethod

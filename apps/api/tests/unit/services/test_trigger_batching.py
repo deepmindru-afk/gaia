@@ -154,7 +154,7 @@ class TestBufferTriggerEvent:
     ) -> None:
         """The whole point: 56 emails must not become 56 agent runs.
 
-        ARQ rejects the duplicate ``_job_id`` by returning None, so every event
+        ARQ rejects the duplicate _job_id by returning None, so every event
         after the first rides the buffer instead of starting its own run.
         """
         enqueue.side_effect = [MagicMock(job_id="job-1")] + [None] * 55

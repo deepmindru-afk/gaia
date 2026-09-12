@@ -101,12 +101,12 @@ def _refusal_stream(error_code: str) -> StreamingResponse:
 
 
 def _refusal_stream_with_notice(notice_text: str, error_code: str) -> StreamingResponse:
-    """`_refusal_stream`, preceded by a `notice` frame carrying free-form text.
+    """_refusal_stream, preceded by a notice frame carrying free-form text.
 
-    Used for the unlinked-user paywall notice: the `notice` frame delivers it
-    as a real outbound message (`deliverOutOfBand` in the shared streamer),
-    and the trailing `error` frame is untouched so the existing /auth-link
-    flow (token minting, `buildAuthLinkMessage`) still fires — no adapter
+    Used for the unlinked-user paywall notice: the notice frame delivers it
+    as a real outbound message (deliverOutOfBand in the shared streamer),
+    and the trailing error frame is untouched so the existing /auth-link
+    flow (token minting, buildAuthLinkMessage) still fires — no adapter
     change needed for either half.
     """
 
@@ -118,11 +118,11 @@ def _refusal_stream_with_notice(notice_text: str, error_code: str) -> StreamingR
 
 
 def _notice_only_stream(notice_text: str) -> StreamingResponse:
-    """Answer a turn with one canned line and no agent run: `notice` + `done`.
+    """Answer a turn with one canned line and no agent run: notice + done.
 
-    No `text` frame is ever sent, so `onDone` receives an empty `fullText`
-    and delivers nothing further — the `notice` is the whole reply. Reuses
-    the same generic frames the rate-limit notice (`_bot_rate_limit_notice`)
+    No text frame is ever sent, so onDone receives an empty fullText
+    and delivers nothing further — the notice is the whole reply. Reuses
+    the same generic frames the rate-limit notice (_bot_rate_limit_notice)
     already proves out for arbitrary, per-user text (a checkout link, a
     discount code) with zero bot-adapter changes.
     """
@@ -153,9 +153,9 @@ def _capture_bot_turn_refused(user_id: str, platform: str, reason: str) -> None:
 def _resolve_user_id(user: dict[str, Any]) -> str:
     """The stable GAIA user id from a user document, or "" if it carries neither key.
 
-    Both keys must be tried: ``PlatformLinkService`` returns a transitional
-    shape (``_id``, no ``user_id``) while the auth middleware's
-    ``build_user_context()`` returns the opposite. This is the id every bot
+    Both keys must be tried: PlatformLinkService returns a transitional
+    shape (_id, no user_id) while the auth middleware's
+    build_user_context() returns the opposite. This is the id every bot
     capture and audit line attributes to, so a wrong answer here silently moves
     the record onto another profile.
     """
@@ -169,17 +169,17 @@ async def require_bot_api_key(request: Request) -> None:
 
 
 async def _may_mint_bot_upgrade_link(user_id: str) -> bool:
-    """Whether this turn may mint a fresh Dodo session for ``user_id``.
+    """Whether this turn may mint a fresh Dodo session for user_id.
 
-    A ``SET NX EX`` window, the same gate shape as
-    ``workflow_repository.claim_limit_notice`` — one mint per user per
-    ``BOT_UPGRADE_LINK_TTL``, so a burst of blocked turns costs one session
+    A SET NX EX window, the same gate shape as
+    workflow_repository.claim_limit_notice — one mint per user per
+    BOT_UPGRADE_LINK_TTL, so a burst of blocked turns costs one session
     instead of one per message.
 
     Fails CLOSED, unlike that sibling, because what is at stake differs. There,
     losing the gate costs the user a duplicate notification; here it costs a
     trail of orphan Dodo sessions, and the newest of those buries the session
-    the user actually paid on when ``get_latest_for_user`` looks for it. A
+    the user actually paid on when get_latest_for_user looks for it. A
     degraded link is a marketing regression; a buried payment is a paying
     customer told they have no subscription.
     """
@@ -206,14 +206,14 @@ async def _bot_upgrade_url(user_id: str) -> str:
     web app and sign in before they can pay, and most never do. A personalised
     checkout link removes both steps and attributes the subscription correctly.
 
-    Bounded by ``_may_mint_bot_upgrade_link``: this is the ONE place a bot turn
+    Bounded by _may_mint_bot_upgrade_link: this is the ONE place a bot turn
     reaches Dodo, and both walls that call it — the paid-only gate and the
     rate-limit notice — repeat for every message until the user acts, so an
     ungated mint here is one throwaway session per inbound message. Outside the
     window the caller still gets a working URL, just the pricing page rather
     than a personalised one. The session itself is never cached and never
     reused: Dodo sessions are single-use, and handing back a spent one shows
-    "link expired" (see ``create_pro_checkout``).
+    "link expired" (see create_pro_checkout).
     """
     if not await _may_mint_bot_upgrade_link(user_id):
         return f"{settings.FRONTEND_URL}/pricing"
@@ -245,7 +245,7 @@ def _bot_upgrade_url_once(user_id: str) -> Callable[[], Awaitable[str]]:
     paywall.
 
     Only the within-turn bound. Across turns the cap lives in
-    ``_bot_upgrade_url`` itself, so a caller that reaches it directly (the
+    _bot_upgrade_url itself, so a caller that reaches it directly (the
     paid-only gate does, having no stream to hang a resolver off) is bounded
     too.
     """
@@ -264,13 +264,13 @@ async def _bot_rate_limit_notice(
 ) -> str | None:
     """Render a web-only rate-limit card as a plain-text notice for bots.
 
-    Rate limits are streamed as a ``tool_data`` card for the web UI to render.
-    Bots drop ``tool_data``, so without this they'd silently swallow the limit.
-    Returns the user-facing notice, or ``None`` if ``chunk`` isn't such a card.
+    Rate limits are streamed as a tool_data card for the web UI to render.
+    Bots drop tool_data, so without this they'd silently swallow the limit.
+    Returns the user-facing notice, or None if chunk isn't such a card.
 
-    The upgrade link is emitted as CommonMark ``[label](url)``; each bot adapter
-    localises it to its platform's link syntax (WhatsApp ``label (url)``, Slack
-    ``<url|label>``, Telegram keeps ``[label](url)``).
+    The upgrade link is emitted as CommonMark [label](url); each bot adapter
+    localises it to its platform's link syntax (WhatsApp label (url), Slack
+    <url|label>, Telegram keeps [label](url)).
     """
     tool_data = chunk.get("tool_data")
     if not isinstance(tool_data, dict) or tool_data.get("tool_name") != "rate_limit_data":
@@ -287,12 +287,12 @@ async def _bot_rate_limit_notice(
 
 
 def _bot_approval_payload(chunk: dict[str, Any]) -> dict[str, Any] | None:
-    """Extract a HIL ``approval_request`` card as a bot ``approval`` payload.
+    """Extract a HIL approval_request card as a bot approval payload.
 
-    Bots drop ``tool_data``, but the approval prompt MUST reach the user — a bot
+    Bots drop tool_data, but the approval prompt MUST reach the user — a bot
     has no buttons, so the user answers yes/no in chat and the conversational
     resolver relays it. The bot client renders this as an out-of-band message.
-    Returns the approval data, or ``None`` if ``chunk`` isn't such a card.
+    Returns the approval data, or None if chunk isn't such a card.
     """
     tool_data = chunk.get("tool_data")
     if not isinstance(tool_data, dict) or tool_data.get("tool_name") != APPROVAL_REQUEST_TOOL_NAME:
@@ -304,9 +304,9 @@ def _bot_approval_payload(chunk: dict[str, Any]) -> dict[str, Any] | None:
 def _bot_stream_control_frame(
     chunk: str, conversation_id: str
 ) -> tuple[str | None, dict[str, Any] | None, bool]:
-    """Peel Redis SSE framing off one raw chunk from ``_bot_stream_from_redis``.
+    """Peel Redis SSE framing off one raw chunk from _bot_stream_from_redis.
 
-    Returns ``(frame, data, stop)`` — see the tri-state contract below.
+    Returns (frame, data, stop) — see the tri-state contract below.
     """
     # A comment/[DONE]/malformed-JSON chunk yields a ready-to-send `frame`
     # (`data` is None); a content chunk yields the parsed payload as `data`
@@ -343,7 +343,7 @@ async def _bot_stream_payload_frame(
 ) -> tuple[str | None, bool]:
     """Translate one parsed web SSE payload into a bot frame.
 
-    Returns ``(frame, stop)`` — ``frame`` is ``None`` when nothing bots need.
+    Returns (frame, stop) — frame is None when nothing bots need.
     """
     # `frame` is None for a payload that carries nothing bots need (a
     # web-only field, an unrecognized shape). `stop` marks the terminal
@@ -422,7 +422,7 @@ async def _bot_stream_entitlement_gate(user_id: str, platform: str) -> Streaming
 def _bot_stream_failure_logger(
     stream_id: str, conversation_id: str
 ) -> Callable[[asyncio.Task[Any]], None]:
-    """Build the ``on_done`` callback that logs an unhandled background stream failure."""
+    """Build the on_done callback that logs an unhandled background stream failure."""
 
     def _log_stream_failure(t: asyncio.Task[Any]) -> None:
         if not t.cancelled() and (exc := t.exception()):
@@ -449,9 +449,9 @@ async def _bot_stream_from_redis(
     """Subscribe to Redis stream and translate chunks for bot clients.
 
     The body runs while the response streams — after the request's
-    ``http_request`` event has emitted — so it needs its own boundary or
+    http_request event has emitted — so it needs its own boundary or
     the delivery outcome is silently discarded. The generator body
-    inherits the request's context, so ``get_trace_id()`` still returns
+    inherits the request's context, so get_trace_id() still returns
     the request's trace_id.
     """
     async with log_context(

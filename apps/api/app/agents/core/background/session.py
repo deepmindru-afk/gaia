@@ -1,19 +1,19 @@
 """Per-stream orchestration state for background executor runs.
 
-One ``StreamSession`` per ``stream_id`` replaces the five parallel
-module-level dicts that previously lived in ``inbox.py`` (spawned flags,
+One StreamSession per stream_id replaces the five parallel
+module-level dicts that previously lived in inbox.py (spawned flags,
 done events, subagent counters, subagent results, tool-event collectors).
 Tearing down a session drops all of its state at once — there is no
 per-dict cleanup to forget.
 
-``ExecutorRun`` is the immutable identity of a single executor run: how it
-was spawned (``RunKind``), which conversation/user it belongs to, and its
+ExecutorRun is the immutable identity of a single executor run: how it
+was spawned (RunKind), which conversation/user it belongs to, and its
 workflow context. It owns the tool_data ownership rule
-(``executor_owns_tool_data``) so terminal handlers consult one source of
-truth instead of re-deriving ``is_queued or workflow_id`` ad hoc.
+(executor_owns_tool_data) so terminal handlers consult one source of
+truth instead of re-deriving is_queued or workflow_id ad hoc.
 
 Sessions are intentionally in-process (asyncio primitives cannot cross
-process boundaries); the ``executor:busy`` Redis key remains the
+process boundaries); the executor:busy Redis key remains the
 cross-process guard for multi-worker deployments.
 """
 
@@ -33,11 +33,11 @@ from shared.py.wide_events import current_workflow_execution_id, log
 class RunKind(StrEnum):
     """How an executor run was spawned.
 
-    LIVE   — dispatched by ``call_executor`` inside a comms run (chat or
+    LIVE   — dispatched by call_executor inside a comms run (chat or
              silent/workflow); tool events reach the user over the comms
              stream and the comms path attaches them to its own message.
     QUEUED — popped from the per-conversation executor queue; the run has
-             its own ``queued_*`` stream and self-publishes its results.
+             its own queued_* stream and self-publishes its results.
     """
 
     LIVE = "live"
@@ -96,8 +96,8 @@ class StreamSession:
 class RunIdentity:
     """The caller-supplied identity of one executor run.
 
-    Grouped so ``ExecutorRun.from_configurable`` takes the run's identity as one
-    object beside the LangGraph ``configurable`` it reads the rest from.
+    Grouped so ExecutorRun.from_configurable takes the run's identity as one
+    object beside the LangGraph configurable it reads the rest from.
     """
 
     conversation_id: str
@@ -148,9 +148,9 @@ class ExecutorRun:
         identity: RunIdentity,
         workflow_execution_id: str | None = None,
     ) -> "ExecutorRun":
-        """Build the run context from a LangGraph ``configurable`` dict.
+        """Build the run context from a LangGraph configurable dict.
 
-        ``workflow_execution_id`` is the stored one when rebuilding from a queue
+        workflow_execution_id is the stored one when rebuilding from a queue
         item or HIL resume record (those rebuild in a context with no workflow
         boundary); a live dispatch leaves it unset and reads the execution in
         flight off the boundary it is being built in.
@@ -220,10 +220,10 @@ class ExecutorRun:
           - background-detached (queued, scheduled workflow): no comms consumer
             attaches cards, so the executor self-persists.
 
-        ``workflow_id is not None`` stands in for "background-detached" only
+        workflow_id is not None stands in for "background-detached" only
         because every workflow run today is silent/scheduled. When a live
         *interactive* workflow lands (streamed from the workflow page like chat),
-        it must be dispatched as ``RunKind.LIVE`` and this ``workflow_id`` clause
+        it must be dispatched as RunKind.LIVE and this workflow_id clause
         dropped — otherwise it would self-persist instead of streaming.
         """
         return self.kind is RunKind.QUEUED or self.workflow_id is not None
@@ -293,7 +293,7 @@ def mark_executor_queued(stream_id: str, task_id: str) -> None:
 def queued_without_run(stream_id: str) -> str | None:
     """The task_id this stream queued when nothing ran for it at all.
 
-    ``None`` once an executor actually spawned: the turn then did real work and
+    None once an executor actually spawned: the turn then did real work and
     a queued dispatch alongside it is extra work, not a substitute for it. This
     is the truthful "nothing happened yet" signal — the alternative, reading the
     queue acknowledgement out of the tool's returned prose, is a model-visible
@@ -387,7 +387,7 @@ def claim_tool_output(stream_id: str, tool_call_id: str, subagent_id: str | None
 
     A run that did not announce the call is always the echo, however early it
     looks. Deciding on arrival order instead let the outer driver — which sees
-    the nested run's ToolMessage but has no ``subagent_id`` — win on a slow
+    the nested run's ToolMessage but has no subagent_id — win on a slow
     machine and publish the result untagged, stranding the card outside the
     subagent's row. An unannounced call still fails open, so a HIL resume (whose
     announcement happened in the run before the pause) keeps streaming.
@@ -413,7 +413,7 @@ def get_pending_subagents(stream_id: str) -> int:
 def claim_bg_integration(stream_id: str, integration_id: str) -> bool:
     """Claim the one background-handoff slot for an integration this run.
 
-    ``False`` means one is already in flight — the caller must fall back to a
+    False means one is already in flight — the caller must fall back to a
     blocking handoff, because a second detached subagent for the same integration
     would share its deterministic checkpoint thread id.
     """

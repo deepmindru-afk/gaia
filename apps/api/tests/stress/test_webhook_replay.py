@@ -1,15 +1,15 @@
 """Stress: webhook replay — duplicate delivery of the same signed payload.
 
 Real code under test:
-1. The Composio webhook endpoint (``app/api/v1/endpoints/webhook_composio.py``)
-   with the REAL HMAC-SHA256 signature verification (``webhook_utils``) and the
-   REAL ``webhook-id`` dedup claim (``SET webhook:composio:{id} NX EX 3600``).
+1. The Composio webhook endpoint (app/api/v1/endpoints/webhook_composio.py)
+   with the REAL HMAC-SHA256 signature verification (webhook_utils) and the
+   REAL webhook-id dedup claim (SET webhook:composio:{id} NX EX 3600).
    The endpoint is exercised over HTTP via the ASGI test client; Redis is an
    in-process fake with genuine SET-NX semantics, so exactly-one-claim is
    deterministic. Handlers are faked (they reach into workflow queueing).
-2. ``PaymentWebhookService.process_webhook``
-   (``app/services/payments/payment_webhook_service.py``) — Dodo payment
-   webhooks dedup on ``webhook_id`` against the processed-webhook store.
+2. PaymentWebhookService.process_webhook
+   (app/services/payments/payment_webhook_service.py) — Dodo payment
+   webhooks dedup on webhook_id against the processed-webhook store.
    Repositories are stateful fakes; the handler logic is the real code.
 
 The invariant everywhere: duplicate delivery — sequential or concurrent —
@@ -40,9 +40,9 @@ TIMESTAMP = "2025-01-01T00:00:00Z"
 class _FakeRedisClient:
     """In-process Redis stand-in with real SET-NX semantics.
 
-    No ``await`` between the existence check and the set — exactly like Redis's
+    No await between the existence check and the set — exactly like Redis's
     single-threaded command execution, so of N concurrent claims precisely one
-    sees ``True``.
+    sees True.
     """
 
     def __init__(self) -> None:
@@ -61,8 +61,8 @@ class _FakeRedisClient:
 
 
 def _sign_composio(webhook_id: str, timestamp: str, body: bytes, secret: str) -> str:
-    """Real signature per ``app/utils/webhook_utils.py``: HMAC-SHA256 over
-    ``webhook_id.timestamp.body``, base64-encoded, prefixed ``v1,``."""
+    """Real signature per app/utils/webhook_utils.py: HMAC-SHA256 over
+    webhook_id.timestamp.body, base64-encoded, prefixed v1,."""
     signed_content = webhook_id.encode() + b"." + timestamp.encode() + b"." + body
     digest = hmac.new(secret.encode(), signed_content, hashlib.sha256).digest()
     return f"v1,{base64.b64encode(digest).decode()}"

@@ -79,7 +79,7 @@ def _make_subagent(
 def _ui_graph_run(writer: MagicMock, *, expired: bool = False) -> Iterator[None]:
     """Make the connect prompt believe it is running inside a UI chat turn.
 
-    ``expired`` is the stored connection status the prompt reads to tell a dead
+    expired is the stored connection status the prompt reads to tell a dead
     grant from one that was never set up.
     """
     with (
@@ -155,7 +155,7 @@ class TestCheckIntegrationConnection:
         assert _connect_card_ids(mock_writer) == ["gmail"]
 
     async def test_a_dead_connection_asks_the_user_to_sign_in_again(self):
-        """`check_integration_status` only says "not usable" — the stored record
+        """check_integration_status only says "not usable" — the stored record
         is what stops a died-on-us connection reading as a first-time connect."""
         mock_writer = MagicMock()
         with (
@@ -655,7 +655,7 @@ class TestConnectionChecksUseTheirArguments:
     @staticmethod
     @contextmanager
     def _lookup_only(integration_id: str, subagent: Subagent) -> Iterator[None]:
-        """``get_subagent_by_id`` that recognises exactly one id."""
+        """get_subagent_by_id that recognises exactly one id."""
         with patch(
             "app.agents.core.subagents.handoff_tools.get_subagent_by_id",
             side_effect=lambda requested: subagent if requested == integration_id else None,
@@ -794,7 +794,7 @@ class TestConnectionChecksUseTheirArguments:
 
 @contextmanager
 def _resolved_subagent(agent_name: str, integration_id: str) -> Iterator[MagicMock]:
-    """Stand every collaborator `handoff` needs past resolution, so the only
+    """Stand every collaborator handoff needs past resolution, so the only
     thing under test is what it does with the task text it was handed."""
     ctx = SimpleNamespace(agent_name=agent_name, integration_id=integration_id)
     with (
@@ -819,9 +819,9 @@ def _resolved_subagent(agent_name: str, integration_id: str) -> Iterator[MagicMo
 
 @pytest.mark.unit
 class TestBackgroundHandoffWithoutAStream:
-    """``background=True`` needs a stream_id to route the result back. Without
+    """background=True needs a stream_id to route the result back. Without
     one the handoff still runs, but blocking — and the executor has to be told,
-    or it calls ``wait_for_subagents()`` for a result that already arrived and
+    or it calls wait_for_subagents() for a result that already arrived and
     waits on nothing."""
 
     async def test_the_result_is_prefixed_with_the_fallback_warning(self) -> None:
@@ -844,8 +844,8 @@ class TestBackgroundHandoffWithoutAStream:
 class TestWorkflowHandoffCarriesTheSubagentsCallRecord:
     """A workflow run's executor transcribes playbook steps from the handoff
     result — it never sees the subagent's own tool calls, so without the record
-    it guesses names and args (invented ``max_results`` for GMAIL_FETCH_MESSAGES
-    whose real arg is ``max_messages``). A chat run must stay byte-identical to
+    it guesses names and args (invented max_results for GMAIL_FETCH_MESSAGES
+    whose real arg is max_messages). A chat run must stay byte-identical to
     the plain subagent text: no extra text, no extra tokens."""
 
     @staticmethod
@@ -869,7 +869,7 @@ class TestWorkflowHandoffCarriesTheSubagentsCallRecord:
 
     @contextmanager
     def _running_subagent(self) -> Iterator[None]:
-        """Real ``_run_blocking_handoff`` over a faked subagent stream — the
+        """Real _run_blocking_handoff over a faked subagent stream — the
         record append under test lives inside it, so it must not be mocked."""
         ctx = SimpleNamespace(
             agent_name="gmail_agent",
@@ -987,7 +987,7 @@ class TestIndexedCustomMcpDocument:
 @pytest.mark.asyncio
 class TestCustomMcpResolution:
     """Every return of the custom-MCP path is read out to the user verbatim, and
-    the ``is_custom`` flag decides whether the caller looks the integration's
+    the is_custom flag decides whether the caller looks the integration's
     display metadata up in Mongo — a failure must never claim to be custom."""
 
     @staticmethod
@@ -1001,8 +1001,8 @@ class TestCustomMcpResolution:
             yield
 
     async def test_a_document_with_no_id_key_is_rejected(self):
-        """``.get("id")`` without the empty-string default resolves a missing key
-        to ``None``, whose ``str()`` is the truthy "None" — and the run proceeds
+        """.get("id") without the empty-string default resolves a missing key
+        to None, whose str() is the truthy "None" — and the run proceeds
         against an integration id that does not exist."""
         with self._mongo_doc({"name": "Custom"}):
             graph, name, error, is_custom = await _resolve_subagent("abc", "user1")
@@ -1200,8 +1200,8 @@ class TestPlainSubagentGraphResolution:
         assert name == "composio_agent"
 
     async def test_the_graph_is_fetched_under_the_configured_agent_name(self):
-        """``agent_name`` is the provider-registry key — asking for the wrong one
-        (or for ``None``) resolves to no graph and the handoff dies as "not
+        """agent_name is the provider-registry key — asking for the wrong one
+        (or for None) resolves to no graph and the handoff dies as "not
         available" on an integration that is connected and fine."""
         subagent = _make_subagent(
             "gcal", "gcal", "Google Calendar", managed_by="internal", agent_name="calendar_agent"
@@ -1228,7 +1228,7 @@ class TestPlainSubagentGraphResolution:
 
 
 def _blocking_ctx() -> SimpleNamespace:
-    """The parts of a SubagentExecutionContext `_run_blocking_handoff` touches."""
+    """The parts of a SubagentExecutionContext _run_blocking_handoff touches."""
     return SimpleNamespace(
         agent_name="gmail_agent",
         integration_id="gmail",
@@ -1243,7 +1243,7 @@ def _stream_event(writer: MagicMock, key: str) -> dict[str, object]:
 
 @pytest.mark.asyncio
 class TestBlockingHandoffLifecycleEvents:
-    """``subagent_start`` is the UI row for the run: its name, icon and category
+    """subagent_start is the UI row for the run: its name, icon and category
     are the resolved integration's, and its id must be the replay-stable row id
     or an approval pause orphans a spinner and opens a duplicate on resume."""
 
@@ -1387,7 +1387,7 @@ class TestBlockingHandoffLifecycleEvents:
 @pytest.mark.asyncio
 class TestHandoffRejectionMessages:
     """A refusal is the executor's only instruction on what to do instead —
-    ``wait_for_subagents()`` — so the wording and the named subagent are
+    wait_for_subagents() — so the wording and the named subagent are
     behaviour, not decoration. Dropping the name gives the model "the None
     subagent is paused" to act on."""
 
@@ -1437,7 +1437,7 @@ class TestHandoffRejectionMessages:
 
     async def test_a_background_handoff_is_left_to_the_session_slot_claim(self):
         """The background branch enforces one-per-integration itself via
-        ``claim_bg_integration``. Refusing here as well would fail every parallel
+        claim_bg_integration. Refusing here as well would fail every parallel
         dispatch that follows a live one, instead of falling back cleanly."""
         ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
         with (
@@ -1458,7 +1458,7 @@ class TestHandoffRejectionMessages:
 
 @pytest.mark.unit
 class TestHandoffBuildsItsDispatch:
-    """Everything past resolution travels in one ``_HandoffDispatch``. A nulled
+    """Everything past resolution travels in one _HandoffDispatch. A nulled
     or dropped field silently downgrades the run: no metadata on the UI row, no
     checkpoint probe on a resume replay, no call record for a workflow."""
 
@@ -1540,7 +1540,7 @@ class TestHandoffBuildsItsDispatch:
         )
 
     async def test_a_background_dispatch_is_handed_the_runs_stream_id(self) -> None:
-        """``sid`` routes the detached result back to this conversation's bucket
+        """sid routes the detached result back to this conversation's bucket
         and keys its integration slot — the wrong one strands the result."""
         ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
         calls: list[tuple[object, object, object]] = []
@@ -1590,7 +1590,7 @@ class TestHandoffBuildsItsDispatch:
 
 @pytest.mark.unit
 class TestHandoffPassesTheRunModeToTheRejectionCheck:
-    """``background`` and ``stream_id`` decide which collision the pre-dispatch
+    """background and stream_id decide which collision the pre-dispatch
     check is even looking for. Losing either turns the check on its head: a
     blocking run stops colliding with a live background task, or a background
     run starts refusing itself."""

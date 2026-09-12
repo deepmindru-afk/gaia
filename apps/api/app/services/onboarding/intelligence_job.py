@@ -32,7 +32,7 @@ def personalization_already_ran(onboarding: OnboardingSubdocument) -> bool:
     """Whether the Gmail personalization pipeline has already run for this user.
 
     Users who completed the pre-relocation onboarding carry holo-card fields but
-    no marker; ``house`` stands in as the marker for them.
+    no marker; house stands in as the marker for them.
     """
     return bool(onboarding.gmail_personalization_at or onboarding.house)
 

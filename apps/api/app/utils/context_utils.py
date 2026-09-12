@@ -38,7 +38,7 @@ def execute_tool(
         output_model: Optional Pydantic model to validate the response data.
 
     Returns:
-        The ``data`` payload from the tool response.
+        The data payload from the tool response.
 
     Raises:
         Exception: If the tool execution fails.
@@ -90,8 +90,8 @@ def fetch_all_providers(
 ) -> dict[str, Any]:
     """Fetch all providers in parallel by calling each CUSTOM_GATHER_CONTEXT tool.
 
-    Values stay ``dict[str, Any]``: each is a provider's raw
-    ``CUSTOM_GATHER_CONTEXT`` payload, whose shape is the provider's own and
+    Values stay dict[str, Any]: each is a provider's raw
+    CUSTOM_GATHER_CONTEXT payload, whose shape is the provider's own and
     differs per integration (Type Safety item 8).
     """
 

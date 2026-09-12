@@ -1,9 +1,9 @@
 """The memory write path: extract -> embed -> reconcile -> apply -> journal.
 
-``retain`` is the single ingestion pipeline, designed to run fire-and-forget
+retain is the single ingestion pipeline, designed to run fire-and-forget
 after a turn ends — it never raises into callers for LLM failures
 (extraction degrades to an empty batch upstream). Every ingestion schedules
-the hash-gated ``/workspace/memory`` projection sync and a debounced
+the hash-gated /workspace/memory projection sync and a debounced
 core-document consolidation for the docs its changes touch.
 """
 
@@ -60,9 +60,9 @@ _FALLBACK_CATEGORY_PATH = "general"
 class MemoryLimitReachedError(Exception):
     """An explicit memory add was blocked by the free plan's live-fact cap.
 
-    Raised only by ``retain_single`` (add_memory tool / POST endpoint) so the
+    Raised only by retain_single (add_memory tool / POST endpoint) so the
     caller can surface an upgrade prompt. Passive ingestion never raises — it
-    silently drops NEW facts at the cap (see ``retain``).
+    silently drops NEW facts at the cap (see retain).
     """
 
     def __init__(self, limit: int) -> None:
@@ -74,20 +74,20 @@ class MemoryLimitReachedError(Exception):
 
 
 async def _free_cap_remaining(user_id: str, growth: int) -> int | None:
-    """How many more live facts a FREE user may add, or ``None`` when uncapped.
+    """How many more live facts a FREE user may add, or None when uncapped.
 
-    ``None`` means no cap applies — a paid plan, or an infra error during the
+    None means no cap applies — a paid plan, or an infra error during the
     plan lookup (fail open: memory must not stop working because the plan
-    lookup hiccuped). For a free user it is ``max(0, limit - live count)``, so
+    lookup hiccuped). For a free user it is max(0, limit - live count), so
     a batch that would cross the cap can be trimmed to land exactly at it.
 
-    ``growth`` is how many facts this call would add (the NEW count for a
+    growth is how many facts this call would add (the NEW count for a
     batch, 1 for a single add). The live count comes from the Redis counter
-    (``cap_counter``) on the hot path, avoiding a Postgres ``COUNT`` when a free
+    (cap_counter) on the hot path, avoiding a Postgres COUNT when a free
     user sits far below the cap. The cache is trusted only when the remaining
-    budget clears ``growth`` plus a safety margin; when the batch might cross
+    budget clears growth plus a safety margin; when the batch might cross
     the cap, the counter is missing, or Redis is down, it falls back to the
-    authoritative ``COUNT`` (and re-seeds the counter), so the hard cap is exact.
+    authoritative COUNT (and re-seeds the counter), so the hard cap is exact.
 
     Uses the cached plan lookup (Redis-backed) — retain() runs from many
     callers (chat turns, subagents, email ingestion, API endpoints), so
@@ -122,9 +122,9 @@ async def _free_cap_remaining(user_id: str, growth: int) -> int | None:
 def _enforce_free_cap(
     reconciled: list[ReconciledFact], remaining: int
 ) -> tuple[list[ReconciledFact], int]:
-    """Trim growth facts to ``remaining`` free slots, preserving order.
+    """Trim growth facts to remaining free slots, preserving order.
 
-    Admits at most ``remaining`` NEW facts (the only outcome that grows the
+    Admits at most remaining NEW facts (the only outcome that grows the
     live set) in reconciliation order and drops the surplus; UPDATES, EXTENDS
     and DUPLICATEs pass through untouched since each supersedes or collapses
     into an existing row. Returns the kept facts and how many were dropped.
@@ -165,7 +165,7 @@ class RetainedMemory:
 
 @dataclass
 class _ApplyResult:
-    """Rows written by ``_apply_reconciled`` plus graph counts."""
+    """Rows written by _apply_reconciled plus graph counts."""
 
     inserted: list[tuple[MemoryRecord, ExtractedFact]]
     duplicates: int
@@ -221,7 +221,7 @@ def _agenda_fact(item: str) -> ExtractedFact:
 def _route_by_shelf_life(batch: ExtractedMemoryBatch) -> tuple[ExtractedMemoryBatch, list[str]]:
     """Send every assertion to the store its shelf life says owns it.
 
-    ``task`` and ``journal`` never become plain facts: a commitment becomes an
+    task and journal never become plain facts: a commitment becomes an
     agenda row and anything that merely happened — including everything GAIA
     itself recommended, drafted or advised — becomes a journal line. Agenda
     items go through the normal fact pipeline (so they are embedded, deduped
@@ -285,8 +285,8 @@ async def retain(
 ) -> RetainResult:
     """Ingest a conversation transcript into long-term memory.
 
-    ``now`` overrides the ingestion timestamp used for relative-date
-    resolution, ``mentioned_at`` (recency), and the journal day — letting
+    now overrides the ingestion timestamp used for relative-date
+    resolution, mentioned_at (recency), and the journal day — letting
     callers replay historical sessions (backfills, benchmarks) at their real
     time. Defaults to the current UTC time. Journal DAYS (and the entry clock
     times shown to the user) bucket that instant on the user's wall clock,
@@ -453,7 +453,7 @@ async def retain_single(
     full extraction prompt is tuned to filter conversational noise and
     could drop an explicitly requested fact, so it is not reused here.
 
-    Raises ``MemoryLimitReachedError`` when a free user at the live-fact cap
+    Raises MemoryLimitReachedError when a free user at the live-fact cap
     tries to add a fact that would GROW the set — explicit adds fail LOUD so
     the tool/endpoint can upsell, unlike passive ingestion which drops
     silently. A DUPLICATE, UPDATES or EXTENDS resolves to zero growth and
@@ -705,7 +705,7 @@ async def _store_conversation_chunks(
     Extracted facts compress a conversation, which loses verbatim
     micro-details ("the exact move GAIA suggested", "the 27th item in that
     list"). Chunking the transcript keeps those details searchable via
-    ``recall_transcripts`` without polluting the fact store.
+    recall_transcripts without polluting the fact store.
     """
     chunks: list[str] = []
     current: list[str] = []
@@ -776,9 +776,9 @@ async def _append_episode_entries(
     source_type: MemorySourceType,
     local_now: datetime,
 ) -> tuple[int, int]:
-    """Append today's novel journal lines; returns ``(appended, deduped)``.
+    """Append today's novel journal lines; returns (appended, deduped).
 
-    ``local_now`` is the ingestion instant on the user's wall clock — it
+    local_now is the ingestion instant on the user's wall clock — it
     decides both the journal DAY the lines file under and the clock time
     stamped on each entry. The journal had no dedupe tier — facts get
     embedding reconciliation, entries were appended blindly — and the
@@ -864,7 +864,7 @@ def _build_record(
 ) -> MemoryRecord:
     """Map an extracted fact onto an unsaved ORM row (no lineage fields).
 
-    ``mentioned_at`` is set explicitly only when the caller replays a
+    mentioned_at is set explicitly only when the caller replays a
     historical session; otherwise the column default (now) applies.
     """
     values: dict[str, object] = {

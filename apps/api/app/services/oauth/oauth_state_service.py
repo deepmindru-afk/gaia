@@ -1,5 +1,5 @@
 """
-OAuth State Management Service
+OAuth State Management Service.
 
 Provides secure state token management for OAuth flows to prevent:
 - Open redirect vulnerabilities

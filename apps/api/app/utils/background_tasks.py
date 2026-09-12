@@ -17,15 +17,15 @@ def spawn_background_task(
     name: str | None = None,
     on_done: Callable[[asyncio.Task[Any]], None] | None = None,
 ) -> asyncio.Task[Any]:
-    """Schedule ``coro`` as a fire-and-forget task kept alive until it finishes.
+    """Schedule coro as a fire-and-forget task kept alive until it finishes.
 
     The single canonical way to run a coroutine detached from its caller. The
     returned task is strong-referenced in a module-level set until it completes,
     then discarded — without that reference the event loop can collect a still-
     running task (see the module docstring). Requires a running event loop;
-    raises ``RuntimeError`` otherwise, exactly like ``asyncio.create_task``.
+    raises RuntimeError otherwise, exactly like asyncio.create_task.
 
-    ``on_done`` runs as an additional done-callback once the task finishes — use
+    on_done runs as an additional done-callback once the task finishes — use
     it to log the task's outcome, which a detached task cannot surface otherwise.
     """
     try:
@@ -44,13 +44,13 @@ def spawn_background_task(
 
 
 def guard_task(task: asyncio.Task[Any]) -> asyncio.Task[Any]:
-    """Strong-reference an already-created ``task`` until it finishes, then release it.
+    """Strong-reference an already-created task until it finishes, then release it.
 
     For a task the caller built and may await, but which must survive if it
     outlives the awaiting scope — the module-level set is the strong reference the
     event loop needs to not collect it mid-flight (see the module docstring), and
     the done-callback discards it so the set stays bounded. Use
-    ``spawn_background_task`` instead when you have a coroutine rather than a task.
+    spawn_background_task instead when you have a coroutine rather than a task.
     """
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)

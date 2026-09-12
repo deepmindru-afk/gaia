@@ -6,15 +6,15 @@ the next tier's context. These XML-style tags frame that text: they say where an
 internal payload starts, where it ends, and that it is addressed to the agent and
 never to the user.
 
-XML tags rather than the bare ``[MARKER]`` prefixes they replace, for two
+XML tags rather than the bare [MARKER] prefixes they replace, for two
 reasons. A prefix only marks a start, so the model has to infer where the
 internal payload stops and its own reply begins; an open/close pair states it.
 And models are trained on tagged context blocks, so a tag reads as machine
 framing while a bracketed word reads as text worth copying — which is exactly how
-``[EXECUTOR_RESULT]`` kept surfacing at the top of user-facing replies.
+[EXECUTOR_RESULT] kept surfacing at the top of user-facing replies.
 
 This module owns the vocabulary AND the framing, so the site that writes a tag
-and the site that strips one (``strip_internal_agent_tags``) can never disagree
+and the site that strips one (strip_internal_agent_tags) can never disagree
 about the syntax.
 """
 
@@ -40,8 +40,8 @@ class AgentTag(StrEnum):
 def wrap_agent_payload(tag: AgentTag, body: str, agent: str | None = None) -> str:
     """Frame an internal payload in its channel tag.
 
-    ``agent`` names the tier that produced the payload, which only a
-    ``<subagent_result>`` carries — several land in one collection and the
+    agent names the tier that produced the payload, which only a
+    <subagent_result> carries — several land in one collection and the
     executor has to tell whose report is whose.
 
     Trailing newline included so consecutive blocks concatenate into one

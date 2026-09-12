@@ -1,5 +1,5 @@
 """
-Unified Integration Dependencies
+Unified Integration Dependencies.
 
 This module provides FastAPI dependencies for validating both Google OAuth scopes
 and Composio integrations before allowing access to protected endpoints.
@@ -112,7 +112,7 @@ def require_integration(
 def require_integration_user_id(
     integration_short_name: str,
 ) -> Callable[..., Coroutine[Any, Any, str]]:
-    """``require_integration`` for handlers that need only the authenticated user id.
+    """require_integration for handlers that need only the authenticated user id.
 
     Same checks, same failure modes — it just unwraps the one field instead of
     handing back the whole auth-context dict for each handler to dig into.

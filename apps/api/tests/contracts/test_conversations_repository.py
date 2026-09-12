@@ -1,8 +1,8 @@
 """Contract tests for ConversationRepository.
 
-Business-key identity (``conversation_id`` scoped to ``user_id``), an embedded
-``messages`` array, legacy camelCase timestamps, and no cache policy — so this is
-a bespoke suite (not the inherited ``UserScopedRepositoryContract``) asserting on
+Business-key identity (conversation_id scoped to user_id), an embedded
+messages array, legacy camelCase timestamps, and no cache policy — so this is
+a bespoke suite (not the inherited UserScopedRepositoryContract) asserting on
 concrete values against real Mongo.
 """
 
@@ -140,9 +140,9 @@ class TestListSummaries:
         assert await repo.count_active(user) == 3
 
     async def test_both_summary_lists_are_newest_first(self, repo):
-        """createdAt descending, for the starred and active lists alike.
+        """CreatedAt descending, for the starred and active lists alike.
 
-        ``createdAt`` is an ISO string, so this is Mongo's lexicographic order —
+        createdAt is an ISO string, so this is Mongo's lexicographic order —
         chronological only because every writer emits the same UTC ISO-8601
         shape. Seeded oldest-first so an unsorted read would fail here.
         """
@@ -263,10 +263,10 @@ class TestMessages:
     async def test_append_preserves_every_key_emitters_stamp_on_tool_data(self, repo):
         """A persisted tool_data entry keeps the keys the emitters actually set.
 
-        ``append_messages`` writes through ``MessageModel.model_dump()``, which
-        drops any key ``ToolDataEntry`` does not declare. ``format_tool_call_entry``
-        stamps ``tool_category``/``mcp_ui``/``mcp_server_url`` and the subagent
-        path stamps ``subagent_id``; losing them on write is invisible live (the
+        append_messages writes through MessageModel.model_dump(), which
+        drops any key ToolDataEntry does not declare. format_tool_call_entry
+        stamps tool_category/mcp_ui/mcp_server_url and the subagent
+        path stamps subagent_id; losing them on write is invisible live (the
         SSE frame carries them) and only shows on reload — a tool card rendering
         with the wrong icon and an MCP App that never comes back.
         """
@@ -312,8 +312,8 @@ class TestMessages:
 
 
 class TestMessageSettlementWrites:
-    """``set_message_response`` / ``set_message_tool_data`` /
-    ``set_message_approval_status`` — the in-place writes background delivery and
+    """set_message_response / set_message_tool_data /
+    set_message_approval_status — the in-place writes background delivery and
     the HIL bridge use to settle a turn that has already been persisted."""
 
     @staticmethod
@@ -321,8 +321,8 @@ class TestMessageSettlementWrites:
         """A conversation with a tool_data-less user message and a bot message.
 
         The leading user message is load-bearing for the approval-status filter:
-        it has no ``tool_data`` at all, which is exactly the shape a
-        ``messages.$[]`` positional filter chokes on.
+        it has no tool_data at all, which is exactly the shape a
+        messages.$[] positional filter chokes on.
         """
         doc = _doc()
         await repo.create(doc)
@@ -371,7 +371,7 @@ class TestMessageSettlementWrites:
         assert stored is not None and stored.response == ""
 
     async def test_set_tool_data_replaces_rather_than_appends(self, repo):
-        """The distinction from ``append_message_tool_data``: delivery re-persists
+        """The distinction from append_message_tool_data: delivery re-persists
         the whole frame list, so a stale entry must not survive the write."""
         doc, _user_mid, bot_mid = await self._seed(repo)
         assert await repo.append_message_tool_data(
@@ -418,7 +418,7 @@ class TestMessageSettlementWrites:
         assert not stored.tool_data
 
     async def test_approval_status_settles_only_the_named_frame(self, repo):
-        """Two approval cards on one message: settling ``a1`` must not touch ``a2``,
+        """Two approval cards on one message: settling a1 must not touch a2,
         and the tool_data-less user message ahead of them must not block the write."""
         doc, _user_mid, bot_mid = await self._seed(repo)
         assert await repo.set_message_tool_data(
@@ -454,8 +454,8 @@ class TestMessageSettlementWrites:
     @pytest.mark.regression
     async def test_approval_status_for_an_unknown_id_reports_failure(self, repo):
         """Returning True for an approval that is not in the document reports work
-        that did not happen. The sibling writes filter on ``messages.message_id``,
-        so their ``matched > 0`` means "the row was there"; this one filtered on the
+        that did not happen. The sibling writes filter on messages.message_id,
+        so their matched > 0 means "the row was there"; this one filtered on the
         conversation alone, so it meant "the conversation exists" — true for every
         stale or already-reconciled approval_id a caller might pass."""
         doc, _user_mid, bot_mid = await self._seed(repo)
@@ -536,7 +536,7 @@ class TestMessageSettlementWrites:
         assert stored.tool_data[0]["data"]["status"] == "pending"
 
     async def test_settlement_writes_never_advance_updated_at(self, repo):
-        """All three settle a turn the client already sees; bumping ``updatedAt``
+        """All three settle a turn the client already sees; bumping updatedAt
         would reshuffle the sidebar's recency ordering behind the user's back."""
         doc, _user_mid, bot_mid = await self._seed(repo)
         assert await repo.set_starred(doc.conversation_id, user_id=doc.user_id, starred=True)
@@ -729,15 +729,15 @@ class TestSearchAndSweeps:
 
 
 class TestActivitySignal:
-    """`has_activity_since` — the dormancy sweep's transport-agnostic usage signal.
+    """has_activity_since — the dormancy sweep's transport-agnostic usage signal.
 
     Against real Mongo specifically: the bug this pins is a BSON type mismatch,
     which every mocked collection in the unit tier happily reports as a match.
     """
 
     async def test_a_conversation_created_since_the_cutoff_counts(self, repo):
-        """`createdAt` is an ISO STRING (see the module's timestamp contract), so a
-        date `$gte` against it matches nothing at all — silently, reading as "this
+        """createdAt is an ISO STRING (see the module's timestamp contract), so a
+        date $gte against it matches nothing at all — silently, reading as "this
         user has no activity" and making the sweep pause a live user's workflows."""
         doc = _doc()
         await repo.create(doc)

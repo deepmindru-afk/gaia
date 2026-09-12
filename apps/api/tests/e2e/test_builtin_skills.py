@@ -2,19 +2,19 @@
 
 The plan asks for a deletion test: remove the skills code and the skills tests
 must fail. Today they would not. Every existing skills test patches
-``load_builtin_skills``, so ``rm -rf app/agents/skills/builtin/`` leaves the
+load_builtin_skills, so rm -rf app/agents/skills/builtin/ leaves the
 whole suite green — the library that ships in the product is asserted by
 nothing.
 
 That matters because a skill is only useful if two independent things agree: the
 prompt tells the agent a path, and materialization wrote a file there. They are
-computed in different modules (``system_files.builtin_skill_rel_path`` and
-``sessions.skills.materialize_skills``) and nothing checks they match. When they
+computed in different modules (system_files.builtin_skill_rel_path and
+sessions.skills.materialize_skills) and nothing checks they match. When they
 drift the agent is told to read a file that does not exist, gets nothing, and
 silently does the generic thing instead — no error anywhere.
 
 Nothing here is patched except a temp directory to write into. No mount needed:
-materialization is plain ``Path`` work.
+materialization is plain Path work.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ def library():
 
 class TestTheLibraryShips:
     def test_the_builtin_library_is_not_empty(self, library):
-        """The deletion test. Remove ``app/agents/skills/builtin/`` and
-        ``load_builtin_skills`` returns an empty tuple — every other skills test
+        """The deletion test. Remove app/agents/skills/builtin/ and
+        load_builtin_skills returns an empty tuple — every other skills test
         in the repo stays green because they all patch this function, and this
         one goes red."""
         assert library, "no builtin skills loaded — the shipped library is missing or unparseable"
@@ -63,7 +63,7 @@ class TestTheLibraryShips:
         assert broken == []
 
     def test_slugs_are_unique(self, library):
-        """Materialization writes to ``skills/<slug>/``; two skills sharing a
+        """Materialization writes to skills/<slug>/; two skills sharing a
         slug means one silently overwrites the other on disk."""
         slugs = [s.slug for s in library]
 
@@ -82,9 +82,9 @@ class TestPathContract:
     """The prompt says a path; materialization writes a file. These are computed
     in two different modules and nothing else checks they agree.
 
-    Integration skills only: ``materialize_skills`` deliberately does NOT write
-    executor bodies (they live in the ``/skills/<uid>`` overlay that
-    ``link_system_files_into_workspace`` symlinks in), so asserting them here
+    Integration skills only: materialize_skills deliberately does NOT write
+    executor bodies (they live in the /skills/<uid> overlay that
+    link_system_files_into_workspace symlinks in), so asserting them here
     would be asserting against the design.
     """
 
@@ -134,7 +134,7 @@ class TestPathContract:
 
 class TestConnectedMarker:
     """Every integration's catalog is written regardless of connection; the
-    ``.connected`` marker is what says which ones the user actually has. Getting
+    .connected marker is what says which ones the user actually has. Getting
     that backwards either hides skills the user can use or advertises tools they
     cannot."""
 

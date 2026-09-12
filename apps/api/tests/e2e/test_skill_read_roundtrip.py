@@ -1,17 +1,17 @@
-"""The full loop: the agent is told a path, and calling ``read`` on it works.
+"""The full loop: the agent is told a path, and calling read on it works.
 
 Everything else about skills is circumstantial until this holds. The listing can
 name a skill, the materializer can write a file, and the agent can still get
-nothing — because what the agent actually does is take the ``Location:`` string
-out of its prompt and hand it verbatim to the ``read`` tool. Three components
+nothing — because what the agent actually does is take the Location: string
+out of its prompt and hand it verbatim to the read tool. Three components
 have to agree on one string, and they are in three different modules.
 
 This takes the location out of the real listing and feeds it to the real tool,
 with no path construction of its own — constructing the path here would test
 this file's idea of the path rather than the product's.
 
-No mount is involved: ``read`` serves system-owned files (the builtin skills)
-straight from process memory (``read_tool.py`` ``system_file_body``), which is
+No mount is involved: read serves system-owned files (the builtin skills)
+straight from process memory (read_tool.py system_file_body), which is
 also why an agent can read them before any workspace provisioning has happened.
 """
 
@@ -43,7 +43,7 @@ LOCATION = re.compile(r"Location:\s*(\S+)")
 def _stores():
     """Mongo, Redis and the workspace-ownership probe.
 
-    ``user_owns_regular_file`` decides whether a user's own copy shadows the
+    user_owns_regular_file decides whether a user's own copy shadows the
     system one; it is the only JuiceFS touch on this path and False is the
     honest answer for a user who has never overridden a builtin.
     """
@@ -87,7 +87,7 @@ class TestTheAgentCanReadWhatItIsTold:
 
     async def test_every_location_the_executor_is_given_is_readable(self):
         """One unreadable entry is a skill the agent is told it has and cannot
-        use — and it fails silently, since ``read`` returns an error string the
+        use — and it fails silently, since read returns an error string the
         model simply reads and moves past."""
         unreadable = []
         for location in await _locations():
@@ -116,7 +116,7 @@ class TestTheAgentCanReadWhatItIsTold:
 
 class TestFailureIsVisible:
     async def test_reading_a_path_that_does_not_exist_reports_an_error(self):
-        """Control. Without it, a ``read`` that returned "" for everything would
+        """Control. Without it, a read that returned "" for everything would
         satisfy the tests above."""
         result = await read.ainvoke(
             {"path": "/workspace/skills/no-such-skill-xyz/skill.md"}, config=CONFIG

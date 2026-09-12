@@ -29,7 +29,7 @@ async def adapt_media_for_model(
     messages: Sequence[AnyMessage],
     config: RunnableConfig,
 ) -> list[AnyMessage]:
-    """Rewrite ``messages`` so their inline media fits the active lane.
+    """Rewrite messages so their inline media fits the active lane.
 
     Applied at the request boundary only — persisted history keeps the canonical
     block shape, so a thread stays portable when the lane changes under it (plan
@@ -50,12 +50,12 @@ class MediaAdapter:
 
     - Vision lanes read image blocks inside tool results natively. Direct Gemini
       does so out of the box; OpenRouter needs
-      ``app/patches/openrouter_tool_multimodal_patch.py``, because the client
+      app/patches/openrouter_tool_multimodal_patch.py, because the client
       library converts blocks for user messages but not for tool messages.
-    - Text-only lanes get a notice instead; the `read` tool separately hands them
-      a text description via `describe_image`.
+    - Text-only lanes get a notice instead; the read tool separately hands them
+      a text description via describe_image.
 
-    Every lane is also held to ``max_blocks``. History is append-only and media
+    Every lane is also held to max_blocks. History is append-only and media
     is never compacted away — a spilled image is useless, the block *is* the
     payload — so without a per-request budget a thread that read twenty
     screenshots would re-send all of them on every subsequent turn until the
@@ -71,7 +71,7 @@ class MediaAdapter:
         self._max_blocks = max_blocks
 
     def adapt(self, messages: Sequence[AnyMessage]) -> list[AnyMessage]:
-        """Rewrite the tool-result media in ``messages``, one branch per strategy."""
+        """Rewrite the tool-result media in messages, one branch per strategy."""
         if self._delivery is MediaDelivery.REPLACE_WITH_TEXT:
             return self._strip(messages)
         return self._keep_in_tool_results(messages, self._within_budget(messages))
@@ -123,12 +123,12 @@ def _carries_media(msg: AnyMessage) -> TypeGuard[ToolMessage]:
 
 
 def _blocks(msg: ToolMessage) -> list[ContentItem]:
-    """The block list of a message ``_carries_media`` has already vouched for."""
+    """The block list of a message _carries_media has already vouched for."""
     return cast(list[ContentItem], msg.content)
 
 
 def _as_text(msg: ToolMessage, notice: str) -> ToolMessage:
-    """The tool result with its media dropped and ``notice`` appended, as plain text."""
+    """The tool result with its media dropped and notice appended, as plain text."""
     text = extract_text_content(msg.content)
     return msg.model_copy(update={"content": f"{text}\n{notice}" if text else notice})
 
@@ -136,7 +136,7 @@ def _as_text(msg: ToolMessage, notice: str) -> ToolMessage:
 def _as_described_text(msg: ToolMessage) -> ToolMessage:
     """The tool result with its media replaced by the descriptions cached on it.
 
-    The descriptions are written at tool-execution time (``describe_tool_media``).
+    The descriptions are written at tool-execution time (describe_tool_media).
     A message that predates that — produced on a vision lane, now replayed on a
     text-only one — carries none, and falls back to the bare notice.
     """

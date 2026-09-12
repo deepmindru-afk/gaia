@@ -145,10 +145,10 @@ def _handoff_space(tools: dict[str, BaseTool] | None = None):
 
 
 def _retrieval_disabled_handoff_space():
-    """A handoff to a subagent shaped like ``docgen``: direct tools, no retrieval.
+    """A handoff to a subagent shaped like docgen: direct tools, no retrieval.
 
-    Its scoped dict holds both the tool it binds (``list_events``) and one it
-    can only see (``send_email``), the way the always-available tools sit in
+    Its scoped dict holds both the tool it binds (list_events) and one it
+    can only see (send_email), the way the always-available tools sit in
     every subagent's dict without being in its initial set.
     """
     subagent = Subagent(
@@ -427,7 +427,7 @@ result_brief: x
         assert "no_such_agent" in result.issues[0].problem
 
     async def test_a_tool_only_the_integration_has_is_accepted(self) -> None:
-        """The PostHog case: `exec` exists on the user's MCP client and nowhere in
+        """The PostHog case: exec exists on the user's MCP client and nowhere in
         the executor's registry. Validating it against the registry refused every
         playbook an integration-backed workflow could ever write."""
         body = _body(
@@ -456,7 +456,7 @@ result_brief: x
     async def test_a_child_the_subagent_can_see_but_not_bind_is_refused_as_the_runner_would(
         self,
     ) -> None:
-        """A subagent that cannot retrieve (``docgen``, ``gaia_knowledge_guide``)
+        """A subagent that cannot retrieve (docgen, gaia_knowledge_guide)
         runs only the tools it bound at startup, yet its scoped dict also holds
         the always-available ones. Validating children against the dict alone
         accepted a playbook the replay then stopped at that very step. The
@@ -515,8 +515,8 @@ result_brief: x
         assert result.issues == []
 
     async def test_a_dollar_ask_string_is_literal_text_and_is_type_checked_as_one(self) -> None:
-        """``$ask`` left the placeholder vocabulary when asks moved inline, so
-        ``$ask.headline`` is characters like ``$HOME`` is. It must neither be
+        """$ask left the placeholder vocabulary when asks moved inline, so
+        $ask.headline is characters like $HOME is. It must neither be
         refused as an undeclared reference nor exempt the argument from the type
         check the way a real placeholder does — an author who writes it into an
         integer arg has written a string there."""
@@ -541,8 +541,8 @@ result_brief: x
         ]
 
     async def test_an_unknown_dollar_word_is_literal_text_not_a_placeholder(self) -> None:
-        """Only the closed namespaces are placeholders. A recorded ``bash`` step
-        says ``echo $HOME``; refusing every ``$identifier`` would refuse it."""
+        """Only the closed namespaces are placeholders. A recorded bash step
+        says echo $HOME; refusing every $identifier would refuse it."""
         body = _body(
             """
 description: Shell variable in a recorded command
@@ -560,9 +560,9 @@ result_brief: x
         assert result.issues == []
 
     async def test_a_placeholder_embedded_in_text_is_checked_like_a_whole_one(self) -> None:
-        """The evaluator interpolates ``$x`` inside a larger string, so the
+        """The evaluator interpolates $x inside a larger string, so the
         validator has to read it there too. It only looked at values that
-        START with ``$``, so ``"Sent $steps.headline.text"`` was accepted and
+        START with $, so "Sent $steps.headline.text" was accepted and
         then replayed against a step the playbook never declares."""
         body = _body(
             """
@@ -583,7 +583,7 @@ result_brief: x
         assert "$steps.headline.text" in result.issues[0].problem
 
     async def test_an_embedded_dollar_ask_is_literal_text_too(self) -> None:
-        """The embedded scan reads every ``$word`` in a string; ``$ask`` is no
+        """The embedded scan reads every $word in a string; $ask is no
         longer one of the roots it knows, so text mentioning it must pass rather
         than being refused as a reference to a table that no longer exists."""
         body = _body(
@@ -708,7 +708,7 @@ result_brief: x
         assert result.issues == []
 
     async def test_a_slot_carrying_a_key_the_vocabulary_has_no_room_for_is_refused(self) -> None:
-        """The slot vocabulary is two keys. A model that adds ``goal`` has
+        """The slot vocabulary is two keys. A model that adds goal has
         written an instruction the runner will never read, so the refusal names
         the argument it sits in and spells out what a slot may hold — one issue,
         not a pydantic dump the author has to decode."""
@@ -837,8 +837,8 @@ result_brief: x
         assert result.issues == []
 
     async def test_a_duplicate_step_id_is_refused_by_name(self) -> None:
-        """The runner records results by id, so a second ``agenda`` overwrites
-        the first and every ``$steps.agenda`` silently reads whichever ran last."""
+        """The runner records results by id, so a second agenda overwrites
+        the first and every $steps.agenda silently reads whichever ran last."""
         body = _body(
             """
 description: Two steps called agenda
@@ -908,7 +908,7 @@ result_brief: x
         assert resolve.await_args_list == [call("mail_agent", USER_ID, registry)]
 
     async def test_an_arg_json_cannot_serialise_is_type_checked_not_a_crash(self) -> None:
-        """A recorded arg can hold a value ``json.dumps`` refuses — a YAML date is
+        """A recorded arg can hold a value json.dumps refuses — a YAML date is
         the everyday one. Scanning it for the truncation marker must fall back to
         its text rather than raise, or authoring dies with a TypeError instead of
         telling the author their date belongs in a string field.
@@ -1001,7 +1001,7 @@ result_brief: x
     async def test_a_union_typed_arg_accepts_every_member_of_the_union(self) -> None:
         """An optional arg is declared as anyOf[string, null].
 
-        Reading only the ``type`` key would treat the whole union as untyped and
+        Reading only the type key would treat the whole union as untyped and
         wave through any value; reading the wrong union key would reject a
         perfectly valid playbook at authoring time.
         """
@@ -1095,9 +1095,9 @@ result_brief: x
         assert "expected another type, got str" in result.issues[0].problem
 
     async def test_a_boolean_is_not_accepted_for_an_integer_arg(self) -> None:
-        """Python says ``isinstance(True, int)``; the tool's API does not.
+        """Python says isinstance(True, int); the tool's API does not.
 
-        Letting ``true`` through as a count sends a live integration a 1 the
+        Letting true through as a count sends a live integration a 1 the
         author never wrote.
         """
         body = _body(
@@ -1119,7 +1119,7 @@ result_brief: x
         assert "expected integer, got bool" in result.issues[0].problem
 
     async def test_a_placeholder_in_a_typed_arg_is_not_type_checked(self) -> None:
-        """``$steps.agenda.count`` is a string now and an int at replay time.
+        """$steps.agenda.count is a string now and an int at replay time.
 
         Type-checking the unresolved token would make every dynamic argument
         unauthorable.
@@ -1321,7 +1321,7 @@ result_brief: x
         assert result.issues == []
 
     async def test_a_tool_that_requires_nothing_is_not_asked_for_anything(self) -> None:
-        """An MCP schema with no ``required`` list is not a tool that requires
+        """An MCP schema with no required list is not a tool that requires
         every arg; a step calling it with none is complete."""
         registry = _schema_registry(ping={})
         body = _body(
@@ -1346,7 +1346,7 @@ result_brief: x
         self, tool_kind: str
     ) -> None:
         """Decorated tools carry a v2 model, MCP tools a raw JSON document and
-        legacy tools a v1 model. ``required`` is spelled the same way on all
+        legacy tools a v1 model. required is spelled the same way on all
         three, but each is read through a different branch, and a branch that
         reads nothing would quietly stop refusing calls that cannot run."""
 
@@ -1402,8 +1402,8 @@ result_brief: x
         ]
 
     async def test_a_deep_step_reference_resolves_against_the_step_id(self) -> None:
-        """``$steps.agenda.organizer.email`` names step ``agenda``, not
-        ``agenda.organizer``. Splitting from the wrong end rejects a playbook
+        """$steps.agenda.organizer.email names step agenda, not
+        agenda.organizer. Splitting from the wrong end rejects a playbook
         that would replay perfectly."""
         body = _body(
             """
@@ -1438,7 +1438,7 @@ class TestValidateAgainstTheRunThatIsWritingIt:
     """The checks that read the authoring run's own results.
 
     Every case here was a playbook production accepted and then broke on:
-    ``pb_c7d357db77dd`` froze a field its tool does not return, and two more
+    pb_c7d357db77dd froze a field its tool does not return, and two more
     were frozen from calls that came back empty. The run had every answer in
     hand at write time, and nothing looked at it.
     """
@@ -1530,7 +1530,7 @@ result_brief: x
     ) -> None:
         """A step whose args match no recorded call is not a call the run made.
         Handing it the run's last call anyway validated that call's result as
-        the step's own, so a `$steps` reference could be approved against a shape
+        the step's own, so a $steps reference could be approved against a shape
         the replayed args will never return. The refusal shows the args the run
         actually used so the author can freeze the real call."""
         body = _body(
@@ -1600,7 +1600,7 @@ result_brief: x
         ]
 
     async def test_a_literal_nested_beside_a_placeholder_still_picks_the_call(self) -> None:
-        """The two calls differ only inside ``filters``, which also carries a
+        """The two calls differ only inside filters, which also carries a
         placeholder. Treating the whole arg as a wildcard matches the last call
         and refuses this playbook for the spam folder's emptiness."""
         body = _body(
@@ -1636,7 +1636,7 @@ result_brief: x
         assert result.issues == []
 
     async def test_a_key_the_recorded_call_lacks_disagrees_with_it(self) -> None:
-        """The last call never sent ``label`` at all, so it is not the call this
+        """The last call never sent label at all, so it is not the call this
         step froze — an arg the step names and the record omits is a
         disagreement, not something to shrug at."""
         body = _body(
@@ -1859,8 +1859,8 @@ result_brief: x
     async def test_a_failure_with_no_error_key_is_named_by_whatever_it_did_say(
         self, envelope: dict[str, Any], said: str
     ) -> None:
-        """Tools spell their failure two ways — an ``error`` and a bare
-        ``message`` — and some say only ``success: false``. The refusal is the
+        """Tools spell their failure two ways — an error and a bare
+        message — and some say only success: false. The refusal is the
         author's only account of why the call failed, so it has to read the
         second spelling and say so plainly when there is no third."""
         body = _body(
@@ -1957,7 +1957,7 @@ result_brief: x
         )
 
     async def test_a_reference_to_a_field_the_result_lacks_is_refused_with_its_keys(self) -> None:
-        """``pb_c7d357db77dd`` exactly: a field frozen on a tool that does not
+        """pb_c7d357db77dd exactly: a field frozen on a tool that does not
         return it. The keys are the whole point of the message — without them the
         author is told what is wrong and not what it could have written."""
         body = _body(
@@ -2177,7 +2177,7 @@ result_brief: x
         self,
     ) -> None:
         """The D2 shape as it happened: a for_each inside a handoff over
-        elements carrying ``id``, written with a field they do not have."""
+        elements carrying id, written with a field they do not have."""
         body = _body(
             """
 description: x
@@ -2263,9 +2263,9 @@ result_brief: x
         assert result.issues[0].problem.startswith("send_email ran 2 time(s) in this run")
 
     async def test_a_reference_deeper_than_one_field_is_still_read_from_its_step(self) -> None:
-        """``$steps.agenda.organizer.email`` names the step ``agenda`` and the
-        path ``organizer.email``. Split from the other end the step is called
-        ``agenda.organizer``, nothing in the run answers to it, and a reference
+        """$steps.agenda.organizer.email names the step agenda and the
+        path organizer.email. Split from the other end the step is called
+        agenda.organizer, nothing in the run answers to it, and a reference
         into a shape the tool does not return is waved through."""
         body = _body(
             """
@@ -2300,7 +2300,7 @@ result_brief: x
     async def test_a_result_with_no_keys_to_offer_ends_the_refusal_where_it_is(self) -> None:
         """The keys are a hint, not a sentence: a result that is a bare list has
         none to give, and the refusal has to stop rather than trail off into an
-        empty ``has keys:``."""
+        empty has keys:."""
         body = _body(
             """
 description: Reply on a thread id a list cannot carry
@@ -2360,7 +2360,7 @@ result_brief: x
         assert result.issues == []
 
     async def test_a_reference_to_a_steps_offload_file_is_exempt(self) -> None:
-        """``$steps.<id>.file`` addresses the workspace path a step offloaded its
+        """$steps.<id>.file addresses the workspace path a step offloaded its
         result to, which exists only at replay. Checked against the authoring
         run's result it is always absent, and every offloading playbook would be
         refused."""
@@ -2429,9 +2429,9 @@ result_brief: x
         assert "Résumé für das Team" in rendered
 
     def test_keys_stay_in_authored_order_with_the_result_brief_last(self) -> None:
-        """Alphabetising would put ``description`` after ``result_brief`` and
-        scatter each step's ``id``/``tool``/``args``, so the document stops
-        reading like the sequence it describes. ``result_brief`` comes last
+        """Alphabetising would put description after result_brief and
+        scatter each step's id/tool/args, so the document stops
+        reading like the sequence it describes. result_brief comes last
         because it is written from what every step above it returned."""
         body = _body(VALID_YAML)
         rendered = dump_playbook(body)
@@ -2460,7 +2460,7 @@ result_brief: x
 def _messages(exc: pytest.ExceptionInfo[ValidationError]) -> list[str]:
     """Just the validator's own messages.
 
-    ``str(ValidationError)`` also renders the offending input, so a message
+    str(ValidationError) also renders the offending input, so a message
     asserted against the whole string passes on the strength of the input echo
     even when the message says something else entirely.
     """
@@ -2518,7 +2518,7 @@ class TestStepShapeMessages:
     node leaves it to guess which of a dozen steps to change, and a message that
     names the wrong thing sends it to rewrite a step that was fine. Both models
     carry the same rule because a playbook is authored through the input models
-    and stored through ``PlaybookStep``, and the two must refuse the same shapes.
+    and stored through PlaybookStep, and the two must refuse the same shapes.
     """
 
     def test_an_authored_tool_step_carrying_children_is_named_by_its_id(self) -> None:
@@ -2597,7 +2597,7 @@ class TestAuthoredPlaybookBecomesTheStoredOne:
     def test_an_ask_slot_written_into_an_arg_reaches_the_stored_body(self) -> None:
         """A slot is ordinary argument data all the way through the conversion.
 
-        The tool boundary no longer has an ``ask`` parameter to drop, so a slot
+        The tool boundary no longer has an ask parameter to drop, so a slot
         lost here would be lost silently: the playbook stores and replays, and
         the step simply sends nothing where the written text belonged.
         """
@@ -2630,7 +2630,7 @@ class TestAuthoredPlaybookBecomesTheStoredOne:
 @pytest.mark.unit
 class TestForEachSource:
     """A for_each has to name a list. Seen live on the first real authoring run:
-    a model wrote ``for_each: "overdue-items-from-$steps.list"`` — prose with a
+    a model wrote for_each: "overdue-items-from-$steps.list" — prose with a
     placeholder inside it, which resolves to a STRING. The runner refused it
     correctly, but only on the replay, so a whole agentic run was spent before
     anyone found out. The write is where that is knowable.
@@ -2709,9 +2709,9 @@ result_brief: Say what was sent.
 
 @pytest.mark.unit
 class TestDumpKeepsTheLoop:
-    """``read_playbook`` renders through ``dump_playbook``, and the heal brief
-    tells the agent to call ``read_playbook`` before rewriting. A loop step
-    dumped without its loop is a step whose ``$item`` addresses nothing, and the
+    """read_playbook renders through dump_playbook, and the heal brief
+    tells the agent to call read_playbook before rewriting. A loop step
+    dumped without its loop is a step whose $item addresses nothing, and the
     agent would "fix" it by dropping the for_each the playbook was written for.
     """
 
@@ -2755,8 +2755,8 @@ class TestDumpKeepsTheLoop:
 
 @pytest.mark.unit
 class TestAHandoffIsNotAnAddress:
-    """Seen live: a model wrote ``$steps.sweep.list.todos`` for the ``list`` child
-    of the ``sweep`` handoff. The write was accepted, since ``sweep`` is a
+    """Seen live: a model wrote $steps.sweep.list.todos for the list child
+    of the sweep handoff. The write was accepted, since sweep is a
     declared id, and the replay stopped on it: a handoff records no result, so
     the runner keys a child's result on the child's own id. The write is where
     that is knowable, and the message has to say what to write instead."""
@@ -2889,8 +2889,8 @@ result_brief: Say what was sent.
 
 @pytest.mark.unit
 class TestForEachSourcesAndItem:
-    """Seen live under the scripted model: ``$item`` in a plain step was
-    accepted and resolved to nothing at replay; a ``for_each`` naming a field
+    """Seen live under the scripted model: $item in a plain step was
+    accepted and resolved to nothing at replay; a for_each naming a field
     that is not a list was refused only by the replay, a whole run later."""
 
     async def test_item_outside_a_for_each_is_refused(self) -> None:
@@ -2961,8 +2961,8 @@ result_brief: x
         ]
 
     async def test_an_item_field_the_elements_do_not_have_is_refused_at_the_write(self) -> None:
-        """Seen on the real model: ``$item.todo_id`` over a list whose elements
-        carry ``id``. The replay stopped on the first element and a heal was
+        """Seen on the real model: $item.todo_id over a list whose elements
+        carry id. The replay stopped on the first element and a heal was
         spent, when the authoring run's own result already showed the keys."""
         body = _body(
             """
@@ -3226,7 +3226,7 @@ result_brief: x
     async def test_an_ask_pick_is_one_text_value_with_no_field_under_it(
         self, to: str, refused: bool
     ) -> None:
-        """Seen on the real model (D3): ``$item.title`` over an $ask pick. The
+        """Seen on the real model (D3): $item.title over an $ask pick. The
         write accepted it and the replay stopped on the first element."""
         body = _body(
             f"""
@@ -3301,9 +3301,9 @@ result_brief: x
 
 @pytest.mark.unit
 class TestTimeArgumentsRenderByExample:
-    """Seen live (D6): the run sent the reminder tool ``2026-09-06 09:00:00``;
-    the model froze it as ``"$today + 1d at 09:00"``, which renders to a
-    sentence, and a bare ``$today + 1d`` would render to ISO 8601, which is not
+    """Seen live (D6): the run sent the reminder tool 2026-09-06 09:00:00;
+    the model froze it as "$today + 1d at 09:00", which renders to a
+    sentence, and a bare $today + 1d would render to ISO 8601, which is not
     this tool's layout either. The recorded argument is the example."""
 
     def _body(self, scheduled_at: str) -> PlaybookBody:

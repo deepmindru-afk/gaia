@@ -2,13 +2,13 @@
 """Backfill descriptions and prompts for public workflows.
 
 Today every seeded explore workflow stores the same long string in both
-``description`` (shown on cards) and ``prompt`` (sent to the agent), and the
-three user-published community workflows have ``prompt = None`` and rely on
-the legacy ``effective_prompt`` fallback. This script splits them apart:
+description (shown on cards) and prompt (sent to the agent), and the
+three user-published community workflows have prompt = None and rely on
+the legacy effective_prompt fallback. This script splits them apart:
 
-- Explore workflows (37): replace ``description`` with a short marketing line
-  and leave ``prompt`` alone.
-- Community workflows (3): copy ``description`` into ``prompt`` so execution
+- Explore workflows (37): replace description with a short marketing line
+  and leave prompt alone.
+- Community workflows (3): copy description into prompt so execution
   no longer depends on the runtime fallback.
 
 Usage::

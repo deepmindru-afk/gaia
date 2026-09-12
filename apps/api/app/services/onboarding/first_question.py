@@ -1,9 +1,9 @@
 """The one LLM-composed line of GAIA's opening conversation.
 
-:mod:`first_conversation` is deterministic on purpose, and stays that way: it is
+:mod:first_conversation is deterministic on purpose, and stays that way: it is
 the thing that always ships. This module writes only the LAST turn of it — one
 extremely specific question about what to tackle first, inferred from the three
-onboarding answers — and every failure mode returns ``None`` so the static line
+onboarding answers — and every failure mode returns None so the static line
 composed next door is what the user gets instead.
 
 The rules are enforced in code rather than trusted to the prompt. A model that
@@ -73,7 +73,7 @@ class _QuestionDraft(BaseModel):
 def comms_voice_rules() -> str:
     """The comms agent's own Voice section, verbatim.
 
-    Sliced out of :data:`COMMS_AGENT_PROMPT` rather than restated here: a
+    Sliced out of :data:COMMS_AGENT_PROMPT rather than restated here: a
     second copy of the voice rules is a second thing to keep in sync, and the
     one that is never read is the one that rots.
     """
@@ -152,13 +152,13 @@ async def compose_first_question(
     user_id: str | None = None,
     timeout_seconds: float = QUESTION_TIMEOUT_SECONDS,
 ) -> FirstQuestion | None:
-    """The four starting jobs for a brand-new user, or ``None`` for no chips.
+    """The four starting jobs for a brand-new user, or None for no chips.
 
     One structured call on the deployment's own cheap lane, capped at
-    :data:`QUESTION_TIMEOUT_SECONDS` with no retry, because the caller is a user
-    waiting on a page. Every exception, timeout and rule miss returns ``None``.
+    :data:QUESTION_TIMEOUT_SECONDS with no retry, because the caller is a user
+    waiting on a page. Every exception, timeout and rule miss returns None.
 
-    ``timeout_seconds`` exists for the persona eval script, which reads the copy
+    timeout_seconds exists for the persona eval script, which reads the copy
     on whatever lane a developer has configured and must not report a slow local
     endpoint as a copy problem. Nothing in the product passes it.
     """
@@ -270,7 +270,7 @@ async def resolve_first_question(
 ) -> FirstQuestion | None:
     """The question to close the seeded conversation with, at completion time.
 
-    Prefers whatever :func:`prewarm_first_question` already wrote, because that
+    Prefers whatever :func:prewarm_first_question already wrote, because that
     call cost the user nothing. A miss (they answered and completed in the same
     breath, Redis was down, the prewarm lost its race) gets ONE short live
     attempt, and then the static line.

@@ -55,7 +55,7 @@ def _make_capturing_composio() -> tuple[MagicMock, dict[str, Callable[..., Any]]
 
 
 class _UTCOnlyDateTime(datetime):
-    """datetime stand-in whose local-time ``now(None)`` reads the previous day,
+    """datetime stand-in whose local-time now(None) reads the previous day,
     so an overdue check that computes "today" off a non-UTC clock fails these
     boundary assertions deterministically instead of depending on machine TZ."""
 

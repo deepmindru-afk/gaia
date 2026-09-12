@@ -93,7 +93,7 @@ def _composio_integration(integration_id: str) -> MagicMock:
 
 
 def _mcp_client(tools: list[BaseTool]):
-    """A client that hands back ``tools`` only for this user and this subagent."""
+    """A client that hands back tools only for this user and this subagent."""
 
     async def ensure_connected(subagent_id: str) -> list[BaseTool]:
         assert subagent_id == SUBAGENT_ID
@@ -176,7 +176,7 @@ class TestSubagentResolution:
         assert space.subagent is subagent
 
     async def test_a_subagent_that_never_finishes_explicitly_binds_no_finish_task(self) -> None:
-        """``include_finish_task`` is honoured, not assumed.
+        """include_finish_task is honoured, not assumed.
 
         A read-only subagent terminates with an AIMessage instead; binding
         finish_task anyway would let a replay name a tool the live run cannot.
@@ -216,9 +216,9 @@ class TestMcpBackedSubagent:
 
     async def test_the_live_tools_are_also_in_the_ids_the_handoff_binds(self) -> None:
         """Being in the space is not enough. The runner builds the handoff's
-        runtime config from ``initial_tool_ids``, and a subagent that cannot
+        runtime config from initial_tool_ids, and a subagent that cannot
         retrieve refuses every tool outside that set — so a live MCP tool merged
-        only into ``tools`` was accepted by the validator and then refused by the
+        only into tools was accepted by the validator and then refused by the
         replay as "outside the bound tool set"."""
         subagent = _subagent(mcp=True)
 
@@ -353,7 +353,7 @@ class TestToolSpaceDenial:
         ]
 
     def test_an_answer_only_subagent_binds_no_finish_task(self) -> None:
-        """``include_finish_task=False`` is how an answer-only subagent terminates
+        """include_finish_task=False is how an answer-only subagent terminates
         with a plain message; defaulting it back to True binds a tool the live
         subagent never had."""
         space = self._space(_subagent(mcp=False, include_finish_task=False))

@@ -71,7 +71,7 @@ def test_call_without_a_generation_id_keeps_its_logged_cost_and_loses_coverage()
 
 
 def test_dropped_generation_is_unverifiable_not_an_error() -> None:
-    """OpenRouter 404s ids it has aged out — cached as ``None``, same treatment
+    """OpenRouter 404s ids it has aged out — cached as None, same treatment
     as an id it was never asked about."""
     cached_404 = aggregate_true_cost([_call("gone", 0.40)], {"gone": None})
     never_asked = aggregate_true_cost([_call("gone", 0.40)], {})

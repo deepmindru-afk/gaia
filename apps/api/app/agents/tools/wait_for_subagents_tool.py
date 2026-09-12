@@ -133,7 +133,7 @@ async def _resolve_parked_batch(
     """Drive every HIL-parked subagent to completion, pausing the executor as needed.
 
     Each round: resume subagents whose approvals are decided; if any approvals are
-    still pending, ``interrupt()`` once with the whole batch (the executor
+    still pending, interrupt() once with the whole batch (the executor
     checkpoints and exits; a decision re-dispatches it and this node re-runs from
     the top, idempotently). A resumed subagent may park again on its next gated
     action — the loop carries it into the next round.

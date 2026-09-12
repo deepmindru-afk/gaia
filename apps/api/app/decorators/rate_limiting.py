@@ -52,13 +52,13 @@ def build_rate_limit_card(
     current_plan: str,
     message: str | None = None,
 ) -> dict[str, Any]:
-    """Build the ``rate_limit_data`` stream-card payload the frontend's RateLimitCard renders.
+    """Build the rate_limit_data stream-card payload the frontend's RateLimitCard renders.
 
     Shared by every caller that surfaces a rate/budget/cap limit inline in chat:
-    :func:`with_rate_limiting` below, the LLM-call budget wall
-    (``app.agents.middleware.accounting._emit_budget_stop_card``), and the free
-    memory cap (``app.agents.tools.memory_tools._stream_memory_limit_card``).
-    ``message`` is omitted from the payload when not given.
+    :func:with_rate_limiting below, the LLM-call budget wall
+    (app.agents.middleware.accounting._emit_budget_stop_card), and the free
+    memory cap (app.agents.tools.memory_tools._stream_memory_limit_card).
+    message is omitted from the payload when not given.
     """
     data: dict[str, Any] = {
         "feature": feature,
@@ -174,7 +174,7 @@ def _limit_hit_exception(
 
 
 async def _enforce_feature_limit(user_id: str, actual_feature_key: str) -> None:
-    """Run one rate-limit check for ``user_id`` on ``actual_feature_key``."""
+    """Run one rate-limit check for user_id on actual_feature_key."""
     try:
         user_plan = await payment_service.get_cached_plan_type(user_id)
 
@@ -308,14 +308,14 @@ def with_rate_limiting(
 async def enforce_tiered_limit(
     user_id: str, feature_key: str, *, origin: LimitHitOrigin | None = None
 ) -> None:
-    """Charge ``feature_key`` against ``user_id``'s plan quota.
+    """Charge feature_key against user_id's plan quota.
 
-    The imperative half of :func:`tiered_rate_limit`, extracted so an entry point
+    The imperative half of :func:tiered_rate_limit, extracted so an entry point
     that resolves its caller in the body rather than from the auth middleware
     still meters through the same code. The bot chat stream is the case: it
     resolves a platform link after the decorator would already have run, so
     before this existed it went entirely unmetered — no plan quota, and no
-    ``usage_daily`` row, since ``record_activity`` fires from the limiter.
+    usage_daily row, since record_activity fires from the limiter.
     """
     origin = origin or current_limit_origin()
     subscription = await payment_service.get_user_subscription_status(user_id)
@@ -430,11 +430,11 @@ async def enforce_daily_cost_budget(
     The message-count limiter caps HOW MANY requests a user makes; this caps
     HOW EXPENSIVE they were. Free budgets are a real usage wall; pro budgets
     are abuse-level guards a legitimate user never hits. Raises the same
-    ``RateLimitExceededException`` (429) as the count limiter so the frontend
+    RateLimitExceededException (429) as the count limiter so the frontend
     toast / upgrade-modal path renders identically.
 
-    ``feature_key`` names the surface being blocked (e.g. ``chat_messages``,
-    ``trigger_workflow_executions``) for the 429 payload and reset copy.
+    feature_key names the surface being blocked (e.g. chat_messages,
+    trigger_workflow_executions) for the 429 payload and reset copy.
     """
     origin = origin or current_limit_origin()
     plan_type = await payment_service.get_cached_plan_type(user_id)

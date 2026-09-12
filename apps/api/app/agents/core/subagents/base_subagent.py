@@ -55,7 +55,7 @@ def resolve_declared_tools(
 ) -> list[str]:
     """The declared tools that actually resolved, warning about any that did not.
 
-    A subagent's ``auto_bind_tools`` / ``extra_initial_tools`` are a promise that
+    A subagent's auto_bind_tools / extra_initial_tools are a promise that
     those tools are bound before its first model call. Filtering out names the
     registry never produced is correct — binding a non-existent tool would fail
     the build — but a name that goes missing is always an upstream fault (a
@@ -90,10 +90,10 @@ def build_scoped_tool_dict(
 ) -> tuple[dict[str, BaseTool], list[str]]:
     """Assemble the scoped tool dict + initial tool IDs for a subagent.
 
-    Split out of `create_provider_subagent` to keep that function's cognitive
+    Split out of create_provider_subagent to keep that function's cognitive
     complexity below SonarQube's threshold.
 
-    ``authoring_only`` builds a pure draft-authoring agent (e.g. the workflow
+    authoring_only builds a pure draft-authoring agent (e.g. the workflow
     assistant): only its tool_space tools, none of the always-available
     execution tools (coding/FS, web, research, memory), so it cannot try to
     *do* the work instead of describe it.
@@ -178,11 +178,11 @@ class SubAgentFactory:
             use_direct_tools: If True, bind all tools directly without retrieve_tools
             disable_retrieve_tools: If True, disable retrieve_tools mechanism entirely
             auto_bind_tools: Tools to auto-bind at startup. Always included
-                in `initial` regardless of `use_direct_tools` or
-                `disable_retrieve_tools`. Reduces latency for
+                in initial regardless of use_direct_tools or
+                disable_retrieve_tools. Reduces latency for
                 frequently-used tools.
             include_finish_task: When True (default), the subagent gets the
-                `finish_task` tool to signal completion. When False, it
+                finish_task tool to signal completion. When False, it
                 terminates with a normal AIMessage that the streaming layer
                 captures as the final answer. Use False for answer-only
                 subagents (e.g. documentation fetchers) where finish_task adds

@@ -2,13 +2,13 @@
 
 Inline media is an image the model receives as pixels rather than prose. It lives
 in history as a LangChain v1 data content block
-(``{"type": "image", "base64": ..., "mime_type": ...}``) inside a ToolMessage, and
-is fitted to the active model lane at request time (see ``app/agents/llm/vision/``).
+({"type": "image", "base64": ..., "mime_type": ...}) inside a ToolMessage, and
+is fitted to the active model lane at request time (see app/agents/llm/vision/).
 
-Three budgets bound it, at three boundaries: per file (``MAX_IMAGE_FILE_BYTES``),
-per block (``TARGET_INLINE_IMAGE_BYTES`` — what one image costs in a provider
+Three budgets bound it, at three boundaries: per file (MAX_IMAGE_FILE_BYTES),
+per block (TARGET_INLINE_IMAGE_BYTES — what one image costs in a provider
 request and in every Postgres checkpoint that persists it), and per request
-(``MAX_INLINE_MEDIA_BLOCKS``).
+(MAX_INLINE_MEDIA_BLOCKS).
 """
 
 PNG_MIME = "image/png"

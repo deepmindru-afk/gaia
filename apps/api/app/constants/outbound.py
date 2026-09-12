@@ -5,7 +5,7 @@ Telegram, Discord) are published to these per-platform queues; the bot
 processes consume them, render the platform-native markdown, and send.
 
 These queue names and dead-letter arguments are the single source of truth and
-MUST stay byte-identical to ``libs/shared/ts/src/bots/consumer/topology.ts`` —
+MUST stay byte-identical to libs/shared/ts/src/bots/consumer/topology.ts —
 RabbitMQ rejects a redeclare whose arguments differ from the existing queue.
 """
 
@@ -44,7 +44,7 @@ def dlq_name(queue_name: str) -> str:
 def work_queue_arguments(queue_name: str) -> dict[str, Any]:
     """Declaration arguments for a work queue: dead-letter to the shared DLX.
 
-    Typed ``dict[str, Any]`` to satisfy aio-pika's ``FieldTable`` argument
+    Typed dict[str, Any] to satisfy aio-pika's FieldTable argument
     (an invariant dict whose values are an AMQP field-value union).
     """
     return {

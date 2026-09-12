@@ -1,15 +1,15 @@
 """Regression tests: workflow tools must emit JSON-serializable payloads.
 
-The workflow tools hand ``workflow.model_dump()`` (python mode — native
+The workflow tools hand workflow.model_dump() (python mode — native
 datetimes) to the LLM as a tool result and to the stream writer as an SSE
-frame. Both consumers plain ``json.dumps`` the payload, so any datetime
-raises ``TypeError: Object of type datetime is not JSON serializable`` — in
+frame. Both consumers plain json.dumps the payload, so any datetime
+raises TypeError: Object of type datetime is not JSON serializable — in
 the background/bot path from *inside* the tool's try-block, which surfaces as
 a tool error the agent then retries forever.
 
 Same defect class already documented for search_reminders_tool in
 scripts/evals/data/capability/reminders_extra.yaml; the codebase convention
-(todo_tool.py, workflow_tasks.py) is ``model_dump(mode="json")``.
+(todo_tool.py, workflow_tasks.py) is model_dump(mode="json").
 """
 
 from datetime import UTC, datetime, timedelta

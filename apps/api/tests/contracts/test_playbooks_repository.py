@@ -382,7 +382,7 @@ class TestTheStoredFormReadsBack:
     async def test_a_for_each_over_an_ask_slot_survives_the_write_and_the_read(self, repo) -> None:
         """Seen on the real model: it wrote exactly the shape the brief asks for,
         a for_each whose source is an $ask. The repository stored the slot under
-        its field name (``prompt``) instead of its alias (``$ask``), the read
+        its field name (prompt) instead of its alias ($ask), the read
         refused the document it had just written, and every later fire fell to
         the agent with a warning nobody watches."""
         stored = await repo.upsert_for_workflow(

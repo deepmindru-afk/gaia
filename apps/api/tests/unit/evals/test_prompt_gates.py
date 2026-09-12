@@ -5,9 +5,9 @@ The failure these prevent is subtle: a gate can carry its own copy of the rule
 the prompt. So the interesting assertions here are not "the gate catches a
 violation" — they are:
 
-* :func:`test_a_new_banned_phrase_is_gated_with_no_eval_change` — add a phrase to
+* :func:test_a_new_banned_phrase_is_gated_with_no_eval_change — add a phrase to
   the prompt, the gate covers it immediately;
-* :func:`test_a_reworded_rule_raises_instead_of_checking_nothing` — reword the
+* :func:test_a_reworded_rule_raises_instead_of_checking_nothing — reword the
   rule so the list can no longer be read out, and extraction fails loud rather
   than gating on an empty list and reporting green.
 """
@@ -267,7 +267,7 @@ def test_internal_tags_passes_a_clean_reply() -> None:
 
 
 def test_gates_read_run_text_when_there_is_no_transcript() -> None:
-    """Transports that record only ``text`` must still be graded."""
+    """Transports that record only text must still be graded."""
     run = CaseRun(case_id="t", text=f"sure {EM_DASH} on it")
 
     assert dash_discipline(run)[0] == 0.0

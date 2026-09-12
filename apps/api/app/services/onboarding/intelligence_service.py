@@ -544,7 +544,7 @@ async def _run_holo_card(
     social_profiles: list[SocialProfile],
 ) -> bool:
     """Generate and persist the holo card. Returns whether it is now viewable —
-    the public card page 404s until ``onboarding.house`` exists, so the caller
+    the public card page 404s until onboarding.house exists, so the caller
     must not advertise a link for a card that failed to generate."""
     t0 = time.monotonic()
     card_ready = False

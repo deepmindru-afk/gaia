@@ -1,25 +1,25 @@
 """A gate a suite does not compute is an auto-FAIL, and nothing else catches it.
 
-``runner._status_from_scores`` reads each declared gate back with
-``scores.get(gate, 0.0)``. So a case naming a gate its own scorer never emits is
+runner._status_from_scores reads each declared gate back with
+scores.get(gate, 0.0). So a case naming a gate its own scorer never emits is
 not "ungated" — it is permanently red, whatever the agent did.
 
-That shipped. ``CapabilitySuite.score()`` used to implement exactly
-``communicate`` / ``end_state`` / ``tool_call_correctness`` inline instead of
-routing through ``core/gates.py``, and ``hard-ambiguity-which-client`` declared
-``no_forbidden_tools``. A perfect run of it — the agent asks which client and
-creates nothing — scored ``{}`` and was journaled ``failed``. The category had
+That shipped. CapabilitySuite.score() used to implement exactly
+communicate / end_state / tool_call_correctness inline instead of
+routing through core/gates.py, and hard-ambiguity-which-client declared
+no_forbidden_tools. A perfect run of it — the agent asks which client and
+creates nothing — scored {} and was journaled failed. The category had
 one case, so the whole category read 0% and the number was blamed on the agent.
 Every suite now dispatches through the shared registry, and
-``gates.validate_gates`` rejects an unknown name at load time; these tests are
+gates.validate_gates rejects an unknown name at load time; these tests are
 what keeps both true.
 
-``verify`` cannot see this class of defect: an unscored gate rejects every
+verify cannot see this class of defect: an unscored gate rejects every
 forgery, so the case reports as *proven* while being incapable of passing. The
 falsifiability sweep asks "can this go red"; this asks the other half, "can it
 go green".
 
-The suites here are the ones whose ground truth lives in ``data/<suite>/*.yaml``
+The suites here are the ones whose ground truth lives in data/<suite>/*.yaml
 — the surface a case author actually writes against.
 """
 
@@ -118,8 +118,8 @@ def test_an_unimplemented_gate_dies_at_load_time() -> None:
 def test_load_time_validation_accepts_a_suite_local_gate() -> None:
     """Mutation guard: it must not reject every name it does not recognise.
 
-    ``no_unauthorized_send`` is capability's own; validation has to consult the
-    suite's ``EXTRA_GATES`` rather than the shared registry alone, or every
+    no_unauthorized_send is capability's own; validation has to consult the
+    suite's EXTRA_GATES rather than the shared registry alone, or every
     suite-specific gate becomes unusable.
     """
     from scripts.evals.suites.capability import CapabilitySuite
@@ -140,7 +140,7 @@ class _SuiteThatForgetsAGate:
 
 
 def test_verify_reports_a_gate_the_suite_never_scores() -> None:
-    """``verify``'s blind spot, closed.
+    """verify's blind spot, closed.
 
     Before this, an unscored gate rejected every forgery and the case was
     reported as *proven* — the strongest verdict the tool has — while being
@@ -190,7 +190,7 @@ AUTOPASS_DEBT: dict[str, int] = {
 
 @pytest.mark.parametrize("suite_name", AUTHORED_SUITES)
 def test_auto_passing_cases_do_not_multiply(suite_name: str) -> None:
-    """``gates: []`` is recorded as PASSED unconditionally (runner line 459)."""
+    """gates: [] is recorded as PASSED unconditionally (runner line 459)."""
     cfg = load_config()
     suite = next(s for s in _suites(cfg) if s.name == suite_name)
     autopass = [

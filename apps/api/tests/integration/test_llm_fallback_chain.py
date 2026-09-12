@@ -189,7 +189,7 @@ class TestProviderInitialization:
     def test_init_llm_preferred_unavailable_no_fallback_uses_priority(self) -> None:
         """Preferred provider unavailable with fallback disabled still returns from priority order.
 
-        The `_get_ordered_providers` logic has `if fallback_enabled or not ordered`,
+        The _get_ordered_providers logic has if fallback_enabled or not ordered,
         meaning when no preferred provider matched and ordered is empty, it falls
         through to priority-based ordering regardless of fallback_enabled.
         """
@@ -281,7 +281,7 @@ class TestGetAvailableProviders:
     def _build_registry(self, present_providers: dict[str, Any]) -> ProviderRegistry:
         """Build a ProviderRegistry with all LLM slots registered.
 
-        Providers listed in `present_providers` get a real loader that returns
+        Providers listed in present_providers get a real loader that returns
         the given instance. Missing providers get a loader that returns None
         (simulating missing API key via WARN strategy).
         """
@@ -335,7 +335,7 @@ class TestGetAvailableProviders:
 class TestProductionProviderRegistration:
     """Drives the REAL register_llm_providers().
 
-    `_build_registry` above always registers all four slots and varies only the
+    _build_registry above always registers all four slots and varies only the
     keys, so production's actual state — custom_llm never registered, because it
     is gated on ENV=development — was unrepresentable, and the KeyError it raised
     went unseen by every tier.

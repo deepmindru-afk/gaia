@@ -238,7 +238,7 @@ def run_shape(
 
 
 def _budget(text: str) -> float:
-    """A finite, non-negative dollar amount; ``nan`` would pass every comparison."""
+    """A finite, non-negative dollar amount; nan would pass every comparison."""
     value = float(text)
     if not math.isfinite(value) or value < 0:
         raise argparse.ArgumentTypeError(

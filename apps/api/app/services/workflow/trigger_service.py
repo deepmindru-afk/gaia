@@ -65,7 +65,7 @@ class TriggerService:
         live todo subscription's trigger, and vice versa.
 
         The two counts are summed here rather than in either repository: each one
-        reads only its own collection (the ``repository-boundaries`` rule). The
+        reads only its own collection (the repository-boundaries rule). The
         owner being deleted is excluded from its own side of the count.
         """
         safe_to_delete = []
@@ -109,7 +109,7 @@ class TriggerService:
         """Register triggers for an owner (a workflow or a tracked todo).
 
         Returns the registered Composio trigger IDs (may be empty on success, e.g.
-        account-level Gmail has no per-workflow IDs). With ``raise_on_failure``,
+        account-level Gmail has no per-workflow IDs). With raise_on_failure,
         raises TriggerRegistrationError when the handler is missing or raises.
         """
         handler = get_handler_by_name(trigger_name)
@@ -158,8 +158,8 @@ class TriggerService:
 
         Only deletes a trigger from Composio when neither a workflow nor a tracked
         todo still references it: Composio upserts, so owners with identical configs
-        share a trigger ID. Pass the owner being torn down (``workflow_id`` or
-        ``todo_id``) so it is not counted as a remaining reference to itself.
+        share a trigger ID. Pass the owner being torn down (workflow_id or
+        todo_id) so it is not counted as a remaining reference to itself.
         Returns True once the operation completes, even if some triggers were kept.
         """
         if not trigger_ids:
@@ -212,7 +212,7 @@ class TriggerService:
 
         Reconnecting an integration creates a fresh Composio connected account,
         so per-workflow triggers registered against the old account stop firing
-        and the stored ``composio_trigger_ids`` go permanently stale. Re-register
+        and the stored composio_trigger_ids go permanently stale. Re-register
         each affected workflow against the current account and repoint its ids.
         Failures are logged per workflow — one broken workflow must not block
         the rest of the resync (or the OAuth flow it runs behind).

@@ -1,4 +1,4 @@
-"""WorkOS session auth middleware + ``get_current_user`` dependency."""
+"""WorkOS session auth middleware + get_current_user dependency."""
 
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
@@ -28,7 +28,7 @@ from shared.py.wide_events import log
 
 
 def get_current_user(request: Request) -> dict[str, Any] | None:
-    """Return the authenticated user dict on ``request.state``, or ``None``."""
+    """Return the authenticated user dict on request.state, or None."""
     return cast("dict[str, Any] | None", getattr(request.state, "user", None))
 
 
@@ -69,11 +69,11 @@ class PostHogRequestContextMiddleware(BaseHTTPMiddleware):
 
 
 class WorkOSAuthMiddleware(BaseHTTPMiddleware):
-    """Authenticate WorkOS session cookies; populate ``request.state.user``.
+    """Authenticate WorkOS session cookies; populate request.state.user.
 
     Handles cookie refresh and an agent-token fallback for the chat-stream
     endpoint. Unauthenticated requests still pass through — route handlers
-    are responsible for enforcing auth via :func:`get_current_user`.
+    are responsible for enforcing auth via :func:get_current_user.
     """
 
     def __init__(
@@ -191,7 +191,7 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
         return response
 
     async def _authenticate_wos_session(self, request: Request, wos_session: str) -> None:
-        """Resolve a WorkOS session cookie/bearer onto ``request.state``."""
+        """Resolve a WorkOS session cookie/bearer onto request.state."""
         try:
             user_info, new_session = await self._authenticate_session(wos_session)
         except Exception as e:
@@ -220,7 +220,7 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
             request.state.new_session = new_session
 
     async def _authenticate_agent_token(self, request: Request) -> None:
-        """Resolve an agent bearer token onto ``request.state``, if it carries one."""
+        """Resolve an agent bearer token onto request.state, if it carries one."""
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             return
@@ -252,13 +252,13 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         """Authenticate the request as a dev user, skipping WorkOS.
 
-        Only reachable when ``DEV_AUTH_BYPASS_EMAIL`` is set in development
-        (production refuses to boot with it — see ``get_settings``). The target
-        user is resolved by ``resolve_dev_bypass_user``: the ``X-Dev-User``
+        Only reachable when DEV_AUTH_BYPASS_EMAIL is set in development
+        (production refuses to boot with it — see get_settings). The target
+        user is resolved by resolve_dev_bypass_user: the X-Dev-User
         header (per-request impersonation, so one server can act as many users),
-        else the ``dev_bypass_user`` cookie (so two browser profiles can act as
+        else the dev_bypass_user cookie (so two browser profiles can act as
         different users against one instance — how free vs pro get tested side
-        by side), else ``DEV_AUTH_BYPASS_EMAIL``. A target email that doesn't
+        by side), else DEV_AUTH_BYPASS_EMAIL. A target email that doesn't
         resolve to a Mongo user fails loud with a 401 that names the fix — mint
         it via the dev router — rather than silently degrading to a generic
         auth error.
@@ -291,11 +291,11 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _publish_user(request: Request) -> None:
-        """Mirror ``request.state.user`` into the request ContextVar.
+        """Mirror request.state.user into the request ContextVar.
 
-        Read back from ``request.state`` rather than taking the value as an
+        Read back from request.state rather than taking the value as an
         argument, so this can never drift from what the handler sees. Must run
-        before ``call_next`` — that is where the downstream task is created, and
+        before call_next — that is where the downstream task is created, and
         the task inherits the context as it stands at that moment.
         """
         set_authenticated_user(getattr(request.state, "user", None))
@@ -303,11 +303,11 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
     async def _authenticate_session(
         self, wos_session: str
     ) -> tuple[AuthenticatedUser | None, str | None]:
-        """Authenticate a WorkOS sealed session and bump ``last_active_at``.
+        """Authenticate a WorkOS sealed session and bump last_active_at.
 
-        Returns ``(user_info, new_session)`` where ``new_session`` is the
+        Returns (user_info, new_session) where new_session is the
         refreshed token when WorkOS rotates the cookie. Either field may be
-        ``None`` on failure; raises if WorkOS itself errors.
+        None on failure; raises if WorkOS itself errors.
         """
         user_info, new_session = await authenticate_workos_session(
             session_token=wos_session, workos_client=self.workos

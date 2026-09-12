@@ -1,17 +1,17 @@
-"""Resolve a playbook step's ``$placeholders`` against the run that is happening.
+"""Resolve a playbook step's $placeholders against the run that is happening.
 
-Pure: given a value and a :class:`RunContext`, produce the value the tool is
-actually called with. No I/O, no ``eval``, no dynamic code — the vocabulary is a
+Pure: given a value and a :class:RunContext, produce the value the tool is
+actually called with. No I/O, no eval, no dynamic code — the vocabulary is a
 closed table matched by one scanner, so an argument a playbook author writes can
 only ever become data.
 
 The one asymmetry worth knowing: the current run is addressed by step id
-(``$steps.<id>``) and the previous run by TOOL NAME (``$last_run.<TOOL>``),
+($steps.<id>) and the previous run by TOOL NAME ($last_run.<TOOL>),
 because the run before a playbook's first replay was agentic and has no step ids
-at all. That is also why a ``$last_run`` naming a tool the previous run never
-called is ``None`` rather than an error: a first replay legitimately has nothing
-to look back at. Every other miss — a ``$last_run`` path absent from what that
-tool did return, an unresolvable ``$steps`` / ``$trigger`` / ``$user`` — means
+at all. That is also why a $last_run naming a tool the previous run never
+called is None rather than an error: a first replay legitimately has nothing
+to look back at. Every other miss — a $last_run path absent from what that
+tool did return, an unresolvable $steps / $trigger / $user — means
 the playbook no longer matches reality and must fail loudly instead of calling a
 tool with a hole in it.
 """
@@ -62,7 +62,7 @@ STEP_FILE_FIELD = "file"
 class PlaceholderError(AppError):
     """A placeholder this run cannot resolve, named so the failure says which one.
 
-    Raised for ``$steps`` / ``$trigger`` / ``$user``, and for an ask slot no
+    Raised for $steps / $trigger / $user, and for an ask slot no
     model wrote: every one of them addresses something this run was supposed to
     have, so a miss means the playbook is stale and the run must stop rather
     than proceed with a gap.
@@ -82,8 +82,8 @@ class PlaybookUser:
 class StepResult:
     """What one executed step leaves behind for the steps after it.
 
-    ``value`` is the tool's result parsed as JSON when it is JSON, and the raw
-    string otherwise. ``file`` is the workspace path when the tool offloaded its
+    value is the tool's result parsed as JSON when it is JSON, and the raw
+    string otherwise. file is the workspace path when the tool offloaded its
     result instead of returning it inline.
     """
 
@@ -124,7 +124,7 @@ def last_run_index(trace: Sequence[RecordedCall]) -> dict[str, object]:
     """The previous run's results keyed by tool name, most recent call winning.
 
     A tool called several times in one run resolves to its LAST result, which is
-    what a cursor placeholder (``$last_run.GMAIL_FETCH_MESSAGES.next_page``)
+    what a cursor placeholder ($last_run.GMAIL_FETCH_MESSAGES.next_page)
     wants: where the run finished, not where it started.
     """
     index: dict[str, object] = {}
@@ -136,7 +136,7 @@ def last_run_index(trace: Sequence[RecordedCall]) -> dict[str, object]:
 class AskAnswers:
     """Every answer the run's ask calls have written, by the key of the slot it fills.
 
-    One table for both kinds of answer, typed at the edge: ``record`` refuses an
+    One table for both kinds of answer, typed at the edge: record refuses an
     answer for a slot that was not asked and an answer of the wrong kind for the
     slot it names, and the two readers raise when the slot was never written.
     Nothing here is a bare dict lookup, because the last time it was, a skipped
@@ -203,7 +203,7 @@ class AskAnswers:
         """The answers as the end-of-run call reads them.
 
         A for_each source's answer is the list of elements the step then ran
-        over. The narration sees each element's call in ``completed``; this is
+        over. The narration sees each element's call in completed; this is
         where it sees that those were a selection, and what the selection was.
         """
         if not self._texts and not self._items:
@@ -219,12 +219,12 @@ class AskAnswers:
 def fill_ask_slots(args: Mapping[str, Any], asks: AskAnswers, key_prefix: str) -> dict[str, Any]:
     """One step's arguments with every inline ask slot replaced by its written text.
 
-    Pure, and deliberately a separate pass ahead of :func:`resolve_args`: a slot
+    Pure, and deliberately a separate pass ahead of :func:resolve_args: a slot
     becomes an ordinary string first, and is then scanned for placeholders like
-    any other value. That is what keeps ``$ask`` a value in the grammar rather
+    any other value. That is what keeps $ask a value in the grammar rather
     than a second grammar with its own resolution rules.
 
-    ``key_prefix`` is the step's id (its tool name when it has no id); together
+    key_prefix is the step's id (its tool name when it has no id); together
     with the argument path it spells the key the ask call answered under.
     """
     return {
@@ -250,7 +250,7 @@ def _fill_value(
 def resolve_args(args: Mapping[str, Any], context: RunContext) -> dict[str, Any]:
     """One step's arguments with every placeholder resolved.
 
-    An argument that IS a placeholder and resolves to ``None`` (a ``$last_run``
+    An argument that IS a placeholder and resolves to None (a $last_run
     with no history behind it) is left out, so the tool's own default applies
     rather than a null reaching a parameter that does not accept one. A literal
     null, and a null inside a nested value, are kept as written.
@@ -276,7 +276,7 @@ def _carries_cut_value(value: object) -> bool:
     """Whether a resolved argument holds a string that was cut when recorded.
 
     The marker is searched for rather than matched at the end, because a cut
-    value interpolated into a longer string (``page=<cut>&limit=50``) carries the
+    value interpolated into a longer string (page=<cut>&limit=50) carries the
     stub in the middle and is no more replayable there than on its own.
     """
     if isinstance(value, str):
@@ -292,7 +292,7 @@ def resolve_value(value: object, context: RunContext) -> object:
     """Resolve one value, descending into lists and mappings.
 
     A whole-value placeholder keeps the resolved value's real type (so
-    ``max_results: $steps.x.count`` stays an int); a placeholder embedded in a
+    max_results: $steps.x.count stays an int); a placeholder embedded in a
     larger string is interpolated into it.
     """
     if is_ask_slot(value):
@@ -412,7 +412,7 @@ def _resolve_user(token: str, path: str, user: PlaybookUser) -> str:
 
 
 def resolve_step(token: str, path: str, steps: Mapping[str, StepResult]) -> object:
-    """One ``$steps.<id>.<path>`` reference against the results in hand.
+    """One $steps.<id>.<path> reference against the results in hand.
 
     Public because the validator resolves the same references against the run
     that is AUTHORING the playbook, using the results that run already has. Two
@@ -446,14 +446,14 @@ def resolve_item(token: str, path: str, item: object) -> object:
 
 
 def _resolve_last_run(token: str, path: str, last_run: Mapping[str, object]) -> object:
-    """The previous run's value, or ``None`` when there is nothing to look back at.
+    """The previous run's value, or None when there is nothing to look back at.
 
     A tool the previous run never called is deliberately not an error: the run
     before a playbook's first replay was agentic, so a value the playbook expects
     to carry over may simply not exist yet — and the first replay must still run.
     A tool it DID call whose result lacks the path is: the playbook expects a
     shape the tool no longer returns (or the result was recorded as text), and
-    calling the tool with ``None`` where a cursor belongs restarts from the top.
+    calling the tool with None where a cursor belongs restarts from the top.
     """
     tool_name, _, rest = path.partition(".")
     if tool_name not in last_run:
@@ -485,7 +485,7 @@ def _resolve_required(token: str, root: object, path: str, where: str) -> object
 
 
 def _walk(root: object, path: str) -> tuple[object, bool]:
-    """Follow a dotted path through mappings and lists. ``(value, found)``."""
+    """Follow a dotted path through mappings and lists. (value, found)."""
     current = root
     if not path:
         return current, True
@@ -504,8 +504,8 @@ def _walk(root: object, path: str) -> tuple[object, bool]:
 def _render(value: object) -> str:
     """A resolved value as it reads inside a larger string.
 
-    ``None`` renders as nothing rather than the word "None": it is either a
-    ``$last_run`` with no history behind it or a recorded JSON null, and neither
+    None renders as nothing rather than the word "None": it is either a
+    $last_run with no history behind it or a recorded JSON null, and neither
     should reach a tool as the literal text.
     """
     if value is None:

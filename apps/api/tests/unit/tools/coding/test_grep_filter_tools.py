@@ -1,7 +1,7 @@
-"""grep tool + shared `_filter` subprocess execution: behavior + hardening.
+"""grep tool + shared _filter subprocess execution: behavior + hardening.
 
-Exercises the real subprocess path (`python` as a generic vehicle, `grep` for
-grep-specifics) and mocks only the JuiceFS boundary (`resolve_user_file`). The
+Exercises the real subprocess path (python as a generic vehicle, grep for
+grep-specifics) and mocks only the JuiceFS boundary (resolve_user_file). The
 hardening tests encode real risks: env exfil, output-cap runaway, child rlimits,
 the stderr-pipe deadlock, and flag injection.
 """
@@ -125,7 +125,7 @@ async def test_output_cap_kill_does_not_hang_on_a_paused_stdout_pipe(
     """Regression: the overrun kill used to reap the child from inside the drain.
 
     asyncio pauses a pipe transport once its buffer passes the high-water mark and
-    completes ``wait()`` only when every pipe has seen EOF — so reaping there, with
+    completes wait() only when every pipe has seen EOF — so reaping there, with
     stdout paused and nobody reading it, hung until the wall-clock timeout. It
     reproduced roughly half the time on CI, depending on how full the buffer was
     when the cap tripped. Reading a byte at a time pins the buffer full so the

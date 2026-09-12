@@ -1,7 +1,7 @@
 """User-todos VFS projection: staleness, the lighter body, index glyphs.
 
 This is the todo list the user sees in the UI, projected to
-``/workspace/todos/`` so the agent can read "what's on their plate" as files.
+/workspace/todos/ so the agent can read "what's on their plate" as files.
 Mongo is the truth; anything that survives here after Mongo moved on makes the
 agent act on a todo the user already dealt with.
 
@@ -9,7 +9,7 @@ It shares its shape with the gaia-tasks materializer but deliberately projects
 less (meta only, no canvas/log) and renders a different index line, so the
 divergences are what get attacked here alongside the staleness contract.
 
-``tmp_path`` is the real mount root — paths, mode bits and rmtree are genuine.
+tmp_path is the real mount root — paths, mode bits and rmtree are genuine.
 Nothing is mocked except one deliberate mid-write failure injection.
 """
 

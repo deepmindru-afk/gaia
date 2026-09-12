@@ -423,10 +423,10 @@ async def initiate_integration_connection(
     """Resolve an integration and start its connect flow.
 
     Single source of truth for the connect dispatch, shared by the
-    ``POST /connect/{id}`` endpoint and the login-free ``GET /connect-link``
-    entry point. Returns ``None`` when the integration does not exist (callers
-    map that to 404 / a friendly error); otherwise a ``ConnectIntegrationResponse``
-    whose ``redirect_url`` is the provider OAuth URL.
+    POST /connect/{id} endpoint and the login-free GET /connect-link
+    entry point. Returns None when the integration does not exist (callers
+    map that to 404 / a friendly error); otherwise a ConnectIntegrationResponse
+    whose redirect_url is the provider OAuth URL.
     """
     resolved = await IntegrationResolver.resolve(integration_id)
     if not resolved:

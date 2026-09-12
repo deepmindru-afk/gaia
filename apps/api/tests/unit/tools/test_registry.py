@@ -257,9 +257,9 @@ class TestToolRegistry:
     def test_core_tools_receive_the_hil_stamps_too(self):
         """A category registers its HIL sets for BOTH tool lists.
 
-        `_add_category` calls `add_tools` twice — once for `core_tools`, once
-        for `tools` — and every existing test passes its risk sets through the
-        `tools=` call only. A forced-gate tool registered as a core tool would
+        _add_category calls add_tools twice — once for core_tools, once
+        for tools — and every existing test passes its risk sets through the
+        tools= call only. A forced-gate tool registered as a core tool would
         silently lose its stamp and stop asking for approval, which is the
         whole point of the flag.
         """
@@ -624,7 +624,7 @@ class TestToolRegistryAsync:
         the /tools listing and subagent binding all key on those four flags.
 
         Its HIL risk comes from the curated set for that toolkit, so an
-        uncurated ``None`` would hand every reviewed provider tool back to the
+        uncurated None would hand every reviewed provider tool back to the
         LLM classifier at gate time.
         """
         fake_tools = [
@@ -691,7 +691,7 @@ class TestToolRegistryAsync:
 class TestInitializeCategories:
     """The category map itself, which nothing asserted before.
 
-    ``_initialize_categories`` is the single place every in-repo tool is bound
+    _initialize_categories is the single place every in-repo tool is bound
     to a category, and the category is what retrieval, the HIL risk gate and the
     frontend icon all key on. A registration silently dropped or renamed here
     makes a tool unreachable rather than broken, so nothing fails loudly.
@@ -727,9 +727,9 @@ class TestInitializeCategories:
         assert names == {"write_playbook", "read_playbook", "decline_playbook", "disable_playbook"}
 
     def test_playbook_tools_are_curated_as_non_destructive(self, registry: ToolRegistry) -> None:
-        """An empty set and ``None`` mean different things at the HIL gate.
+        """An empty set and None mean different things at the HIL gate.
 
-        ``None`` sends a tool to the LLM risk classifier; an explicit empty set
+        None sends a tool to the LLM risk classifier; an explicit empty set
         says "curated, none of these are destructive". Writing a playbook has no
         side effect on the user's data, so it must be the latter — passing None
         would put an in-repo tool back in front of the classifier on every call.
@@ -742,11 +742,11 @@ class TestInitializeCategories:
 
 @pytest.mark.unit
 class TestInitializedCategoryContract:
-    """Every literal ``_initialize_categories`` hands to a category, pinned.
+    """Every literal _initialize_categories hands to a category, pinned.
 
     The registry is built once at startup and nothing else re-derives these
-    values, so a nulled ``space``, a dropped ``is_delegated``, a case-mangled
-    ``integration_name`` or a lost tool list makes a tool land in the wrong
+    values, so a nulled space, a dropped is_delegated, a case-mangled
+    integration_name or a lost tool list makes a tool land in the wrong
     space or vanish rather than break — no caller fails loudly.
     """
 
@@ -798,7 +798,7 @@ class TestInitializedCategoryContract:
         self, registry: ToolRegistry
     ) -> None:
         """These four categories are registered on one line each, so a dropped
-        ``tools=`` argument leaves a silently empty category behind."""
+        tools= argument leaves a silently empty category behind."""
         names = {
             name: {tool.name for tool in registry._categories[name].tools}
             for name in ("manual", "memory", "weather", "context")
@@ -822,8 +822,8 @@ class TestInitializedCategoryContract:
         }
 
     def test_the_two_destructive_built_ins_are_stamped_alone(self, registry: ToolRegistry) -> None:
-        """``execute_workflow`` starts an autonomous run and
-        ``connect_integration`` connects an external account; every sibling is
+        """execute_workflow starts an autonomous run and
+        connect_integration connects an external account; every sibling is
         reversible or read-only. A mangled member name in either curated set
         downgrades the one tool that must stop at the HIL gate to safe.
         """
@@ -854,7 +854,7 @@ class TestInitializedCategoryContract:
 
 @pytest.mark.unit
 class TestAddCategoryWideEvent:
-    """``_add_category`` reports the category it just built on the wide event.
+    """_add_category reports the category it just built on the wide event.
 
     The registry is assembled once at startup, so this is the only record of
     which space a category landed in and whether it replaced an earlier
@@ -907,7 +907,7 @@ class TestAddCategoryWideEvent:
 
 @pytest.mark.unit
 class TestAddCategoryOptions:
-    """``_add_category`` forwards its keyword options to ``ToolCategory`` and
+    """_add_category forwards its keyword options to ToolCategory and
     nothing else decides their defaults (mutation survivors 2026-08-28: the
     default values and the option keys were not pinned)."""
 

@@ -77,12 +77,12 @@ def _subscription_mock(plan_type: PlanType = PlanType.PRO) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _no_real_redis_plan_cache():
-    """``get_cached_plan_type`` reads ``subscription_plan:<user_id>`` from Redis
-    before consulting ``get_user_subscription_status``, and every test in this
+    """get_cached_plan_type reads subscription_plan:<user_id> from Redis
+    before consulting get_user_subscription_status, and every test in this
     file shares FAKE_USER's id. The test env's REDIS_URL points at a real
-    local Redis (``tests/conftest.py``) — without this, a plan tier cached by
+    local Redis (tests/conftest.py) — without this, a plan tier cached by
     one test leaks into a later test that patches a different tier, which is
-    the "stray local Redis singleton" flake noted in ``apps/api/CLAUDE.md``.
+    the "stray local Redis singleton" flake noted in apps/api/CLAUDE.md.
     """
     with (
         patch(
@@ -743,7 +743,7 @@ class TestRegenerateSteps:
 
     async def test_regenerate_steps_not_found_returns_404(self, client: AsyncClient):
         """A missing workflow is a 404, not a 500: the endpoint re-raises its own
-        HTTPException instead of letting the bare ``except Exception`` wrap it."""
+        HTTPException instead of letting the bare except Exception wrap it."""
         with patch(
             f"{_WF_SERVICE}.regenerate_workflow_steps",
             new_callable=AsyncMock,
@@ -1167,7 +1167,7 @@ class TestGeneratePrompt:
     async def test_generate_prompt_forwards_every_request_field(
         self, client: AsyncClient, fake_user: dict
     ):
-        """Every field the editor posts has to reach ``WorkflowPromptRequest``:
+        """Every field the editor posts has to reach WorkflowPromptRequest:
         a dropped one silently degrades the generated instructions (wrong
         trigger, unmentioned integrations) instead of failing loudly."""
         with patch(

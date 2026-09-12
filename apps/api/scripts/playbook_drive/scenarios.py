@@ -1,11 +1,11 @@
 """The shapes thrown at the playbook surface, as data.
 
 Each scenario is one workflow whose step text is a script for the scripted
-model (``tools/llm-stub``): ``[[tool:<name> <json>]]`` calls, then ``[[say:]]``.
+model (tools/llm-stub): [[tool:<name> <json>]] calls, then [[say:]].
 Every fire of that workflow re-sends the same script, so a scenario reads as a
 sequence of fires with an expectation on what each one did — authored, then
 replayed, then starved of data and healed, and so on. What is asserted is the
-``Observation`` of the fire: the execution record, the playbook's lifecycle
+Observation of the fire: the execution record, the playbook's lifecycle
 fields, the workflow's decline tally and pause state, and the worker's own
 events. Never prose, never a tool result the model wrote.
 

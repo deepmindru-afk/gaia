@@ -63,7 +63,7 @@ def _make_response(
 
 
 def _noop_writer() -> MagicMock:
-    """Return a callable mock suitable for ``get_stream_writer``."""
+    """Return a callable mock suitable for get_stream_writer."""
     return MagicMock()
 
 

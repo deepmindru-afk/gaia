@@ -1,6 +1,4 @@
-"""
-Sentry configuration for error tracking and performance monitoring.
-"""
+"""Sentry configuration for error tracking and performance monitoring."""
 
 from collections.abc import Callable
 from typing import Any

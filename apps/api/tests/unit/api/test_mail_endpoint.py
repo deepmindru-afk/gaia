@@ -3,8 +3,8 @@
 Tests the Gmail endpoints with mocked service layer and integration
 dependency to verify routing, status codes, response bodies, and validation.
 
-Gmail endpoints use ``require_integration("gmail")`` which internally calls
-``check_integration_status``.  We patch that function to return ``True`` so
+Gmail endpoints use require_integration("gmail") which internally calls
+check_integration_status.  We patch that function to return True so
 the dependency passes without a real Composio/Redis connection.
 """
 

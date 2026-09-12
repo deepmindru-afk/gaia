@@ -12,11 +12,11 @@ removes a job from the queue once it finishes, so a worker that dies mid-send
 leaves the job to be picked up and re-run.
 
 That made the *job* durable but not the *intent*, which is what the other two
-pieces here are for. Each landed delivery stamps the user (``SignupDelivery``),
+pieces here are for. Each landed delivery stamps the user (SignupDelivery),
 so a re-run after a mid-send death resumes instead of mailing the same person
 twice, and the enqueue carries a per-user job id so two enqueues collapse into
 one job. A signup whose enqueue never reached Redis at all leaves both stamps
-missing, and ``sweep_undelivered_signup_emails`` finishes it later — before
+missing, and sweep_undelivered_signup_emails finishes it later — before
 that, a single Redis hiccup lost both deliveries forever with no record
 anywhere that they were owed.
 """

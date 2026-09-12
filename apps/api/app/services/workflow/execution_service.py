@@ -67,10 +67,10 @@ class WorkflowFireOverlapped(Exception):
     The replay holds the same per-conversation executor lock an agentic run
     does, so two fires of one workflow cannot both replay its playbook (seen
     live: two manual fires at the same moment, two "Replayed 1 step(s)"
-    results, every side effect doubled). Unlike :class:`WorkflowFireQueued`
+    results, every side effect doubled). Unlike :class:WorkflowFireQueued
     nothing is put on the queue: the fire is dropped, and the run that holds
     the lock delivers the workflow's one result. So it is neither a success to
-    record nor a failure to tell the user about. ``holder`` is the lock value
+    record nor a failure to tell the user about. holder is the lock value
     of the run that was in flight, for the record and the log.
     """
 
@@ -86,7 +86,7 @@ class WorkflowFireOverlapped(Exception):
 class WorkflowRunFailed(Exception):
     """A fire that failed after it had already done something on record.
 
-    The calls in ``trace`` are side effects that happened; if the record of
+    The calls in trace are side effects that happened; if the record of
     this fire does not carry them, the next fire reads an empty history and
     repeats them.
     """

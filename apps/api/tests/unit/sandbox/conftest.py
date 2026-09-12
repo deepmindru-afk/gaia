@@ -13,14 +13,14 @@ def _no_cross_replica_lock(monkeypatch):
     """Neutralize the Redis half of the acquisition lock for the whole unit tier.
 
     The unit tier is hermetic and does no I/O, so it cannot take a real lease —
-    and ``redis_cache.redis`` is a process-wide client bound to whichever event
-    loop touched it first, which surfaces as ``Event loop is closed`` in the
+    and redis_cache.redis is a process-wide client bound to whichever event
+    loop touched it first, which surfaces as Event loop is closed in the
     second test that reaches it.
 
-    Only the Redis leg is stubbed. The in-process ``asyncio.Lock`` still runs, so
+    Only the Redis leg is stubbed. The in-process asyncio.Lock still runs, so
     these tests keep asserting on real per-user locking; the cross-replica lease
     (mutual exclusion, renewal, expiry) is proven against real Redis in
-    ``tests/integration/real/test_sandbox_lock_real.py``.
+    tests/integration/real/test_sandbox_lock_real.py.
     """
 
     @contextlib.asynccontextmanager

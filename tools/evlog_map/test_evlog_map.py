@@ -221,7 +221,7 @@ def test_a_boundary_inside_a_nested_helper_is_credited(tmp_path: Path) -> None:
 
 
 def _write_router_tree(tmp_path: Path) -> tuple[Path, Path, list[Path]]:
-    """app → v1 → integrations → gmail, the real three-level nesting."""
+    """App → v1 → integrations → gmail, the real three-level nesting."""
     factory = _write(
         tmp_path,
         "core/app_factory.py",

@@ -24,7 +24,7 @@ class WorkflowConfigError(Exception):
 
 
 class WorkflowCreatedTriggerConfig(TypedDict):
-    """The ``trigger_config`` block of the ``workflow_created`` stream frame."""
+    """The trigger_config block of the workflow_created stream frame."""
 
     type: TriggerType
     cron_expression: str | None
@@ -34,7 +34,7 @@ class WorkflowCreatedTriggerConfig(TypedDict):
 
 
 class WorkflowCreatedPayload(TypedDict):
-    """The ``workflow_created`` frame streamed when a workflow is created
+    """The workflow_created frame streamed when a workflow is created
     without a confirmation card — the frontend renders it as a created-workflow
     tool card."""
 
@@ -399,7 +399,7 @@ async def _regenerated_after_prompt_edit(
     workflow: Workflow, user_id: str, updated: Workflow
 ) -> Workflow:
     """The workflow with its steps regenerated for the new prompt; the update
-    already committed, so a regeneration failure is logged and ``updated``
+    already committed, so a regeneration failure is logged and updated
     stands."""
     from app.services.workflow.service import WorkflowService
 

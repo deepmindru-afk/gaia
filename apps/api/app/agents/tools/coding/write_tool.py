@@ -1,4 +1,4 @@
-"""Persistent `write` tool — overwrite files in the user's E2B workspace."""
+"""Persistent write tool — overwrite files in the user's E2B workspace."""
 
 from __future__ import annotations
 

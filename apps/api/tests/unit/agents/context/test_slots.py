@@ -125,7 +125,7 @@ class TestRequestSlotOrder:
         )
 
     def test_gemini_keeps_the_leading_block_layout(self) -> None:
-        """``langchain-google-genai`` drops every system message after the first
+        """langchain-google-genai drops every system message after the first
         non-system one, so a tail slot there is not a colder cache — it is content
         the model never sees."""
         assert request_slot_order("gemini") == tuple(PromptSlot)

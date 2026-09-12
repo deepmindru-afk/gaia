@@ -1,6 +1,6 @@
 """Middleware registration order — the invariant PostHog identity rests on.
 
-Starlette runs ``app.user_middleware`` outermost-first, so a middleware's index
+Starlette runs app.user_middleware outermost-first, so a middleware's index
 IS its execution order. Two orderings here are load-bearing and neither was
 asserted anywhere; the module had no unit test at all.
 """
@@ -35,7 +35,7 @@ def test_posthog_context_is_registered(middleware_names: list[str]) -> None:
 
 
 def test_posthog_context_runs_inside_workos_auth(middleware_names: list[str]) -> None:
-    """It reads ``request.state.user``, which WorkOSAuthMiddleware populates.
+    """It reads request.state.user, which WorkOSAuthMiddleware populates.
 
     Registered the other way round it would run first, see no user, and
     silently identify nobody — the events still send, just unattributed.
@@ -48,10 +48,10 @@ def test_posthog_context_runs_inside_workos_auth(middleware_names: list[str]) ->
 def test_bot_auth_runs_inside_posthog_context(middleware_names: list[str]) -> None:
     """The documented reason bot routes must attribute explicitly.
 
-    BotAuthMiddleware populates ``request.state.user`` for bot API-key traffic,
+    BotAuthMiddleware populates request.state.user for bot API-key traffic,
     but it runs INSIDE the PostHog context, which has already decided there is
-    nobody to identify. Hence ``capture_event(user_id, ...)`` rather than
-    ``capture_context_event`` on every bot route (see apps/api/CLAUDE.md).
+    nobody to identify. Hence capture_event(user_id, ...) rather than
+    capture_context_event on every bot route (see apps/api/CLAUDE.md).
     Should this order ever flip, that guidance becomes wrong.
     """
     assert middleware_names.index("PostHogRequestContextMiddleware") < (
@@ -62,10 +62,10 @@ def test_bot_auth_runs_inside_posthog_context(middleware_names: list[str]) -> No
 class TestPostHogContextDoesNotSwallowExceptions:
     """The context must not become the thing that reports the error.
 
-    ``new_context`` autocaptures escaping exceptions by default, through the
+    new_context autocaptures escaping exceptions by default, through the
     MODULE-level posthog client — which this codebase never configures, since
-    it builds a ``Posthog()`` instance via the lazy provider. That autocapture
-    raises ``ValueError("API key is required")`` on the way out and REPLACES the
+    it builds a Posthog() instance via the lazy provider. That autocapture
+    raises ValueError("API key is required") on the way out and REPLACES the
     real exception, so every authenticated 500 reaches the error handler, the
     wide event and Sentry as the same bogus ValueError.
 

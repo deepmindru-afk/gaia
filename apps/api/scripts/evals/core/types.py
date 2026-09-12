@@ -219,13 +219,13 @@ class CaseTrace:
     def error_info(self) -> dict[str, str] | None:
         """Opik's error envelope — for cases that ERRORED, never merely failed.
 
-        A graded wrong answer records why it was wrong in ``error`` too ("gate
+        A graded wrong answer records why it was wrong in error too ("gate
         score below threshold"), and writing that into the envelope made every
         failed case count as an error in Opik's project list — 105 phantom
         "errors" on suites whose runs had zero. The envelope means "the machine
         broke", and only an errored status earns it.
 
-        All three keys are required by the API — omitting ``traceback`` fails
+        All three keys are required by the API — omitting traceback fails
         validation and silently drops the whole trace.
         """
         if not self.error or self.status != "errored":
@@ -249,7 +249,7 @@ class CaseTrace:
     ) -> CaseTrace:
         """Build the trace for one journaled case.
 
-        ``suite`` and ``app_version`` are required, and keyword-only, because
+        suite and app_version are required, and keyword-only, because
         they used to default to "". The seeder passed them and the live run loop
         did not, so every trace written during a run was missing both while the
         same case re-seeded later carried them — two sources of truth for one
@@ -298,7 +298,7 @@ class CaseTrace:
 
 
 def _parse_ts(value: object) -> datetime:
-    """Journal timestamp, falling back to now for pre-``ts`` records."""
+    """Journal timestamp, falling back to now for pre-ts records."""
     if isinstance(value, str):
         try:
             return datetime.fromisoformat(value)
@@ -308,7 +308,7 @@ def _parse_ts(value: object) -> datetime:
 
 
 def _last_assistant(messages: list[dict[str, str]]) -> str:
-    """Fallback output for journals written before records carried ``text``."""
+    """Fallback output for journals written before records carried text."""
     for message in reversed(messages):
         if message.get("role") == "assistant":
             return str(message.get("content", ""))
@@ -333,7 +333,7 @@ class ProviderError(Exception):
 class InfraError(Exception):
     """Raised by a transport when a backend the suite needs is unavailable.
 
-    Distinct from :class:`ProviderError`: rotating to another LLM lane cannot
+    Distinct from :class:ProviderError: rotating to another LLM lane cannot
     fix a dead datastore, and nothing about the agent was measured. The run
     loop aborts instead of journaling cases that never ran — an outage graded
     as a wrong answer becomes a fabricated 0% in the report.

@@ -1,7 +1,7 @@
-"""Repository for the ``user_integrations`` collection.
+"""Repository for the user_integrations collection.
 
-User-scoped; one document per ``(user_id, integration_id)`` (unique index),
-addressed by the business ``integration_id`` within a user. Tracks which
+User-scoped; one document per (user_id, integration_id) (unique index),
+addressed by the business integration_id within a user. Tracks which
 integrations a user has added and whether they are connected.
 """
 
@@ -59,12 +59,12 @@ class UserIntegrationsRepository(
         expired_reason: str | None = None,
         connected_account_id: str | None = None,
     ) -> bool:
-        """Upsert the user's connection status. ``connected_at`` is stamped on the
-        connected transition and ``expired_at``/``expired_reason`` on the expired one;
-        ``created_at`` only on insert. ``connected_account_id`` is written whenever
+        """Upsert the user's connection status. connected_at is stamped on the
+        connected transition and expired_at/expired_reason on the expired one;
+        created_at only on insert. connected_account_id is written whenever
         the caller learns it and never cleared — the id of the account that died is
         what lets us address it after the fact. Reconnecting clears the expiry stamps so an
-        `expired` record never reads as connected-but-broken. Always succeeds (the
+        expired record never reads as connected-but-broken. Always succeeds (the
         upsert matches or inserts), matching the old modified/upserted/matched check."""
         set_fields: dict[str, object] = {
             "status": status,
@@ -89,7 +89,7 @@ class UserIntegrationsRepository(
         return doc is not None
 
     async def user_ids_with_integration(self, integration_id: str) -> list[str]:
-        """Every user_id that has added ``integration_id`` (cross-user — for the
+        """Every user_id that has added integration_id (cross-user — for the
         cache-bust / link-cleanup fan-out when a shared integration changes)."""
         return await self._distinct("user_id", {"integration_id": integration_id})
 

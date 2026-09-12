@@ -492,7 +492,7 @@ class TestUpdateTaskStatus:
 
 class TestGetPendingTask:
     """The due-scan (and its ObjectId->string mapping) now lives on
-    ``reminder_repository.find_pending_before`` — contract-tested against real Mongo
+    reminder_repository.find_pending_before — contract-tested against real Mongo
     in tests/contracts/test_reminders_repository.py. Here we verify the scheduler
     delegates to it and passes the scan time through."""
 

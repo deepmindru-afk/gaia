@@ -165,13 +165,13 @@ class TestMCPConnectionFlow:
     # ------------------------------------------------------------------
 
     async def test_ensure_connected_refuses_an_integration_revoked_elsewhere(self):
-        """The DB is the authorization record; ``_tools`` is only a transport cache.
+        """The DB is the authorization record; _tools is only a transport cache.
 
-        ``disconnect()`` clears the local dicts, so with one process the user
+        disconnect() clears the local dicts, so with one process the user
         revoking an integration took effect immediately. Across replicas the
         DELETE lands on one of them and every other replica keeps the live
         session for the life of the process (the pool's LRU cap is 5000, so
-        nothing evicts it and there is no TTL). Checking ``_tools`` before the
+        nothing evicts it and there is no TTL). Checking _tools before the
         DB status let those replicas keep executing tools against an
         integration the user had already revoked.
         """
@@ -186,8 +186,8 @@ class TestMCPConnectionFlow:
     async def test_ensure_connected_drops_the_stale_session_it_refused(self):
         """Refusing once is not enough — the warm entry must go.
 
-        ``_find_integration_id_by_server_url`` routes tool calls off
-        ``_clients``, so leaving the entry behind keeps the revoked
+        _find_integration_id_by_server_url routes tool calls off
+        _clients, so leaving the entry behind keeps the revoked
         integration reachable through the MCP proxy.
         """
         client = _build_client_with_no_auth("user-revoked-cleanup")
@@ -202,13 +202,13 @@ class TestMCPConnectionFlow:
         assert "gone" not in client._clients
 
     async def test_server_url_routing_skips_an_integration_revoked_elsewhere(self):
-        """The MCP proxy routes by server_url off ``_clients`` — status must gate it.
+        """The MCP proxy routes by server_url off _clients — status must gate it.
 
-        The slow path already filters on ``status == "connected"``; the warm
+        The slow path already filters on status == "connected"; the warm
         fast path did not, so a replica holding a live session would still route
-        ``/mcp/proxy/tool-call`` to an integration the user had revoked on
+        /mcp/proxy/tool-call to an integration the user had revoked on
         another replica. This is the path the MCP-App iframe actually uses, and
-        it never goes through ``ensure_connected``.
+        it never goes through ensure_connected.
         """
         client = _build_client_with_no_auth("user-proxy-revoked")
         client._clients["gone"] = MagicMock()
@@ -420,7 +420,7 @@ class TestMCPConnectionFlow:
         embed it in the BaseMCPClient config (auth field).
 
         This exercises _build_config()'s bearer-token branch.  If the
-        assignment `server_config["auth"] = raw_token` is removed, a mock
+        assignment server_config["auth"] = raw_token is removed, a mock
         that asserts on the config dict passed to BaseMCPClient will catch it.
         """
         bearer_token = "my-static-bearer-token"  # nosec B105
@@ -503,7 +503,7 @@ class TestMCPConnectionFlow:
         the BaseMCPClient config.
 
         This exercises the requires_auth branch in _build_config().  If the
-        fallback `stored_token = await self.token_store.get_oauth_token(...)`
+        fallback stored_token = await self.token_store.get_oauth_token(...)
         is removed, the captured config will have no auth key.
         """
         oauth_token = "oauth-access-token-xyz"  # nosec B105
@@ -694,7 +694,7 @@ class TestMCPConnectionFlow:
         """When _do_connect() receives a 401-style error it must attempt a
         token refresh and retry the connection exactly once.
 
-        The mechanism under test is the ``_retry_<integration_id>`` flag inside
+        The mechanism under test is the _retry_<integration_id> flag inside
         _do_connect() (lines 470-499 of mcp_client.py).  On the first call
         BaseMCPClient.create_session raises a RuntimeError that contains "401",
         which triggers _try_refresh_token().  After a successful refresh the

@@ -51,7 +51,7 @@ async def insert_note(
 
 
 async def index_note(note_id: str, user_id: str, plaintext: str) -> None:
-    """Index one note's plaintext into the ``notes`` vector collection."""
+    """Index one note's plaintext into the notes vector collection."""
     collection = await ChromaClient.get_langchain_client(collection_name=CHROMA_NOTES_COLLECTION)
     await collection.aadd_documents(
         documents=[
@@ -65,8 +65,8 @@ async def index_note(note_id: str, user_id: str, plaintext: str) -> None:
 async def reindex_note(note_id: str, user_id: str, plaintext: str) -> None:
     """Re-index a note whose first indexing attempt failed, clearing the flag.
 
-    Mirrors ``reindex_file`` in app/services/files/store.py — the repair entry
-    point for notes flagged by ``insert_note``. Failures propagate so a caller
+    Mirrors reindex_file in app/services/files/store.py — the repair entry
+    point for notes flagged by insert_note. Failures propagate so a caller
     repairing a batch sees which notes are still broken.
     """
     await index_note(note_id, user_id, plaintext)

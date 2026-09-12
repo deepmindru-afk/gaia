@@ -1,8 +1,8 @@
-"""Repository for the ``llm_calls`` collection — one document per model call.
+"""Repository for the llm_calls collection — one document per model call.
 
 The permanent, queryable ledger of every priced LLM call, written from the one
-seam both metering routes share (``app.services.llm_metering._record``). It
-answers the questions ``usage_daily`` cannot: a per-day rollup knows what a user
+seam both metering routes share (app.services.llm_metering._record). It
+answers the questions usage_daily cannot: a per-day rollup knows what a user
 spent, not *which* calls spent it, on what model, in which conversation, under
 which agent — so today those answers only exist in log lines, which expire.
 
@@ -10,17 +10,17 @@ which agent — so today those answers only exist in log lines, which expire.
 only. The whole point of a durable ledger is that it outlives a retention
 window; message content must not.
 
-**Any COGS or spend query must filter on ``charge_to_budget``.**
-``charge_to_budget=True`` is spend the user asked for and was metered against
-their allowance; ``False`` is background work GAIA chose to do on their behalf
+**Any COGS or spend query must filter on charge_to_budget.**
+charge_to_budget=True is spend the user asked for and was metered against
+their allowance; False is background work GAIA chose to do on their behalf
 (memory extraction, follow-ups, onboarding) which is recorded for COGS but never
-charged. Summing ``cost_usd`` across both answers "what did this cost us", which
+charged. Summing cost_usd across both answers "what did this cost us", which
 is a different question from "what was this user charged" — and only the charged
-half mirrors the Redis budget windows and ``usage_daily.cost``.
+half mirrors the Redis budget windows and usage_daily.cost.
 
-``created_at`` carries a 90-day TTL (see ``create_llm_call_indexes``), which is
+created_at carries a 90-day TTL (see create_llm_call_indexes), which is
 what keeps the collection bounded — the durable per-day money history stays in
-``usage_daily``, which this never replaces.
+usage_daily, which this never replaces.
 """
 
 from collections.abc import Sequence
@@ -78,11 +78,11 @@ class LaneThread(NamedTuple):
 def split_lane_thread(thread_id: str | None) -> LaneThread:
     """Split a checkpoint thread id into the bare conversation id and its lane wrapper.
 
-    Every wrapped shape returns the bare ``<conv>`` plus the full wrapped id as
-    ``lane_thread``, so a ledger query can ask both "everything in this
+    Every wrapped shape returns the bare <conv> plus the full wrapped id as
+    lane_thread, so a ledger query can ask both "everything in this
     conversation" (across comms, executor and every spawn) and "only this lane".
-    A plain conversation thread has no wrapper and returns ``lane_thread=None``.
-    An empty/absent thread returns both as ``None`` rather than inventing an id.
+    A plain conversation thread has no wrapper and returns lane_thread=None.
+    An empty/absent thread returns both as None rather than inventing an id.
 
     Spawned-subagent threads matter more than their ~1% share suggests: there is
     one per tool call, so a conversation that spawns work fragments into as many
@@ -222,14 +222,14 @@ class LLMCallsRepository(MongoRepository[LLMCallDocument, LLMCallUpdate]):
     async def insert_backfilled(self, docs: Sequence[LLMCallDocument]) -> int:
         """Insert reconstructed rows, skipping any already present.
 
-        Idempotent by construction: each row carries a ``backfill_key`` derived
-        from the log event it was rebuilt from, and ``$setOnInsert`` under a
-        unique index means a re-run of ``--apply`` matches the existing document
+        Idempotent by construction: each row carries a backfill_key derived
+        from the log event it was rebuilt from, and $setOnInsert under a
+        unique index means a re-run of --apply matches the existing document
         and writes nothing. Re-running a half-finished backfill is therefore
         safe and cheap, which matters because the run takes long enough to be
         interrupted.
 
-        Returns the number of rows actually created. ``ordered=False`` so one
+        Returns the number of rows actually created. ordered=False so one
         duplicate cannot abort the rest of the batch.
         """
         if not docs:

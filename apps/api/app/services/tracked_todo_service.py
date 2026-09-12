@@ -8,7 +8,7 @@ A tracked todo is a regular todo with:
 - log_content field (system-written audit trail)
 
 Canvas and log content live on the todo document itself — see
-``app/services/todo_canvas_storage.py`` for the storage primitives. No
+app/services/todo_canvas_storage.py for the storage primitives. No
 JuiceFS / FUSE mount is required, so tracked todos work in every dev mode.
 """
 
@@ -58,7 +58,7 @@ CANVAS_TEMPLATE = """# {title}
 
 
 def _pin_active_todo(docs: list[TodoDocument], active_todo_id: str | None) -> None:
-    """Move the matching todo to the front of `docs` in-place (no-op if not found)."""
+    """Move the matching todo to the front of docs in-place (no-op if not found)."""
     if not active_todo_id:
         return
     for i, d in enumerate(docs):
@@ -68,7 +68,7 @@ def _pin_active_todo(docs: list[TodoDocument], active_todo_id: str | None) -> No
 
 
 def _format_due_string(due_date: datetime | None, now: datetime) -> str:
-    """Render the due-date suffix: ` due(Nd)`, ` OVERDUE(Nd)`, or empty."""
+    """Render the due-date suffix:  due(Nd),  OVERDUE(Nd), or empty."""
     if not due_date:
         return ""
     days_until = (due_date - now).days
@@ -100,7 +100,7 @@ class TrackedTodoService:
     """Manages VFS lifecycle for tracked (GAIA working memory) todos.
 
     All methods are static — the service holds no instance state. The
-    ``tracked_todo_service`` singleton is kept for call-site compatibility.
+    tracked_todo_service singleton is kept for call-site compatibility.
     """
 
     @staticmethod

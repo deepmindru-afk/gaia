@@ -1,21 +1,21 @@
 """Shared orchestration for VFS sync glue modules.
 
-The two glue modules (``gaia_tasks_fs``, ``user_todos_fs``) share two
+The two glue modules (gaia_tasks_fs, user_todos_fs) share two
 distinct patterns:
 
 * **Hash-gated sync**: bail on missing mount, fetch active docs from
   Mongo, hash them, compare against the on-disk catalog marker, run
   the materializer in a thread only on mismatch, stamp the new marker,
-  log the result. Implemented by :func:`run_hashed_sync`.
+  log the result. Implemented by :func:run_hashed_sync.
 
 * **Fire-and-forget scheduling**: turn an async sync function into a
-  ``schedule(user_id)`` callable that creates a background task, holds
+  schedule(user_id) callable that creates a background task, holds
   a reference so the task isn't garbage-collected, and never raises
-  into the caller. Implemented by :func:`make_scheduler`.
+  into the caller. Implemented by :func:make_scheduler.
 
 Both helpers are deliberately small. They exist to make the two glue
 modules read top-down and identical in shape — if a third VFS area
-(``/workspace/memory/`` for semantic memory, say) gets added later it
+(/workspace/memory/ for semantic memory, say) gets added later it
 slots in by providing the same five callbacks.
 """
 
@@ -56,16 +56,16 @@ async def run_hashed_sync(
     catalog_marker_path_fn: Callable[[Path], Path],
     log_name: str,
 ) -> int:
-    """Run a hash-gated VFS sync for ``user_id``.
+    """Run a hash-gated VFS sync for user_id.
 
-    Returns the number of doc bodies rewritten. ``0`` means either the
+    Returns the number of doc bodies rewritten. 0 means either the
     mount was missing (native dev) or the on-disk catalog signature
     already matched Mongo — both are no-ops from the caller's POV.
 
     Steps (do not reorder):
 
     1. Short-circuit on missing mount.
-    2. Open the ``fs_timer`` so dashboards see the call even when it's
+    2. Open the fs_timer so dashboards see the call even when it's
        a no-op due to the marker match (helps spot a runaway caller).
     3. Fetch + hash + compare against the catalog marker.
     4. If mismatch, materialize off the event loop and stamp the new
@@ -93,7 +93,7 @@ def make_scheduler(
     *,
     log_name: str,
 ) -> Callable[[str], None]:
-    """Build a ``schedule(user_id)`` wrapper around ``sync_fn``.
+    """Build a schedule(user_id) wrapper around sync_fn.
 
     The returned closure:
 
@@ -103,7 +103,7 @@ def make_scheduler(
       calling tools synchronously during startup).
     * Wraps every task body in a try/except that logs but never raises
       — fire-and-forget MUST NOT crash the host coroutine.
-    * Spawns via ``spawn_background_task`` so tasks aren't
+    * Spawns via spawn_background_task so tasks aren't
       garbage-collected mid-flight.
     """
 

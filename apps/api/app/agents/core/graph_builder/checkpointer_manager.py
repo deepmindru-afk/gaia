@@ -1,14 +1,14 @@
 """LangGraph checkpointing backed by Postgres, lazily provided.
 
 Flow
-- Requires `POSTGRES_URL` from `app.config.settings`.
-- `@lazy_provider` registers a provider for the checkpointer.
-- First `providers.aget(...)` creates an async pool and checkpointer, then reuses it.
-- Use helpers `get_checkpointer_manager()`.
+- Requires POSTGRES_URL from app.config.settings.
+- @lazy_provider registers a provider for the checkpointer.
+- First providers.aget(...) creates an async pool and checkpointer, then reuses it.
+- Use helpers get_checkpointer_manager().
 
 Add/change config
-- Set `POSTGRES_URL` in settings; in dev it can be Optional.
-- To alter pool size, adjust `CheckpointerManager` init params.
+- Set POSTGRES_URL in settings; in dev it can be Optional.
+- To alter pool size, adjust CheckpointerManager init params.
 """
 
 from typing import cast
@@ -26,9 +26,7 @@ from app.core.lazy_loader import MissingKeyStrategy, lazy_provider, providers
 
 
 class CheckpointerManager:
-    """
-    A manager class to handle checkpointer initialization and lifecycle.
-    """
+    """A manager class to handle checkpointer initialization and lifecycle."""
 
     def __init__(self, conninfo: str, max_pool_size: int = 20) -> None:
         self.conninfo = conninfo
@@ -38,9 +36,7 @@ class CheckpointerManager:
         self.checkpointer: AsyncPostgresSaver | None = None
 
     async def setup(self) -> "CheckpointerManager":
-        """
-        Initialize the connection pool and checkpointer.
-        """
+        """Initialize the connection pool and checkpointer."""
         # Swarm VXLAN overlay silently drops idle TCP connections (conntrack
         # timeout ~15 min). Without keepalives + pool recycling the pool hands
         # out dead sockets and chat_stream fails with "server closed the
@@ -86,16 +82,12 @@ class CheckpointerManager:
         return self
 
     async def close(self) -> None:
-        """
-        Close the connection pool and cleanup resources.
-        """
+        """Close the connection pool and cleanup resources."""
         if self.pool:
             await self.pool.close()
 
     def get_checkpointer(self) -> AsyncPostgresSaver:
-        """
-        Get the initialized checkpointer.
-        """
+        """Get the initialized checkpointer."""
         if not self.checkpointer:
             raise RuntimeError("Checkpointer has not been initialized. Call setup() first.")
         return self.checkpointer

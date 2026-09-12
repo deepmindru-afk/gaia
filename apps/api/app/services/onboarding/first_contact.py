@@ -19,10 +19,10 @@ A connect link is only asked for when the job is impossible without the
 account (the inbox needs Gmail, a meeting brief needs the calendar). Everything
 else is a question, and the answer's playbook offers a link later, in context.
 
-Links are written as markdown; every bot's ``send`` renders markdown for its
-platform (Telegram: a real hyperlink; WhatsApp and iMessage: ``label (url)``).
+Links are written as markdown; every bot's send renders markdown for its
+platform (Telegram: a real hyperlink; WhatsApp and iMessage: label (url)).
 
-The rules of the voice apply here as everywhere (``agents/prompts/comms_prompts``):
+The rules of the voice apply here as everywhere (agents/prompts/comms_prompts):
 short lines, plain words, no exclamation marks, no emoji, never a feature list.
 """
 
@@ -43,7 +43,7 @@ LINK_GREETING = "Hey, I'm with you on {platform} now."
 def compose_link_greeting(platform: str, name: str | None) -> str:
     """GAIA's hello on a freshly linked platform.
 
-    ``name`` is the GAIA user's full name; only the first token is used, because
+    name is the GAIA user's full name; only the first token is used, because
     a greeting that says the surname is an email, not a text.
     """
     from app.services.onboarding.first_conversation import (  # noqa: PLC0415 -- first_conversation imports the onboarding package for its phrases; a top-level import back would be a cycle
@@ -298,8 +298,8 @@ def compose_first_contact(
 ) -> list[str]:
     """Every bubble a bot sends right after a one-tap link, in order.
 
-    ``connect_links`` are ``(integration_id, url)`` pairs already minted by the
-    caller for whatever :func:`needed_integration_ids` returned MINUS what the
+    connect_links are (integration_id, url) pairs already minted by the
+    caller for whatever :func:needed_integration_ids returned MINUS what the
     user already has connected. Minting is I/O and this stays pure, so the copy
     can be asserted without a Redis or a Mongo in the room.
 
@@ -317,7 +317,7 @@ async def build_first_contact(
     name: str | None,
     preferences: OnboardingPreferences,
 ) -> list[str]:
-    """:func:`compose_first_contact` with the connect links resolved and minted.
+    """:func:compose_first_contact with the connect links resolved and minted.
 
     An integration the user already connected is dropped rather than re-offered:
     the whole point of the links is that they are the first move, and a link to

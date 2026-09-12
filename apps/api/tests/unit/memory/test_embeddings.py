@@ -1,7 +1,7 @@
 """Unit tests for app.memory.embeddings batching/chunking behavior (#918).
 
 The sidecar OOM-killed on large batches because fastembed's default internal
-``batch_size=256`` materializes gigabytes of ONNX activations in one forward
+batch_size=256 materializes gigabytes of ONNX activations in one forward
 pass. The fix bounds every fastembed call with an explicit small batch size
 and splits oversized client requests into bounded HTTP calls. These tests pin
 the chunking contract and that the sync helpers never invoke fastembed with

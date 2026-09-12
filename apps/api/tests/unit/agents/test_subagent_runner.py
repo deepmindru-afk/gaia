@@ -93,7 +93,7 @@ def _make_ctx(**overrides) -> SubagentExecutionContext:
 
 
 def _make_run(**overrides) -> _StreamRun:
-    """One in-flight ``execute_subagent_stream`` drive, without the stream.
+    """One in-flight execute_subagent_stream drive, without the stream.
 
     The per-mode handlers and the finalizer all take this by reference, so a
     test can drive them directly instead of through the astream loop.
@@ -124,12 +124,12 @@ def _make_integration(
     agent_name: str = "github_agent",
     provider: str = "github",
 ) -> MagicMock:
-    """Subagent-shaped fixture for `get_subagent_by_id` (used by
-    `build_subagent_system_prompt`).
+    """Subagent-shaped fixture for get_subagent_by_id (used by
+    build_subagent_system_prompt).
 
-    Mirrors the `Subagent` dataclass surface: `.id`, `.name`, `.short_name`,
-    `.provider`, and `.config` with `.agent_name`, `.system_prompt`, and
-    `.has_subagent`.
+    Mirrors the Subagent dataclass surface: .id, .name, .short_name,
+    .provider, and .config with .agent_name, .system_prompt, and
+    .has_subagent.
     """
     subagent_cfg = MagicMock()
     subagent_cfg.has_subagent = has_subagent
@@ -151,7 +151,7 @@ def _make_integration(
 
 
 class TestBuildInitialMessages:
-    """Shape is ``[static, dynamic_stable, memory_recall?, human_task, time]`` —
+    """Shape is [static, dynamic_stable, memory_recall?, human_task, time] —
     canonical slot order, so the pre-model hooks normalise correct input rather
     than correcting this tier's output."""
 
@@ -676,7 +676,7 @@ class TestProcessUpdatesPayload:
 
     @pytest.mark.asyncio
     async def test_an_interrupt_event_records_its_payloads_and_stops_there(self):
-        """The approval values come out of the event's own ``__interrupt__``
+        """The approval values come out of the event's own __interrupt__
         entry — accumulated, because one event arrives per paused task."""
         run = _make_run()
         payload = {LANGGRAPH_INTERRUPT_KEY: ({"approval_id": "a1"}, {"approval_id": "a2"})}
@@ -689,7 +689,7 @@ class TestProcessUpdatesPayload:
 
     @pytest.mark.asyncio
     async def test_a_non_agent_node_is_skipped_without_abandoning_the_rest(self):
-        """Skipping the pre-model hook must ``continue``, not ``break`` — the
+        """Skipping the pre-model hook must continue, not break — the
         agent node's update arrives in the SAME payload behind it."""
         ai = AIMessage(content="", tool_calls=[{"name": "web_search", "args": {}, "id": "tc-1"}])
         writer = MagicMock()
@@ -710,7 +710,7 @@ class TestProcessUpdatesPayload:
 
     @pytest.mark.asyncio
     async def test_an_agent_update_without_messages_records_nothing(self):
-        """The default is an empty list, not ``None`` — a node update that
+        """The default is an empty list, not None — a node update that
         carries no messages at all is ordinary, not a crash."""
         run = _make_run()
 
@@ -721,7 +721,7 @@ class TestProcessUpdatesPayload:
 
     @pytest.mark.asyncio
     async def test_only_tool_bearing_messages_are_captured(self):
-        """The filter reads ``tool_calls`` defensively: the agent node's update
+        """The filter reads tool_calls defensively: the agent node's update
         also carries messages that have no such attribute at all."""
         ai = AIMessage(content="", tool_calls=[{"name": "web_search", "args": {}, "id": "tc-1"}])
         plain = HumanMessage(content="not a tool call")
@@ -754,7 +754,7 @@ class TestProcessUpdatesPayload:
 
     @pytest.mark.asyncio
     async def test_announcing_a_call_claims_its_result_for_this_stream_and_subagent(self):
-        """``note_tool_output_owner`` is what stops "messages" mode re-emitting
+        """note_tool_output_owner is what stops "messages" mode re-emitting
         the same ToolMessage untagged — all three arguments decide the claim."""
         run = _make_run(subagent_id="sub-1", ctx_overrides={"stream_id": "s-1"})
 
@@ -1302,7 +1302,7 @@ class TestPrepareExecutorExecution:
         """Every ThreadSeed field is load-bearing: the tier decides which context
         sections apply, the user id scopes what they retrieve, and the query has
         to stay the ORIGINAL task — the workflow section injected into
-        ``enhanced_task`` would otherwise pollute the semantic search."""
+        enhanced_task would otherwise pollute the semantic search."""
         build_config = AsyncMock(return_value={"configurable": {"thread_id": "executor_t1"}})
         graph, config, system, context = self._prepare_patches(build_config)
         with graph, config, system, context as mock_assemble:
@@ -1345,7 +1345,7 @@ class TestBuildSubagentSystemPrompt:
         """The static subagent prompt must be byte-identical across users.
 
         Provider metadata (usernames, emails) is assembled separately by
-        ``app.agents.context`` and delivered in its own message, so the static
+        app.agents.context and delivered in its own message, so the static
         prefix the LLM receives stays cacheable.
         """
         integration = _make_integration("github")

@@ -78,13 +78,13 @@ STALE_THREAD = [
 
 @pytest.mark.unit
 class TestSystemBlockIsLeadingAndContiguous:
-    """``langchain-google-genai`` promotes a ``SystemMessage`` to
-    ``system_instruction`` only while the system block is leading and unbroken.
+    """langchain-google-genai promotes a SystemMessage to
+    system_instruction only while the system block is leading and unbroken.
     The first non-system message ends the block, and every later system message
     is silently discarded — taking the entire persona with it.
 
     This binds on the GEMINI lane. The OpenAI wire has no such rule, and the tail
-    layout spends exactly that freedom (see ``TestTheTailLayoutOnTheOpenAIWire``).
+    layout spends exactly that freedom (see TestTheTailLayoutOnTheOpenAIWire).
     """
 
     @pytest.mark.parametrize("tier", list(AgentTier))
@@ -196,9 +196,9 @@ class TestStaticPromptIsUserIndependent:
 
 @pytest.mark.unit
 class TestClockPlacement:
-    """The clock ticks every minute. In ``system_instruction`` it would push the
+    """The clock ticks every minute. In system_instruction it would push the
     cache boundary back to just before the timestamp on every call, so it rides
-    a ``HumanMessage`` at the very tail of contents instead."""
+    a HumanMessage at the very tail of contents instead."""
 
     @pytest.mark.parametrize("tier", list(AgentTier))
     async def test_clock_is_the_final_message_and_is_human(self, tier: AgentTier) -> None:
@@ -245,7 +245,7 @@ class TestOneMessagePerSlot:
 
     @pytest.mark.parametrize("tier", list(AgentTier))
     async def test_the_survivor_is_the_latest(self, tier: AgentTier) -> None:
-        """Every message in ``STALE_THREAD`` carries recognisable stale text, so a
+        """Every message in STALE_THREAD carries recognisable stale text, so a
         survivor of a slot this turn refilled is unmistakable.
 
         Only slots the current turn actually produces are checked. The background
@@ -308,8 +308,8 @@ class TestLegacyMarkersStillResolve:
         assert legacy not in messages, "the legacy block competes for the stable slot and loses"
 
     async def test_marker_in_model_extra_resolves(self) -> None:
-        """A marker passed as a bare constructor kwarg lands in ``model_extra``,
-        not ``additional_kwargs``.
+        """A marker passed as a bare constructor kwarg lands in model_extra,
+        not additional_kwargs.
 
         Asserted on the slot directly. Inferring it from "the message did not
         survive" cannot fail: a misresolved message competes for the *static*
@@ -331,9 +331,9 @@ class TestLegacyMarkersStillResolve:
 
 @pytest.mark.unit
 class TestWorkspaceSessionNeverGuesses:
-    """``vfs_session_id`` is the executor's pin to the conversation thread.
-    ``thread_id`` is the ``executor_<conv>`` wrapper — using it would state
-    ``/workspace/sessions/executor_<conv>/``, sending the agent's deliverables
+    """vfs_session_id is the executor's pin to the conversation thread.
+    thread_id is the executor_<conv> wrapper — using it would state
+    /workspace/sessions/executor_<conv>/, sending the agent's deliverables
     outside the directory the artifact watcher scans, where they are lost."""
 
     @pytest.mark.parametrize(
@@ -389,7 +389,7 @@ class TestOneFailingSourceCostsOnlyItsOwnSection:
     enrichment read therefore strips the user's name, timezone, preferences,
     connected integrations and memories from the same turn.
 
-    ``build_tracked_todos_block`` was the one fetcher that left its service call
+    build_tracked_todos_block was the one fetcher that left its service call
     unguarded, so a Mongo blip on the todo service silently cost a comms turn
     every other piece of context it had.
     """
@@ -520,7 +520,7 @@ class TestTheGatherSlotsEachSectionWhereItDeclared:
     async def test_the_whole_memory_core_sits_behind_the_conversation(
         self,
     ) -> None:
-        """``get_core_context`` renders the documents, the agenda and the activity
+        """get_core_context renders the documents, the agenda and the activity
         journal as one string, and ALL of it now rides behind the conversation.
 
         The agenda and journal were split off first, because they obviously churn
@@ -565,11 +565,11 @@ class TestTheGatherSlotsEachSectionWhereItDeclared:
 
     @staticmethod
     async def _volatile_driven_by_todos(text: str) -> str:
-        """The volatile block with ``text`` as the only per-turn content.
+        """The volatile block with text as the only per-turn content.
 
         Driven through the tracked-todo summary: it is retrieved per turn and
         grows with the user's todo list, so it is one of the sections this cap
-        exists for. (``skills`` used to play this role and no longer can — it
+        exists for. (skills used to play this role and no longer can — it
         is byte-stable and now sits in the cached prefix.)
         """
         with fake_context_sources(ContextSources(tracked_todos=text)):
@@ -627,7 +627,7 @@ class TestTheGatherSlotsEachSectionWhereItDeclared:
 
 @pytest.mark.unit
 class TestTheAssemblyIsRecordedOnTheWideEvent:
-    """``dynamic_context`` is how anyone answers "what did the agent actually
+    """dynamic_context is how anyone answers "what did the agent actually
     see?" for a turn that already happened. A wrong field here does not break a
     prompt, so nothing else would ever catch it — it just makes every later
     investigation quietly lie."""
@@ -666,7 +666,7 @@ class TestTheAssemblyIsRecordedOnTheWideEvent:
         assert record["stable_chars"] > 0
 
     async def test_the_real_channel_is_recorded_when_there_is_one(self) -> None:
-        """``web`` is the default for a turn with no channel, not a label to
+        """web is the default for a turn with no channel, not a label to
         stamp on every turn — a Slack turn recorded as web is unfindable."""
         async with captured_wide_event() as event:
             with fake_context_sources(ContextSources()):
@@ -688,7 +688,7 @@ class TestTheAssemblyIsRecordedOnTheWideEvent:
 
 @pytest.mark.unit
 class TestEachBlockDeclaresItsOwnSlot:
-    """``manage_system_prompts_node`` resolves a message to a slot by its
+    """manage_system_prompts_node resolves a message to a slot by its
     marker, not by where it sits. An unmarked block is not recognised as the
     slot's holder, so the stale copy from the previous turn is never replaced —
     the thread stacks dynamic blocks and the cache prefix shatters, which is the
@@ -724,7 +724,7 @@ class TestEachBlockDeclaresItsOwnSlot:
 class TestAWorkerTierRecordsItsOwnSections:
     """Comms is given no skills section at all, so the skills field can only be
     proven on a tier that actually has one — asserted on comms it would read as
-    ``False`` whatever the code did."""
+    False whatever the code did."""
 
     async def test_the_executor_records_the_skills_it_was_given(self) -> None:
         async with captured_wide_event() as event:

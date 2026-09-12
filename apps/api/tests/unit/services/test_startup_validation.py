@@ -1,11 +1,11 @@
 """validate_startup_requirements must HALT startup when setup is incomplete.
 
-It is a ``strategy=ERROR`` lazy provider, so raising propagates through the
-strict auto-initializer and aborts a blocking boot. A prior broad ``except``
-swallowed its own ``RuntimeError`` and the check never halted anything.
+It is a strategy=ERROR lazy provider, so raising propagates through the
+strict auto-initializer and aborts a blocking boot. A prior broad except
+swallowed its own RuntimeError and the check never halted anything.
 
 Only payment plans are checked: model pricing moved into code
-(``app/config/model_pricing.py``), so there is no models collection left to
+(app/config/model_pricing.py), so there is no models collection left to
 seed or to gate on.
 """
 

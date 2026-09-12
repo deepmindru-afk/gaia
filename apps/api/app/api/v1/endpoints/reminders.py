@@ -1,6 +1,4 @@
-"""
-FastAPI endpoints for reminder management.
-"""
+"""FastAPI endpoints for reminder management."""
 
 from typing import Annotated
 
@@ -39,11 +37,11 @@ router = APIRouter(prefix="/reminders", tags=["reminders"])
 def _reminder_context(operation: str, reminder: ReminderModel) -> ReminderContext:
     """Wide-event context for one reminder.
 
-    ``recurrence`` and ``next_run_time`` read ``repeat``/``scheduled_at`` — the
+    recurrence and next_run_time read repeat/scheduled_at — the
     fields a reminder actually has. The previous
-    ``reminder.recurrence if hasattr(reminder, "recurrence") else None`` spelling
-    named attributes ``ReminderModel`` has never defined, so both fields were
-    logged as ``None`` on every request.
+    reminder.recurrence if hasattr(reminder, "recurrence") else None spelling
+    named attributes ReminderModel has never defined, so both fields were
+    logged as None on every request.
     """
     context = ReminderContext(operation=operation, id=str(reminder.id))
     if reminder.repeat:

@@ -196,7 +196,7 @@ class TestChainSemantics:
 
 
 class TestAnyMatch:
-    """`match=ANY` is a flat OR — one true condition fires it.
+    """match=ANY is a flat OR — one true condition fires it.
 
     This is how a single subscription watches "from acme.com OR from northwind.com"
     without splitting into two. The ALL default is exercised throughout
@@ -255,12 +255,12 @@ class TestAnyMatch:
 
 
 class TestComparatorFallthrough:
-    """An operator no comparator branch handles must return exactly ``False`` —
-    never ``None`` or ``True``.
+    """An operator no comparator branch handles must return exactly False —
+    never None or True.
 
-    A ``None`` collapses to falsy in the AND/OR chain, so ``conditions_match``
+    A None collapses to falsy in the AND/OR chain, so conditions_match
     alone cannot tell it apart from a real no-match; asserting on
-    ``evaluate_condition`` directly is what pins the wildcard default. A ``True``
+    evaluate_condition directly is what pins the wildcard default. A True
     default would fire a subscription on an operator that was never meant to
     apply to the field's type.
     """

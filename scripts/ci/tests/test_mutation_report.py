@@ -564,7 +564,7 @@ def test_a_mutmut_child_that_produced_nothing_is_an_error_not_a_pass(tmp_path: P
 
 
 def test_a_run_that_generated_no_mutants_is_a_skip_not_a_pass(tmp_path: Path) -> None:
-    """mutmut ran and found nothing to mutate: honest, but still not proof.
+    """Mutmut ran and found nothing to mutate: honest, but still not proof.
 
     Distinguished from the case above by the evidence that it ran at all — a
     log with output in it and a mutants/ tree on disk.

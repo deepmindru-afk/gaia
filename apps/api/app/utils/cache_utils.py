@@ -1,6 +1,4 @@
-"""
-Cache utilities for key generation and hashing.
-"""
+"""Cache utilities for key generation and hashing."""
 
 import hashlib
 

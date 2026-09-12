@@ -21,7 +21,7 @@ from tests.helpers import captured_wide_event
 
 @pytest.fixture
 def connected_publisher() -> tuple[RabbitMQPublisher, MagicMock]:
-    """A publisher whose connection/channel report healthy, so ``ensure_connected``
+    """A publisher whose connection/channel report healthy, so ensure_connected
     is a no-op and tests drive the real publish/declare paths."""
     pub = RabbitMQPublisher("amqp://test")
     pub.connection = MagicMock(is_closed=False)
@@ -47,12 +47,12 @@ class TestPublishWithRetry:
     async def test_publish_outbound_asks_for_no_declare_explicitly(
         self, connected_publisher
     ) -> None:
-        """``declare`` must be False, not merely falsy.
+        """declare must be False, not merely falsy.
 
-        Watching ``declare_queue`` cannot tell False from None: ``_publish_with_retry``
-        branches on ``if declare:`` and both values skip the declare, so the test
-        above passes either way. The hole is real rather than pedantic — ``declare``
-        is a required keyword-only ``bool``, so a None arriving there means a caller
+        Watching declare_queue cannot tell False from None: _publish_with_retry
+        branches on if declare: and both values skip the declare, so the test
+        above passes either way. The hole is real rather than pedantic — declare
+        is a required keyword-only bool, so a None arriving there means a caller
         dropped the flag while the behaviour stays accidentally right, and it stops
         being right the moment that branch is tightened to an identity check: the
         outbound path would redeclare a pre-declared queue and take

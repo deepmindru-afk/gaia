@@ -1,5 +1,5 @@
 """
-LANGGRAPH BIGTOOL OVERRIDE
+LANGGRAPH BIGTOOL OVERRIDE.
 
 This overrides `create_agent` from langgraph_bigtool to support dynamic model configuration
 and LangChain AgentMiddleware integration.
@@ -134,7 +134,7 @@ class _AgentDeps:
 
 
 def _fallback_config(config: RunnableConfig, lane: "ModelLane") -> RunnableConfig:
-    """``config`` rebound onto ``lane`` — the config the fallback attempt runs under."""
+    """config rebound onto lane — the config the fallback attempt runs under."""
     return cast(
         RunnableConfig,
         {**config, "configurable": lane.rebind(config.get("configurable") or {})},
@@ -148,10 +148,10 @@ def _prepare_fallback(
 ) -> tuple[Callable[[], Runnable], "ModelLane"] | None:
     """Factory that re-binds this run on the NEXT configured provider, with the
     same tools. Zero-arg so the (per-turn, tool-list-sized) binding only happens
-    if the primary actually fails. ``None`` when no other provider is configured.
+    if the primary actually fails. None when no other provider is configured.
 
     The fallback target is a different PROVIDER, not a different model on the
-    same one. Falling back to ``get_default_llm()`` was inert in production: it
+    same one. Falling back to get_default_llm() was inert in production: it
     was skipped whenever the run already selected the default model, and since
     every tier resolves to that model the graph had no fallback at all — one 402
     or 401 from OpenRouter killed the whole turn on every execution path.
@@ -171,10 +171,10 @@ def _bind_session_id(
     model_configurations: AgentConfigurable,
     agent_name: str | None = None,
 ) -> Runnable:
-    """Bind the sticky-routing session id onto ``llm_with_tools``, if applicable.
+    """Bind the sticky-routing session id onto llm_with_tools, if applicable.
 
-    ``agent_name`` gives each agent CLASS its own cache chain, extending the
-    ``-aux`` suffix that already exists for one-shot calls.
+    agent_name gives each agent CLASS its own cache chain, extending the
+    -aux suffix that already exists for one-shot calls.
 
     Why: every agent in a turn previously shared the conversation's bare session
     id, so comms, the executor, the subagents and the memory lane all wrote into
@@ -197,9 +197,9 @@ def _bind_session_id(
 def _agent_sticky_key(
     model_configurations: AgentConfigurable, agent_name: str | None
 ) -> str | None:
-    """This agent's sticky-routing key for this run, or ``None``.
+    """This agent's sticky-routing key for this run, or None.
 
-    One computation, used by the primary's bind AND handed to ``invoke_llm``
+    One computation, used by the primary's bind AND handed to invoke_llm
     for the fallback. They used to derive it separately — the fallback from
     config, which yields the BARE session id — so a provider hiccup dropped
     every agent back into one shared chain and they resumed evicting each
@@ -276,9 +276,9 @@ def _maybe_inject_wrapup(state: State) -> State:
 def _tools_to_bind(deps: _AgentDeps, state: State) -> list[BaseTool]:
     """Assemble the bound-tool list with a cache-stable ordering.
 
-    Fixed tools (``retrieve_tools``, the agent's initial set, middleware)
+    Fixed tools (retrieve_tools, the agent's initial set, middleware)
     are bound first so they form a byte-stable prefix for the whole
-    conversation. Dynamically retrieved tools (``selected_tool_ids``, which
+    conversation. Dynamically retrieved tools (selected_tool_ids, which
     only ever grows via the append-only reducer) are bound LAST, so each
     retrieval appends to the tail instead of shifting the fixed tools. That
     keeps the request's function-declaration prefix stable and lets the
@@ -524,7 +524,7 @@ def _select_tools_node(deps: _AgentDeps) -> RunnableCallable | Callable[..., Any
     async def aselect_tools(
         tool_calls: list[dict[str, Any]], config: RunnableConfig, *, store: BaseStore
     ) -> State:
-        """Async twin of ``select_tools`` — resolve retrieve_tools calls into bindings."""
+        """Async twin of select_tools — resolve retrieve_tools calls into bindings."""
         if deps.retrieve_tools is None:
             raise RuntimeError("retrieve_tools is disabled and aselect_tools should not be called")
 
@@ -596,7 +596,7 @@ def reject_unbound_tools(tool_calls: list[dict[str, Any]], *, store: BaseStore) 
 
 
 async def areject_unbound_tools(tool_calls: list[dict[str, Any]], *, store: BaseStore) -> State:
-    """Async twin of ``reject_unbound_tools`` for the async graph path."""
+    """Async twin of reject_unbound_tools for the async graph path."""
     return reject_unbound_tools(tool_calls, store=store)
 
 
@@ -617,7 +617,7 @@ def finish_task_node(tool_calls: list[ToolCall], *, store: BaseStore) -> State: 
 
 
 async def afinish_task_node(tool_calls: list[ToolCall], *, store: BaseStore) -> State:
-    """Async twin of ``finish_task_node`` for the async graph path."""
+    """Async twin of finish_task_node for the async graph path."""
     return finish_task_node(tool_calls, store=store)
 
 
@@ -631,7 +631,7 @@ def _owes_playbook_decision(state: State) -> bool:
 
 
 def _after_finish_task(exit_node: str) -> Callable[[State], str]:
-    """Route out of the finish node: ``finish_task`` is the executor's other
+    """Route out of the finish node: finish_task is the executor's other
     way to stop, so a briefed workflow run that finishes without deciding
     about its playbook is nudged here exactly as a plain-text stop is. Same
     bound (MAX_PLAYBOOK_DECISION_NUDGES), so a model that finishes twice
@@ -662,10 +662,10 @@ def nudge_continue_node(state: State) -> State:
 def _last_tool_calling_message(state: State) -> AIMessage | None:
     """The AI message whose calls this turn is executing.
 
-    NOT ``messages[-1]``: a resume prepends a current-time HumanMessage
-    (``subagent_runner._with_current_time``), so by the time the approvals node has
+    NOT messages[-1]: a resume prepends a current-time HumanMessage
+    (subagent_runner._with_current_time), so by the time the approvals node has
     paused and woken, the tool-calling message is no longer last. Matches
-    ``hil/utils.current_tool_calls``, which the gate resolves siblings with — the two
+    hil/utils.current_tool_calls, which the gate resolves siblings with — the two
     must agree on which message is being executed or they gate different call sets.
     """
     for message in reversed(state["messages"]):

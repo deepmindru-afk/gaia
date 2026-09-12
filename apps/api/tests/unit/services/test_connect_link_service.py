@@ -20,8 +20,8 @@ from app.services.connect_link_service import (
 
 @pytest.fixture
 def fake_store() -> Generator[dict[str, object], None, None]:
-    """In-memory stand-in for the Redis single-use store: ``set_cache`` writes
-    (returning success), ``get_and_delete_cache`` reads-and-deletes (the
+    """In-memory stand-in for the Redis single-use store: set_cache writes
+    (returning success), get_and_delete_cache reads-and-deletes (the
     single-use guarantee)."""
     store: dict[str, object] = {}
 

@@ -411,9 +411,9 @@ class TestBuildExecutorGraph:
                 assert graph is deps["compiled"]
 
     async def test_executor_is_built_with_the_completion_guard_and_skill_tool(self):
-        """Two things the executor cannot lose. ``require_finish_to_end`` is what
+        """Two things the executor cannot lose. require_finish_to_end is what
         opts it into the harness-owned completion check — without it a plain-text
-        stop is taken at face value and the guard is inert. ``save_learned_skill``
+        stop is taken at face value and the guard is inert. save_learned_skill
         is bound up front rather than retrieved, so a renamed id silently drops the
         tool from the executor's initial set."""
         with ExitStack() as stack:

@@ -1,17 +1,17 @@
 """Resolve high-level file references into Composio file uploads.
 
 Composio's file-accepting tools (Gmail compose today — GMAIL_CREATE_EMAIL_DRAFT /
-GMAIL_SEND_EMAIL — any future toolkit with the same ``attachment`` of
-``{name, mimetype, s3key}``) take a file already uploaded to Composio's store,
+GMAIL_SEND_EMAIL — any future toolkit with the same attachment of
+{name, mimetype, s3key}) take a file already uploaded to Composio's store,
 not raw bytes. This module turns a reference the agent or a user gives us into
 that shape:
 
-- ``workspace_path`` — a file in the current session workspace (an upload, or a file an
+- workspace_path — a file in the current session workspace (an upload, or a file an
   agent downloaded there). Read from the host JuiceFS mount and uploaded to Composio.
-- ``url`` — any *publicly* fetchable URL, e.g. the download link
+- url — any *publicly* fetchable URL, e.g. the download link
   GOOGLEDRIVE_DOWNLOAD_FILE returns for a Google Drive file. Composio fetches and
   stores it, from inside this process, so the URL passes our SSRF guard first.
-- raw ``bytes`` — via ``upload_bytes_sync`` for the REST multipart path, where the
+- raw bytes — via upload_bytes_sync for the REST multipart path, where the
   file arrives as bytes rather than a reference.
 
 Resolution is all-or-nothing: if any reference fails, we raise so the caller can fail
@@ -39,7 +39,7 @@ def upload_file_reference(
 ) -> FileUploadable:
     """Upload one file reference to Composio's store for any toolkit's use.
 
-    General capability, not email-specific: ``tool``/``toolkit`` name the invoking
+    General capability, not email-specific: tool/toolkit name the invoking
     Composio tool so uploads are attributed correctly (Gmail today, Outlook/Slack
     or any file-accepting tool tomorrow).
     """
@@ -89,7 +89,7 @@ def resolve_attachments_sync(
 ) -> list[ComposioAttachment]:
     """Upload each referenced file to Composio and return the attachment objects.
 
-    Raises ``AppError`` if any reference cannot be resolved (all-or-nothing).
+    Raises AppError if any reference cannot be resolved (all-or-nothing).
     """
     resolved: list[ComposioAttachment] = []
     for index, ref in enumerate(references):
@@ -137,8 +137,8 @@ def upload_bytes_sync(
     """Upload raw bytes (e.g. a multipart upload) to Composio and return the attachment.
 
     Used by the REST send path, where the file arrives as bytes rather than a
-    workspace path or URL. ``_upload_bytes_to_s3`` is Composio's own bytes uploader
-    (the byte-level counterpart of the public ``FileUploadable.from_path``); it is
+    workspace path or URL. _upload_bytes_to_s3 is Composio's own bytes uploader
+    (the byte-level counterpart of the public FileUploadable.from_path); it is
     private and has no public equivalent that preserves the caller's mimetype, so
     it is imported here rather than at module scope — a Composio release that moves
     it then breaks this one upload path loudly instead of the whole API's boot.

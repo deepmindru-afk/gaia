@@ -1,14 +1,14 @@
 """Dead-connected-account reconciliation in the Composio tool wrapper.
 
 Regression cover for GAIA-BACKEND-2ZG: a revoked Composio account made
-`execute_tool` raise `NotFoundError`, which PR #932 wrapped in a blanket
-`except Exception` returning `{"successful": False, "error": str(e)}`. That
+execute_tool raise NotFoundError, which PR #932 wrapped in a blanket
+except Exception returning {"successful": False, "error": str(e)}. That
 stopped the 500 but left the user stuck (nothing ever recorded the connection
 as dead) and swallowed timeouts, 5xx and real bugs into the same opaque string.
 
 The wrapper is imported as a module rather than by symbol: the regression lane
 replays marked tests against the base revision, where the private helpers below
-do not exist yet. ``from ... import _helper`` would break at collection and prove
+do not exist yet. from ... import _helper would break at collection and prove
 nothing; attribute access fails inside the test body, where it counts as a real
 failure.
 """
@@ -63,7 +63,7 @@ def _returns(result: dict[str, Any]) -> Any:
 
 
 def _composio_tool(slug: str = "GMAIL_FETCH_MESSAGES") -> Tool:
-    """The minimum Composio tool descriptor `wrap_tool` needs."""
+    """The minimum Composio tool descriptor wrap_tool needs."""
     return Tool(
         slug=slug,
         name=slug,
@@ -170,7 +170,7 @@ class TestDeadAccountClassifier:
 
 class TestUnrelatedFailuresPropagate:
     """The blanket catch this replaces turned every failure into an opaque
-    `{"successful": False}` string and hid it from Sentry.
+    {"successful": False} string and hid it from Sentry.
 
     Unmarked on purpose: that catch only ever existed in the PR #932 diff, never
     on master, so these pass on the base revision. They guard the narrow catch
@@ -290,7 +290,7 @@ class TestDeadAccountReconciles:
 
     async def test_the_transition_runs_under_its_own_named_wide_event_boundary(self) -> None:
         """The dispatch arrives from an executor thread with no boundary of its own,
-        so without this one every `log.set()` inside the transition is discarded."""
+        so without this one every log.set() inside the transition is discarded."""
         with (
             patch(f"{MODULE}.expire_user_integration", AsyncMock()),
             patch(f"{MODULE}.log_context") as boundary,
@@ -328,7 +328,7 @@ class TestDeadAccountReconciles:
 
 class TestNonRaisingDeadAccountResult:
     """Composio also reports a dead account without raising, as a
-    `{"successful": False, "error": ...}` payload. That string match is far
+    {"successful": False, "error": ...} payload. That string match is far
     looser than the structured 404, so it only logs — driving the expiry
     transition off it would mark healthy integrations dead."""
 

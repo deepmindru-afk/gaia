@@ -1,6 +1,6 @@
-"""Reading a whole day of ``llm_call`` events out of Loki, exactly once.
+"""Reading a whole day of llm_call events out of Loki, exactly once.
 
-Shared by the backfill scripts. Loki caps a response at ``limit`` lines and
+Shared by the backfill scripts. Loki caps a response at limit lines and
 offers no cursor, so reading a busy day whole is the fiddly part: the page must
 re-open AT the last nanosecond seen and skip precisely the lines already taken
 from it. Starting one nanosecond later silently drops the rest of that group;
@@ -10,7 +10,7 @@ whose numbers matter.
 That logic lives here rather than in either script because there is only one
 correct version of it, and a copy would drift. Callers supply the parser for
 their own row shape; the stream selector is shared because both scripts read the
-same ``llm_call`` events.
+same llm_call events.
 
 Loki keeps 30 days, so nothing older can be read at all.
 """
@@ -37,10 +37,10 @@ _T = TypeVar("_T")
 
 
 def nanos(moment: datetime) -> int:
-    """``moment`` as whole nanoseconds — Loki's own timestamp resolution.
+    """moment as whole nanoseconds — Loki's own timestamp resolution.
 
     Integer nanoseconds end to end, deliberately. Rounding the page cursor to
-    a whole second (or round-tripping it through a ``datetime``, whose float
+    a whole second (or round-tripping it through a datetime, whose float
     seconds cannot hold a nanosecond) makes the next page restart *inside* a
     second already returned, and every event in that second is folded twice —
     inflating the totals for exactly the busiest days.
@@ -49,7 +49,7 @@ def nanos(moment: datetime) -> int:
 
 
 class PageBudgetExhaustedError(RuntimeError):
-    """A day needed more than ``LOKI_MAX_PAGES`` pages, so what was read is a
+    """A day needed more than LOKI_MAX_PAGES pages, so what was read is a
     prefix, not the day — it must not be written."""
 
     def __init__(self, day: str) -> None:
@@ -79,16 +79,16 @@ async def fetch_day(
     day: str,
     parse: Callable[[str], _T | None],
 ) -> list[_T]:
-    """Every ``llm_call`` event Loki holds for one UTC day, parsed by ``parse``.
+    """Every llm_call event Loki holds for one UTC day, parsed by parse.
 
-    Pages forward — Loki caps a single response at ``limit`` lines and gives
-    no cursor of its own, so a busy day needs several passes. ``start`` is
+    Pages forward — Loki caps a single response at limit lines and gives
+    no cursor of its own, so a busy day needs several passes. start is
     inclusive, and several lines can share one nanosecond, so the next page
     re-opens AT the last timestamp seen and the lines already taken from that
     timestamp are skipped by identity. Starting one nanosecond later would drop
     the rest of that group; starting any coarser would double-count.
 
-    ``parse`` returns ``None`` for a line the caller wants dropped.
+    parse returns None for a line the caller wants dropped.
     """
     start = datetime.fromisoformat(f"{day}T00:00:00+00:00")
     end_nanos = nanos(min(start + timedelta(days=1), datetime.now(UTC)))
@@ -154,7 +154,7 @@ async def _drain_timestamp(
     rows: list[_T],
     parse: Callable[[str], _T | None],
 ) -> bool:
-    """Read everything logged at exactly ``at_nanos``, keeping whatever was not
+    """Read everything logged at exactly at_nanos, keeping whatever was not
     taken on an earlier page. False means the group is larger than one page, so
     Loki cannot serve it whole and the day cannot be read completely.
     """

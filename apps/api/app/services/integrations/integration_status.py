@@ -1,7 +1,7 @@
 """Which integrations a user has connected, read once and cached.
 
-Below ``oauth_service`` on purpose: the workflow layer asks this question
-(``integration_requirements``) and ``oauth_service`` imports the workflow
+Below oauth_service on purpose: the workflow layer asks this question
+(integration_requirements) and oauth_service imports the workflow
 layer for pause/resume, so the reader lives where both can import it.
 """
 

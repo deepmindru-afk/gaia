@@ -124,7 +124,7 @@ async def real_redis(monkeypatch):
     Redis is not reachable so local runs without Docker still work.
 
     Each xdist worker uses its own Redis DB so parallel tests cannot wipe
-    each other's keys during ``flushdb()`` teardown.
+    each other's keys during flushdb() teardown.
     """
     url = worker_redis_url(_REDIS_URL)
     client = Redis.from_url(url, decode_responses=True)

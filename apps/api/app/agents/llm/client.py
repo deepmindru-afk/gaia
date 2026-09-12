@@ -85,8 +85,8 @@ _ResultT = TypeVar("_ResultT")
 
 
 def without_sdk_retry(llm: ChatOpenRouter) -> ChatOpenRouter:
-    """Leave retrying to :func:`with_llm_retry`; the SDK's own loop nests under
-    ours and turned 3 attempts into 40 requests. ``max_retries=0`` does NOT
+    """Leave retrying to :func:with_llm_retry; the SDK's own loop nests under
+    ours and turned 3 attempts into 40 requests. max_retries=0 does NOT
     disable it — the SDK then applies a one-hour default; only this does."""
     llm.client.sdk_configuration.retry_config = RetryConfig(
         # Any strategy but "backoff" skips the retry path, so the (required)
@@ -103,9 +103,9 @@ def without_sdk_retry(llm: ChatOpenRouter) -> ChatOpenRouter:
 def with_llm_retry(runnable: Runnable, *, max_attempts: int = LLM_RETRY_MAX_ATTEMPTS) -> Runnable:
     """The single, canonical LLM retry. Wraps a (tool-bound) model runnable so
     transient provider/infra errors are retried with exponential backoff before
-    the caller falls back to the default model. Applied AFTER ``bind_tools`` so
-    the ``RunnableRetry`` wrapper never has to expose ``bind_tools``.
-    ``max_attempts=1`` disables retry for callers on a hard latency budget."""
+    the caller falls back to the default model. Applied AFTER bind_tools so
+    the RunnableRetry wrapper never has to expose bind_tools.
+    max_attempts=1 disables retry for callers on a hard latency budget."""
     return runnable.with_retry(
         retry_if_exception_type=LLM_RETRYABLE_EXCEPTIONS,
         stop_after_attempt=max_attempts,
@@ -160,7 +160,7 @@ _MODEL_FIELD = ConfigurableField(id=MODEL_FIELD_ID, name="Model", description="W
 def _openrouter_wire_configurables(llm: ChatOpenRouter) -> LanguageModelLike:
     """Attach the per-request configurable fields shared by every OpenRouter-wire
     client (the real OpenRouter and the env-defined custom endpoint). The field
-    ids form one namespace across provider alternatives (``prefix_keys=False``),
+    ids form one namespace across provider alternatives (prefix_keys=False),
     so every compatible client must expose identical ids."""
     return llm.configurable_fields(
         model_name=_MODEL_FIELD,
@@ -200,7 +200,7 @@ def init_gemini_llm() -> LanguageModelLike:
 
 
 class _AppAttribution(TypedDict):
-    """Keyword shape of ChatOpenRouter's attribution params, so ``**`` unpacking
+    """Keyword shape of ChatOpenRouter's attribution params, so ** unpacking
     stays precisely checked against the client's signature."""
 
     app_url: str
@@ -241,11 +241,11 @@ def init_openrouter_llm() -> LanguageModelLike:
     """Initialize the OpenRouter LLM (MiniMax M3, Grok, etc.).
 
     Uses ChatOpenRouter (langchain-openrouter), not ChatOpenAI, because it parses
-    OpenRouter's `reasoning`/`reasoning_details` fields into standard reasoning
+    OpenRouter's reasoning/reasoning_details fields into standard reasoning
     content blocks — ChatOpenAI silently drops them. That is what lets us surface
-    the model's thinking. Reasoning effort is the native `reasoning` field; provider
-    routing (the first-party MiniMax pin) rides `model_kwargs` (OpenRouter's
-    `provider` request param). Both are per-request configurable.
+    the model's thinking. Reasoning effort is the native reasoning field; provider
+    routing (the first-party MiniMax pin) rides model_kwargs (OpenRouter's
+    provider request param). Both are per-request configurable.
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm()
@@ -305,8 +305,8 @@ def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenR
     """The bare custom-endpoint chat model, before the configurable wiring.
 
     Split out because a structured one-shot needs the model itself:
-    ``with_structured_output`` lives on the chat model, not on the configurable
-    wrapper ``init_custom_llm`` hands back.
+    with_structured_output lives on the chat model, not on the configurable
+    wrapper init_custom_llm hands back.
     """
     llm = without_sdk_retry(
         ChatOpenRouter(
@@ -399,15 +399,15 @@ def _get_available_providers() -> dict[LLMProviderName, ProviderLLM]:
 
 
 def next_fallback_provider(current: str | None) -> tuple[LLMProviderName, str] | None:
-    """The highest-priority configured provider other than ``current``, and the
-    model to run on it. ``None`` when nothing else is usable.
+    """The highest-priority configured provider other than current, and the
+    model to run on it. None when nothing else is usable.
 
-    The agent graph selects its lane by ``configurable["provider"]`` and never
+    The agent graph selects its lane by configurable["provider"] and never
     fails over on its own, so this is what a caller that caught a provider
     failure retries onto. A provider with no model configured is skipped rather
     than returned with an empty model: the custom dev endpoint's
-    ``PROVIDER_MODELS`` entry is ``settings.DEV_LLM_MODEL or ""``, and pinning
-    ``""`` would trade one dead provider for a guaranteed bad request.
+    PROVIDER_MODELS entry is settings.DEV_LLM_MODEL or "", and pinning
+    "" would trade one dead provider for a guaranteed bad request.
     """
     available = _get_available_providers()
     for priority in sorted(PROVIDER_PRIORITY):
@@ -485,17 +485,17 @@ def register_llm_providers() -> None:
 
 
 def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
-    """The single factory for the default model (``DEFAULT_MODEL_NAME``, served over
+    """The single factory for the default model (DEFAULT_MODEL_NAME, served over
     OpenRouter) used by EVERY auxiliary LLM task — follow-ups, research,
     integration inference, profile/holo cards, vision helpers, workflow
     generation, context summarization, onboarding, one-shot helpers. The memory
     pipeline is the one exception: it prefers direct Gemini for cache isolation
     and only lands here when that lane is unavailable (see
-    :func:`ainvoke_structured_gemini`). The paid model is reserved for the main
-    chat agent (see ``lane``); auxiliary tasks never use it.
-    ``temperature`` lets creative tasks opt into more variation. Instances are
+    :func:ainvoke_structured_gemini). The paid model is reserved for the main
+    chat agent (see lane); auxiliary tasks never use it.
+    temperature lets creative tasks opt into more variation. Instances are
     cached per temperature so hot paths reuse one HTTP client instead of
-    rebuilding it per call. Raises ``LLMNotConfiguredError`` if OpenRouter is not
+    rebuilding it per call. Raises LLMNotConfiguredError if OpenRouter is not
     configured."""
     if settings.GAIA_SIM_MODE:
         return _sim_llm(temperature)
@@ -520,11 +520,11 @@ def _provider_order_kwargs() -> dict[str, Any]:
     reads 90-99% cached, and 49 of 114 production threads were split across
     providers — nearly every cold read came from that scattering.
 
-    ``allow_fallbacks: False`` is what makes ``order`` binding rather than a
+    allow_fallbacks: False is what makes order binding rather than a
     preference: OpenRouter still walks down the listed slugs on error, but it
     can no longer silently hand the turn to an unlisted upstream and strand the
     chain. If every listed provider is down the call raises, and the existing
-    ``with_llm_retry``/fallback-model path takes it from there — a failure we
+    with_llm_retry/fallback-model path takes it from there — a failure we
     can see, instead of a cache miss and a surprise bill we cannot.
 
     Opt-in and empty by default, deliberately: the preference is set from the
@@ -569,21 +569,21 @@ def _build_default_llm(temperature: float) -> BaseChatModel:
 
 
 def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
-    """:func:`get_default_llm`, capped to :data:`HELPER_MAX_OUTPUT_TOKENS`.
+    """:func:get_default_llm, capped to :data:HELPER_MAX_OUTPUT_TOKENS.
 
     For the one-shot helpers whose real output is small (titles, JSON blobs,
-    classifications, short generated copy) — ``ainvoke_structured`` and every
-    direct ``get_default_llm()`` call outside the agent graph. The two graph-
-    adjacent consumers (the ``create_agent`` model fallback, the summarization/
-    compaction middleware) keep the full reservation via ``get_default_llm()``
+    classifications, short generated copy) — ainvoke_structured and every
+    direct get_default_llm() call outside the agent graph. The two graph-
+    adjacent consumers (the create_agent model fallback, the summarization/
+    compaction middleware) keep the full reservation via get_default_llm()
     directly, since they can legitimately produce long output.
 
-    ``model_copy`` (not a new ``ChatOpenRouter(...)``) is deliberate: it shares
-    the cached instance's ``client`` field by reference instead of opening a
-    second connection pool. A ``.bind(max_tokens=...)`` wrapper was tried and
-    rejected — ``RunnableBinding.__getattr__`` only preserves bound kwargs for
-    methods that take a ``config`` argument, and neither ``bind_tools`` nor
-    ``with_structured_output`` do, so the override silently vanished the moment
+    model_copy (not a new ChatOpenRouter(...)) is deliberate: it shares
+    the cached instance's client field by reference instead of opening a
+    second connection pool. A .bind(max_tokens=...) wrapper was tried and
+    rejected — RunnableBinding.__getattr__ only preserves bound kwargs for
+    methods that take a config argument, and neither bind_tools nor
+    with_structured_output do, so the override silently vanished the moment
     a caller chained either of those on top of it.
     """
     llm = get_default_llm(temperature=temperature)
@@ -593,12 +593,12 @@ def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
 
 
 def get_vision_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
-    """The factory for every image -> text call (``vision/describe.py``).
+    """The factory for every image -> text call (vision/describe.py).
 
-    Separate from :func:`get_default_llm` on purpose. The default model is picked
+    Separate from :func:get_default_llm on purpose. The default model is picked
     for cheap text and may not be multimodal; this one must be able to see, or the
     vision fallback describes nothing — and it fails silently, since
-    ``describe_image`` degrades to ``None``. Raises ``LLMNotConfiguredError`` when
+    describe_image degrades to None. Raises LLMNotConfiguredError when
     Google is not configured.
     """
     if settings.GAIA_SIM_MODE:
@@ -618,13 +618,13 @@ def _build_vision_llm(temperature: float) -> BaseChatModel:
 
 def memory_lane_available() -> bool:
     """Whether the direct-Gemini memory lane can serve a call at all — the one
-    check :func:`get_memory_llm` raises on and callers route around."""
+    check :func:get_memory_llm raises on and callers route around."""
     return bool(settings.GAIA_SIM_MODE or settings.GOOGLE_API_KEY)
 
 
 def aux_lane_available() -> bool:
     """Whether the aux (OpenRouter) lane can serve a call — the mirror of
-    :func:`memory_lane_available` for the other side of the memory pipeline's
+    :func:memory_lane_available for the other side of the memory pipeline's
     provider choice."""
     return bool(settings.GAIA_SIM_MODE or settings.OPENROUTER_API_KEY)
 
@@ -633,14 +633,14 @@ def get_memory_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatM
     """The factory for every memory-pipeline call (extraction, categorization,
     reconciliation, consolidation).
 
-    Runs on direct Gemini (:data:`MEMORY_MODEL_NAME`), NOT the OpenRouter lane,
+    Runs on direct Gemini (:data:MEMORY_MODEL_NAME), NOT the OpenRouter lane,
     on purpose: the memory extraction is a fire-and-forget background task that
     overlaps the graph's next-turn requests, and concurrent requests on the
     same provider's cache store wipe each other's cached chains mid-read
     (measured: the comms chain collapses to ~0 under a concurrent alias-lane
     extraction and holds ~99.5% under a concurrent Gemini extraction — a
     different provider has no shared cache store, so the overlap is harmless).
-    Raises ``LLMNotConfiguredError`` when Google is not configured.
+    Raises LLMNotConfiguredError when Google is not configured.
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm(temperature)
@@ -679,13 +679,13 @@ _WIRE_WALK_MAX_HOPS = 6
 
 
 def _is_openrouter_wire(runnable: Runnable) -> bool:
-    """Whether ``runnable`` ultimately calls an OpenRouter-wire client.
+    """Whether runnable ultimately calls an OpenRouter-wire client.
 
-    Decides who may receive ``session_id``, which only OpenRouter understands.
-    A fallback is never a bare client — it arrives wrapped by ``bind_tools`` or
-    ``with_structured_output`` — so the wrappers are walked rather than
-    type-checked: ``RunnableSequence`` exposes ``steps``, a binding exposes
-    ``bound``.
+    Decides who may receive session_id, which only OpenRouter understands.
+    A fallback is never a bare client — it arrives wrapped by bind_tools or
+    with_structured_output — so the wrappers are walked rather than
+    type-checked: RunnableSequence exposes steps, a binding exposes
+    bound.
     """
     node: Any = runnable
     # Bounded, and only through the two wrappers LangChain actually builds:
@@ -714,7 +714,7 @@ def _resolve_fallback(
     session_id: str | None = None,
 ) -> Runnable:
     """Materialize the fallback, log the downgrade, and return the retry-wrapped
-    runnable. Re-raises ``primary_error`` when no fallback is available."""
+    runnable. Re-raises primary_error when no fallback is available."""
     # ``session_id`` (OpenRouter sticky-routing key) is bound on the resolved
     # runnable so the fallback's requests stay on the conversation's provider —
     # the config-based value is dropped before the wire, while a bind survives
@@ -755,11 +755,11 @@ def _sticky_session_id(config: RunnableConfig | None, *, auxiliary: bool) -> str
 
 
 def _requested_model(runnable: Any) -> str:  # noqa: ANN401 -- any Runnable shape
-    """The model id this runnable was going to ask for, or ``UNKNOWN_MODEL_NAME``.
+    """The model id this runnable was going to ask for, or UNKNOWN_MODEL_NAME.
 
     A failed call has no reply to read the served model off, so the ledger's
-    ``model_requested`` is all there is. Read defensively: the bound runnable is
-    a chat model on the graph lane but a ``with_structured_output`` wrapper on
+    model_requested is all there is. Read defensively: the bound runnable is
+    a chat model on the graph lane but a with_structured_output wrapper on
     the auxiliary one, and neither shape is guaranteed to expose the name.
     """
     for attribute in ("model_name", "model"):
@@ -803,38 +803,38 @@ def _invoke_context(
 
 @dataclass(frozen=True)
 class LLMInvokeOptions:
-    """The rarely-tuned knobs of :func:`ainvoke_llm` (and, where noted,
-    :func:`invoke_llm`), grouped so the call signature stays under the repo's
+    """The rarely-tuned knobs of :func:ainvoke_llm (and, where noted,
+    :func:invoke_llm), grouped so the call signature stays under the repo's
     argument-count ceiling.
 
     Attributes:
-        max_attempts: Retry attempts before falling back to ``fallback``.
-            ``max_attempts=1`` disables retry for callers on a hard latency
-            budget. Honored by both ``ainvoke_llm`` and ``invoke_llm``.
+        max_attempts: Retry attempts before falling back to fallback.
+            max_attempts=1 disables retry for callers on a hard latency
+            budget. Honored by both ainvoke_llm and invoke_llm.
         timeout: A total wall-clock ceiling over the retries, their backoff
             sleeps and the fallback attempt — the guarantee being that the
             call cannot outlive it. Retry alone cannot cover a provider that
             accepts the connection and then never answers, because nothing
             is ever raised to retry on. The ceiling deliberately wraps the
-            fallback too: expiring mid-fallback raises ``TimeoutError``
-            rather than starting a second, unbounded attempt. ``None``
-            disables it. ``ainvoke_llm`` only — ``invoke_llm`` is sync and
+            fallback too: expiring mid-fallback raises TimeoutError
+            rather than starting a second, unbounded attempt. None
+            disables it. ainvoke_llm only — invoke_llm is sync and
             does not honor this field.
         meter_auxiliary: Routes the call through the one metering seam for
-            auxiliary spend when ``True``. The agent graph passes ``False``
-            because it is already metered by ``LLMAccountingMiddleware`` —
+            auxiliary spend when True. The agent graph passes False
+            because it is already metered by LLMAccountingMiddleware —
             metering here too would book every graph call twice.
-            ``ainvoke_llm`` only — ``invoke_llm`` never meters.
+            ainvoke_llm only — invoke_llm never meters.
         fallback_config: The config the fallback runs under, when given.
-            Reusing ``config`` for the fallback is what made provider
+            Reusing config for the fallback is what made provider
             failover a no-op: LangChain merges a passed config OVER a
-            ``with_config`` one, so the run's own configurable put the
+            with_config one, so the run's own configurable put the
             just-failed provider straight back. Honored by both
-            ``ainvoke_llm`` and ``invoke_llm``.
+            ainvoke_llm and invoke_llm.
         sticky_session_id: The provider's sticky-routing key to bind the
-            fallback to, overriding what :func:`_sticky_session_id` would
-            derive from ``config``. Honored by both ``ainvoke_llm`` and
-            ``invoke_llm``.
+            fallback to, overriding what :func:_sticky_session_id would
+            derive from config. Honored by both ainvoke_llm and
+            invoke_llm.
     """
 
     max_attempts: int = LLM_RETRY_MAX_ATTEMPTS
@@ -846,8 +846,8 @@ class LLMInvokeOptions:
 
 @dataclass(frozen=True)
 class StructuredCallOptions:
-    """The optional settings of :func:`ainvoke_structured` and
-    :func:`ainvoke_structured_gemini`."""
+    """The optional settings of :func:ainvoke_structured and
+    :func:ainvoke_structured_gemini."""
 
     temperature: float = DEFAULT_LLM_TEMPERATURE
     timeout: float | None = LLM_INVOKE_TIMEOUT_SECONDS
@@ -865,33 +865,33 @@ async def ainvoke_llm(
     label: str = "model",
     options: LLMInvokeOptions | None = None,
 ) -> Any:  # noqa: ANN401 -- overrides LangChain Runnable methods typed Any upstream
-    """Invoke a runnable: retry transient errors, then fall back to ``fallback`` (if
+    """Invoke a runnable: retry transient errors, then fall back to fallback (if
     given) on a provider failure. Bugs and CancelledError propagate.
 
-    ``timeout`` is a total wall-clock ceiling over the retries, their backoff sleeps
+    timeout is a total wall-clock ceiling over the retries, their backoff sleeps
     and the fallback attempt — the guarantee being that this call cannot outlive it.
     Retry alone cannot cover a provider that accepts the connection and then never
-    answers, because nothing is ever raised to retry on. ``None`` disables it.
+    answers, because nothing is ever raised to retry on. None disables it.
 
     The ceiling deliberately wraps the fallback too. Expiring mid-fallback raising
-    ``TimeoutError`` is the point: the alternative is catching it as a fallback trigger
-    (``TimeoutError`` is in ``LLM_FALLBACK_EXCEPTIONS``) and starting a second,
+    TimeoutError is the point: the alternative is catching it as a fallback trigger
+    (TimeoutError is in LLM_FALLBACK_EXCEPTIONS) and starting a second,
     unbounded attempt — which is exactly the stall this exists to prevent.
 
-    The return stays ``Any``, deliberately (Type Safety item 14). The obvious fix —
-    ``primary: Runnable[LanguageModelInput, _ResultT] -> _ResultT`` — was tried and
+    The return stays Any, deliberately (Type Safety item 14). The obvious fix —
+    primary: Runnable[LanguageModelInput, _ResultT] -> _ResultT — was tried and
     measured, and it does not hold at either end:
 
-    - The fallback path resolves through ``LLMFallback``/``_resolve_fallback``, which
-      are plain unparametrized ``Runnable``, so every return trips ``warn_return_any``
+    - The fallback path resolves through LLMFallback/_resolve_fallback, which
+      are plain unparametrized Runnable, so every return trips warn_return_any
       unless those are made generic too.
-    - Callers pass both plain chat models (yielding a ``BaseMessage``) and
-      ``with_structured_output(...)`` runnables, which LangChain types as
-      ``dict[str, Any] | BaseModel`` — so the type var binds to that union and the
+    - Callers pass both plain chat models (yielding a BaseMessage) and
+      with_structured_output(...) runnables, which LangChain types as
+      dict[str, Any] | BaseModel — so the type var binds to that union and the
       structured call sites stop type-checking against their real schema.
 
-    Callers that know their shape narrow it themselves: ``ainvoke_structured`` casts
-    to its ``schema``, and the chat-model call sites cast to ``BaseMessage``.
+    Callers that know their shape narrow it themselves: ainvoke_structured casts
+    to its schema, and the chat-model call sites cast to BaseMessage.
     """
     # The one metering seam for auxiliary spend. Every one-shot helper reaches a
     # provider through here — the vision describer, chatbot, research, PDF page
@@ -987,9 +987,9 @@ def invoke_llm(
     label: str = "model",
     options: LLMInvokeOptions | None = None,
 ) -> Any:  # noqa: ANN401 -- overrides LangChain Runnable methods typed Any upstream
-    """Sync counterpart of :func:`ainvoke_llm`. Only ``options.max_attempts``,
-    ``options.fallback_config`` and ``options.sticky_session_id`` apply here —
-    ``timeout``/``meter_auxiliary`` are async-only (see :class:`LLMInvokeOptions`)."""
+    """Sync counterpart of :func:ainvoke_llm. Only options.max_attempts,
+    options.fallback_config and options.sticky_session_id apply here —
+    timeout/meter_auxiliary are async-only (see :class:LLMInvokeOptions)."""
     opts = options or LLMInvokeOptions()
     try:
         return with_llm_retry(primary, max_attempts=opts.max_attempts).invoke(
@@ -1025,22 +1025,22 @@ SILENT_LLM_CONFIG: RunnableConfig = {
 
 
 def metered_config(user_id: str) -> RunnableConfig:
-    """The minimal run config for an auxiliary :func:`ainvoke_structured` call:
+    """The minimal run config for an auxiliary :func:ainvoke_structured call:
     who its spend is attributed to (COGS observability — never charged to the
     user's budget). Call sites that already forward a graph config (which
-    carries ``configurable.user_id`` already) don't need this."""
+    carries configurable.user_id already) don't need this."""
     return cast(RunnableConfig, {"configurable": {"user_id": user_id}})
 
 
 def silent_metered_config(user_id: str) -> RunnableConfig:
-    """:data:`SILENT_LLM_CONFIG` plus the spend attribution of
-    :func:`metered_config` — for an internal call made *while a graph is
+    """:data:SILENT_LLM_CONFIG plus the spend attribution of
+    :func:metered_config — for an internal call made *while a graph is
     streaming* and on behalf of a specific user (the HIL intent judge and the
     conversational resolver).
 
     Both halves are needed and each is easy to forget alone: without the silent
     flags the structured output leaks into the chat as a bot message, and
-    without ``user_id`` the call's real COGS lands on nobody.
+    without user_id the call's real COGS lands on nobody.
     """
     return cast(
         RunnableConfig,
@@ -1051,11 +1051,11 @@ def silent_metered_config(user_id: str) -> RunnableConfig:
 def _reported_cost(response: LLMResult) -> float | None:
     """What OpenRouter charged for this call, from whichever shape carries it.
 
-    Auxiliary one-shots return the parsed schema rather than the ``AIMessage``,
+    Auxiliary one-shots return the parsed schema rather than the AIMessage,
     so the price has to be read off the raw result like the generation id is.
-    Non-streaming puts ``token_usage`` in ``llm_output``; streaming leaves the
-    figure on the message's ``response_metadata``, where ``ChatOpenRouter``
-    copies it. ``None`` means the lane reported no price and the caller should
+    Non-streaming puts token_usage in llm_output; streaming leaves the
+    figure on the message's response_metadata, where ChatOpenRouter
+    copies it. None means the lane reported no price and the caller should
     fall back to the pricing table.
     """
     llm_output = response.llm_output or {}
@@ -1098,13 +1098,13 @@ class ResponseFacts:
 class _GenerationIdCallback(BaseCallbackHandler):
     """Captures the upstream generation id for auxiliary calls.
 
-    Structured one-shots return the parsed schema, not the ``AIMessage``
-    carrying ``response_metadata`` — so ``extract_generation_id`` has nothing
-    to read and every follow-up / memory-family ``llm_call`` event logged no
+    Structured one-shots return the parsed schema, not the AIMessage
+    carrying response_metadata — so extract_generation_id has nothing
+    to read and every follow-up / memory-family llm_call event logged no
     id. Without the id those lanes cannot be attributed to a serving upstream,
     and the per-provider cache table only covers the graph trio. ChatOpenRouter
-    puts the id in ``llm_output`` on the non-streaming path and in
-    ``generation_info`` when streaming; both are read here."""
+    puts the id in llm_output on the non-streaming path and in
+    generation_info when streaming; both are read here."""
 
     def __init__(self) -> None:
         self.generation_id: str | None = None
@@ -1129,13 +1129,13 @@ class _GenerationIdCallback(BaseCallbackHandler):
         """Provider-reported spend summed over EVERY attempt this call made.
 
         Accumulated, not last-write-wins, because the usage it is booked
-        against accumulates: ``UsageMetadataCallbackHandler`` adds up the
+        against accumulates: UsageMetadataCallbackHandler adds up the
         tokens of a retry and of a fallback, so keeping only the final
         attempt's price would charge one attempt's dollars against several
         attempts' tokens and under-count real spend on exactly the calls that
         went wrong.
 
-        ``None`` when ANY attempt reported no price — a partial sum is not the
+        None when ANY attempt reported no price — a partial sum is not the
         call's cost, so the caller falls back to the pricing table for the
         whole thing rather than booking a number that is confidently short.
         """
@@ -1172,8 +1172,8 @@ class _GenerationIdCallback(BaseCallbackHandler):
 
         Read here rather than at the metering seam because this callback holds
         the only thing that carries them on this route — the auxiliary lane
-        returns a parsed schema, not the ``AIMessage``, so
-        ``extract_message_provider`` has nothing to read and the fields arrived
+        returns a parsed schema, not the AIMessage, so
+        extract_message_provider has nothing to read and the fields arrived
         empty. Three separate fields have now been lost at this seam for that
         same reason (the cost, the generation id, and the upstream), so the
         whole reply is read once instead of a field at a time.
@@ -1208,9 +1208,9 @@ class _GenerationIdCallback(BaseCallbackHandler):
 def _with_usage_handler(
     config: RunnableConfig | None, handler: BaseCallbackHandler | None
 ) -> RunnableConfig:
-    """Return ``config`` with ``handler`` attached, never mutating the caller's
+    """Return config with handler attached, never mutating the caller's
     object — several callers pass a shared module-level config constant, and
-    graph nodes forward a config whose ``callbacks`` is a live manager. A None
+    graph nodes forward a config whose callbacks is a live manager. A None
     handler (caller meters the call itself) returns the config unchanged."""
     if handler is None:
         return config if config is not None else RunnableConfig()
@@ -1237,19 +1237,19 @@ async def _record_auxiliary_usage(
 ) -> None:
     """Meter one auxiliary (non-agent) model call for COGS observability.
 
-    ``ainvoke_structured`` runs outside the agent graph, so
-    ``LLMAccountingMiddleware`` never sees it — without this, memory
+    ainvoke_structured runs outside the agent graph, so
+    LLMAccountingMiddleware never sees it — without this, memory
     extraction/reconcile/consolidation and every other one-shot helper would
     spend real money that nothing ever measured.
 
     This spend is deliberately NOT charged to the user's allowance
-    (``charge_to_budget=False``): a memory save or an onboarding question is
+    (charge_to_budget=False): a memory save or an onboarding question is
     background work GAIA does on the user's behalf, not usage they asked for,
     so it must never eat into their chat budget (memory volume is bounded by
     its own count cap). Tokens likewise never touch the per-request token
     ceiling — that counter bounds a single agent tree against runaway loops.
-    The cost is booked durably per user (``usage_daily.aux_cost``) and the
-    ``llm_call`` event carries ``background=True``, so auxiliary COGS stays
+    The cost is booked durably per user (usage_daily.aux_cost) and the
+    llm_call event carries background=True, so auxiliary COGS stays
     fully measurable and splittable from in-turn agent spend.
     """
     # The handler aggregates per model, so a call that fanned out across models
@@ -1337,7 +1337,7 @@ def _aux_structured_runnable(
     schema: type[_StructuredT], temperature: float, config: RunnableConfig | None
 ) -> Runnable:
     """The structured runnable every auxiliary one-shot runs on: the helper LLM
-    re-pointed at :data:`AUX_MODEL_NAME`, with the aux sticky-routing session."""
+    re-pointed at :data:AUX_MODEL_NAME, with the aux sticky-routing session."""
     # The helper LLM is the cached default instance; run the aux id. The alias
     # must be set on the INSTANCE via model_copy, NOT bound with
     # .bind(model=...): with_structured_output rebuilds the runnable through
@@ -1371,7 +1371,7 @@ def background_structured_runnable(
 ) -> Runnable:
     """A structured one-shot on the provider THIS deployment actually runs on.
 
-    ``_aux_structured_runnable`` is hardwired to OpenRouter, which is right when
+    _aux_structured_runnable is hardwired to OpenRouter, which is right when
     that is the deployment's lane and wrong when it is not. A deployment pointed
     at another endpoint replays a playbook's tool calls perfectly and then cannot
     write the run's result, because the one model call in the whole replay goes
@@ -1383,7 +1383,7 @@ def background_structured_runnable(
     custom endpoint at it asks for a model that endpoint does not have.
 
     Sim mode wins over the custom endpoint, as in every other factory here
-    (``init_custom_llm``, ``get_default_llm``): a sim run with DEV_LLM_* set
+    (init_custom_llm, get_default_llm): a sim run with DEV_LLM_* set
     must land on the scripted stub, not on a real endpoint.
     """
     if settings.GAIA_SIM_MODE:
@@ -1408,17 +1408,17 @@ async def ainvoke_structured(
     config: RunnableConfig | None = None,
     options: StructuredCallOptions = _DEFAULT_STRUCTURED_OPTIONS,
 ) -> _StructuredT:
-    """The single canonical one-shot structured call on the default model. ``prompt``
+    """The single canonical one-shot structured call on the default model. prompt
     is any LangChain input — a plain string (sent as one human message) or a full
-    message list — and ``config`` carries optional run config (e.g. silent tags that
-    keep internal tokens out of the chat stream, and ``configurable.user_id``, which
+    message list — and config carries optional run config (e.g. silent tags that
+    keep internal tokens out of the chat stream, and configurable.user_id, which
     is what the call's spend is metered against). Adds the transient-retry + fallback
-    of :func:`ainvoke_llm`. Runs on :func:`get_helper_llm` — structured output is
+    of :func:ainvoke_llm. Runs on :func:get_helper_llm — structured output is
     always a small JSON blob, never the large-output case. Returns the validated
-    ``schema`` instance. Raises ``LLMNotConfiguredError`` when ``OPENROUTER_API_KEY``
-    is unset — this lane is OpenRouter, not Google (see :func:`get_default_llm`).
+    schema instance. Raises LLMNotConfiguredError when OPENROUTER_API_KEY
+    is unset — this lane is OpenRouter, not Google (see :func:get_default_llm).
 
-    Runs on :data:`AUX_MODEL_NAME` — the same model id as the graph, isolated
+    Runs on :data:AUX_MODEL_NAME — the same model id as the graph, isolated
     from the conversation's cache chain by the suffixed sticky session rather
     than by a second model id. The second id used to provide the isolation,
     but its provider pool cannot cache or hold session affinity for
@@ -1440,7 +1440,7 @@ async def ainvoke_structured(
 
 def _memory_structured_runnable(schema: type[_StructuredT], temperature: float) -> Runnable:
     """The direct-Gemini structured runnable the memory pipeline falls back to
-    — the counterpart of :func:`_aux_structured_runnable` for the other lane."""
+    — the counterpart of :func:_aux_structured_runnable for the other lane."""
     return get_memory_llm(temperature=temperature).with_structured_output(schema)
 
 
@@ -1455,8 +1455,8 @@ async def ainvoke_structured_gemini(
     """The structured one-shot call for the memory pipeline: aux lane primary,
     direct Gemini as the fallback.
 
-    Same contract as :func:`ainvoke_structured` (retry + fallback, metering via
-    :func:`ainvoke_llm`, validated ``schema`` output). The preference order is
+    Same contract as :func:ainvoke_structured (retry + fallback, metering via
+    :func:ainvoke_llm, validated schema output). The preference order is
     measured, both halves. Gemini flash-lite's implicit cache never extends
     past tools+system into the contents: identical 4.6k-token extraction-shaped
     prompts repeatedly read exactly 3,064 cached tokens — the schema plus the
@@ -1473,7 +1473,7 @@ async def ainvoke_structured_gemini(
     with everything else running concurrently — so the reason for the split
     is gone, and the lane whose cache actually works wins.
 
-    A deployment with only ``GOOGLE_API_KEY`` still extracts memories on
+    A deployment with only GOOGLE_API_KEY still extracts memories on
     Gemini alone, and an aux outage falls back to Gemini mid-flight. Losing a
     lane costs cache hit rate; losing the call would cost the user every
     memory they never got."""

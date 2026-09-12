@@ -109,7 +109,7 @@ def mock_executions_repo():
 def mock_redis_pool(route_enqueue_via_pool):
     """Patch RedisPoolManager.get_pool used by WorkflowQueueService.
 
-    ``route_enqueue_via_pool`` (shared conftest) routes the wide-event enqueue
+    route_enqueue_via_pool (shared conftest) routes the wide-event enqueue
     wrapper through pool.enqueue_job, so the tests' existing pool mocks and
     assertions stay authoritative.
     """

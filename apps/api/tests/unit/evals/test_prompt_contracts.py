@@ -1,14 +1,14 @@
 """Eval rubrics must break when the prompt they grade changes.
 
 Every judge rubric in this harness used to be hand-written prose — a paraphrase
-of `COMMS_AGENT_PROMPT` frozen at the moment someone typed it. You could soften a
+of COMMS_AGENT_PROMPT frozen at the moment someone typed it. You could soften a
 rule, rename a section, or delete it outright and no eval would notice; the suite
 kept grading a spec the product had stopped shipping and reported green.
 
-`scripts/evals/core/prompt_contracts.py` anchors rubrics to the live prompt text.
+scripts/evals/core/prompt_contracts.py anchors rubrics to the live prompt text.
 This file is the gate that makes the anchoring real:
 
-* :func:`test_every_registered_clause_resolves` fails CI when a prompt edit
+* :func:test_every_registered_clause_resolves fails CI when a prompt edit
   orphans a clause, naming the clause and the evals that depend on it.
 * the rest prove resolution FAILS LOUD rather than degrading — no stale copy, no
   default, no first-of-several match. A silent fallback would restore the exact
@@ -39,7 +39,7 @@ EMOJI_REF = "comms.emoji_discipline"
 
 @pytest.fixture(autouse=True)
 def _clear_prompt_cache() -> Iterator[None]:
-    """``prompt_text`` is cached; a test that edits a prompt must not leak."""
+    """prompt_text is cached; a test that edits a prompt must not leak."""
     prompt_contracts.prompt_text.cache_clear()
     yield
     prompt_contracts.prompt_text.cache_clear()
@@ -65,8 +65,8 @@ def test_every_registered_clause_resolves() -> None:
     """A prompt edit that orphans a clause fails here, loudly and by name.
 
     This assertion IS the deliverable. Watched red by deleting the emoji rule
-    from ``COMMS_AGENT_PROMPT``: it reported the clause ref, the anchor, and
-    ``gate:emoji_discipline`` as the dependent eval.
+    from COMMS_AGENT_PROMPT: it reported the clause ref, the anchor, and
+    gate:emoji_discipline as the dependent eval.
     """
     failures = contract_failures()
 

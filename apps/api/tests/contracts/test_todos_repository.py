@@ -1,8 +1,8 @@
 """Contract + finder tests for TodosRepository against real Mongo + Redis.
 
 Todos is the migration's stress test, so this file also exercises the base
-primitives it forced into existence: ``_apply_ops`` (array/positional/$unset),
-``_bulk_set``/``_bulk_delete``, and their user-scope enforcement.
+primitives it forced into existence: _apply_ops (array/positional/$unset),
+_bulk_set/_bulk_delete, and their user-scope enforcement.
 """
 
 from __future__ import annotations
@@ -360,12 +360,12 @@ class TestTodosRepository(UserScopedRepositoryContract):
         assert [t.title for t in found] == ["gmail"]
 
     async def test_a_subscription_written_by_update_is_findable(self, repo, make_doc):
-        """Registration writes through ``update``, not ``create``.
+        """Registration writes through update, not create.
 
-        ``_apply_update`` dumps with ``exclude_unset=True``, which recurses into
+        _apply_update dumps with exclude_unset=True, which recurses into
         the nested subscription: every field left at its default was dropped
-        before reaching Mongo, so the stored record had no ``status`` — and the
-        dispatch finders match on ``status``. The write succeeded, the document
+        before reaching Mongo, so the stored record had no status — and the
+        dispatch finders match on status. The write succeeded, the document
         looked plausible, and the watch simply never fired.
         """
         doc = await repo.create(make_doc(user_id="u"))

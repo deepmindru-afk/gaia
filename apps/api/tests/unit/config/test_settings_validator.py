@@ -1,6 +1,6 @@
 """The registered settings groups, exercised through a fresh validator.
 
-The module-level ``settings_validator`` singleton registers its groups at
+The module-level settings_validator singleton registers its groups at
 import time, so nothing that only imports the module ever runs the
 registration again. These tests construct their own validator, which is what
 makes the registration observable at all — and what lets the mutation gate
@@ -76,7 +76,7 @@ def _group(validator: SettingsValidator, name: str) -> SettingsGroup:
 
 
 def test_the_share_group_publishes_the_prose_an_operator_reads() -> None:
-    """``description`` reaches no runtime code path — scripts/dump_config_schema.py
+    """description reaches no runtime code path — scripts/dump_config_schema.py
     lifts it straight off this module's AST into the config schema — so this is
     the only place its content is checked at all."""
     group = _group(SettingsValidator(), SHARE_GROUP)

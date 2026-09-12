@@ -17,20 +17,20 @@ user with no card and no memories and nothing anywhere saying so. A pipeline
 that runs *twice* is worse — a second holo card and a second announcement
 conversation for a user who merely reconnected Gmail.
 
-**What is real here.** The HTTP endpoints, ``onboarding_service``,
-``handle_oauth_connection``'s Gmail branch, ``intelligence_job``, the ARQ task
-wrapper, and the whole ``intelligence_service`` DAG including triage, writing
+**What is real here.** The HTTP endpoints, onboarding_service,
+handle_oauth_connection's Gmail branch, intelligence_job, the ARQ task
+wrapper, and the whole intelligence_service DAG including triage, writing
 style, the holo card and the seeded announcement. ARQ is real too: jobs are
-enqueued onto a real ``ArqRedis`` (backed by fakeredis), read back off the queue
-by ``run_queued_jobs`` exactly as the worker does, and aborts land in arq's real
-``abort`` sorted set — so "the job is live" and "the job was aborted" are
+enqueued onto a real ArqRedis (backed by fakeredis), read back off the queue
+by run_queued_jobs exactly as the worker does, and aborts land in arq's real
+abort sorted set — so "the job is live" and "the job was aborted" are
 answered by arq, not by a mock.
 
 **What is doubled.** Only external I/O: the LLM, Gmail, Composio, notifications
-and the persistence layer. ``_UserStore`` stands in for Mongo and mirrors two
-conditional repository contracts — the ``onboarding: {$exists: false}`` gate and
+and the persistence layer. _UserStore stands in for Mongo and mirrors two
+conditional repository contracts — the onboarding: {$exists: false} gate and
 compare-and-clear on the job id — each of which is certified against real Mongo
-in ``tests/contracts/test_users_repository.py``.
+in tests/contracts/test_users_repository.py.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ class _UserStore:
     Only the named methods the onboarding flow calls are implemented, under the
     repository's own names, so production code is unchanged. The one method
     whose real semantics live in a Mongo filter rather than in Python —
-    ``complete_onboarding``'s existence gate — is reproduced here; it is
+    complete_onboarding's existence gate — is reproduced here; it is
     certified against real Mongo by the repository contract suite.
     """
 
@@ -247,7 +247,7 @@ class _UserStore:
 
 
 class _StageSink:
-    """Every ``onboarding_stage`` event the socket would have carried, in order."""
+    """Every onboarding_stage event the socket would have carried, in order."""
 
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, Any]]] = []
@@ -263,7 +263,7 @@ class _StageSink:
         return [name for name, _ in self.events]
 
     def payload(self, stage: OnboardingStage) -> dict[str, Any]:
-        """The last payload emitted for ``stage`` — the one the client keeps."""
+        """The last payload emitted for stage — the one the client keeps."""
         for name, payload in reversed(self.events):
             if name == stage.value:
                 return payload
@@ -316,7 +316,7 @@ def seeded_descriptions(externals: _Externals) -> list[str]:
 
 
 def seeded_id_of(externals: _Externals, description: str) -> str:
-    """The id of the one seeded conversation carrying ``description``."""
+    """The id of the one seeded conversation carrying description."""
     ids = [cid for cid, desc in externals.seeded_conversations if desc == description]
     assert len(ids) == 1, f"expected exactly one {description!r} conversation, got {ids}"
     return ids[0]
@@ -410,7 +410,7 @@ def stages() -> _StageSink:
 
 
 def _enter_persistence_patches(stack: ExitStack, users: _UserStore, externals: _Externals) -> None:
-    """Every write the flow makes, routed into ``users``/``externals`` instead of Mongo."""
+    """Every write the flow makes, routed into users/externals instead of Mongo."""
 
     async def _create_conversation(conversation: Any, _user: Any) -> Any:
         if externals.seeding_fails:
@@ -671,7 +671,7 @@ class TestSubmittingTheFormIsCompletion:
     ):
         """The web lands the user in this conversation off the completion
         response, and a reset tears it down by this id. Sharing the legacy
-        ``first_message_conversation_id`` would overwrite the conversation a
+        first_message_conversation_id would overwrite the conversation a
         returning pre-relocation user still has, orphaning it forever."""
         await complete_submit(client)
 
@@ -856,7 +856,7 @@ class TestThePipelineRunsAtMostOnce:
     async def test_a_legacy_user_who_already_has_a_card_is_not_re_run(
         self, client: AsyncClient, arq_pool: ArqRedis, users: _UserStore
     ):
-        """Users who finished the pre-relocation onboarding carry `house` and no
+        """Users who finished the pre-relocation onboarding carry house and no
         marker. Treating them as new hands them a second card."""
         await complete_submit(client)
         users.docs[USER_ID]["onboarding"]["house"] = "explorer"

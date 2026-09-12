@@ -1,12 +1,12 @@
-"""``search_uploaded_files`` must scope by the conversation, not the graph thread.
+"""search_uploaded_files must scope by the conversation, not the graph thread.
 
-The tool is registered for the executor only (``registry.py`` "documents"
-category), and ``prepare_executor_execution`` runs the executor on a derived
-thread ``executor_<conversation_id>``. Reading the conversation scope out of
-``thread_id`` therefore looked up a conversation that owns no files, so the tool
+The tool is registered for the executor only (registry.py "documents"
+category), and prepare_executor_execution runs the executor on a derived
+thread executor_<conversation_id>. Reading the conversation scope out of
+thread_id therefore looked up a conversation that owns no files, so the tool
 returned an empty string for every upload — the executor's only route to an
-uploaded file's extracted content. ``build_agent_config`` documents the trap:
-the true conversation id is not recoverable from ``thread_id``.
+uploaded file's extracted content. build_agent_config documents the trap:
+the true conversation id is not recoverable from thread_id.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -56,7 +56,7 @@ class TestSearchUploadedFilesScope:
     async def test_returns_the_uploaded_file_content_for_an_executor_thread(self):
         """End to end through the tool: an executor thread still finds the upload.
 
-        Fails whenever the scope id regresses to ``thread_id`` — the lookup then
+        Fails whenever the scope id regresses to thread_id — the lookup then
         matches no file and the tool hands the agent an empty string.
         """
         chroma_document = type("Doc", (), {"metadata": {"file_id": "file-1", "page_number": 1}})()

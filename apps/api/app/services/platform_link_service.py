@@ -1,4 +1,4 @@
-"""Platform Link Service
+"""Platform Link Service.
 
 Centralized service for managing platform account linking (Discord, Slack, Telegram, WhatsApp).
 
@@ -75,7 +75,7 @@ IMESSAGE_REGISTRATION_FEATURE_KEY = "imessage_registration"
 class PlatformAccountTakenError(ValueError):
     """This platform account already belongs to a different GAIA user.
 
-    Distinct from ``AccountHasDifferentPlatformError``: the conflict is on the
+    Distinct from AccountHasDifferentPlatformError: the conflict is on the
     platform side, and the person linking has to free the platform account.
     """
 
@@ -83,7 +83,7 @@ class PlatformAccountTakenError(ValueError):
 class AccountHasDifferentPlatformError(ValueError):
     """This GAIA account already has a different account on this platform.
 
-    Distinct from ``PlatformAccountTakenError``: nobody else is involved, and
+    Distinct from PlatformAccountTakenError: nobody else is involved, and
     the fix is on the GAIA side. Telling this person to "disconnect it from the
     other GAIA account" sends them looking for an account that does not exist.
     """
@@ -161,7 +161,7 @@ async def _clear_pending_imessage_registration(user_id: str, linked_phone_number
 
 
 async def _is_linked_number(user_id: str, phone_number: str) -> bool:
-    """Whether ``phone_number`` is the user's live iMessage link right now."""
+    """Whether phone_number is the user's live iMessage link right now."""
     linked = await PlatformLinkService.get_linked_platforms(user_id)
     entry = linked.get(Platform.IMESSAGE.value)
     return entry is not None and entry["platformUserId"] == phone_number
@@ -204,7 +204,7 @@ async def reap_abandoned_imessage_registrations(now: datetime) -> int:
 
 
 async def platform_requires_upgrade(user_id: str, platform: str) -> bool:
-    """True when ``platform`` is Pro-only and ``user_id`` is on the free plan."""
+    """True when platform is Pro-only and user_id is on the free plan."""
     if platform not in PREMIUM_PLATFORMS:
         return False
     return await payment_service.get_cached_plan_type(user_id) == PlanType.FREE
@@ -231,7 +231,7 @@ async def start_platform_connect(
     platform: str,
     phone: str | None = None,
 ) -> InitiatePlatformConnectResponse:
-    """Build whatever ``platform``'s connect flow needs: an OAuth URL or manual
+    """Build whatever platform's connect flow needs: an OAuth URL or manual
     /auth instructions.
 
     Shared by the settings-page endpoint and the agent's manage_linked_account
@@ -346,7 +346,7 @@ async def start_platform_connect(
 
 
 async def disconnect_platform_account(user_id: str, platform: str) -> DisconnectPlatformResponse:
-    """Unlink ``platform`` from the user and clear the bot auth cache entry.
+    """Unlink platform from the user and clear the bot auth cache entry.
 
     Shared by the settings-page endpoint and the agent's manage_linked_account
     tool so every unlink path gets the same cleanup. Raises AppError (404) when
@@ -397,11 +397,11 @@ async def disconnect_platform_account(user_id: str, platform: str) -> Disconnect
 
 
 def linked_platforms_of(user: UserDocument) -> dict[str, PlatformLinkEntry]:
-    """A loaded user's linked platforms, keyed by platform name in ``Platform`` order.
+    """A loaded user's linked platforms, keyed by platform name in Platform order.
 
     Only platforms stored as a dict with a non-empty "id" are returned; legacy
     string/int values are skipped. Split out from
-    ``PlatformLinkService.get_linked_platforms`` so callers that already hold the
+    PlatformLinkService.get_linked_platforms so callers that already hold the
     document (onboarding completion) do not pay for a second read.
     """
     platform_links = user.platform_links or {}
@@ -438,7 +438,7 @@ class PlatformLinkService:
         """List the platform_user_ids of every account linked to the given platform.
 
         Used by bots (e.g. Discord) to pre-warm DM-channel caches on startup so
-        inbound DMs resolve even on a cold restart. Bounded by ``limit`` to keep
+        inbound DMs resolve even on a cold restart. Bounded by limit to keep
         startup cost predictable.
         """
         return await user_repository.list_platform_user_ids(platform, limit=limit)

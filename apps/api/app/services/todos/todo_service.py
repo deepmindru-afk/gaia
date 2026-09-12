@@ -81,9 +81,9 @@ def _ensure_subtask_ids(subtasks: list[SubTask]) -> list[SubTask]:
 
 
 def _to_todo_update(updates: TodoUpdateRequest) -> TodoUpdate:
-    """Project a partial API update onto the repository's ``$set`` model.
+    """Project a partial API update onto the repository's $set model.
 
-    ``None`` means "not provided" on this API — no field can be cleared through
+    None means "not provided" on this API — no field can be cleared through
     it — so None-valued fields are dropped rather than written as nulls, and the
     resulting model's set fields are exactly what will be written.
     """
@@ -94,9 +94,9 @@ def _to_todo_update(updates: TodoUpdateRequest) -> TodoUpdate:
 
 
 def _drop_completion_fields(update: TodoUpdate) -> TodoUpdate:
-    """Rebuild ``update`` without the completion fields.
+    """Rebuild update without the completion fields.
 
-    A ``TodoUpdate`` writes exactly the fields that are *set* on it, and a field
+    A TodoUpdate writes exactly the fields that are *set* on it, and a field
     cannot be un-set in place, so dropping one means rebuilding from the rest.
     """
     fields = update.model_dump(exclude_unset=True)

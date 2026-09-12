@@ -1,6 +1,6 @@
 """Unit tests for app.workers.tasks.scheduler_recovery_tasks.
 
-``rescan_pending_scheduled_tasks`` is the periodic safety net for deferred
+rescan_pending_scheduled_tasks is the periodic safety net for deferred
 work lost mid-run: it reaps BOTH workflows and reminders wedged in EXECUTING,
 then re-scans both schedulers. If any pass fails the whole task must fail
 loudly — a swallowed scheduler error would silently break the recovery

@@ -38,7 +38,7 @@ def _collect(session: StreamSession, data: dict[str, Any]) -> None:
     boundary) closes the block, and the end of the run closes the last one by
     simply never extending it. Deltas are still published individually above —
     the live stream must stay token by token; only what gets persisted is
-    batched. Same-``subagent_id`` only, so two subagents thinking concurrently
+    batched. Same-subagent_id only, so two subagents thinking concurrently
     on one stream never merge into each other.
     """
     reasoning = data.get("reasoning")
@@ -65,7 +65,7 @@ def make_redis_stream_writer(stream_id: str) -> Callable[[dict[str, Any]], None]
     tool_output / todo_progress for MongoDB persistence after the notifier
     returns. The SSE publish happens regardless — the session is a side-channel
     only for the save path, not for re-publishing — and it publishes every event
-    verbatim, including each reasoning delta, which ``_collect`` coalesces for
+    verbatim, including each reasoning delta, which _collect coalesces for
     the save path alone.
     """
 

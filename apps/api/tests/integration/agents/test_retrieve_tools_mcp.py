@@ -1,13 +1,13 @@
 """retrieve_tools must surface per-user MCP tools end-to-end.
 
-After the resilience rewrite removed per-user `mcp_{iid}_{user_id}` categories
+After the resilience rewrite removed per-user mcp_{iid}_{user_id} categories
 from ToolRegistry, MCP tool names no longer appear in
-`tool_registry.get_tool_names()`. retrieve_tools had two filters keyed against
+tool_registry.get_tool_names(). retrieve_tools had two filters keyed against
 that set — one in discovery mode (Chroma post-processing) and one in binding
 mode (exact_tool_names validation). Both used to drop every MCP tool as
 "unknown."
 
-These tests exercise the live `retrieve_tools` factory with mocked Chroma /
+These tests exercise the live retrieve_tools factory with mocked Chroma /
 MCPClient boundaries and verify:
 
 1. Discovery mode returns posthog tool names from a Chroma hit.
@@ -43,7 +43,7 @@ def _fake_search_item(key: str, namespace: tuple, score: float = 0.95):
 
 
 def _fake_mcp_client(integration_tools_map: dict[str, list[Any]]):
-    """Build a MagicMock MCPClient whose `_tools` dict contains the given tools.
+    """Build a MagicMock MCPClient whose _tools dict contains the given tools.
 
     integration_tools_map: {integration_id: [tool, tool, ...]}
     """

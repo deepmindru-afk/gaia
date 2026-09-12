@@ -128,7 +128,7 @@ class MCPTokenStore:
         """Check if token expires within threshold (default 5 minutes).
 
         Also returns True when token_expires_at is not set but the token
-        was issued more than ``max_age_seconds`` ago — servers can revoke
+        was issued more than max_age_seconds ago — servers can revoke
         tokens at any time, so proactively refreshing stale tokens avoids
         connection failures from expired-but-unknown-expiry tokens.
         """
@@ -379,7 +379,7 @@ class MCPTokenStore:
 
         The whole RFC 7591 response is persisted verbatim — servers return
         arbitrary extra metadata alongside the credentials — so the write side
-        stays a raw mapping. Reads go through :class:`DCRClientRegistration`.
+        stays a raw mapping. Reads go through :class:DCRClientRegistration.
         """
         async with get_db_session() as session:
             result = await session.execute(
@@ -410,7 +410,7 @@ class MCPTokenStore:
         Cache OAuth discovery data in Redis.
 
         NOTE: This cache is GLOBAL per integration, not per-user. The key is:
-        `mcp_oauth_discovery:{integration_id}` (no user_id component).
+        mcp_oauth_discovery:{integration_id} (no user_id component).
 
         This is intentional because OAuth discovery data (authorization_endpoint,
         token_endpoint, registration_endpoint, etc.) is the same for all users
@@ -455,7 +455,7 @@ class MCPTokenStore:
 
     async def get_excluded_scopes(self, integration_id: str) -> set[str]:
         """
-        Get scopes the auth server rejected with `invalid_scope`.
+        Get scopes the auth server rejected with invalid_scope.
 
         Accumulated within a single OAuth flow (TTL-bounded) so each
         re-authorization retry drops the offending scope(s) and converges.
@@ -486,7 +486,7 @@ class MCPTokenStore:
         Introspect token at authorization server per RFC 7662.
 
         Returns introspection response with 'active' field, or None if failed.
-        The body stays a raw mapping: past ``active``, RFC 7662 lets the
+        The body stays a raw mapping: past active, RFC 7662 lets the
         authorization server return any claims it likes.
         """
         discovery = await self.get_oauth_discovery(integration_id)

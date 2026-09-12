@@ -1,18 +1,18 @@
 """The one transition that marks a user's integration connection dead.
 
 Two callers, same state change, different escalation: the Composio
-connection-lifecycle webhook runs it proactively with ``notify=True`` (the user
+connection-lifecycle webhook runs it proactively with notify=True (the user
 is not looking at GAIA, so the notification and the live page update are the
 whole point), and the tool-execution reconciliation path runs it with
-``notify=False`` (the user is mid-conversation and is handed a connect card in
+notify=False (the user is mid-conversation and is handed a connect card in
 the same turn — a notification seconds later is noise).
 
 Pausing the workflows that needed the dead integration is the *caller's* job:
-it hands the paused titles in as ``paused_workflows`` and this module only
+it hands the paused titles in as paused_workflows and this module only
 folds them into the announcement. The transition is reachable from the Composio
 tool wrapper, so importing the workflow layer here would close an import cycle
-(``workflow.service`` -> ``trigger_service``/``generation_service`` ->
-``composio_service`` -> back to this module).
+(workflow.service -> trigger_service/generation_service ->
+composio_service -> back to this module).
 """
 
 from collections.abc import Sequence
@@ -73,7 +73,7 @@ async def expire_user_integration(
     """Mark a user's integration connection dead and stop the rest of GAIA treating it as usable.
 
     Returns True when the transition was applied, False when it was a no-op —
-    no ``user_integrations`` record (never fabricates one) or already ``expired``
+    no user_integrations record (never fabricates one) or already expired
     (idempotent, so a flapping account cannot notify twice without a real
     reconnect in between).
     """

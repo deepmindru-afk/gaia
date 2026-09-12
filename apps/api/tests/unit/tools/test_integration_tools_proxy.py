@@ -2,10 +2,10 @@
 
 Each integration tool registration is verified end-to-end:
 1. Tools are registered under the expected names.
-2. The tool body invokes `proxy_request_sync` with the right toolkit + endpoint.
+2. The tool body invokes proxy_request_sync with the right toolkit + endpoint.
 
 Detailed per-function behavior tests live in the per-tool unit modules
-(e.g. `test_composio_gmail_tools.py`). This file provides a regression net
+(e.g. test_composio_gmail_tools.py). This file provides a regression net
 that fails fast if a tool stops routing through the proxy.
 """
 
@@ -117,7 +117,7 @@ def test_gather_context_tools_use_proxy(
 def test_google_meet_gather_context_swallows_calendar_failures() -> None:
     """If the GOOGLEMEET account lacks calendar scope, the events fetch raises.
 
-    The tool must catch that and return an empty `upcoming_meets` list rather
+    The tool must catch that and return an empty upcoming_meets list rather
     than failing the whole gather_context call.
     """
     from app.agents.tools.integrations.google_meet_tool import (

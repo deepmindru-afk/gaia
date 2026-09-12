@@ -17,7 +17,7 @@ from app.models.agent_models import agent_configurable
 
 
 class MediaDelivery(Enum):
-    """The transform ``MediaAdapter`` applies to a *tool result's* images for the
+    """The transform MediaAdapter applies to a *tool result's* images for the
     active lane — one strategy per lane, picked from what that lane's model can
     see. Images the user themselves attached are never touched; this only governs
     media a tool produced.
@@ -48,9 +48,9 @@ async def resolve_media_delivery(config: RunnableConfig) -> MediaDelivery:
     OpenRouter accepts media inside a tool message (its spec types tool content
     as the same union the user role gets), but whether the *upstream* model
     honours it is per-model and not exposed anywhere in the models API — two
-    models can be byte-identical in `architecture` and still differ. Older
+    models can be byte-identical in architecture and still differ. Older
     OpenAI-family models 400 on it. That capability is therefore established by
-    running ``tests/model_onboarding`` before a model is seeded, not by a lookup
+    running tests/model_onboarding before a model is seeded, not by a lookup
     at request time.
     """
     provider, model = active_lane(config)

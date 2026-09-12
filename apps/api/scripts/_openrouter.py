@@ -88,7 +88,7 @@ def default_cache_dir() -> Path:
     cache is written and read back as the script's own input, so a world-
     writable path lets anyone on the box pre-create it and decide what this
     backfill believes each call cost — and that number is written to
-    ``usage_daily``. Ephemeral either way; it only makes a re-run cheaper.
+    usage_daily. Ephemeral either way; it only makes a re-run cheaper.
     """
     xdg = os.environ.get("XDG_CACHE_HOME")
     return (Path(xdg) if xdg else Path.home() / ".cache") / "gaia-true-cost"
@@ -107,7 +107,7 @@ async def resolve_generations(
     generation_ids: Iterable[str],
     cache_path: Path,
 ) -> dict[str, GenerationRecord | None]:
-    """Resolve every generation id in ``calls``, reusing the day's cache file."""
+    """Resolve every generation id in calls, reusing the day's cache file."""
     known = _read_cache(cache_path)
     todo = sorted({gid for gid in generation_ids if gid} - set(known))
     if not todo:

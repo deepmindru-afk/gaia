@@ -1,21 +1,21 @@
 """Per-turn forwarding of a conversation's artifact events to the chat SSE stream.
 
-One :class:`ArtifactForwarder` runs per chat turn. It subscribes to
-``artifacts:{user_id}`` (published by the coding tools and the upload pipeline),
+One :class:ArtifactForwarder runs per chat turn. It subscribes to
+artifacts:{user_id} (published by the coding tools and the upload pipeline),
 keeps only this conversation's events, and runs each through a fixed pipeline:
 
     show it live  →  save it (registry + message ref)  →  deliver to bot  →  warm cache
 
 "Show it live" streams the full file data so the web client populates its map
 immediately; "save it" writes the conversation-level registry (the source of
-truth) plus a lightweight ``{session_id, path, event}`` reference on the bot
-message so the card re-renders on reload. A per-turn ``mtime`` map, loaded once,
+truth) plus a lightweight {session_id, path, event} reference on the bot
+message so the card re-renders on reload. A per-turn mtime map, loaded once,
 makes whole-dir re-emits idempotent: an unchanged file is skipped entirely.
 
-The event payload itself stays ``dict[str, Any]`` here on purpose (Type Safety
-item 14): its wire contract is owned by :mod:`app.services.artifact_events`
-(the ``upsert``/``remove``/``upload`` builders) and consumed by
-``app.utils.artifact_utils``, which both declare it as a plain dict — naming
+The event payload itself stays dict[str, Any] here on purpose (Type Safety
+item 14): its wire contract is owned by :mod:app.services.artifact_events
+(the upsert/remove/upload builders) and consumed by
+app.utils.artifact_utils, which both declare it as a plain dict — naming
 the shape belongs in those modules, not in a rival type declared here.
 """
 
@@ -71,7 +71,7 @@ async def forward_artifact_events(
 ) -> None:
     """Bridge this conversation's artifact events to its chat SSE stream.
 
-    ``subscribed`` is set once the pub/sub subscription is live (or will never
+    subscribed is set once the pub/sub subscription is live (or will never
     be), so callers can order their own publishes after it — pubsub has no
     replay, so anything published earlier is lost.
     """
@@ -81,7 +81,7 @@ async def forward_artifact_events(
 
 
 class _TurnStatsEvent(TypedDict):
-    """The ``artifacts`` field of the turn's canonical log line."""
+    """The artifacts field of the turn's canonical log line."""
 
     conversation_id: str
     upserts: int
@@ -112,10 +112,10 @@ class _TurnStats:
 class ArtifactForwarder:
     """Forwards one turn's artifact events: live SSE + registry + bot delivery.
 
-    All per-turn mutable state lives on the instance: ``registry_mtimes`` dedups
-    re-emits, ``published_files`` caps bot delivery at once per file, and
-    ``stats`` tallies the turn. The public entry point is
-    :func:`forward_artifact_events`.
+    All per-turn mutable state lives on the instance: registry_mtimes dedups
+    re-emits, published_files caps bot delivery at once per file, and
+    stats tallies the turn. The public entry point is
+    :func:forward_artifact_events.
     """
 
     def __init__(
@@ -180,7 +180,7 @@ class ArtifactForwarder:
             self.subscribed.set()
 
     async def _load_registry(self) -> None:
-        """Seed the per-turn ``path → mtime`` map so re-emits dedup against it."""
+        """Seed the per-turn path → mtime map so re-emits dedup against it."""
         # @Cacheable erases its wrapped function's return type, so name it here.
         registry: list[ArtifactRegistryEntry] = await get_conversation_artifacts(
             self.user_id, self.conversation_id
@@ -258,16 +258,16 @@ class ArtifactForwarder:
     # ── Pipeline steps ─────────────────────────────────────────────────────
 
     async def _stream_entry(self, entry: ArtifactDataEntry) -> None:
-        """Publish one ``artifact_data`` chunk to the live SSE stream."""
+        """Publish one artifact_data chunk to the live SSE stream."""
         chunk = "data: " + json.dumps({"tool_data": entry}) + "\n\n"
         await stream_manager.publish_chunk(self.stream_id, chunk)
 
     async def _persist_entry(self, entry: ArtifactDataEntry) -> None:
-        """``$push`` one ``artifact_data`` reference onto the turn's bot message.
+        """$push one artifact_data reference onto the turn's bot message.
 
         Best-effort: the live stream already delivered the card, so a failed
         persist only costs the reload re-render. A not-yet-saved bot message (an
-        early-turn artifact racing ``_persist_turn``) is retried with a short
+        early-turn artifact racing _persist_turn) is retried with a short
         backoff so the entry isn't dropped before the row exists.
         """
         if not self.bot_message_id:
@@ -300,7 +300,7 @@ class ArtifactForwarder:
     def _maybe_deliver_to_bot(self, payload: dict[str, Any], path: str, event: str | None) -> None:
         """Push an agent-generated artifact to a bot user's outbound queue, once.
 
-        User uploads (``event == "upload"``) are skipped — the user already has
+        User uploads (event == "upload") are skipped — the user already has
         them; the web SSE card isn't visible to a bot user, hence this path.
         """
         if not (
@@ -363,7 +363,7 @@ class ArtifactForwarder:
 
 
 def _bot_source(source: str | None) -> ConversationSource | None:
-    """Return the bot ``ConversationSource`` for ``source`` if it has an outbound
+    """Return the bot ConversationSource for source if it has an outbound
     queue (whatsapp/telegram/discord/slack), else None (web/mobile/unknown)."""
     if not source:
         return None
@@ -377,7 +377,7 @@ def _bot_source(source: str | None) -> ConversationSource | None:
 def _parse_artifact_message(message: dict[str, Any], conversation_id: str) -> dict[str, Any] | None:
     """Decode a pub/sub message into an artifact payload for this conversation.
 
-    Returns ``None`` when the message isn't a data frame, can't be parsed, or
+    Returns None when the message isn't a data frame, can't be parsed, or
     belongs to a different conversation.
     """
     if message.get("type") != "message":

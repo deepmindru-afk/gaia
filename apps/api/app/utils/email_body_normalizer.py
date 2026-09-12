@@ -7,10 +7,10 @@ quoted replies, which the user finds useful for thread context).
 
 Pure functions, no side effects. Safe to apply multiple times (idempotent).
 
-Used by ``GMAIL_FETCH_MESSAGES`` to keep typical inbox responses
+Used by GMAIL_FETCH_MESSAGES to keep typical inbox responses
 under the inline-context threshold. When the aggregate is still too big,
-``WorkspaceCompactionMiddleware`` writes the result to a file the agent
-mines with ``query_json``/``grep``; the offloaded JSONL is meaningfully
+WorkspaceCompactionMiddleware writes the result to a file the agent
+mines with query_json/grep; the offloaded JSONL is meaningfully
 smaller too because every message was already normalized.
 """
 
@@ -104,7 +104,7 @@ _HTML_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 
 
 def strip_signature(body: str) -> str:
-    """Remove the signature block (everything after ``-- \\n`` on its own line)."""
+    """Remove the signature block (everything after -- \\n on its own line)."""
     match = _SIGNATURE_DELIMITER_RE.search(body)
     if match is None:
         return body
@@ -227,8 +227,8 @@ def collapse_whitespace(body: str) -> str:
 def html_to_text(html: str) -> str:
     """Extract plain text from HTML, unescape entities, collapse whitespace.
 
-    Block-level elements (``<p>``, ``<div>``, ``<br>``, ``<li>``, ``<h1-6>``,
-    ``<tr>``, ``<br>``, end-of-block) introduce paragraph breaks so the
+    Block-level elements (<p>, <div>, <br>, <li>, <h1-6>,
+    <tr>, <br>, end-of-block) introduce paragraph breaks so the
     paragraph-based rules downstream can identify boilerplate sections.
     """
     if not html or "<" not in html:
@@ -267,9 +267,9 @@ def normalize_email_body(body: str) -> str:
 
     Note:
         **Quoted replies are intentionally NOT stripped.** Lines starting with
-        ``>`` and the ``On <date>, <sender> wrote:`` attribution line are
+        > and the On <date>, <sender> wrote: attribution line are
         preserved — they give context into the older conversation, which
-        the user finds useful. See ``test_quoted_replies_are_kept`` for the
+        the user finds useful. See test_quoted_replies_are_kept for the
         explicit guardrail.
     """
     if not body:

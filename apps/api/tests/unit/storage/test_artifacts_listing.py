@@ -1,6 +1,6 @@
 """Layer 2 — artifact listing: the os.scandir walk + stat_artifact.
 
-`_list_files` is pure (takes a Path) so it runs against a real tmpdir — this is
+_list_files is pure (takes a Path) so it runs against a real tmpdir — this is
 filesystem logic, the filesystem is the boundary, not something to mock. The
 stat_artifact tests patch the JuiceFS mount root to a tmpdir, including a
 SYMLINKED root to lock in the resolve-anchor fix.

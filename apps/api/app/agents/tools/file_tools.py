@@ -89,8 +89,8 @@ async def _get_similar_documents(
 ) -> list[tuple[Document, float]]:
     """Semantic search over files uploaded in this conversation, scored by similarity.
 
-    Scope is resolved from MongoDB (files carrying this ``conversation_id``, plus
-    legacy unscoped files) and applied as a ``file_id`` filter on the vector
+    Scope is resolved from MongoDB (files carrying this conversation_id, plus
+    legacy unscoped files) and applied as a file_id filter on the vector
     search — so the tool can never surface a file from another conversation,
     regardless of ChromaDB metadata.
     """

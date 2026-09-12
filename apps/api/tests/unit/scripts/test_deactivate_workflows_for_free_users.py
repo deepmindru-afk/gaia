@@ -1,7 +1,7 @@
 """Unit tests for the paid-only-gate workflow-deactivation migration.
 
-Two behaviors decide whether a production run is safe: `--dry-run` (the
-default) must never write, and `--execute` must touch exactly the users with
+Two behaviors decide whether a production run is safe: --dry-run (the
+default) must never write, and --execute must touch exactly the users with
 no active subscription — never a paying user's workflows.
 """
 

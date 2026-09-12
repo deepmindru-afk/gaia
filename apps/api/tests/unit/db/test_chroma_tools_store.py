@@ -518,7 +518,7 @@ def _store_holding(*doc_hashes: str) -> AsyncMock:
 
 @contextmanager
 def _indexing(store: AsyncMock, cached_hash: str | None) -> Iterator[SimpleNamespace]:
-    """Run index_tools_to_store against ``store`` with Redis reporting ``cached_hash``."""
+    """Run index_tools_to_store against store with Redis reporting cached_hash."""
     with (
         patch(
             "app.db.chroma.chroma_tools_store.get_cache",

@@ -1,5 +1,5 @@
 """
-OAuth Integration Configuration
+OAuth Integration Configuration.
 
 Single source of truth for all OAuth integration configurations in GAIA.
 Defines integrations, scopes, display properties, and subagent configurations.

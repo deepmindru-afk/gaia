@@ -153,7 +153,7 @@ async def get_reminder_tool(
     config: RunnableConfig,
     reminder_id: Annotated[str, "The unique identifier of the reminder"],
 ) -> dict[str, Any]:
-    """Get full details of a specific reminder by ID"""
+    """Get full details of a specific reminder by ID."""
     try:
         log.set(tool={"name": "get_reminder_tool", "action": "get"})
         user_id = agent_configurable(config).get("user_id")
@@ -177,7 +177,7 @@ async def delete_reminder_tool(
     config: RunnableConfig,
     reminder_id: Annotated[str, "The unique identifier of the reminder to cancel"],
 ) -> dict[str, str]:
-    """Cancel a scheduled reminder by ID"""
+    """Cancel a scheduled reminder by ID."""
     try:
         log.set(tool={"name": "delete_reminder_tool", "action": "delete"})
         user_id = agent_configurable(config).get("user_id")
@@ -217,7 +217,7 @@ async def update_reminder_tool(
         dict[str, Any] | None, "Additional data for the reminder task (optional)"
     ] = None,
 ) -> dict[str, str]:
-    """Update attributes of an existing reminder"""
+    """Update attributes of an existing reminder."""
     try:
         log.set(tool={"name": "update_reminder_tool", "action": "update"})
         user_id = agent_configurable(config).get("user_id")
@@ -279,7 +279,7 @@ async def search_reminders_tool(
     config: RunnableConfig,
     query: Annotated[str, "Search keyword(s) to match against reminders"],
 ) -> dict[str, str] | list[dict[str, Any]]:
-    """Search reminders by keyword or content"""
+    """Search reminders by keyword or content."""
     try:
         log.set(tool={"name": "search_reminders_tool", "action": "search"})
         user_id = agent_configurable(config).get("user_id")

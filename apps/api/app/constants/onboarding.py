@@ -1,8 +1,8 @@
 """
 Gmail personalization pipeline constants.
 
-Shared between the job-lifecycle helpers (`intelligence_job`) and the pipeline
-itself (`intelligence_service`), which run when a user connects Gmail.
+Shared between the job-lifecycle helpers (intelligence_job) and the pipeline
+itself (intelligence_service), which run when a user connects Gmail.
 """
 
 # ARQ task name — must match the registered worker task function.

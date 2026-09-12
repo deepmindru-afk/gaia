@@ -3,16 +3,16 @@
 Each hook rewrites the message list on its way to the model, and each one's
 contract assumes the previous ones already ran:
 
-* ``filter_messages_node`` strips unanswered tool calls — if it ran *after*
-  ``manage_system_prompts_node`` the provider would receive a dangling tool call
+* filter_messages_node strips unanswered tool calls — if it ran *after*
+  manage_system_prompts_node the provider would receive a dangling tool call
   and reject the whole request, so the user's message appears to vanish;
-* ``adapt_media_node`` rewrites media blocks for the model lane;
+* adapt_media_node rewrites media blocks for the model lane;
 * the todo hook re-renders the plan and appends it, marked;
-* ``manage_system_prompts_node`` runs LAST and collapses each system slot to its
+* manage_system_prompts_node runs LAST and collapses each system slot to its
   latest copy, which only works once every earlier hook has added theirs.
 
-Nothing asserted that they run in order. ``test_graph_builder`` checks only
-``len(pre_model_hooks) == 4``, which any four callables in any order satisfy;
+Nothing asserted that they run in order. test_graph_builder checks only
+len(pre_model_hooks) == 4, which any four callables in any order satisfy;
 the one real order assertion in the repo is comms-only and integration-tier.
 """
 
@@ -124,7 +124,7 @@ class TestDeclaredChains:
         return list(hooks.pre_model_hooks or [])
 
     async def test_the_executor_filters_before_it_manages_prompts(self):
-        """``filter_messages_node`` must run first. After the prompt manager, a
+        """filter_messages_node must run first. After the prompt manager, a
         dangling tool call reaches the provider and the request is rejected —
         the user's turn fails with no visible cause."""
         from app.agents.core.nodes.adapt_media import adapt_media_node
@@ -142,7 +142,7 @@ class TestDeclaredChains:
         status frame — appends it marked and lets the prompt manager place it.
         A hook that ran afterwards would have to place its own message, and its
         position would then depend on which other slots that turn happened to
-        fill, which is how ``todo_context`` used to land in a different position
+        fill, which is how todo_context used to land in a different position
         depending on whether a background-executor frame was present."""
         from app.agents.core.nodes.manage_system_prompts import manage_system_prompts_node
 

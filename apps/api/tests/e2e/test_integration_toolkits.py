@@ -1,6 +1,6 @@
 """The four headline toolkits driven through their real tool bodies.
 
-``test_composio_custom_tools.py`` proves *one* body reaches the provider. This
+test_composio_custom_tools.py proves *one* body reaches the provider. This
 file drives the toolkits a user actually notices when they break — gmail,
 googlecalendar, github, slack — and asserts the **shape** each tool returns,
 because that shape is what the model reads. A tool that hands back the raw
@@ -10,28 +10,28 @@ raises, the agent just starts hallucinating over 40x the tokens.
 Each toolkit reaches its provider through a different seam, and all three have
 to be stubbed or the call goes out over the network (plan §2.8):
 
-* **A — proxy** (gmail, most calendar tools): ``proxy_client._get_composio``.
+* **A — proxy** (gmail, most calendar tools): proxy_client._get_composio.
   Everything above it is real — connected-account resolution, the toolkit →
-  auth-config mapping, parameter building, the non-2xx → ``AppError``
+  auth-config mapping, parameter building, the non-2xx → AppError
   translation. The fake client stands in for the Composio SDK, not for GAIA.
 * **B — hosted execute** (github, slack, calendar's gather-context):
-  ``execute_tool``, patched **at each importing module**. Consumers do
-  ``from … import execute_tool``, so patching ``context_utils.execute_tool``
+  execute_tool, patched **at each importing module**. Consumers do
+  from … import execute_tool, so patching context_utils.execute_tool
   silently no-ops and the test hits the network while passing.
-* **C — dispatch**: ``CustomTool.__get_auth_credentials`` runs
-  ``connected_accounts.list`` before *every* invocation. Covered in depth in
-  ``test_composio_custom_tools.py``; stubbed here so each test is offline.
+* **C — dispatch**: CustomTool.__get_auth_credentials runs
+  connected_accounts.list before *every* invocation. Covered in depth in
+  test_composio_custom_tools.py; stubbed here so each test is offline.
 
-Calendar adds a fourth seam of its own: ``CUSTOM_GET_DAY_SUMMARY`` /
-``CUSTOM_FETCH_EVENTS`` go through ``app.services.calendar_service``, which
+Calendar adds a fourth seam of its own: CUSTOM_GET_DAY_SUMMARY /
+CUSTOM_FETCH_EVENTS go through app.services.calendar_service, which
 reads the user's selected-calendar preferences out of Mongo. Those functions
-are patched on the ``calendar_service`` module (the tool holds a reference to
+are patched on the calendar_service module (the tool holds a reference to
 the module, not to the function, so module-level patching binds correctly);
-``get_calendar_metadata_map`` is deliberately left alone where it can run for
+get_calendar_metadata_map is deliberately left alone where it can run for
 real through seam A.
 
 Tools run inside a **real compiled LangGraph run** rather than a bare call, so
-``get_config()`` (home timezone, session id) and ``get_stream_writer()`` (the
+get_config() (home timezone, session id) and get_stream_writer() (the
 email / calendar cards the chat UI renders) are the genuine articles.
 """
 
@@ -77,10 +77,10 @@ def tools() -> dict[str, Any]:
 
 @pytest.fixture(autouse=True)
 def _clear_connected_account_cache() -> Any:
-    """The proxy caches ``connected_account_id`` for 600s in a module global.
+    """The proxy caches connected_account_id for 600s in a module global.
 
     Without this, the second test to use a toolkit never re-resolves the
-    account, so its ``connected_accounts.list`` assertions read as zero calls.
+    account, so its connected_accounts.list assertions read as zero calls.
     """
     invalidate_connected_account_cache()
     yield
@@ -99,11 +99,11 @@ class _GraphState(TypedDict, total=False):
 def run_in_graph(
     call: Any, configurable: dict[str, Any] | None = None
 ) -> tuple[Any, list[dict[str, Any]]]:
-    """Run ``call`` inside a real compiled LangGraph run.
+    """Run call inside a real compiled LangGraph run.
 
-    Returns ``(result, streamed)`` where ``streamed`` is everything the tool
+    Returns (result, streamed) where streamed is everything the tool
     pushed to the custom stream — the email / calendar cards the chat renders.
-    A bare call would make ``get_stream_writer()`` raise and ``get_config()``
+    A bare call would make get_stream_writer() raise and get_config()
     fall back to UTC, so the timezone and card behaviour would go untested.
     """
     graph = StateGraph(_GraphState)
@@ -128,7 +128,7 @@ def run_in_graph(
 
 
 def stub_auth(tool: Any, user_id: str = USER) -> Any:
-    """Seam C: the per-invocation ``connected_accounts.list`` for credentials."""
+    """Seam C: the per-invocation connected_accounts.list for credentials."""
     return patch.object(
         tool,
         "_CustomTool__get_auth_credentials",
@@ -137,7 +137,7 @@ def stub_auth(tool: Any, user_id: str = USER) -> Any:
 
 
 class FakeProxyResponse:
-    """What ``composio.tools.proxy`` hands back: provider status, body, headers."""
+    """What composio.tools.proxy hands back: provider status, body, headers."""
 
     def __init__(self, data: Any, status: int = 200, headers: dict[str, Any] | None = None) -> None:
         self.status = status
@@ -148,7 +148,7 @@ class FakeProxyResponse:
 def fake_composio(proxy: Any, *, account_status: str = "ACTIVE") -> MagicMock:
     """A stand-in Composio SDK client for seam A.
 
-    Everything in ``proxy_client`` above the SDK call still runs for real.
+    Everything in proxy_client above the SDK call still runs for real.
     """
     account = MagicMock()
     account.id = "connected-account-1"
@@ -171,7 +171,7 @@ def query_params(proxy_kwargs: dict[str, Any]) -> dict[str, str]:
 
 
 def gmail_message(message_id: str, *, body: str = "Invoice #42 is attached") -> dict[str, Any]:
-    """A raw Gmail ``users.messages.get`` payload, MIME tree and all."""
+    """A raw Gmail users.messages.get payload, MIME tree and all."""
     return {
         "id": message_id,
         "threadId": f"thread-{message_id}",
@@ -246,7 +246,7 @@ class TestGmailFetchMessages:
 
     def test_a_timeframe_is_resolved_in_the_users_home_timezone(self, tools):
         """ "Today's email" is the single most common ask, and the process
-        timezone is not the user's. Resolving ``today`` in UTC serves a user in
+        timezone is not the user's. Resolving today in UTC serves a user in
         IST the wrong day's mail for five and a half hours out of every
         twenty-four."""
         tool = tools["GMAIL_FETCH_MESSAGES"]
@@ -275,7 +275,7 @@ class TestGmailFetchMessages:
     def test_two_users_a_day_apart_are_served_different_days(self, tools):
         """The timezone-independent half of the previous test: Kiritimati
         (UTC+14) and Baker Island (UTC-12) are 26 hours apart, so their local
-        dates *always* differ. A tool that resolves ``today`` against the
+        dates *always* differ. A tool that resolves today against the
         server clock hands both users the identical query — which is exactly
         the bug the timezone plumbing exists to prevent, and the one an
         assertion pinned to a single zone can only catch for part of the day.
@@ -300,7 +300,7 @@ class TestGmailFetchMessages:
         assert sent[0] != sent[1]
 
     def test_pagination_keeps_going_past_the_first_page(self, tools):
-        """Gmail returns a ``nextPageToken``, not the whole result set. Stopping
+        """Gmail returns a nextPageToken, not the whole result set. Stopping
         at page one silently answers "you have 2 emails" when there are 4 —
         wrong data, no error, and the agent acts on it."""
         tool = tools["GMAIL_FETCH_MESSAGES"]
@@ -370,7 +370,7 @@ class TestGmailFetchMessages:
 
         Two things have to hold or the feature is a trap: the file must carry
         the **body** even though the inline projection drops it (the whole
-        point is ``query_json(where=body contains 'invoice')`` downstream — a
+        point is query_json(where=body contains 'invoice') downstream — a
         body-less file makes that silently return nothing), and the read plan's
         chunks must cover every line exactly once (a gap means a subagent never
         reads part of the inbox and nobody notices).
@@ -442,7 +442,7 @@ class TestGmailFetchMessages:
 
 class TestGmailMutations:
     def test_a_half_failed_bulk_mark_as_read_does_not_report_success(self, tools):
-        """Gmail caps ``batchModify`` at 1000 ids, so "mark all 1500 as read"
+        """Gmail caps batchModify at 1000 ids, so "mark all 1500 as read"
         is two calls. If the second fails and the tool still reports a clean
         success, the user is told their inbox is cleared while 500 messages sit
         unread — and the agent has no idea to retry."""
@@ -469,7 +469,7 @@ class TestGmailMutations:
 
     def test_the_first_batch_failing_outright_is_raised_not_swallowed(self, tools):
         """Nothing was modified, so there is no partial result to report — a
-        ``{"modified_count": 0}`` success would tell the agent the mailbox was
+        {"modified_count": 0} success would tell the agent the mailbox was
         already in that state."""
         tool = tools["GMAIL_ARCHIVE_EMAIL"]
 
@@ -488,7 +488,7 @@ class TestGmailConnectionErrors:
     def test_a_disconnected_gmail_tells_the_user_to_reconnect_not_to_log_in(self, tools):
         """403, never 401. The web client's axios interceptor treats 401 as
         session expiry and pops the login modal at an already-logged-in user;
-        403 + ``INTEGRATION_NOT_CONNECTED`` routes to the reconnect flow."""
+        403 + INTEGRATION_NOT_CONNECTED routes to the reconnect flow."""
         tool = tools["GMAIL_GET_UNREAD_COUNT"]
         client = fake_composio(lambda **kwargs: FakeProxyResponse({}), account_status="INITIATED")
 
@@ -638,7 +638,7 @@ class TestCalendarDaySummary:
         assert streamed == [{"calendar_fetch_data": result["events"]}]
 
     def test_the_next_event_is_one_that_has_not_happened_yet(self, tools):
-        """``next_event`` drives "what's next?" and the proactive nudges. If it
+        """next_event drives "what's next?" and the proactive nudges. If it
         can pick an event that already ended, the assistant reminds the user
         about the standup they just left."""
         tool = tools["GOOGLECALENDAR_CUSTOM_GET_DAY_SUMMARY"]
@@ -677,7 +677,7 @@ class TestCalendarDaySummary:
 
 class TestCalendarGetEvent:
     def test_a_batch_where_one_event_is_missing_reports_both_halves(self, tools):
-        """Regression the code carries a comment about: dropping ``errors``
+        """Regression the code carries a comment about: dropping errors
         made a partly-failed batch read as a clean success, so the agent told
         the user about two events when it had only fetched one."""
         tool = tools["GOOGLECALENDAR_CUSTOM_GET_EVENT"]
@@ -724,7 +724,7 @@ class TestCalendarGetEvent:
 
 class TestCalendarCreateEvent:
     def test_an_unconfirmed_event_is_drafted_and_never_reaches_google(self, tools):
-        """The human-in-the-loop contract. ``confirm_immediately=False`` must
+        """The human-in-the-loop contract. confirm_immediately=False must
         draft only: one stray write here puts a real event on someone's
         calendar (and mails every attendee) before they agreed to it."""
         tool = tools["GOOGLECALENDAR_CUSTOM_CREATE_EVENT"]
@@ -984,12 +984,12 @@ class TestSlackGatherContext:
         assert result["unread_count"] == 2
 
     def test_a_workspace_with_only_mentions_does_not_report_nothing_waiting(self, tools):
-        """``unread_count`` counts both lists it ships beside.
+        """unread_count counts both lists it ships beside.
 
         The two lists are disjoint by construction — a mention is removed from
-        ``messages`` — so counting either one alone under-reports. Counting only
+        messages — so counting either one alone under-reports. Counting only
         the de-duplicated remainder is the worse half: a user whose entire day is
-        @-mentions gets ``unread_count: 0`` next to a populated ``mentions``
+        @-mentions gets unread_count: 0 next to a populated mentions
         list, and the assistant tells them nothing is waiting while it is holding
         the mentions that say otherwise.
         """

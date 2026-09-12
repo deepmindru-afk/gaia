@@ -80,8 +80,8 @@ def _plan(plan: PlanType, *, over_budget: bool = False) -> Any:
 def _distinct_reasoning_knobs() -> Iterator[None]:
     """Give the two reasoning knobs different values for the duration.
 
-    ``PAID_COMMS_REASONING`` and ``OPENROUTER_REASONING`` are both
-    ``{"effort": "medium"}`` right now, so any assertion on their real values
+    PAID_COMMS_REASONING and OPENROUTER_REASONING are both
+    {"effort": "medium"} right now, so any assertion on their real values
     passes whichever one the code picked. These stand-ins make the choice
     observable — the point is which knob a role is routed to, not what today's
     effort happens to be.
@@ -111,7 +111,7 @@ class TestPlanRouting:
         assert resolved.provider_pin is None
 
     async def test_paid_gets_the_paid_model_with_no_routing_pin(self) -> None:
-        """No `only` pin, deliberately: the session_id sticky-routing key keeps a
+        """No only pin, deliberately: the session_id sticky-routing key keeps a
         conversation on the provider holding its warm prompt cache, and an explicit
         pin fought that — measured 64% cache hits against 83-91% per turn without
         it. The key must be ABSENT rather than None; the SDK's **model_kwargs
@@ -201,7 +201,7 @@ class TestMonthlyEconomicGuard:
         assert plan == PlanType.PRO
 
     async def test_the_degrade_is_a_named_event_carrying_who_and_which_tier(self) -> None:
-        """``pro_model_degraded`` is the queryable signal that the economic guard
+        """pro_model_degraded is the queryable signal that the economic guard
         fired. Without the user and tier on it, nobody can tell who it hit."""
         a, b, c = _plan(PlanType.PRO, over_budget=True)
         with a, b, c, patch.object(lane_module, "log") as log:
@@ -233,7 +233,7 @@ def _spend(amount: float) -> Any:
 
 
 class TestTheMonthlySpendRead:
-    """The guard's own read. ``TestMonthlyEconomicGuard`` patches it out to test
+    """The guard's own read. TestMonthlyEconomicGuard patches it out to test
     routing, so without these the read itself never runs."""
 
     async def test_spend_at_the_budget_crosses_the_guard(self) -> None:
@@ -272,7 +272,7 @@ class TestTheMonthlySpendRead:
 class _FakeRedisSetNX:
     """SET NX semantics, faithful on the two points this gate rests on.
 
-    A non-str value raises the way redis-py does (``DataError``) rather than
+    A non-str value raises the way redis-py does (DataError) rather than
     being stored: the marker has to be something Redis can actually hold, and a
     fake that swallows anything would call a broken write a success. The TTL is
     recorded because the notice is once *a month*, not once *ever*.
@@ -450,8 +450,8 @@ class TestDegradeNotice:
 class TestReasoningPerRole:
     """The per-tier effort policy, asserted on the literal effort strings.
 
-    Paid comms ran at ``low`` while free comms inherited the client default
-    ``medium``, so a paying user's front-door agent thought LESS than a free
+    Paid comms ran at low while free comms inherited the client default
+    medium, so a paying user's front-door agent thought LESS than a free
     one's. These assert the values, not the constants: a test that reads the
     constant back cannot catch the constant being wrong.
     """
@@ -610,7 +610,7 @@ class TestDevOverride:
         assert log.warning.call_args.kwargs == {"dev_default": "not-a-real-id"}
 
     def test_the_stashed_executor_id_is_looked_up_without_the_env_default(self) -> None:
-        """``dev_option`` takes an id comms already resolved, so the env default
+        """dev_option takes an id comms already resolved, so the env default
         must not get a second chance to override it here."""
         with patch.object(lane_module.settings, "DEV_DEFAULT_MODEL", "deepseek-v4"):
             option = dev_option("minimax-m3")
@@ -697,7 +697,7 @@ class TestFallback:
 class TestRebindOntoAFallbackLane:
     """The other half of the provider-failover fix.
 
-    ``fallback()`` picks the next lane; ``rebind()`` is what makes the run actually
+    fallback() picks the next lane; rebind() is what makes the run actually
     use it. It was untested — the regression test covered only that ainvoke_llm
     honours a fallback_config, not that the config handed to it was right.
     """

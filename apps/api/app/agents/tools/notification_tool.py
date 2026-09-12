@@ -48,28 +48,28 @@ SerializedNotification: TypeAlias = dict[str, Any]
 
 
 class NotificationListResult(TypedDict):
-    """``get_notifications`` / ``search_notifications``."""
+    """get_notifications / search_notifications."""
 
     notifications: list[SerializedNotification]
     error: NotRequired[str]
 
 
 class NotificationCountResult(TypedDict):
-    """``get_notification_count``."""
+    """get_notification_count."""
 
     count: int
     error: NotRequired[str]
 
 
 class MarkReadResult(TypedDict):
-    """``mark_notifications_read``."""
+    """mark_notifications_read."""
 
     success: bool
     error: NotRequired[str]
 
 
 class SentNotificationResult(TypedDict):
-    """``send_notification`` on success — also the ``send_notification_data``
+    """send_notification on success — also the send_notification_data
     stream payload that renders the "notification sent" chat card."""
 
     success: Literal[True]
@@ -82,15 +82,15 @@ class SentNotificationResult(TypedDict):
 
 
 class SendNotificationFailure(TypedDict):
-    """``send_notification`` when validation or delivery setup failed."""
+    """send_notification when validation or delivery setup failed."""
 
     error: str
     success: Literal[False]
 
 
 class NotificationPreferencesResult(TypedDict):
-    """``get_notification_preferences``. The channel lists are absent on the
-    error path, which returns only ``error`` and an empty ``preferences``."""
+    """get_notification_preferences. The channel lists are absent on the
+    error path, which returns only error and an empty preferences."""
 
     preferences: dict[str, bool]
     available_channels: NotRequired[list[str]]

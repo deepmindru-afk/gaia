@@ -1,4 +1,4 @@
-"""``WorkflowsRepository.claim_limit_notice`` — the limit-notice dedup gate.
+"""WorkflowsRepository.claim_limit_notice — the limit-notice dedup gate.
 
 The gate exists because one production thread ended on six identical daily-limit
 notifications. It fails open on purpose: a user who hits a budget wall must be
@@ -36,9 +36,9 @@ async def test_the_claim_is_a_per_workflow_key_set_once_for_one_window() -> None
     """The dedup IS this call's arguments, so they are what must be asserted.
 
     Every other test here reads the return value, which the fake decides — so
-    the key, the NX and the TTL were all free to be anything. Drop ``nx`` and
+    the key, the NX and the TTL were all free to be anything. Drop nx and
     every occurrence claims successfully and the six-notice incident is back;
-    drop ``ex`` and the key never expires, so the wall is announced once and
+    drop ex and the key never expires, so the wall is announced once and
     then never again; widen the key and two workflows share one claim.
     """
     client = _redis(set_result=True)
@@ -80,7 +80,7 @@ async def test_a_redis_failure_sends_the_notice_and_says_so() -> None:
 
     The log line is the only thing that will tell the next person why six
     identical notices went out, so the fields it carries are asserted exactly:
-    without ``workflow_id``/``user_id`` the event cannot be joined to the
+    without workflow_id/user_id the event cannot be joined to the
     notifications the user actually received.
     """
     client = _redis(set_error=ConnectionError("redis down"))

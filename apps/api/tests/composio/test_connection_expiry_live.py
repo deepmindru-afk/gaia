@@ -2,59 +2,59 @@
 
 Nothing here is patched. Every test talks to the real Composio API with a real
 key, runs real tool executions against a real third-party account, and asserts
-against the real ``user_integrations`` document in Mongo. That is the entire
+against the real user_integrations document in Mongo. That is the entire
 point of this tier: the 1810 classifier, the expiry transition and the webhook
 route can all pass a mocked test while being wrong about what Composio actually
 sends.
 
 What each test costs
 --------------------
-- ``test_l1_...``  — one ``connected_accounts.link()`` call (creates a pending
-  ``ca_*`` account at Composio) plus one HTTP GET of the Connect Link. Deletes
+- test_l1_...  — one connected_accounts.link() call (creates a pending
+  ca_* account at Composio) plus one HTTP GET of the Connect Link. Deletes
   the pending account again. Non-destructive.
-- ``test_l5_...``  — one real tool execution on the healthy account. Costs
+- test_l5_...  — one real tool execution on the healthy account. Costs
   whatever that tool costs at the provider. Non-destructive. **Run this first**:
   it is the false-positive guard and it needs a live, healthy connection.
-- ``test_l2_...``  — **DESTRUCTIVE.** Revokes the user's connected account at
+- test_l2_...  — **DESTRUCTIVE.** Revokes the user's connected account at
   Composio, then executes a tool against the corpse. The OAuth grant is gone
   afterwards; it deletes the revoked account so the account list stays clean,
-  but only a human completing OAuth again (``test_l4_...``) restores service.
-- ``test_l3_...``  — **DESTRUCTIVE**, same revocation, and additionally needs a
+  but only a human completing OAuth again (test_l4_...) restores service.
+- test_l3_...  — **DESTRUCTIVE**, same revocation, and additionally needs a
   publicly reachable GAIA API so Composio can deliver the webhook.
-- ``test_l4_...``  — **INTERACTIVE.** Prints a Connect Link and waits for a
-  human to complete OAuth in a browser. Run pytest with ``-s`` or you will not
+- test_l4_...  — **INTERACTIVE.** Prints a Connect Link and waits for a
+  human to complete OAuth in a browser. Run pytest with -s or you will not
   see the link.
 
 Manual setup
 ------------
-1. ``COMPOSIO_KEY`` — the live key. Declared in ``tests/composio/conftest.py``
-   via ``HERMETIC_ALLOW_KEYS`` so the root hermetic fence does not blank it.
+1. COMPOSIO_KEY — the live key. Declared in tests/composio/conftest.py
+   via HERMETIC_ALLOW_KEYS so the root hermetic fence does not blank it.
    Without it every test here skips.
-2. ``USE_REAL_SERVICES=1`` — the root conftest replaces the Mongo client with a
-   ``MagicMock`` unless this is set, so every Mongo assertion below would be
+2. USE_REAL_SERVICES=1 — the root conftest replaces the Mongo client with a
+   MagicMock unless this is set, so every Mongo assertion below would be
    asserting against a mock. L2–L5 skip without it. Mongo and Redis must be the
    same instances the GAIA API/worker use.
-3. ``COMPOSIO_LIVE_USER_ID`` — the GAIA user id. It is also the Composio
-   ``user_id``: ``connect_account()`` passes the GAIA id straight through and
+3. COMPOSIO_LIVE_USER_ID — the GAIA user id. It is also the Composio
+   user_id: connect_account() passes the GAIA id straight through and
    the OAuth callback reads the GAIA id back off the connected account.
-4. ``COMPOSIO_LIVE_INTEGRATION_ID`` — a Composio-managed integration id from
-   ``app/config/oauth_config.py`` (e.g. ``gmail``), already connected for that
-   user, i.e. ``user_integrations`` says ``connected``.
-5. ``COMPOSIO_LIVE_TOOL_SLUG`` (+ optional ``COMPOSIO_LIVE_TOOL_ARGS`` as a JSON
+4. COMPOSIO_LIVE_INTEGRATION_ID — a Composio-managed integration id from
+   app/config/oauth_config.py (e.g. gmail), already connected for that
+   user, i.e. user_integrations says connected.
+5. COMPOSIO_LIVE_TOOL_SLUG (+ optional COMPOSIO_LIVE_TOOL_ARGS as a JSON
    object) — a cheap, READ-ONLY tool on that toolkit, e.g.
-   ``COMPOSIO_LIVE_TOOL_SLUG=GMAIL_FETCH_EMAILS``
-   ``COMPOSIO_LIVE_TOOL_ARGS='{"max_results": 1}'``. Needed by L2 and L5.
-6. ``COMPOSIO_LIVE_REVOKE=tool`` (L2) or ``COMPOSIO_LIVE_REVOKE=webhook`` (L3).
+   COMPOSIO_LIVE_TOOL_SLUG=GMAIL_FETCH_EMAILS
+   COMPOSIO_LIVE_TOOL_ARGS='{"max_results": 1}'. Needed by L2 and L5.
+6. COMPOSIO_LIVE_REVOKE=tool (L2) or COMPOSIO_LIVE_REVOKE=webhook (L3).
    One revocation is available per reconnect, so these are mutually exclusive by
-   construction — and because ``pytest-randomly`` shuffles test order, the
+   construction — and because pytest-randomly shuffles test order, the
    exclusivity has to live in the gates rather than in file order. L5 refuses to
    run in any invocation where a destructive or interactive knob is set.
-7. ``COMPOSIO_LIVE_RECONNECT=1`` (L4) — plus a running GAIA API sharing this
-   Redis (the OAuth state token) and this Mongo, reachable at ``settings.HOST``
+7. COMPOSIO_LIVE_RECONNECT=1 (L4) — plus a running GAIA API sharing this
+   Redis (the OAuth state token) and this Mongo, reachable at settings.HOST
    from the browser that completes the consent.
 8. L3 only: the GAIA API must be reachable from the public internet (a tunnel),
    a Composio webhook subscription must point at
-   ``<public-host>/api/v1/webhook/composio``, and ``COMPOSIO_WEBHOOK_SECRET``
+   <public-host>/api/v1/webhook/composio, and COMPOSIO_WEBHOOK_SECRET
    must match — otherwise the signature check rejects the delivery.
 
 Suggested sequence, one invocation each (order matters, the runner shuffles)::
@@ -67,10 +67,10 @@ Suggested sequence, one invocation each (order matters, the runner shuffles)::
 
 What these tests do NOT exercise
 --------------------------------
-Tool calls run through a minimal single-node ``StateGraph`` rather than through
+Tool calls run through a minimal single-node StateGraph rather than through
 the executor agent. That is a real LangGraph runtime — verified to give the tool
-a working ``get_stream_writer()`` and to propagate ``metadata.user_id``, the two
-things ``_handle_dead_connected_account`` depends on — but it does not exercise
+a working get_stream_writer() and to propagate metadata.user_id, the two
+things _handle_dead_connected_account depends on — but it does not exercise
 tool selection, the executor's own hooks, or the SSE bridge that carries the
 connect card to a browser. L4 drives the real OAuth callback end to end; L3
 drives the real webhook endpoint end to end.
@@ -233,8 +233,8 @@ def auth_config_id(integration: OAuthIntegration) -> str:
 async def composio_service() -> ComposioService:
     """A real ComposioService, built per test on the test's own event loop.
 
-    ``LangchainProvider`` captures the running loop at construction and later
-    dispatches the expiry transition onto it with ``run_coroutine_threadsafe``.
+    LangchainProvider captures the running loop at construction and later
+    dispatches the expiry transition onto it with run_coroutine_threadsafe.
     pytest-asyncio gives every test a fresh loop, so a shared service instance
     would post the transition to a dead one.
     """
@@ -271,8 +271,8 @@ class _ToolRun:
         """The streamed connect-card payload, the contract the frontend renders.
 
         Structural on purpose: the agent-facing copy in
-        ``request_integration_connection`` is prose and gets reworded, but
-        ``integration_id`` / ``expired`` are what the UI actually branches on.
+        request_integration_connection is prose and gets reworded, but
+        integration_id / expired are what the UI actually branches on.
         """
         for event in self.custom_events:
             payload = event.get("integration_connection_required")
@@ -286,8 +286,8 @@ async def _run_tool_in_graph(
 ) -> _ToolRun:
     """Execute a Composio tool inside a real LangGraph run and capture what it streamed.
 
-    ``_handle_dead_connected_account`` calls ``get_stream_writer()``, which only
-    resolves inside a LangGraph runtime, and reads ``user_id`` out of the run's
+    _handle_dead_connected_account calls get_stream_writer(), which only
+    resolves inside a LangGraph runtime, and reads user_id out of the run's
     config metadata to decide whether to expire anything. Invoking the tool
     directly gives it neither, so the code under test would take a different
     branch than it does in production.
@@ -338,7 +338,7 @@ def _revoke_connected_account(composio: Composio, nanoid: str) -> object:
 async def _poll_record(
     matches: Callable[[UserIntegrationDocument], bool], *, timeout: float
 ) -> UserIntegrationDocument | None:
-    """Poll the live ``user_integrations`` document until it matches, else None."""
+    """Poll the live user_integrations document until it matches, else None."""
     deadline = time.monotonic() + timeout
     while True:
         record = await user_integration_repository.get_for_user(LIVE_USER_ID, LIVE_INTEGRATION_ID)
@@ -375,7 +375,7 @@ async def test_l1_connect_account_mints_a_reachable_connect_link(
     """connect_account() goes through link(), not the retiring initiate() endpoint.
 
     Proven by the shape of what comes back: link() returns a Composio-hosted
-    Connect Link plus the ``ca_*`` nanoid of the account it just staged. The
+    Connect Link plus the ca_* nanoid of the account it just staged. The
     retired path would raise ComposioLegacyConnectedAccountsEndpointRetiredError
     instead of returning anything.
     """
@@ -431,7 +431,7 @@ async def test_l5_healthy_connected_account_is_left_alone(
 
     What it does not prove: that the tool call *succeeded*. A registered
     after-hook may narrow the Composio envelope to a tool-specific shape, so
-    there is no portable ``successful`` field to assert on. The positive signal
+    there is no portable successful field to assert on. The positive signal
     is the pre-flight check that Composio reports the account ACTIVE; the guard
     itself is the three negatives below.
     """
@@ -485,7 +485,7 @@ async def test_l2_revoked_account_expires_the_integration_at_tool_execution(
     """Revoke for real, then let a real tool call discover it.
 
     The returned payload is what pins the tool path specifically: only
-    ``_handle_dead_connected_account`` produces the reconnect instruction and
+    _handle_dead_connected_account produces the reconnect instruction and
     the connect-card stream event, so neither can be explained by a webhook
     racing this test.
     """
@@ -551,10 +551,10 @@ async def test_l2_revoked_account_expires_the_integration_at_tool_execution(
 async def test_l3_expired_webhook_delivery_expires_the_integration(
     composio_service: ComposioService, auth_config_id: str
 ) -> None:
-    """A real ``composio.connected_account.expired`` delivery drives the expiry.
+    """A real composio.connected_account.expired delivery drives the expiry.
 
     No tool runs in this test, so the only thing that can move the record is a
-    delivery Composio made to ``/api/v1/webhook/composio`` on the running API —
+    delivery Composio made to /api/v1/webhook/composio on the running API —
     signature check, dedupe, envelope validation, terminal-status filter and the
     background transition, all real.
 
@@ -603,8 +603,8 @@ async def test_l4_reconnecting_clears_the_expiry_and_records_the_new_account(
 ) -> None:
     """The human half: real consent, real OAuth callback, real restored record.
 
-    ``status == 'connected'`` is only ever written by the callback path, so the
-    assertion cannot be satisfied by the ``created`` upsert this test performs
+    status == 'connected' is only ever written by the callback path, so the
+    assertion cannot be satisfied by the created upsert this test performs
     when it mints the link.
     """
     record = await user_integration_repository.get_for_user(LIVE_USER_ID, LIVE_INTEGRATION_ID)

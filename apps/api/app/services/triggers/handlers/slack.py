@@ -1,6 +1,4 @@
-"""
-Slack trigger handler.
-"""
+"""Slack trigger handler."""
 
 import asyncio
 from typing import Any, ClassVar

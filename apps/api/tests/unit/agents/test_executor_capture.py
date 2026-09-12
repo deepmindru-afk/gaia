@@ -224,7 +224,7 @@ class TestReturnedToFrontendNote:
         assert "via subagent" not in note
 
     def test_a_malformed_group_row_is_skipped_not_fatal(self) -> None:
-        """``subagent_group`` rows also arrive pre-formed from child streams, so
+        """subagent_group rows also arrive pre-formed from child streams, so
         the shape is not this module's to guarantee. One bad row must cost its
         own provenance, never the whole note."""
         session = create_session("s1", RunKind.QUEUED)
@@ -294,8 +294,8 @@ class TestReturnedToFrontendNote:
 
 
 class TestCollectCoalescesReasoning:
-    """Direct unit coverage of ``redis_writer._collect``'s content-merge line —
-    pins the exact defaults used when a dict is missing its ``content`` key,
+    """Direct unit coverage of redis_writer._collect's content-merge line —
+    pins the exact defaults used when a dict is missing its content key,
     which the higher-level streaming tests never exercise (every delta they
     send already carries content)."""
 
@@ -408,7 +408,7 @@ class TestAnExecutorThatNeverFinishes:
             await asyncio.sleep(10)
 
         class run_subagent_probe(Coroutine[object, object, object]):  # noqa: N801 -- named like the coroutine it stands for
-            """A coroutine object with no ``__qualname__``: named by its type."""
+            """A coroutine object with no __qualname__: named by its type."""
 
             def __init__(self) -> None:
                 self._inner = asyncio.sleep(10)

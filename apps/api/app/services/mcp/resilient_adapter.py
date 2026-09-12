@@ -42,7 +42,7 @@ def _memoized_jsonschema_to_pydantic(schema: dict[str, Any]) -> type[BaseModel]:
 
     Falls through to the original when the schema isn't JSON-serializable
     (rare, but possible if a server smuggles non-JSON types into inputSchema).
-    Do NOT pass `default=str` to json.dumps — it would silently coerce
+    Do NOT pass default=str to json.dumps — it would silently coerce
     non-serializable values into their string form, building a lossy cache
     key and risking two different schemas mapping to the same Pydantic model.
     """

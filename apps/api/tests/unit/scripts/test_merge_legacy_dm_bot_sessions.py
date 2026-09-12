@@ -1,12 +1,12 @@
-"""Unit tests for the legacy ``:dm`` bot-session merge.
+"""Unit tests for the legacy :dm bot-session merge.
 
 The script decides which of two forked sessions survives before it writes
 anything, so the selection is pure and pinned here. The write path is asserted
 against a fake repository — the seam the script actually talks to. What it must
-never do is leave a ``:dm`` row behind or drop the newer conversation. The
+never do is leave a :dm row behind or drop the newer conversation. The
 repository's own filters and update documents are proven a tier down, in
-``tests/unit/db/repositories/test_bot_sessions.py`` and against real Mongo in
-``tests/contracts/test_bot_sessions_repository.py``.
+tests/unit/db/repositories/test_bot_sessions.py and against real Mongo in
+tests/contracts/test_bot_sessions_repository.py.
 """
 
 from typing import Any
@@ -154,7 +154,7 @@ class TestPlanMerge:
         assert plan_merge(row, None, canonical_key_for(row)) is None
 
     def test_a_row_whose_canonical_key_is_itself_is_left_alone(self) -> None:
-        """A user literally identified as ``dm`` would map onto its own key; renaming
+        """A user literally identified as dm would map onto its own key; renaming
         it onto itself is a no-op that must not be planned as work."""
         row = BotSessionDocument(
             session_key="telegram:dm:dm",

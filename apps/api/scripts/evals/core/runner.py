@@ -109,7 +109,7 @@ def select_cases(cases: list[Case], opts: RunOptions, journal: RunJournal) -> li
     Kept whole and apart from the run loop because the selection is where every
     "the run did nothing and said nothing" defect has come from — and because
     testing it against a journal costs nothing, while testing it through
-    ``run_suite`` costs a live API and a model bill.
+    run_suite costs a live API and a model bill.
     """
     if opts.only:
         # --from is an ordered cursor, so it cannot pick out a case that sorts
@@ -433,9 +433,9 @@ def _app_version() -> str:
 def _require_meta(journal: RunJournal) -> RunMeta:
     """The run's metadata, which every path into the loop guarantees exists.
 
-    ``run.json`` is written before the first case and only ever updated after,
+    run.json is written before the first case and only ever updated after,
     so its absence means the run directory itself is broken. Saying that is the
-    whole job — the alternative, a default ``RunMeta``, publishes a run under an
+    whole job — the alternative, a default RunMeta, publishes a run under an
     empty suite name and an empty app version as though both were real.
     """
     meta = journal.load_meta()
@@ -503,7 +503,7 @@ async def _run_cases_concurrently(
     provider_name: str,
     record_case: Callable[[Case, CaseRun, dict[str, float], str, str | None], None],
 ) -> str | None:
-    """Run cases against one pinned provider, at most ``concurrency`` at a time.
+    """Run cases against one pinned provider, at most concurrency at a time.
 
     Safe only because a case now owns its user: two cases sharing an account
     would write over each other's todos and memory. Returns an abort reason when
@@ -581,10 +581,10 @@ def _score_or_zero(case: Case, run: CaseRun, suite: Suite) -> dict[str, float]:
 def _status_from_scores(case: Case, scores: dict[str, float], error: str | None) -> str:
     """Grade a case, keeping "the agent was wrong" apart from "the case blew up".
 
-    ``failed`` means the agent answered and missed the gate — a real quality
-    signal. ``errored`` means no answer was produced (timeout, crash, dead
+    failed means the agent answered and missed the gate — a real quality
+    signal. errored means no answer was produced (timeout, crash, dead
     backend), which is not a quality signal and must not be averaged into one.
-    ``skipped`` means we declined to attempt the case at all — which IS a
+    skipped means we declined to attempt the case at all — which IS a
     quality signal, scored zero and kept in the denominator, because the
     benchmark asked and we had no answer.
     """
@@ -613,9 +613,9 @@ def _log_trace(
 ) -> None:
     """Log one journaled case as an Opik trace with its feedback scores.
 
-    Built from the journal record, so a live run and a later ``seed`` backfill
+    Built from the journal record, so a live run and a later seed backfill
     produce the identical trace. Opik being down must not fail the eval run —
-    the journal still holds the case and ``seed`` picks it up later — so the
+    the journal still holds the case and seed picks it up later — so the
     failure is reported and the loop continues.
     """
     try:

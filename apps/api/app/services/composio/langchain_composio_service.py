@@ -1,4 +1,4 @@
-"""ComposioLangChain class definition"""
+"""ComposioLangChain class definition."""
 
 import asyncio
 from inspect import Parameter, Signature
@@ -81,9 +81,9 @@ def _is_dead_account_error(error: composio_client.NotFoundError) -> bool:
 async def _expire_with_log_boundary(user_id: str, integration_id: str, reason: str) -> None:
     """Run the expiry transition under its own wide-event boundary.
 
-    The dispatch comes from an executor thread via ``run_coroutine_threadsafe``,
+    The dispatch comes from an executor thread via run_coroutine_threadsafe,
     which carries no boundary of its own — without this the transition's
-    ``log.set()`` fields would be silently discarded.
+    log.set() fields would be silently discarded.
     """
     async with log_context("composio_tool_integration_expiry", user_id=user_id):
         await expire_user_integration(
@@ -171,9 +171,7 @@ class LangchainProvider(
     AgenticProvider[StructuredTool, list[StructuredTool]],
     name="langchain",
 ):
-    """
-    Composio toolset for Langchain framework.
-    """
+    """Composio toolset for Langchain framework."""
 
     runtime = "langchain"
 
@@ -410,7 +408,5 @@ class LangchainProvider(
         tools: t.Sequence[Tool],
         execute_tool: AgenticProviderExecuteFn,
     ) -> list[StructuredTool]:
-        """
-        Get composio tools wrapped as Langchain StructuredTool objects.
-        """
+        """Get composio tools wrapped as Langchain StructuredTool objects."""
         return [self.wrap_tool(tool=tool, execute_tool=execute_tool) for tool in tools]

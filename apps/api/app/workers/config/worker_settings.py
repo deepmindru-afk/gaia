@@ -1,6 +1,4 @@
-"""
-ARQ worker settings configuration.
-"""
+"""ARQ worker settings configuration."""
 
 from collections.abc import Callable, Coroutine
 import socket

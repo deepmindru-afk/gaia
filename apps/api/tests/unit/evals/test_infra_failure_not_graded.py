@@ -1,9 +1,9 @@
 """An unavailable backend must abort the run, never be graded as a wrong answer.
 
 Regression cover for the LongMemEval run in which PostgreSQL shut down mid-run:
-every remaining case raised ``RuntimeError: PostgreSQL engine not available`` in
-~0.01s, the run loop journaled each one as a ``failed`` case, and the report
-turned 64 never-asked questions into ``single-session-user 0/64``. An
+every remaining case raised RuntimeError: PostgreSQL engine not available in
+~0.01s, the run loop journaled each one as a failed case, and the report
+turned 64 never-asked questions into single-session-user 0/64. An
 infrastructure outage must never be published as a quality score.
 """
 
@@ -182,7 +182,7 @@ class _MixedSuite(_DeadBackendSuite):
     The two non-answers must not be averaged in with the wrong answer — only the
     wrong answer says anything about the agent's quality. The crash and the
     timeout reach the run loop by different routes (a raised exception vs a
-    CaseRun carrying ``error``), and both must land on ``errored``.
+    CaseRun carrying error), and both must land on errored.
     """
 
     name = "mixed"

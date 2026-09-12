@@ -3,7 +3,7 @@
 Two halves. The selection logic (which rows the script proposes to retire, and
 why) is pure and tested directly. The driver is tested against a mocked store:
 what it PRINTS is the whole product of a dry run — an operator reads that plan
-and decides whether to re-run with ``--apply`` — so the printed plan and the
+and decides whether to re-run with --apply — so the printed plan and the
 retire reasons it writes are asserted verbatim.
 """
 
@@ -511,7 +511,7 @@ class TestALongProfileIsNotASnapshot:
 class TestRunBootstrapsWhatAScriptHasNoLifespanFor:
     """Outside the API process nobody has registered the lazy providers, so the
     memory store's Postgres engine has nobody to build it and every query raises
-    ``Provider 'postgresql_engine' not found in registry``. That is exactly how
+    Provider 'postgresql_engine' not found in registry. That is exactly how
     the first production dry run of this script failed."""
 
     async def test_providers_are_registered_before_the_first_repair(self) -> None:

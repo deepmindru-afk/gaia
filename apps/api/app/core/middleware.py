@@ -180,7 +180,7 @@ def get_allowed_origin_regex() -> str | None:
 
     Matches any localhost origin on any port over http or https, with or
     without a subdomain — covers dev servers on arbitrary ports (e.g. worktree
-    ports) and `*.localhost` tunnels alike.
+    ports) and *.localhost tunnels alike.
     """
     if settings.ENV == "production":
         return None

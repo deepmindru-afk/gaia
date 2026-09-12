@@ -27,7 +27,7 @@ IconFormat = Literal["png", "svg", "ico", "other"]
 
 
 class IconCandidate(TypedDict):
-    """One ``<link rel="icon">`` entry, ranked by format then declared size."""
+    """One <link rel="icon"> entry, ranked by format then declared size."""
 
     href: str
     size: int
@@ -74,8 +74,8 @@ def _get_domain_cache_key(server_url: str) -> str:
 def _smithery_qualified_name(server_url: str) -> str | None:
     """Smithery server qualified name from its URL, or None if not a Smithery host.
 
-    URLs look like ``https://server.smithery.ai/@owner/name`` or a bare ``/slug``,
-    optionally with a transport suffix (``/mcp``, ``/sse``, ``/stdio``).
+    URLs look like https://server.smithery.ai/@owner/name or a bare /slug,
+    optionally with a transport suffix (/mcp, /sse, /stdio).
     """
     parsed = urlparse(server_url if "://" in server_url else f"https://{server_url}")
     hostname = parsed.hostname or ""
@@ -234,12 +234,12 @@ async def _fetch_favicon_impl(server_url: str) -> str | None:
 
     Order of preference, each validated to be a live image before use:
     1. The per-server Smithery icon (Smithery hosts many servers behind one host).
-    2. An explicit ``<link rel="icon">`` the host declares in its root HTML — the
+    2. An explicit <link rel="icon"> the host declares in its root HTML — the
        intentional signal a self-hosted MCP server uses to declare its own icon.
     3. Google's favicon service for the registered domain (the default fallback).
 
     Each override is validated (HEAD -> must be a live image) so we never replace
-    the working default with a broken or missing icon. Probing ``/favicon.ico`` or
+    the working default with a broken or missing icon. Probing /favicon.ico or
     the favicon library is deliberately avoided — it picks up a framework's generic
     placeholder (or nothing) for servers that don't customise their icon.
     """

@@ -1,15 +1,15 @@
 """Layer 3 — lifecycle core: create/resume/acquire, mount script, canary, watcher.
 
-The sibling files cover death-eviction (`test_lifecycle_eviction`), pause
-scheduling (`test_lifecycle_pause`) and cached-entry reuse
-(`test_lifecycle_reuse`). This one attacks what they leave untouched: the
+The sibling files cover death-eviction (test_lifecycle_eviction), pause
+scheduling (test_lifecycle_pause) and cached-entry reuse
+(test_lifecycle_reuse). This one attacks what they leave untouched: the
 credential split that keeps the JuiceFS meta password out of a world-readable
-`/proc/<pid>/cmdline`, the mount-script shipping path, the canary staleness
-protocol, fresh-create vs resume routing in `_acquire_or_create`, and the
+/proc/<pid>/cmdline, the mount-script shipping path, the canary staleness
+protocol, fresh-create vs resume routing in _acquire_or_create, and the
 failure modes that must not leave a half-built sandbox in the pool or a lock
 held forever.
 
-Boundaries mocked: the e2b `AsyncSandbox` (create/connect/commands/files), the
+Boundaries mocked: the e2b AsyncSandbox (create/connect/commands/files), the
 Mongo repository, the tiered rate limiter, and the host-side JuiceFS seeding.
 The pooling and lifecycle state machine is the real production code.
 """
@@ -73,7 +73,7 @@ def _fake_watcher(alive: bool = True, stop_error: Exception | None = None) -> Ar
 
 
 def _sandbox_class(sbx: AsyncMock) -> MagicMock:
-    """Replacement for the module-level `AsyncSandbox` symbol."""
+    """Replacement for the module-level AsyncSandbox symbol."""
     cls = MagicMock()
     cls.create = AsyncMock(return_value=sbx)
     cls.connect = AsyncMock(return_value=sbx)

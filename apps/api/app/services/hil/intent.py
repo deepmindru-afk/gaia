@@ -1,14 +1,14 @@
 """Auto mode's intent judge: do the user's own words authorize this call?
 
-Called by the gate for a gated tool when the user's mode is ``auto``. Authorized calls
+Called by the gate for a gated tool when the user's mode is auto. Authorized calls
 run; anything unsupported, broader, or unclear falls back to the normal approval pause.
 
 Four properties make this a safety gate rather than a rubber stamp:
 
 * **Only the user's words carry authority.** The task inside the executor or a subagent is
   an agent-authored paraphrase (comms → call_executor → handoff), so judging against it
-  would be circular — the agent would be grading its own instruction. ``user_messages``
-  is set once by comms and inherited unchanged (see ``build_agent_config``).
+  would be circular — the agent would be grading its own instruction. user_messages
+  is set once by comms and inherited unchanged (see build_agent_config).
 
 * **Intent spans turns, so all the user's recent turns are carried** — "draft an email to
   Bob about the deck" … "looks good, send it". The latest turn is the live instruction;
@@ -24,7 +24,7 @@ Four properties make this a safety gate rather than a rubber stamp:
 * **The verdict is verified, not trusted.** LLM judges are measurably lenient — >96% TPR
   but <25% TNR — and cave hardest on ambiguous cases (arXiv 2510.11822, 2605.06161). "Be
   strict" in a rubric does not fix that. So the model must quote the user's authorizing
-  words, and :func:`_is_grounded` checks that quote really occurs in something the user
+  words, and :func:_is_grounded checks that quote really occurs in something the user
   wrote. An approval the user's words don't support is not an approval.
 
 Everything fails toward asking: no user turns, judge error, malformed output, an
@@ -136,7 +136,7 @@ async def judge_intent(
 ) -> IntentDecision:
     """Whether the user's own words authorize this call. Fails toward asking.
 
-    ``user_messages`` are the user's verbatim turns, oldest first, live request last —
+    user_messages are the user's verbatim turns, oldest first, live request last —
     never a delegated task (see the module docstring). No user turns means there is
     nothing to verify against, so it asks without spending a call.
 
@@ -236,7 +236,7 @@ def _accept(verdict: _Verdict, user_text: str, tool_name: str) -> bool:
 
 
 def _is_grounded(quote: str, user_text: str) -> bool:
-    """Whether ``quote`` is a substantive thing the user actually wrote.
+    """Whether quote is a substantive thing the user actually wrote.
 
     Compared on collapsed case, punctuation and whitespace, so ordinary reformatting still
     matches while a paraphrased or fabricated quote does not.

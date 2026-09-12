@@ -1,21 +1,21 @@
 """The tool-call contract of the chat stream, asserted frame by frame.
 
-Every test drives the real ``execute_graph_streaming`` — the function that
+Every test drives the real execute_graph_streaming — the function that
 translates LangGraph's three stream modes into the SSE vocabulary the chat UI
-consumes — and asserts on a parsed :class:`Transcript`, never on prose.
+consumes — and asserts on a parsed :class:Transcript, never on prose.
 
 What is under test is the contract the frontend depends on:
 
 * a tool call is *visible*, with its real name and its arguments, before it runs
-  (``libs/shared/ts/src/chat/turnAccumulator.ts`` appends the entry to the
+  (libs/shared/ts/src/chat/turnAccumulator.ts appends the entry to the
   message's tool list);
-* its result arrives separately and is joined **only** by ``tool_call_id``
-  (``mergeToolOutputIntoToolData`` in ``streaming.ts``) — a broken id means a
+* its result arrives separately and is joined **only** by tool_call_id
+  (mergeToolOutputIntoToolData in streaming.ts) — a broken id means a
   tool card that renders forever without a result;
 * frames that must not reach the client (stale replays from pre-model hooks,
-  silent turns, executor-tier text, the ``nostream:`` marker) do not.
+  silent turns, executor-tier text, the nostream: marker) do not.
 
-Only the graph is a double (see ``_harness/graph_double.py``); it exists so a
+Only the graph is a double (see _harness/graph_double.py); it exists so a
 test can pin the exact LangGraph event sequence, including ones a real run
 produces only under conditions a test cannot arrange.
 """
@@ -69,9 +69,9 @@ async def run_stream(
 ) -> Transcript:
     """Stream a scripted LangGraph event sequence through the real translator.
 
-    ``user_id`` is deliberately left out of the config: it only unlocks the MCP
-    provenance lookups (``_resolve_mcp_integration_id`` /
-    ``_resolve_mcp_ui_metadata``), which are per-user network calls and are not
+    user_id is deliberately left out of the config: it only unlocks the MCP
+    provenance lookups (_resolve_mcp_integration_id /
+    _resolve_mcp_ui_metadata), which are per-user network calls and are not
     what these tests are about.
     """
     scripted = graph if graph is not None else ScriptedGraph(events)
@@ -106,8 +106,8 @@ class TestToolCallVisibility:
         assert transcript.result_for("call_executor") == "Task accepted"
 
     async def test_real_tool_name_is_nested_under_the_envelope(self):
-        """``tool_name`` on the entry is always the envelope literal; the tool
-        the model called is at ``data.tool_name``. Flattening it would make the
+        """tool_name on the entry is always the envelope literal; the tool
+        the model called is at data.tool_name. Flattening it would make the
         frontend render every tool card as "tool_calls_data"."""
         transcript = await run_stream(
             [agent_update(AIMessage(content="", tool_calls=[_tool_call("call_executor")]))]
@@ -133,9 +133,9 @@ class TestToolCallVisibility:
         assert transcript.args("call_executor") == args
 
     async def test_curated_special_tool_carries_its_category_and_label(self):
-        """``call_executor`` is one of the nine curated tools: the frontend keys
-        the executor card off ``tool_category`` and drops the category prefix
-        when ``show_category`` is false."""
+        """call_executor is one of the nine curated tools: the frontend keys
+        the executor card off tool_category and drops the category prefix
+        when show_category is false."""
         transcript = await run_stream(
             [agent_update(AIMessage(content="", tool_calls=[_tool_call("call_executor")]))]
         )
@@ -211,7 +211,7 @@ class TestToolCallVisibility:
 
 class TestToolCallEmissionGuards:
     async def test_a_repeated_tool_call_id_is_emitted_once(self):
-        """LangGraph re-sends the same ``AIMessage`` across updates within a
+        """LangGraph re-sends the same AIMessage across updates within a
         turn. Without the dedup set the user sees the same card twice."""
         message = AIMessage(content="", tool_calls=[_tool_call("call_executor", call_id="tc_dup")])
         transcript = await run_stream([agent_update(message), agent_update(message)])
@@ -263,8 +263,8 @@ class TestNodeGate:
         "node", ["filter_messages", "manage_system_prompts", "tools", "follow_up_actions"]
     )
     async def test_only_the_agent_node_streams_tool_cards(self, node: str):
-        """Pre-model hooks replay historical ``AIMessage``s that still carry
-        last turn's ``tool_calls``. Emitting those would replay stale tool cards
+        """Pre-model hooks replay historical AIMessages that still carry
+        last turn's tool_calls. Emitting those would replay stale tool cards
         into the current turn."""
         historical = AIMessage(content="", tool_calls=[_tool_call("add_memory", call_id="old_1")])
         transcript = await run_stream([node_update(node, historical)])
@@ -293,7 +293,7 @@ class TestResponseText:
         assert transcript.final_text() == "Hello!"
 
     async def test_executor_text_never_reaches_the_client(self):
-        """Only ``comms_agent`` talks to the user. Executor-tier text on the
+        """Only comms_agent talks to the user. Executor-tier text on the
         same stream would duplicate the reply the comms agent is about to give."""
         transcript = await run_stream([text("internal reasoning")], agent_name="executor_agent")
 
@@ -308,7 +308,7 @@ class TestResponseText:
         assert transcript.of_kind("response") == []
 
     async def test_completion_marker_carries_the_text_that_gets_persisted(self):
-        """The ``nostream:`` marker is where the persisted bot message comes
+        """The nostream: marker is where the persisted bot message comes
         from — it must equal what the user actually saw."""
         transcript = await run_stream([text("Part one. "), text("Part two.")])
 
@@ -366,8 +366,8 @@ class TestToolOutput:
         assert [o.tool_call_id for o in transcript.outputs()] == ["tc_other"]
 
     async def test_output_payload_omits_the_subagent_key_when_absent(self):
-        """``exclude_none`` keeps root-level results free of a null
-        ``subagent_id``, which the frontend routes on."""
+        """exclude_none keeps root-level results free of a null
+        subagent_id, which the frontend routes on."""
         transcript = await run_stream([tool_message("plain result", tool_call_id="tc_1")])
 
         assert transcript.of_kind("tool_output") == [
@@ -376,15 +376,15 @@ class TestToolOutput:
 
     @pytest.mark.parametrize("suppressed", ["plan_tasks", "update_tasks"])
     async def test_todo_tool_results_are_suppressed(self, suppressed: str):
-        """Todo tools already stream ``todo_progress``; a second result frame
+        """Todo tools already stream todo_progress; a second result frame
         renders a duplicate card next to the todo list."""
         transcript = await run_stream([tool_message("[]", tool_call_id="tc_1", name=suppressed)])
 
         assert transcript.of_kind("tool_output") == []
 
     async def test_todo_flagged_tools_are_suppressed_by_their_marker(self):
-        """Tracked-todo helpers are not named ``plan_tasks``; they carry the
-        ``todo_tool`` marker instead."""
+        """Tracked-todo helpers are not named plan_tasks; they carry the
+        todo_tool marker instead."""
         transcript = await run_stream(
             [
                 tool_message(
@@ -487,7 +487,7 @@ class TestCustomEvents:
 
     async def test_subagent_tool_calls_are_visible_and_tagged(self):
         """A tool run inside a subagent must still show up as a tool call, and
-        carry the ``subagent_id`` the frontend groups it under."""
+        carry the subagent_id the frontend groups it under."""
         transcript = await run_stream(
             [
                 custom(
@@ -552,7 +552,7 @@ class TestStreamShape:
         assert transcript.kinds().count(DONE) == 1
 
     async def test_every_frame_is_a_well_formed_sse_event(self):
-        """``data: <json>\\n\\n``, no exceptions. A frame missing its blank line
+        """data: <json>\\n\\n, no exceptions. A frame missing its blank line
         is folded into the next event by every EventSource implementation, so a
         single malformed frame silently corrupts the rest of the turn."""
         transcript = await run_stream(
@@ -572,8 +572,8 @@ class TestStreamShape:
             assert _SSE_FRAME.fullmatch(chunk), f"malformed SSE frame: {chunk!r}"
 
     async def test_the_completion_marker_is_not_an_sse_frame(self):
-        """``nostream:`` is consumed by the chat service before the wire. If it
-        were emitted as ``data:`` it would be an unparseable frame for every
+        """nostream: is consumed by the chat service before the wire. If it
+        were emitted as data: it would be an unparseable frame for every
         client — and it carries the raw persisted text."""
         transcript = await run_stream([text("hi")])
 
@@ -609,7 +609,7 @@ class TestStreamShape:
 
     async def test_the_graph_is_streamed_with_subgraphs_and_all_three_modes(self):
         """Executor and subagent activity only reaches this stream because the
-        run subscribes to subgraph namespaces and to the ``custom`` mode."""
+        run subscribes to subgraph namespaces and to the custom mode."""
         graph = ScriptedGraph([])
         await run_stream([], graph=graph)
 
@@ -628,7 +628,7 @@ class TestCancellation:
 
         Both graphs are scripted identically, so the only difference is the
         cancel flag — which pins down what "not cancelled" looks like and makes
-        the truncation assertion mean something. ``yielded`` is the load-bearing
+        the truncation assertion mean something. yielded is the load-bearing
         check: a run that keeps draining events is a graph still doing work
         (and still burning tokens) after the user pressed stop.
         """
@@ -658,7 +658,7 @@ class TestCancellation:
         assert control_graph.yielded == 3
 
     async def test_cancelling_closes_the_run_before_recording_the_interruption(self):
-        """``record_interruption`` reads the checkpoint, so the run must already
+        """record_interruption reads the checkpoint, so the run must already
         be stopped — otherwise it records a state the run then overwrites."""
         graph = ScriptedGraph(
             [text("one "), text("two ")],

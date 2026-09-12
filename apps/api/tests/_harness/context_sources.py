@@ -19,7 +19,7 @@ from app.services.gaia_knowledge_service import KnowledgeResult
 
 
 def memory(content: str, *, mentioned: str | None = None) -> MemoryEntry:
-    """A recalled memory. ``mentioned`` fixes the date ``entry_to_note`` renders."""
+    """A recalled memory. mentioned fixes the date entry_to_note renders."""
     return MemoryEntry(
         content=content,
         mentioned_at=datetime.fromisoformat(mentioned).replace(tzinfo=UTC) if mentioned else None,
@@ -173,10 +173,10 @@ def fake_context_sources(sources: ContextSources) -> Iterator[None]:
 
 @contextmanager
 def _patch_executor_lock(task_id: str | None) -> Iterator[None]:
-    """Pin the comms executor-busy lock ``executor_status_hook`` reads.
+    """Pin the comms executor-busy lock executor_status_hook reads.
 
     The hook treats a missing client as "not busy", which is the same observable
-    state as an unheld lock — so ``None`` covers both without a Redis server.
+    state as an unheld lock — so None covers both without a Redis server.
     """
     with patch("app.agents.core.nodes.executor_status.redis_cache") as fake_cache:
         if task_id is None:

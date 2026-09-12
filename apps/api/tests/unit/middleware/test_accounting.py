@@ -178,7 +178,7 @@ async def test_the_metered_call_states_which_lane_and_whose_budget_it_is() -> No
 
 
 async def test_the_metered_call_carries_both_the_conversation_and_its_lane_thread() -> None:
-    """A child agent runs on ``executor_<conv>``. Recording only the wrapper
+    """A child agent runs on executor_<conv>. Recording only the wrapper
     splits one turn across two ids; recording only the conversation loses which
     lane spent the money."""
     context = await _ledger_context(_ai())
@@ -189,7 +189,7 @@ async def test_the_metered_call_carries_both_the_conversation_and_its_lane_threa
 
 async def test_a_run_with_no_conversation_id_states_its_absence() -> None:
     """A bare checkpoint bag has no conversation. The ledger derives one from the
-    thread rather than the middleware inventing the string ``"None"``."""
+    thread rather than the middleware inventing the string "None"."""
     context = await _ledger_context(_ai(), CONFIG)
 
     assert context.conversation_id is None
@@ -207,7 +207,7 @@ async def test_the_metered_call_names_the_workflow_that_triggered_it() -> None:
 
 
 async def test_the_surface_the_turn_came_from_reaches_the_ledger() -> None:
-    """``conversation_source`` was already on the configurable and simply unread.
+    """conversation_source was already on the configurable and simply unread.
     An executor call inherits it, so a child reports its root turn's surface."""
     config = {"configurable": {**_LEDGER_CONFIG["configurable"], "conversation_source": "slack"}}
 
@@ -216,7 +216,7 @@ async def test_the_surface_the_turn_came_from_reaches_the_ledger() -> None:
 
 async def test_a_graph_call_is_never_recorded_as_background_system_work() -> None:
     """The graph lane IS the user's turn. Passing it as background would relabel
-    every chat call with no explicit source as ``system``, which is the bucket
+    every chat call with no explicit source as system, which is the bucket
     that exists for work nobody asked for — and it is most of the spend."""
     bare = {
         "configurable": {
@@ -229,7 +229,7 @@ async def test_a_graph_call_is_never_recorded_as_background_system_work() -> Non
 
 
 async def test_why_the_provider_stopped_reaches_the_ledger() -> None:
-    """A run of ``length`` on one lane is a truncation bug that otherwise only
+    """A run of length on one lane is a truncation bug that otherwise only
     surfaces as users reporting answers that stop mid-sentence."""
     message = _ai(response_metadata={"finish_reason": "length"})
 
@@ -264,9 +264,9 @@ async def test_the_metered_call_carries_the_generation_id_for_spot_audits() -> N
 
 
 async def test_the_provider_calls_wall_time_reaches_the_ledger_in_milliseconds() -> None:
-    """Latency is measured around the invocation in ``awrap_model_call`` — the
+    """Latency is measured around the invocation in awrap_model_call — the
     only seam that sees the provider call start and finish — and consumed by the
-    ``aafter_model`` that meters that same call. We have no latency visibility on
+    aafter_model that meters that same call. We have no latency visibility on
     model calls today, so the unit and the precision both matter: the clock is
     pinned here rather than slept against, because a real elapsed time cannot
     tell a millisecond from a second-scaled one within its own noise.
@@ -336,7 +336,7 @@ async def test_the_latency_is_consumed_by_the_call_it_measured() -> None:
 
 
 async def test_the_metered_call_carries_the_request_tree_it_belongs_to() -> None:
-    """``root_request_id`` is what joins a comms turn to the executor calls it
+    """root_request_id is what joins a comms turn to the executor calls it
     spawned. Losing it makes a multi-agent turn look like unrelated spend."""
     config_patch, cost_patch, usage_patch = _accounting_env(_LEDGER_CONFIG)
     mw = LLMAccountingMiddleware(agent_name="comms_agent")
@@ -966,7 +966,7 @@ async def test_the_llm_call_event_carries_the_per_step_attribution() -> None:
 
 
 async def test_the_llm_call_event_says_whether_the_price_was_the_providers_or_ours() -> None:
-    """``cost_usd`` alone cannot be audited: a table guess and a provider
+    """cost_usd alone cannot be audited: a table guess and a provider
     invoice look identical in the log. They disagree by more than 10x per
     upstream, so the event has to name which one it carries — that flag is what
     makes the coverage number in the true-cost backfill mean anything."""

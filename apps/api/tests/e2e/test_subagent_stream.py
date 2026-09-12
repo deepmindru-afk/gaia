@@ -1,16 +1,16 @@
 """What a subagent puts on the chat stream, and what it hands back to its parent.
 
-Drives the real ``execute_subagent_stream`` — the driver every handoff and
+Drives the real execute_subagent_stream — the driver every handoff and
 provider subagent runs through. It is not an SSE producer: it calls a
-``stream_writer`` with plain dicts, which ``background/redis_writer.py``
-serializes verbatim as ``data: {json}\\n\\n``. So the writer payloads *are* the
-frames, and :class:`Transcript` asserts on them the same way.
+stream_writer with plain dicts, which background/redis_writer.py
+serializes verbatim as data: {json}\\n\\n. So the writer payloads *are* the
+frames, and :class:Transcript asserts on them the same way.
 
 Two contracts live here and nothing else covers either one:
 
 * **subagent routing.** Every frame a subagent emits must carry its
-  ``subagent_id``. The frontend reducer routes on that key alone
-  (``updateSubagentInToolData`` in ``turnAccumulator.ts``); an untagged frame
+  subagent_id. The frontend reducer routes on that key alone
+  (updateSubagentInToolData in turnAccumulator.ts); an untagged frame
   does not land in the wrong group, it lands at the *root* of the turn — the
   card appears outside the subagent it belongs to.
 * **the return value.** A subagent that only narrated and never ran a tool has
@@ -137,7 +137,7 @@ class TestSubagentRouting:
         """Thinking text has to nest under the right step, same routing key.
 
         Both provider shapes are covered because both are real: LangChain
-        normalizes ``additional_kwargs.reasoning_content`` into a ``reasoning``
+        normalizes additional_kwargs.reasoning_content into a reasoning
         content block, so a reader who only sees one shape in the wild would not
         know the other is handled.
         """
@@ -158,7 +158,7 @@ class TestSubagentRouting:
 
     async def test_a_call_and_its_result_share_one_id_across_both_frames(self):
         """The frontend joins the subagent's result to its card by
-        ``tool_call_id`` inside the group — the same join as the root timeline."""
+        tool_call_id inside the group — the same join as the root timeline."""
         transcript, _, _ = await run_subagent(
             flat(
                 agent_update(
@@ -218,8 +218,8 @@ class TestReturnValue:
 
     async def test_a_resumed_run_that_only_sees_its_tool_result_is_not_narration(self):
         """After a HIL approval the subagent resumes at the tools node, so this
-        invocation never sees the ``updates`` event that emitted the card — its
-        ``emitted_tool_calls`` set starts empty. The ToolMessage is then the only
+        invocation never sees the updates event that emitted the card — its
+        emitted_tool_calls set starts empty. The ToolMessage is then the only
         evidence work happened. Miss it and the parent is told to re-issue a
         handoff whose action (sending the email) already executed.
         """
@@ -239,7 +239,7 @@ class TestReturnValue:
         assert outcome.text == "Task completed"
 
     async def test_finish_task_content_becomes_the_result(self):
-        """Subagents that terminate through ``finish_task`` carry their answer in
+        """Subagents that terminate through finish_task carry their answer in
         the tool's return value, not in an AIMessage."""
         _, outcome, _ = await run_subagent(
             flat(
@@ -275,7 +275,7 @@ class TestMalformedEvents:
         assert transcript.frames() == []
 
     async def test_a_tool_call_with_no_name_emits_no_card(self):
-        """``format_tool_call_entry`` returns None for it; emitting the ``None``
+        """format_tool_call_entry returns None for it; emitting the None
         would put a frame with a null payload on the wire."""
         transcript, _, _ = await run_subagent(
             flat(
@@ -384,15 +384,15 @@ class TestApprovalPause:
     async def test_a_paused_run_reports_the_approval_and_drains_the_stream(self):
         """A pause is not an answer — but the stream still has to be drained.
 
-        It used to break here. Under ``durability="exit"`` the run-exit save is the
+        It used to break here. Under durability="exit" the run-exit save is the
         only checkpoint write there is, so abandoning the generator skipped it and the
         writes of every task that had already COMPLETED in the interrupting step were
         lost — LangGraph then re-ran them on resume, which is how an ungated tool call
         beside a gated one executed twice. See
-        ``tests/unit/agents/test_pause_checkpointing.py``.
+        tests/unit/agents/test_pause_checkpointing.py.
 
         Draining is safe because the outcome is still marked paused: every caller keys
-        off ``outcome.paused`` and never reads the text of a paused run.
+        off outcome.paused and never reads the text of a paused run.
         """
         graph = ScriptedGraph(
             [
@@ -411,10 +411,10 @@ class TestApprovalPause:
         assert transcript.frames() == []
 
     async def test_every_paused_call_is_reported_not_just_the_last(self):
-        """One ``__interrupt__`` event per paused task, so they must accumulate.
+        """One __interrupt__ event per paused task, so they must accumulate.
 
         The caller stamps re-dispatch context onto every id reported here. An approval
-        left out gets no ``resume_item``, and deciding it later raises
+        left out gets no resume_item, and deciding it later raises
         ApprovalNotResumableError — the user presses Approve and nothing can ever happen.
         """
         graph = ScriptedGraph(
@@ -465,15 +465,15 @@ class TestRunShape:
         assert set(graph.astream_kwargs["stream_mode"]) == {"messages", "custom", "updates"}
 
     async def test_checkpoints_are_written_once_at_exit(self):
-        """``durability="exit"`` collapses O(steps) Postgres checkpoint writes to
+        """durability="exit" collapses O(steps) Postgres checkpoint writes to
         one per run. LangGraph's default is per-step."""
         _, _, graph = await run_subagent([])
 
         assert graph.astream_kwargs["durability"] == "exit"
 
     async def test_the_subagent_id_is_threaded_into_the_run_config(self):
-        """Nested ``spawn_subagent`` calls read it back as their
-        ``parent_subagent_id``; without it a nested subagent renders as a
+        """Nested spawn_subagent calls read it back as their
+        parent_subagent_id; without it a nested subagent renders as a
         sibling of its own parent."""
         _, _, graph = await run_subagent([])
 

@@ -56,8 +56,8 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 def mock_support_repo():
     """Patch the support-requests repository seam.
 
-    ``create`` echoes the document back with ``updated_at`` stamped (as the real
-    base does on insert); ``delete`` reports a successful rollback by default.
+    create echoes the document back with updated_at stamped (as the real
+    base does on insert); delete reports a successful rollback by default.
     """
     repo = AsyncMock()
 
@@ -435,8 +435,8 @@ class TestUploadSingleAttachment:
 
 
 class _LocalTimeDiffersFromUTC(datetime):
-    """datetime stand-in whose local-time ``now(None)`` reads a different DATE
-    than its UTC ``now(UTC)``.
+    """datetime stand-in whose local-time now(None) reads a different DATE
+    than its UTC now(UTC).
 
     The ticket id's date segment must be computed against UTC (the id is stored,
     displayed and sorted across timezones); this clock turns a non-UTC read into
@@ -1466,7 +1466,7 @@ class TestGetUserSupportRequests:
         assert result.pagination.per_page == 10
 
     async def test_second_page_skip_is_exactly_per_page(self, mock_support_repo):
-        """skip == (page - 1) * per_page exactly: page 2 → skip 10."""
+        """Skip == (page - 1) * per_page exactly: page 2 → skip 10."""
         mock_support_repo.page_for_user.return_value = []
         mock_support_repo.count_for_user_status.return_value = 0
 
@@ -1478,7 +1478,7 @@ class TestGetUserSupportRequests:
         assert page_call.kwargs["skip"] == 10
 
     async def test_pages_ceil_division_boundaries(self, mock_support_repo):
-        """pages is ceil(total / per_page): exact int at each boundary."""
+        """Pages is ceil(total / per_page): exact int at each boundary."""
         for total, expected_pages in [(1, 1), (9, 1), (10, 1), (11, 2), (20, 2), (21, 3)]:
             mock_support_repo.page_for_user.return_value = []
             mock_support_repo.count_for_user_status.return_value = total
@@ -1616,7 +1616,7 @@ class TestProcessAttachmentsPins:
     async def test_results_after_a_failed_upload_are_still_collected_for_cleanup(
         self, mock_upload_file_to_cloudinary
     ):
-        """gather returns every outcome; files uploaded AFTER the failing one
+        """Gather returns every outcome; files uploaded AFTER the failing one
         still made it to Cloudinary and must be cleaned up too — bailing out of
         the results loop orphans them there forever."""
         mock_upload_file_to_cloudinary.side_effect = [

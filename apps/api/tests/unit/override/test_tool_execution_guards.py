@@ -4,10 +4,10 @@ Three things sit between the agent deciding to call a tool and the result coming
 back, and each one exists because of a specific way a turn used to break:
 
 * a **timeout**, because a hung integration call hung the entire chat forever;
-* a **``GraphBubbleUp`` re-raise**, because a HIL approval is raised as control
+* a **GraphBubbleUp re-raise**, because a HIL approval is raised as control
   flow through the same path an error takes — convert it and the approval card
   never reaches the user and the gated action is silently dropped;
-* a **``Command`` passthrough**, because a state-mutating tool's whole effect is
+* a **Command passthrough**, because a state-mutating tool's whole effect is
   its graph update, and stringifying it loses the update while looking like
   success.
 

@@ -1,12 +1,12 @@
-"""``verify_payment_completion`` reconciling against Dodo when no webhook landed.
+"""verify_payment_completion reconciling against Dodo when no webhook landed.
 
-The bug: verification only ever read ``get_latest_active_for_user``. A dropped
-or rejected ``subscription.active`` webhook therefore left a paying user with
-no local subscription row and no path to Pro — ``/payment/success`` told them
+The bug: verification only ever read get_latest_active_for_user. A dropped
+or rejected subscription.active webhook therefore left a paying user with
+no local subscription row and no path to Pro — /payment/success told them
 the payment had not completed while Dodo happily held their money.
 
 The fix routes the reconciliation through the SAME reducer the webhook goes
-through (``subscription_events.apply_subscription_event``), so a recovered
+through (subscription_events.apply_subscription_event), so a recovered
 payment and a webhook-delivered one produce identical state. These tests pin
 the ownership refusal too: the subscription id arrives in a URL the client
 controls, so it is a hint, never an authorisation.
@@ -34,13 +34,13 @@ DODO_SUBSCRIPTION_ID = "sub_reconciled"
 
 
 def _remote_subscription(**overrides: Any) -> MagicMock:
-    """A stand-in for the Dodo SDK's ``Subscription``.
+    """A stand-in for the Dodo SDK's Subscription.
 
-    Only ``model_dump`` matters: the service revalidates whatever the SDK hands
-    back into ``DodoSubscriptionData`` rather than trusting attribute access.
-    The dump is mode-aware like the SDK's own — ``mode="json"`` yields the wire
+    Only model_dump matters: the service revalidates whatever the SDK hands
+    back into DodoSubscriptionData rather than trusting attribute access.
+    The dump is mode-aware like the SDK's own — mode="json" yields the wire
     shape the webhook schema is built for, while the default python mode yields
-    real ``datetime`` objects that a ``created_at: str`` field refuses.
+    real datetime objects that a created_at: str field refuses.
     """
     payload: dict[str, Any] = {
         "subscription_id": DODO_SUBSCRIPTION_ID,
@@ -290,7 +290,7 @@ def _recorded_checkout(session_id: str = "cks_1") -> CheckoutSessionDocument:
 def _buried_paid_session_service() -> DodoPaymentService:
     """A Dodo client for the user whose paid session is no longer the newest.
 
-    Only ``cks_paid`` was ever paid; the sessions minted after it by the paywall
+    Only cks_paid was ever paid; the sessions minted after it by the paywall
     are still sitting at the details step, which is what Dodo answers for a link
     nobody opened.
     """
@@ -308,13 +308,13 @@ class TestVerifyPaymentMaterializesFromTheCheckoutSession:
     """The recovery route taken when Dodo's return URL carries no subscription id.
 
     It used to build the subscription row itself instead of delegating to
-    the shared activation, so a user whose ``subscription.active`` webhook
+    the shared activation, so a user whose subscription.active webhook
     was slow kept the pre-payment tier cached (402 for up to five more minutes)
     and the workflows paused when their subscription lapsed never came back.
     These tests pin the delegation, not the row's contents — the shared path's
     own tests cover those.
 
-    Each test re-patches ``checkout_session_repository`` over the module's
+    Each test re-patches checkout_session_repository over the module's
     autouse fixture, which exists to keep this route out of the sibling class.
     """
 

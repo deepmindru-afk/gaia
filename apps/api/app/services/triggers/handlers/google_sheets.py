@@ -1,6 +1,4 @@
-"""
-Google Sheets trigger handler with cascading dropdown support.
-"""
+"""Google Sheets trigger handler with cascading dropdown support."""
 
 import asyncio
 from collections.abc import Sequence
@@ -62,7 +60,7 @@ class GoogleSheetsTriggerHandler(TriggerHandler):
     ) -> Sequence[TriggerOption | TriggerOptionGroup]:
         """Get dynamic options for Google Sheets trigger config fields.
 
-        ``spreadsheet_ids`` yields flat options; ``sheet_names`` yields one
+        spreadsheet_ids yields flat options; sheet_names yields one
         group per parent spreadsheet.
         """
         try:

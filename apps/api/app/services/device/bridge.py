@@ -93,9 +93,9 @@ async def send_down(device_id: str, frame: dict[str, Any]) -> None:
 async def publish_up_to_pod(pod_id: str, raw_frame: str) -> None:
     """Address an already-serialized upstream frame to the pod running the session.
 
-    The frame arrives off the socket as JSON text carrying the consumer ``pod``
+    The frame arrives off the socket as JSON text carrying the consumer pod
     id; we route it verbatim to that pod's up-channel rather than parse-and-
-    re-serialize (the down leg is symmetric — see ``_down_relay``).
+    re-serialize (the down leg is symmetric — see _down_relay).
     """
     if not redis_cache.redis:
         return

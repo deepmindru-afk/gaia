@@ -230,7 +230,7 @@ class TestRejection:
 
 
 class TestNormalize:
-    """`_normalize` is the field-name matcher; both sides of the compare run through
+    """_normalize is the field-name matcher; both sides of the compare run through
     it, so a broken normalize can hide behind the fuzzy fallback. Pin it directly."""
 
     def test_it_lowercases_and_strips_non_alphanumerics(self) -> None:

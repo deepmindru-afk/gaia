@@ -106,8 +106,8 @@ def _make_config(**configurable: Any) -> RunnableConfig:
 class _ModelNode(Protocol):
     """The two entry points the agent node exposes, named locally.
 
-    LangGraph types ``node.runnable`` as a union that does not statically carry
-    ``func`` / ``afunc``, and ``RunnableCallable`` is not an explicitly exported
+    LangGraph types node.runnable as a union that does not statically carry
+    func / afunc, and RunnableCallable is not an explicitly exported
     symbol. Naming only what is used here keeps the tests off a private import.
     """
 
@@ -127,9 +127,9 @@ def _make_state(
     todos: Sequence[dict[str, Any]] | None = None,
     remaining_steps: int = RECURSION_WRAPUP_THRESHOLD_STEPS + 1,
 ) -> State:
-    """A complete ``State`` — every channel the node's signature promises.
+    """A complete State — every channel the node's signature promises.
 
-    ``remaining_steps`` defaults just clear of the wrap-up threshold so the
+    remaining_steps defaults just clear of the wrap-up threshold so the
     recursion notice stays out of these tests; pass a lower value to exercise
     it.
     """
@@ -934,7 +934,7 @@ class TestBindSessionId:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent", ["comms_agent", "executor_agent"])
     async def test_a_real_model_call_carries_the_agent_s_own_key(self, agent: str) -> None:
-        """``_bind_session_id`` being correct is worth nothing if ``create_agent``
+        """_bind_session_id being correct is worth nothing if create_agent
         does not hand it the agent's name. This drives the actual model node and
         reads the key that reached the runnable, so dropping the argument at the
         call site is caught rather than only the helper being right in isolation.
@@ -1094,7 +1094,7 @@ def _next_is_gemini() -> Any:
 class TestFallbackPreparation:
     """The graph's provider failover.
 
-    Falling back to ``get_default_llm()`` was inert in production: it was skipped
+    Falling back to get_default_llm() was inert in production: it was skipped
     whenever the run already selected the default model, and since every tier
     resolves to that model the graph had no fallback at all — one 402 from
     OpenRouter killed the whole turn on every execution path. The target is a
@@ -1161,9 +1161,9 @@ class TestFallbackPreparation:
 class TestTheFallbackKeepsTheAgentsOwnChain:
     """The per-agent sticky key must survive a provider failover.
 
-    The primary binds ``{session}-{agent}`` so comms, the executor and each
-    subagent hold separate cache chains. ``ainvoke_llm`` used to recompute the
-    fallback's key from config, which yields the BARE ``{session}`` — so the
+    The primary binds {session}-{agent} so comms, the executor and each
+    subagent hold separate cache chains. ainvoke_llm used to recompute the
+    fallback's key from config, which yields the BARE {session} — so the
     moment a provider hiccuped, every agent's fallback landed back in one
     shared chain and they resumed evicting each other, which is the exact
     failure the per-agent key was measured to fix (+19.2 points on comms).
@@ -1244,9 +1244,9 @@ class TestTheFallbackKeepsTheAgentsOwnChain:
 
     def _assert_rebound_onto_the_fallback_lane(self, options: Any) -> None:
         """The fallback must run under the FALLBACK lane's config, carrying the
-        run's own keys. Reusing ``config`` is what made failover a no-op:
+        run's own keys. Reusing config is what made failover a no-op:
         LangChain merges a passed config over a bound one, so the just-failed
-        provider went straight back on. Passing ``None`` instead loses the
+        provider went straight back on. Passing None instead loses the
         user the spend belongs to."""
         rebound = options.fallback_config
         assert rebound is not None
@@ -1307,7 +1307,7 @@ class TestTheFallbackKeepsTheAgentsOwnChain:
     @pytest.mark.asyncio
     async def test_no_prepared_fallback_means_no_fallback_config_to_rebind(self) -> None:
         """With nowhere to fail over to there is no second lane, and handing
-        ``ainvoke_llm`` a config for one would rebind the primary attempt."""
+        ainvoke_llm a config for one would rebind the primary attempt."""
         builder = create_agent(
             _make_llm(),
             _make_tool_registry(dummy_tool_a),
@@ -1384,7 +1384,7 @@ class TestMaybeInjectWrapupDirect:
 
     def test_budget_exactly_at_the_threshold_still_gets_the_notice(self) -> None:
         """The boundary IS the feature: at the threshold the run is nearly out,
-        so the notice must fire on ``<=`` — an off-by-one silently lets runs die
+        so the notice must fire on <= — an off-by-one silently lets runs die
         with a GraphRecursionError the model never saw."""
         state = _make_state(
             messages=[HumanMessage("keep going")], remaining_steps=RECURSION_WRAPUP_THRESHOLD_STEPS
@@ -2051,8 +2051,8 @@ class TestWireEdgesPinning:
         assert "end_graph_hooks" in path_map
 
     def test_the_finish_branch_declares_both_destinations_it_can_return(self) -> None:
-        """``_after_finish_task`` returns either the nudge or the exit node, and
-        a conditional edge can only reach a node its ``path_map`` names. Blanked
+        """_after_finish_task returns either the nudge or the exit node, and
+        a conditional edge can only reach a node its path_map names. Blanked
         or dropped, LangGraph falls back to "any node in the graph" — the
         finish-task branch stops being a declared two-way and the nudge loop it
         guards is no longer pinned by the graph at all.
@@ -2222,7 +2222,7 @@ _EXPECTED_FALLBACK_CONFIG = {
 class TestTheFallbackTheModelNodeHandsTheClient:
     """Both model call sites build the failover options themselves, and neither
     one is exercised by a run whose lane has no next provider — which is every
-    other test here. What ``invoke_llm``/``ainvoke_llm`` receive is the whole
+    other test here. What invoke_llm/ainvoke_llm receive is the whole
     contract: a factory that re-binds the SAME tools on the next provider, and a
     config with the dead lane's keys cleared. A blank, a swapped tuple slot or a
     dropped argument leaves the turn with no failover at all, and the primary's
@@ -2302,7 +2302,7 @@ class TestTheFallbackTheModelNodeHandsTheClient:
 
     @pytest.mark.asyncio
     async def test_a_run_with_no_next_provider_hands_over_no_failover_at_all(self) -> None:
-        """The other side of the same branch: ``None``, not a half-built
+        """The other side of the same branch: None, not a half-built
         failover that resolves back onto the provider that just failed."""
         llm = _make_llm()
         builder = self._builder(llm)

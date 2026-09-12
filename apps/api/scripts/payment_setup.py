@@ -19,7 +19,7 @@ IMPORTANT: Run this script from the correct directory!
 4. Run as module (from app directory):
     python -m scripts.payment_setup --monthly-product-id <id> --yearly-product-id <id>
 
-`docker exec` does not run the image entrypoint, so the Infisical machine-identity
+docker exec does not run the image entrypoint, so the Infisical machine-identity
 variables it exports from the Docker Swarm secrets are absent in an exec shell and
 settings import fails. Export them from /run/secrets/gaia_infisical_* first, the
 same way scripts/docker-entrypoint.sh does.

@@ -1,8 +1,8 @@
 """HIL (human-in-the-loop) approval constants: policy, timings, limits, frame names.
 
 Every tunable number the HIL services use lives here. The LLM-facing *text* lives in
-``app/services/hil/prompts.py``; the destructive classification lives on each tool in
-the tool registry (``app/agents/tools/core/registry.py``), the single source of truth
+app/services/hil/prompts.py; the destructive classification lives on each tool in
+the tool registry (app/agents/tools/core/registry.py), the single source of truth
 for every tool in the app.
 """
 

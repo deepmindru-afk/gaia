@@ -8,9 +8,9 @@ when it is wrong: the user either sees narration they were never meant to see,
 or loses a reply that was meant for them.
 
 The drivers themselves are exercised end to end in
-``test_agent_helpers_tool_call_silence.py`` (real wire, real graph). These are
+test_agent_helpers_tool_call_silence.py (real wire, real graph). These are
 the unit-level truth tables underneath, plus — at the bottom — the same
-bookkeeping driven through both drivers over a scripted ``astream``, which is
+bookkeeping driven through both drivers over a scripted astream, which is
 the only way to reach the shapes a real OpenAI wire never produces: a message
 the provider gave no id, tool-call deltas arriving BEFORE their text, a
 tool-call whose arguments never parse, and a retraction landing mid-node.
@@ -50,8 +50,8 @@ class TestAnnouncesToolCall:
         assert announces_tool_call(message) is True
 
     def test_a_still_assembling_chunk_announces_before_its_args_parse(self) -> None:
-        """A chunk cut mid-JSON has no parsed ``tool_calls`` at all — only the
-        raw ``tool_call_chunks``. Reading just the parsed list would let the
+        """A chunk cut mid-JSON has no parsed tool_calls at all — only the
+        raw tool_call_chunks. Reading just the parsed list would let the
         preamble through for exactly as long as the arguments take to arrive."""
         chunk = AIMessageChunk(
             content="",
@@ -117,7 +117,7 @@ class TestDropRetractedText:
 
     def test_a_retraction_of_an_id_less_message_drops_the_unkeyed_text(self) -> None:
         """A chunk the provider gave no id is held under the empty key, because
-        that is what ``chunk.id or ""`` produces. The retraction has to resolve
+        that is what chunk.id or "" produces. The retraction has to resolve
         to the same key or the draft survives its own retraction."""
         held = {"": "draft"}
 
@@ -141,13 +141,13 @@ class TestDropRetractedText:
 
 
 class _ScriptedGraph:
-    """A graph whose ``astream`` replays exactly the triples handed to it.
+    """A graph whose astream replays exactly the triples handed to it.
 
-    The loopback-wire harness in ``test_agent_helpers_tool_call_silence.py``
+    The loopback-wire harness in test_agent_helpers_tool_call_silence.py
     proves the drivers against the real OpenAI delta order. It cannot script the
     shapes that order never produces — an id-less message, a tool call announced
     before its text, args that never parse — and those are precisely where the
-    hold bookkeeping goes wrong silently. Driving ``astream`` directly is the
+    hold bookkeeping goes wrong silently. Driving astream directly is the
     same driver code over the same triple shape, with the wire's accidents
     removed.
     """
@@ -168,12 +168,12 @@ class _ScriptedGraph:
 def _chunk(
     *, message_id: str | None, content: str = "", **kwargs: Any
 ) -> tuple[tuple[str, ...], str, Any]:
-    """A ``messages`` triple carrying one assistant chunk."""
+    """A messages triple carrying one assistant chunk."""
     return ((), "messages", (AIMessageChunk(id=message_id, content=content, **kwargs), {}))
 
 
 def _boundary(message: AIMessage) -> tuple[tuple[str, ...], str, Any]:
-    """An ``updates`` triple closing the agent node with ``message`` as its reply."""
+    """An updates triple closing the agent node with message as its reply."""
     return ((), "updates", {"agent": {"messages": [message]}})
 
 
@@ -202,7 +202,7 @@ async def _run_streaming(events: list[tuple[tuple[str, ...], str, Any]]) -> list
 
 
 def _frames(frames: list[str], key: str) -> list[Any]:
-    """Every ``data:`` frame carrying ``key``, in order."""
+    """Every data: frame carrying key, in order."""
     out = []
     for frame in frames:
         if not frame.startswith("data: "):
@@ -247,7 +247,7 @@ class TestBoundaryBookkeeping:
         assert _streamed_message(await _run_streaming(events)) == ""
 
     async def test_text_from_a_message_the_provider_gave_no_id_is_still_kept(self) -> None:
-        """``chunk.id or ""`` holds an id-less message under the empty key, so
+        """chunk.id or "" holds an id-less message under the empty key, so
         the boundary has to resolve to that same key or the reply is stranded."""
         events = [
             _chunk(message_id=None, content="hey"),
@@ -281,7 +281,7 @@ class TestBoundaryBookkeeping:
     async def test_a_preamble_is_dropped_even_when_no_chunk_announced_the_call(
         self, resolved_tool_cards: Any
     ) -> None:
-        """The two halves of ``discarded`` are alternatives, not requirements.
+        """The two halves of discarded are alternatives, not requirements.
 
         A finished message can carry a tool call that no chunk ever announced —
         a non-streaming provider, or a call assembled entirely in the node
@@ -334,7 +334,7 @@ class TestChunkLevelSilence:
         """Anthropic-shaped ordering: the tool call announces first, then the
         narration. Nothing downstream can catch it — the finished message's
         arguments never parsed, so the boundary sees no tool call at all. Only
-        the chunk that carried ``tool_call_chunks`` knows.
+        the chunk that carried tool_call_chunks knows.
         """
         events = [
             _chunk(message_id="m1", **_UNPARSEABLE_CALL),

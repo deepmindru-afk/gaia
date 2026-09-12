@@ -1,6 +1,6 @@
 """FS metrics: per-op aggregation, the Prometheus surface, and fs_timer's guarantees.
 
-Every storage call site funnels through ``fs_timer`` / ``record_fs_op``. Two
+Every storage call site funnels through fs_timer / record_fs_op. Two
 failure shapes matter and are both invisible at runtime: the aggregate silently
 under-reporting (a slow op that never shows up on a dashboard, an error counted
 as a success), and the metrics layer itself breaking the operation it measures
@@ -11,11 +11,11 @@ Known ContextVar wart, verified in-process and pinned by the two isolation
 tests below: a task spawned *before* the request records its first FS op gets a
 bucket of its own that nobody ever flushes, so its ops reach Prometheus but
 never the wide event. Spawned *after*, the same task shares the bucket and is
-billed to the request. Whether a fire-and-forget op shows up in ``fs={}`` is
+billed to the request. Whether a fire-and-forget op shows up in fs={} is
 therefore decided by unrelated ordering earlier in the turn.
 
 Boundaries mocked: nothing. The Prometheus collectors are in-process, so the
-real registry is read back via ``REGISTRY.get_sample_value``; each test uses a
+real registry is read back via REGISTRY.get_sample_value; each test uses a
 unique op name so its samples cannot collide with another test's. The only
 patched objects are deliberately-broken collector stubs used to prove the
 registry-failure guards actually guard.
@@ -50,7 +50,7 @@ def _clean_bucket() -> Iterator[None]:
     """Start every test from an empty ContextVar bucket.
 
     Sync tests mutate the caller's context directly, so without this a leftover
-    bucket from a previous test would make `flush` assertions read another
+    bucket from a previous test would make flush assertions read another
     test's numbers.
     """
     m._metrics_var.set(None)

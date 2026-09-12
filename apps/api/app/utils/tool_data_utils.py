@@ -1,6 +1,4 @@
-"""
-Utility functions for converting legacy tool data to unified format.
-"""
+"""Utility functions for converting legacy tool data to unified format."""
 
 from datetime import UTC, datetime
 from typing import Any

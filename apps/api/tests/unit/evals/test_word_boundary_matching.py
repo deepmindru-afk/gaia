@@ -1,10 +1,10 @@
 """A presence gate must credit words the agent said, not fragments of them.
 
-Plain substring matching made ``communicate: ["milk"]`` satisfiable by
+Plain substring matching made communicate: ["milk"] satisfiable by
 "buttermilkshake" — the agent gets credit for a word it never used. These pin
 both directions: fragments no longer count, and assertions on times, money and
 addresses still match inside a sentence, because those do not sit on word
-boundaries and a naive ``\\b`` on both ends would break them.
+boundaries and a naive \\b on both ends would break them.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def test_fragments_do_not_count(text: str, needle: str) -> None:
 def test_hyphenated_compounds_do_match_in_prose() -> None:
     """A hyphen is a word boundary, so "personal-finance" does contain the word
     "personal" — correct for prose, and deliberately different from the LIST
-    comparison in `_arg_matches`, where a label must match whole so the label
+    comparison in _arg_matches, where a label must match whole so the label
     "personal" is not satisfied by "personal-finance"."""
     assert says("filed under personal-finance", "personal") is True
 

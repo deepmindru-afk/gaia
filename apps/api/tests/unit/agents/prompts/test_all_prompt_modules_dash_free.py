@@ -5,10 +5,10 @@ rulebook: the model imitates the dashes sitting in its own prose more than it
 obeys the rule banning them. This test extends the same guard past the comms
 and executor prompts to every other module whose string constants are read by
 a model: the subagent system prompts, the onboarding prompts, the memory
-prompts, the workspace docs served by ``read_manual``, and the tool
-descriptions bound to ``@tool`` functions via ``@with_doc``.
+prompts, the workspace docs served by read_manual, and the tool
+descriptions bound to @tool functions via @with_doc.
 
-``comms_prompts`` is deliberately excluded: it has its own dedicated test file
+comms_prompts is deliberately excluded: it has its own dedicated test file
 that already covers this ground with the one legitimate exception (the
 banned-literals line, which cannot ban a literal without naming it).
 """
@@ -64,7 +64,7 @@ MODULE_NAMES = _discover_module_names()
 
 def _dict_entry_strings(name: str, key: object, entry: object) -> dict[str, str]:
     """Every str reachable from one dict value: the value itself, or, for a
-    NamedTuple record (e.g. operational_docs' ``ManualDoc``), each str field."""
+    NamedTuple record (e.g. operational_docs' ManualDoc), each str field."""
     if isinstance(entry, str):
         return {f"{name}[{key!r}]": entry}
     if isinstance(entry, tuple) and hasattr(entry, "_fields"):

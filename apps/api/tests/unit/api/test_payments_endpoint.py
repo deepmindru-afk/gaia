@@ -182,7 +182,7 @@ class TestCreateSubscription:
         self, client: AsyncClient
     ):
         """The legacy redirect path emits the same event name as the overlay, so
-        the funnel reads one event with a `source`/`surface` split rather than
+        the funnel reads one event with a source/surface split rather than
         two rival events."""
         with patch(
             "app.services.payments.payment_service.payment_service.create_subscription",
@@ -302,7 +302,7 @@ class TestCreateCheckoutSession:
         )
 
     async def test_attributes_the_overlay_checkout_to_its_source(self, client: AsyncClient):
-        """The server is the single emitter of `payment:checkout_started`; the
+        """The server is the single emitter of payment:checkout_started; the
         client no longer fires its own rival event, so the attribution the
         funnel reads has to arrive on this call."""
         with patch(
@@ -767,7 +767,7 @@ class TestDodoWebhook:
     async def test_an_ownerless_activation_is_abandoned_and_its_claim_released(
         self, client: AsyncClient
     ):
-        """The whole path, not the two halves: a real ``subscription.active``
+        """The whole path, not the two halves: a real subscription.active
         whose owner GAIA cannot resolve is acknowledged (a retry finds the
         same missing user) but left re-drivable by hand — claim released — so
         the user who paid can still be activated once the cause is fixed."""

@@ -62,8 +62,8 @@ class TestStripPartialMessageBreak:
         assert strip_partial_message_break("a<NEW_MESSAGE_BREAK>") == "a<NEW_MESSAGE_BREAK>"
 
     def test_keeps_a_lone_trailing_bracket(self) -> None:
-        """A bare ``<`` carries no sentinel evidence — eating it would corrupt
-        ordinary text (a code snippet ending in ``<``)."""
+        """A bare < carries no sentinel evidence — eating it would corrupt
+        ordinary text (a code snippet ending in <)."""
         assert strip_partial_message_break("if a <") == "if a <"
 
     def test_keeps_unrelated_trailing_tag(self) -> None:
@@ -91,7 +91,7 @@ class TestSplitMessageBubbles:
 
 
 class TestPrefixBuilders:
-    """``_word_prefixes`` and ``_partial_sequence`` run only at import time, to
+    """_word_prefixes and _partial_sequence run only at import time, to
     build the module-level compiled constants — no test exercises them through
     any public function, so a mutation of either can only be observed by
     calling them directly and asserting on what they return."""
@@ -138,7 +138,7 @@ class TestPrefixBuilders:
     ) -> None:
         """The builder assembles one character at a time (see its docstring); a
         run of two or more literal letters means a placeholder or a stray
-        ``None``/``str(None)`` leaked into the generated pattern instead of a
+        None/str(None) leaked into the generated pattern instead of a
         real per-character prefix."""
         pattern_source = _partial_sequence(words)
         assert re.findall(r"(?<!\\)[A-Za-z]{2,}", pattern_source) == []

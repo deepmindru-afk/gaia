@@ -1,10 +1,10 @@
-"""Hermetic unit tests for ``BotSessionsRepository``.
+"""Hermetic unit tests for BotSessionsRepository.
 
-The real-Mongo proof lives in ``tests/contracts/test_bot_sessions_repository.py``;
+The real-Mongo proof lives in tests/contracts/test_bot_sessions_repository.py;
 this tier pins the exact filter and update document the repository hands the
 driver — what the contracts tier cannot see, and what keeps the DM-merge
 migration's writes honest without a cluster. The driver is mocked at
-``app.db.repositories.base.get_async_collection``, the single seam every read and
+app.db.repositories.base.get_async_collection, the single seam every read and
 write in the base repository goes through.
 """
 
@@ -62,9 +62,9 @@ class TestClaimSessionTimestamps:
     async def test_the_timestamp_stays_the_iso_string_it_was_given(
         self, repo: BotSessionsRepository, collection: MagicMock
     ) -> None:
-        """The collection's TTL reads ``created_at``/``updated_at`` as ISO strings.
-        The base auto-stamps a ``datetime`` into ``$set`` for any document that
-        MODELS ``updated_at`` — which would silently replace the string and break
+        """The collection's TTL reads created_at/updated_at as ISO strings.
+        The base auto-stamps a datetime into $set for any document that
+        MODELS updated_at — which would silently replace the string and break
         the TTL. This repository opts out; nothing else enforces that."""
         await repo.claim_session(
             session_key=LEGACY_KEY,
@@ -84,7 +84,7 @@ class TestListLegacyDmSessions:
     async def test_it_matches_only_keys_ending_in_the_retired_suffix(
         self, repo: BotSessionsRepository, collection: MagicMock
     ) -> None:
-        """Anchored at the end: a Slack channel id merely CONTAINING ``dm`` is a
+        """Anchored at the end: a Slack channel id merely CONTAINING dm is a
         live session, and rewriting it would fork the very chat this repairs."""
         await repo.list_legacy_dm_sessions()
 
@@ -168,7 +168,7 @@ class TestDeleteBySessionKey:
 
 
 class TestSessionWritesBustTheGlobalCache:
-    """These three rows are keyed by ``session_key``, not by user, so they live
+    """These three rows are keyed by session_key, not by user, so they live
     in the repository's GLOBAL cache scope. Invalidating any other scope leaves
     the pre-migration session cached: the row moves, the next lookup still reads
     the old conversation, and the fork the migration just merged comes back.

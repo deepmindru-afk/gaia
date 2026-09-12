@@ -88,8 +88,8 @@ def _make_oauth_discovery(
 ) -> OAuthDiscovery:
     """Build an OAuthDiscovery (SDK-model based) for tests.
 
-    ``metadata_overrides`` tweak the wrapped ``as_metadata`` (e.g. drop the
-    authorization_endpoint); ``overrides`` tweak the OAuthDiscovery fields
+    metadata_overrides tweak the wrapped as_metadata (e.g. drop the
+    authorization_endpoint); overrides tweak the OAuthDiscovery fields
     (resource, initial_scope, discovery_method, prm).
     """
     as_metadata = _make_oauth_metadata(**(metadata_overrides or {}))
@@ -3225,7 +3225,7 @@ class TestMCPClientHandleCustomIntegrationConnect:
         )
 
     async def test_an_integration_with_no_description_indexes_an_empty_one(self):
-        """The request's description is a plain ``str``; a missing one becomes the
+        """The request's description is a plain str; a missing one becomes the
         empty string rather than travelling as None into the embedded text."""
         from app.agents.core.subagents.handoff_tools import (
             CustomMcpIndexRequest,
@@ -4985,7 +4985,7 @@ class TestServerUrlMatchingHelpersExact:
     async def test_match_active_client_skips_an_integration_revoked_elsewhere(self):
         """A warm session is not authorization — the stored status gates it.
 
-        ``disconnect`` only clears the dicts of the replica that handled it, so
+        disconnect only clears the dicts of the replica that handled it, so
         without this a revoked integration stays routable through the MCP proxy
         on every other replica for the life of the process.
         """

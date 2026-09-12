@@ -6,7 +6,7 @@ Two invariants carry the security weight, and both are attacked here:
   must resolve to *destructive*. A classifier that returns False when it is broken is a
   classifier that runs destructive tools unattended.
 * **The MCP hint escalates only.** An untrusted MCP server may flag danger but must never
-  clear it: ``destructiveHint=False`` and ``readOnlyHint=True`` mean "defer", not "safe".
+  clear it: destructiveHint=False and readOnlyHint=True mean "defer", not "safe".
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch

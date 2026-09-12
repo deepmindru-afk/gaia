@@ -1,18 +1,18 @@
 """Terminal delivery for background-executor results.
 
-Two run-based entry points, both taking the run's ``ExecutorRun`` context:
+Two run-based entry points, both taking the run's ExecutorRun context:
 
-- ``deliver_result``  — completed/errored run: narrate via comms, compose the
+- deliver_result  — completed/errored run: narrate via comms, compose the
   bot message, persist to MongoDB, then route over EXACTLY ONE transport
   chosen by the conversation's own source (bot platform / WebSocket /
   workflow notification).
-- ``persist_cancelled_run`` — cancelled run that self-owns its tool_data:
+- persist_cancelled_run — cancelled run that self-owns its tool_data:
   durably persist the already-streamed cards (no narration, no re-push; the
-  frontend sync reconciles by ``message_id == task_id``).
+  frontend sync reconciles by message_id == task_id).
 
 Every executor terminal path goes through one of these.
 
-- ``deliver_message_to_conversation`` — the run-free primitive underneath: push
+- deliver_message_to_conversation — the run-free primitive underneath: push
   an already-voiced proactive message (a fired reminder, a tracked-todo result)
   into one conversation on its own surface and record it in that conversation's
   langgraph thread. Reuses the same save / route / checkpoint seams.
@@ -20,7 +20,7 @@ Every executor terminal path goes through one of these.
 Neither reads the run's session: both take the cards their caller snapshotted
 before signalling the run done. By the time delivery runs, the comms consumer
 (chat stream or silent workflow path) has already drained that session and torn
-it down — see ``executor_runner._finalize_executor_run``.
+it down — see executor_runner._finalize_executor_run.
 """
 
 import asyncio
@@ -103,11 +103,11 @@ async def deliver_result(
     user-visible bot message. The executor's terminal text is NOT shown to the
     user directly; it's internal context for comms.
 
-    Returns ``(narrated_text, message_id)`` of the saved bot message (voice mode
-    speaks the text and bubbles it by that id). ``(None, None)`` on failure.
+    Returns (narrated_text, message_id) of the saved bot message (voice mode
+    speaks the text and bubbles it by that id). (None, None) on failure.
 
     The message is always saved to the conversation, then delivered over EXACTLY
-    ONE transport chosen by the conversation's own ``source``:
+    ONE transport chosen by the conversation's own source:
       - workflow runs → the proactive workflow notification (multi-channel)
       - bot conversations (whatsapp/telegram/discord/slack) → that platform's
         API (bots have no WebSocket — it's their only inbound path)
@@ -115,11 +115,11 @@ async def deliver_result(
     Routing keys on the conversation, not the run that produced the message, so a
     background/scheduled run posting into a bot conversation still reaches it.
 
-    Tool cards: ``tool_data`` is the caller's pre-signal snapshot, already gated
-    on ``run.executor_owns_tool_data`` — ``None`` for a live run, whose cards the
+    Tool cards: tool_data is the caller's pre-signal snapshot, already gated
+    on run.executor_owns_tool_data — None for a live run, whose cards the
     chat stream attaches to the comms ack instead (attaching them here too would
     render every card twice). Queued runs key the saved message on
-    ``message_id == task_id`` so the frontend sync reconciles it with the live
+    message_id == task_id so the frontend sync reconciles it with the live
     placeholder by id — the WebSocket push is immediacy only.
     """
     try:
@@ -136,7 +136,7 @@ async def persist_cancelled_run(run: ExecutorRun, tool_data: list[ToolDataEntry]
     them on the placeholder (keyed by task_id). This only writes the same cards
     to MongoDB so they survive a cache clear and reach the user's other devices
     via the normal conversation sync. Deliberately:
-      - keyed on ``message_id == task_id`` so sync reconciles with the placeholder
+      - keyed on message_id == task_id so sync reconciles with the placeholder
         by id (no duplicate) — no WebSocket re-push of already-streamed data;
       - no comms re-narration (the run was stopped) and no result text, mirroring
         the cards-only placeholder the user saw.
@@ -199,9 +199,9 @@ async def deliver_message_to_conversation(
 
     Saves it, routes it over the conversation's OWN transport (its bot platform's
     API, or the web/mobile WebSocket), then appends it to the checkpoint so a later
-    turn in this conversation remembers it. Unlike ``deliver_result`` it takes no
-    run and does not narrate — ``text`` is the user-facing message (a fired
-    reminder, a tracked-todo result); ``origin`` names the producer for the
+    turn in this conversation remembers it. Unlike deliver_result it takes no
+    run and does not narrate — text is the user-facing message (a fired
+    reminder, a tracked-todo result); origin names the producer for the
     checkpoint record. Returns the conversation's source when delivered, else None.
     Best-effort: never raises into the caller.
     """
@@ -266,8 +266,8 @@ async def _narrate_and_deliver(
 ) -> tuple[str | None, str | None]:
     """Compose the user-facing message, save it, and route it.
 
-    Returns ``(narrated_text, message_id)`` of the saved bot message, or
-    ``(None, None)`` if it could not be saved.
+    Returns (narrated_text, message_id) of the saved bot message, or
+    (None, None) if it could not be saved.
     """
     user_id = run.user.get("user_id", "")
 
@@ -454,7 +454,7 @@ async def _attach_reply_quote(
     *,
     is_hil_resume: bool,
 ) -> tuple[bool, str]:
-    """Quote the user's message on the bot message; returns ``(shown, content)``."""
+    """Quote the user's message on the bot message; returns (shown, content)."""
     # Reply-quote only for genuinely queued tasks — live tasks land directly
     # after the user's last message so quoting it is visual noise; a
     # HIL-resumed run merges onto that same live message, so it never had
@@ -482,8 +482,8 @@ async def _resolve_append_mode(
 ) -> tuple[bool, list[ToolDataEntry] | None]:
     """Merge a HIL-resumed result onto the original message where possible.
 
-    Returns ``(fresh_append, tool_data)`` — ``fresh_append`` False only when the
-    merge landed, in which case ``tool_data`` is the FULL merged card set.
+    Returns (fresh_append, tool_data) — fresh_append False only when the
+    merge landed, in which case tool_data is the FULL merged card set.
     """
     if not is_hil_resume:
         return True, tool_data
@@ -577,14 +577,14 @@ async def _merge_resumed_result(
     """In-place update the ORIGINAL live turn's bot message with a HIL-resumed
     run's result, instead of appending a rival one.
 
-    ``update_messages``/``append_messages`` unconditionally ``$push``-es a new
+    update_messages/append_messages unconditionally $push-es a new
     array element — reusing the original message_id there would create a literal
-    duplicate copy of the message, not a merge (the same trap ``_persist_follow_up_actions``
+    duplicate copy of the message, not a merge (the same trap _persist_follow_up_actions
     already guards against). This does targeted in-place field updates instead.
 
     Returns the FULL merged tool_data (original cards + this run's new cards):
     the WebSocket push replaces the client's stored message wholesale, so a
-    delta alone would drop the original cards. ``None`` means the original
+    delta alone would drop the original cards. None means the original
     message could not be found or updated — the caller falls back to
     appending a fresh message rather than discarding the result.
     """
@@ -904,10 +904,10 @@ async def _persist_follow_up_actions(
 
     The answer was persisted and broadcast without suggestions to unblock the UI;
     this sets them on that SAME message, matched by id. It MUST be an in-place
-    field update — re-saving the whole message through ``update_messages`` (which
-    ``$push``-es) would append a duplicate copy of the answer to the conversation.
+    field update — re-saving the whole message through update_messages (which
+    $push-es) would append a duplicate copy of the answer to the conversation.
 
-    Returns ``True`` when the suggestions were written to the stored message, so
+    Returns True when the suggestions were written to the stored message, so
     the caller only broadcasts follow-ups that will survive a reload.
     """
     if not message_id:
@@ -939,7 +939,7 @@ async def _dispatch_workflow_notification(
     """Send the proactive workflow completion/failure notification.
 
     Failures always notify — the user must learn their automation broke. The
-    success notification respects the workflow's ``notify_on_completion``
+    success notification respects the workflow's notify_on_completion
     setting: silent workflows keep their result in the conversation and leave
     any user-facing alerting to the agent's own send_notification calls (driven
     by the workflow's instructions).

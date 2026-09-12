@@ -1,13 +1,13 @@
 """Preparing one subagent for execution.
 
-``prepare_subagent_execution`` is the single path both the executor's ``handoff``
+prepare_subagent_execution is the single path both the executor's handoff
 tool and the dev direct-invocation endpoint go through to turn "run gmail on
 this task" into a runnable context. Its failure branches are covered through
-``_resolve_subagent``; the function itself had no test at all, so nothing pinned
+_resolve_subagent; the function itself had no test at all, so nothing pinned
 what it builds on the way out — the checkpoint thread a subagent resumes on, the
 task text the model is handed, or the identity a provider tool authenticates as.
 
-External I/O is doubled at the module boundary (``handoff_tools`` imports every
+External I/O is doubled at the module boundary (handoff_tools imports every
 collaborator by name, so patching there is what takes effect); everything the
 assertions cover is real.
 """
@@ -44,8 +44,8 @@ def _configurable(**overrides: Any) -> dict[str, Any]:
 def gmail_subagent(monkeypatch: pytest.MonkeyPatch):
     """Resolve to a stand-in gmail subagent without Mongo, OAuth or Composio.
 
-    ``_resolve_subagent`` is a separately-tested concern (every one of its
-    failure branches is covered in ``test_handoff_tools``); doubling it here
+    _resolve_subagent is a separately-tested concern (every one of its
+    failure branches is covered in test_handoff_tools); doubling it here
     keeps these tests on what preparation *builds*.
     """
     graph = MagicMock(name="gmail_graph")
@@ -89,9 +89,9 @@ def gmail_subagent(monkeypatch: pytest.MonkeyPatch):
 
 
 def _task_message(ctx: Any) -> HumanMessage:
-    """The task turn, picked by its ``visible_to`` marker.
+    """The task turn, picked by its visible_to marker.
 
-    ``build_initial_messages`` also puts the current time in a HumanMessage (to
+    build_initial_messages also puts the current time in a HumanMessage (to
     keep the system prefix byte-stable for the prompt cache), so position is not
     a safe way to find the task.
     """
@@ -200,7 +200,7 @@ class TestServiceIdentity:
         assert "Dhruv" not in content
 
     async def test_the_sanitized_task_is_also_what_the_run_records_as_intent(self, gmail_subagent):
-        """``intent`` drives retrieval and logging; leaving it unsanitized would
+        """intent drives retrieval and logging; leaving it unsanitized would
         put the GAIA name back into the subagent's semantic search."""
         ctx, _, _ = await prepare_subagent_execution(
             "gmail", "find gmail messages from user: Dhruv", _configurable()
@@ -247,7 +247,7 @@ class TestPreparedContext:
 
 class TestResolutionFailure:
     async def test_an_unresolvable_subagent_returns_an_error_instead_of_raising(self, monkeypatch):
-        """``handoff`` must always hand the executor a string it can act on — a
+        """handoff must always hand the executor a string it can act on — a
         raise here aborts the whole turn instead of letting the model retry."""
         monkeypatch.setattr(
             handoff_tools,

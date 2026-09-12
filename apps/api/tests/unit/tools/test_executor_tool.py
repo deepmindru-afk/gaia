@@ -1,8 +1,8 @@
-"""Unit tests for the comms → executor handoff (`app/agents/tools/executor_tool.py`).
+"""Unit tests for the comms → executor handoff (app/agents/tools/executor_tool.py).
 
 Redis is real (fakeredis) so the busy-lock and queue mechanics under test run for
 real; the only mocked boundaries are the executor graph itself
-(``run_executor_background``) and the WebSocket fan-out.
+(run_executor_background) and the WebSocket fan-out.
 """
 
 import asyncio
@@ -46,10 +46,10 @@ def _spawned(stream_id: str) -> bool:
 
 
 def tool_function(tool_obj: BaseTool) -> Callable[..., Awaitable[str]]:
-    """The undecorated coroutine behind a ``@tool``.
+    """The undecorated coroutine behind a @tool.
 
-    Called directly instead of ``ainvoke`` so a test never opens a LangSmith
-    trace: ``langsmith.utils.get_env_var`` is ``lru_cache``d, so a fixture that
+    Called directly instead of ainvoke so a test never opens a LangSmith
+    trace: langsmith.utils.get_env_var is lru_cached, so a fixture that
     disabled tracing would poison every later test in the same worker.
     """
     coroutine = cast(StructuredTool, tool_obj).coroutine
@@ -159,12 +159,12 @@ def release_lock_on_attempt(
     monkeypatch: pytest.MonkeyPatch,
     fake_redis: fakeredis.aioredis.FakeRedis,
 ) -> Callable[[int], None]:
-    """Free the busy lock on the N-th ``try_acquire_lock`` call.
+    """Free the busy lock on the N-th try_acquire_lock call.
 
     Replaces real-time releaser tasks racing the DETECT/WAIT windows: the
-    redirect poll loop calls ``try_acquire_lock`` exactly once per POLL
+    redirect poll loop calls try_acquire_lock exactly once per POLL
     iteration, so a release tied to the attempt count lands at a fixed
-    ``waited`` value (overall attempt K with the pre-redirect attempt at
+    waited value (overall attempt K with the pre-redirect attempt at
     #1 ⇒ redirect wait (K-2)*POLL) — deterministic by construction.
     """
 
@@ -787,7 +787,7 @@ class TestCancelWithMalformedQueueItems:
         broadcast: AsyncMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """`json.loads("5")` is an int; `.get` on it raised outside the ValueError
+        """json.loads("5") is an int; .get on it raised outside the ValueError
         handler, aborting the cancel and destroying the running task's lock."""
         monkeypatch.setattr(StreamManager, "cancel_stream", AsyncMock())
         await fake_redis.set(LOCK_KEY, "stream-1:running-task", ex=EXECUTOR_BUSY_TTL)
@@ -880,7 +880,7 @@ def test_both_executor_tools_are_exported_for_the_comms_agent() -> None:
 class TestDispatchThreadsTheTurnsIdentity:
     """What the comms turn hands the executor about *which* turn it is.
 
-    ``bot_message_id`` is the original live turn's message: a HIL pause resumes
+    bot_message_id is the original live turn's message: a HIL pause resumes
     onto it rather than minting a rival placeholder, so losing it here is the
     same user-visible split as losing it in the queue — the client renders a
     second bubble with its own tool accordion and the first one never finishes.
@@ -934,7 +934,7 @@ class TestDispatchThreadsTheTurnsIdentity:
         """Regression: a pasted billing table went to the executor with 3 of its 4
         recipient addresses corrupted by the comms model's rewrite, and no verbatim
         copy to check against. The brief must still carry the exact bytes even when
-        the model's `task` gets the identifiers wrong."""
+        the model's task gets the identifiers wrong."""
         pasted = (
             "writetokhair@gmail.com\tFailed\t$30.00\tsub_0Ni7oWIA6kMF0ogWiKC3x\n"
             "tmunson750@gmail.com\tCancelled\t$30.00\tsub_0NfdUP7ekmLIw59KBtWwa"

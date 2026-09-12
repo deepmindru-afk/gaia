@@ -304,7 +304,7 @@ def _bare_request(
     The two authenticate helpers are called directly here rather than through
     TestClient: WorkOSAuthMiddleware runs outside LoggingMiddleware's context,
     so a wide event captured around a full request would not receive its
-    ``log.error`` at all.
+    log.error at all.
     """
     raw = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
     request = Request(
@@ -586,11 +586,11 @@ REQUEST_PATH = "/api/v1/notes"
 
 
 async def _noop_asgi(scope, receive, send) -> None:  # pragma: no cover - never called
-    """BaseHTTPMiddleware requires an inner app; ``dispatch`` is driven directly."""
+    """BaseHTTPMiddleware requires an inner app; dispatch is driven directly."""
 
 
 def _authenticated_request(user: dict | None) -> Request:
-    """A plain GET carrying ``state.user`` exactly as WorkOSAuthMiddleware leaves it."""
+    """A plain GET carrying state.user exactly as WorkOSAuthMiddleware leaves it."""
     request = Request(
         {
             "type": "http",
@@ -611,9 +611,9 @@ def _authenticated_request(user: dict | None) -> Request:
 
 
 async def _dispatch(request: Request) -> tuple[Response, dict]:
-    """Run the middleware over ``request``, reporting what the route saw.
+    """Run the middleware over request, reporting what the route saw.
 
-    ``downstream`` records the identity a capture inside the handler would be
+    downstream records the identity a capture inside the handler would be
     attributed to, plus the path the handler could still read — the middleware
     must hand the route its own request, not a substitute.
     """
@@ -694,7 +694,7 @@ class TestPostHogRequestContextIdentity:
         assert response.body == b"handler ran"
 
     def test_identity_is_bound_through_the_real_asgi_stack(self, posthog_provider) -> None:
-        """The unit tests above drive ``dispatch`` directly; this one proves the
+        """The unit tests above drive dispatch directly; this one proves the
         middleware still binds identity when Starlette runs it for real."""
         posthog_provider(available=True, client=object())
         seen: dict = {}

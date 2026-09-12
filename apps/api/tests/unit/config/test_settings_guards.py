@@ -1,7 +1,7 @@
 """Production boot-guards and the OpenRouter base-URL passthrough.
 
-The dev-only overrides (`DEV_AUTH_BYPASS_EMAIL`, `OPENROUTER_BASE_URL`) must make
-`get_settings()` refuse to start under `ENV=production`, and `init_openrouter_llm`
+The dev-only overrides (DEV_AUTH_BYPASS_EMAIL, OPENROUTER_BASE_URL) must make
+get_settings() refuse to start under ENV=production, and init_openrouter_llm
 must forward the base-URL override only in development.
 """
 
@@ -35,8 +35,8 @@ DEV_OVERRIDE_VARS = (
 def _fake_chat_openrouter(captured: dict[str, object]) -> type:
     """A ChatOpenRouter double that records its construction kwargs.
 
-    It carries a ``client.sdk_configuration`` because the real class does and
-    ``without_sdk_retry`` writes the SDK's retry config there — a double missing
+    It carries a client.sdk_configuration because the real class does and
+    without_sdk_retry writes the SDK's retry config there — a double missing
     it would pass while the production path raises.
     """
 
@@ -177,7 +177,7 @@ def test_production_allows_https_dodo_base_url():
 def test_production_allows_unset_dodo_base_url():
     """Leaving DODO_PAYMENTS_BASE_URL unset stays valid — production uses the
     real Dodo endpoint by default. (None passed explicitly to override any
-    ambient env var; the validator's job is to allow the unset case.)"""
+    ambient env var; the validator's job is to allow the unset case.)."""
     settings_obj = _prod_settings(DODO_PAYMENTS_BASE_URL=None)
 
     assert settings_obj.DODO_PAYMENTS_BASE_URL is None

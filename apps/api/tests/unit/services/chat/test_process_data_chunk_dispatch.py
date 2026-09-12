@@ -1,4 +1,4 @@
-"""The ``data:`` chunk dispatcher forwards each event to the right publisher
+"""The data: chunk dispatcher forwards each event to the right publisher
 with the turn's own stream id and accumulators.
 
 A wrong stream id would publish a user's tool cards into someone else's

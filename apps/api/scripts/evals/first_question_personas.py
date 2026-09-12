@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # mypy: ignore-errors -- dev eval script; typing not maintained here
 """
-Run `compose_first_question` over the onboarding answers we actually see.
+Run compose_first_question over the onboarding answers we actually see.
 
 Not a test: it calls a real model, so it goes red when the provider is down and
 that would be a useless CI signal. It exists to read the copy — ten personas,
@@ -12,13 +12,13 @@ Usage (from apps/api/):
     uv run python scripts/evals/first_question_personas.py
     uv run python scripts/evals/first_question_personas.py --follow
 
-`--follow` takes each chip of the first five personas and sends it as the user's
+--follow takes each chip of the first five personas and sends it as the user's
 next message to the LOCALLY RUNNING API, so you can read GAIA's actual reply and
-judge whether a chip leads anywhere concrete. It needs `mise dev --agent` (or any
-boot with `DEV_AUTH_BYPASS_EMAIL` set); it mints one dev user per persona, which
+judge whether a chip leads anywhere concrete. It needs mise dev --agent (or any
+boot with DEV_AUTH_BYPASS_EMAIL set); it mints one dev user per persona, which
 must be able to pass the paid-only gate.
 
-`--turns 2` (the default) keeps going: it answers GAIA's offer with "yes" in the
+--turns 2 (the default) keeps going: it answers GAIA's offer with "yes" in the
 SAME conversation and captures whether a tool actually ran on that turn. An offer
 nobody can accept is the failure mode a single-turn read cannot see.
 
@@ -332,7 +332,7 @@ class Graded(BaseModel):
 
 
 async def run_follow(rows: list[tuple[str, object]], api_url: str, turns: int) -> None:
-    """Each chip of the first personas, replayed as a real thread of ``turns`` turns.
+    """Each chip of the first personas, replayed as a real thread of turns turns.
 
     Every persona gets its own minted dev user, so one persona's threads can
     never surface in another's reply, and every chip gets its own conversation id
@@ -395,7 +395,7 @@ async def run_follow(rows: list[tuple[str, object]], api_url: str, turns: int) -
 async def _grade_all(collected: list[Graded]) -> None:
     """Judge every collected reply, a few at a time, writing verdicts in place.
 
-    A judge that fails leaves ``verdict`` as None and is reported as ungraded
+    A judge that fails leaves verdict as None and is reported as ungraded
     rather than scored zero: a provider blip is not the agent getting it wrong,
     and averaging it in as a 0 would understate the prompt.
     """

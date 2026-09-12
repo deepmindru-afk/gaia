@@ -1,7 +1,7 @@
 """Repository for the workflow_executions collection.
 
-Identity is the business key ``execution_id`` (Mongo's ``_id`` is an incidental
-ObjectId). A global repository: completion is keyed by ``execution_id`` alone
+Identity is the business key execution_id (Mongo's _id is an incidental
+ObjectId). A global repository: completion is keyed by execution_id alone
 with no user in context, while history listing filters by workflow + user.
 """
 
@@ -36,8 +36,8 @@ class WorkflowExecutionsRepository(
         conversation_id: str | None = None,
         trace: list[RecordedCall] | None = None,
     ) -> WorkflowExecutionDocument | None:
-        """Mark an execution finished, computing its duration from ``started_at``.
-        Returns the updated document, or ``None`` if the execution was not found."""
+        """Mark an execution finished, computing its duration from started_at.
+        Returns the updated document, or None if the execution was not found."""
         execution = await self.get(execution_id)
         if execution is None:
             return None
@@ -70,7 +70,7 @@ class WorkflowExecutionsRepository(
         hiding the last one that had something to say. A FAILED run counts: it
         ran steps with side effects before it stopped, and hiding it would show
         the next run the fire before, which then repeats them. The brief and
-        ``$last_run`` both carry the status, so a reader can tell.
+        $last_run both carry the status, so a reader can tell.
         """
         rows = await self._find(
             {

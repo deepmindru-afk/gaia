@@ -1,11 +1,11 @@
-"""The Composio SDK call `connect_account` actually makes.
+"""The Composio SDK call connect_account actually makes.
 
-Every other test of this path mocks `self.composio`, so they pass whatever the
+Every other test of this path mocks self.composio, so they pass whatever the
 SDK's real signature is — including after it changes under us. These bind GAIA's
 call against the installed SDK instead, which is the only thing here that fails
 when Composio moves the contract.
 
-`link()` replaced `initiate()`: the legacy `POST /api/v3/connected_accounts`
+link() replaced initiate(): the legacy POST /api/v3/connected_accounts
 behind initiate() is retired for Composio-managed OAuth (cutover 2026-07-03),
 after which the SDK raises ComposioLegacyConnectedAccountsEndpointRetiredError.
 
@@ -62,7 +62,7 @@ class TestConnectAccountSdkContract:
 
 
 class TestDeadConnectionStatusContract:
-    """`constants.integrations.DEAD_CONNECTION_STATUSES` expires an integration on
+    """constants.integrations.DEAD_CONNECTION_STATUSES expires an integration on
     EXPIRED/REVOKED/FAILED. If Composio renames one of those, the webhook stops
     matching and silently never expires anything — the failure mode is silence,
     so only a binding against the real enum catches it."""
@@ -84,7 +84,7 @@ class TestDeadConnectionStatusContract:
 
 
 class TestConnectionExpiredEventContract:
-    """The endpoint routes on `is_connection_expired_event(body)` before building
+    """The endpoint routes on is_connection_expired_event(body) before building
     any model, so a renamed event name would fall through to the trigger path
     instead of erroring."""
 

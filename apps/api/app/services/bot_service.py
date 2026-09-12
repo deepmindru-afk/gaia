@@ -1,4 +1,4 @@
-"""Bot Service
+"""Bot Service.
 
 Business logic for bot chat sessions, rate limiting, and conversation management.
 """
@@ -71,21 +71,21 @@ class BotService:
     def build_session_key(platform: str, platform_user_id: str, channel_id: str | None) -> str:
         """The one key a (platform, user, channel) conversation lives under.
 
-        No ``channel_id`` means "the user's DM" — all a backend-originated
+        No channel_id means "the user's DM" — all a backend-originated
         delivery knows, since it resolves its destination from the platform link
-        (``outbound_delivery._resolve_destination`` returns the platform user id)
+        (outbound_delivery._resolve_destination returns the platform user id)
         rather than from an inbound chat. A DM therefore has to key off the
         platform user id, which is exactly what Telegram sends as the chat id for
-        a private chat: ``ctx.chat.id == ctx.from.id`` there.
+        a private chat: ctx.chat.id == ctx.from.id there.
 
-        This used to key an absent channel as the literal ``"dm"``, so one
-        Telegram DM lived under two keys — ``telegram:<id>:<id>`` from the chat
-        and ``telegram:<id>:dm`` from workflow delivery — and the user's chat
+        This used to key an absent channel as the literal "dm", so one
+        Telegram DM lived under two keys — telegram:<id>:<id> from the chat
+        and telegram:<id>:dm from workflow delivery — and the user's chat
         forked into a second conversation carrying none of the history.
 
         Discord and Slack DM channel ids are NOT the user id, so an inbound DM
         there must not key off its channel: the bot flags those messages as DMs
-        and ``get_or_create_session`` drops the channel id before keying, which
+        and get_or_create_session drops the channel id before keying, which
         lands them here on the user-id form a backend-originated delivery also
         produces. The flag lives with the bot because a DM-channel key is
         indistinguishable from a guild/channel key server-side.
@@ -100,8 +100,8 @@ class BotService:
 
         Discord and Slack DMs used to key off the DM channel id, which differs
         from the user id there, so the same DM forked: inbound chat under
-        ``platform:<user>:<dm-channel>``, workflow delivery under
-        ``platform:<user>:<user>``. Now that the bot flags DMs, the first
+        platform:<user>:<dm-channel>, workflow delivery under
+        platform:<user>:<user>. Now that the bot flags DMs, the first
         flagged message finds the channel-keyed row and merges it onto the
         canonical key — rename when the canonical key is free, otherwise the
         more recently used conversation wins. Runs at most once per DM: after
@@ -294,7 +294,7 @@ async def build_bot_message_request(
 async def charge_bot_turn(user_id: str, body: BotChatRequest) -> None:
     """Charge quota/budget for one bot turn and record its submission event.
 
-    Mirrors what the web chat endpoint charges via ``@tiered_rate_limit``, done
+    Mirrors what the web chat endpoint charges via @tiered_rate_limit, done
     manually since the caller here has no authenticated request to decorate.
     """
     # Can't be a decorator: the caller is resolved from a platform link, so

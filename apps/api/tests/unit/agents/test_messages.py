@@ -10,7 +10,7 @@ dynamic-context message; volatile per-turn content (memory recall, knowledge,
 skills, todos) lives in an optional memory-recall message. Both are built by
 the shared context-assembly module. The current-time HumanMessage is appended
 LAST so minute ticks never shift the cacheable prefix. These tests exercise the
-orchestration — they patch ``create_system_message`` and ``assemble_context``
+orchestration — they patch create_system_message and assemble_context
 and verify the assembled message list.
 """
 
@@ -48,7 +48,7 @@ def _patches(
     reply_msg: str = "Reply context\n\noriginal",
     files_str: str = "",
 ) -> dict[str, Any]:
-    """Bundle context-manager patches for the helpers `construct_langchain_messages` calls."""
+    """Bundle context-manager patches for the helpers construct_langchain_messages calls."""
     return {
         "create_system": patch(
             "app.agents.core.messages.create_system_message",
@@ -236,8 +236,8 @@ class TestConstructLangchainMessages:
 
     @pytest.mark.asyncio
     async def test_source_passed_to_static_prompt_selector(self) -> None:
-        """The per-channel static prompt is selected via the ``source`` kwarg
-        on ``create_system_message``. Different sources must produce different
+        """The per-channel static prompt is selected via the source kwarg
+        on create_system_message. Different sources must produce different
         static prompts (OpenUI on web, platform restrictions on WhatsApp).
         """
         p = _patches()
@@ -614,7 +614,7 @@ class TestTheOnboardingProbeSeesTheUsersActualMessage:
 
 
 class TestAnOnboardingTurnKeepsBothItsPromptAndTheUsersIdentity:
-    """The onboarding prompt used to be stamped ``memory_message`` — the stable
+    """The onboarding prompt used to be stamped memory_message — the stable
     block's OWN marker — and emitted after it, so the single-occupant slot kept
     the prompt and dropped the identity block. Every onboarding turn reached the
     model with no user name, timezone, preferences or integrations manifest,
@@ -657,7 +657,7 @@ class TestAnOnboardingTurnKeepsBothItsPromptAndTheUsersIdentity:
 
     @pytest.mark.asyncio
     async def test_the_prompt_does_not_claim_the_stable_blocks_slot(self) -> None:
-        """Carrying ``memory_message`` is what made it evict identity; the
+        """Carrying memory_message is what made it evict identity; the
         pruning node keeps only the latest holder of that marker."""
         (onboarding,) = [
             m for m in await self._run() if m.additional_kwargs.get(ONBOARDING_MARKER) is True

@@ -1,8 +1,8 @@
 """Nightly sweep that retires expired memories.
 
-``forget_after`` used to be a read-time filter only. Nothing ever wrote the
+forget_after used to be a read-time filter only. Nothing ever wrote the
 expiry back, so an expired row stayed in the folder tree, in the free-plan
-live count, in the ``/workspace/memory`` projection and in the rendered
+live count, in the /workspace/memory projection and in the rendered
 agenda — visible everywhere except recall. This task is what makes an expiry
 actually happen, and repairs the derived state of the users it touched.
 """

@@ -7,7 +7,7 @@ agent graph with a Redis stream writer for tool events, then finalizes:
   1. Signal the executor-done event so any waiting chat stream can close
      its SSE.
   2. Route the terminal outcome through exactly one delivery entry point
-     (``deliver_result`` for finished runs, ``persist_cancelled_run`` for
+     (deliver_result for finished runs, persist_cancelled_run for
      cancelled runs that self-own their tool_data — see result_delivery).
   3. For queued runs, tear down the session and close the stream.
   4. Hand the busy lock to the next queued task, or release it.
@@ -87,18 +87,18 @@ async def run_executor_background(
     """Run (or resume) the executor agent in background and hand its result to delivery.
 
     Designed for asyncio.create_task(). Never raises — all exceptions
-    caught and routed through comms as an ``<executor_error>`` message.
+    caught and routed through comms as an <executor_error> message.
 
     Tool events stream live to the SSE consumer during execution. When
     execution finishes, _finalize_executor_run signals completion, delivers
     the result, and hands off the queue lock.
 
-    ``resume`` continues a thread paused on a HIL approval. A run that pauses
-    ends with ``result_type == "paused"``: it has no result to deliver and it
+    resume continues a thread paused on a HIL approval. A run that pauses
+    ends with result_type == "paused": it has no result to deliver and it
     keeps the busy lock, because the thread has pending work and no other task
     may run on it until the approval resolves.
 
-    Inherits `langfuse_trace_id` from the parent's `configurable` so this run's
+    Inherits langfuse_trace_id from the parent's configurable so this run's
     LLM/tool spans land on the same Langfuse trace as comms.
     """
     # This task outlives the spawning request/turn (queued, resumed and
@@ -213,7 +213,7 @@ async def _record_pause(
 
 
 class _ExecutorResult(NamedTuple):
-    """One executor run's terminal shape; ``paused_on`` holds the approval id(s)
+    """One executor run's terminal shape; paused_on holds the approval id(s)
     when the run stopped on a HIL interrupt instead of finishing — one for a
     gate pause, several for a wait_for_subagents batch pause."""
 
@@ -240,13 +240,13 @@ async def _execute_executor(
     resume: Command | None = None,
 ) -> _ExecutorResult:
     """Run the executor agent graph once. Never raises — errors come back as
-    ``_ExecutorResult(text, "error")``.
+    _ExecutorResult(text, "error").
 
     Tool events stream to the session's collector via make_redis_stream_writer
     so the terminal path can persist the executor's tool_data.
 
     The executor inherits the comms agent's model/provider/reasoning from
-    ``configurable`` (free -> Gemini, paid -> MiniMax M3), so no override here.
+    configurable (free -> Gemini, paid -> MiniMax M3), so no override here.
     """
     try:
         ctx, error = await prepare_executor_execution(
@@ -433,7 +433,7 @@ async def _finalize_paused_run(run: ExecutorRun) -> None:
 
     Deliberately does NOT deliver a result, drain the queue, or release the busy
     lock. The executor thread is checkpointed with pending work, so no other task
-    may run on it — the lock stays held until ``resolve_approval`` resumes this
+    may run on it — the lock stays held until resolve_approval resumes this
     thread and that run's normal finalize drains the queue. Redis outlives the
     process, so the lock survives a restart exactly as the checkpoint does.
 
@@ -469,9 +469,9 @@ async def _finalize_paused_run(run: ExecutorRun) -> None:
 
 @dataclass(frozen=True)
 class TerminalOutcome:
-    """The terminal facts of one executor run, as ``_finalize_run`` snapshotted them.
+    """The terminal facts of one executor run, as _finalize_run snapshotted them.
 
-    ``tool_data`` is ``None`` for a live run, whose cards the comms stream owns.
+    tool_data is None for a live run, whose cards the comms stream owns.
     """
 
     result_text: str
@@ -491,7 +491,7 @@ async def _deliver_terminal_outcome(
     A cancelled run's already-streamed cards must not vanish: self-owning runs
     (queued / background workflow) persist them here, while live runs defer to
     the comms path's attach step (persisting here too would duplicate cards) —
-    which is what a ``None`` snapshot means. A completed run with text narrates
+    which is what a None snapshot means. A completed run with text narrates
     and delivers.
     """
     if outcome.was_cancelled:
@@ -524,13 +524,13 @@ async def _publish_voice_tts(
     """Push the narrated answer on a voice-mode stream so the agent can speak it
     AND bubble it.
 
-    The frame carries the saved message's ``message_id`` so the voice agent can
+    The frame carries the saved message's message_id so the voice agent can
     forward it as a display frame keyed by that id: the bubble then renders
     immediately off the data channel instead of waiting on the separate
-    WebSocket push from ``deliver_result``, and that same WebSocket message
+    WebSocket push from deliver_result, and that same WebSocket message
     (identical id) reconciles in place rather than duplicating. Only live
     streams are ever marked voice mode, so queued/workflow runs never reach here
-    with ``session.voice_mode`` set.
+    with session.voice_mode set.
     """
     if not notification_text:
         return
@@ -546,7 +546,7 @@ async def _close_queued_stream(run: ExecutorRun, was_cancelled: bool) -> None:
     """Tear down a queued run's session and close the SSE stream it owns.
 
     Only queued runs own a stream the frontend subscribed to via
-    ``executor.stream_started``; live sessions are torn down by the chat path. A
+    executor.stream_started; live sessions are torn down by the chat path. A
     cancelled queued stream closes silently — the cancel already told the client
     — so no [DONE] / complete_stream.
     """

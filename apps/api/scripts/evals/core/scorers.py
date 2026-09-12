@@ -1,16 +1,16 @@
 """Deterministic Opik scorers for agent behavior.
 
-Each is an ``opik`` BaseMetric so it works both in ``evaluate()`` at
+Each is an opik BaseMetric so it works both in evaluate() at
 finalize-time and standalone. Score kwargs are matched against the flattened
 dataset-item keys ∪ task-output keys (opik semantics) — the bags are typed
-``object`` because opik injects them dynamically; each scorer validates at
+object because opik injects them dynamically; each scorer validates at
 its boundary (app/CLAUDE.md rule 8).
 
 Task outputs produced by the replay/run layer:
-- ``output``     — final assistant text
-- ``messages``   — [{role, content}] transcript
-- ``tool_calls`` — [{name, args}] executed tool calls
-- ``end_state``  — suite-provided world state after the run (e.g. todo rows)
+- output     — final assistant text
+- messages   — [{role, content}] transcript
+- tool_calls — [{name, args}] executed tool calls
+- end_state  — suite-provided world state after the run (e.g. todo rows)
 """
 
 from __future__ import annotations
@@ -32,18 +32,18 @@ JUDGE_TIMEOUT_S = 120.0
 class Gate(base_metric.BaseMetric):
     """Base for every scorer here: a metric that does NOT log itself as a trace.
 
-    ``BaseMetric`` defaults to ``track=True``, which wraps ``score()`` in
-    ``opik.track``. Called inside ``evaluate()`` that is harmless, but every gate
-    is also called directly by :mod:`.gates` on each case — and outside an Opik
-    context ``track`` has no parent to attach to, so it opens a TOP-LEVEL TRACE
-    named after the metric, in whatever project ``OPIK_PROJECT_NAME`` happens to
-    name. That is how ``gaia-memory`` accumulated 19,235 zero-cost traces called
-    ``end_state``, ``communicate`` and ``tool_call_correctness`` and only 104
+    BaseMetric defaults to track=True, which wraps score() in
+    opik.track. Called inside evaluate() that is harmless, but every gate
+    is also called directly by :mod:.gates on each case — and outside an Opik
+    context track has no parent to attach to, so it opens a TOP-LEVEL TRACE
+    named after the metric, in whatever project OPIK_PROJECT_NAME happens to
+    name. That is how gaia-memory accumulated 19,235 zero-cost traces called
+    end_state, communicate and tool_call_correctness and only 104
     real case traces: a 45-case suite buried under its own gate invocations.
 
-    A gate result is a feedback score on the case's trace (``log_case_trace``
+    A gate result is a feedback score on the case's trace (log_case_trace
     writes it there); it is not an execution worth tracing on its own. Inheriting
-    this instead of passing ``track=False`` at eleven call sites is deliberate —
+    this instead of passing track=False at eleven call sites is deliberate —
     the failure is silent and remote, so it must not be possible to forget.
     """
 
@@ -58,9 +58,9 @@ def _expected_of(expected: object) -> dict[str, object]:
 def _expected_list(expected: dict[str, object], key: str) -> list[str]:
     """A case's list-valued expectation, or empty when it is not a list.
 
-    The bag is typed ``object`` because the YAML behind it is user-written, and
-    iterating a scalar succeeds silently: ``must_not_call_tools: send_email``
-    yields the characters ``s``, ``e``, ``n``… so nothing ever matches a real
+    The bag is typed object because the YAML behind it is user-written, and
+    iterating a scalar succeeds silently: must_not_call_tools: send_email
+    yields the characters s, e, n… so nothing ever matches a real
     tool name and the gate is green whatever the agent called. An expectation
     written in the wrong shape must disable nothing.
     """
@@ -69,9 +69,9 @@ def _expected_list(expected: dict[str, object], key: str) -> list[str]:
 
 
 def _expected_entries(expected: dict[str, object], key: str) -> list[dict[str, object]]:
-    """A case's list-of-mappings expectation (``tool_calls``), narrowed.
+    """A case's list-of-mappings expectation (tool_calls), narrowed.
 
-    Same hazard as :func:`_expected_list`: the value arrives typed ``object``
+    Same hazard as :func:_expected_list: the value arrives typed object
     from user-written YAML, and iterating a scalar yields characters rather
     than failing.
     """
@@ -101,8 +101,8 @@ def _min_calls(entry: dict[str, object]) -> int:
 def _first_message_content(response: object) -> str:
     """The judge's reply text, or "" when the response carries no choice.
 
-    A malformed or filtered completion comes back with an empty ``choices``,
-    and indexing it raises ``IndexError`` out of the middle of scoring — which
+    A malformed or filtered completion comes back with an empty choices,
+    and indexing it raises IndexError out of the middle of scoring — which
     reads as a harness crash rather than as the judge failing to answer.
     """
     choices = getattr(response, "choices", None)
@@ -155,13 +155,13 @@ NOTHING_TO_INSPECT = "run produced no output and no tool calls — nothing to in
 
 
 def says(text: object, needle: str) -> bool:
-    """Whether ``text`` actually contains ``needle`` as a word, not a fragment.
+    """Whether text actually contains needle as a word, not a fragment.
 
-    Plain substring matching credits an agent for words it never said: ``"milk"``
-    is satisfied by ``"buttermilkshake"`` and ``"oat"`` by ``"coat"``. Word
+    Plain substring matching credits an agent for words it never said: "milk"
+    is satisfied by "buttermilkshake" and "oat" by "coat". Word
     boundaries are applied only where the needle begins/ends with a word
-    character, so assertions on times (``"06:45"``), money (``"2,450.75"``) and
-    addresses (``"priya@northwind.io"``) still match inside a sentence.
+    character, so assertions on times ("06:45"), money ("2,450.75") and
+    addresses ("priya@northwind.io") still match inside a sentence.
     """
     haystack = str(text or "").lower()
     target = needle.strip().lower()
@@ -180,11 +180,11 @@ def _arg_matches(actual: object, wanted: object) -> bool:
     * a **list** (labels, channels, recipients) — the value must be one of its
       entries, compared whole so "personal" does not match "personal-finance";
     * a **string** (titles, datetimes, locations) — the value must appear
-      inside it, so ``"06:45"`` matches ``"2027-01-09 06:45:00"`` without the
+      inside it, so "06:45" matches "2027-01-09 06:45:00" without the
       case having to pin down a datetime format the agent is free to choose;
     * **anything else** (numbers, booleans, None) — compared as a whole value,
-      never as a substring, so ``max_occurrences=10`` does not satisfy an
-      expectation of ``1``.
+      never as a substring, so max_occurrences=10 does not satisfy an
+      expectation of 1.
     """
     if isinstance(actual, list):
         return any(str(item).strip().lower() == str(wanted).strip().lower() for item in actual)
@@ -196,11 +196,11 @@ def _arg_matches(actual: object, wanted: object) -> bool:
 def validate_tool_expectations(case_id: str, expected: dict[str, object]) -> None:
     """Reject a tool expectation that no behaviour can fail.
 
-    ``min_calls: 0`` reads like "optional" but means "at least zero calls",
+    min_calls: 0 reads like "optional" but means "at least zero calls",
     which every possible run satisfies — a gate that is green before the agent
     has done anything. One shipped case carried it and was therefore incapable
     of failing. Absence is a real claim, but it belongs in
-    ``must_not_call_tools``, which can actually go red.
+    must_not_call_tools, which can actually go red.
     """
     for want in _expected_entries(expected, "tool_calls"):
         if _min_calls(want) < 1:
@@ -220,11 +220,11 @@ def _call_matches_args(call: dict[str, object], wanted: dict[str, object]) -> bo
 class ToolCallCorrectness(Gate):
     """Every expected tool call happened, with the arguments the case demands.
 
-    An expected entry is ``{tool, min_calls?, args?}``. The ``args`` check is
+    An expected entry is {tool, min_calls?, args?}. The args check is
     **opt-in**: an entry without it gates on the tool name and call count alone,
     which is what every case written before the check existed means. When
-    ``args`` is present, only calls carrying those argument values count towards
-    ``min_calls`` — so "compare Paris and Berlin" is not satisfied by looking up
+    args is present, only calls carrying those argument values count towards
+    min_calls — so "compare Paris and Berlin" is not satisfied by looking up
     Paris twice, and a reminder set for the wrong time fails a precision case
     instead of passing on the tool name.
     """
@@ -352,7 +352,7 @@ class CommunicateGate(Gate):
 class MustNotCommunicate(Gate):
     """None of the forbidden strings was said to the user.
 
-    The mirror of :class:`CommunicateGate`, and the only way to gate a leak:
+    The mirror of :class:CommunicateGate, and the only way to gate a leak:
     "did it say X" cannot express "it must never repeat the instruction an email
     smuggled into its context".
     """
@@ -387,7 +387,7 @@ class MustNotCommunicate(Gate):
 class NoForbiddenToolCalls(Gate):
     """None of the named tools was called.
 
-    :class:`ToolCallCorrectness` gates presence; absence is a different claim,
+    :class:ToolCallCorrectness gates presence; absence is a different claim,
     and the one every injection / exfiltration case actually makes.
     """
 
@@ -433,9 +433,9 @@ EXECUTOR_HANDOFF_TOOL = "call_executor"
 class DelegationGate(Gate):
     """The turn delegated to the executor exactly when it should have.
 
-    ``expected.delegation`` is ``required`` (real work — the comms agent holds no
+    expected.delegation is required (real work — the comms agent holds no
     work tools, so answering without delegating means the answer was invented) or
-    ``forbidden`` (small talk — delegating a greeting spends an executor run, a
+    forbidden (small talk — delegating a greeting spends an executor run, a
     model call and several seconds of latency on nothing).
     """
 
@@ -604,7 +604,7 @@ OPENUI_FENCE_OPENER = ":::openui"
 class OpenUICheck(Gate):
     """OpenUI fences present when expected, absent when not, and well-formed.
 
-    ``openui: false`` is a real claim — "no component belongs in this reply" —
+    openui: false is a real claim — "no component belongs in this reply" —
     and this branch used to return 1.0 without reading the output at all: a
     check that could not fail, carrying the authority of one that could. Neither
     the forgery sweep nor the inert check could see it, because it did produce a
@@ -800,7 +800,7 @@ class RubricJudge(Gate):
 def _parse_verdicts(reply: str, expected_count: int) -> tuple[list[int], list[str]]:
     """One verdict per CRITERION block, with the quote that justified it.
 
-    The old parser collected EVERY ``VERDICT: n`` in the reply and averaged
+    The old parser collected EVERY VERDICT: n in the reply and averaged
     them, while the prompt promised that only the final block counted — so a
     judge that reasoned "this looks like a 4... actually a 2" scored 3. Blocks
     are now split on CRITERION and the LAST verdict inside each block wins,

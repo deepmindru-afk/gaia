@@ -5,11 +5,11 @@ shape*, and the two bugs on either side of it are opposites:
 
 - A durable queue (the RabbitMQ predecessor) is competing-consumers: with N
   replicas each broadcast reached exactly ONE of them, so a user parked on any
-  other replica silently received nothing. ``test_every_replica_receives_it``
+  other replica silently received nothing. test_every_replica_receives_it
   pins the fan-out that replaced it.
 - Delivering locally *and* publishing means the publishing replica writes to its
   own sockets twice — once directly, once off its own subscription. Every other
-  replica still sees one. ``test_broadcast_writes_nothing_locally`` pins the
+  replica still sees one. test_broadcast_writes_nothing_locally pins the
   publish-only rule that prevents it; the asymmetry is what made it survive
   review, because a two-replica smoke test only shows it on one side.
 

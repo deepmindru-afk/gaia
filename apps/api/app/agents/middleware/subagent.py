@@ -1,10 +1,10 @@
 """SubagentMiddleware - Provides spawn_subagent tool for lightweight parallel task execution.
 
 A spawned subagent is a real compiled graph (see
-``app/agents/core/subagents/spawn_agent.py``), run imperatively on a disposable
+app/agents/core/subagents/spawn_agent.py), run imperatively on a disposable
 thread of its own. That is what gives it the full middleware stack — including
 the HIL gate, so a gated tool inside a spawn pauses for the user's approval and
-bubbles that pause up to the parent, exactly as ``handoff`` does.
+bubbles that pause up to the parent, exactly as handoff does.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -63,11 +63,11 @@ from shared.py.wide_events import log
 class SpawnGraphProvider(Protocol):
     """Compiles the graph a spawn runs on.
 
-    A Protocol rather than ``Callable[..., ...]`` because this is an injection
+    A Protocol rather than Callable[..., ...] because this is an injection
     seam: every call site passes these six by keyword, and an erased signature
-    turns a renamed or dropped argument into a runtime ``TypeError`` instead of a
-    type error. Satisfied by ``core.subagents.spawn_agent.get_spawn_graph``,
-    which is injected rather than imported (see :meth:`set_spawn_graph_provider`).
+    turns a renamed or dropped argument into a runtime TypeError instead of a
+    type error. Satisfied by core.subagents.spawn_agent.get_spawn_graph,
+    which is injected rather than imported (see :meth:set_spawn_graph_provider).
     """
 
     async def __call__(
@@ -83,7 +83,7 @@ class SpawnGraphProvider(Protocol):
 
 @dataclass(frozen=True)
 class SubagentMiddlewareConfig:
-    """Construction settings for :class:`SubagentMiddleware`.
+    """Construction settings for :class:SubagentMiddleware.
 
     One object rather than ten constructor arguments: these are all build-time
     wiring for the same middleware, and every field keeps the default the
@@ -277,9 +277,9 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
         """Run the graph, bubbling every HIL pause up to the parent.
 
         The spawn is invoked imperatively, so its GraphInterrupt never reaches the
-        parent's runtime — each pause is re-raised here with ``interrupt()``. A LOOP,
+        parent's runtime — each pause is re-raised here with interrupt(). A LOOP,
         not an if: one task can gate several destructive calls in sequence, and each
-        must suspend the parent again. ``resume_for_gate`` raises on the first pass and
+        must suspend the parent again. resume_for_gate raises on the first pass and
         returns that gate's own decision on the replay (matching the recovered park, not
         an earlier gate's already-applied decision).
         """
@@ -390,7 +390,7 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
     def set_spawn_graph_provider(self, provider: SpawnGraphProvider) -> None:
         """Wire the builder that compiles the graph a spawn runs on.
 
-        Injected rather than imported: the graph builder pulls in ``create_agent``,
+        Injected rather than imported: the graph builder pulls in create_agent,
         which imports this package, so importing it from here would close a cycle.
         """
         self._spawn_graph_provider = provider

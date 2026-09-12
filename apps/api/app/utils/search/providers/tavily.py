@@ -1,6 +1,6 @@
 """Tavily AI search (https://tavily.com) — booster (1k req/mo free).
 
-Uniquely returns an LLM-ready ``answer`` and inline images alongside results.
+Uniquely returns an LLM-ready answer and inline images alongside results.
 """
 
 import asyncio

@@ -51,7 +51,7 @@ def _elapsed_ms(start: float) -> float:
 async def _ensure_url_allowed(url: str) -> None:
     """SSRF guard for the agent-controlled fetch URL (delegates to the shared policy).
 
-    Raises ``FetchError`` if the URL isn't HTTP(S) or resolves to a non-public
+    Raises FetchError if the URL isn't HTTP(S) or resolves to a non-public
     address (loopback, private, link-local incl. cloud metadata, or reserved).
     """
     try:
@@ -61,7 +61,7 @@ async def _ensure_url_allowed(url: str) -> None:
 
 
 class WebpageFetcher(ABC):
-    """One webpage-fetching engine. ``fetch`` returns markdown or raises ``FetchError``."""
+    """One webpage-fetching engine. fetch returns markdown or raises FetchError."""
 
     name: str
 
@@ -71,7 +71,7 @@ class WebpageFetcher(ABC):
 
     @abstractmethod
     async def fetch(self, url: str) -> str:
-        """Render ``url`` to markdown, raising ``FetchError`` on failure."""
+        """Render url to markdown, raising FetchError on failure."""
 
 
 class Crawl4aiFetcher(WebpageFetcher):
@@ -189,7 +189,7 @@ async def _fetch_first_success(url: str, fetchers: list[WebpageFetcher] | None =
     """Try each configured engine in order, returning the first success.
 
     Records every engine attempt (outcome, latency, content length) in a single
-    ``webpage_fetch`` wide-event field, keyed by host for high-cardinality drill-down.
+    webpage_fetch wide-event field, keyed by host for high-cardinality drill-down.
     """
     fetchers = fetchers if fetchers is not None else _default_fetchers()
     host = urlparse(url).hostname or ""

@@ -1,15 +1,15 @@
 """True black-box E2E tests for the device bridge — driven only through the real
 wire protocol, exactly as a real user/device would:
 
-  * the ``gaia bridge`` daemon runs as a real Node subprocess (via ``tsx``, no
+  * the gaia bridge daemon runs as a real Node subprocess (via tsx, no
     build step) and does its own real pairing/token/WebSocket work — nothing
     about the daemon is mocked or called into directly from Python;
   * the "signed-in user" side (approve, list, test-connection, revoke) is
     driven by real HTTP calls against a real, live GAIA API instance (see
-    ``live_api_server`` in conftest.py) — no internal service-function calls;
+    live_api_server in conftest.py) — no internal service-function calls;
   * the local MCP server the daemon exposes is the real, official
-    ``@modelcontextprotocol/server-everything`` reference server, spawned by
-    the daemon over real stdio — not the built-in ``filesystem`` special case.
+    @modelcontextprotocol/server-everything reference server, spawned by
+    the daemon over real stdio — not the built-in filesystem special case.
 
 Direct Redis access is used in exactly two places, both called out inline,
 for states a real client genuinely cannot produce without waiting out a real
@@ -71,11 +71,11 @@ EVERYTHING_VERSION = "2026.8.18"
 
 @cache
 def _npm_cache_dir() -> str:
-    """Where ``everything_server_cached`` installs the server and finds it again.
+    """Where everything_server_cached installs the server and finds it again.
 
-    npm derives both its content cache and the ``_npx`` package directory from
-    ``HOME``, so leaving it implicit means the install and the lookup can land
-    in different places depending on whose ``HOME`` is set. Naming one real
+    npm derives both its content cache and the _npx package directory from
+    HOME, so leaving it implicit means the install and the lookup can land
+    in different places depending on whose HOME is set. Naming one real
     directory pins both ends of the fixture to the same install.
     """
     resolved = subprocess.run(
@@ -115,10 +115,10 @@ USER_CODE_TIMEOUT_SECONDS = 60.0
 def everything_server(entry: Path) -> dict:
     """The third-party stdio MCP server config the daemon is told to expose.
 
-    ``entry`` is the server's own entry script, resolved out of the npx cache by
-    ``everything_server_cached``, and it is spawned with ``node`` directly
-    rather than through ``npx``. This is inside the timed /api/v1/mcp/test
-    request, and ``npx`` is not free there: it is a whole extra Node process
+    entry is the server's own entry script, resolved out of the npx cache by
+    everything_server_cached, and it is spawned with node directly
+    rather than through npx. This is inside the timed /api/v1/mcp/test
+    request, and npx is not free there: it is a whole extra Node process
     that re-resolves the package before exec'ing the real one. Measured on the
     CI box, the gap between the tunnel opening the session and the server
     printing its banner was 5.3s idle and 9.4-15.2s under load — enough to put
@@ -137,8 +137,8 @@ def everything_server(entry: Path) -> dict:
 
 
 class BridgeDaemon:
-    """Drives the real ``gaia bridge`` CLI as a subprocess, isolated to a
-    scratch ``HOME`` so it can never touch a developer's real pairing.
+    """Drives the real gaia bridge CLI as a subprocess, isolated to a
+    scratch HOME so it can never touch a developer's real pairing.
     """
 
     def __init__(self, home: Path) -> None:
@@ -309,7 +309,7 @@ def everything_server_cached() -> Path:
     fetch rather than an approximation of one: the server sees EOF on its stdio
     transport and exits 0 on its own, so the package is installed by exactly the
     command a user would run. What the tests then spawn is the entry script this
-    resolves out of that install — see ``everything_server``.
+    resolves out of that install — see everything_server.
 
     A warm cache (the persistent home runner, a developer laptop) skips the npx
     step entirely: the pinned version is already on disk, and npx would only
@@ -353,7 +353,7 @@ def warm_cli() -> None:
     Two jobs, both learned from a CI failure whose only symptom was an empty
     transcript. It pays node's boot plus tsx's transpile of src/index.ts's whole
     import graph (every command is a static import — ink, react, simple-git,
-    execa, the MCP SDK — so `bridge login` loads all of it before printing
+    execa, the MCP SDK — so bridge login loads all of it before printing
     anything) outside the window the tests measure. And it turns an unrunnable
     CLI — tsx missing, a node_modules symlink dangling after a pnpm store move,
     a node/ABI mismatch — into a named failure here rather than a silent
@@ -518,15 +518,15 @@ class TestDaemonStartupDiagnostics:
     async def test_a_dead_login_child_is_reported_as_a_death_not_as_silence(
         self, tmp_path, warm_cli
     ):
-        """A `gaia bridge login` that exits must fail the wait immediately, naming
+        """A gaia bridge login that exits must fail the wait immediately, naming
         its exit code — not time out looking like a slow one.
 
-        This is the gap that cost two days of CI triage: `wait_connected` below
-        already checks `returncode is not None` and says "exited early", but
-        `wait_for_user_code` only ever reported the collected output, so a child
+        This is the gap that cost two days of CI triage: wait_connected below
+        already checks returncode is not None and says "exited early", but
+        wait_for_user_code only ever reported the collected output, so a child
         that died at 0.8s and a child still transpiling at 10s produced the same
         message. Pointing the CLI at a port nothing is listening on makes
-        `startPairing`'s fetch reject, which is a real, unmocked death of the
+        startPairing's fetch reject, which is a real, unmocked death of the
         real child process.
         """
         daemon = BridgeDaemon(tmp_path / "home")

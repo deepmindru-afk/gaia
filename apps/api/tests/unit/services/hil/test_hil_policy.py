@@ -2,12 +2,12 @@
 
 Three things decide whether a destructive call runs unattended, and each is attacked:
 
-* the user's mode and per-tool overrides (``resolve_policy`` / ``is_gated``);
-* the fail-open in ``_preferences``, which is only safe while HIL is off — it must
+* the user's mode and per-tool overrides (resolve_policy / is_gated);
+* the fail-open in _preferences, which is only safe while HIL is off — it must
   re-raise the moment the default becomes a gating mode;
-* ``has_pausing_sibling``, which suppresses auto-approval when a sibling call will
+* has_pausing_sibling, which suppresses auto-approval when a sibling call will
   pause the node — the guard that stopped one send becoming two. A sibling pauses
-  either at its own gate or, for ``HIL_PAUSING_TOOLS``, without ever being gated.
+  either at its own gate or, for HIL_PAUSING_TOOLS, without ever being gated.
 """
 
 from types import SimpleNamespace
@@ -38,7 +38,7 @@ def _quiet_log():
 def _registry_without_stamps():
     """Default registry for tests that don't care about forced-ask stamps:
     every tool looks up as unregistered (meta None → never always-gated).
-    Tests exercising the stamp patch ``get_tool_registry`` themselves."""
+    Tests exercising the stamp patch get_tool_registry themselves."""
     with patch(
         f"{MODULE}.get_tool_registry",
         new=AsyncMock(return_value=SimpleNamespace(get_tool_meta=lambda name: None)),
@@ -324,7 +324,7 @@ class TestHasPausingSibling:
     async def test_a_sibling_gated_by_its_arguments_suppresses_auto_approval(self) -> None:
         """The argument gate reads the sibling's OWN args.
 
-        ``manage_linked_account`` only pauses when it is disconnecting, so the
+        manage_linked_account only pauses when it is disconnecting, so the
         args have to travel with the name. Passing None (or the wrong key)
         makes a disconnect look like an ordinary call and auto-approve beside
         it.
@@ -382,7 +382,7 @@ class TestHasPausingSibling:
     async def test_a_siblings_arguments_reach_the_preference_gate(self) -> None:
         """In a gating mode, the per-sibling classification also gets the args.
 
-        ``is_gated`` re-checks the argument gate and can key on args itself, so
+        is_gated re-checks the argument gate and can key on args itself, so
         a scan that passed None there would classify every sibling as if it had
         been called bare.
         """
@@ -410,7 +410,7 @@ class TestHasPausingSibling:
         assert seen == [("delete_file", {"path": "/tmp/x"})]
 
     async def test_a_sibling_called_with_no_arguments_gates_on_none(self) -> None:
-        """An empty args dict is normalized to None, not passed as ``{}``.
+        """An empty args dict is normalized to None, not passed as {}.
 
         The gate treats "no arguments" as absent; forwarding a falsy dict makes
         the argument-gate checks read a value that was never supplied.

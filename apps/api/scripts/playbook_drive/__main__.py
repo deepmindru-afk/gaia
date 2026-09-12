@@ -1,7 +1,7 @@
 """Drive the playbook surface against a running stack with the scripted model.
 
 Boot the stack in sim mode first (the API with the dev auth bypass, the ARQ
-worker, and ``tools/llm-stub``; see the ``driving-gaia`` skill), then::
+worker, and tools/llm-stub; see the driving-gaia skill), then::
 
     cd apps/api
     uv run --group backend python -m scripts.playbook_drive --worker-log /path/to/worker.log

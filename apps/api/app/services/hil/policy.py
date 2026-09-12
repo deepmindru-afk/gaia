@@ -2,13 +2,13 @@
 
 This module answers two questions and nothing else, so the gate can stay about acting:
 
-1. **Is this tool gated?** ``is_gated`` — the user's per-tool override, else the
+1. **Is this tool gated?** is_gated — the user's per-tool override, else the
    destructive classification. This set is identical in both gating modes.
-2. **What happens to the gated set?** ``resolve_policy`` — ``ask`` (confirm with the
-   user) or ``auto`` (let the intent judge decide). ``always_allow`` gates nothing.
+2. **What happens to the gated set?** resolve_policy — ask (confirm with the
+   user) or auto (let the intent judge decide). always_allow gates nothing.
 
 Plus one guard that belongs with the policy because it *suppresses* auto-approval:
-``has_pausing_sibling`` — see its docstring for the double-execution it prevents.
+has_pausing_sibling — see its docstring for the double-execution it prevents.
 """
 
 from collections.abc import Mapping
@@ -41,16 +41,16 @@ ARGUMENT_GATED_TOOLS: dict[str, dict[str, object]] = {
 
 
 async def _stamp_registry() -> ToolRegistry | None:
-    """The registry the forced-ask stamp is read from, or ``None`` when unreachable.
+    """The registry the forced-ask stamp is read from, or None when unreachable.
 
-    The stamp is an ESCALATION, like an MCP ``destructiveHint``: its presence adds a
+    The stamp is an ESCALATION, like an MCP destructiveHint: its presence adds a
     reason to ask, its absence never clears a call. So an unreachable registry means
     "no stamp read", and the rest of the policy — the user's override, then
-    ``is_tool_destructive``, which already fails closed to gated — still decides.
+    is_tool_destructive, which already fails closed to gated — still decides.
 
-    Raising instead took the whole gate down with it: ``decide_tool_call`` fails
+    Raising instead took the whole gate down with it: decide_tool_call fails
     closed on ANY exception by DENYING the call outright, so a process where the
-    ``tool_registry`` provider was never registered (a bare xdist worker, a worker
+    tool_registry provider was never registered (a bare xdist worker, a worker
     that never ran app startup) silently refused every gated tool instead of asking
     the user — no approval card, no record, no way to say yes.
     """
@@ -131,7 +131,7 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
     """Whether another call in this same AI message can pause the run.
 
     If one can, this call cannot simply run and be done with it. The sibling will
-    ``interrupt()``, and LangGraph discards the writes of every task in that step and
+    interrupt(), and LangGraph discards the writes of every task in that step and
     replays them on resume — so a handler that ran before the pause runs a second time
     (verified: one send became two). Two callers act on that:
 
@@ -140,18 +140,18 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
       a call is the turn's only pausing action; several destructive actions in one turn
       are confirmed together, which is the behaviour worth having anyway.
     * **an ungated call** remembers its result under its tool_call_id, so the replay
-      reuses it rather than repeating the work (``gate._run_once_across_replays``).
+      reuses it rather than repeating the work (gate._run_once_across_replays).
 
     A sibling pauses in one of two ways. It is **gated**, and pauses at its own gate:
     siblings arrive as bare tool-call dicts, so each one's tool object is resolved from
     the registry, because classifying it must use the same description and MCP
-    ``destructiveHint`` its own gate will use. Classifying without them (a bare name, an
+    destructiveHint its own gate will use. Classifying without them (a bare name, an
     empty description) both under-detects the sibling — defeating the double-run guard
-    this exists for — and poisons the registry's name-keyed ``destructive`` flag, since an
+    this exists for — and poisons the registry's name-keyed destructive flag, since an
     unclassified tool's verdict is written back there for every later gate check to read.
 
-    Or it is **exempt but pausing** (``HIL_PAUSING_TOOLS``) — ``handoff`` bubbles up its
-    subagent's gate interrupt, ``wait_for_subagents`` interrupts for the parked-approval
+    Or it is **exempt but pausing** (HIL_PAUSING_TOOLS) — handoff bubbles up its
+    subagent's gate interrupt, wait_for_subagents interrupts for the parked-approval
     batch. Neither is ever gated, so skipping them as exempt would leave exactly the
     double-run this guard exists to prevent. Checked first, and by name alone, so the
     common case costs no preference or registry lookup.

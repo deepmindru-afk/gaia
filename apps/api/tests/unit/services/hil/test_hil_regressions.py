@@ -52,10 +52,10 @@ STORE = "app.services.hil.approvals_store"
 
 
 def snapshot(next_nodes: tuple[str, ...] = (), messages: list[Any] | None = None) -> Any:
-    """A LangGraph StateSnapshot as ``aget_state`` returns it.
+    """A LangGraph StateSnapshot as aget_state returns it.
 
-    A thread that never ran has no checkpoint: empty ``next`` AND empty ``values``. A
-    thread that FINISHED looks identical in ``next`` alone — which is the bug below.
+    A thread that never ran has no checkpoint: empty next AND empty values. A
+    thread that FINISHED looks identical in next alone — which is the bug below.
     """
     return SimpleNamespace(
         next=next_nodes,
@@ -73,11 +73,11 @@ def ctx_with(snap: Any) -> Any:
 
 
 class TestFinishedSubagentIsNotDrivenTwice:
-    """Bug: ``_parked_interrupt`` returned ``None`` for a thread that had FINISHED as well
+    """Bug: _parked_interrupt returned None for a thread that had FINISHED as well
     as one that had never run, so on an executor resume a completed blocking handoff was
     re-invoked from scratch — repeating every side effect its subagent had already caused.
 
-    Trigger: one AI message with ``handoff(...)`` plus a gated tool. The handoff completes,
+    Trigger: one AI message with handoff(...) plus a gated tool. The handoff completes,
     the gated tool pauses, and LangGraph re-runs the whole node on resume.
     """
 
@@ -134,7 +134,7 @@ class TestFinishedSubagentIsNotDrivenTwice:
 
 
 class TestJoinToolIsNeverGated:
-    """Bug: ``wait_for_subagents`` was absent from ``HIL_EXEMPT_TOOLS`` and is registered
+    """Bug: wait_for_subagents was absent from HIL_EXEMPT_TOOLS and is registered
     directly into the executor's tool dict rather than the ToolRegistry — so the gate sent
     it to the LLM destructive classifier, which fails CLOSED. A classifier outage would
     gate the very join that collects parked approvals.
@@ -165,8 +165,8 @@ class TestJoinToolIsNeverGated:
 
 
 class TestExemptSiblingsThatPauseSuppressAutoApproval:
-    """Bug: the sibling guard skipped every exempt tool, but ``handoff`` and
-    ``wait_for_subagents`` are exempt AND can pause. A gated tool sharing a message with
+    """Bug: the sibling guard skipped every exempt tool, but handoff and
+    wait_for_subagents are exempt AND can pause. A gated tool sharing a message with
     one of them auto-ran, then ran a SECOND time when the pause re-ran the whole node.
     """
 
@@ -260,7 +260,7 @@ class TestExemptSiblingsThatPauseSuppressAutoApproval:
 
 
 class TestAnAutoApprovedRecordStillHasToRun:
-    """``auto_approved`` means the user was not ASKED. It never meant the call ran.
+    """auto_approved means the user was not ASKED. It never meant the call ran.
 
     It used to: auto mode approved and executed in one pass, so a replay finding the
     record had to refuse (the action was irreversible and already done). Approvals are
@@ -315,7 +315,7 @@ class TestAPendingRecordParksInsteadOfRunning:
     The call must neither run nor be refused: it parks, and the run resumes when the
     decision lands. Its siblings are unaffected — LangGraph persists the writes of the
     tasks that completed in the interrupting step (see
-    ``tests/unit/agents/test_pause_checkpointing.py``), which is what makes pausing
+    tests/unit/agents/test_pause_checkpointing.py), which is what makes pausing
     here safe rather than a source of double-execution.
     """
 
@@ -371,11 +371,11 @@ class TestAPendingRecordParksInsteadOfRunning:
 
 
 class TestAResumeWithNoDecisionFailsClosed:
-    """The one path where ``interrupt()`` RETURNS instead of exiting the run.
+    """The one path where interrupt() RETURNS instead of exiting the run.
 
     On a replay LangGraph hands the resume value back rather than raising, so execution
     continues past the pause. Normally the decision is already on the record and the
-    call never reaches the pause again — ``resolve_approval`` marks the record decided
+    call never reaches the pause again — resolve_approval marks the record decided
     before it dispatches the resume. But the gate must not assume that: the resume value
     is a wake-up, not a decision, and treating "we were woken" as "the user said yes"
     would run an irreversible action nobody approved.
@@ -442,7 +442,7 @@ async def drain_spawned_tasks() -> None:
 
 class _ApprovalStore:
     """Stand-in for the approvals collection, keeping the one semantic that decides
-    this: ``pending -> decided`` is conditional, so it happens at most once."""
+    this: pending -> decided is conditional, so it happens at most once."""
 
     def __init__(self, *records: Any) -> None:
         self.records = {record.approval_id: record for record in records}

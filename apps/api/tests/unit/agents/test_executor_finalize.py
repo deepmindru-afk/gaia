@@ -316,11 +316,11 @@ class TestBackgroundRunCardsSurviveTheCommsDrain:
     """A scheduled workflow's tool cards must reach the bot message it saves.
 
     The comms silent path and the executor's delivery read the run's cards off
-    the SAME session. ``call_agent_silent`` waits on ``done_event``, drains, and
-    tears the session down in its ``finally`` — so a delivery that reads the
+    the SAME session. call_agent_silent waits on done_event, drains, and
+    tears the session down in its finally — so a delivery that reads the
     session AFTER signalling done finds nothing left. The symptom: a workflow
     run whose execution record listed every tool call saved a bot message with
-    an empty ``tool_data``, and the chat showed no "Used N tools" thread.
+    an empty tool_data, and the chat showed no "Used N tools" thread.
     """
 
     @staticmethod
@@ -357,7 +357,7 @@ class TestBackgroundRunCardsSurviveTheCommsDrain:
         run = _run(RunKind.LIVE, workflow_id="wf-1", source_category=SourceCategory.BG)
 
         async def comms_silent_path() -> None:
-            """What ``call_agent_silent`` does around a workflow's graph run."""
+            """What call_agent_silent does around a workflow's graph run."""
             await await_executor_done("s1")
             drain_executor_tool_data("s1")
             teardown_executor_capture("s1")
@@ -423,11 +423,11 @@ class TestQueueLockBugs:
 
 
 class TestRecordPause:
-    """``_record_pause`` must fail the run, never the process, when the write fails.
+    """_record_pause must fail the run, never the process, when the write fails.
 
     A batch pause with no resumable context is worse than an error: it holds the
     busy lock for its full TTL waiting on a resume that can never come. The
-    caller (``run_executor_background``) treats a False return as "fail this
+    caller (run_executor_background) treats a False return as "fail this
     run" — so a write failure here must surface as False, not an exception.
     """
 
@@ -482,7 +482,7 @@ class TestFinalizeDeliveryFailureDoesNotStrandQueue:
     ) -> None:
         """Swallowing the exception is deliberate — losing it is not.
 
-        ``log.error`` is what puts the failure in the wide event's ``errors[]``;
+        log.error is what puts the failure in the wide event's errors[];
         without the cause in it, a user whose result never arrived leaves an
         event that says the run finished cleanly.
         """
@@ -654,7 +654,7 @@ class TestTheBusyLockDoesNotOutliveTheResult:
 
 
 class TestTheCardNoteOnlyGoesWhereCardsRender:
-    """``returned_to_frontend`` tells comms "these items are already on screen,
+    """returned_to_frontend tells comms "these items are already on screen,
     don't re-type them". On a bot conversation there is no screen — the reply is
     plain text over the platform API — so the note suppresses the only copy of
     the data the user would ever see."""
@@ -719,7 +719,7 @@ class TestExecutorRunSource:
 
 class TestBuildRunItem:
     """The one serialized run-context shape, written by the queue and by the HIL
-    resume store and read back by ``prepare_run_from_item``. A renamed or dropped
+    resume store and read back by prepare_run_from_item. A renamed or dropped
     key here is invisible on write and only shows when a resumed run silently
     loses what a queued run kept."""
 
@@ -745,7 +745,7 @@ class TestBuildRunItem:
 
     def test_a_plain_enqueue_carries_no_bot_message_id(self) -> None:
         """Only a HIL pause sets it; a queued run must still carry the key, as
-        ``prepare_run_from_item`` reads it unconditionally."""
+        prepare_run_from_item reads it unconditionally."""
         item = build_run_item(
             task="t",
             configurable={"user_id": "user-1"},

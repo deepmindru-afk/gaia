@@ -1,6 +1,4 @@
-"""
-Clean and lean workflow models for GAIA workflow system.
-"""
+"""Clean and lean workflow models for GAIA workflow system."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -145,9 +143,9 @@ class TriggerConfig(BaseModel):
     ) -> datetime | None:
         """Calculate the next run time from the cron expression. Returns UTC.
 
-        The schedule runs in ``user_timezone`` if given, else the trigger's own
+        The schedule runs in user_timezone if given, else the trigger's own
         stored timezone, else UTC. Both accept IANA names or "+05:30" offsets.
-        ``get_next_run_time`` interprets the cron in that zone and returns UTC.
+        get_next_run_time interprets the cron in that zone and returns UTC.
         """
         if self.type != TriggerType.SCHEDULE or not self.cron_expression:
             return None
@@ -178,10 +176,10 @@ class TriggerConfig(BaseModel):
 
 
 class WorkflowCreator(TypedDict):
-    """The public-facing creator card built by ``format_creator``.
+    """The public-facing creator card built by format_creator.
 
-    A ``TypedDict``, not a model: it rides inside the untyped card dicts of
-    ``PublicWorkflowsResponse.workflows`` as well as ``Workflow.creator``, so it
+    A TypedDict, not a model: it rides inside the untyped card dicts of
+    PublicWorkflowsResponse.workflows as well as Workflow.creator, so it
     has to stay a plain dict on the wire for both.
     """
 
@@ -325,12 +323,12 @@ class Workflow(BaseScheduledTask, ResponseModel):
     def __init__(self, **data: Any) -> None:  # noqa: ANN401 -- framework contract
         """Initialize workflow with mapping from trigger_config to BaseScheduledTask fields.
 
-        ``**data`` stays ``Any``. Measured, don't re-litigate: ``**data: object``
-        produces 4 errors on the ``super().__init__(**data)`` below, because
-        BaseScheduledTask's generated ``__init__`` declares per-field types
-        (``str``, ``datetime``, ``ScheduledTaskStatus``, ``int``) that a
-        ``dict[str, object]`` bag cannot satisfy. The two "before" validators in
-        this module were narrowed to ``object`` and did not need it.
+        **data stays Any. Measured, don't re-litigate: **data: object
+        produces 4 errors on the super().__init__(**data) below, because
+        BaseScheduledTask's generated __init__ declares per-field types
+        (str, datetime, ScheduledTaskStatus, int) that a
+        dict[str, object] bag cannot satisfy. The two "before" validators in
+        this module were narrowed to object and did not need it.
         """
         # Ensure user_id is provided (it's required by BaseScheduledTask)
         if "user_id" not in data:
@@ -394,8 +392,8 @@ class Workflow(BaseScheduledTask, ResponseModel):
 
 
 class WorkflowWithIntegrations(Workflow):
-    """Read-time view of a workflow: the persisted `Workflow` plus its computed
-    integration requirements. Never persisted — the storage model is `Workflow`;
+    """Read-time view of a workflow: the persisted Workflow plus its computed
+    integration requirements. Never persisted — the storage model is Workflow;
     these fields are populated by the service on read paths only."""
 
     required_integrations: list[IntegrationRef] | None = Field(
@@ -526,7 +524,7 @@ class UpdateWorkflowRequest(BaseModel):
 
 
 def as_read_view(workflow: Workflow) -> WorkflowWithIntegrations:
-    """The wire shape of a workflow: a write path's plain ``Workflow`` widened
+    """The wire shape of a workflow: a write path's plain Workflow widened
     to the read view (its computed integration fields empty)."""
     if isinstance(workflow, WorkflowWithIntegrations):
         return workflow
@@ -600,7 +598,7 @@ class PublicWorkflowStep(ResponseModel):
 class PublicWorkflowCard(ResponseModel):
     """One marketplace card, as the community, explore and related lists emit it.
 
-    The three lists share this shape; ``categories`` and ``total_executions``
+    The three lists share this shape; categories and total_executions
     are set only where the list has them (explore, related) and are null on the
     others, so a consumer never has to guess which list a card came from.
     """
@@ -629,7 +627,7 @@ class PublicWorkflowCard(ResponseModel):
 
 
 def public_workflow_steps(row: "PublicWorkflowRow") -> list[PublicWorkflowStep]:
-    """The card's step summaries; an uncategorised step reads as ``general``."""
+    """The card's step summaries; an uncategorised step reads as general."""
     return [
         PublicWorkflowStep(
             id=step.id,
@@ -762,11 +760,11 @@ class GenerateWorkflowPromptResponse(BaseModel):
 
 
 class GeneratedPromptResult(TypedDict):
-    """What ``generate_workflow_prompt`` hands back to its two callers.
+    """What generate_workflow_prompt hands back to its two callers.
 
-    A ``TypedDict``, not the response model above (Type Safety item 6): the value
+    A TypedDict, not the response model above (Type Safety item 6): the value
     never crosses a validation boundary — the endpoint builds the response model
-    from it, and onboarding's ``_build_one_workflow`` reads the same two keys
+    from it, and onboarding's _build_one_workflow reads the same two keys
     off the dict. Being a plain dict at runtime keeps both call sites working
     untouched while mypy starts checking the keys.
     """
@@ -801,13 +799,13 @@ class PlaybookDiscard(BaseModel):
 class WorkflowDocument(Workflow, MongoDocument):
     """A workflow as stored in MongoDB.
 
-    Identity is the string business key ``id`` (persisted as ``_id``; the two are
-    equal ``wf_…`` UUIDs). Extends ``Workflow`` so it doubles as the read model —
-    the service wraps it in ``WorkflowWithIntegrations`` only to attach computed
-    integration fields. ``extra="ignore"`` (from ``MongoDocument``) tolerates
-    legacy stray fields; the ISO-string ``created_at``/``scheduled_at`` values a
+    Identity is the string business key id (persisted as _id; the two are
+    equal wf_… UUIDs). Extends Workflow so it doubles as the read model —
+    the service wraps it in WorkflowWithIntegrations only to attach computed
+    integration fields. extra="ignore" (from MongoDocument) tolerates
+    legacy stray fields; the ISO-string created_at/scheduled_at values a
     handful of legacy rows still carry are coerced to tz-aware datetimes by the
-    inherited ``BaseScheduledTask`` validators.
+    inherited BaseScheduledTask validators.
     """
 
     # Resolve the ``Workflow.id`` (``str | None``, alias ``_id``) vs
@@ -849,11 +847,11 @@ class WorkflowCreatorInfo(BaseModel):
 
 class PublicWorkflowRow(WorkflowDocument):
     """A workflow read from a public-marketplace aggregation: the persisted
-    ``WorkflowDocument`` plus the joined ``creator_info`` array.
+    WorkflowDocument plus the joined creator_info array.
 
-    ``creator_info`` and ``use_case_categories`` are ``exclude``d from
-    serialization so a row handed straight back as a ``WorkflowResponse.workflow``
-    (the single ``get_public`` path) emits exactly the ``Workflow`` shape — the
+    creator_info and use_case_categories are excluded from
+    serialization so a row handed straight back as a WorkflowResponse.workflow
+    (the single get_public path) emits exactly the Workflow shape — the
     join scaffolding never leaks into the response. The list paths
     (community/explore/related) read these attributes to hand-build their dict
     payloads and never serialize the row itself.
@@ -900,9 +898,9 @@ class WorkflowUpdate(BaseModel):
 
 
 class _Unset:
-    """Sentinel for a ``WorkflowRearm`` field that was not provided — distinct
-    from an explicit ``None``, which the recovery scan legitimately writes (a
-    reaped non-recurring workflow clears its ``scheduled_at``)."""
+    """Sentinel for a WorkflowRearm field that was not provided — distinct
+    from an explicit None, which the recovery scan legitimately writes (a
+    reaped non-recurring workflow clears its scheduled_at)."""
 
 
 UNSET = _Unset()
@@ -910,13 +908,13 @@ UNSET = _Unset()
 
 @dataclass(slots=True, frozen=True)
 class WorkflowRearm:
-    """Optional re-arm fields for ``WorkflowsRepository.set_status``.
+    """Optional re-arm fields for WorkflowsRepository.set_status.
 
-    ``scheduled_at``/``next_run`` (written as ``trigger_config.next_run``) default
-    to the ``UNSET`` sentinel because ``None`` is a meaningful value the recovery
-    scan writes — an omitted field is left untouched, an explicit ``None`` clears
-    it. ``occurrence_count``/``repeat`` are only set when provided (they never
-    need clearing to ``None``).
+    scheduled_at/next_run (written as trigger_config.next_run) default
+    to the UNSET sentinel because None is a meaningful value the recovery
+    scan writes — an omitted field is left untouched, an explicit None clears
+    it. occurrence_count/repeat are only set when provided (they never
+    need clearing to None).
     """
 
     scheduled_at: datetime | _Unset | None = UNSET
@@ -928,7 +926,7 @@ class WorkflowRearm:
 @dataclass(slots=True, frozen=True)
 class SystemWorkflowDefinition:
     """A system workflow's canonical definition, re-applied in full by
-    ``WorkflowsRepository.reset_system_workflow``."""
+    WorkflowsRepository.reset_system_workflow."""
 
     title: str
     description: str

@@ -1,9 +1,9 @@
-"""Repository for the ``integrations`` collection.
+"""Repository for the integrations collection.
 
 Global (non-user-scoped) catalog of custom + community MCP integrations. Identity
-is the business key ``integration_id`` (unique index); the Mongo ``_id`` (ObjectId)
+is the business key integration_id (unique index); the Mongo _id (ObjectId)
 is incidental and dropped on read. Timestamps are not auto-stamped — the collection
-leaves ``updated_at`` unset on insert and only ``update_custom`` writes it, so the
+leaves updated_at unset on insert and only update_custom writes it, so the
 repository mirrors that on-disk reality rather than stamping every write.
 """
 
@@ -43,7 +43,7 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
     async def find_by_id_prefix_or_name(self, search: str) -> Integration | None:
         """Resolve a partial id or exact name to an integration.
 
-        Matches ``integration_id`` by case-insensitive prefix, or ``name`` by
+        Matches integration_id by case-insensitive prefix, or name by
         case-insensitive exact match — the disambiguation used by handoff/agent
         metadata lookups where the caller may hold either a short id or a name.
         """
@@ -58,7 +58,7 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
         )
 
     async def find_by_id_prefix(self, prefix: str) -> Integration | None:
-        """Resolve a partial ``integration_id`` (case-insensitive prefix) to an integration."""
+        """Resolve a partial integration_id (case-insensitive prefix) to an integration."""
         escaped = re.escape(prefix)
         return await self._find_one({"integration_id": {"$regex": f"^{escaped}", "$options": "i"}})
 
@@ -71,13 +71,13 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
         return await self._find_one({"integration_id": integration_id, "source": "custom"})
 
     async def get_custom_for_user(self, integration_id: str, user_id: str) -> Integration | None:
-        """A custom integration owned by ``user_id`` — the creator-only edit guard."""
+        """A custom integration owned by user_id — the creator-only edit guard."""
         return await self._find_one(
             {"integration_id": integration_id, "source": "custom", "created_by": user_id}
         )
 
     async def delete_custom(self, integration_id: str, created_by: str) -> bool:
-        """Delete a custom integration only if ``created_by`` owns it (creator-only)."""
+        """Delete a custom integration only if created_by owns it (creator-only)."""
         return await self._remove(
             integration_id, REPO_GLOBAL_SCOPE, {"source": "custom", "created_by": created_by}
         )
@@ -143,8 +143,8 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
     ) -> None:
         """Sync the legacy top-level auth mirror to match the authoritative mcp_config.
 
-        Writes the ad-hoc ``requires_auth`` / ``auth_type`` document-root fields that
-        predate mcp_config; kept as a raw ``$set`` because they are not part of the
+        Writes the ad-hoc requires_auth / auth_type document-root fields that
+        predate mcp_config; kept as a raw $set because they are not part of the
         typed update surface."""
         await self._apply_raw_update_unfetched(
             {"integration_id": integration_id},
@@ -160,9 +160,9 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
         """Join each integration's creator (name/picture) from the users collection.
 
         The single canonical creator-lookup, folded in from the two divergent copies
-        that used to live in integration_helpers and integration_service. ``created_by``
-        holds a user's ObjectId-as-string; ``$convert`` tolerates a missing/invalid
-        value (``creator`` becomes ``None``) rather than failing the pipeline.
+        that used to live in integration_helpers and integration_service. created_by
+        holds a user's ObjectId-as-string; $convert tolerates a missing/invalid
+        value (creator becomes None) rather than failing the pipeline.
         """
         return [
             {
@@ -208,7 +208,7 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
         return results[0] if results else None
 
     async def get_public_by_id_prefix(self, short_id: str) -> IntegrationWithCreator | None:
-        """A published integration by ``integration_id`` prefix (legacy hash slugs),
+        """A published integration by integration_id prefix (legacy hash slugs),
         with creator info joined."""
         escaped = re.escape(short_id)
         results = await self._aggregate(
@@ -410,7 +410,7 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
         """Upsert the stored tool metadata for an integration (creating a tools-only
         stub document if the integration doc does not exist yet).
 
-        Uses the unfetched upsert: a tools-only stub is not a full ``Integration``,
+        Uses the unfetched upsert: a tools-only stub is not a full Integration,
         so it must never be read back through model validation.
         """
         await self._apply_raw_update_unfetched(

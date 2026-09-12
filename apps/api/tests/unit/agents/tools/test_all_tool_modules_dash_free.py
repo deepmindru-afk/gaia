@@ -1,34 +1,34 @@
 """Every model-visible tool string must stay dash-free.
 
-Mirrors ``tests/unit/agents/prompts/test_all_prompt_modules_dash_free.py`` for
-``app.agents.tools`` and the Composio custom-tools package: these modules do
+Mirrors tests/unit/agents/prompts/test_all_prompt_modules_dash_free.py for
+app.agents.tools and the Composio custom-tools package: these modules do
 not export their model-visible text as plain module-level string constants
-(they build it as ``@tool`` descriptions, ``Annotated`` parameter
+(they build it as @tool descriptions, Annotated parameter
 descriptions, and f-strings assembled inside a tool's body and returned to
 the model), so a different discovery strategy is needed per surface:
 
-1. **Bound tool objects** — every module-level ``BaseTool`` created by the
-   ``@tool`` decorator has a ``.description`` (the function's docstring) and
-   an ``args_schema`` whose fields each carry the ``Annotated[...,
-   "description"]`` text. Both are read verbatim by the model.
+1. **Bound tool objects** — every module-level BaseTool created by the
+   @tool decorator has a .description (the function's docstring) and
+   an args_schema whose fields each carry the Annotated[...,
+   "description"] text. Both are read verbatim by the model.
 2. **Module-level string constants** — the same convention as the prompts
-   guard: any public module-level ``str`` (docstring templates, error
+   guard: any public module-level str (docstring templates, error
    fragments) that a tool assembles into its return value.
 3. **Return-value source scan** — the two categories above miss text that
    only exists inside an f-string or a plain string literal *inside* a
-   function body (e.g. ``return f"Already known — matched..."``). Walking
+   function body (e.g. return f"Already known — matched..."). Walking
    bound values can't see that; it was never assigned to a name. Instead this
    scans the AST of every tool module and flags any string literal that
-   appears textually inside a function decorated with ``@tool`` (the
+   appears textually inside a function decorated with @tool (the
    decorator that makes the docstring/return value model-visible) or a
    function whose name matches a "returns to the model" naming heuristic.
    This is intentionally coarse: it does not trace whether a given literal
-   inside a ``@tool`` function is actually returned versus, say, a comment
+   inside a @tool function is actually returned versus, say, a comment
    equivalent (a log message string, an internal-only branch) — logging
-   calls are excluded (see ``_LOG_CALL_NAMES``) but everything else inside a
-   ``@tool`` function body is treated as model-visible, because that is
+   calls are excluded (see _LOG_CALL_NAMES) but everything else inside a
+   @tool function body is treated as model-visible, because that is
    exactly the shape of the bug this guard exists to catch (memory_tools.py
-   lines 358 and 712: a plain string literal deep inside a ``@tool``
+   lines 358 and 712: a plain string literal deep inside a @tool
    function's body, invisible to any constant-walking approach).
 """
 
@@ -87,7 +87,7 @@ MODULE_NAMES = _discover_module_names()
 
 
 def _bound_tools(module: ModuleType) -> dict[str, BaseTool]:
-    """Every module-level ``BaseTool`` instance (the result of ``@tool``)."""
+    """Every module-level BaseTool instance (the result of @tool)."""
     return {name: value for name, value in vars(module).items() if isinstance(value, BaseTool)}
 
 
@@ -108,7 +108,7 @@ def _tool_offenders(bound_tool: BaseTool) -> list[tuple[str, str]]:
 
 
 def _string_constants(module: ModuleType) -> dict[str, str]:
-    """Every public module-level ``str`` constant."""
+    """Every public module-level str constant."""
     return {
         name: value
         for name, value in vars(module).items()

@@ -1,17 +1,17 @@
 """record_platform_delivery must actually land in a REAL comms thread.
 
 The unit tests for the platform-delivery feature mock the graph, so they never
-ran the real ``aupdate_state`` write — which is exactly how the bug shipped: the
-write used ``as_node="agent"``, whose ``should_continue`` branch needs a ``store``
-that ``aupdate_state`` cannot inject, so every checkpoint write raised
+ran the real aupdate_state write — which is exactly how the bug shipped: the
+write used as_node="agent", whose should_continue branch needs a store
+that aupdate_state cannot inject, so every checkpoint write raised
 "Missing required config key 'store'" and was swallowed (best-effort). Workflow
 AND reminder results were being delivered to platforms but never recorded, so
 GAIA had no memory of them on the next turn — the very thing the feature exists
 to fix.
 
-This test drives ``record_platform_delivery`` against the real compiled comms
+This test drives record_platform_delivery against the real compiled comms
 graph and asserts the frame is present in the thread the next turn reads. It
-goes red if the write reverts to ``as_node="agent"``.
+goes red if the write reverts to as_node="agent".
 """
 
 from __future__ import annotations

@@ -368,7 +368,7 @@ class MemoryKind(StrEnum):
 class MemoryShelfLife(StrEnum):
     """How long an extracted assertion stays true — decides where it is stored.
 
-    ``TASK`` and ``JOURNAL`` never reach the memories table: the extractor uses
+    TASK and JOURNAL never reach the memories table: the extractor uses
     them to route a commitment to the agenda and an event (or something GAIA
     itself produced) to the journal, instead of freezing either as a fact.
     """

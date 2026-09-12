@@ -1,6 +1,6 @@
 """A Composio custom-tool body executing through the real dispatch chain.
 
-Nothing in the repo has ever run one. ``test_send_email_flow`` mocks the whole
+Nothing in the repo has ever run one. test_send_email_flow mocks the whole
 service, and the unit tests stop at registration — so the code between "the
 model picked a tool" and "the provider was called" was entirely unexercised:
 argument validation, the auth-credentials fetch that fires on *every*
@@ -9,12 +9,12 @@ invocation, and the tool body itself.
 Three seams have to be stubbed to run offline, and the plan (§2.8) is explicit
 that missing any one of them still reaches the network:
 
-* **A — proxy**: ``proxy_client._get_composio`` (gmail, calendar, docs, notion…)
-* **B — hosted execute**: ``execute_tool``, patched **at each importing module**
-  because consumers do ``from … import execute_tool`` and the name is bound at
-  the call site — patching ``context_utils.execute_tool`` silently no-ops
-* **C — dispatch**: ``CustomTool.__get_auth_credentials``, which calls
-  ``connected_accounts.list`` before every single tool body runs
+* **A — proxy**: proxy_client._get_composio (gmail, calendar, docs, notion…)
+* **B — hosted execute**: execute_tool, patched **at each importing module**
+  because consumers do from … import execute_tool and the name is bound at
+  the call site — patching context_utils.execute_tool silently no-ops
+* **C — dispatch**: CustomTool.__get_auth_credentials, which calls
+  connected_accounts.list before every single tool body runs
 
 Seam C is the one people miss: stub A alone and the call still goes out.
 """
@@ -50,7 +50,7 @@ def tools() -> dict[str, Any]:
 def gathered(tools):
     """Notion's context tool, with seam C stubbed and seam B recorded.
 
-    Notion is the sample because its body goes through ``execute_tool`` (seam B)
+    Notion is the sample because its body goes through execute_tool (seam B)
     — the hosted-execute path shared by github, slack, todoist and asana.
     """
     tool = tools["NOTION_CUSTOM_GATHER_CONTEXT"]
@@ -70,7 +70,7 @@ def gathered(tools):
 
 class TestABodyActuallyRuns:
     def test_the_tool_body_executes_and_returns_its_own_shape(self, gathered):
-        """End to end through ``invoke_trusted``: arguments validated, auth
+        """End to end through invoke_trusted: arguments validated, auth
         fetched, body run, result returned. Not a mock of the service — the
         real registered function."""
         tool, _, calls = gathered
@@ -102,8 +102,8 @@ class TestABodyActuallyRuns:
 
 class TestSeamC:
     def test_auth_is_fetched_on_every_single_invocation(self, gathered):
-        """The seam people miss. ``__get_auth_credentials`` calls
-        ``connected_accounts.list`` before each body runs, so a test that stubs
+        """The seam people miss. __get_auth_credentials calls
+        connected_accounts.list before each body runs, so a test that stubs
         only the proxy still makes a live API call per tool call — and a suite
         that does it under load gets rate-limited rather than failing cleanly."""
         tool, seam_c, _ = gathered
@@ -144,7 +144,7 @@ class TestSeamC:
 
 class TestArgumentHandling:
     def test_model_authored_arguments_are_validated_before_the_body_runs(self, tools):
-        """``invoke_trusted`` validates through the request model, and it must
+        """invoke_trusted validates through the request model, and it must
         reject BEFORE the body runs — otherwise malformed LLM-authored JSON
         reaches the provider and the failure surfaces as whatever the API
         happens to do with it.
@@ -192,7 +192,7 @@ class TestArgumentHandling:
             tool.invoke_trusted(user_id=USER, request_kwargs={})
 
     def test_a_user_id_in_the_models_arguments_cannot_override_the_real_one(self, gathered):
-        """A security property the SDK documents and nothing tested. ``user_id``
+        """A security property the SDK documents and nothing tested. user_id
         is a separate parameter precisely so an LLM cannot smuggle one into the
         arguments — if it could, a prompt injection would read another user's
         Notion workspace."""

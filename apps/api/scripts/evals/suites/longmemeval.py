@@ -29,10 +29,10 @@ DEFAULT_CASE_TIMEOUT_S = 420.0
 
 
 def _case_timeout_s() -> float:
-    """Per-question wall clock, overridable via ``EVALS_CASE_TIMEOUT_S``.
+    """Per-question wall clock, overridable via EVALS_CASE_TIMEOUT_S.
 
-    A non-numeric value fails here, by name, rather than as a bare ``ValueError``
-    from ``float()`` half a run into a suite.
+    A non-numeric value fails here, by name, rather than as a bare ValueError
+    from float() half a run into a suite.
     """
     raw = os.environ.get("EVALS_CASE_TIMEOUT_S")
     if raw is None:
@@ -202,7 +202,7 @@ class LongMemEvalSuite(Suite):
     async def _ensure_backend(self, tracker: EvalCostTracker) -> None:
         """Register the memory backend once per run, then prove it is reachable.
 
-        Registration must NOT repeat per case: ``providers.register`` replaces the
+        Registration must NOT repeat per case: providers.register replaces the
         LazyLoader, so re-registering discards the live engine (leaking its pool)
         and forces every case to rebuild one. Once Postgres goes away, that rebuild
         fails and the swallowed failure surfaces as a bare "engine not available"

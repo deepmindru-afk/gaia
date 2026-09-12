@@ -1,5 +1,5 @@
 """
-Bot Authentication Middleware
+Bot Authentication Middleware.
 
 Handles authentication for bot platforms (Discord, Slack, Telegram).
 Supports two authentication methods:

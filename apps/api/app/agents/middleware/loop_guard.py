@@ -4,7 +4,7 @@ Detects a model stuck retrying a failing tool call and nudges it to change
 strategy. Two failure signals are tracked per run:
 
 - Identical failures: the same tool called with the same arguments keeps
-  returning ``status="error"``. Almost always a genuine dead end (bad URL,
+  returning status="error". Almost always a genuine dead end (bad URL,
   missing permission) the model is blind to.
 - Same-tool failures: one tool fails repeatedly across the run regardless of
   arguments — a weaker signal that the chosen approach isn't working.
@@ -13,12 +13,12 @@ Behaviour is escalating:
 
 - At the warn thresholds, a short note is appended to the error ToolMessage so
   the model sees, in-band, that it is looping and should change course.
-- In ``hard_stop`` mode (silent / workflow runs, where no human is watching to
+- In hard_stop mode (silent / workflow runs, where no human is watching to
   interrupt a runaway), once the stop thresholds are hit the offending tool is
   no longer executed at all — a synthetic error is returned instead, capping
   wasted tool calls and cost.
 
-Counters are keyed by the run's ``thread_id`` (not the middleware instance),
+Counters are keyed by the run's thread_id (not the middleware instance),
 because the graph — and therefore this middleware — is a per-process singleton
 cached by the lazy provider; per-instance dicts would otherwise leak failures
 across unrelated runs and users. A bounded LRU over recent threads keeps memory
@@ -56,7 +56,7 @@ _UNKNOWN_RUN = "unknown"
 
 
 class _RunCounters:
-    """Failure tallies for a single run (one ``thread_id``)."""
+    """Failure tallies for a single run (one thread_id)."""
 
     __slots__ = ("identical", "last_call_key", "last_failure_key", "per_tool", "repeat")
 
@@ -78,7 +78,7 @@ class _RunCounters:
 
 
 class LoopGuardMiddleware(AgentMiddleware):
-    """Nudge (or, in ``hard_stop`` mode, halt) a model looping on a failing tool.
+    """Nudge (or, in hard_stop mode, halt) a model looping on a failing tool.
 
     Usage::
 

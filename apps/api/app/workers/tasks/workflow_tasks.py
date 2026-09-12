@@ -327,7 +327,7 @@ async def process_workflow_generation_task(
 
 
 async def _completed_onboarding(user_id: str) -> bool:
-    """Whether the user submitted the onboarding wizard (``onboarding.completed``)."""
+    """Whether the user submitted the onboarding wizard (onboarding.completed)."""
     user = await user_repository.get(user_id)
     return bool(user and user.onboarding and user.onboarding.completed)
 
@@ -340,7 +340,7 @@ async def _rearm_if_scheduled(
     Only scheduler-originated fires (trigger_type=schedule) advance the schedule;
     manual and integration-triggered runs must not shift it. A workflow deactivated
     while a fire was in flight must not be re-armed back into the scheduled loop —
-    liveness is governed by `activated`.
+    liveness is governed by activated.
     """
     if workflow is None or not workflow.repeat or not workflow.activated:
         return
@@ -468,7 +468,7 @@ async def _limit_notice_already_sent(workflow: Workflow) -> bool:
 
     One production thread ended on six identical limit notices: the wall is one
     fact per day, so it is worth one message per day. The gate lives with the
-    workflow entity (``claim_limit_notice``); the run itself is still skipped
+    workflow entity (claim_limit_notice); the run itself is still skipped
     and re-armed either way.
     """
     return not await workflow_repository.claim_limit_notice(workflow.user_id, workflow.id)
@@ -577,8 +577,8 @@ async def _record_execution_failure(
 ) -> None:
     """Close out a failed run: mark the execution record, bump the failure count
     and notify the user. Every step is best-effort — none of this bookkeeping
-    may mask ``error``. The error itself is recorded on the wide event by the
-    caller's except block (this helper is bookkeeping only). ``record`` carries
+    may mask error. The error itself is recorded on the wide event by the
+    caller's except block (this helper is bookkeeping only). record carries
     what the fire had already done before it failed, so the next fire reads it
     as history instead of repeating it."""
     if execution_id:
@@ -761,7 +761,7 @@ async def _run_workflow(
     """Run the fire on whichever path can carry it. Returns the conversation, the
     trace, and the summary the execution record should carry.
 
-    A playbook is replayed only while its ``workflow_hash`` still matches the
+    A playbook is replayed only while its workflow_hash still matches the
     workflow: the frozen sequence answered one particular prompt and set of
     steps, so a user edit makes it an answer to a question nobody asked. A
     replay that stops partway hands the rest to the agent WITH its own record,
@@ -888,7 +888,7 @@ async def _notify_replay_finished(
 ) -> None:
     """Deliver a finished replay exactly as the executor path delivers an agent
     run: into the user's linked platforms, then the in-app heads-up. Gated on
-    ``notify_on_completion`` like that path; best-effort like that path."""
+    notify_on_completion like that path; best-effort like that path."""
     if not workflow.notify_on_completion:
         log.info(
             f"{LogTag.WORKER} Replay completion notification skipped (workflow is silent)",
@@ -969,7 +969,7 @@ async def _finish_after_replay(
     the deterministic check or the narration) hands the fire to the agent WITH
     its record, so the user gets one result per fire and never a confident
     wrong brief. Suspect outcomes accumulate on the playbook; at
-    ``PLAYBOOK_SUSPECT_STREAK_LIMIT`` it is dropped before the agent runs, so
+    PLAYBOOK_SUSPECT_STREAK_LIMIT it is dropped before the agent runs, so
     that run is asked to author afresh rather than to heal.
     """
     workflow, workflow_id, context, user = fire.workflow, fire.workflow_id, fire.context, fire.user
@@ -1185,7 +1185,7 @@ async def _admit_fire(
 async def _drain_trigger_events(
     batch_key: str | None, context: dict[str, Any] | None, workflow_id: str
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Take the coalesced batch; returns ``(context, skip_reason)``.
+    """Take the coalesced batch; returns (context, skip_reason).
 
     An empty take means another run already drained these events and there is
     nothing left to do. A Redis outage leaves the buffer intact — the returned
@@ -1456,9 +1456,7 @@ async def execute_workflow_by_id(
     workflow_id: str,
     context: dict[str, Any] | None = None,
 ) -> str:
-    """
-    Execute a workflow by ID with proper execution count tracking.
-    """
+    """Execute a workflow by ID with proper execution count tracking."""
     log.set(workflow_id=workflow_id)
     actual_fire_utc = datetime.now(UTC)
     log.set(actual_fire_utc=actual_fire_utc.isoformat())
@@ -1605,8 +1603,8 @@ async def _resolve_workflow_user(workflow: Workflow, user_id: str) -> Authentica
     There is no request header here (ARQ worker), so prefer the real profile
     zone; fall back to the workflow's own schedule zone before UTC so a missing
     or poisoned profile doesn't silently run hours off. Both run paths read the
-    zone off ``user_data["timezone"]`` — the agent through ``build_agent_config``,
-    the replay through ``$now`` / ``$today``.
+    zone off user_data["timezone"] — the agent through build_agent_config,
+    the replay through $now / $today.
     """
     try:
         # The legacy bridge dict is a spread of a validated UserDocument plus
@@ -1663,16 +1661,16 @@ async def execute_workflow_as_playbook(
     """Replay the workflow's playbook in its conversation.
 
     Returns the conversation id and the replay's own report. A stopped replay is
-    NOT an exception: it comes back with ``ok=False`` so the caller can hand the
+    NOT an exception: it comes back with ok=False so the caller can hand the
     rest of the run to the agent knowing exactly what already happened. The
     turn itself is written by the caller once the outcome is recorded, because
     how the text is labelled depends on that outcome.
 
     The replay holds the conversation's executor busy lock for its whole
-    duration — the same lock ``call_executor`` takes for an agentic run — so
+    duration — the same lock call_executor takes for an agentic run — so
     two fires of one workflow can never replay at once, and a replay can never
     run alongside an agentic run of the same workflow. A held lock raises
-    :class:`WorkflowFireOverlapped` before any step runs; nothing waits and
+    :class:WorkflowFireOverlapped before any step runs; nothing waits and
     nothing is queued.
     """
     user_id = user["user_id"]
@@ -1728,10 +1726,10 @@ async def execute_workflow_as_chat(
     """Run a workflow as a silent chat turn; return its conversation id and trace.
 
     The workflow is fed to the agent exactly like an interactive chat turn (same
-    ``call_agent_silent`` entry, same ``selectedWorkflow`` awareness). Comms
+    call_agent_silent entry, same selectedWorkflow awareness). Comms
     delegates the whole workflow to the executor, which runs every step and
     synthesizes one result. That result is delivered as the workflow-completion
-    notification from the background executor path (gated by ``workflow_id`` in
+    notification from the background executor path (gated by workflow_id in
     the trigger context), so this function only kicks off the run and persists
     the trigger message; it does not build or send the result here.
 

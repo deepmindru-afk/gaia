@@ -1,6 +1,6 @@
 """Deactivating a user's workflows once their Dodo subscription lapses.
 
-Mirrors ``test_integration_pause.py``: goes through ``WorkflowService`` so a
+Mirrors test_integration_pause.py: goes through WorkflowService so a
 deactivation also unregisters the workflow's Composio trigger upstream, not
 just flips a local flag.
 """
@@ -117,7 +117,7 @@ class TestDeactivateWorkflowsForLapsedSubscription:
 
     async def test_rerunning_after_success_deactivates_nothing_again(self) -> None:
         """Idempotency: once a workflow is deactivated it is no longer
-        ``activated``, so a second sweep for the same user finds nothing left."""
+        activated, so a second sweep for the same user finds nothing left."""
         with (
             patch(f"{MODULE}.workflow_repository") as repo,
             patch(f"{MODULE}.WorkflowService") as service,
@@ -242,7 +242,7 @@ class TestReactivateWorkflowsForRestoredSubscription:
         """Two workflows reactivated in one sweep must return 2, not a flag
         reset to 1 on each success — the count feeds the summary log and is
         exactly the kind of bug an increment-vs-assign typo introduces
-        silently (mirrors ``reactivated += 1`` vs ``reactivated = 1``)."""
+        silently (mirrors reactivated += 1 vs reactivated = 1)."""
         first = _workflow("wf-1", activated=False)
         second = _workflow("wf-2", activated=False)
 

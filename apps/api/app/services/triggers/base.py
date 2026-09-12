@@ -29,9 +29,9 @@ from shared.py.wide_events import TriggerContext, log
 class TriggerEventResult(TypedDict):
     """What dispatching one webhook event reported.
 
-    ``status`` is ``Literal["success"]`` because the dispatch genuinely has no
+    status is Literal["success"] because the dispatch genuinely has no
     failure return: a workflow that cannot be queued is logged and counted out of
-    ``message``, never surfaced here. The webhook endpoint discards this value
+    message, never surfaced here. The webhook endpoint discards this value
     (the call is fire-and-forget), so it is an in-process contract, not a wire one.
     """
 
@@ -42,7 +42,7 @@ class TriggerEventResult(TypedDict):
 def _parse_event_start_utc(data: dict[str, Any]) -> datetime | None:
     """Best-effort extraction of an event's start time as a UTC datetime.
 
-    Handles Composio/Google payloads that may ship `start_time` as an ISO-8601
+    Handles Composio/Google payloads that may ship start_time as an ISO-8601
     string with or without offset. Returns None when the field is absent or
     unparseable — callers should skip lag instrumentation in that case.
     """
@@ -110,7 +110,7 @@ class TriggerHandler(ABC):
 
     @property
     def registers_instances(self) -> bool:
-        """Whether ``register`` returns per-owner Composio trigger instance ids.
+        """Whether register returns per-owner Composio trigger instance ids.
 
         False for account-level triggers, which Composio fires on the connected
         account itself: there is no per-owner instance to register, so the only
@@ -316,12 +316,12 @@ class TriggerHandler(ABC):
 
         Supports cascading dropdowns by accepting parent_ids to filter children.
 
-        ``Sequence`` (not ``list``) because ``list`` is invariant: handlers that
+        Sequence (not list) because list is invariant: handlers that
         only ever produce flat options override this returning
-        ``list[TriggerOption]``.
+        list[TriggerOption].
 
         Returns:
-            Flat options, or ``TriggerOptionGroup``s for cascading dropdowns.
+            Flat options, or TriggerOptionGroups for cascading dropdowns.
             Empty when no dynamic options are available.
         """
         return []

@@ -1,6 +1,4 @@
-"""
-Workflow conversation service for managing single conversations per workflow.
-"""
+"""Workflow conversation service for managing single conversations per workflow."""
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -159,9 +157,9 @@ def _playbook_plan(steps: Sequence[PlaybookStep]) -> list[str]:
 async def build_playbook_tool_data(
     trace: Sequence[RecordedCall], user_id: str, playbook: PlaybookDocument
 ) -> list[ToolDataEntry]:
-    """Replayed calls in the shape ``drain_executor_tool_data`` yields.
+    """Replayed calls in the shape drain_executor_tool_data yields.
 
-    Built through ``format_tool_call_entry`` rather than by hand so a card's
+    Built through format_tool_call_entry rather than by hand so a card's
     category, icon and display name are resolved by the one function the live
     stream uses. The synthetic call ids exist only to carry each result back
     onto its own entry through the same backfill the live path runs.

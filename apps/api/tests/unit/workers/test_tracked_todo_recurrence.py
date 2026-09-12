@@ -1,14 +1,14 @@
 """Unit tests for tracked_todo recurrence + timezone resolution.
 
 Covers the recently-refactored timezone code paths in
-``app.workers.tasks.tracked_todo_tasks``:
+app.workers.tasks.tracked_todo_tasks:
 
-- ``_compute_next_run`` now evaluates cron in ``recurrence_tz`` via the
-  canonical ``get_next_run_time``, parsing the zone with ``Timezone.parse`` so a
-  stored ``±HH:MM`` offset no longer crashes ``ZoneInfo`` and silently falls
+- _compute_next_run now evaluates cron in recurrence_tz via the
+  canonical get_next_run_time, parsing the zone with Timezone.parse so a
+  stored ±HH:MM offset no longer crashes ZoneInfo and silently falls
   back to UTC (the regression this fix closed).
-- ``_load_user_with_tz`` resolves the user's home zone via ``Timezone.parse``
-  and falls back to ``Timezone.utc()`` on a missing user or exception.
+- _load_user_with_tz resolves the user's home zone via Timezone.parse
+  and falls back to Timezone.utc() on a missing user or exception.
 """
 
 from datetime import UTC, datetime, timedelta

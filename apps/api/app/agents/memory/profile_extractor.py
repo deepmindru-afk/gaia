@@ -34,9 +34,9 @@ class PlatformConfig(TypedDict):
     """How one platform is recognised in email and turned into a profile URL.
 
     A TypedDict rather than a model: this is a hardcoded in-process table, so it
-    crosses no validation boundary. Naming it is what lets ``url_template`` and
-    ``regex_pattern`` read back as ``str`` — inferred, the table's value type
-    collapses to ``str | list[str]`` and every read of it needs a cast.
+    crosses no validation boundary. Naming it is what lets url_template and
+    regex_pattern read back as str — inferred, the table's value type
+    collapses to str | list[str] and every read of it needs a cast.
     """
 
     #: Sender domains whose mail identifies this platform (e.g. "notify.twitter.com").
@@ -254,7 +254,7 @@ async def _write_debug_json(platform: str, kind: str, payload: dict[str, Any]) -
     """Dump a debug payload beside this module when DEBUG_EMAIL_PROCESSING is on.
 
     The write runs in a worker thread: this is called from the async extraction
-    path, and a plain ``open()`` there blocks the event loop (ASYNC230). It was
+    path, and a plain open() there blocks the event loop (ASYNC230). It was
     also the same eight lines written three times, once per debug artefact.
     """
     if not settings.DEBUG_EMAIL_PROCESSING:

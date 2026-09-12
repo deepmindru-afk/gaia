@@ -17,11 +17,11 @@ LINEAR_TOOLKIT = "LINEAR"
 
 
 def history_label_names(raw: object) -> list[str]:
-    """Label names off an issue-history entry's ``addedLabels``/``removedLabels``.
+    """Label names off an issue-history entry's addedLabels/removedLabels.
 
-    Accepts both a plain ``[{id, name}]`` list and a ``{"nodes": [...]}``
-    connection. ``QUERY_ISSUE_HISTORY`` selects ``addedLabels { id name }``,
-    which implies a list — a connection would need ``{ nodes { ... } }`` — but
+    Accepts both a plain [{id, name}] list and a {"nodes": [...]}
+    connection. QUERY_ISSUE_HISTORY selects addedLabels { id name },
+    which implies a list — a connection would need { nodes { ... } } — but
     Linear's published schema could not be confirmed for this field, so both
     shapes are handled rather than one guessed at. Anything else yields no
     labels instead of raising.
@@ -44,7 +44,7 @@ def graphql_request(
     Args:
         query: GraphQL query or mutation string
         variables: Optional variables for the query
-        auth_credentials: Auth credentials dict; must contain `user_id`
+        auth_credentials: Auth credentials dict; must contain user_id
 
     Returns:
         The 'data' field from the GraphQL response

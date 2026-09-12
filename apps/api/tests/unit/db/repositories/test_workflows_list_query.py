@@ -1,7 +1,7 @@
-"""``WorkflowsRepository``'s shared list predicate — what "a user's workflows" means.
+"""WorkflowsRepository's shared list predicate — what "a user's workflows" means.
 
-``list_for_user`` and ``count_for_user`` answer the same question in two shapes,
-so they share ``_list_query``: a page and its reported total must never come from
+list_for_user and count_for_user answer the same question in two shapes,
+so they share _list_query: a page and its reported total must never come from
 different filters. Both exclusions are opt-in per caller and the defaults differ
 between them, which is exactly the kind of thing a service test that mocks the
 repository cannot see — so the filter handed to the driver is asserted here.
@@ -92,8 +92,8 @@ class TestCountForUser:
     async def test_a_workflow_predating_the_flag_still_counts_as_the_user_s(
         self, repo: WorkflowsRepository, collection: MagicMock
     ) -> None:
-        """``$ne`` rather than ``False``: rows written before ``is_system_workflow``
-        existed carry no such field, and ``{"is_system_workflow": False}`` would
+        """$ne rather than False: rows written before is_system_workflow
+        existed carry no such field, and {"is_system_workflow": False} would
         exclude every one of them — a user with only old workflows would be told
         they have never created one."""
         await repo.count_for_user(USER_ID, exclude_system_workflows=True)

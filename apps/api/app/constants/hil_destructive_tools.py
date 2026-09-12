@@ -7,10 +7,10 @@ by any later tool call or UI action. Three buckets qualify:
   3. Financial actions (pay / purchase / checkout).
 Reversible actions — trash/archive, create/update/edit, follow/like/star/react,
 labels, internal comments, reads — are NOT listed. Each integration references its
-constant via ``destructive_tools=`` in ``app/config/oauth_config.py``; the registry
-stamps ``Tool.destructive`` from it. A present (possibly empty) list = reviewed:
+constant via destructive_tools= in app/config/oauth_config.py; the registry
+stamps Tool.destructive from it. A present (possibly empty) list = reviewed:
 exactly those gate, every other tool in the toolkit is safe. These are the DEFAULT
-gated set; users override per tool via HIL ``tool_overrides``.
+gated set; users override per tool via HIL tool_overrides.
 """
 
 GOOGLECALENDAR_DESTRUCTIVE_TOOLS: list[str] = [

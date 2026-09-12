@@ -383,7 +383,7 @@ async def run(api_url: str, only: str | None) -> None:
 
 
 async def _grade_all(collected: list[Graded]) -> None:
-    """A judge that fails leaves ``verdict`` None: a provider blip is not a
+    """A judge that fails leaves verdict None: a provider blip is not a
     behavioural miss, and averaging it in as 0 would understate the prompt."""
     semaphore = asyncio.Semaphore(JUDGE_CONCURRENCY)
 

@@ -10,7 +10,7 @@ Key Components:
 - WorkspaceArchivingSummarizationMiddleware: Archives history to the
   persistent workspace before summarization
 - WorkspaceCompactionMiddleware: Persists large tool outputs to the
-  persistent workspace and replaces them with a `/workspace/...` reference
+  persistent workspace and replaces them with a /workspace/... reference
 - create_middleware_stack: Factory function to create the standard middleware stack
 
 Usage in build_graph.py:

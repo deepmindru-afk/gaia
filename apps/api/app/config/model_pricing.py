@@ -1,10 +1,10 @@
 """Model pricing for token cost calculation — the rate card ships in code.
 
-Pricing previously lived in the ``ai_models`` Mongo collection, synced by hand
-via ``scripts/seed_models.py``. Nothing enforced the sync, so prod drifted: the
+Pricing previously lived in the ai_models Mongo collection, synced by hand
+via scripts/seed_models.py. Nothing enforced the sync, so prod drifted: the
 vision/memory model's row went missing and every one of its calls was priced at
 DEFAULT_PRICING (~10x its real input rate) with only an error log to show for
-it. Models are constants in ``constants/llm.py``; their prices now live beside
+it. Models are constants in constants/llm.py; their prices now live beside
 them, so a rate changes in the same reviewed deploy as the model id, and the
 unit suite fails if a runtime-referenced model has no rate.
 """
@@ -69,7 +69,7 @@ MODEL_PRICING: dict[str, ModelPricing] = {
 
 
 def get_model_pricing(model_name: str) -> ModelPricing:
-    """The rate card for ``model_name``, or DEFAULT_PRICING — loudly — when the
+    """The rate card for model_name, or DEFAULT_PRICING — loudly — when the
     id was never registered above."""
     pricing = MODEL_PRICING.get(model_name)
     if pricing is not None:
@@ -91,10 +91,10 @@ def calculate_token_cost(
 ) -> dict[str, float]:
     """Calculate the cost in USD for token usage.
 
-    ``input_tokens`` is the total prompt size; ``cached_tokens`` is the
+    input_tokens is the total prompt size; cached_tokens is the
     subset that hit the provider's prompt cache (billed at the discounted
-    rate). Returns ``input_cost`` (uncached portion only),
-    ``cached_input_cost``, ``output_cost`` and ``total_cost``.
+    rate). Returns input_cost (uncached portion only),
+    cached_input_cost, output_cost and total_cost.
     """
     pricing = get_model_pricing(model_name)
 

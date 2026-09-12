@@ -1,6 +1,6 @@
 """The prompt-cache guarantee the whole slot ordering exists to protect.
 
-Every ordering decision in ``PromptSlot`` — the clock at the tail of contents,
+Every ordering decision in PromptSlot — the clock at the tail of contents,
 volatile sections after stable ones, one message per slot — exists to keep the
 request prefix byte-identical across turns so the provider's implicit cache can
 match it. Nothing asserted that it actually did.

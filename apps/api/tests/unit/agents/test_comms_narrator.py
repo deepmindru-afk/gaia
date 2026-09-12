@@ -70,8 +70,8 @@ class TestNarrateExecutorResult:
         assert config["configurable"]["conversation_id"] == CONVERSATION_ID
 
     async def test_the_users_onboarding_data_reaches_build_agent_config(self) -> None:
-        """``build_agent_config`` runs for real here (unmocked) — proves the
-        (preferences, writing_style) pair extracted from ``user["onboarding"]``
+        """build_agent_config runs for real here (unmocked) — proves the
+        (preferences, writing_style) pair extracted from user["onboarding"]
         actually lands on the configurable this narration run carries, not just
         that the extraction call doesn't crash."""
         user_with_onboarding = {

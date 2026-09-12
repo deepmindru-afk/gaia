@@ -174,7 +174,7 @@ class TestBudget:
         assert any(MEDIA_EVICTED_NOTICE in str(m.content) for m in out)
 
     def test_exactly_at_the_budget_nothing_is_evicted(self):
-        """Boundary: `>=` vs `>` in the budget check."""
+        """Boundary: >= vs > in the budget check."""
         msgs = [_tool_msg(_img(str(i)), call_id=f"c{i}") for i in range(MAX_INLINE_MEDIA_BLOCKS)]
 
         out = MediaAdapter(MediaDelivery.KEEP_IN_TOOL_RESULTS).adapt(msgs)

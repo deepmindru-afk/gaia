@@ -1,23 +1,23 @@
 """
 LLM Call Accounting Middleware.
 
-Emits a structured ``llm_call`` wide event after every model invocation with
+Emits a structured llm_call wide event after every model invocation with
 input/cached/output tokens, credits charged, step index, and agent name. Also
-emits ``recursion_high_water_mark`` when a run has consumed ≥80% of its
+emits recursion_high_water_mark when a run has consumed ≥80% of its
 recursion limit so we can tune the cap from real data.
 
 Also the budget enforcement seam: every model call records its USD cost into
 the user's day/month budget windows and its tokens into the request tree's
-aggregate counter (``app.services.cost_budget``), and ``awrap_model_call``
+aggregate counter (app.services.cost_budget), and awrap_model_call
 short-circuits the invocation with a user-facing stop message when the daily
 cost budget or the per-request token ceiling is exhausted. This hook runs on
 every execution path (chat, workflows, bots, voice, subagents), and the wall is
-self-sufficient — when a path never stamped ``plan_type`` onto the configurable,
-``get_budget_stop_reason`` derives it from the cached tier — so no entry point
+self-sufficient — when a path never stamped plan_type onto the configurable,
+get_budget_stop_reason derives it from the cached tier — so no entry point
 can bypass the walls. The endpoint-level 429 gates are the nice UX, this is the
 law.
 
-Runs as a LangChain :class:`AgentMiddleware` via `create_agent(middleware=...)`.
+Runs as a LangChain :class:AgentMiddleware via create_agent(middleware=...).
 """
 
 from collections.abc import Awaitable, Callable
@@ -84,17 +84,17 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
 
     Responsibilities:
 
-    - ``@after_model``: read ``usage_metadata`` from the most recent AIMessage,
-      compute USD credits via :func:`calculate_token_cost`, emit a
-      ``llm_call`` wide event.
+    - @after_model: read usage_metadata from the most recent AIMessage,
+      compute USD credits via :func:calculate_token_cost, emit a
+      llm_call wide event.
     - High-water-mark emission: when the run's step counter passes
-      ``RECURSION_HWM_FRACTION * AGENT_RECURSION_LIMIT``, emit
-      ``recursion_high_water_mark`` exactly once per thread.
-    - ``@awrap_model_call``: the budget wall — short-circuits the model call
+      RECURSION_HWM_FRACTION * AGENT_RECURSION_LIMIT, emit
+      recursion_high_water_mark exactly once per thread.
+    - @awrap_model_call: the budget wall — short-circuits the model call
       with a stop message when the daily cost budget or per-request token
-      ceiling is exhausted (see :func:`get_budget_stop_reason`); below that,
+      ceiling is exhausted (see :func:get_budget_stop_reason); below that,
       injects a one-time-per-thread wrap-up notice once spend crosses
-      ``BUDGET_WRAPUP_REMAINING_FRACTION``.
+      BUDGET_WRAPUP_REMAINING_FRACTION.
     """
 
     def __init__(self, agent_name: str, recursion_limit: int = AGENT_RECURSION_LIMIT) -> None:
@@ -135,9 +135,9 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         return n
 
     def _emit_budget_stop_card(self, stop_reason: str, plan_type: PlanType) -> None:
-        """Stream a ``rate_limit_data`` frame so the frontend renders RateLimitCard
-        instead of the bare stop text. Same helper ``with_rate_limiting`` uses in
-        ``app.decorators.rate_limiting``; a missing stream writer (workflows, bots)
+        """Stream a rate_limit_data frame so the frontend renders RateLimitCard
+        instead of the bare stop text. Same helper with_rate_limiting uses in
+        app.decorators.rate_limiting; a missing stream writer (workflows, bots)
         is normal and logged at debug, never raised.
         """
         try:
@@ -169,8 +169,8 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
 
         Budget GATING does not live here — a before_model return can only
         merge state; the custom graph loop (create_agent.acall_model) never
-        routes on ``jump_to``, so it would not stop the call. Enforcement is
-        in :meth:`awrap_model_call`, which can short-circuit the invocation.
+        routes on jump_to, so it would not stop the call. Enforcement is
+        in :meth:awrap_model_call, which can short-circuit the invocation.
         """
         del state, runtime  # state not consulted in this pre-call hook yet
         config = current_run_config()
@@ -191,16 +191,16 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
 
         1. Daily USD cost budget (free = usage wall, pro = abuse guard).
         2. Per-request aggregate token ceiling across the whole agent tree
-           (keyed by the inherited ``root_request_id``).
+           (keyed by the inherited root_request_id).
 
         On a hit, returns the user-facing stop text as the final AIMessage —
         no tool calls, so the graph ends naturally. Fail-open on infra errors:
         a Redis hiccup must never take down the turn.
 
         Below the hard wall, when spend has crossed
-        ``BUDGET_WRAPUP_REMAINING_FRACTION`` of the daily budget, injects a
+        BUDGET_WRAPUP_REMAINING_FRACTION of the daily budget, injects a
         one-time-per-thread wrap-up notice (mirrors the recursion wrap-up in
-        ``create_agent._maybe_inject_wrapup``) so the model lands the plane
+        create_agent._maybe_inject_wrapup) so the model lands the plane
         with what it has instead of dying mid-tool-call on the hard stop.
         """
         config = current_run_config()
@@ -283,7 +283,7 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         state: AgentState[Any],
         runtime: Runtime[Any],
     ) -> dict[str, Any] | None:
-        """Emit ``llm_call`` wide event after the model produces a response."""
+        """Emit llm_call wide event after the model produces a response."""
         del runtime  # unused — config is fetched from the graph context var
         messages = (
             state.get("messages") if isinstance(state, dict) else getattr(state, "messages", [])

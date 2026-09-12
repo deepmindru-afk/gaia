@@ -1,8 +1,8 @@
 """Paywall gate: blocks non-PRO users from spend-incurring endpoints.
 
-Distinct from ``app.decorators.rate_limiting`` — that caps HOW MUCH a plan may
+Distinct from app.decorators.rate_limiting — that caps HOW MUCH a plan may
 use; this blocks access outright for a plan with none at all. Mirrors the
-``tiered_rate_limit`` decorator / ``enforce_tiered_limit`` imperative-helper
+tiered_rate_limit decorator / enforce_tiered_limit imperative-helper
 split so callers that resolve their own user (bots) can still gate.
 """
 
@@ -36,14 +36,14 @@ class SubscriptionRequiredException(HTTPException):
     """402 raised when a non-PRO user hits a paid-only surface.
 
     Wire contract is fixed (the frontend is built against it): the body is the
-    error envelope ``{code, message, checkout_url, discount_code}``. No
+    error envelope {code, message, checkout_url, discount_code}. No
     dedicated exception handler is registered for this — like
-    ``RateLimitExceededException``, it rides the app's generic
-    ``StarletteHTTPException`` handler, which flattens ``detail`` onto the
+    RateLimitExceededException, it rides the app's generic
+    StarletteHTTPException handler, which flattens detail onto the
     envelope.
 
-    ``checkout_url`` is always ``None``: a Dodo session is minted on user
-    intent, not on refusal. See ``require_active_subscription``. The key stays
+    checkout_url is always None: a Dodo session is minted on user
+    intent, not on refusal. See require_active_subscription. The key stays
     in the body because the shipped clients parse this exact shape and already
     handle a null — the web popup mints its own on the Subscribe click, mobile
     falls back to the pricing page.
@@ -60,7 +60,7 @@ class SubscriptionRequiredException(HTTPException):
 
 
 async def is_paid(user_id: str) -> bool:
-    """Whether ``user_id`` is on Pro — the one entitlement rule in the codebase.
+    """Whether user_id is on Pro — the one entitlement rule in the codebase.
 
     A cached PRO is trusted. A cached FREE is confirmed against the database
     once before anything is refused: the cached tier lags a payment by up to
@@ -82,21 +82,21 @@ async def is_paid(user_id: str) -> bool:
 
 
 async def require_active_subscription(user_id: str, feature: str) -> None:
-    """Raise ``SubscriptionRequiredException`` unless ``user_id`` is on PRO.
+    """Raise SubscriptionRequiredException unless user_id is on PRO.
 
-    ``feature`` names the surface that turned the caller away; it is required
+    feature names the surface that turned the caller away; it is required
     so every block is attributable in the funnel rather than anonymous.
 
     Refusing costs one cached plan read and nothing else. It used to mint a
     Dodo checkout session first, which was affordable while a handful of routes
-    opted in and is not now that ``EntitlementMiddleware`` runs this on every
+    opted in and is not now that EntitlementMiddleware runs this on every
     authenticated request: an unpaid user's app shell fires several blocked
-    calls, the web retries each twice, and every one of them was a ``get_plans``
-    call, an HTTP round-trip to Dodo and a ``checkout_sessions`` insert for a
+    calls, the web retries each twice, and every one of them was a get_plans
+    call, an HTTP round-trip to Dodo and a checkout_sessions insert for a
     link nobody asked for. Dodo sessions are single-use, so those are pure
     waste — and under that self-inflicted load Dodo rate-limits, which took out
     the link on the one response that needed it. Clients mint on user intent
-    instead, from the allowlisted ``POST /api/v1/payments/checkout-session``.
+    instead, from the allowlisted POST /api/v1/payments/checkout-session.
     """
     if await is_paid(user_id):
         return

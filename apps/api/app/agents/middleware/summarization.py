@@ -1,9 +1,9 @@
 """Workspace-archiving summarization middleware.
 
-Wraps LangChain's `SummarizationMiddleware` so we archive the full message
+Wraps LangChain's SummarizationMiddleware so we archive the full message
 history to the persistent workspace before summarization happens. The agent
-can recover any detail by reading `/workspace/sessions/{conv}/archives/...`
-with the `read` tool.
+can recover any detail by reading /workspace/sessions/{conv}/archives/...
+with the read tool.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class WorkspaceArchivingSummarizationMiddleware(SummarizationMiddleware):
 
     Drop-in replacement for the previous VFS-backed middleware. The archive
     path is injected into the summary message so the agent can fetch detail
-    on demand via the `read` tool.
+    on demand via the read tool.
     """
 
     def __init__(
@@ -73,12 +73,12 @@ class WorkspaceArchivingSummarizationMiddleware(SummarizationMiddleware):
         return result
 
     def _should_trigger_summarization(self, state: AgentState[Any]) -> bool:
-        """Whether the archive should be written before ``super().abefore_model`` runs.
+        """Whether the archive should be written before super().abefore_model runs.
 
-        Delegates the threshold decision to the parent's ``_should_summarize`` so
+        Delegates the threshold decision to the parent's _should_summarize so
         the archive gate fires in exact lockstep with summarization. Re-deriving
-        the thresholds here drifted from the parent in four ways (strict ``>``
-        instead of ``>=`` at the boundary, and no support for list, mapping, or
+        the thresholds here drifted from the parent in four ways (strict >
+        instead of >= at the boundary, and no support for list, mapping, or
         provider-reported-token triggers), each of which summarized history away
         with no archive to recover it from.
         """
@@ -148,9 +148,9 @@ class WorkspaceArchivingSummarizationMiddleware(SummarizationMiddleware):
         return history
 
     def _inject_archive_path(self, result: dict[str, Any], archive_path: str) -> None:
-        """Annotate the summary HumanMessage in ``result`` with the archive path.
+        """Annotate the summary HumanMessage in result with the archive path.
 
-        Mutates ``result``'s messages in place.
+        Mutates result's messages in place.
         """
         messages = result.get("messages", [])
         for msg in messages:

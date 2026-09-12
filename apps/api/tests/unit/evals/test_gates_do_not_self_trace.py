@@ -1,17 +1,17 @@
 """Gates must not log themselves as Opik traces.
 
-``opik``'s ``BaseMetric`` defaults to ``track=True``, which replaces ``score``
-with an ``opik.track``-wrapped copy. Inside ``evaluate()`` that attaches a child
-span; called directly — which is what :mod:`scripts.evals.core.gates` does for
+opik's BaseMetric defaults to track=True, which replaces score
+with an opik.track-wrapped copy. Inside evaluate() that attaches a child
+span; called directly — which is what :mod:scripts.evals.core.gates does for
 every case — there is no parent, so each call opens a TOP-LEVEL TRACE named after
-the metric, in whatever project ``OPIK_PROJECT_NAME`` points at.
+the metric, in whatever project OPIK_PROJECT_NAME points at.
 
-That is not hypothetical: it put 19,235 zero-cost traces named ``end_state``,
-``communicate`` and ``tool_call_correctness`` into ``gaia-memory``, against 104
+That is not hypothetical: it put 19,235 zero-cost traces named end_state,
+communicate and tool_call_correctness into gaia-memory, against 104
 real case traces, and left the project reporting no cost and no tokens at all.
 
-The wrapping is observable without a backend: ``track=True`` assigns an instance
-attribute that shadows the class method, so ``"score" in metric.__dict__`` is
+The wrapping is observable without a backend: track=True assigns an instance
+attribute that shadows the class method, so "score" in metric.__dict__ is
 True for a tracked metric and False for an untracked one.
 """
 
@@ -52,7 +52,7 @@ EVERY_SCORER = [
 
 
 def _is_tracked(metric: base_metric.BaseMetric) -> bool:
-    """Whether opik replaced ``score`` with a tracked wrapper on this instance."""
+    """Whether opik replaced score with a tracked wrapper on this instance."""
     return "score" in metric.__dict__
 
 
@@ -67,7 +67,7 @@ def test_no_scorer_logs_itself_as_a_trace(metric: base_metric.BaseMetric) -> Non
 def test_the_check_can_actually_fail() -> None:
     """A tracked metric must trip the assertion — otherwise the test proves nothing.
 
-    Without this, ``_is_tracked`` returning False for every input would look like
+    Without this, _is_tracked returning False for every input would look like
     a clean sweep. This is the mutation check: a deliberately tracked metric has
     to be detected.
     """
@@ -104,7 +104,7 @@ def test_every_scorer_in_the_module_inherits_the_untracked_base() -> None:
     The parametrised test above only covers the scorers named in this file, so it
     passes forever while a new tracked scorer quietly floods a project. This walks
     the module instead: anything that is an opik metric here has to come through
-    :class:`Gate`.
+    :class:Gate.
     """
     offenders = [
         name
@@ -121,7 +121,7 @@ def test_every_scorer_in_the_module_inherits_the_untracked_base() -> None:
 
 
 def test_every_registered_gate_name_maps_to_a_module_scorer() -> None:
-    """The module walk above only protects what :mod:`gates` actually invokes."""
+    """The module walk above only protects what :mod:gates actually invokes."""
     assert set(GATES) <= {
         "communicate",
         "must_not_communicate",

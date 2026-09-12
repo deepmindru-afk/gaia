@@ -103,7 +103,7 @@ def build_gaia_test_graph(
 ):
     """Build a real GAIA agent graph for E2E testing.
 
-    Uses the real ``create_agent`` from ``app.override.langgraph_bigtool.create_agent``
+    Uses the real create_agent from app.override.langgraph_bigtool.create_agent
     and wires in the real GAIA pre-model hooks:
     - filter_messages_node
     - manage_system_prompts_node
@@ -111,8 +111,8 @@ def build_gaia_test_graph(
     The LLM, checkpointer, and store are replaced with in-memory test doubles
     so no external services are required.
 
-    If ``app.agents.core.nodes.filter_messages.filter_messages_node`` or
-    ``app.agents.core.nodes.manage_system_prompts.manage_system_prompts_node``
+    If app.agents.core.nodes.filter_messages.filter_messages_node or
+    app.agents.core.nodes.manage_system_prompts.manage_system_prompts_node
     are removed, this function will raise an ImportError and ALL e2e tests
     will fail — which is the desired sentinel behaviour.
     """
@@ -188,10 +188,10 @@ async def in_memory_store():
 def real_tool_registry():
     """Register the real global ToolRegistry provider.
 
-    ``format_tool_call_entry`` resolves every streamed tool call's category
-    through ``get_tool_registry()``; without the provider registered that lookup
-    raises, so any test asserting on a ``tool_data`` frame needs this. Setup is
-    in-process only (``_initialize_categories`` imports the tool modules and
+    format_tool_call_entry resolves every streamed tool call's category
+    through get_tool_registry(); without the provider registered that lookup
+    raises, so any test asserting on a tool_data frame needs this. Setup is
+    in-process only (_initialize_categories imports the tool modules and
     indexes them by name) — no ChromaDB, no network.
 
     The provider registry is a process-wide singleton with no reset between
@@ -220,7 +220,7 @@ def make_gaia_state(**overrides) -> dict[str, Any]:
     """Build a minimal GAIA State dict for direct node testing.
 
     Uses the real State fields from app.override.langgraph_bigtool.utils
-    (which extends langgraph_bigtool State with the ``todos`` channel).
+    (which extends langgraph_bigtool State with the todos channel).
     """
     defaults: dict[str, Any] = {
         "messages": [],

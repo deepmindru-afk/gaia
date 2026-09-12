@@ -1,16 +1,16 @@
 """What a turn recovered from Redis progress is allowed to contain.
 
 The graph driver decides, per assistant message, whether its text is a reply or
-a preamble to a tool call, and announces the verdict as a ``message_boundary``
+a preamble to a tool call, and announces the verdict as a message_boundary
 frame. The live client honours it. The Redis progress record — the thing
-``recover_stream_state`` rebuilds a cancelled or errored turn from — used to be
-a blind concatenation of every ``response`` frame, so a recovered turn brought
+recover_stream_state rebuilds a cancelled or errored turn from — used to be
+a blind concatenation of every response frame, so a recovered turn brought
 back the working notes the user had been told to drop, glued onto the real
 reply with no separator ("…what integrations are available.Working the week
 now, Alex"), and two real drafts ran into one bubble.
 
-These tests drive the real dispatcher (``process_data_chunk``) and the real
-``StreamManager`` against an in-memory Redis, then run the real recovery.
+These tests drive the real dispatcher (process_data_chunk) and the real
+StreamManager against an in-memory Redis, then run the real recovery.
 """
 
 from __future__ import annotations

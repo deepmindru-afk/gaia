@@ -1,13 +1,13 @@
 """E2E: subscribing a tracked todo to a trigger, through a real compiled graph.
 
 WHAT THIS TESTS (REAL GAIA CODE):
-- ``list_trigger_fields`` / ``subscribe_todo_to_trigger`` from
-  ``app.agents.tools.tracked_todo_tools`` — the real tools, bound into a real
+- list_trigger_fields / subscribe_todo_to_trigger from
+  app.agents.tools.tracked_todo_tools — the real tools, bound into a real
   compiled agent graph.
 - The real matchable-fields catalog and the real deterministic validator: the
   model writes a camelCased field name, and the repair path resolves it without
   any second LLM call.
-- ``create_agent`` from ``app.override.langgraph_bigtool.create_agent`` compiles
+- create_agent from app.override.langgraph_bigtool.create_agent compiles
   the graph; the real pre-model hooks run.
 
 The point of driving it here rather than calling the tool directly is the loop:
@@ -20,7 +20,7 @@ Mock surfaces:
 - Composio registration + Mongo: mocked at the service seam
 - Store: InMemoryStore, Checkpointer: MemorySaver
 
-DELETE ``app/services/triggers/matchable_fields.py`` → these tests FAIL.
+DELETE app/services/triggers/matchable_fields.py → these tests FAIL.
 DELETE the validator's mechanical repair → the typo test FAILS.
 """
 
@@ -92,7 +92,7 @@ class TestSubscribeThroughTheGraph:
     async def test_a_typod_field_is_repaired_and_the_subscription_registers(
         self, thread_config, in_memory_store, memory_saver
     ):
-        """The model writes ``threadId``; the catalog says ``thread_id``.
+        """The model writes threadId; the catalog says thread_id.
 
         No LLM repair pass runs — the deterministic stage resolves it, and the
         tool reports what it changed so the model does not repeat the mistake.

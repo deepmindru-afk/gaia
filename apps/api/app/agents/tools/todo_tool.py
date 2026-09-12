@@ -94,8 +94,8 @@ class _SummaryStats(TypedDict):
 
 
 class _RecentlyCompletedBucket(TypedDict):
-    """The recently-completed bucket — capped like ``_TodoBucket`` but with no
-    ``has_more`` flag (the summary card never offers to expand it)."""
+    """The recently-completed bucket — capped like _TodoBucket but with no
+    has_more flag (the summary card never offers to expand it)."""
 
     count: int
     todos: list[SerializedModel]
@@ -110,7 +110,7 @@ class _ProjectCounts(TypedDict):
 
 
 class TodosSummary(TypedDict):
-    """The ``get_todos_summary`` payload — streamed as ``todo_data.summary``."""
+    """The get_todos_summary payload — streamed as todo_data.summary."""
 
     today: _TodoBucket
     overdue: _TodoBucket
@@ -147,7 +147,7 @@ class TodoListResult(TypedDict):
 
 
 class SemanticSearchResult(TodoListResult):
-    """``semantic_search_todos`` — a todo list tagged with the search backend."""
+    """semantic_search_todos — a todo list tagged with the search backend."""
 
     search_type: NotRequired[Literal["semantic"]]
 
@@ -160,7 +160,7 @@ class SuccessResult(TypedDict):
 
 
 class TodoStatsResult(TypedDict):
-    """``get_todo_statistics`` — the serialized stats model."""
+    """get_todo_statistics — the serialized stats model."""
 
     stats: SerializedModel | None
     error: str | None
@@ -182,14 +182,14 @@ class ProjectListResult(TypedDict):
 
 
 class LabelListResult(TypedDict):
-    """``get_all_labels`` — every label the user has, serialized."""
+    """get_all_labels — every label the user has, serialized."""
 
     labels: list[SerializedModel]
     error: str | None
 
 
 class TodosSummaryResult(TypedDict):
-    """``get_todos_summary`` — the whole snapshot in one call."""
+    """get_todos_summary — the whole snapshot in one call."""
 
     summary: TodosSummary | None
     error: str | None

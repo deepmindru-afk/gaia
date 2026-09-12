@@ -24,9 +24,7 @@ MONGO_DATABASE_NAME = os.getenv("MONGO_DB_NAME", "GAIA")
 
 
 class MongoDB:
-    """
-    A class to manage the MongoDB connection using Motor.
-    """
+    """A class to manage the MongoDB connection using Motor."""
 
     client: AsyncIOMotorClient[dict[str, Any]]
     database: AsyncIOMotorDatabase[dict[str, Any]]
@@ -124,7 +122,7 @@ def init_mongodb() -> MongoDB:
 
 
 def object_id_filter(id_value: str) -> dict[str, ObjectId]:
-    """The ``_id`` filter for a 24-hex string id — the id-codec stays in app/db
+    """The _id filter for a 24-hex string id — the id-codec stays in app/db
     (repository-boundaries lint), so raw-connection operational scripts never
     import bson themselves."""
     return {"_id": ObjectId(id_value)}

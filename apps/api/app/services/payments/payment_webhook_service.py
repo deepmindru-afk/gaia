@@ -145,7 +145,7 @@ class PaymentWebhookService:
         """
         Process a Dodo payment webhook exactly once.
 
-        The delivery is claimed (inserted under the unique ``webhook_id``)
+        The delivery is claimed (inserted under the unique webhook_id)
         before its handler runs, so a replay or a racing duplicate is turned
         away at the claim, never after the side effects. A handler failure —
         raised or returned — releases the claim so Dodo's retry is a clean run;
@@ -428,7 +428,7 @@ class PaymentWebhookService:
         """What the delivery is owed for what the reducer did.
 
         A missing row is the one outcome whose answer depends on time:
-        ``subscription.active`` is a separate delivery with its own retries,
+        subscription.active is a separate delivery with its own retries,
         so a lifecycle event that beat it is asked to come back — but only for
         as long as the activation could plausibly still be on its way.
         """

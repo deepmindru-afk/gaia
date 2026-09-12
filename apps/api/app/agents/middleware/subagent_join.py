@@ -1,19 +1,19 @@
 """Force the executor to collect background subagents before its turn can end.
 
-``wait_for_subagents`` is a model-invoked tool, but collection must not be
+wait_for_subagents is a model-invoked tool, but collection must not be
 model-discretionary: an executor that finishes with background subagents still
 in flight — or parked on a HIL approval — strands them. The results are never
 gathered, and a parked subagent's approval becomes a promise nobody keeps (the
 user taps Approve, nothing ever runs it).
 
 This after-model hook closes that structurally. When the model produces a
-turn-ending response (no tool calls, or only ``finish_task``) while background
+turn-ending response (no tool calls, or only finish_task) while background
 work is uncollected, it rewrites the response's tool calls to a single
-``wait_for_subagents`` call. The graph then routes to the join, which collects
+wait_for_subagents call. The graph then routes to the join, which collects
 results, pauses for any pending approvals, and hands everything back to the
 model — which finishes for real on its next response, when nothing is left.
 
-The rewrite mutates the response message in place: ``acall_model`` returns the
+The rewrite mutates the response message in place: acall_model returns the
 same object it hands to after-model hooks, and the messages reducer appends —
 a returned state update could not replace the message's tool calls.
 """
@@ -91,7 +91,7 @@ def _latest_ai_message(state: AgentState[Any]) -> AIMessage | None:
 
 
 def _is_turn_ending(response: AIMessage) -> bool:
-    """The response ends the turn: no tool calls, or only ``finish_task``."""
+    """The response ends the turn: no tool calls, or only finish_task."""
     if not response.tool_calls:
         return True
     return all(call.get("name") == FINISH_TASK_NAME for call in response.tool_calls)

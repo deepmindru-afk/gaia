@@ -1,7 +1,7 @@
 """Behavior tests for app/agents/tools/wait_for_subagents_tool.py.
 
 Locks the executor-facing contract of the join: collected subagent results come
-back framed in ``<subagent_result agent="...">`` blocks, so the executor can tell
+back framed in <subagent_result agent="..."> blocks, so the executor can tell
 where one subagent's report ends and the next begins, and which agent produced
 each. The e2e barrier test drives the same path through real graphs, but only
 under live services — this tier runs on every commit.
@@ -62,7 +62,7 @@ class TestCollectedResultFraming:
         )
 
     async def test_a_result_containing_the_old_separator_stays_one_block(self) -> None:
-        """Results used to be joined with a literal ``---``, so a subagent whose
+        """Results used to be joined with a literal ---, so a subagent whose
         report contained one split its own result in two as far as the executor
         could tell. The closing tag is what makes the boundary real."""
         report = "found 2 issues\n\n---\n\nboth are stale"

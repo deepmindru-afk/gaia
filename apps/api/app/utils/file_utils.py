@@ -1,6 +1,6 @@
 """
 Document processing and summarization. PDF/DOCX/XLSX/PPTX/CSV are extracted
-locally (no network call) via ``local_document_parser``; scanned/image-based
+locally (no network call) via local_document_parser; scanned/image-based
 PDFs fall back to LlamaParse, which is the only path here that can OCR them.
 The default LLM summarizes images, text, and every extracted chunk. Summaries
 are embedded into ChromaDB for retrieval.
@@ -82,7 +82,7 @@ class DocumentProcessor:
         """Initialize the document processor. The LlamaParse client is built
         lazily -- only scanned/image-based PDFs need it as an OCR fallback.
 
-        ``user_id`` is whose COGS this processor's LLM spend is attributed to.
+        user_id is whose COGS this processor's LLM spend is attributed to.
         Held here rather than passed through every branch: one upload fans out
         to an image description or a summary per PDF page, and each of those is
         a billable call that must name the same user.
@@ -153,7 +153,7 @@ class DocumentProcessor:
 
         Runs on the same codec and vision call as every other image path, so the
         MIME the provider is told about is sniffed from the bytes rather than
-        assumed: a PNG or WEBP upload used to be labelled ``image/jpeg``, which
+        assumed: a PNG or WEBP upload used to be labelled image/jpeg, which
         the provider rejects outright.
         """
         try:
@@ -179,8 +179,8 @@ class DocumentProcessor:
         Classified first (pdf_inspector): text-based PDFs are extracted
         locally, one native call for the whole document; scanned/image-based
         PDFs fall back to LlamaParse for OCR. Extraction errors propagate to
-        the caller (``process_file``) instead of being swallowed here,
-        matching ``process_text``.
+        the caller (process_file) instead of being swallowed here,
+        matching process_text.
         """
         chunks = await self._extract_pdf_chunks(data)
         return await self._summarize_chunks(chunks)

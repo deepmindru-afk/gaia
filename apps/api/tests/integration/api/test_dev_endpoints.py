@@ -1,9 +1,9 @@
 """Integration tests for the dev-only identity + seeding layer.
 
 Covers three surfaces:
-- the ``/api/v1/dev`` router (mounted only when the bypass is configured),
-- ``dev_service`` seeding/mint logic against mocked real services,
-- the ``X-Dev-User`` per-request impersonation in the real WorkOSAuthMiddleware.
+- the /api/v1/dev router (mounted only when the bypass is configured),
+- dev_service seeding/mint logic against mocked real services,
+- the X-Dev-User per-request impersonation in the real WorkOSAuthMiddleware.
 """
 
 from contextlib import asynccontextmanager, contextmanager

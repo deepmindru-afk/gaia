@@ -1,6 +1,6 @@
 """Evaluate a subscription's conditions against a fired trigger's payload.
 
-Deliberately boring: an AND-chain of ``field op value`` tests over the curated
+Deliberately boring: an AND-chain of field op value tests over the curated
 matchable fields, evaluated in-process. No expression language, no sandbox, no
 LLM — this runs on every webhook event for every subscriber, so it has to cost
 nothing and behave the same way every time.
@@ -22,7 +22,7 @@ from app.services.triggers.matchable_fields import get_matchable_trigger
 
 
 def resolve_payload_value(payload: dict[str, Any], field_name: str) -> object | None:
-    """Read ``field_name`` (one level of dotting allowed) out of a raw payload."""
+    """Read field_name (one level of dotting allowed) out of a raw payload."""
     current: object = payload
     for segment in field_name.split("."):
         if not isinstance(current, dict):
@@ -109,10 +109,10 @@ def conditions_match(
 ) -> bool:
     """Do a subscription's conditions hold against this payload?
 
-    ``ALL`` is the AND-chain; ``ANY`` is a flat OR. No conditions means the
+    ALL is the AND-chain; ANY is a flat OR. No conditions means the
     subscription fires on every event for its trigger, which is the right default
     for a per-resource trigger already scoped to one channel, calendar or
-    repository at registration time — regardless of ``match``.
+    repository at registration time — regardless of match.
 
     A condition naming a field the catalog no longer has does NOT match. The
     alternative — ignoring it — would silently widen a subscription the moment a

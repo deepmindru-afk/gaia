@@ -2,7 +2,7 @@
 
 Proves the composition no mock can: mint a grant against a seeded workspace,
 serve the app with uvicorn, and fetch with Composio's actual
-``_fetch_file_from_url`` over real HTTP — filename, bytes, and mimetype must
+_fetch_file_from_url over real HTTP — filename, bytes, and mimetype must
 all survive. Hermetic (localhost socket, fake mount, stubbed secret).
 """
 
@@ -35,7 +35,7 @@ def _serve(app: FastAPI) -> tuple[uvicorn.Server, threading.Thread, int]:
 
 @pytest.fixture
 def _workspace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Fake JuiceFS mount with one seeded file (the `mount` lie, hermetic)."""
+    """Fake JuiceFS mount with one seeded file (the mount lie, hermetic)."""
     from app.config.settings import settings
 
     user_dir = tmp_path / "users" / "u1"

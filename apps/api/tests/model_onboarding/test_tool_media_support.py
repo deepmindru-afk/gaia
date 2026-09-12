@@ -1,9 +1,9 @@
 """Onboarding gate: can a model actually see an image delivered in a tool result?
 
 Run this before adding an OpenRouter-inference model to
-``OPENROUTER_MODEL_TOOL_IMAGE_SUPPORT`` (``constants/llm.py``). It costs real
+OPENROUTER_MODEL_TOOL_IMAGE_SUPPORT (constants/llm.py). It costs real
 tokens, so it is marked
-``model_onboarding`` and excluded from the default suite.
+model_onboarding and excluded from the default suite.
 
     # check a candidate before declaring it
     GAIA_ONBOARD_MODELS=x-ai/grok-4.1-fast \
@@ -13,15 +13,15 @@ tokens, so it is marked
     uv run pytest tests/model_onboarding -m model_onboarding -v
 
 Why a live call and not a capability lookup: OpenRouter exposes nothing that
-answers this. `/api/v1/models` reports `architecture.input_modalities` (whether
-the model takes images *at all*) and `/models/:id/endpoints` reports uptime and
+answers this. /api/v1/models reports architecture.input_modalities (whether
+the model takes images *at all*) and /models/:id/endpoints reports uptime and
 pricing — neither says whether images survive in a *tool* message. Two models
-can be byte-identical there and still disagree: `openai/gpt-5-mini` accepts it,
-`openai/gpt-4o-mini` returns
-``"Image URLs are only allowed for messages with role 'user'"``. So the only
+can be byte-identical there and still disagree: openai/gpt-5-mini accepts it,
+openai/gpt-4o-mini returns
+"Image URLs are only allowed for messages with role 'user'". So the only
 honest test is to send one and see whether the model describes the picture.
 
-A failure means `MediaDelivery.KEEP_IN_TOOL_RESULTS` is wrong for that model:
+A failure means MediaDelivery.KEEP_IN_TOOL_RESULTS is wrong for that model:
 its tool results would 400 mid-turn. Do not declare it — raise it, and decide
 then whether the model is worth a per-model delivery path.
 """
@@ -52,12 +52,12 @@ _FOREGROUND = (255, 220, 0)  # yellow
 def _declared_openrouter_models() -> list[str]:
     """Read straight from the constants — never keep a model list in this file.
 
-    A new model is declared in one place, ``OPENROUTER_MODEL_TOOL_IMAGE_SUPPORT``
-    in ``constants/llm.py``, and this test picks it up from there. A copy here
+    A new model is declared in one place, OPENROUTER_MODEL_TOOL_IMAGE_SUPPORT
+    in constants/llm.py, and this test picks it up from there. A copy here
     would drift the moment someone declares a model without touching the tests,
     and the model this gate exists to catch would be the one it silently skips.
 
-    Text-only models are exempt BY DECLARATION, not by omission: a ``False``
+    Text-only models are exempt BY DECLARATION, not by omission: a False
     routes tool media through the caption fallback, so asserting those models
     see pixels would fail by design. The flag lives on the declaration so a
     model can only skip this gate by saying so out loud.
@@ -70,7 +70,7 @@ def _declared_openrouter_models() -> list[str]:
 
 
 def _models_under_test() -> list[str]:
-    """Declared models by default; ``GAIA_ONBOARD_MODELS`` to vet one first.
+    """Declared models by default; GAIA_ONBOARD_MODELS to vet one first.
 
     The override is for the order this actually happens in — you check a
     candidate first, then add it to the constants once it passes.
@@ -95,7 +95,7 @@ def _two_colour_png() -> str:
 @pytest.mark.skipif(not settings.OPENROUTER_API_KEY, reason="OPENROUTER_API_KEY is not configured")
 @pytest.mark.parametrize("model", _models_under_test())
 def test_model_sees_an_image_returned_by_a_tool(model: str) -> None:
-    """The exact shape our agent produces: a `read` tool result carrying pixels.
+    """The exact shape our agent produces: a read tool result carrying pixels.
 
     Asserted on content, not status: a 200 that describes the wrong thing means
     the image was dropped somewhere in the chain, which is the failure this gate

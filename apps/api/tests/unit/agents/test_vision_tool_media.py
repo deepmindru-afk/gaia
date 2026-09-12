@@ -1,6 +1,6 @@
 """Unit tests for app.agents.llm.vision.tool_media and the middleware wrapper.
 
-`describe_tool_media` runs on every tool call in the agent loop, so its no-op
+describe_tool_media runs on every tool call in the agent loop, so its no-op
 guards are load-bearing: a missed guard means a vision API call (and its latency
 and cost) on every plain-text tool result. Its caching is equally load-bearing —
 without it the same image is re-described on every turn, forever.

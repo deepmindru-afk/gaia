@@ -110,7 +110,7 @@ class TestPublishOutboundMessage:
         )
 
     async def test_a_callers_ttl_is_the_one_that_reaches_the_broker(self) -> None:
-        """``ttl_seconds`` exists so a caller can say "this is noise once the
+        """ttl_seconds exists so a caller can say "this is noise once the
         moment has passed". Ignoring it silently gives that message the full
         day-long default."""
         publisher = AsyncMock()
@@ -413,8 +413,8 @@ class TestNotifyAccountLinked:
         assert OUTBOUND_TTL_SECONDS_GREETING < OUTBOUND_TTL_SECONDS_DEFAULT
 
     async def test_whatsapp_uses_cased_display_name(self) -> None:
-        """WhatsApp's display name is ``WhatsApp``, not ``Whatsapp`` — a
-        ``.capitalize()`` fallback would be observable."""
+        """WhatsApp's display name is WhatsApp, not Whatsapp — a
+        .capitalize() fallback would be observable."""
         publisher = AsyncMock()
         with (
             patch.object(
@@ -435,7 +435,7 @@ class TestNotifyAccountLinked:
         assert "Your Whatsapp account" not in envelope["text"]
 
     async def test_imessage_is_spelled_the_way_apple_spells_it(self) -> None:
-        """iMessage is the one platform whose display name is not a plain
+        """IMessage is the one platform whose display name is not a plain
         capitalization, so the map must carry it rather than fall back."""
         publisher = AsyncMock()
         with (

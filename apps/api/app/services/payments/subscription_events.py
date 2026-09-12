@@ -2,9 +2,9 @@
 
 Every source of a billing change — the Dodo subscription webhooks, the user's
 own cancel request, payment verification reconciling against Dodo when the
-webhook never landed — is reduced to a ``SubscriptionEvent`` and applied here.
-Nothing else writes ``status``, the billing dates, the plan-cache drop, the
-``subscription:*`` analytics or the workflow pause/resume: three call sites
+webhook never landed — is reduced to a SubscriptionEvent and applied here.
+Nothing else writes status, the billing dates, the plan-cache drop, the
+subscription:* analytics or the workflow pause/resume: three call sites
 each doing their own version is how a recovered subscription was left
 lapsed, a scheduled cancel downgraded a user early on one path and not the
 other, and a replayed webhook counted an activation twice.
@@ -12,7 +12,7 @@ other, and a replayed webhook counted an activation twice.
 The rules, in order: an event older than the row's last applied one is
 stale and ignored; an event that changes nothing writes nothing and captures
 nothing; what did change decides the side effects — a status crossing into
-``active`` restores the workflows, a status leaving it pauses them, and each
+active restores the workflows, a status leaving it pauses them, and each
 analytics event fires exactly once for the transition it names.
 """
 
@@ -68,7 +68,7 @@ class SubscriptionEventKind(StrEnum):
 
 @dataclass(frozen=True)
 class SubscriptionEvent:
-    """One reported change. ``occurred_at`` is the source's clock (Dodo's
+    """One reported change. occurred_at is the source's clock (Dodo's
     event timestamp, or the moment Dodo answered a direct call), which is what
     orders it against the row."""
 
@@ -90,7 +90,7 @@ class SubscriptionEventOutcome(StrEnum):
 
 @dataclass(frozen=True)
 class SubscriptionEventResult:
-    """``user_id`` is None exactly when nothing was written for nobody."""
+    """user_id is None exactly when nothing was written for nobody."""
 
     outcome: SubscriptionEventOutcome
     user_id: str | None
@@ -121,7 +121,7 @@ async def reactivate_workflows_safely(user_id: str) -> None:
 
 async def deactivate_workflows_safely(user_id: str) -> None:
     """Turn off this user's automation once they're no longer paid. Never
-    raises — see ``reactivate_workflows_safely``."""
+    raises — see reactivate_workflows_safely."""
     from app.services.workflow.subscription_pause import (  # noqa: PLC0415  # real cycle through app.decorators, see reactivate_workflows_safely
         deactivate_workflows_for_lapsed_subscription,
     )
@@ -138,7 +138,7 @@ async def deactivate_workflows_safely(user_id: str) -> None:
 
 
 async def send_welcome_email_safely(user_id: str) -> None:
-    """Welcome the new subscriber. Never raises — see ``reactivate_workflows_safely``."""
+    """Welcome the new subscriber. Never raises — see reactivate_workflows_safely."""
     try:
         user = await user_repository.get(user_id)
         if user and user.email:
@@ -179,7 +179,7 @@ def _active_state(data: DodoSubscriptionData) -> SubscriptionUpdate:
     """Active with the billing dates the event carries.
 
     A date is set only when the event carries it: the repository writes
-    ``exclude_unset`` as ``$set``, so a date the event omits must stay out of
+    exclude_unset as $set, so a date the event omits must stay out of
     the update rather than write null over the stored value.
     """
     desired = SubscriptionUpdate(status=SubscriptionStatus.ACTIVE.value)
@@ -192,7 +192,7 @@ def _active_state(data: DodoSubscriptionData) -> SubscriptionUpdate:
 
 def _cancelled_state(data: DodoSubscriptionData) -> SubscriptionUpdate:
     """A cancel scheduled for period end keeps the user on Pro until
-    ``subscription.expired``; only an immediate cancel drops the status now.
+    subscription.expired; only an immediate cancel drops the status now.
     The payload's own status is never trusted here — a scheduled cancel
     reporting "cancelled" would downgrade early."""
     desired = SubscriptionUpdate(cancel_at_next_billing_date=data.cancel_at_next_billing_date)
@@ -350,11 +350,11 @@ async def _create_row(event: SubscriptionEvent) -> SubscriptionEventResult:
 
 
 async def apply_subscription_event(event: SubscriptionEvent) -> SubscriptionEventResult:
-    """Bring the local row in line with ``event`` and fire what the change owes.
+    """Bring the local row in line with event and fire what the change owes.
 
-    Only an ``ACTIVATED`` event may create a row — it is the one that carries a
+    Only an ACTIVATED event may create a row — it is the one that carries a
     subscription GAIA has not seen. Every other kind needs the row to exist,
-    and answers ``NO_ROW`` when it does not, so the caller can decide whether
+    and answers NO_ROW when it does not, so the caller can decide whether
     the activation may still be on its way.
     """
     data = event.data

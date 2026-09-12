@@ -1,8 +1,8 @@
 """The rate-limit card: how a blocked call is described to the frontend.
 
-``build_rate_limit_card`` is the one payload shape every limit surface renders
+build_rate_limit_card is the one payload shape every limit surface renders
 (the tool decorator here, the LLM budget wall, the free memory cap), and
-``with_rate_limiting`` is the caller that fills it in from a 429 the tiered
+with_rate_limiting is the caller that fills it in from a 429 the tiered
 limiter raised. Both are asserted directly — the decorator's consumers only
 ever exercise the pass-through path, so nothing else runs this code.
 """
@@ -292,7 +292,7 @@ class TestBlockedCallLabelsANonEnumPlan:
 
 
 class TestTokenCounting:
-    """With ``count_tokens`` on, a dict result's ``tokens_used`` is logged."""
+    """With count_tokens on, a dict result's tokens_used is logged."""
 
     @staticmethod
     async def _run(tokens_used: Any) -> MagicMock:
@@ -338,7 +338,7 @@ class TestTokenCounting:
         )
 
     async def test_a_missing_tokens_key_logs_nothing(self) -> None:
-        """A dict result without ``tokens_used`` is not an error and logs no
+        """A dict result without tokens_used is not an error and logs no
         usage line — the default must read as zero, not truthy."""
 
         async def tool(config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -402,7 +402,7 @@ class TestAttachUsageMetadata:
 
 
 class TestSystemBypass:
-    """``bypass_for_system`` skips metering ONLY for backend-initiated runs."""
+    """bypass_for_system skips metering ONLY for backend-initiated runs."""
 
     @staticmethod
     async def _run(initiator: str | None) -> AsyncMock:
@@ -446,7 +446,7 @@ async def _endpoint() -> dict[str, bool]:
 
 
 class TestTieredRateLimitMetersUnderItsOrigin:
-    """The decorator's ``origin`` has to survive the hop into the limiter —
+    """The decorator's origin has to survive the hop into the limiter —
     a background run metered as interactive sends the wrong upsell email."""
 
     @staticmethod
@@ -491,7 +491,7 @@ class TestTieredRateLimitMetersUnderItsOrigin:
 class TestTieredRateLimitCallerResolution:
     """The caller-resolution branches at the top of the decorator — a public
     route with nobody to bill, an authenticated-but-id-less caller, and the
-    bot-style kwarg/positional fallback ``resolve_caller`` itself covers."""
+    bot-style kwarg/positional fallback resolve_caller itself covers."""
 
     async def test_unauthenticated_call_bypasses_the_limiter_entirely(self) -> None:
         decorated = rl.tiered_rate_limit("chat_messages")(_endpoint)
@@ -537,7 +537,7 @@ class TestTieredRateLimitCallerResolution:
     async def test_unauthenticated_bypass_forwards_positional_and_keyword_args(self) -> None:
         """The bypass calls the wrapped function with its ORIGINAL args and
         kwargs — dropping either silently breaks any endpoint that takes
-        positional arguments or keyword arguments beyond ``user``."""
+        positional arguments or keyword arguments beyond user."""
 
         async def echo(*args: Any, **kwargs: Any) -> dict[str, Any]:
             return {"args": args, "kwargs": kwargs}
@@ -630,7 +630,7 @@ class TestDailyCostBudget:
 
 
 class TestToolPlanLabelling:
-    """Both of ``plan_label``'s call sites: the context stashed for the
+    """Both of plan_label's call sites: the context stashed for the
     response metadata, and the inline card a blocked call streams."""
 
     @staticmethod

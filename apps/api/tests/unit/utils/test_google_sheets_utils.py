@@ -1,8 +1,8 @@
 """Unit tests for app.utils.google_sheets_utils.
 
-The pure helpers (`hex_to_rgb`, `parse_a1_range`, `parse_a1_anchor`) run with no
+The pure helpers (hex_to_rgb, parse_a1_range, parse_a1_anchor) run with no
 mocking at all. The two lookup helpers mock only the real I/O boundary
-(`proxy_request_sync`).
+(proxy_request_sync).
 
 Several production bugs were found while writing these tests and fixed at the
 root; the tests pinning them down are marked with a "BUG:" comment.

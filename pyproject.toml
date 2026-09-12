@@ -178,10 +178,30 @@ select = [
   "INT",   # gettext f-string misuse
   "ASYNC", # blocking calls inside async functions
   "T20",   # no print() — app code logs through wide events
+  # Docstring shape (pydocstyle). Deliberately not the whole "D" group: D1xx
+  # would demand docstrings everywhere, the opposite of the goal. Content
+  # (length, markup, tautology, comment walls) is tools/lints/docstring_slop.py
+  # and comment_slop.py — ruff only checks structure.
+  "D200",  # one-line docstring on one line
+  "D205",  # blank line after the summary
+  "D210",  # no whitespace inside the quotes
+  "D300",  # triple double quotes
+  "D401",  # summary in the imperative ("Return x", never "Returns x")
+  "D403",  # summary capitalized
+  "D404",  # summary must not start with "This"
+  "D415",  # summary ends with punctuation
+  # Sections that lie about the contract (pydoclint port; preview-only rules).
+  "DOC202", # Returns: on a function that returns nothing
+  "DOC502", # Raises: X that is never raised
   "PT",    # pytest style (see the ignores below for the noisy half)
   "PIE",   # unnecessary placeholders / dict kwargs / container lambdas
   "ANN401", # disallow explicit `Any` in type annotations
 ]
+# Only the DOC rules named above are preview. Without explicit-preview-rules,
+# preview = true would also switch on every preview rule inside PL/RUF/S/FURB
+# (~8k findings on this tree).
+preview = true
+explicit-preview-rules = true
 ignore = [
   "ASYNC109",  # objects to async functions having a timeout param — reworking 17 signatures for style
   "C414",  # list() inside sorted() — readability
@@ -515,6 +535,13 @@ unfixable = [
 "**/migrations/**/*.py" = ["INP001", "N999", "ANN"]  # migration runners are not namespace packages and skip annotations
 "**/__init__.py" = ["F401"]  # re-export modules intentionally re-export imported names
 "**/patches.py" = ["F401", "PLC", "ANN", "ARG"]  # monkeypatch modules import heavily for side effects
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+# A property reads as a noun ("The current user."); D401 must not force
+# "Return the current user." onto it.
+property-decorators = ["functools.cached_property", "pydantic.computed_field"]
+ignore-decorators = ["typing.overload"]
+
 [tool.ruff.lint.isort]
 combine-as-imports = true
 force-sort-within-sections = true

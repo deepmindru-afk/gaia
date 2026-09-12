@@ -32,7 +32,7 @@ class TestExtractTextContent:
 
     def test_media_only_content_yields_empty_string_not_a_repr(self):
         """A bridge read_file returns an image with no text sibling. The old
-        `str(content)` produced the whole dict repr, base64 and all."""
+        str(content) produced the whole dict repr, base64 and all."""
         assert extract_text_content([IMAGE]) == ""
 
     def test_plain_string_passes_through(self):

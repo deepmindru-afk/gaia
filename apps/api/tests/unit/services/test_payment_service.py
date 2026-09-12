@@ -4,8 +4,8 @@ Unit tests for DodoPaymentService.
 Covers: get_plans, create_subscription, verify_payment_completion,
 get_user_subscription_status.
 
-PaymentWebhookService tests live in ``test_payment_webhook_service.py``; both
-files share fixtures and fake data via ``conftest.py`` in this directory.
+PaymentWebhookService tests live in test_payment_webhook_service.py; both
+files share fixtures and fake data via conftest.py in this directory.
 """
 
 from datetime import UTC, datetime
@@ -821,8 +821,8 @@ class TestCancelSubscription:
     ):
         """Dodo is asked for a period-end cancel, and the local row is written
         by the same reducer the webhook uses — as a scheduled cancel whatever
-        status Dodo echoes back (``test_subscription_events.py`` pins that the
-        reducer keeps the user on Pro until ``subscription.expired``)."""
+        status Dodo echoes back (test_subscription_events.py pins that the
+        reducer keeps the user on Pro until subscription.expired)."""
         mock_subscription_repository.get_active_for_user = AsyncMock(
             return_value=SAMPLE_SUBSCRIPTION
         )
@@ -984,7 +984,7 @@ class TestVerifyPaymentCompletion:
 
     @pytest.fixture
     def activation_seams(self, mock_subscription_repository, mock_users_collection):
-        """The row is written by ``subscription_events``, so verification's
+        """The row is written by subscription_events, so verification's
         recovery runs through that module's seams.
 
         The same repository and user mocks stand behind both modules: the test
@@ -1029,10 +1029,10 @@ class TestVerifyPaymentCompletion:
         user_id: str | None = FAKE_USER_ID,
         status: str = "active",
     ) -> Subscription:
-        """The Dodo SDK's own ``Subscription``, not a stand-in for it.
+        """The Dodo SDK's own Subscription, not a stand-in for it.
 
         Verification revalidates whatever the SDK hands back into
-        ``DodoSubscriptionData`` before anything is written, so the fixture has
+        DodoSubscriptionData before anything is written, so the fixture has
         to be the real shape: a namespace or a MagicMock would answer any
         attribute and let a drift between the two schemas pass unnoticed.
         """
@@ -1071,7 +1071,7 @@ class TestVerifyPaymentCompletion:
 
     @staticmethod
     def _exact_retrieve(expected_id: str, result: object) -> MagicMock:
-        """A ``retrieve`` stub that answers only its own id.
+        """A retrieve stub that answers only its own id.
 
         Any other argument raises, so a mutant that rewrites which id gets
         passed dies in every test that walks the chain.
@@ -1346,7 +1346,7 @@ class TestVerifyPaymentCompletion:
         mock_redis_cache,
     ):
         """The result page verifies eight times over ~50 s
-        (``verifyPaymentWithRetry.ts``). Every retry re-scanned every recorded
+        (verifyPaymentWithRetry.ts). Every retry re-scanned every recorded
         session against Dodo — up to CHECKOUT_SESSION_SCAN_LIMIT round trips
         per verify, eight times, for an answer that had not changed. The
         negative result is cached for the retry window so the scan costs one
@@ -1979,7 +1979,7 @@ class TestCreateProCheckout:
         mock_redis_cache,
         mock_dodo_client,
     ):
-        """Every surface advertises ``PAYWALL_DISCOUNT_CODE``; the one place the
+        """Every surface advertises PAYWALL_DISCOUNT_CODE; the one place the
         session is minted must apply it, or the link and the pitch drift."""
         mock_plan_repository.list_plans = AsyncMock(return_value=CATALOGUE)
         mint = AsyncMock(

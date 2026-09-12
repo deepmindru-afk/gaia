@@ -1,9 +1,9 @@
-"""Repository for the ``usage_snapshots`` collection — user-scoped usage tracking.
+"""Repository for the usage_snapshots collection — user-scoped usage tracking.
 
 Snapshots are hourly-aggregated: a write merges into the current hour's row for
-the user (bounded ``$gte``/``$lt`` on ``snapshot_date``) or creates it, keeping the
-document count from exploding. ``updated_at`` is stamped by the base on merge; a
-90-day TTL on ``created_at`` reaps old rows (see indexes).
+the user (bounded $gte/$lt on snapshot_date) or creates it, keeping the
+document count from exploding. updated_at is stamped by the base on merge; a
+90-day TTL on created_at reaps old rows (see indexes).
 """
 
 from datetime import UTC, datetime, timedelta
@@ -50,7 +50,7 @@ class UsageSnapshotsRepository(UserScopedRepository[UserUsageSnapshot, UsageSnap
         return created.id
 
     async def history_for_user(self, user_id: str, *, since: datetime) -> list[UserUsageSnapshot]:
-        """A user's snapshots created since ``since``, newest first."""
+        """A user's snapshots created since since, newest first."""
         return await self._find(
             {"user_id": user_id, "created_at": {"$gte": since}},
             sort=[("created_at", -1)],

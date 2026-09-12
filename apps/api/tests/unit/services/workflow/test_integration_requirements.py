@@ -1,7 +1,7 @@
 """Checking a run's claim that an integration was missing, before acting on it.
 
 The rest of this module derives requirements from a workflow's declared steps.
-``confirm_disconnected`` is the one function whose input comes from a run instead
+confirm_disconnected is the one function whose input comes from a run instead
 — and a run is a model, so its claim is the thing under test here.
 """
 

@@ -45,8 +45,8 @@ from .chroma_store import ChromaStore
 class IndexableTool(Protocol):
     """The only surface indexing reads off a tool: its name and description.
 
-    A ``Protocol`` rather than ``BaseTool`` because the provider-catalog warmup
-    deliberately indexes ``_CatalogToolMeta`` — a two-slot stand-in that avoids
+    A Protocol rather than BaseTool because the provider-catalog warmup
+    deliberately indexes _CatalogToolMeta — a two-slot stand-in that avoids
     materializing ~1.6k StructuredTools just to embed their descriptions.
     """
 
@@ -57,8 +57,8 @@ class IndexableTool(Protocol):
 class IndexedToolEntry(TypedDict):
     """One entry of the current/existing tool maps the diff runs over.
 
-    Keyed by ``"<namespace>::<tool_name>"``. ``tool`` is present for real tools
-    and ``description`` for subagent entries — ``_build_put_operations``
+    Keyed by "<namespace>::<tool_name>". tool is present for real tools
+    and description for subagent entries — _build_put_operations
     discriminates on which one is there; rows read back from Chroma carry
     neither, since only the hash matters for the diff.
     """
@@ -70,14 +70,14 @@ class IndexedToolEntry(TypedDict):
 
 
 def _namespace_equals(namespace: str) -> Where:
-    """A ``Where`` clause matching one namespace.
+    """A Where clause matching one namespace.
 
-    The filter itself is correct — chromadb\'s own ``validate_where`` accepts it
+    The filter itself is correct — chromadb\'s own validate_where accepts it
     (and rejects a bogus operator, so that check is not a no-op), and running it
     against a live collection returns exactly the matching namespace\'s rows. The
-    ``cast`` is purely a stub limitation: chromadb\'s ``Where`` alias allows bare
-    ``str`` for field names but keys the operator dict by ``Literal["$eq", ...]``,
-    so mypy widens the nested literal to ``dict[str, str]`` and rejects it. Keeping
+    cast is purely a stub limitation: chromadb\'s Where alias allows bare
+    str for field names but keys the operator dict by Literal["$eq", ...],
+    so mypy widens the nested literal to dict[str, str] and rejects it. Keeping
     it in one helper confines the unchecked spot instead of spreading it over
     three call sites.
     """

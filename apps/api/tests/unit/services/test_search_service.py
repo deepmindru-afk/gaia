@@ -1,6 +1,6 @@
 """Unit tests for the search service.
 
-``search_messages`` orchestrates two repositories (conversations + notes) and
+search_messages orchestrates two repositories (conversations + notes) and
 assembles the response with highlight snippets. These tests mock the repository
 singletons (services never mock the DB) and assert the service's own behaviour:
 response shape, snippet attachment, error mapping, and — critically — that the

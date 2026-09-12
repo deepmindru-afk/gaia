@@ -1,5 +1,5 @@
 """
-Provider Metadata Service
+Provider Metadata Service.
 
 Service for fetching and storing provider-specific user metadata (e.g., username)
 when OAuth integrations are connected. This metadata is used to enhance agent
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 def get_composio_service() -> "ComposioService":
     """Resolve the Composio service at call time rather than importing
-    ``app.services.composio.composio_service`` (Composio SDK, ``app.patches``,
+    app.services.composio.composio_service (Composio SDK, app.patches,
     every custom tool: seconds of import) into everything that imports this
     module, e.g. the agent context sections."""
     from app.services.composio.composio_service import (  # noqa: PLC0415 -- defers the Composio SDK import chain out of module import

@@ -1,14 +1,14 @@
 """In-process E2B sandbox pool.
 
-The pool holds a single live `AsyncSandbox` per user_id. Reuse across tool
+The pool holds a single live AsyncSandbox per user_id. Reuse across tool
 calls avoids reconnecting to E2B's control plane for every command. The pool
-also exposes per-user `asyncio.Lock` + refcount used by the lifecycle layer to
+also exposes per-user asyncio.Lock + refcount used by the lifecycle layer to
 serialize calls and time pause-on-idle correctly.
 
 The pool is per-API-process, not cross-process. Two API replicas operating on
 the same user will each hold their own AsyncSandbox handle; E2B coordinates
 the underlying sandbox state. That's fine — the lifecycle layer reconciles via
-the Mongo `e2b_sandboxes` doc as the source of truth for `sandbox_id`.
+the Mongo e2b_sandboxes doc as the source of truth for sandbox_id.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ class SandboxPool:
         return self._entries.get(user_id)
 
     def put(self, user_id: str, entry: PooledSandbox) -> None:
-        """Cache ``entry`` as the user's pooled sandbox and republish pool size."""
+        """Cache entry as the user's pooled sandbox and republish pool size."""
         self._entries[user_id] = entry
         self._publish_size()
 
@@ -111,7 +111,7 @@ class SandboxPool:
         """Serialize sandbox acquisition for one user across every replica.
 
         Two locks, because they answer different questions. The in-process
-        ``asyncio.Lock`` collapses this pod's concurrent acquirers so only one of
+        asyncio.Lock collapses this pod's concurrent acquirers so only one of
         them talks to Redis; the Redis lease then serializes against the *other*
         pods. Without the first, every coroutine on the pod would queue on Redis;
         without the second, two pods would create the same user's sandbox twice.
@@ -127,8 +127,8 @@ class SandboxPool:
     def _publish_size(self) -> None:
         """Recompute per-shard pool occupancy and publish to Prometheus.
 
-        Walks ``_entries`` once, buckets by ``shard_for(user_id)``, and emits
-        one ``sandbox_pool_size{kind="user",shard=...}`` gauge value per
+        Walks _entries once, buckets by shard_for(user_id), and emits
+        one sandbox_pool_size{kind="user",shard=...} gauge value per
         shard. Re-publishes 0 for previously-seen shards now empty so the
         gauge falls instead of holding its last positive value forever.
 
@@ -164,10 +164,10 @@ _pool_singleton: SandboxPool | None = None
 def init_sandbox_pool() -> SandboxPool:
     """Lazy-provider factory; also memoizes the module-level singleton.
 
-    Registered with `@lazy_provider` purely to expose the E2B_API_KEY
-    dependency to provider_registration. The `@lazy_provider` decorator
-    wraps the return value, so callers should use `get_sandbox_pool()` to
-    get the unwrapped `SandboxPool` instance.
+    Registered with @lazy_provider purely to expose the E2B_API_KEY
+    dependency to provider_registration. The @lazy_provider decorator
+    wraps the return value, so callers should use get_sandbox_pool() to
+    get the unwrapped SandboxPool instance.
     """
     global _pool_singleton
     if _pool_singleton is None:
@@ -178,14 +178,14 @@ def init_sandbox_pool() -> SandboxPool:
 
 @contextlib.asynccontextmanager
 async def _redis_user_lock(user_id: str) -> AsyncIterator[None]:
-    """Hold the cross-replica lease for ``user_id`` for the duration of the block.
+    """Hold the cross-replica lease for user_id for the duration of the block.
 
     Correctness-critical: not holding the lease raises rather than entering the
     critical section unprotected — the exact double-create the lock exists to
     prevent — so a failed acquire (another replica held it past the window, or
-    Redis is unavailable) becomes a ``SandboxAcquisitionError``. The lease is
+    Redis is unavailable) becomes a SandboxAcquisitionError. The lease is
     short and watchdog-renewed, so a pod that dies holding it frees the user
-    within ``SANDBOX_LOCK_LEASE_SECONDS`` while a slow-but-alive holder keeps it
+    within SANDBOX_LOCK_LEASE_SECONDS while a slow-but-alive holder keeps it
     for as long as the work actually takes.
     """
     lock = DistributedLock(
@@ -208,7 +208,7 @@ def get_sandbox_pool() -> SandboxPool:
     """Synchronous accessor for the SandboxPool singleton.
 
     The pool itself does no I/O at construction time, so we don't need the
-    full `providers.aget` machinery here. Initializes on first call.
+    full providers.aget machinery here. Initializes on first call.
     """
     global _pool_singleton
     if _pool_singleton is None:

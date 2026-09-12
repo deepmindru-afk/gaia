@@ -1,11 +1,11 @@
-"""Hermetic unit tests for ``PlaybooksRepository``.
+"""Hermetic unit tests for PlaybooksRepository.
 
-The real-Mongo proof lives in ``tests/contracts/test_playbooks_repository.py``;
+The real-Mongo proof lives in tests/contracts/test_playbooks_repository.py;
 this tier pins the exact shape of the writes the repository hands the driver —
 that a first authoring is ONE atomic upsert rather than a read-then-insert two
 concurrent authors can both pass, and that a run outcome lands only on the
 playbook that was actually replayed. The driver is mocked at
-``app.db.repositories.base.get_async_collection``, the single seam every read and
+app.db.repositories.base.get_async_collection, the single seam every read and
 write in the base repository goes through.
 """
 
@@ -93,8 +93,8 @@ def _raw_update_spy(*outcomes: Any) -> tuple[Any, list[dict[str, Any]]]:
     signature so a dropped argument fails here rather than reaching the driver.
 
     The seam is where the cache scope and the upsert flag are decided; neither
-    reaches ``find_one_and_update``, so they are only observable from this side.
-    Each entry of ``outcomes`` is the next call's return value, or an exception
+    reaches find_one_and_update, so they are only observable from this side.
+    Each entry of outcomes is the next call's return value, or an exception
     to raise from it.
     """
     calls: list[dict[str, Any]] = []
@@ -176,7 +176,7 @@ class TestUpsertForWorkflow:
     async def test_the_written_body_is_the_whole_playbook_and_nothing_else(
         self, repo: PlaybooksRepository, collection: MagicMock
     ) -> None:
-        """A rewrite replaces the workflow's one record in place, so the ``$set``
+        """A rewrite replaces the workflow's one record in place, so the $set
         IS the new playbook. A field that goes missing here is silently kept from
         the body just thrown away; one that arrives as null erases it."""
         await repo.upsert_for_workflow(_doc())
@@ -223,7 +223,7 @@ class TestUpsertForWorkflow:
     async def test_both_attempts_are_written_in_the_global_scope(
         self, repo: PlaybooksRepository
     ) -> None:
-        """``playbooks`` is a global collection, so both the first attempt and the
+        """playbooks is a global collection, so both the first attempt and the
         duplicate-key retry name the global cache scope."""
         spy, calls = _raw_update_spy(None, None, DuplicateKeyError("E11000 duplicate key"), _doc())
 
@@ -392,7 +392,7 @@ class TestRecordRunOutcome:
     async def test_with_a_revision_the_write_lands_only_on_that_body(
         self, repo: PlaybooksRepository, collection: MagicMock
     ) -> None:
-        """``playbook_id`` survives a rewrite, so on its own it guarded nothing."""
+        """playbook_id survives a rewrite, so on its own it guarded nothing."""
         await repo.record_run_outcome(
             WORKFLOW_ID,
             USER_ID,
@@ -497,9 +497,9 @@ class TestIncrementHealAttempts:
 
 
 class TestTheScopeAndShapeOfEveryRawWrite:
-    """The raw-update seam carries two things ``find_one_and_update`` never sees:
+    """The raw-update seam carries two things find_one_and_update never sees:
     the cache scope the write invalidates, and how the outcome update was asked
-    for. ``playbooks`` is a global collection, so every write names the global
+    for. playbooks is a global collection, so every write names the global
     scope; a per-user scope would bump a generation nobody reads and leave the
     global one stale."""
 
@@ -629,9 +629,9 @@ class TestDeleteRevision:
 
 @pytest.mark.unit
 class TestTheWriteIsTheTransition:
-    """``_outcome_update`` splits the lifecycle transition into the part that
+    """_outcome_update splits the lifecycle transition into the part that
     depends on the stored state and the part that does not. Applying the write
-    to a document must land exactly where ``transition`` says a replay lands,
+    to a document must land exactly where transition says a replay lands,
     for every outcome from every prior status, or the two have drifted."""
 
     @pytest.mark.parametrize(
@@ -679,7 +679,7 @@ class TestTheWriteIsTheTransition:
 async def test_an_ask_slot_source_is_written_by_its_alias(
     repo: PlaybooksRepository, collection: MagicMock
 ) -> None:
-    """The document model reads ``$ask``; a write that spells the field name
+    """The document model reads $ask; a write that spells the field name
     stores a body the read refuses. The stored form is the read form."""
     await repo.upsert_for_workflow(
         _doc(

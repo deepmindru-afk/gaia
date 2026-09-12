@@ -2,12 +2,12 @@
 
 Shipping a skill is three things agreeing: it loads, it is listed to the right
 agent, and the location it is listed with is a file that exists. Nothing in the
-repo asserted the middle one — every skills test patches ``load_builtin_skills``
-or ``get_skills_for_agent``, so "the executor is told about plan-my-day" was
+repo asserted the middle one — every skills test patches load_builtin_skills
+or get_skills_for_agent, so "the executor is told about plan-my-day" was
 never checked against the real library.
 
-The failure is silent by construction. ``get_available_skills_text`` swallows a
-Mongo error and returns builtins anyway, and returns ``""`` when there is
+The failure is silent by construction. get_available_skills_text swallows a
+Mongo error and returns builtins anyway, and returns "" when there is
 nothing — so a skill that stops being listed produces no error, no log the user
 sees, and an agent that just does the generic thing instead.
 
@@ -37,7 +37,7 @@ EXECUTOR = "executor"
 def _no_mongo_no_cache():
     """The two stores this function touches. Everything else stays real.
 
-    ``Cacheable`` wraps the function, so without stubbing the cache the first
+    Cacheable wraps the function, so without stubbing the cache the first
     test's result is served to the rest and per-agent differences vanish.
     """
     with (
@@ -82,7 +82,7 @@ class TestTheExecutorIsToldAboutItsSkills:
 
     async def test_an_integration_agent_is_not_given_the_executors_skills(self):
         """Integration subagents receive their builtins through
-        ``integration_skills_block`` instead. Merging them here too would list
+        integration_skills_block instead. Merging them here too would list
         every skill twice in their prompt."""
         listing = await _text("gmail_agent")
         executor_only = {s.name for s in load_builtin_skills() if s.subagent_id == EXECUTOR}
@@ -91,7 +91,7 @@ class TestTheExecutorIsToldAboutItsSkills:
 
 
 class TestTheListedLocationIsReadable:
-    """The listing tells the agent a path and the agent calls ``read`` on it.
+    """The listing tells the agent a path and the agent calls read on it.
     The path is built by the same helper the materializer uses — these assert
     that stays true, because a drift produces a read of a file that is not there
     and the agent silently continues without the skill."""
@@ -113,7 +113,7 @@ class TestTheListedLocationIsReadable:
         """End to end for the path contract: materialize into a real directory,
         then confirm the location the agent would be told matches a file that
         exists. Asserted on an integration skill because those are the ones
-        ``materialize_skills`` writes."""
+        materialize_skills writes."""
         from app.agents.workspace.system_files import builtin_skill_rel_path
 
         materialize_skills(tmp_path, {"gmail"})

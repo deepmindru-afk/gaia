@@ -28,8 +28,8 @@ from app.db.postgresql import (
 def _get_original_init_fn():
     """Extract the original async function wrapped by @lazy_provider.
 
-    The decorator replaces the function with ``register_provider`` — a closure
-    whose ``__wrapped__`` attribute is not set.  The original coroutine function
+    The decorator replaces the function with register_provider — a closure
+    whose __wrapped__ attribute is not set.  The original coroutine function
     is captured in the closure and can be retrieved from the providers registry
     after calling the registration helper once.
     """

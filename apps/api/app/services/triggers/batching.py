@@ -1,7 +1,7 @@
 """Coalescing window for poll-based integration triggers.
 
-Composio's ``GMAIL_NEW_GMAIL_MESSAGE`` fires **once per message**: the trigger's
-``interval`` controls how often Composio polls Gmail, not how many messages ride
+Composio's GMAIL_NEW_GMAIL_MESSAGE fires **once per message**: the trigger's
+interval controls how often Composio polls Gmail, not how many messages ride
 in one webhook. Dispatching a workflow run per event therefore turns a busy
 inbox into one full agent run per email — 56 runs in three minutes for a user
 with a normal morning, each paying the agent's fixed ~53k-token prompt and
@@ -10,12 +10,12 @@ racing the others into a cold prompt cache.
 This module gives those triggers the batching their config already promises.
 Events accumulate in a Redis list while a single deferred ARQ job is in flight
 for the workflow; when the job runs it drains the whole list and hands the agent
-one batch. ARQ's ``_job_id`` dedup is what collapses the fan-out: the first
+one batch. ARQ's _job_id dedup is what collapses the fan-out: the first
 event schedules the run, every later event in the window is rejected as a
 duplicate enqueue and survives only as a buffered payload.
 
 Only triggers with a declared poll interval coalesce. Everything else keeps
-firing immediately, because a trigger like ``calendar_event_starting_soon`` is
+firing immediately, because a trigger like calendar_event_starting_soon is
 worthless late — a meeting reminder delayed by its window is a missed meeting.
 """
 
@@ -170,7 +170,7 @@ async def drain_trigger_batch(batch_key: str) -> list[dict[str, Any]] | None:
 
     Read-and-delete in one transaction so events arriving mid-drain open the
     next window instead of being consumed by a run that already built its
-    prompt without them. Returns ``None`` when Redis is unavailable — the
+    prompt without them. Returns None when Redis is unavailable — the
     buffer may well be non-empty, and reporting it as drained-empty would let
     the run exit "cleanly" while the events sit unread.
     """

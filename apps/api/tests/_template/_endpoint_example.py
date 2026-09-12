@@ -1,9 +1,9 @@
-"""Canonical endpoint test — copy into ``tests/unit/api/``, rename, adapt.
+"""Canonical endpoint test — copy into tests/unit/api/, rename, adapt.
 
-Mirrors ``tests/unit/api/test_todos_endpoint.py``: the root ``client`` fixture
+Mirrors tests/unit/api/test_todos_endpoint.py: the root client fixture
 (ASGITransport against the test app, auth dependency overridden), the service
 mocked at the class the endpoint calls, and asserts on status code + response
-body only. The 401 path uses ``unauthed_client`` (auth dependency popped).
+body only. The 401 path uses unauthed_client (auth dependency popped).
 """
 
 from datetime import UTC, datetime

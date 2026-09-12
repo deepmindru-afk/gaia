@@ -988,7 +988,7 @@ class TestBuildEntries:
 
 
 class _RecallHarness:
-    """Drives the real ``recall`` pipeline with every I/O boundary faked."""
+    """Drives the real recall pipeline with every I/O boundary faked."""
 
     def __init__(self) -> None:
         self.rerank_inputs: list[list[str]] = []

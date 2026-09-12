@@ -1,8 +1,8 @@
 """Unit tests for app/services/llm_metering.py — the one pricing + recording
 seam both metering routes share.
 
-Covers ``extract_message_usage`` (the AIMessage -> token counts read, including
-every provider-shape fallback) and ``record_llm_call`` itself (the funnel every
+Covers extract_message_usage (the AIMessage -> token counts read, including
+every provider-shape fallback) and record_llm_call itself (the funnel every
 metering route prices through).
 """
 
@@ -171,7 +171,7 @@ def test_the_model_is_read_from_what_the_provider_reported() -> None:
 
 
 def test_a_response_with_no_model_is_unknown_rather_than_guessed() -> None:
-    """``unknown`` prices at DEFAULT_PRICING instead of a real rate, so the
+    """unknown prices at DEFAULT_PRICING instead of a real rate, so the
     metering seams log it loudly; silently substituting a plausible default
     would hide the miss."""
     assert extract_message_model(AIMessage(content="hi")) == UNKNOWN_MODEL_NAME
@@ -252,8 +252,8 @@ async def test_an_unreported_reasoning_count_is_booked_as_none_of_it(
 
 def test_the_generation_id_is_read_from_the_response() -> None:
     """The id is the only handle on WHICH UPSTREAM served the call: ChatOpenRouter
-    keeps the aggregator's own name (``model_provider="openrouter"``) and drops the
-    upstream's ``provider`` field, and this id resolves to the serving upstream
+    keeps the aggregator's own name (model_provider="openrouter") and drops the
+    upstream's provider field, and this id resolves to the serving upstream
     through the generation-metadata endpoint without spending a model call."""
     message = AIMessage(content="hi", response_metadata={"id": "gen-abc123"})
 
@@ -261,7 +261,7 @@ def test_the_generation_id_is_read_from_the_response() -> None:
 
 
 def test_a_response_with_no_generation_id_is_none_rather_than_empty() -> None:
-    """``None`` drops the key from the wide event; an empty string would land in
+    """None drops the key from the wide event; an empty string would land in
     the logs as a real-looking id that resolves to nothing."""
     assert extract_generation_id(AIMessage(content="hi")) is None
     assert extract_generation_id(AIMessage(content="hi", response_metadata={})) is None

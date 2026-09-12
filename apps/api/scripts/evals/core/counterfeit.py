@@ -13,7 +13,7 @@ must reject them. Two levels, in increasing strength:
   catches the gate that is structurally incapable of failing.
 * **echo** — a run that says the prompt back and does nothing. Catches the gate
   satisfied by words the user already supplied.
-* **counterfeit** — an optional per-case ``counterfeit:`` block: a hand-written
+* **counterfeit** — an optional per-case counterfeit: block: a hand-written
   wrong answer built to be as sneaky as the author can make it. This is the one
   that catches gates faked by a plausible-looking wrong answer.
 
@@ -131,10 +131,10 @@ def _echo_run(case: Case) -> CaseRun:
 def _self_scored(suite: Scorable) -> frozenset[str]:
     """Gates the suite computes from its transport's own end state.
 
-    A benchmark verdict — ``gaia_exact``, ``probes`` — is derived from a payload
+    A benchmark verdict — gaia_exact, probes — is derived from a payload
     only a real run of that suite produces, so a synthetic run legitimately
     yields nothing for it and its absence here is not evidence of a defect.
-    Those names are covered instead by ``gates.validate_gates`` at load time.
+    Those names are covered instead by gates.validate_gates at load time.
     """
     extra = getattr(suite, "EXTRA_GATES", None)
     if not isinstance(extra, Mapping):
@@ -159,7 +159,7 @@ def _plausible_run(case: Case) -> CaseRun:
 
 
 def _authored_run(case: Case) -> CaseRun | None:
-    """The case's own ``counterfeit:`` block, if its author wrote one."""
+    """The case's own counterfeit: block, if its author wrote one."""
     block = case.setup.get("counterfeit") if isinstance(case.setup, dict) else None
     if not isinstance(block, dict):
         return None
@@ -177,7 +177,7 @@ def _authored_run(case: Case) -> CaseRun | None:
 
 
 def parroted_assertions(case: Case) -> list[str]:
-    """``communicate`` strings the user's own prompt already contains.
+    """communicate strings the user's own prompt already contains.
 
     A presence assertion the prompt supplies can be satisfied by repeating the
     question back, so it credits the agent for nothing. This is reported rather

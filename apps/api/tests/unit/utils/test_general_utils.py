@@ -311,7 +311,7 @@ class TestTransformGmailMessage:
     @pytest.mark.regression
     def test_composio_null_fields_become_empty_strings(self) -> None:
         """Composio documents every header field as nullable; the derived keys stay
-        strings so the result validates as ``GmailMessageSummary``."""
+        strings so the result validates as GmailMessageSummary."""
         msg: dict[str, Any] = {
             "messageId": "msg-1",
             "messageText": "body",

@@ -1,6 +1,4 @@
-"""
-GitHub trigger handler.
-"""
+"""GitHub trigger handler."""
 
 import asyncio
 from typing import Any, ClassVar

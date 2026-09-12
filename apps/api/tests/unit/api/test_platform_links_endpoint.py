@@ -1,4 +1,4 @@
-"""Tests for app/api/v1/endpoints/platform_links.py"""
+"""Tests for app/api/v1/endpoints/platform_links.py."""
 
 from typing import cast
 from unittest.mock import AsyncMock, patch
@@ -970,7 +970,7 @@ class TestImessagePremiumGate:
     @pytest.mark.regression
     @pytest.mark.asyncio
     async def test_pro_user_connect_returns_the_number_to_text(self, client: AsyncClient) -> None:
-        """The deep link is an Apple-only `sms:` URL — a desktop browser opens it to a
+        """The deep link is an Apple-only sms: URL — a desktop browser opens it to a
         blank tab. The number the user has to text must reach the client as data."""
         photon_user = PhotonUser(
             id="pu_123", phoneNumber="+15551234567", assignedPhoneNumber="+14155955082"

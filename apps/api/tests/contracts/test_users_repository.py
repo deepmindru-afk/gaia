@@ -45,7 +45,7 @@ def make_user() -> Callable[..., UserDocument]:
 def local_time_offset_from_utc(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Move the process's local timezone off UTC for the test.
 
-    The suite pins TZ=UTC, which makes a naive ``datetime.now()`` numerically
+    The suite pins TZ=UTC, which makes a naive datetime.now() numerically
     identical to an aware UTC one — so a timestamp that forgot its timezone
     would look correct here and be hours wrong in production.
     """
@@ -172,7 +172,7 @@ class TestOnboardingWrites:
     async def test_complete_onboarding_writes_timezone_at_the_document_root(
         self, repo, make_user, raw_collection
     ):
-        """``user.timezone`` is the single source of truth — the wizard's answer
+        """user.timezone is the single source of truth — the wizard's answer
         must land at the root under that exact key, not on the subdocument."""
         created = await repo.create(make_user(email="tz@y.com"))
         completed = await repo.complete_onboarding(
@@ -452,7 +452,7 @@ class TestWorkerScans:
         self, repo, make_user, local_time_offset_from_utc
     ):
         """The marker is compared against a UTC cutoff by the daily cron, so a
-        naive local ``now()`` would land hours off and re-select (or hide) the
+        naive local now() would land hours off and re-select (or hide) the
         user."""
         created = await repo.create(make_user())
         before = datetime.now(UTC) - timedelta(milliseconds=1)  # BSON stores milliseconds
@@ -468,8 +468,8 @@ class TestSignupDeliveryStamps:
     A missing stamp is the only durable record that a new user is still owed a
     welcome email and a place in the marketing audience, so the query that finds
     those users and the write that retires them are the whole mechanism. Both
-    run against real Mongo here because both are pure query shape — an ``$or``
-    over ``{$exists: false}`` and a ``$set`` of named fields — which a stubbed
+    run against real Mongo here because both are pure query shape — an $or
+    over {$exists: false} and a $set of named fields — which a stubbed
     repository proves nothing about.
     """
 
@@ -543,7 +543,7 @@ class TestSignupDeliveryStamps:
         Stamping both when only one landed loses the other with no trace.
 
         The instant is compared against a UTC cutoff by the sweep, so a naive
-        local ``now()`` would land hours off and either re-select the user or
+        local now() would land hours off and either re-select the user or
         hide them for good.
         """
         created = await repo.create(make_user(created_at=self._recent(1)))
@@ -608,7 +608,7 @@ class TestPlatformLinking:
 
 class TestHilPreferenceWrites:
     """The concurrency-safe HIL preference writes. Each assertion maps to a way a
-    read-modify-write (or a dotted ``$set`` path) could silently drop or bury a
+    read-modify-write (or a dotted $set path) could silently drop or bury a
     user's setting — verified against real Mongo, where the burying happens."""
 
     async def test_setting_an_override_touches_only_that_tools_key(self, repo, make_user):

@@ -1,14 +1,14 @@
 """The shared no-op ChromaDB embedding function.
 
 ChromaStore computes its own embeddings (fastembed) and passes them
-explicitly to ``upsert(embeddings=...)``, so the collection-level embedding
+explicitly to upsert(embeddings=...), so the collection-level embedding
 function is never used for real. Registering a no-op prevents ChromaDB from
-loading its default ONNX model (``all-MiniLM-L6-v2``) in environments where
+loading its default ONNX model (all-MiniLM-L6-v2) in environments where
 it is unavailable (CI, minimal containers).
 
 One copy lives here because the two stores that need it (
-``app.db.chroma.chroma_store`` and ``app.memory.chroma_store``) drifted
-apart once already: the memory copy lost ``name()``/``get_config()`` and
+app.db.chroma.chroma_store and app.memory.chroma_store) drifted
+apart once already: the memory copy lost name()/get_config() and
 chromadb 1.x turned the missing methods into a hard deprecation error.
 """
 

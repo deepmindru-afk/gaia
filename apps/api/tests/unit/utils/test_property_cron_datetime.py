@@ -2,16 +2,16 @@
 
 The invariants pinned here are the ones the module's own docstring promises:
 
-- ``get_next_run_time`` always returns a tz-aware datetime in UTC, strictly in
+- get_next_run_time always returns a tz-aware datetime in UTC, strictly in
   the future, whose wall-clock time in the schedule's timezone matches the
   cron's hour/minute fields.
 - The wall-clock match must survive DST transitions: a daily 09:00 schedule in
   America/New_York must fire at 09:00 local whether the fire lands in EST or
   EDT. If the naive wall-clock stepping were reverted, the fire would come out
   an hour off and this property fails.
-- ``calculate_next_occurrences`` returns exactly ``count`` strictly increasing
+- calculate_next_occurrences returns exactly count strictly increasing
   aware-UTC datetimes.
-- Invalid or never-firing expressions raise ``CronError`` and nothing else.
+- Invalid or never-firing expressions raise CronError and nothing else.
 """
 
 from datetime import UTC, datetime

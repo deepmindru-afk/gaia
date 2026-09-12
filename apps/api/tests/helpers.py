@@ -24,9 +24,9 @@ from shared.py.wide_events import log, log_context
 def effective_limit(config: RateLimitConfig, period: str) -> float:
     """Comparable allowance for a period under RateLimitConfig's 0-semantics.
 
-    ``0`` is overloaded: a tier with BOTH periods 0 has no access at all
-    (returns ``0.0``); otherwise a period of 0 means that period is uncapped
-    (returns ``math.inf``). Lets free and pro allowances be ordered directly
+    0 is overloaded: a tier with BOTH periods 0 has no access at all
+    (returns 0.0); otherwise a period of 0 means that period is uncapped
+    (returns math.inf). Lets free and pro allowances be ordered directly
     despite 0 meaning either "no access" or "unlimited" by context.
     """
     if config.day <= 0 and config.month <= 0:
@@ -76,13 +76,13 @@ _TEST_REDIS_DB_BLOCK_SIZE = _TEST_REDIS_STRIPE - (_TEST_REDIS_DB_BLOCK_START % _
 def worker_redis_url(base_url: str) -> str:
     """Return a Redis URL with a per-xdist-worker DB number that is safe to flush.
 
-    Each xdist worker gets its own logical DB so ``flushdb()`` teardown cannot wipe
+    Each xdist worker gets its own logical DB so flushdb() teardown cannot wipe
     another worker's in-flight keys, and the resolved DB is never 0 — so teardown
     can never touch the application's live database. When the URL pins no DB (or
     pins DB 0), the run is relocated into a dedicated high-DB block of 24 DBs
-    starting at ``GAIA_REDIS_DB_BASE`` (default 8, i.e. the historical 8–31).
+    starting at GAIA_REDIS_DB_BASE (default 8, i.e. the historical 8–31).
 
-    Setting ``GAIA_REDIS_DB_BASE`` to ``8 + lane*32`` gives each concurrent CI
+    Setting GAIA_REDIS_DB_BASE to 8 + lane*32 gives each concurrent CI
     lane a disjoint 32-DB stripe on one shared Redis, so lanes cannot flush each
     other's keys either — see scripts/ci/test-services.sh.
     """
@@ -114,15 +114,15 @@ def worker_redis_url(base_url: str) -> str:
 def worker_mongo_db_name(base_name: str | None = None) -> str:
     """Return a per-xdist-worker MongoDB database name.
 
-    The same reason ``worker_redis_url`` exists: the service fixtures wipe collections
-    with ``delete_many({})`` on setup and teardown, so on a shared database one worker
+    The same reason worker_redis_url exists: the service fixtures wipe collections
+    with delete_many({}) on setup and teardown, so on a shared database one worker
     clears another worker's in-flight documents and its conversation vanishes mid-test.
     Giving each worker its own database makes that impossible rather than unlikely.
 
-    The base defaults to ``GAIA_MONGO_DB_BASE`` (itself defaulting to ``gaia_test``)
+    The base defaults to GAIA_MONGO_DB_BASE (itself defaulting to gaia_test)
     so several CI lanes can share ONE mongod: lane r is handed
-    ``GAIA_MONGO_DB_BASE=gaia_test_r<r>`` and its workers land on
-    ``gaia_test_r<r>_gw<n>``, a namespace teardown in another lane cannot reach.
+    GAIA_MONGO_DB_BASE=gaia_test_r<r> and its workers land on
+    gaia_test_r<r>_gw<n>, a namespace teardown in another lane cannot reach.
     """
     base = base_name if base_name is not None else os.environ.get("GAIA_MONGO_DB_BASE", "gaia_test")
     worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
@@ -170,22 +170,22 @@ def create_fake_llm_with_tool_calls(
 
 
 class PassthroughFakeLLM:
-    """Base for hand-rolled fake LLMs that ``create_agent`` drives directly.
+    """Base for hand-rolled fake LLMs that create_agent drives directly.
 
-    ``create_agent`` reshapes the model before every call — ``with_config``,
-    ``bind_tools``, ``bind`` (the OpenRouter sticky-routing key), and
-    ``with_retry`` via ``with_llm_retry`` — and each returns a new runnable in
+    create_agent reshapes the model before every call — with_config,
+    bind_tools, bind (the OpenRouter sticky-routing key), and
+    with_retry via with_llm_retry — and each returns a new runnable in
     production. A fake only needs them to hand itself back, so they live here
-    once: subclasses write ``ainvoke`` and nothing else.
+    once: subclasses write ainvoke and nothing else.
 
-    Duck-typed rather than a ``BaseChatModel`` subclass on purpose — these
+    Duck-typed rather than a BaseChatModel subclass on purpose — these
     fakes answer from the messages they are shown, which is what makes them
-    replay-safe, and ``FakeMessagesListChatModel`` answers from a fixed list
+    replay-safe, and FakeMessagesListChatModel answers from a fixed list
     instead. The shared base is what stops the next reshaping call production
     adds from breaking every one of them separately.
 
     Carries the two model attributes production middleware reads without
-    invoking: ``_llm_type`` (token-counter selection) and ``profile``
+    invoking: _llm_type (token-counter selection) and profile
     (fractional-token triggers) — same invariant every real chat LLM meets.
     """
 
@@ -250,7 +250,7 @@ class NoAuthMiddleware(BaseHTTPMiddleware):
 
 class HeaderDrivenAuthMiddleware(BaseHTTPMiddleware):
     """Test-only stand-in for WorkOSAuthMiddleware that trusts an
-    ``X-Test-User-Id`` header instead of a real WorkOS session.
+    X-Test-User-Id header instead of a real WorkOS session.
 
     Unlike MockAuthMiddleware (one fixed user baked in at app-construction
     time), this lets a single live server be hit as several different
@@ -300,10 +300,10 @@ class AssertNumDbCalls:
     """Assert exactly N SQL statements executed inside the block (Django's
     assertNumQueries pattern).
 
-    Listens for SQLAlchemy ``before_cursor_execute`` on the given engine
+    Listens for SQLAlchemy before_cursor_execute on the given engine
     (sync or async — the event fires on both) and asserts the count,
     dumping every captured statement on mismatch so the accidental query is
-    visible, not just counted. ``warmup`` excludes the first statements that
+    visible, not just counted. warmup excludes the first statements that
     only establish the pool, so a warm-up connection is never mistaken for
     a query.
     """
@@ -344,8 +344,8 @@ class AssertNumDbCalls:
 
 
 def assert_num_db_calls(expected: int, engine: Any, *, warmup: int = 0) -> AssertNumDbCalls:
-    """Context manager: fail if the block runs anything but ``expected`` SQL
-    statements against ``engine``. Attach to a real engine at the repository
+    """Context manager: fail if the block runs anything but expected SQL
+    statements against engine. Attach to a real engine at the repository
     layer — N+1 and accidental-query regressions die here."""
     return AssertNumDbCalls(expected, engine, warmup=warmup)
 
@@ -353,8 +353,8 @@ def assert_num_db_calls(expected: int, engine: Any, *, warmup: int = 0) -> Asser
 class WideEventRecorder:
     """Captures every wide event a boundary flushes through the loguru sink.
 
-    ``log.get()`` only ever sees the INNERMOST open boundary, so it cannot read
-    fields a nested ``wide_task`` owns — and a fire-and-forget task that opens
+    log.get() only ever sees the INNERMOST open boundary, so it cannot read
+    fields a nested wide_task owns — and a fire-and-forget task that opens
     its own boundary (memory ingestion, ARQ jobs) is exactly that case. This
     stands in for the sink instead, so the assertion reads the event the code
     actually emitted:
@@ -383,8 +383,8 @@ class WideEventRecorder:
         return lambda *a, **k: None
 
     def event(self, task: str) -> dict[str, Any]:
-        """The single event emitted by the ``wide_task``/``log_context`` named
-        ``task``. Raises if that boundary emitted nothing or emitted twice."""
+        """The single event emitted by the wide_task/log_context named
+        task. Raises if that boundary emitted nothing or emitted twice."""
         matches = [event for event in self.events if event.get("task") == task]
         if len(matches) != 1:
             raise AssertionError(
@@ -398,7 +398,7 @@ class WideEventRecorder:
 async def captured_wide_event(operation: str = "test") -> AsyncIterator[dict[str, Any]]:
     """Run a block inside a real wide-event boundary, exposing its live fields.
 
-    ``log.warning``/``log.error`` append to the event's ``warnings``/``errors``
+    log.warning/log.error append to the event's warnings/errors
     ONLY inside a boundary — outside one every write is discarded — so this is
     what a test needs to prove a swallowed failure is actually observable
     rather than silent. That claim is the entire justification for swallowing,
@@ -427,7 +427,7 @@ LANGGRAPH_SETUP_LOCK_ID = 743_001_994
 async def pg_advisory_lock(
     conninfo: str, lock_id: int = LANGGRAPH_SETUP_LOCK_ID
 ) -> AsyncIterator[None]:
-    """Hold Postgres advisory lock ``lock_id`` for the block, across processes."""
+    """Hold Postgres advisory lock lock_id for the block, across processes."""
     import psycopg
 
     async with await psycopg.AsyncConnection.connect(conninfo, autocommit=True) as conn:

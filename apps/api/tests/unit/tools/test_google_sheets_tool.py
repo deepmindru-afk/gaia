@@ -1,14 +1,14 @@
 """Unit tests for app.agents.tools.integrations.google_sheets_tool.
 
-Only the true I/O boundary is faked: `proxy_request_sync`, patched in both this
-module and `google_sheets_utils`, is routed through a single fake Sheets/Drive
+Only the true I/O boundary is faked: proxy_request_sync, patched in both this
+module and google_sheets_utils, is routed through a single fake Sheets/Drive
 API. Everything else — A1 parsing, sheet/column resolution, request assembly —
 runs for real, so the assertions below are against the exact JSON Google would
 receive.
 
 Several production bugs were found while writing these tests and fixed at the
-root in `google_sheets_tool.py`, `google_sheets_utils.py` and
-`google_sheets_models.py`; the tests pinning them down are marked "BUG:".
+root in google_sheets_tool.py, google_sheets_utils.py and
+google_sheets_models.py; the tests pinning them down are marked "BUG:".
 """
 
 from typing import Any, cast

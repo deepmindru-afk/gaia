@@ -27,8 +27,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     Handles startup and shutdown events.
 
     Boot runs inside its own boundary so a failed start is one queryable
-    ``api_startup`` event (which service, how long it got, which exception)
-    instead of a discarded ``log.set``. The boundary covers startup only — it
+    api_startup event (which service, how long it got, which exception)
+    instead of a discarded log.set. The boundary covers startup only — it
     must not span the yield, or the pod would emit a single event at exit.
     """
     posthog_client = None

@@ -3,10 +3,10 @@ Skill Discovery Service - Generate available skills text for agent prompts.
 
 This module implements the "progressive disclosure" model from the Agent Skills spec:
   Level 1: Only name + description + location injected into system prompt
-  Level 2: Agent reads full SKILL.md via the `read` tool (on-demand)
-  Level 3: Agent reads referenced files via `read` / `bash` (on-demand)
+  Level 2: Agent reads full SKILL.md via the read tool (on-demand)
+  Level 3: Agent reads referenced files via read / bash (on-demand)
 
-The agent activates a skill by reading its file with the `read` tool (which reads
+The agent activates a skill by reading its file with the read tool (which reads
 host-side from JuiceFS — no sandbox spin-up); skill bodies are materialized into
 the user's workspace.
 
@@ -39,13 +39,13 @@ from shared.py.wide_events import SkillContext, log
 
 
 def _builtin_entries(agent_name: str) -> list[tuple[str, str, str]]:
-    """Return ``(name, description, location)`` for builtins targeting ``agent_name``.
+    """Return (name, description, location) for builtins targeting agent_name.
 
-    Builtins are not stored in Mongo, so the Mongo-backed ``get_skills_for_agent``
+    Builtins are not stored in Mongo, so the Mongo-backed get_skills_for_agent
     never returned them — the index was silently empty of the entire builtin
     library. We surface them straight from process memory. The location mirrors
-    exactly what ``storage.sessions.skills`` materializes on JuiceFS, so the
-    ``read(location)`` the agent is told to call actually resolves.
+    exactly what storage.sessions.skills materializes on JuiceFS, so the
+    read(location) the agent is told to call actually resolves.
     """
     entries: list[tuple[str, str, str]] = []
     for skill in load_builtin_skills():
@@ -66,7 +66,7 @@ async def get_available_skills_text(
     """Generate plain text skills listing for injection into agent system prompt.
 
     Merges builtin skills (process memory) with user/system skills (MongoDB) for
-    the given agent_name. Each entry includes a location the `read` tool can open.
+    the given agent_name. Each entry includes a location the read tool can open.
     Results are cached in Redis (12h TTL).
 
     Args:

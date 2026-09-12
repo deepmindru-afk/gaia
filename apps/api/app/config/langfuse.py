@@ -4,9 +4,9 @@ Activates only when LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and
 LANGFUSE_HOST are all set; missing any one is a silent no-op so dev runs
 without keys stay quiet.
 
-Trace association lives in `RunnableConfig.metadata["langfuse_trace_id"]`
-(the standard Langfuse LangChain pattern). `trace_id_for_message` seeds a
-deterministic ID from the GAIA assistant `message_id` so `/feedback` can
+Trace association lives in RunnableConfig.metadata["langfuse_trace_id"]
+(the standard Langfuse LangChain pattern). trace_id_for_message seeds a
+deterministic ID from the GAIA assistant message_id so /feedback can
 re-derive it without persisting anything.
 """
 
@@ -33,7 +33,7 @@ LANGFUSE_AUTH_CHECK_WAIT_SECONDS = 5
 def _langfuse_configured() -> bool:
     """True only when all three Langfuse env vars are non-blank.
 
-    Matches `LazyLoader`'s missing-value semantics — whitespace-only strings
+    Matches LazyLoader's missing-value semantics — whitespace-only strings
     count as missing, so callbacks stay disabled when the provider itself
     skipped initialization.
     """
@@ -61,13 +61,13 @@ def _langfuse_configured() -> bool:
 def init_langfuse() -> Langfuse:
     """Construct the process-wide Langfuse client + verify reachability.
 
-    A successful `Langfuse(...)` construction does not test the network. The
+    A successful Langfuse(...) construction does not test the network. The
     SDK ships traces from a background flush thread that swallows errors, so
     bad creds / DNS / TLS failures normally surface as zero traces in the UI
     with no log line anywhere. We run an explicit auth check so the bad case is
     one warning instead of a silent black hole — but off the startup path, since
     the check can otherwise block a process start for two minutes (see
-    ``LANGFUSE_AUTH_CHECK_WAIT_SECONDS``).
+    LANGFUSE_AUTH_CHECK_WAIT_SECONDS).
     """
     # Sentry's OTel integration (sentry-sdk[langgraph]) sets the global
     # TracerProvider before us, so the SDK's `environment` constructor kwarg

@@ -56,10 +56,10 @@ async def _user_mcp_tool_names(user_id: str | None) -> set[str]:
     """Tool names exposed by the user's live MCPClient.
 
     The resilience rewrite moved per-user MCP tool storage out of the global
-    ToolRegistry, so `retrieve_tools` can't rely on `get_tool_names()` alone
+    ToolRegistry, so retrieve_tools can't rely on get_tool_names() alone
     for discovery filtering or binding validation. This helper supplies the
     missing slice — read straight from the MCPClient that owns the live
-    connectors for `user_id`. Returns an empty set on any failure so the
+    connectors for user_id. Returns an empty set on any failure so the
     surrounding logic degrades cleanly.
     """
     if not user_id:
@@ -80,12 +80,12 @@ async def _user_mcp_tool_names(user_id: str | None) -> set[str]:
 
 
 def _is_platform_tool_space(tool_space: str) -> bool:
-    """True if `tool_space` belongs to a hardcoded platform integration.
+    """True if tool_space belongs to a hardcoded platform integration.
 
     Platform integrations (github, gmail, slack, ...) are defined in
-    OAUTH_INTEGRATIONS and have a fixed `subagent_config.tool_space`.
+    OAUTH_INTEGRATIONS and have a fixed subagent_config.tool_space.
     Their tool descriptions are not user-owned, so it is safe to search
-    them without checking that the caller's `user_namespaces` lists them.
+    them without checking that the caller's user_namespaces lists them.
 
     Custom MCPs and user-added integrations have dynamic, user-owned
     namespaces (e.g. URL-derived). Those MUST stay gated by user_namespaces
@@ -214,7 +214,7 @@ Discovery may also return subagent tools alongside regular tools.
 class ScoredToolHit(TypedDict):
     """One ranked discovery hit, threaded from a search result to the final list.
 
-    ``id`` is either a tool name or a ``subagent:<id> (Name)`` key; ``score`` is
+    id is either a tool name or a subagent:<id> (Name) key; score is
     the backing store's relevance, absent on stores that don't rank.
     """
 
@@ -323,7 +323,7 @@ def _build_search_tasks(
 ) -> list[Awaitable[SearchTaskResult]]:
     """Build list of search tasks to execute.
 
-    The `tool_space in user_namespaces` gate is the security boundary that
+    The tool_space in user_namespaces gate is the security boundary that
     keeps a user from searching another user's custom MCP tools. We never
     bypass it here — _get_user_context is responsible for ensuring
     user_namespaces contains tool_space whenever the caller is entitled
@@ -527,7 +527,7 @@ def _deduplicate_and_sort(
 
 
 def _split_subagent_entry(entry: str) -> tuple[str, str | None]:
-    """``subagent:<id> (Name)`` -> (id, name)."""
+    """subagent:<id> (Name) -> (id, name)."""
     tail = entry[len("subagent:") :]
     if " (" in tail and tail.endswith(")"):
         subagent_id, name = tail.split(" (", 1)
@@ -547,7 +547,7 @@ def _render_discovery_response(
     """Render discovery hits as JSON in three buckets: bind, handoff, connect.
 
     Availability is the only axis that changes what the model may do next, so it
-    is the top-level split. ``internal_subagents`` is required to tell a built-in
+    is the top-level split. internal_subagents is required to tell a built-in
     capability (always usable) from an integration the user has not connected —
     without it every built-in was reported as needing a connection it has none of.
     """
@@ -629,10 +629,10 @@ def _inject_available_subagents(
 ) -> list[str]:
     """Inject available subagents that user has access to.
 
-    Every subagent entry is rendered as ``subagent:<id> (Name)`` whenever a name
-    is known, so the model can tell what ``subagent:<uuid>`` actually is. Names
+    Every subagent entry is rendered as subagent:<id> (Name) whenever a name
+    is known, so the model can tell what subagent:<uuid> actually is. Names
     come from the connected-integrations map first, then the in-memory registry.
-    Semantic-search hits often arrive unnamed (a ``subagent:`` key from a tool
+    Semantic-search hits often arrive unnamed (a subagent: key from a tool
     namespace, or a store that didn't return the value); they get upgraded here
     and deduped by canonical id so the named and unnamed forms collapse to one.
     """
@@ -695,15 +695,15 @@ def get_retrieve_tools_function(
 ) -> Callable[..., Awaitable[RetrieveToolsResult]]:
     """Get a retrieve_tools function configured for specific context.
 
-    The ``...`` in the return type is deliberate (Type Safety items 11/14): the
-    result is handed to ``create_agent(retrieve_tools_coroutine=...)``, which
-    wraps it in a ``StructuredTool``. LangGraph then calls it by keyword with
-    ``store``/``config`` injected and the rest supplied by the model, so pinning
+    The ... in the return type is deliberate (Type Safety items 11/14): the
+    result is handed to create_agent(retrieve_tools_coroutine=...), which
+    wraps it in a StructuredTool. LangGraph then calls it by keyword with
+    store/config injected and the rest supplied by the model, so pinning
     a parameter list here would describe a call shape that never happens.
 
     This unified function handles both tool discovery (semantic search) and tool binding.
-    - When `query` is provided: Returns tool names for discovery (not bound)
-    - When `exact_tool_names` is provided: Binds and returns validated tool names
+    - When query is provided: Returns tool names for discovery (not bound)
+    - When exact_tool_names is provided: Binds and returns validated tool names
 
     Args:
         tool_space: Namespace to search for tools

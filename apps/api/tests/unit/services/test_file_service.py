@@ -1,6 +1,6 @@
 """Unit tests for the files service package.
 
-Covers the ``FileService`` upload/update/delete flows plus the store/summaries
+Covers the FileService upload/update/delete flows plus the store/summaries
 helpers they orchestrate. External boundaries (Cloudinary, Mongo, ChromaDB,
 the JuiceFS sandbox mirror, the summary LLM) are mocked at the same seams the
 production code uses.
@@ -82,7 +82,7 @@ def _upload_file_mock(
 def _no_analytics() -> Iterator[None]:
     """Neutralize analytics captures for tests not asserting on them.
 
-    ``capture_event`` resolves the PostHog provider at call time, which is not
+    capture_event resolves the PostHog provider at call time, which is not
     registered in this test module's import chain — capture-specific tests
     patch the call explicitly and assert on it.
     """
@@ -92,9 +92,9 @@ def _no_analytics() -> Iterator[None]:
 
 @pytest.fixture
 def mock_file_repo() -> Iterator[AsyncMock]:
-    """One mock behind both module bindings of ``file_repository``.
+    """One mock behind both module bindings of file_repository.
 
-    ``store.py`` (insert_metadata) and ``service.py`` (get/update/delete) each
+    store.py (insert_metadata) and service.py (get/update/delete) each
     import the repository singleton directly, so both bindings must point at
     the same mock.
     """
@@ -128,7 +128,7 @@ def mock_chroma_client() -> Iterator[tuple[MagicMock, AsyncMock]]:
 
 @pytest.fixture
 def mock_sandbox_mirror() -> Iterator[tuple[AsyncMock, AsyncMock]]:
-    """Mock the JuiceFS projection boundary used by ``FileService.upload``."""
+    """Mock the JuiceFS projection boundary used by FileService.upload."""
     with (
         patch(
             "app.services.files.service.mirror_upload",

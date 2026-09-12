@@ -1,4 +1,4 @@
-"""The shared `connected -> expired` transition (app/services/integrations/integration_expiry.py).
+"""The shared connected -> expired transition (app/services/integrations/integration_expiry.py).
 
 Two callers run it: the Composio connection webhook (notify=True) and the
 tool-execution reconciliation path (notify=False). Both need it to be a strict
@@ -6,7 +6,7 @@ no-op when there is nothing to expire, because a fabricated record or a repeat
 notification is worse than doing nothing.
 
 Pausing is the caller's job — the transition only receives the resulting titles
-as ``paused_workflows``, so that is what these tests hand it.
+as paused_workflows, so that is what these tests hand it.
 """
 
 from datetime import UTC, datetime
@@ -277,7 +277,7 @@ GENERIC_LEAD = "GAIA lost access to your Notion account and can no longer use it
 
 
 class TestTheBodySaysWhyTheConnectionDied:
-    """`expired_reason` is stored for every expiry; the user only ever sees it when
+    """expired_reason is stored for every expiry; the user only ever sees it when
     it is a reason we can state in plain language. Composio publishes no enum for
     it, and the tool-execution path puts a raw error sentence in the same field."""
 
@@ -346,7 +346,7 @@ class TestTheBodySaysWhyTheConnectionDied:
 
 
 def _ns_fields(log_mock) -> dict[str, object]:
-    """Every field folded onto the ``integration_expiry`` wide-event namespace."""
+    """Every field folded onto the integration_expiry wide-event namespace."""
     fields: dict[str, object] = {}
     for c in log_mock.set_ns.call_args_list:
         assert c.args[0] == "integration_expiry", f"wrote to the wrong namespace: {c.args[0]}"

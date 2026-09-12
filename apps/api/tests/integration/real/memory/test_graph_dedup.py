@@ -2,9 +2,9 @@
 
 Two layers are tested:
 
-1. Pure unit: ``_dedupe_edges`` collapses duplicate/bidirectional edges in
+1. Pure unit: _dedupe_edges collapses duplicate/bidirectional edges in
    memory without touching the DB.
-2. Integration: ``insert_edges`` + ``get_graph`` write a pair and then confirm
+2. Integration: insert_edges + get_graph write a pair and then confirm
    that a same-pair edge (different wording or opposite direction) is silently
    dropped, leaving only one edge in the graph.
 """

@@ -40,10 +40,10 @@ def _subscription_mock(plan_type: PlanType = PlanType.PRO) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _no_real_redis_plan_cache():
-    """``get_cached_plan_type`` caches the tier in Redis under a key derived
+    """get_cached_plan_type caches the tier in Redis under a key derived
     from the user id, and every test here shares FAKE_USER's id — without this
     a tier cached by one test leaks into the next (the stray local-Redis
-    singleton flake noted in ``apps/api/CLAUDE.md``)."""
+    singleton flake noted in apps/api/CLAUDE.md)."""
     with (
         patch(
             "app.services.payments.payment_service.redis_cache.get",
@@ -84,7 +84,7 @@ def _decode_token(token: str) -> dict:
 
 
 class TestGetVoiceToken:
-    """GET /api/v1/token — LiveKit room token minting"""
+    """GET /api/v1/token — LiveKit room token minting."""
 
     @pytest.fixture(autouse=True)
     def _pro_subscription(self):
@@ -203,7 +203,7 @@ class TestVoicePaidOnlyGate:
 
 
 class TestListVoices:
-    """GET /api/v1/voice/voices"""
+    """GET /api/v1/voice/voices."""
 
     @patch("app.api.v1.endpoints.voice.list_voices", new_callable=AsyncMock)
     async def test_list_voices_success(self, mock_list: AsyncMock, client: AsyncClient):
@@ -236,7 +236,7 @@ class TestListVoices:
 
 
 class TestSelectVoice:
-    """PUT /api/v1/voice/voices/selected"""
+    """PUT /api/v1/voice/voices/selected."""
 
     @patch("app.api.v1.endpoints.voice.set_user_voice", new_callable=AsyncMock)
     async def test_select_voice_success(self, mock_set: AsyncMock, client: AsyncClient):
@@ -291,7 +291,7 @@ class TestSelectVoice:
 
 
 class TestStarVoice:
-    """PUT /api/v1/voice/voices/{voice_id}/star"""
+    """PUT /api/v1/voice/voices/{voice_id}/star."""
 
     @patch("app.api.v1.endpoints.voice.set_voice_star", new_callable=AsyncMock)
     async def test_star_voice_success(self, mock_star: AsyncMock, client: AsyncClient):

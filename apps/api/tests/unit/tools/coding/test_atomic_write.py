@@ -1,6 +1,6 @@
 """Layer 2 — atomic_write: atomicity sequence + the naive-UTC mtime fix.
 
-Mocks only the E2B `files` boundary; the write→rename ordering, the
+Mocks only the E2B files boundary; the write→rename ordering, the
 temp-suffix, and the mtime-tagging are real production logic.
 """
 

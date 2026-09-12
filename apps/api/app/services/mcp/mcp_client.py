@@ -125,7 +125,7 @@ from shared.py.wide_events import McpContext, log, log_context
 
 
 class _SanitizedMcpServer(TypedDict):
-    """One ``mcpServers`` entry with credentials reduced to presence flags."""
+    """One mcpServers entry with credentials reduced to presence flags."""
 
     url: str | None
     transport: str | None
@@ -134,7 +134,7 @@ class _SanitizedMcpServer(TypedDict):
 
 
 class _SanitizedMcpConfig(TypedDict):
-    """Log-safe projection of :class:`MCPUseConfig` — never fed back to mcp_use."""
+    """Log-safe projection of :class:MCPUseConfig — never fed back to mcp_use."""
 
     mcpServers: dict[str, _SanitizedMcpServer]
 
@@ -237,9 +237,9 @@ async def _with_wide_event(coro: Awaitable[None], label: str) -> None:
     """Run a background coroutine inside its own wide event boundary.
 
     Detached tasks escape the request's logging middleware, so without this
-    every ``log.set()`` they make (mcp_connect, mcp_connect_error, mcp_reconnect)
-    would be discarded. ``log_context`` binds a fresh accumulator and flushes a
-    canonical ``background_task`` line on exit so those fields reach Loki.
+    every log.set() they make (mcp_connect, mcp_connect_error, mcp_reconnect)
+    would be discarded. log_context binds a fresh accumulator and flushes a
+    canonical background_task line on exit so those fields reach Loki.
     """
     async with log_context(f"mcp:{label}"):
         await coro
@@ -248,7 +248,7 @@ async def _with_wide_event(coro: Awaitable[None], label: str) -> None:
 def _spawn_background(coro: Awaitable[None], label: str) -> asyncio.Task[None] | None:
     """Spawn a fire-and-forget task that survives until completion.
 
-    The coroutine runs inside a wide event boundary so its ``log.set()`` fields
+    The coroutine runs inside a wide event boundary so its log.set() fields
     are emitted — a detached task has no HTTP middleware to flush them.
 
     Returns None if there is no running event loop (e.g., test contexts where
@@ -277,7 +277,7 @@ def _spawn_background(coro: Awaitable[None], label: str) -> asyncio.Task[None] |
 
 
 def _parse_device_server_url(server_url: str) -> tuple[str, str]:
-    """Split a ``device://<device_id>/<server_key>`` URL into its parts."""
+    """Split a device://<device_id>/<server_key> URL into its parts."""
     prefix = f"{DEVICE_TRANSPORT}://"
     if not server_url.startswith(prefix):
         raise ValueError(f"Not a device server URL: {server_url}")
@@ -508,7 +508,7 @@ class MCPClient:
     async def reconnect_and_call(
         self, integration_id: str, tool_name: str, kwargs: dict[str, object]
     ) -> object:
-        """Force a fresh connect for `integration_id` then call `tool_name` once.
+        """Force a fresh connect for integration_id then call tool_name once.
 
         Invoked by the tool wrapper when a call hits a dead connector — the
         user sees latency, never the underlying error. Telemetry tracks how
@@ -516,9 +516,9 @@ class MCPClient:
 
         Concurrency: if another connect or reconnect is already in flight for
         this integration, we wait for it and reuse its result rather than
-        racing. Without that guard, popping `_clients`/`_tools` while another
-        coroutine holds `_connecting[iid]` would make that coroutine raise
-        "Concurrent connect failed" when it checks `_tools` post-wait.
+        racing. Without that guard, popping _clients/_tools while another
+        coroutine holds _connecting[iid] would make that coroutine raise
+        "Concurrent connect failed" when it checks _tools post-wait.
         """
         start = time.monotonic()
         log.warning(
@@ -674,9 +674,9 @@ class MCPClient:
         """Build an mcp_use client whose only session tunnels to a paired device.
 
         The device MCP server has no outbound URL, so we bypass config-based
-        connector creation and inject a :class:`DeviceConnector`-backed session
+        connector creation and inject a :class:DeviceConnector-backed session
         directly. Everything downstream (adapter, tool conversion) reads from
-        ``get_all_active_sessions()``, which this populates.
+        get_all_active_sessions(), which this populates.
         """
         device_id, server_key = _parse_device_server_url(mcp_config.server_url)
 
@@ -908,10 +908,10 @@ class MCPClient:
     ) -> list[BaseTool] | None:
         """Shared connect-failure handling.
 
-        Raises :class:`StepUpAuthRequiredError` for 403 insufficient_scope, retries
+        Raises :class:StepUpAuthRequiredError for 403 insufficient_scope, retries
         once via token refresh on auth-related failures (returning the retried
         connection's tools), and resets MongoDB status only on demonstrably dead
-        credentials. Returns ``None`` when the caller should re-raise.
+        credentials. Returns None when the caller should re-raise.
         """
         error_str = str(e).lower()
 
@@ -1072,7 +1072,7 @@ class MCPClient:
     async def _index_platform_mcp_tools(self, integration_id: str, tools: list[BaseTool]) -> None:
         """Index platform MCP tools (e.g. posthog, deepwiki) to ChromaDB.
 
-        Uses the integration's declared `subagent_config.tool_space` as the
+        Uses the integration's declared subagent_config.tool_space as the
         namespace. If the platform integration lacks a subagent_config we skip
         indexing rather than fall back to integration_id — a bare integration_id
         can collide with custom-MCP namespaces (which are URL-derived but could
@@ -1214,7 +1214,7 @@ class MCPClient:
 
     @staticmethod
     def _metadata_document_candidate() -> tuple[str, bool, str]:
-        """Compute ``(api_base, is_localhost, client metadata document URL)``.
+        """Compute (api_base, is_localhost, client metadata document URL).
 
         Shared by auth-URL building and token exchange so the client_id used in
         the authorization request cannot drift from the one sent to the token
@@ -1374,7 +1374,7 @@ class MCPClient:
         5. Returns authorization URL for browser redirect
 
         Supports platform integrations (from code) and custom integrations.
-        ``challenge_data`` is an optional pre-fetched WWW-Authenticate challenge
+        challenge_data is an optional pre-fetched WWW-Authenticate challenge
         from probe, passed to avoid duplicate discovery HTTP calls.
         """
         # Resolve integration from platform config or MongoDB
@@ -1447,7 +1447,7 @@ class MCPClient:
         redirect_uri: str,
         redirect_path: str,
     ) -> str | None:
-        """Re-issue the authorization URL after an ``invalid_scope`` rejection.
+        """Re-issue the authorization URL after an invalid_scope rejection.
 
         Some auth servers advertise scopes in their metadata that a dynamically
         registered client cannot actually request. We drop the rejected scope(s)
@@ -1579,7 +1579,7 @@ class MCPClient:
         token_endpoint: str,
         exchange: _TokenExchangeRequest,
     ) -> dict[str, Any]:
-        """POST the RFC 6749 authorization-code grant to ``token_endpoint`` and return the parsed response."""
+        """POST the RFC 6749 authorization-code grant to token_endpoint and return the parsed response."""
         token_data: dict[str, Any] = {
             "grant_type": "authorization_code",
             # Always include client_id in body for PKCE compatibility
@@ -1939,7 +1939,7 @@ class MCPClient:
         """Find which connected integration owns a given tool name.
 
         Returns the integration_id, or None if no connected MCP exposes the tool.
-        Scans the in-memory `_tools` map; with ~N integrations × ~M tools per
+        Scans the in-memory _tools map; with ~N integrations × ~M tools per
         user this is sub-millisecond and avoids needing a separate reverse
         index (which would have to stay in sync with connect/disconnect).
         """
@@ -1964,14 +1964,14 @@ class MCPClient:
         Uses stored tokens to reconnect if not already connected in memory.
         Connection status checked against MongoDB user_integrations.
 
-        The DB status is checked FIRST, before the warm ``_tools`` map. The map
-        is a transport cache, never the authorization record: ``disconnect()``
+        The DB status is checked FIRST, before the warm _tools map. The map
+        is a transport cache, never the authorization record: disconnect()
         only clears the dicts of the process that handled it, so with more than
         one replica a revoked integration stayed live on every other replica for
         the life of the process — the pool caps at 5000 sessions and has no TTL,
         so nothing evicted it. A stale session found here is dropped rather than
-        left behind, because ``_find_integration_id_by_server_url`` routes proxy
-        tool calls off ``_clients``.
+        left behind, because _find_integration_id_by_server_url routes proxy
+        tool calls off _clients.
         """
         if not await self.is_connected_db(integration_id):
             if integration_id in self._tools or integration_id in self._clients:
@@ -2033,7 +2033,7 @@ class MCPClient:
         resolved: ResolvedIntegration | None,
         target: str,
     ) -> bool:
-        """Check whether a resolved integration's normalized server URL matches ``target``."""
+        """Check whether a resolved integration's normalized server URL matches target."""
         return bool(
             resolved
             and resolved.mcp_config
@@ -2163,11 +2163,11 @@ class MCPClient:
         return result
 
     async def _get_session_for_server(self, server_url: str) -> ClientSession:
-        """Resolve the underlying official MCP ``ClientSession`` for ``server_url``.
+        """Resolve the underlying official MCP ClientSession for server_url.
 
         Returns the SDK session beneath mcp_use's wrapper so resource/prompt calls
-        yield typed ``*Result`` models — mcp_use's convenience session returns bare
-        lists for list ops and has no ``list_resource_templates`` at all.
+        yield typed *Result models — mcp_use's convenience session returns bare
+        lists for list ops and has no list_resource_templates at all.
 
         Raises:
             ValueError: If no connected integration matches or the session is unavailable.
@@ -2230,18 +2230,18 @@ class MCPClient:
     ) -> McpUiResourceDetails | None:
         """Read a UI resource and return HTML plus content-level UI metadata.
 
-        Finds the active session matching ``server_url``, then reads the resource
+        Finds the active session matching server_url, then reads the resource
         and extracts:
         - html: text content for the app HTML
-        - csp: content-level ``_meta.ui.csp`` when present
-        - permissions: content-level ``_meta.ui.permissions`` when present
+        - csp: content-level _meta.ui.csp when present
+        - permissions: content-level _meta.ui.permissions when present
 
         Args:
             server_url: MCP server URL to resolve the active integration/session.
-            resource_uri: Resource URI (for example ``ui://tool-name/app.html``).
+            resource_uri: Resource URI (for example ui://tool-name/app.html).
 
         Returns:
-            The resource details, or ``None`` on failure.
+            The resource details, or None on failure.
         """
         try:
             matching_integration_id = await self._find_integration_id_by_server_url(server_url)

@@ -1,4 +1,4 @@
-"""Unit tests for the ``llm_calls`` ledger document and its thread-id split.
+"""Unit tests for the llm_calls ledger document and its thread-id split.
 
 The ledger is the permanent, queryable record of every model call — it replaces
 log-scraping, so it outlives any retention window. Two things must hold: it
@@ -64,9 +64,9 @@ _SPAWNED = f"spawn_{CONVERSATION}_call_08eb2a516389452cab3e68d9"
 
 
 def test_a_spawned_subagent_thread_resolves_to_its_conversation() -> None:
-    """Real prod value, verbatim. A spawn thread carries no ``executor_``, so it
+    """Real prod value, verbatim. A spawn thread carries no executor_, so it
     used to fall through as a plain conversation id — the ledger then recorded
-    ``conversation_id = "spawn_<uuid>_call_<hex>"``, which joins to nothing and
+    conversation_id = "spawn_<uuid>_call_<hex>", which joins to nothing and
     fragments that conversation's cost, with the lane invisible."""
     assert split_lane_thread(_SPAWNED) == (CONVERSATION, _SPAWNED)
 
@@ -95,13 +95,13 @@ def test_every_integration_executor_shape_seen_in_production(integration: str) -
 
 def test_a_thread_that_merely_starts_with_spawn_is_not_treated_as_wrapped() -> None:
     """The prefix alone is not the shape. A spawn thread always appends a tool
-    call id, so a bare ``spawn_x`` is some other thread and splitting it would
+    call id, so a bare spawn_x is some other thread and splitting it would
     invent a conversation that does not exist."""
     assert split_lane_thread("spawn_abc") == ("spawn_abc", None)
 
 
 def test_an_executor_thread_with_an_underscored_tail_is_left_whole() -> None:
-    """The shape a reviewer proposed — ``<integration>_executor_<conv>_<hex>``
+    """The shape a reviewer proposed — <integration>_executor_<conv>_<hex>
     — is not minted anywhere: the executor constructors append nothing after the
     conversation. Pinned so that if such a thread ever DOES appear it shows up
     as an unsplit id rather than a silently wrong one."""
@@ -114,7 +114,7 @@ def test_a_missing_thread_invents_no_conversation() -> None:
 
 
 def test_a_thread_that_merely_mentions_executor_is_not_treated_as_wrapped() -> None:
-    """``executor_`` has to be the prefix of the id, not a substring of it —
+    """executor_ has to be the prefix of the id, not a substring of it —
     otherwise an unrelated thread name gets shredded into a fake conversation."""
     assert split_lane_thread("my_executor_notes_thread") == ("my_executor_notes_thread", None)
 
@@ -149,7 +149,7 @@ def test_the_document_round_trips_every_field_it_was_given() -> None:
 
 def test_every_optional_identifier_defaults_to_none_rather_than_a_placeholder() -> None:
     """A system-lane call genuinely has no user and no conversation. Storing ""
-    would make ``{"user_id": {"$ne": null}}`` count calls nobody made."""
+    would make {"user_id": {"$ne": null}} count calls nobody made."""
     doc = _doc()
 
     assert doc.user_id is None
@@ -210,7 +210,7 @@ def test_the_ledger_is_append_only() -> None:
 
 
 def test_an_unknown_cost_source_is_rejected() -> None:
-    """``cost_source`` decides whether a row counts as provider-priced coverage;
+    """cost_source decides whether a row counts as provider-priced coverage;
     a third value would quietly be counted as neither."""
     with pytest.raises(ValueError):
         _doc(cost_source="guessed")

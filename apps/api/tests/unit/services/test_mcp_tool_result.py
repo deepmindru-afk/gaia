@@ -2,11 +2,11 @@
 
 Two guards live here, both of which failed in review:
 
-- `_tool_result_to_content` replaces mcp_use's `str(tool_result.content)`, which
-  leaked pydantic reprs and destroyed images. A `str(item)` fallback for any
+- _tool_result_to_content replaces mcp_use's str(tool_result.content), which
+  leaked pydantic reprs and destroyed images. A str(item) fallback for any
   content type it forgets to handle re-opens exactly that hole.
-- `_json_safe_tool_result` feeds the MCP-UI iframe. Media blocks are plain dicts,
-  so they sail through a naive `json.dumps` serializability probe and ship
+- _json_safe_tool_result feeds the MCP-UI iframe. Media blocks are plain dicts,
+  so they sail through a naive json.dumps serializability probe and ship
   megabytes of base64 into the SSE event.
 """
 
@@ -55,7 +55,7 @@ class TestToolResultToContent:
 
     async def test_an_embedded_text_resource_yields_its_text_not_a_pydantic_repr(self) -> None:
         """Filesystem and database MCP servers routinely return EmbeddedResource.
-        `str(item)` gives `type='resource' resource=TextResourceContents(...)`."""
+        str(item) gives type='resource' resource=TextResourceContents(...)."""
         embedded = EmbeddedResource(
             type="resource",
             resource=TextResourceContents(uri="file:///a.sql", text="SELECT 1;"),

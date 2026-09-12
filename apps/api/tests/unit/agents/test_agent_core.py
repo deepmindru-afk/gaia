@@ -180,9 +180,9 @@ class TestCoreAgentLogic:
 
     @pytest.mark.asyncio
     async def test_the_users_onboarding_data_reaches_build_agent_config(self):
-        """``onboarding_preferences(user.get("onboarding"))`` is real, unmocked
-        code in ``_core_agent_logic`` — this proves the pair it derives actually
-        lands on the ``build_agent_config`` call (so the executor and every
+        """onboarding_preferences(user.get("onboarding")) is real, unmocked
+        code in _core_agent_logic — this proves the pair it derives actually
+        lands on the build_agent_config call (so the executor and every
         subagent it hands off to can inherit it), not just that extraction
         doesn't crash."""
         user = _make_user(
@@ -1045,7 +1045,7 @@ class TestCallAgentSilent:
 def _fresh_config() -> dict:
     """A config object this test owns.
 
-    ``_core_agent_logic`` MUTATES ``config["configurable"]``, so the shared
+    _core_agent_logic MUTATES config["configurable"], so the shared
     module-level FAKE_CONFIG cannot be used by anything that asserts on those
     writes — one test would see the previous test's key.
     """
@@ -1053,7 +1053,7 @@ def _fresh_config() -> dict:
 
 
 class TestTheLaneTheRunResolves:
-    """This is the top-level run: ``build_agent_config`` resolves the comms lane
+    """This is the top-level run: build_agent_config resolves the comms lane
     here and the executor plus every subagent inherit it whole. Everything the run
     is has to reach that one call — a blanked or dropped argument is a turn that
     silently loses its tool scope, its trace, or its identity.
@@ -1188,7 +1188,7 @@ class TestTheDevModelSelector:
 
     @pytest.mark.asyncio
     async def test_expressing_no_preference_takes_the_env_configured_default(self):
-        """``use_default_models`` is what routes bots, scripts and plain requests
+        """use_default_models is what routes bots, scripts and plain requests
         onto the dev model too, so it cannot be ignored here."""
         option = await self._dev_option_for(
             _make_request(comms_model=None, use_default_models=True),
@@ -1402,14 +1402,14 @@ class TestTheWorkflowKeysTheRunStashes:
 
 
 class TestTheOptionsEachEntryPointDerives:
-    """``call_agent`` / ``call_agent_silent`` re-pack their own arguments into a
-    fresh ``AgentRunOptions`` for ``_core_agent_logic``. Every field is a run
+    """call_agent / call_agent_silent re-pack their own arguments into a
+    fresh AgentRunOptions for _core_agent_logic. Every field is a run
     property that has no second source: a blanked or dropped one is a turn that
     loses its token accounting, its surface, or its Langfuse trace, and the run
     still completes normally. The whole object is compared, so an extra or
     missing field fails too.
 
-    The stand-in carries ``_core_agent_logic``'s real signature so a dropped
+    The stand-in carries _core_agent_logic's real signature so a dropped
     positional argument raises here rather than quietly rebinding.
     """
 
@@ -1507,7 +1507,7 @@ class TestTheOptionsEachEntryPointDerives:
 
 
 class TestTheQueuedTaskIdComesFromThisRunsOwnStream:
-    """``queued_without_run`` is read with THIS run's stream_id, off a session
+    """queued_without_run is read with THIS run's stream_id, off a session
     only this function can reach. Handed anything else — a blank, no id at all —
     the turn reports "an executor ran" for work that was only queued, and the
     caller records it as done.

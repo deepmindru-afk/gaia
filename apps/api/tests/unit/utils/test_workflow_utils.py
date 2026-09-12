@@ -92,7 +92,7 @@ class TestGetUserId:
 class TestEditedTrigger:
     """The assistant re-emits the FULL workflow on every edit, so this decides
     what actually changed. Each of the three clauses is exercised alone: an
-    ``and`` in place of any ``or`` here silently drops a real trigger edit."""
+    and in place of any or here silently drops a real trigger edit."""
 
     def test_a_re_emitted_identical_trigger_is_not_reapplied(self) -> None:
         current = TriggerConfig(
@@ -294,7 +294,7 @@ class TestApplyWorkflowEdit:
 @pytest.mark.unit
 class TestCreateWorkflowDirectly:
     async def test_the_card_description_is_not_the_execution_prompt(self) -> None:
-        """description is card copy, prompt is the executor's goal. Writing the
+        """Description is card copy, prompt is the executor's goal. Writing the
         prompt into both put the whole numbered instruction blob, schedule
         preamble and all, on every chat-created workflow card."""
         draft = _draft(

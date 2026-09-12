@@ -90,8 +90,8 @@ def _make_subagent(
     provider: str = "test_provider",
     subagent_config: SubAgentConfig | None = None,
 ) -> Subagent:
-    """Build a real `Subagent` for tests. The new `create_subagent`/registration
-    APIs accept `Subagent` directly, so tests should pass real instances."""
+    """Build a real Subagent for tests. The new create_subagent/registration
+    APIs accept Subagent directly, so tests should pass real instances."""
     if subagent_config is None:
         subagent_config = _make_subagent_config()
     return Subagent(
@@ -227,9 +227,9 @@ class TestCreateSubagent:
 
     async def test_mcp_category_carries_the_space_owner_and_risk_set(self):
         """The category the MCP tools land in is only reachable and only gated
-        correctly because of these three. A default `space` hides the toolkit
-        from the subagent that just loaded it, a missing `integration_name`
-        drops the connected-integration filter, and a `None` risk set sends
+        correctly because of these three. A default space hides the toolkit
+        from the subagent that just loaded it, a missing integration_name
+        drops the connected-integration filter, and a None risk set sends
         every curated destructive tool back to the HIL LLM classifier.
         """
         from app.agents.core.subagents.provider_subagents import create_subagent

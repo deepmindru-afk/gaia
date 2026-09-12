@@ -1,11 +1,11 @@
-"""Gaia-tasks VFS catalog materialization for ``/workspace/gaia-tasks/``.
+"""Gaia-tasks VFS catalog materialization for /workspace/gaia-tasks/.
 
 MongoDB is the source of truth. The on-disk tree is a hash-gated
 projection — steady-state turns do zero I/O because both the catalog
-marker (``.gaia/gaia-tasks.v``) and per-doc markers
-(``.gaia/gaia-tasks/<id>.v``) short-circuit unchanged content.
+marker (.gaia/gaia-tasks.v) and per-doc markers
+(.gaia/gaia-tasks/<id>.v) short-circuit unchanged content.
 
-Layout under ``<user_root>/gaia-tasks/``::
+Layout under <user_root>/gaia-tasks/::
 
     GUIDE.md                          hand-authored, mode 0644
     index.md                          generated summary, mode 0644
@@ -14,16 +14,16 @@ Layout under ``<user_root>/gaia-tasks/``::
         log.md                        mode 0444
         meta.json                     mode 0444
 
-Folder names are ``<slug>-<shortid>``: kebab-case title (≤ 40 chars) +
+Folder names are <slug>-<shortid>: kebab-case title (≤ 40 chars) +
 first 8 hex chars of the Mongo ObjectId. Title rename → stale folder
 removed, fresh folder written under the new slug on next sync.
 
 This module reuses shared FS/marker/slug helpers from
-:mod:`app.services.storage._vfs_common`. The Mongo glue lives in
-:mod:`app.services.gaia_tasks_fs`.
+:mod:app.services.storage._vfs_common. The Mongo glue lives in
+:mod:app.services.gaia_tasks_fs.
 
-A one-shot migration step (:func:`cleanup_legacy_todos_dir`) removes
-the prior release's ``/workspace/todos/`` projection on the first sync
+A one-shot migration step (:func:cleanup_legacy_todos_dir) removes
+the prior release's /workspace/todos/ projection on the first sync
 per user — kept for a release or two and then safe to delete along with
 the legacy constants below.
 """
@@ -118,14 +118,14 @@ def write_gaia_tasks_marker(user_root: Path, value: str) -> None:
 
 
 def cleanup_legacy_todos_dir(user_root: Path) -> bool:
-    """Remove the prior release's ``/todos/`` projection if present.
+    """Remove the prior release's /todos/ projection if present.
 
-    Detection rule: presence of ``.gaia/todos.v`` (the legacy marker
-    only the prior release wrote). We do NOT touch ``/todos/`` without
+    Detection rule: presence of .gaia/todos.v (the legacy marker
+    only the prior release wrote). We do NOT touch /todos/ without
     the marker present, because in the new layout that path belongs to
     the user-todos materializer.
 
-    The marker alone is not enough, though: ``/todos/`` is the SAME path in
+    The marker alone is not enough, though: /todos/ is the SAME path in
     both layouts. A migrating user can have the legacy marker still on disk
     *and* a freshly written user-todos projection, because the two syncs are
     scheduled independently (todo_service / tracked_todo_service) in no fixed
@@ -133,8 +133,8 @@ def cleanup_legacy_todos_dir(user_root: Path) -> bool:
     dir is only dropped while the new projection has not claimed it; the
     legacy-only artifacts are unambiguous and always go.
 
-    Returns ``True`` if anything was deleted (useful for telemetry).
-    Idempotent — subsequent calls return ``False``.
+    Returns True if anything was deleted (useful for telemetry).
+    Idempotent — subsequent calls return False.
     """
     legacy_marker = user_root / LEGACY_TODOS_MARKER
     if not legacy_marker.exists():
@@ -189,7 +189,7 @@ def _index_lines(docs: list[GaiaTaskProjection]) -> str:
 
 
 def materialize_gaia_tasks(user_root: Path, docs: list[GaiaTaskProjection], guide_md: str) -> int:
-    """Idempotently project ``docs`` into ``<user_root>/gaia-tasks/``.
+    """Idempotently project docs into <user_root>/gaia-tasks/.
 
     Returns the number of task bodies rewritten (excluding GUIDE / index).
     """
@@ -232,7 +232,7 @@ def _write_changed_docs(
 
 
 def _remove_stale_folders(tasks_root: Path, expected: set[str]) -> None:
-    """Remove subdirectories of ``tasks_root`` not in ``expected``."""
+    """Remove subdirectories of tasks_root not in expected."""
     for child in tasks_root.iterdir():
         if child.is_dir() and child.name not in expected:
             remove_tree(child)

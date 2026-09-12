@@ -29,7 +29,7 @@ _BLANK_STEP_MSG = "Value error, must not be blank"
 
 
 def _blank_step_errors(exc: ValidationError) -> list[tuple[tuple[Any, ...], str]]:
-    """``exc``'s value_error entries as (location, message) pairs, in order."""
+    """exc's value_error entries as (location, message) pairs, in order."""
     return [(e["loc"], e["msg"]) for e in exc.errors() if e["type"] == "value_error"]
 
 
@@ -586,8 +586,8 @@ class TestSaveLearnedSkill:
 class TestLearnedSkillArtifactIsExact:
     """SKILL.md is read back by an agent as its instructions, so its layout is the
     contract — headings, fenced JSON, and the blank lines between steps all carry
-    meaning. The sibling tests assert with ``in``, which cannot see a heading
-    being renamed (mutmut's ``"XX## StepsXX"`` still *contains* ``"## Steps"``)
+    meaning. The sibling tests assert with in, which cannot see a heading
+    being renamed (mutmut's "XX## StepsXX" still *contains* "## Steps")
     or the sections being reordered."""
 
     def test_the_composed_body_is_exact(self) -> None:
@@ -689,7 +689,7 @@ class TestLearnedSkillArtifactIsExact:
 @pytest.mark.unit
 class TestSaveLearnedSkillRecordsTheRun:
     """What the executor is told, and what the wide event carries afterwards. The
-    tool's return value is the agent's only view of the outcome, and ``log.set``
+    tool's return value is the agent's only view of the outcome, and log.set
     is how a failed save is findable in production."""
 
     @pytest.fixture(autouse=True)

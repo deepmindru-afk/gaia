@@ -91,8 +91,8 @@ async def execute_tracked_todo(
     Acquires a Redis lock to prevent concurrent execution, then delegates to the
     retry/execution helper. The lock is always released in the finally block.
 
-    ``origin`` is present only when a trigger subscription woke this todo. It has
-    to be a task parameter: ARQ's ``ctx`` is built by the worker, not the
+    origin is present only when a trigger subscription woke this todo. It has
+    to be a task parameter: ARQ's ctx is built by the worker, not the
     enqueuer, so there is no channel through it for producer-supplied data.
     """
     log.set(todo_id=todo_id, trigger_origin=origin.trigger_name if origin else None)
@@ -325,7 +325,7 @@ async def _run_execution(
 
 
 def _extract_learnings(ref_canvas: str) -> str | None:
-    """Return the ``## Learnings`` section of a canvas, or None if absent."""
+    """Return the ## Learnings section of a canvas, or None if absent."""
     if not ref_canvas or "## Learnings" not in ref_canvas:
         return None
     learnings_start = ref_canvas.index("## Learnings")
@@ -336,7 +336,7 @@ def _extract_learnings(ref_canvas: str) -> str | None:
 
 
 async def _collect_reference_context(ref_ids: list[str], user_id: str) -> str:
-    """Gather ``## Learnings`` from up to 5 referenced todos for prompt context."""
+    """Gather ## Learnings from up to 5 referenced todos for prompt context."""
     if not ref_ids:
         return ""
     ref_parts: list[str] = []
@@ -366,13 +366,13 @@ def _build_execution_prompt(
 ) -> str:
     """Assemble the run prompt from the todo's fields and context.
 
-    The triggering payload goes in the prompt, not only in ``trigger_context``:
-    that dict reaches the model only through ``format_workflow_execution_message``,
+    The triggering payload goes in the prompt, not only in trigger_context:
+    that dict reaches the model only through format_workflow_execution_message,
     which needs a selected workflow. On the agent path there is none, so a payload
     left there would never be seen — the todo would wake up knowing it was woken
     but not by what.
 
-    ``origin.payload`` is external, attacker-influenceable content (the body of the
+    origin.payload is external, attacker-influenceable content (the body of the
     event that fired the trigger). It is fenced with a per-call random nonce and
     labelled untrusted data so injected instructions inside it read as data, not as
     commands the agent should follow — the same defence the HIL intent judge uses.
@@ -582,7 +582,7 @@ def _compute_next_run(
     - "every_4h" → +4 hours (interval)
     - "every_1h" → +1 hour (interval)
 
-    "daily"/"weekly" are anchored to ``anchor`` (the original scheduled_at) so
+    "daily"/"weekly" are anchored to anchor (the original scheduled_at) so
     a late run does NOT drift the wall-clock time forward. The next fire keeps
     the anchor's local time-of-day and advances by whole days/weeks until it is
     strictly in the future. Without an anchor we fall back to a plain delta.

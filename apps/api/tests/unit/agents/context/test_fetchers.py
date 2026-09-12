@@ -1,6 +1,6 @@
 """The section bodies behind the context table.
 
-Every one of these degrades to ``""`` rather than raising, so the failure path
+Every one of these degrades to "" rather than raising, so the failure path
 is the important half: a recall timeout must cost the user a thinner prompt, not
 their whole turn. Each also declines to render at all when the context it needs
 is absent — that precondition lives with the read rather than at the call site,
@@ -83,7 +83,7 @@ class TestMemoryRecallBlock:
         has to be answerable from the injected text without another tool call.
 
         Asserted as the exact block rather than substrings — the header names
-        what the dates mean, and the ``- `` bullets are what keep two memories
+        what the dates mean, and the -  bullets are what keep two memories
         from reading as one sentence. A substring check sees none of that.
         """
         results = MemorySearchResult(
@@ -193,7 +193,7 @@ class TestCoreMemoryBlock:
 @pytest.mark.unit
 class TestGaiaKnowledgeBlock:
     async def test_renders_each_result(self) -> None:
-        """Two results, not one: with a single item the ``\\n`` joining them is
+        """Two results, not one: with a single item the \\n joining them is
         unobservable, so a separator that stopped separating would read as two
         capabilities run together into one sentence and no test would notice."""
         with patch(
@@ -403,7 +403,7 @@ class TestConnectedIntegrationsManifest:
         assert manifest == "HEADER:\n- Gmail (gmail)"
 
     async def test_two_ids_for_one_provider_render_once_under_the_resolved_name(self) -> None:
-        """A stale ``google_calendar`` beside today's ``googlecalendar`` rendered
+        """A stale google_calendar beside today's googlecalendar rendered
         both — one of them a bare id that resolves to no subagent at all."""
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named",
@@ -811,7 +811,7 @@ class TestNewUserGuidanceBlock:
     async def test_the_block_is_the_template_filled_with_every_one_of_its_slots(self) -> None:
         """Asserted whole rather than by substring: the worked reply example and
         the chips rule are separate slots, and a slot filled with the wrong value
-        (or with ``None``) still renders a plausible-looking block that no
+        (or with None) still renders a plausible-looking block that no
         substring check would notice."""
         block = build_new_user_guidance(
             "Founder", [OnboardingNeed.INBOX], None, ["My mornings", "Growth"]
@@ -875,7 +875,7 @@ class TestWorkspaceSessionBanner:
         )
 
     async def test_no_vfs_session_id_never_guesses_a_directory(self) -> None:
-        """A fallback to ``thread_id`` would name ``executor_<conv>``, sending
+        """A fallback to thread_id would name executor_<conv>, sending
         deliverables outside the directory the artifact watcher scans."""
         banner = await build_workspace_session_banner(
             SectionContext(tier=AgentTier.EXECUTOR, vfs_session_id=None)
@@ -968,7 +968,7 @@ class TestASectionDeclinesWhenItsContextIsAbsent:
 
     Every source below is patched to return real content on purpose. Left
     unpatched, a broken precondition would reach a store that is not there,
-    raise, and be swallowed into the same ``""`` these tests assert — so they
+    raise, and be swallowed into the same "" these tests assert — so they
     would pass whether the guard worked or not. Pinned this way, dropping the
     guard renders the content and the test goes red.
     """
@@ -1050,7 +1050,7 @@ class TestSplitOffSection:
 
 @pytest.mark.unit
 class TestTheMemoryCoreSplit:
-    """``get_core_context`` renders documents, agenda and journal as one string.
+    """get_core_context renders documents, agenda and journal as one string.
     Only the documents are byte-stable; the other two are rewritten every turn,
     so they are two sections in two different slots.
     """
@@ -1092,7 +1092,7 @@ class TestTheMemoryCoreSplit:
             assert "- reviewed a PR" in await build_agenda_and_activity_block(ctx())
 
     def test_the_agenda_does_not_swallow_the_journal(self) -> None:
-        """Split from the back. ``get_core_context`` emits the agenda before the
+        """Split from the back. get_core_context emits the agenda before the
         journal, so splitting on the agenda first hands back the journal as part
         of "the agenda" and leaves the journal's own split with nothing to
         match — the two sections stop being two sections."""

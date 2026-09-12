@@ -1,6 +1,4 @@
-"""
-Decorators package for GAIA backend.
-"""
+"""Decorators package for GAIA backend."""
 
 from .caching import Cacheable, CacheInvalidator
 from .documentation import with_doc

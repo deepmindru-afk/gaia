@@ -92,7 +92,7 @@ class TestReminderTaskExecution:
     @freeze_time("2026-04-01T12:00:00Z")
     async def test_cleanup_expired_reminders_deletes_old_completed(self):
         """cleanup_expired_reminders delegates to the repository with a 30-day cutoff.
-        (The completed/cancelled status filter is the repository's contract.)"""
+        (The completed/cancelled status filter is the repository's contract.)."""
 
         with patch(
             "app.workers.tasks.reminder_tasks.reminder_repository.delete_finished_before",

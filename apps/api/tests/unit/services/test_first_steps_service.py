@@ -1,4 +1,4 @@
-"""The activation checklist derives every ``done`` from a real signal at read
+"""The activation checklist derives every done from a real signal at read
 time; only the collapse is persisted. Repositories are the seams."""
 
 from unittest.mock import AsyncMock, patch
@@ -94,7 +94,7 @@ class TestGetFirstSteps:
 
     async def test_connect_integration_counts_gmail(self, repos) -> None:
         """Gmail is self-managed, so it only reads as connected through the
-        canonical status map — a raw ``user_integrations`` count misses it."""
+        canonical status map — a raw user_integrations count misses it."""
         repos["integrations"].return_value = {"gmail": True, "notion": False}
 
         assert _done(await get_first_steps(USER_ID))[FirstStepKey.CONNECT_INTEGRATION] is True

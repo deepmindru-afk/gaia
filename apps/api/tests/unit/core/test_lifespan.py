@@ -70,7 +70,7 @@ async def test_full_posthog_config_initialises_client_and_shuts_it_down(
     """With both keys present the client is fetched by provider name and closed
     when the lifespan ends.
 
-    ``shutdown()``, not ``flush()``: flush only drains the queue, leaving the
+    shutdown(), not flush(): flush only drains the queue, leaving the
     consumer threads, the flag poller, and exception capture alive.
     """
     _set_posthog(mocker, "phc_test", "https://ph.example.com")

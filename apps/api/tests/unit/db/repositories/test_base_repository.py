@@ -1,4 +1,4 @@
-"""Hermetic unit tests for ``_BaseRepository.__init_subclass__`` validation.
+"""Hermetic unit tests for _BaseRepository.__init_subclass__ validation.
 
 The base rejects a concrete subclass whose required ClassVars are missing or
 whose models are not pydantic BaseModel subclasses — at class-definition time,
@@ -72,7 +72,7 @@ def test_an_abstract_subclass_needs_no_classvars() -> None:
 
 
 def test_a_filter_naming_one_id_reports_it_as_the_targeted_doc() -> None:
-    """``_apply_raw_update`` evicts this id when the write matches nothing."""
+    """_apply_raw_update evicts this id when the write matches nothing."""
     repo = _concrete()()
 
     assert repo._filter_doc_id({"_id": "abc", "user_id": "u1"}) == "abc"
@@ -85,7 +85,7 @@ def test_a_filter_that_names_no_id_targets_no_doc() -> None:
 
 
 def test_an_operator_valued_id_targets_no_single_doc() -> None:
-    """``{"_id": {"$in": [...]}}`` matches a SET, so no one entity key may be
+    """{"_id": {"$in": [...]}} matches a SET, so no one entity key may be
     evicted for it — stringifying the operator dict would evict a key that
     exists for nobody and leave every real cached entity stale."""
     repo = _concrete()()

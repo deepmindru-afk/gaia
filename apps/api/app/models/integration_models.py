@@ -67,8 +67,8 @@ class Integration(MongoDocument):
     Platform integrations from OAUTH_INTEGRATIONS (code) are hydrated at runtime.
     Custom integrations created by users are stored here.
 
-    Identity is the business key ``integration_id`` (unique index); the Mongo
-    ``_id`` (ObjectId) is incidental and dropped on read.
+    Identity is the business key integration_id (unique index); the Mongo
+    _id (ObjectId) is incidental and dropped on read.
     """
 
     integration_id: str = Field(..., description="Unique identifier for the integration")
@@ -188,8 +188,8 @@ class UserIntegration(BaseModel):
 
 
 class UserIntegrationDocument(UserScopedDocument):
-    """Storage model for the ``user_integrations`` collection — one document per
-    ``(user_id, integration_id)`` (unique index). The Mongo ``_id`` (ObjectId) is
+    """Storage model for the user_integrations collection — one document per
+    (user_id, integration_id) (unique index). The Mongo _id (ObjectId) is
     incidental; access is always by the business pair."""
 
     integration_id: str

@@ -1,10 +1,10 @@
 """Device bridge REST: pairing, token exchange, server registration, management.
 
 Auth contexts differ per route:
-  * ``/device/pair/start|poll`` and ``/device/token`` — no user session (the
+  * /device/pair/start|poll and /device/token — no user session (the
     daemon isn't logged in); they self-authenticate via the pairing/refresh
     credential. Excluded from WorkOS middleware.
-  * ``/device/servers`` — authenticated by the device connect JWT (the daemon).
+  * /device/servers — authenticated by the device connect JWT (the daemon).
   * everything else — a signed-in user session.
 """
 

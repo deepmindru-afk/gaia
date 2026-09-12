@@ -3,7 +3,7 @@
 The cron that keeps tracked todos honest: expired todos get a health-check
 agent pass (archive/notify), overdue todos get an individual notification,
 dormant todos get re-queued or bundled into a digest. The backoff escalation
-(`_register_notification`) is the load-bearing part — a stuck todo must stop
+(_register_notification) is the load-bearing part — a stuck todo must stop
 nagging once the schedule is exhausted, and the daytime gate must keep
 notifications out of the user's night.
 """
@@ -76,7 +76,7 @@ def _pool(**overrides) -> MagicMock:
 def _sweep_patches(**overrides) -> tuple[MagicMock, dict[str, AsyncMock], list]:
     """The patches an end-to-end sweep needs, with overridable return values.
 
-    Returns ``(pool, mocks, patches)`` where ``mocks`` keys name each seam.
+    Returns (pool, mocks, patches) where mocks keys name each seam.
     """
     defaults = {
         "list": [_doc()],
@@ -115,7 +115,7 @@ def _sweep_patches(**overrides) -> tuple[MagicMock, dict[str, AsyncMock], list]:
 
 @contextmanager
 def _sweep(**overrides) -> Iterator[tuple[MagicMock, dict[str, AsyncMock]]]:
-    """An end-to-end sweep with every seam mocked; yields ``(pool, mocks)``."""
+    """An end-to-end sweep with every seam mocked; yields (pool, mocks)."""
     pool, mocks, patches = _sweep_patches(**overrides)
     with ExitStack() as stack:
         for p in patches:

@@ -154,7 +154,7 @@ class _MessagesAppendingMiddleware(AgentMiddleware):
 
 
 def _summarizing_executor(trigger_after: int, keep: int) -> MiddlewareExecutor:
-    """Executor wrapping the real ``SummarizationMiddleware``, tuned to fire immediately."""
+    """Executor wrapping the real SummarizationMiddleware, tuned to fire immediately."""
     summarizer = GenericFakeChatModel(messages=iter([AIMessage(content="SUMMARY")] * 50))
     return MiddlewareExecutor(
         [
@@ -386,7 +386,7 @@ class TestExecuteBeforeModelStateUpdates:
 
     The executor runs those hooks inside a single bigtool node, so it — not the
     graph — has to resolve them through the channel reducers. Merging them with
-    ``dict.update`` instead is what put a ``RemoveMessage(REMOVE_ALL_MESSAGES)``
+    dict.update instead is what put a RemoveMessage(REMOVE_ALL_MESSAGES)
     tombstone at position 0 of the list handed to the model, 500ing the executor
     endpoint in production.
     """
@@ -484,7 +484,7 @@ class TestExecuteBeforeModelStateUpdates:
 
 
 class TestExecuteAfterModelStateUpdates:
-    """``execute_after_model`` merges hook returns the same way and needs the same fix."""
+    """execute_after_model merges hook returns the same way and needs the same fix."""
 
     @patch(
         "app.agents.middleware.executor.BigtoolRuntime.from_graph_context",

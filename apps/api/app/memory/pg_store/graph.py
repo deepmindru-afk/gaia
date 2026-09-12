@@ -252,7 +252,7 @@ async def get_graph(
     """The user's graph: (entity, live-memory count) pairs and current edges.
 
     Counts and edges are restricted to facts that are still current
-    (``is_latest`` and not forgotten). Without this, an edge from a superseded
+    (is_latest and not forgotten). Without this, an edge from a superseded
     fact ("lives in Kolkata" after a move to Ahmedabad) would linger forever,
     so the graph showed contradictory relationships. Entities left with no live
     memories and no live edge are dropped client-side by the graph adapter.

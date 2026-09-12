@@ -182,7 +182,7 @@ def _apply_patches(store_mock: MagicMock, extra_patches: list | None = None):
 def _recording_hook(name: str, real: Callable, calls: list[str]) -> Callable:
     """Wrap a hook so its execution is recorded, then delegate to the real one.
 
-    Async hooks return a coroutine that ``execute_hooks`` awaits afterwards, so
+    Async hooks return a coroutine that execute_hooks awaits afterwards, so
     recording at call time still yields the true sequential order.
     """
 
@@ -198,8 +198,8 @@ def _record_hook_execution(names: list[str]) -> Iterator[list[str]]:
     """Patch the named hooks with recording wrappers, in whichever module the
     graph builder resolves them from.
 
-    Pre-model hooks are composed in ``pre_model_hooks``; the end-graph hooks are
-    still named directly in ``build_graph``. Patched where each is looked up,
+    Pre-model hooks are composed in pre_model_hooks; the end-graph hooks are
+    still named directly in build_graph. Patched where each is looked up,
     because patching the definition site would leave the already-imported name
     in the composer untouched and the recorder silently empty.
 

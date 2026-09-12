@@ -195,7 +195,7 @@ def _absolute_url(base_url: str, relative_url: str | None) -> str | None:
 
 
 async def _fetch_following_redirects(url: str) -> httpx.Response | None:
-    """Fetch ``url``, following redirects by hand so every hop re-passes the SSRF
+    """Fetch url, following redirects by hand so every hop re-passes the SSRF
     guard. Returns None once the redirect budget is exhausted."""
     current_url = url
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT, follow_redirects=False) as client:

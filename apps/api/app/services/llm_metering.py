@@ -3,22 +3,22 @@ routes share.
 
 Two seams produce LLM spend and neither can see the other:
 
-- ``LLMAccountingMiddleware`` for everything that runs through an agent graph
+- LLMAccountingMiddleware for everything that runs through an agent graph
   (chat, workflows, bots, voice, subagents), which also passes
-  ``root_request_id`` so the call counts toward the per-request token ceiling.
+  root_request_id so the call counts toward the per-request token ceiling.
   This route CHARGES the user's day/month budget windows — it is work the user
   actively asked for.
-- ``ainvoke_structured`` for auxiliary one-shot calls (memory
+- ainvoke_structured for auxiliary one-shot calls (memory
   extraction/reconcile/consolidation, follow-ups, onboarding, workflow
   generation, …), which never reach the middleware. This route records spend
-  for COGS observability only (``charge_to_budget=False``) — background work
+  for COGS observability only (charge_to_budget=False) — background work
   must never consume the user's allowance.
 
-Both call :func:`record_llm_call`, so a call is priced and recorded identically
+Both call :func:record_llm_call, so a call is priced and recorded identically
 no matter where it originates; only whether it counts against the budget
 differs, and each caller states that explicitly. Lives in its own module
-because ``cost_budget`` cannot import ``config.model_pricing`` — that pulls in
-``app.decorators``, which imports ``cost_budget`` right back.
+because cost_budget cannot import config.model_pricing — that pulls in
+app.decorators, which imports cost_budget right back.
 """
 
 from collections.abc import Mapping
@@ -116,14 +116,14 @@ class LLMCallContext:
     """Everything about a model call that is NOT its price or its token counts.
 
     One object rather than a dozen keyword arguments, for the same reason
-    ``LLMInvokeOptions`` exists: the seam already sits at the repo's
+    LLMInvokeOptions exists: the seam already sits at the repo's
     argument-count ceiling. Every field is what the CALL SITE knows and the
     metering seam cannot re-derive — the seam is shared by four routes that see
     very different amounts of context, so each states what it has and leaves the
-    rest ``None`` instead of the seam guessing.
+    rest None instead of the seam guessing.
 
     Deliberately carries no message content. This object is what becomes an
-    ``llm_calls`` ledger document, and that collection stores counts and
+    llm_calls ledger document, and that collection stores counts and
     identifiers only.
     """
 
@@ -185,13 +185,13 @@ class _PricedCall:
 def _ambient_worker_context() -> dict[str, str | None]:
     """Worker/workflow identity for the call in flight, from the wide event.
 
-    ``job_id`` and the task name are stamped by ``arq_task``'s ``wide_task``
-    boundary and ``workflow.execution_id`` by the workflow task — none of them
-    exist in ``config.configurable``, so there is no call-site value to thread:
+    job_id and the task name are stamped by arq_task's wide_task
+    boundary and workflow.execution_id by the workflow task — none of them
+    exist in config.configurable, so there is no call-site value to thread:
     the boundary's own ContextVar IS where they live, and it is the same one the
-    ``llm_call`` log line is built from. Reading it here keeps the ledger and
+    llm_call log line is built from. Reading it here keeps the ledger and
     the wide event agreeing by construction. Empty outside a boundary (an HTTP
-    request, a test), which reads back as ``None`` rather than a fabricated id.
+    request, a test), which reads back as None rather than a fabricated id.
     """
     fields = log.get()
     return {
@@ -238,18 +238,18 @@ def _build_ledger_document(call: _PricedCall, context: LLMCallContext) -> LLMCal
 
 
 async def _insert_ledger_row(doc: LLMCallDocument) -> None:
-    """Append one row to the ``llm_calls`` ledger, or warn and move on.
+    """Append one row to the llm_calls ledger, or warn and move on.
 
     This is the ONE place in the metering path allowed to degrade silently, and
     the reason is narrow: the ledger is an observability artifact, not the
-    system of record. The money is already booked by ``record_model_call_usage``
-    (Redis budget windows + the durable ``usage_daily`` rollup) and the call is
-    already described by the ``llm_call`` wide event, so a Mongo blip costs a
+    system of record. The money is already booked by record_model_call_usage
+    (Redis budget windows + the durable usage_daily rollup) and the call is
+    already described by the llm_call wide event, so a Mongo blip costs a
     row of analytics — not a user's reply, and not a dollar. Raising here would
     take chat down to protect a metering table, which is exactly backwards.
 
-    The failure is a ``log.warning``, not a swallow: it is greppable, it lands
-    on the wide event, and a sustained gap between ``usage_daily`` and the
+    The failure is a log.warning, not a swallow: it is greppable, it lands
+    on the wide event, and a sustained gap between usage_daily and the
     ledger's own row count is measurable after the fact.
     """
     try:
@@ -276,21 +276,21 @@ async def record_llm_call(
 ) -> float:
     """Price one model call and record its spend + tokens. Returns the USD cost.
 
-    ``usage`` carries the four counts every route prices from (see
-    :class:`TokenUsage`): ``cached_tokens`` is the subset of ``input_tokens``
+    usage carries the four counts every route prices from (see
+    :class:TokenUsage): cached_tokens is the subset of input_tokens
     that hit the provider's prompt cache — billed at the discounted rate, not
-    free — and ``reasoning_tokens`` the subset of ``output_tokens`` spent on
+    free — and reasoning_tokens the subset of output_tokens spent on
     hidden thinking, when the provider reports it (not separately priced —
     already billed as output). All four ride alongside the cost into the
     durable rollup so a mispriced call can be re-derived from raw usage after
-    the fact. Omit ``root_request_id``
+    the fact. Omit root_request_id
     for work that is not bounded by a single agent tree. Fail-open: a pricing or
     write failure degrades cost to 0.0 and never fails a model call that
     already succeeded.
 
-    ``context`` is the call's identity — lane, models, conversation, workflow,
-    latency, and ``charge_to_budget`` (see :class:`LLMCallContext`). It is
-    required, not optional: it is what becomes the call's ``llm_calls`` ledger
+    context is the call's identity — lane, models, conversation, workflow,
+    latency, and charge_to_budget (see :class:LLMCallContext). It is
+    required, not optional: it is what becomes the call's llm_calls ledger
     row, and the ledger is only worth having if every route states what it
     knows. An optional argument is how the log lines ended up with no context
     ids on 55% of calls.
@@ -375,7 +375,7 @@ async def record_failed_llm_call(
     Books no money and no tokens. The attempts did burn tokens upstream, but
     nothing reported them (there is no usage payload on a failed call), and
     inventing a number would put fiction into the same column real spend is
-    summed from. The budget windows and ``usage_daily`` are deliberately NOT
+    summed from. The budget windows and usage_daily are deliberately NOT
     touched: this writes to the ledger only.
     """
     family = classify_error_family(error)
@@ -433,11 +433,11 @@ async def record_failed_llm_call(
 
 async def _record(call: _PricedCall, context: LLMCallContext) -> float:
     """Write one already-priced call to the budget windows, the durable rollup
-    and the ``llm_calls`` ledger.
+    and the llm_calls ledger.
 
     Split out so the provider-reported and table-priced paths record through
     exactly the same seam — the only difference between them is where the
-    dollar figure came from, which is exactly what ``cost_source`` records.
+    dollar figure came from, which is exactly what cost_source records.
 
     The ledger insert is spawned rather than awaited: it is the one write here
     that nothing downstream depends on, and holding the user's turn open for a
@@ -482,13 +482,13 @@ async def _record(call: _PricedCall, context: LLMCallContext) -> float:
 def extract_message_usage(message: AIMessage) -> TokenUsage:
     """Return input/output/cached/reasoning token counts from a message's usage metadata.
 
-    Reads ``message.usage_metadata`` (the canonical LangChain shape) and falls
-    back to ``response_metadata.usage_metadata`` for the provider SDK versions
-    that only populate that. ``cached_tokens`` comes from
-    ``input_token_details.cache_read`` or — when the provider surfaces it
-    separately — ``cached_content_token_count``. ``reasoning_tokens`` (a
-    subset of ``output_tokens`` spent on hidden thinking) comes from
-    ``output_token_details.reasoning``; not every provider/model returns it.
+    Reads message.usage_metadata (the canonical LangChain shape) and falls
+    back to response_metadata.usage_metadata for the provider SDK versions
+    that only populate that. cached_tokens comes from
+    input_token_details.cache_read or — when the provider surfaces it
+    separately — cached_content_token_count. reasoning_tokens (a
+    subset of output_tokens spent on hidden thinking) comes from
+    output_token_details.reasoning; not every provider/model returns it.
     Missing fields default to 0.
     """
     # Annotated as a plain mapping: the TypedDict cannot represent the empty
@@ -527,19 +527,19 @@ def extract_message_usage(message: AIMessage) -> TokenUsage:
 
 
 def extract_message_cost(message: AIMessage) -> float | None:
-    """What OpenRouter says this call actually cost, or ``None`` if it did not say.
+    """What OpenRouter says this call actually cost, or None if it did not say.
 
-    OpenRouter returns a real ``usage.cost`` only when the request carries
-    ``usage: {"include": true}`` (see ``_usage_accounting_kwargs`` in
-    ``agents/llm/client``); ``ChatOpenRouter`` copies it to
-    ``response_metadata["cost"]``. Lanes that are not OpenRouter — direct
+    OpenRouter returns a real usage.cost only when the request carries
+    usage: {"include": true} (see _usage_accounting_kwargs in
+    agents/llm/client); ChatOpenRouter copies it to
+    response_metadata["cost"]. Lanes that are not OpenRouter — direct
     Gemini, the sim lane — never populate it, and those keep falling back to
-    :func:`app.config.model_pricing.calculate_token_cost`.
+    :func:app.config.model_pricing.calculate_token_cost.
 
     A zero is a real answer (free/promotional routes exist) and is returned as
-    ``0.0``; a missing, unparseable, negative or non-finite value returns
-    ``None`` so the caller falls back to table pricing. ``float("inf")`` and
-    ``float("nan")`` parse cleanly and ``inf >= 0.0`` is true, so they have to
+    0.0; a missing, unparseable, negative or non-finite value returns
+    None so the caller falls back to table pricing. float("inf") and
+    float("nan") parse cleanly and inf >= 0.0 is true, so they have to
     be rejected explicitly — otherwise a malformed provider payload becomes a
     non-finite dollar figure in the budget windows and the durable rollup.
     """
@@ -555,11 +555,11 @@ def extract_message_cost(message: AIMessage) -> float | None:
 
 
 def extract_message_model(message: AIMessage) -> str:
-    """The model the provider says served this call, or ``UNKNOWN_MODEL_NAME``.
+    """The model the provider says served this call, or UNKNOWN_MODEL_NAME.
 
     What the LANE asked for and what actually answered are different facts —
     a provider substitution or a fallback makes them diverge — and the ledger
-    records both (``model_requested`` / ``model_served``), so the reply's own
+    records both (model_requested / model_served), so the reply's own
     account of itself has to be readable here rather than inferred from the
     lane the caller configured.
     """
@@ -571,15 +571,15 @@ def extract_generation_id(message: AIMessage) -> str | None:
     """The upstream generation id for this call, when the provider returned one.
 
     A second handle on *which upstream served the request*, alongside the name
-    itself. OpenRouter names the serving upstream in a ``provider`` response
-    field; ``ChatOpenRouter`` drops it and stamps ``model_provider`` as the
-    literal ``"openrouter"``, so the aggregator's own name is all that reaches
-    us out of the box — ``openrouter_provider_name_patch`` is what restores the
-    real one, under ``response_metadata[PROVIDER_NAME_METADATA_KEY]``. The id
+    itself. OpenRouter names the serving upstream in a provider response
+    field; ChatOpenRouter drops it and stamps model_provider as the
+    literal "openrouter", so the aggregator's own name is all that reaches
+    us out of the box — openrouter_provider_name_patch is what restores the
+    real one, under response_metadata[PROVIDER_NAME_METADATA_KEY]. The id
     stays worth carrying because it also resolves cost and routing detail the
-    name alone does not. ``id`` survives both paths (``_create_chat_result`` puts it in
-    ``llm_output``, which ``langchain_core`` merges into ``response_metadata``;
-    ``_astream``/``_stream`` set ``generation_info["id"]`` directly), and it
+    name alone does not. id survives both paths (_create_chat_result puts it in
+    llm_output, which langchain_core merges into response_metadata;
+    _astream/_stream set generation_info["id"] directly), and it
     resolves to the serving upstream through OpenRouter's generation-metadata
     endpoint without spending a model call.
 
@@ -595,29 +595,29 @@ def extract_generation_id(message: AIMessage) -> str | None:
 def resolve_channel(configurable: Mapping[str, Any], *, background: bool = False) -> str | None:
     """Which surface originated this call, from the run's own configurable.
 
-    ``background`` defaults to False because the graph and style-guard seams are
+    background defaults to False because the graph and style-guard seams are
     the user's own turn by construction; only the auxiliary lane passes it, and
     it passes the run's real value.
 
-    ``conversation_source`` is the value the entry point set — ``"web"`` /
-    ``"desktop"`` from the chat endpoint's ``X-Client-Type`` header, or the bot
-    platform (``"discord"``, ``"slack"``, ``"telegram"``, ``"whatsapp"``,
-    ``"imessage"``) from the bot endpoint — and it is inherited by every child
+    conversation_source is the value the entry point set — "web" /
+    "desktop" from the chat endpoint's X-Client-Type header, or the bot
+    platform ("discord", "slack", "telegram", "whatsapp",
+    "imessage") from the bot endpoint — and it is inherited by every child
     agent, so an executor call reports the surface its root turn came from.
-    Never inferred from the agent name: ``comms_agent`` serves all of them.
+    Never inferred from the agent name: comms_agent serves all of them.
 
-    Background runs carry no ``conversation_source`` (nobody typed anything), so
-    they are separated by what they DO carry: a run with a ``workflow_id`` is
-    ``"workflow"``, and any other background work is ``"system"``. ``background``
+    Background runs carry no conversation_source (nobody typed anything), so
+    they are separated by what they DO carry: a run with a workflow_id is
+    "workflow", and any other background work is "system". background
     is passed explicitly because the auxiliary lanes (memory, chatbot,
-    follow-ups) carry no ``source_category`` either — keying only on that field
+    follow-ups) carry no source_category either — keying only on that field
     left 11 of 27 rows null in a live session, which is neither of the two
     answers the rule promises.
 
-    ``None`` only for a foreground call that named no surface anywhere.
+    None only for a foreground call that named no surface anywhere.
 
-    KNOWN GAP: voice reports ``"web"``. The LiveKit agent posts to the same chat
-    endpoint without an ``X-Client-Type`` header, so the header-based resolution
+    KNOWN GAP: voice reports "web". The LiveKit agent posts to the same chat
+    endpoint without an X-Client-Type header, so the header-based resolution
     cannot tell it apart; distinguishing it needs a change in the voice worker,
     not here, and guessing would be worse than the honest "web".
     """
@@ -642,15 +642,15 @@ def resolve_channel(configurable: Mapping[str, Any], *, background: bool = False
 def extract_finish_reason(message: AIMessage) -> str | None:
     """Why the provider stopped generating, when the reply says.
 
-    ``ChatOpenRouter`` merges ``generation_info`` into ``response_metadata`` on
-    the STREAMING path, so ``finish_reason`` is there for every graph call. On
-    the non-streaming path it stays in ``generation_info``, which never reaches
-    an ``AIMessage`` — only ``native_finish_reason`` is copied onto the message.
+    ChatOpenRouter merges generation_info into response_metadata on
+    the STREAMING path, so finish_reason is there for every graph call. On
+    the non-streaming path it stays in generation_info, which never reaches
+    an AIMessage — only native_finish_reason is copied onto the message.
     That upstream-specific value is the honest second-best here, so it is the
-    fallback; the auxiliary route does better by reading ``generation_info``
-    directly off the ``LLMResult`` (see ``_GenerationIdCallback``).
+    fallback; the auxiliary route does better by reading generation_info
+    directly off the LLMResult (see _GenerationIdCallback).
 
-    Worth recording because a run of ``length`` on one lane is a truncation bug,
+    Worth recording because a run of length on one lane is a truncation bug,
     and today it surfaces only as users reporting answers that stop mid-sentence.
     """
     resp_meta = message.response_metadata or {}
@@ -683,22 +683,22 @@ def classify_error_family(error: BaseException) -> ErrorFamily:
 def extract_message_provider(message: AIMessage) -> str | None:
     """The UPSTREAM that served this call — "Baidu", "StreamLake", "Fireworks".
 
-    Read from ``response_metadata[PROVIDER_NAME_METADATA_KEY]``, which
-    ``openrouter_provider_name_patch`` restores on both the streaming and
-    non-streaming paths. Out of the box ``ChatOpenRouter`` drops OpenRouter's
-    ``provider`` response field and stamps ``model_provider`` with the literal
-    ``"openrouter"``, so without that patch the aggregator's own name was all
+    Read from response_metadata[PROVIDER_NAME_METADATA_KEY], which
+    openrouter_provider_name_patch restores on both the streaming and
+    non-streaming paths. Out of the box ChatOpenRouter drops OpenRouter's
+    provider response field and stamps model_provider with the literal
+    "openrouter", so without that patch the aggregator's own name was all
     that reached us and this column was always null.
 
     That name is still rejected explicitly if it ever arrives: the aggregator is
     not an upstream, and recording it would make every row claim a provider we
-    never learned — a ``group by provider`` over the ledger would read as one
+    never learned — a group by provider over the ledger would read as one
     homogeneous pool, when the entire point of the field is that the pool's
     rates differ by more than 10x for the same model id.
 
-    ``None`` on the lanes the patch does not cover (direct Gemini, the sim
+    None on the lanes the patch does not cover (direct Gemini, the sim
     lane), which genuinely have no upstream to name. Never guessed from the
-    model id; :func:`extract_generation_id` remains the second handle, resolving
+    model id; :func:extract_generation_id remains the second handle, resolving
     routing detail the name alone does not carry.
     """
     resp_meta = message.response_metadata or {}

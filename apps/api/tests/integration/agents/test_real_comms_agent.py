@@ -1,7 +1,7 @@
 """Real integration tests for the GAIA comms agent.
 
 Unlike test_comms_agent_flow.py (which uses a fake echo graph), this module
-imports and exercises the ACTUAL production `build_comms_graph` function from
+imports and exercises the ACTUAL production build_comms_graph function from
 app.agents.core.graph_builder.build_graph.
 
 External I/O (DB clients, LLM API calls, memory service) is mocked so that
@@ -9,7 +9,7 @@ the LangGraph routing logic, pre_model_hooks (filter_messages_node,
 manage_system_prompts_node), end_graph_hooks (follow_up_actions_node), and
 tool registration all run for real.
 
-If `build_comms_graph` (or the callee chain it pulls in) is removed or
+If build_comms_graph (or the callee chain it pulls in) is removed or
 renamed these tests will fail immediately — which is the desired behaviour.
 """
 
@@ -125,7 +125,7 @@ def _follow_up_node_io_patches(
 ) -> list:
     """Return context-manager patches that mock ONLY the I/O boundaries of
     follow_up_actions_node: the structured LLM call (which returns the parsed
-    ``FollowUpActions``), the integrations lookup, and the stream writer. The
+    FollowUpActions), the integrations lookup, and the stream writer. The
     node's internal slicing/prompt/guard logic runs for real.
     """
     if writer_fn is None:
@@ -163,7 +163,7 @@ def _apply_all_patches(
 ):
     """Apply store, checkpointer, io, executor, memory patches via ExitStack.
 
-    This avoids ``*io_patches`` unpacking inside ``with()`` which Python
+    This avoids *io_patches unpacking inside with() which Python
     does not support (it produces a tuple, not individual context managers).
     """
     with contextlib.ExitStack() as stack:
@@ -207,7 +207,7 @@ async def comms_graph_simple():
     Build the REAL comms agent graph with:
     - FakeMessagesListChatModel (single plain-text response, no tool calls)
     - InMemorySaver checkpointer
-    - All external I/O mocked at boundaries only
+    - All external I/O mocked at boundaries only.
 
     Yields the compiled CompiledGraph so tests can call ainvoke / aget_state.
     """
@@ -225,7 +225,7 @@ async def comms_graph_simple():
 async def comms_graph_with_tool_call():
     """
     Build the REAL comms agent graph whose fake LLM first returns a tool call
-    for `call_executor`, then returns a final text response.
+    for call_executor, then returns a final text response.
 
     The call_executor tool itself is patched to return a fixed string without
     touching the real executor agent.
@@ -441,7 +441,7 @@ class TestRealCommsAgent:
 
     async def test_tool_routing_to_tool_node(self, comms_graph_with_tool_call):
         """
-        When the fake LLM emits a tool call for `call_executor`, the real
+        When the fake LLM emits a tool call for call_executor, the real
         LangGraph conditional edge (should_continue) must route execution to the
         DynamicToolNode, which executes the tool and produces a ToolMessage.
 
@@ -641,7 +641,7 @@ class TestRealCommsAgent:
 
         We provide enough messages (>= 2) to bypass the early-exit guard so the
         slice and prompt construction run; the writer should receive the
-        ``follow_up_actions`` returned by the mocked structured call.
+        follow_up_actions returned by the mocked structured call.
         """
         store_mock = _make_chroma_store_mock()
         # Give the main agent enough responses for two human messages
@@ -821,7 +821,7 @@ class TestRealCommsAgent:
         When the LLM call raises asyncio.TimeoutError, the exception must
         propagate to the caller with the original TimeoutError type intact —
         it must NOT be swallowed silently or converted to a different type.
-        ``single_llm_attempt`` skips the retry backoff: TimeoutError is
+        single_llm_attempt skips the retry backoff: TimeoutError is
         retryable, and the point here is propagation, not the retry count.
 
         This test will FAIL if:

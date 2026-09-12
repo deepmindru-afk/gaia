@@ -1,22 +1,22 @@
 """
-One-time, idempotent migration: collapse ``selected_integrations`` into
-``integration_ids`` on workflow documents.
+One-time, idempotent migration: collapse selected_integrations into
+integration_ids on workflow documents.
 
 The two fields grew independently on separate branches and ended up meaning the
 same thing — which integrations a workflow uses:
 
-- ``selected_integrations`` — the ids the user picked in the UI, used to scope
+- selected_integrations — the ids the user picked in the UI, used to scope
   step generation.
-- ``integration_ids`` — the ids the workflow assistant identified from intent.
+- integration_ids — the ids the workflow assistant identified from intent.
 
-They are now a single field, ``integration_ids``. Connection state is never
+They are now a single field, integration_ids. Connection state is never
 stored: required/missing integrations are derived from the workflow's steps at
 read time, so connecting an integration clears the warning with nothing to
 clean up.
 
-For every document still carrying ``selected_integrations`` this merges the two
-lists (``integration_ids`` first, then any new ids from
-``selected_integrations``), de-duped and order-preserving, then drops the legacy
+For every document still carrying selected_integrations this merges the two
+lists (integration_ids first, then any new ids from
+selected_integrations), de-duped and order-preserving, then drops the legacy
 key. Ids are lowercased to match what the create path persists. Ids are NOT
 validated against the OAuth catalog — custom integrations are keyed by an opaque
 uuid and would be discarded by such a filter.

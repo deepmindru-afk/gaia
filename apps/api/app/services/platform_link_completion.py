@@ -4,12 +4,12 @@ Two routes create a link and each owes the same follow-through — the "you're
 connected" greeting, the account-FS sync, the analytics event, the audit trail
 on a rejected attempt:
 
-- ``POST /platform-links/{platform}`` — the bot mints a token, the web redeems it.
-- ``POST /bot/redeem-link-code`` — the web mints a code, the bot redeems it.
+- POST /platform-links/{platform} — the bot mints a token, the web redeems it.
+- POST /bot/redeem-link-code — the web mints a code, the bot redeems it.
 
 They live in different routers, so without one implementation they drift. It
-lives here rather than in ``platform_link_service`` because
-``outbound_delivery`` already imports that module.
+lives here rather than in platform_link_service because
+outbound_delivery already imports that module.
 """
 
 from collections.abc import Mapping
@@ -48,7 +48,7 @@ async def complete_platform_link(
     """Link the account and run every side effect a successful link owes.
 
     Whatever GAIA says after the link is sent from here, on the outbound queue
-    every other server-initiated message uses. ``first_contact`` is the
+    every other server-initiated message uses. first_contact is the
     composed opening for the one-tap onboarding link (hello, promise, first
     move) and is delivered as-is; without it a new link gets the generic
     "you're connected" text. The bots deliver, they never compose.

@@ -1,7 +1,7 @@
 """
 Cron utilities for reminder and workflow scheduling.
 
-Timezone handling is delegated entirely to :class:`app.utils.timezone.Timezone`
+Timezone handling is delegated entirely to :class:app.utils.timezone.Timezone
 — this module never parses a timezone string itself.
 """
 
@@ -40,12 +40,12 @@ def get_next_run_time(
 ) -> datetime:
     """Get the next scheduled run time for a cron expression, returned in UTC.
 
-    The cron fields are interpreted as wall-clock time in ``tz`` (the schedule's
-    own timezone), so ``"0 9 * * *"`` with ``tz=Timezone.parse("Asia/Kolkata")``
-    fires at 09:00 IST. When ``tz`` is omitted the cron is interpreted in
-    ``base_time``'s OWN zone — a tz-aware base carries the user's zone (e.g. a
+    The cron fields are interpreted as wall-clock time in tz (the schedule's
+    own timezone), so "0 9 * * *" with tz=Timezone.parse("Asia/Kolkata")
+    fires at 09:00 IST. When tz is omitted the cron is interpreted in
+    base_time's OWN zone — a tz-aware base carries the user's zone (e.g. a
     reminder's local "now") and must not be silently reinterpreted in UTC; only a
-    naive/absent base falls back to UTC. ``base_time`` defaults to "now".
+    naive/absent base falls back to UTC. base_time defaults to "now".
 
     Args:
         cron_expr: Cron expression (e.g. "0 8 * * *" for daily at 8 AM)

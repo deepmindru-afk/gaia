@@ -61,10 +61,10 @@ _FEATURES = {
 
 
 def _user(timezone: str | None = "UTC", **onboarding: object) -> UserDocument:
-    """A user exactly as ``user_repository.get`` yields one.
+    """A user exactly as user_repository.get yields one.
 
-    Built through ``UserDocument`` rather than a namespace so the typed
-    ``onboarding`` subdocument (and its lenient blob handling) is the same thing
+    Built through UserDocument rather than a namespace so the typed
+    onboarding subdocument (and its lenient blob handling) is the same thing
     the projection reads in production — a hand-rolled stand-in would let the
     validation the real read performs go untested.
     """
@@ -86,7 +86,7 @@ _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _plan(overrides: dict[str, object] | None) -> PlanResponse | None:
-    """A Pro plan with the given fields overridden; ``{}`` means no plan at all."""
+    """A Pro plan with the given fields overridden; {} means no plan at all."""
     if overrides == {}:
         return None
     fields: dict[str, object] = {
@@ -225,7 +225,7 @@ class TestBuildAccountProjections:
     async def test_each_group_lands_at_its_own_path_under_account(self, sources) -> None:
         """The id -> path mapping, pinned per group.
 
-        Asserting only the shared ``account/`` prefix lets any two groups swap
+        Asserting only the shared account/ prefix lets any two groups swap
         paths, or every group collapse onto one file, without a test noticing.
         """
         files, _ = await _build()
@@ -424,7 +424,7 @@ class TestProjectionBodies:
     async def test_preferences_drop_a_need_outside_the_allowed_keys(self, sources) -> None:
         """A stored need the enum no longer defines must never reach the agent.
 
-        The typed ``onboarding`` subdocument drops it at the user read (a
+        The typed onboarding subdocument drops it at the user read (a
         historical row still has to load), so the projection ships without it
         rather than skipping the group.
         """
@@ -449,7 +449,7 @@ class TestProjectionBodies:
             }
 
     async def test_preferences_ignore_a_non_dict_preferences_blob(self, sources) -> None:
-        """Mongo's ``onboarding.preferences`` is an untyped blob.
+        """Mongo's onboarding.preferences is an untyped blob.
 
         A string or a list there must read as "no preferences", not blow up the
         whole projection pass.
@@ -602,7 +602,7 @@ class TestSourceFailureIsolation:
     async def test_a_failing_source_logs_the_group_and_the_error_type(self, sources) -> None:
         """The swallow is only defensible if the failure is observable.
 
-        ``_safe_body`` returns None so the pass continues; the error event is
+        _safe_body returns None so the pass continues; the error event is
         the ONLY record that a provider broke, so its fields are the contract.
         """
         async with captured_wide_event() as event:
@@ -699,7 +699,7 @@ class TestSyncAccountFiles:
         """The preserve set has to reach the materializer to do anything.
 
         Dropping it here is invisible from the projection tests — they assert
-        ``build_account_projections`` returns it — and would silently restore
+        build_account_projections returns it — and would silently restore
         the bug where a provider outage deletes a valid account view.
         """
         with (

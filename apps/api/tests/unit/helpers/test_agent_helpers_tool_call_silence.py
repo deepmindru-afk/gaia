@@ -3,15 +3,15 @@
 The comms prompt's "MOMENT 1: SILENT" rule was the only thing stopping the model
 from narrating its own handoff, and models ignore it: in production the comms
 agent answered "yeah, i can set all that up. let me get the tasks created…" with
-a ``call_executor`` tool call attached, then answered again with the real
+a call_executor tool call attached, then answered again with the real
 acknowledgement once the tool returned. The user got two replies.
 
 The driver is what has to enforce it, and the enforcement point is NOT the
 individual chunk. On the OpenAI/OpenRouter wire the text deltas arrive BEFORE
 the tool-call deltas of the same message, carrying no tool-call marker at all —
 so a per-chunk guard suppresses nothing. That is why these tests drive a real
-``ChatOpenRouter`` against a real (loopback) SSE server emitting the real delta
-order, through a real LangGraph with ``stream_mode=["messages", "updates"]``:
+ChatOpenRouter against a real (loopback) SSE server emitting the real delta
+order, through a real LangGraph with stream_mode=["messages", "updates"]:
 anything less faithful cannot tell a working guard from a decorative one.
 """
 
@@ -115,9 +115,9 @@ class _GraphState(TypedDict):
 
 
 def _build_graph(base_url: str, nudges: int = 0) -> Any:
-    """``agent → (tools → agent)* → END``, driven by a real streaming wire client.
+    """agent → (tools → agent)* → END, driven by a real streaming wire client.
 
-    ``nudges`` mirrors the real graph's ``nudge_continue`` node: a tool-free
+    nudges mirrors the real graph's nudge_continue node: a tool-free
     reply is sent back for one more pass instead of ending the run, which is the
     only way a single turn produces two assistant messages the user keeps.
     """

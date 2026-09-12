@@ -1,8 +1,8 @@
-"""Repository for the ``checkout_sessions`` collection.
+"""Repository for the checkout_sessions collection.
 
 Records the Dodo checkout session id at checkout-creation time so the
 result page can resolve what a user bought even when the
-``subscription.active`` webhook has not landed yet (the webhook-vs-redirect
+subscription.active webhook has not landed yet (the webhook-vs-redirect
 race): the session id is the stable reference Dodo can answer for before a
 subscription row exists.
 """

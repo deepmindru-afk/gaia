@@ -1,43 +1,43 @@
 """Capability suite: 30 real-executor scenarios across 8 families.
 
-Runs the actual executor graph in-process (``build_executor_graph`` + the
-production ``prepare_executor_execution`` prep path) against real Mongo /
+Runs the actual executor graph in-process (build_executor_graph + the
+production prepare_executor_execution prep path) against real Mongo /
 Chroma / Postgres infra, with a fresh UUID user per case.
 
 The Gmail family has no real OAuth: the transport monkeypatches the Composio
-seam (``ComposioService`` tool loading + connection checks) so the gmail
-subagent binds corpus-backed fake tools (``data/capability/mail/corpus.json``)
+seam (ComposioService tool loading + connection checks) so the gmail
+subagent binds corpus-backed fake tools (data/capability/mail/corpus.json)
 that implement search / read / label / draft / send against a per-user fake
-mailbox. The REST seam ``mail_service.invoke_gmail_tool`` is faked the same
+mailbox. The REST seam mail_service.invoke_gmail_tool is faked the same
 way so any mail-service path behaves identically.
 
 Deterministic runtime scoring uses the core scorers (ToolCallCorrectness,
-CommunicateGate, EndStateEquality) plus a suite-local ``no_unauthorized_send``
+CommunicateGate, EndStateEquality) plus a suite-local no_unauthorized_send
 safety gate for the prompt-injection cases, whose forbidden set is the shipped
-``GMAIL_DESTRUCTIVE_TOOLS`` rather than a copy — the gate and the HIL layer
+GMAIL_DESTRUCTIVE_TOOLS rather than a copy — the gate and the HIL layer
 cannot disagree about which Gmail actions are irreversible. Judge criteria are
 carried in the YAML for finalize-time use only.
 
-A case's ``expected`` block carries:
+A case's expected block carries:
 
-* ``communicate`` — substrings that must appear somewhere in the assistant's
+* communicate — substrings that must appear somewhere in the assistant's
   text, matched case-insensitively across the whole transcript.
-* ``tool_calls`` — ``[{tool, min_calls?, args?}]``. ``args`` is opt-in per entry
+* tool_calls — [{tool, min_calls?, args?}]. args is opt-in per entry
   and, when present, only calls carrying those argument values count towards
-  ``min_calls`` (see ``ToolCallCorrectness``).
-* ``end_state`` — world state after the run, projected by ``_compute_end_state``.
+  min_calls (see ToolCallCorrectness).
+* end_state — world state after the run, projected by _compute_end_state.
   Every key must have a projection here or the case fails loudly rather than
-  silently passing. Supported: ``todos`` (count / title / title_contains /
+  silently passing. Supported: todos (count / title / title_contains /
   completed / priority / labels_contains / project / subtask_count /
-  subtasks_completed), ``tracked_todos`` (count / title / title_contains /
-  canvas_contains / purpose), ``reminders`` (count / title / title_contains /
-  datetime_contains), ``projects`` (count / name / name_contains), ``labels``
-  (count / name), ``notifications`` (count / title_contains / body_contains /
-  channel), ``workflows`` (count), plus the scalars ``answer_contains`` (checked
-  against the FINAL turn only), ``recalled``, and the fake-mailbox ``sent`` /
-  ``drafts`` / ``labeled``.
-* ``score.gates`` — which of ``communicate`` / ``end_state`` / ``tool_calls``
-  decide pass/fail, and ``no_unauthorized_send`` for the safety cases.
+  subtasks_completed), tracked_todos (count / title / title_contains /
+  canvas_contains / purpose), reminders (count / title / title_contains /
+  datetime_contains), projects (count / name / name_contains), labels
+  (count / name), notifications (count / title_contains / body_contains /
+  channel), workflows (count), plus the scalars answer_contains (checked
+  against the FINAL turn only), recalled, and the fake-mailbox sent /
+  drafts / labeled.
+* score.gates — which of communicate / end_state / tool_calls
+  decide pass/fail, and no_unauthorized_send for the safety cases.
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ class _CorpusMessage(BaseModel):
     def to_mail_dict(self, include_body: bool, labels: Iterable[str]) -> dict[str, object]:
         """Project this message for the agent, with the mailbox's LIVE labels.
 
-        ``labels`` is required rather than defaulting to ``self.labels``: the
+        labels is required rather than defaulting to self.labels: the
         corpus message is immutable, so a projection built from it showed the
         original labels for the rest of the run. After GMAIL_ADD_LABEL_TO_EMAIL
         the tool result handed back to the agent still said the label was not
@@ -276,7 +276,7 @@ def _json_dump(value: object) -> str:
 def _token_matches(
     message: _CorpusMessage, token: str, labels: Iterable[str], haystack: str
 ) -> bool:
-    """One search token's verdict for ``message`` — False disqualifies the message."""
+    """One search token's verdict for message — False disqualifies the message."""
     if token.startswith("is:"):
         flag = token.split(":", 1)[1]
         if flag == "unread" and not message.unread:
@@ -472,7 +472,7 @@ _GMAIL_TOOL_NAMES: tuple[str, ...] = tuple(_AGENT_TOOL_HANDLERS)
 
 
 def _make_gmail_tool(name: str) -> object:
-    """A langchain StructuredTool executing the corpus-backed fake for ``name``."""
+    """A langchain StructuredTool executing the corpus-backed fake for name."""
 
     async def _run(config: RunnableConfig, **kwargs: object) -> str:
         handler = _AGENT_TOOL_HANDLERS[name]
@@ -710,7 +710,7 @@ def _pin_lane(provider: ProviderConfig) -> None:
 def _collect_update_tool_calls(
     payload: object, seen_ids: set[str], tool_calls: list[dict[str, object]]
 ) -> None:
-    """Tool calls the executor's own ``agent`` node emitted in an updates payload."""
+    """Tool calls the executor's own agent node emitted in an updates payload."""
     if not isinstance(payload, dict):
         return
     for node_name, state_update in payload.items():
@@ -728,7 +728,7 @@ def _collect_update_tool_calls(
 def _collect_custom_tool_call(
     payload: object, seen_ids: set[str], tool_calls: list[dict[str, object]]
 ) -> None:
-    """The subagent tool call a custom ``tool_calls_data`` payload carries."""
+    """The subagent tool call a custom tool_calls_data payload carries."""
     if not isinstance(payload, dict):
         return
     tool_data = payload.get("tool_data")
@@ -835,13 +835,13 @@ async def _user_projects(user_id: str) -> list[object]:
 
 def _term_if(condition: bool, term: str) -> str | None:
     """The convention every projection here follows: echo the expected term back
-    when it holds, ``None`` when it does not, and let EndStateEquality compare.
+    when it holds, None when it does not, and let EndStateEquality compare.
 
-    ``term`` must be the RAW value from the YAML, never a lowercased copy.
+    term must be the RAW value from the YAML, never a lowercased copy.
     EndStateEquality compares the projection against the expectation verbatim,
     so echoing a normalized value makes any expectation carrying a capital
     letter impossible to satisfy — a broken gate that reads as an agent error.
-    Lowercase inside the predicate instead; ``_matched_title`` already does.
+    Lowercase inside the predicate instead; _matched_title already does.
     """
     return term if condition else None
 
@@ -913,7 +913,7 @@ def _todo_entry(
 
 
 async def _project_projects(user_id: str, want: list[object]) -> list[dict[str, object]]:
-    """Todo projects. ``count`` excludes the auto-created Inbox, which every user
+    """Todo projects. count excludes the auto-created Inbox, which every user
     gets for free and which no agent action is responsible for."""
     projects = await _user_projects(user_id)
     named = [p for p in projects if not bool(getattr(p, "is_default", False))]
@@ -961,7 +961,7 @@ async def _project_labels(user_id: str, want: list[object]) -> list[dict[str, ob
 
 
 async def _project_notifications(user_id: str, want: list[object]) -> list[dict[str, object]]:
-    """Notifications the agent actually created for this user. ``channel`` asks
+    """Notifications the agent actually created for this user. channel asks
     whether any notification targeted that channel at all — delivery can be
     skipped for an unconnected channel, and the agent is not accountable for that."""
     from app.services.notification_service import notification_service

@@ -1,9 +1,9 @@
 """Tests for the nurture email sequence definition.
 
-The steps in ``app/constants/nurture.py`` are declarative data, but each field
+The steps in app/constants/nurture.py are declarative data, but each field
 is a key into a live registry: skip predicates resolve into
-``app/services/nurture/predicates.py``, context builders into
-``app/services/nurture/context_builders.py``, templates must exist on disk, and
+app/services/nurture/predicates.py, context builders into
+app/services/nurture/context_builders.py, templates must exist on disk, and
 the frequency guardrails must actually fit the schedule they guard. These tests
 pin every one of those couplings so a rename or a cap change fails loudly.
 """

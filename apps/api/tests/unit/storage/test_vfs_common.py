@@ -1,13 +1,13 @@
 """Shared VFS helpers: naming, hash gates, markers, and the write/skip decision.
 
-Every materializer under ``/workspace/`` (gaia-tasks, user-todos, memory,
+Every materializer under /workspace/ (gaia-tasks, user-todos, memory,
 skills) is built on this module, so a bug here is systemic and invisible: the
-hash gates decide whether a user's edit ever reaches disk, and ``matches_text``
+hash gates decide whether a user's edit ever reaches disk, and matches_text
 decides whether a file is rewritten. Get either wrong and you either serve a
 silently stale projection or rewrite the whole tree on every single turn.
 
 Nothing is mocked — these helpers *are* path and I/O logic, so the tests drive
-real files under ``tmp_path``. Mocking the filesystem here would delete the only
+real files under tmp_path. Mocking the filesystem here would delete the only
 part worth testing.
 """
 

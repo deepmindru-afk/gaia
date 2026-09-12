@@ -2,7 +2,7 @@
 
 The executor's terminal text is never shown to the user directly — it is
 handed to the comms agent as internal context (a HumanMessage framed in an
-``<executor_result>``/``<executor_error>`` tag) and comms re-voices it in GAIA's
+<executor_result>/<executor_error> tag) and comms re-voices it in GAIA's
 persona. This module owns that single invocation.
 """
 
@@ -116,12 +116,12 @@ async def record_executor_cancellation(
     task_id: str | None,
     task: str,
 ) -> None:
-    """Append an ``<executor_cancelled>`` record to the comms thread's checkpoint.
+    """Append an <executor_cancelled> record to the comms thread's checkpoint.
 
     Without this, a cancelled executor leaves comms' last knowledge of the task
     as the 'Task accepted... I'm on it' tool result — on any later turn the
     model believes the work is still running (or quietly done). This is a
-    silent context write via ``aupdate_state``: no model call, no user-facing
+    silent context write via aupdate_state: no model call, no user-facing
     message. Best-effort — a failure here must not break the cancel path.
     """
     marker = HumanMessage(
@@ -161,7 +161,7 @@ async def record_platform_delivery(conversation_id: str, text: str) -> None:
     Workflow results pushed into the user's Telegram/WhatsApp sessions are saved
     to MongoDB and sent by the bots without passing through the graph — but the
     next bot turn reads its history from the checkpoint, so without this write
-    GAIA has no memory of results it just delivered. Silent ``aupdate_state``
+    GAIA has no memory of results it just delivered. Silent aupdate_state
     write, no model call. Best-effort: the message is already sent, so a failure
     here must not break delivery.
     """

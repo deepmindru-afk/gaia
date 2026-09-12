@@ -1,7 +1,7 @@
 """Desktop app constants.
 
 Release distribution for the marketing download page — see
-``app.services.desktop.releases``.
+app.services.desktop.releases.
 """
 
 # GAIA's monorepo. Desktop builds are tagged ``desktop-<version>`` and share the

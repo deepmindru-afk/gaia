@@ -1,21 +1,21 @@
-"""Cross-replica distributed locking, backed by redis-py's token-checked ``Lock``.
+"""Cross-replica distributed locking, backed by redis-py's token-checked Lock.
 
-``DistributedLock`` is the one canonical lock for the backend, so no subsystem
+DistributedLock is the one canonical lock for the backend, so no subsystem
 re-derives the lease/watchdog/safe-release dance. Construct it with a key and its
-timing, then either take it directly with ``hold`` (deciding what a failed
-acquire means) or run idempotent work under it with ``run_idempotent`` (which
+timing, then either take it directly with hold (deciding what a failed
+acquire means) or run idempotent work under it with run_idempotent (which
 serializes the herd but always runs the work).
 
 Nothing here can freeze the system on a corrupted run:
 
-- The Redis key carries a TTL (``lease_seconds``), so a holder whose process dies
+- The Redis key carries a TTL (lease_seconds), so a holder whose process dies
   without releasing frees the key within one lease.
 - While the holder's process is alive a watchdog extends the lease every
-  ``renew_seconds``, so a lease shorter than the real critical section is safe.
-- Renewal is capped at ``max_hold_seconds`` from acquisition. Past the cap the
+  renew_seconds, so a lease shorter than the real critical section is safe.
+- Renewal is capped at max_hold_seconds from acquisition. Past the cap the
   watchdog stops renewing and lets the lease expire, so a hung critical section
   (live process, stuck coroutine) is forcibly evicted instead of holding the
-  lock forever. Set ``max_hold_seconds`` comfortably above the longest legitimate
+  lock forever. Set max_hold_seconds comfortably above the longest legitimate
   critical section — beyond it, a second holder may enter.
 """
 
@@ -61,11 +61,11 @@ class DistributedLock:
     async def hold(self) -> AsyncIterator[bool]:
         """Hold the lease for the duration of the block.
 
-        Yields ``True`` if the lease was acquired (a watchdog extends it until the
-        block exits or the max-hold cap is hit) and ``False`` if it could not be
+        Yields True if the lease was acquired (a watchdog extends it until the
+        block exits or the max-hold cap is hit) and False if it could not be
         taken for any operational reason (acquire timed out, Redis unreachable, or
         Redis not configured), each logged with the reason. Never raises to signal
-        a failed acquire; the caller decides what ``False`` means.
+        a failed acquire; the caller decides what False means.
         """
         client = redis_cache.redis
         if client is None:
@@ -151,13 +151,13 @@ class DistributedLock:
                 return
 
     async def run_idempotent(self, work: Callable[[], Awaitable[None]]) -> None:
-        """Run idempotent ``work`` serialized across replicas, but always run it.
+        """Run idempotent work serialized across replicas, but always run it.
 
-        When many processes start at once only one runs ``work`` at a time; the
+        When many processes start at once only one runs work at a time; the
         others block, acquire in turn, and re-run it as the cheap no-op idempotence
-        guarantees. ``work`` runs whether or not the lease was taken — a lease that
+        guarantees. work runs whether or not the lease was taken — a lease that
         cannot be acquired (contended past the window, or Redis down) degrades to
-        an unsynchronized run, never a skip. Use ``hold`` directly when exclusivity
+        an unsynchronized run, never a skip. Use hold directly when exclusivity
         is a correctness requirement and skipping/raising is correct.
         """
         async with self.hold() as held:

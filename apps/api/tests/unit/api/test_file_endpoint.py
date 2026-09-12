@@ -1,6 +1,6 @@
 """Unit tests for file upload/update/delete API endpoints.
 
-Tests the file endpoints with a mocked ``FileService`` to verify routing,
+Tests the file endpoints with a mocked FileService to verify routing,
 status codes, response bodies, validation, and conversation ownership checks.
 """
 
@@ -17,7 +17,7 @@ FILE_BASE = "/api/v1"
 
 
 def _file_doc(**overrides: object) -> FileDocument:
-    """A stored file document as ``FileService.update`` returns it."""
+    """A stored file document as FileService.update returns it."""
     data: dict[str, object] = {
         "id": "0" * 24,
         "file_id": "file-001",
@@ -36,7 +36,7 @@ def _file_doc(**overrides: object) -> FileDocument:
 
 
 class TestUploadFile:
-    """POST /api/v1/upload"""
+    """POST /api/v1/upload."""
 
     @patch(
         "app.api.v1.endpoints.file.FileService.upload",
@@ -156,7 +156,7 @@ class TestUploadFile:
 
 
 class TestUpdateFile:
-    """PUT /api/v1/{file_id}"""
+    """PUT /api/v1/{file_id}."""
 
     @patch(
         "app.api.v1.endpoints.file.FileService.update",
@@ -209,7 +209,7 @@ class TestUpdateFile:
 
 
 class TestDeleteFile:
-    """DELETE /api/v1/{file_id}"""
+    """DELETE /api/v1/{file_id}."""
 
     @patch(
         "app.api.v1.endpoints.file.FileService.delete",

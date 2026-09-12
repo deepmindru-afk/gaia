@@ -1,6 +1,6 @@
 """Voice selection — curated catalog listing and per-user voice preference.
 
-The catalog lives in ``app/constants/voices.py``. ElevenLabs is contacted only
+The catalog lives in app/constants/voices.py. ElevenLabs is contacted only
 to resolve preview sample URLs (cached for a day); listing and selection work
 even when the upstream call fails.
 """
@@ -163,7 +163,7 @@ async def get_user_voice(user_id: str) -> str | None:
     Plain Mongo read — deliberately NO availability validation here. This runs
     in the /token critical path (every session start), and validation would
     drag a (cached, but worst-case live) ElevenLabs lookup into it. Selections
-    are validated once at ``set_user_voice`` time instead.
+    are validated once at set_user_voice time instead.
     """
     user = await user_repository.get(user_id)
     voice_id = user.selected_voice_id if user else None
@@ -256,7 +256,7 @@ async def set_user_voice(user_id: str, voice_id: str) -> str:
     library voice id without first adding it to the account (verified across both
     free and professional library voices). The old add-to-account step was
     unnecessary: it consumed account voice slots and failed outright when the API
-    key lacked the ``add_voice_from_voice_library`` permission, blocking
+    key lacked the add_voice_from_voice_library permission, blocking
     otherwise-usable voices.
     """
     if voice_id not in await _known_voice_ids():

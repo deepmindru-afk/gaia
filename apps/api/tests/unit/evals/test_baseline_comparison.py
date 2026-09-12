@@ -117,7 +117,7 @@ def _run_on_disk(
 
 
 def test_a_run_is_judged_against_the_baseline_from_its_journal_alone(tmp_path: Path) -> None:
-    """The offline `compare` command and the live run loop take this one path."""
+    """The offline compare command and the live run loop take this one path."""
     baseline.write("demo", _records(18, 2), "run-a", "v1")
     journal = _run_on_disk(tmp_path, "run-b", _records(10, 10))
     result = baseline.for_run(journal)

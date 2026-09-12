@@ -1,6 +1,6 @@
 """Unit tests for Gmail custom tools (post-Composio-proxy migration).
 
-Each tool routes provider API calls through `proxy_request_sync` instead of
+Each tool routes provider API calls through proxy_request_sync instead of
 raw httpx. Tests patch that helper and assert on the request shape.
 """
 

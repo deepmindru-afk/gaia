@@ -180,7 +180,7 @@ class TestLockOwnership:
             assert await get_lock_state("conv-1", "s1", "t1") is LockState.FOREIGN
 
     async def test_a_run_without_a_task_id_still_owns_its_own_lock(self) -> None:
-        """A chat run carries no task_id, so its lock value is ``stream:`` with the
+        """A chat run carries no task_id, so its lock value is stream: with the
         task half EMPTY. Comparing against anything else makes every such run
         read its own lock as foreign and refuse to release it."""
         with patch.object(eq, "redis_cache") as redis:
@@ -289,7 +289,7 @@ class TestEnqueueTask:
 
 
 class TestBuildRunItem:
-    """``build_run_item`` is the single serialized shape written by both the
+    """build_run_item is the single serialized shape written by both the
     plain queue enqueue and the HIL pause store — fields must default so a
     plain queue item never accidentally carries resume-only identity."""
 
@@ -324,7 +324,7 @@ class TestBuildRunItem:
 
 
 class TestPrepareRunFromItemResumeIdentity:
-    """A HIL resume re-dispatches through the same ``prepare_run_from_item``
+    """A HIL resume re-dispatches through the same prepare_run_from_item
     the queue pop uses — the resumed run must inherit the original bot
     message id from the stored item so its result can reconcile onto it."""
 

@@ -1,5 +1,5 @@
-"""``_parse_complete_message`` — pulling ``(complete_message, cancelled)`` out of a
-``nostream: {...}`` marker chunk.
+"""_parse_complete_message — pulling (complete_message, cancelled) out of a
+nostream: {...} marker chunk.
 """
 
 import json
@@ -21,8 +21,8 @@ class TestParseCompleteMessage:
         assert cancelled is False
 
     def test_missing_complete_message_key_yields_empty_string(self) -> None:
-        """No key at all — must come back as ``""``, never the literal string
-        ``"None"`` and never a sentinel default."""
+        """No key at all — must come back as "", never the literal string
+        "None" and never a sentinel default."""
         chunk = json.dumps({"cancelled": False})
 
         message, _ = _parse_complete_message(f"nostream: {chunk}")
@@ -45,7 +45,7 @@ class TestParseCompleteMessage:
 
     def test_a_truncated_trailing_sentinel_is_stripped(self) -> None:
         """A run cut short mid-sentinel must never reach the persisted turn as
-        literal text — see ``strip_partial_message_break``."""
+        literal text — see strip_partial_message_break."""
         chunk = json.dumps({"complete_message": "numbers<NEW_MESSAGE_B"})
 
         message, _ = _parse_complete_message(f"nostream: {chunk}")

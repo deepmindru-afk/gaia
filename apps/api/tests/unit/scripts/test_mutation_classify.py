@@ -65,11 +65,11 @@ def workdir(tmp_path: Path) -> Path:
 
 
 class TestCastTypeArgument:
-    """``typing.cast(T, x)`` returns x unchanged, so mutating T cannot matter.
+    """typing.cast(T, x) returns x unchanged, so mutating T cannot matter.
 
     The single-line form was already handled. The wrapped form — which the
     formatter produces whenever the call is long — was not, because the
-    normalisation runs per line and the type sits on the line after ``cast(``.
+    normalisation runs per line and the type sits on the line after cast(.
     """
 
     def test_a_wrapped_cast_type_argument_is_equivalent(self, workdir: Path) -> None:
@@ -229,7 +229,7 @@ class TestLookupDefaultEquivalence:
 
 class TestPopThroughCastWithEarlyExit:
     """The real stream_utils shape: pop's default flows through a cast, the
-    truthiness test is `if not x: return`, and REAL reads follow the guard."""
+    truthiness test is if not x: return, and REAL reads follow the guard."""
 
     _BODY = (
         '    x = cast(T, d.pop("k", {}))\n'
@@ -293,7 +293,7 @@ class TestContainerFunctionWithNestedDefs:
 class TestResponseHeaderCase:
     """Starlette lowercases every response header name, so re-casing one on the
     way OUT changes nothing a client can observe — and the entitlement
-    middleware's ``Retry-After`` survived twice as "real" because of it.
+    middleware's Retry-After survived twice as "real" because of it.
 
     The rule has to stay narrow in the same direction as the lookup rule it
     sits beside: a wrong header name is still a real bug, and a dict handed to
@@ -306,7 +306,7 @@ class TestResponseHeaderCase:
 
     @staticmethod
     def _probe(workdir: Path, call: str, header: str) -> None:
-        """Body laid out so ``headers=`` is line 4 in BOTH files."""
+        """Body laid out so headers= is line 4 in BOTH files."""
         (workdir / MODULE_REL).write_text(
             f"def probe():\n    return {call}(\n        first=1,\n"
             f'        headers={{"{header}": "30"}},\n    )\n'
@@ -333,7 +333,7 @@ class TestResponseHeaderCase:
         assert result.returncode == 0
 
     def test_a_renamed_response_header_is_a_real_survivor(self, workdir: Path) -> None:
-        """Case-only, not merely different — mutmut's ``XX``-wrapped rewrite asks
+        """Case-only, not merely different — mutmut's XX-wrapped rewrite asks
         for a header nobody is listening on, which a test can and should catch."""
         self._probe(workdir, "JSONResponse", "Retry-After")
         _write_mutants(

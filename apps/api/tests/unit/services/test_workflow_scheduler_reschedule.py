@@ -3,12 +3,12 @@
 Editing a scheduled workflow's cron enqueues a NEW deferred ARQ job, but the
 old job (armed for the original time) is still sitting in Redis — ARQ has no
 cancellation. When it fires, the claim gate only checked liveness
-(``activated``) and run-state (``status="scheduled"``), both of which are true
+(activated) and run-state (status="scheduled"), both of which are true
 after a reschedule, so the workflow executed at the ORIGINAL time anyway.
 
 The fix stamps every scheduler-originated fire with the occurrence it was
-armed for (``scheduled_for``) and rejects a fire whose stamp no longer matches
-the workflow's current ``trigger_config.next_run``.
+armed for (scheduled_for) and rejects a fire whose stamp no longer matches
+the workflow's current trigger_config.next_run.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -215,7 +215,7 @@ class TestStaleScheduledFireRejected:
 def _gate_claim(workflow: MagicMock, calls: list[tuple[str, datetime | None]]):
     """A claim mock modeling the real gate semantics: it accepts only a fire
     whose expected time matches the workflow's current next_run — exactly what
-    ``claim_for_execution(expected_next_run=...)`` enforces in Mongo. Records
+    claim_for_execution(expected_next_run=...) enforces in Mongo. Records
     (workflow_id, expected) pairs so tests assert the worker claimed the right
     workflow for the right occurrence."""
 

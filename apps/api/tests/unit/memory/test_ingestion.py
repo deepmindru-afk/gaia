@@ -4,7 +4,7 @@ Every external boundary (Postgres, Chroma, the embedding/extraction models,
 the projection and consolidation schedulers) is mocked; the reconciliation
 application, chunking, journaling and scheduling logic under test is real.
 
-``insert_memories`` is faked to populate ``record.id`` the way a real flush
+insert_memories is faked to populate record.id the way a real flush
 does, because the Chroma vector ids are derived from it after the insert.
 """
 
@@ -2274,8 +2274,8 @@ class TestJournalNearDuplicateGate:
     async def test_a_stored_entry_without_text_never_masks_new_entries(
         self, boundaries: Boundaries
     ) -> None:
-        """A malformed stored entry (no ``text`` key) contributes an empty
-        string to the dedupe corpus — never a sentinel like ``"None"`` that
+        """A malformed stored entry (no text key) contributes an empty
+        string to the dedupe corpus — never a sentinel like "None" that
         would silently swallow a real new entry restating it."""
         boundaries.get_episode.return_value = make_episode(entries=[{"time": "10:00"}])
         boundaries.extract_memories.return_value = self._batch(["None", "xxxx"])

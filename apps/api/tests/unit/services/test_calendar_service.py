@@ -1,9 +1,9 @@
 """Unit tests for the calendar service (app/services/calendar_service.py).
 
 Every Google Calendar API call routes through the async Composio
-``proxy_request``; preferences go through ``calendar_repository``. Tests mock
+proxy_request; preferences go through calendar_repository. Tests mock
 those two seams and assert the shape of each request. Pure helpers
-(``filter_events``/``format_event_for_frontend``) stay synchronous.
+(filter_events/format_event_for_frontend) stay synchronous.
 """
 
 from collections.abc import Iterator

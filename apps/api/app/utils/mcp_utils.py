@@ -56,15 +56,15 @@ def wrap_tool_with_null_filter(
     """Wrap a LangChain MCP tool with null-arg filtering and transparent reconnect.
 
     Three behaviors:
-    1. Filter `None`-valued args before calling the underlying tool (MCP servers
-       reject `null` for optional fields; they want them omitted).
+    1. Filter None-valued args before calling the underlying tool (MCP servers
+       reject null for optional fields; they want them omitted).
     2. On a connection-loss OR 401/unauthorized error (both mean a dead/expired
-       session), evict the stale session via `on_connection_error` and — if
-       `reconnect_and_retry` is provided — rebuild the connector (refreshing the
+       session), evict the stale session via on_connection_error and — if
+       reconnect_and_retry is provided — rebuild the connector (refreshing the
        token) and retry once. A 401 that survives the refresh is re-raised so the
        user can re-authenticate.
 
-    The underlying tool's `_arun` is stashed on the wrapped tool as `_original_arun`
+    The underlying tool's _arun is stashed on the wrapped tool as _original_arun
     so the reconnect path can bypass this wrapper when invoking the fresh tool
     (otherwise a second failure would recurse).
     """

@@ -1,7 +1,7 @@
 """Daily activity rollup for the usage heatmap.
 
-One document per user per UTC day in the ``usage_daily`` collection
-(``{user_id, date, count}``), incremented on every metered action — so the
+One document per user per UTC day in the usage_daily collection
+({user_id, date, count}), incremented on every metered action — so the
 year contribution grid and the percentile badge are backed by durable Mongo
 data, not the short-lived Redis rate-limit counters.
 """
@@ -55,7 +55,7 @@ def _tier_for_total(total: int, thresholds: dict[str, float]) -> str | None:
 
 def counts_as_activity(feature_key: str) -> bool:
     """Whether a metered feature call registers on the activity heatmap. The
-    policy lives on the feature definition (``TieredRateLimits.counts_as_activity``)
+    policy lives on the feature definition (TieredRateLimits.counts_as_activity)
     so there is a single source of truth alongside the limits themselves."""
     limits = FEATURE_LIMITS.get(feature_key)
     return limits.counts_as_activity if limits else True
@@ -90,15 +90,15 @@ async def record_cost(user_id: str, spend: UsageDailyIncrement, *, charged: bool
     percentages for past days instead of message counts alone. The token
     counts land in the same write so a mispriced call can be re-derived from
     raw usage later, instead of only the dollar amount surviving — including
-    when pricing itself failed and ``spend.cost`` is 0 for a call that still
+    when pricing itself failed and spend.cost is 0 for a call that still
     burned real tokens.
 
-    ``spend`` carries the dollar figure and the four token counts (see
-    :class:`UsageDailyIncrement`). ``charged=False`` books everything under the
-    ``aux_*`` fields instead:
+    spend carries the dollar figure and the four token counts (see
+    :class:UsageDailyIncrement). charged=False books everything under the
+    aux_* fields instead:
     auxiliary background work (memory pipeline, onboarding, workflow
     generation, …) is tracked for per-user COGS but never counts against the
-    user's allowance, so ``cost``/``input_tokens``/etc. stay an exact durable
+    user's allowance, so cost/input_tokens/etc. stay an exact durable
     mirror of the Redis windows the budget wall enforces.
     """
     if not user_id:
@@ -136,7 +136,7 @@ def _current_streak(counts: dict[str, int], end: datetime) -> int:
 
 
 async def get_activity(user_id: str, days: int) -> UsageActivityResponse:
-    """Trailing ``days`` of daily counts and tokens, plus streak, percentile, and tier."""
+    """Trailing days of daily counts and tokens, plus streak, percentile, and tier."""
     end = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     start = end - timedelta(days=days - 1)
 
@@ -196,9 +196,9 @@ async def get_activity(user_id: str, days: int) -> UsageActivityResponse:
 def _percentile_window_start() -> str:
     """First UTC day (inclusive) of the cross-user percentile comparison window.
 
-    Mongo matches this boundary with an inclusive ``$gte``, so the window spans
-    exactly ``_PERCENTILE_WINDOW_DAYS`` calendar days (today plus the prior
-    ``_PERCENTILE_WINDOW_DAYS - 1``) — subtracting the full count would include
+    Mongo matches this boundary with an inclusive $gte, so the window spans
+    exactly _PERCENTILE_WINDOW_DAYS calendar days (today plus the prior
+    _PERCENTILE_WINDOW_DAYS - 1) — subtracting the full count would include
     one extra day.
     """
     return _day(datetime.now(UTC) - timedelta(days=_PERCENTILE_WINDOW_DAYS - 1))
@@ -210,7 +210,7 @@ async def _percentile_tier(
     """The user's activity percentile vs all users, and the badge tier it earns.
 
     Compares the user's 30-day total against cross-user thresholds that are
-    recomputed at most once a day (cached in Redis). ``mine`` is that total when
+    recomputed at most once a day (cached in Redis). mine is that total when
     the caller already has the window's rows loaded; pass None and it's read
     here — either way the per-request cost is just the user's own recent rows.
     """
@@ -256,7 +256,7 @@ async def _percentile_thresholds(window_start: str) -> dict[str, float]:
 
 
 async def _record_tier(user_id: str, tier: str) -> UserDocument | None:
-    """Persist ``tier`` as the user's highest ever reached; return the user doc
+    """Persist tier as the user's highest ever reached; return the user doc
     only on a FIRST-TIME promotion, else None.
 
     The guard is monotonic — a stored tier is only ever replaced by a stronger
@@ -274,12 +274,12 @@ async def sync_activity_tiers(send_emails: bool = True) -> dict[str, int]:
 
     One aggregation pass over the trailing-30-day rollups (the same data and
     thresholds the usage page badge reads, so email and page always agree),
-    then a guarded update per qualifying user. With ``send_emails`` each
+    then a guarded update per qualifying user. With send_emails each
     first-time promotion also gets the congratulations email — the promotion
     is recorded BEFORE sending, so a failed send is at most a lost email,
     never a duplicate one.
 
-    ``send_emails=False`` seeds tiers silently — used by the deploy-day
+    send_emails=False seeds tiers silently — used by the deploy-day
     backfill so existing users' current standing doesn't trigger a mass blast;
     only promotions earned after that are emailed.
     """

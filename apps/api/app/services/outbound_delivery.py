@@ -39,7 +39,7 @@ class OutboundResult(StrEnum):
 
 
 async def _resolve_destination(platform: ConversationSource, user_id: str) -> str | None:
-    """Resolve a GAIA ``user_id`` to its platform-native destination id, or None."""
+    """Resolve a GAIA user_id to its platform-native destination id, or None."""
     linked = await PlatformLinkService.get_linked_platforms(user_id)
     info = linked.get(platform.value)
     return info["platformUserId"] if info else None
@@ -54,13 +54,13 @@ async def _prepare(
     """Resolve the queue, destination, and publisher shared by every outbound
     publish.
 
-    ``destination_override`` sends to an explicit platform-native id (a group's
+    destination_override sends to an explicit platform-native id (a group's
     channel id) instead of resolving the user's DM from the platform link — used
     to deliver a proactive message back into the group conversation it came from.
 
-    Returns ``(queue_name, destination_id, publisher)`` on success, or the
-    :class:`OutboundResult` to report when the message can't be enqueued
-    (``SKIPPED`` for unsupported/unlinked, ``FAILED`` for an unavailable broker).
+    Returns (queue_name, destination_id, publisher) on success, or the
+    :class:OutboundResult to report when the message can't be enqueued
+    (SKIPPED for unsupported/unlinked, FAILED for an unavailable broker).
     """
     queue_name = OUTBOUND_QUEUES.get(platform)
     if queue_name is None:
@@ -93,14 +93,14 @@ async def publish_outbound_message(
     is_channel: bool = False,
     ttl_seconds: int = OUTBOUND_TTL_SECONDS_DEFAULT,
 ) -> OutboundResult:
-    """Resolve ``user_id`` to its ``platform`` id and enqueue the ordered text
+    """Resolve user_id to its platform id and enqueue the ordered text
     parts as a SINGLE envelope.
 
-    ``ttl_seconds`` is how long the message may wait for a bot before it
+    ttl_seconds is how long the message may wait for a bot before it
     dead-letters unsent; pass the greeting TTL for anything that is noise once
     the moment has passed.
 
-    ``destination_override`` + ``is_channel`` deliver to a specific channel/group
+    destination_override + is_channel deliver to a specific channel/group
     (the conversation the message came from) instead of the user's DM; the flag
     tells the bot to address a channel rather than open a DM. Defaults keep the
     DM behavior every existing caller relies on.
@@ -113,11 +113,11 @@ async def publish_outbound_message(
     Each incoming part is itself split on the bubble-break sentinel, so any
     caller handing over raw agent text (executor replies, notifications, the
     account-linked confirmation) delivers as the bubbles the model asked for
-    instead of one wall carrying literal ``<NEW_MESSAGE_BREAK>`` tokens.
+    instead of one wall carrying literal <NEW_MESSAGE_BREAK> tokens.
 
-    Returns ``PUBLISHED`` when the envelope was enqueued. ``SKIPPED`` when the
+    Returns PUBLISHED when the envelope was enqueued. SKIPPED when the
     platform is unsupported, the account is unlinked, or there is nothing to
-    send. ``FAILED`` when the broker is unavailable or the publish errored.
+    send. FAILED when the broker is unavailable or the publish errored.
     Best-effort: never raises into the caller's flow.
     """
     parts = [bubble for part in text_parts for bubble in split_message_bubbles(part)]
@@ -212,10 +212,10 @@ async def publish_outbound_file(
     content_type: str | None = None,
     caption: str | None = None,
 ) -> bool:
-    """Enqueue a file (artifact) for the bot to deliver to ``user_id``.
+    """Enqueue a file (artifact) for the bot to deliver to user_id.
 
     The bytes are not enqueued — the envelope references the artifact by
-    ``(conversation_id, path)`` and the bot fetches + uploads it. Best-effort:
+    (conversation_id, path) and the bot fetches + uploads it. Best-effort:
     unknown platform, unlinked account, unavailable broker, and publish errors
     all return False without raising.
     """

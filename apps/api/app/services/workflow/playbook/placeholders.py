@@ -1,22 +1,22 @@
-"""The one grammar for a playbook's ``$placeholders``.
+"""The one grammar for a playbook's $placeholders.
 
-The validator (``parser.py``) and the evaluator (``evaluator.py``) both read
+The validator (parser.py) and the evaluator (evaluator.py) both read
 placeholders out of a step's arguments, and they have to find exactly the same
 ones: a token the validator misses is one the evaluator substitutes unchecked,
 and a token the validator checks but the evaluator ignores reaches a tool as
 literal text. One scanner, used by both, is what keeps them from disagreeing.
 
-A ``$word`` whose root is not one of the namespaces below is NOT a token: it is
+A $word whose root is not one of the namespaces below is NOT a token: it is
 literal text on both sides — the validator does not check it and the evaluator
-leaves it untouched. A recorded ``bash`` step legitimately says ``echo $HOME``,
-and refusing every ``$identifier`` at write time would refuse that playbook.
-``$ask`` is deliberately absent: text a model writes at replay is no longer a
-reference into a table but an inline ``{"$ask": ...}`` value standing where the
-argument goes, so ``$ask.anything`` in a string is now plain text like any other
+leaves it untouched. A recorded bash step legitimately says echo $HOME,
+and refusing every $identifier at write time would refuse that playbook.
+$ask is deliberately absent: text a model writes at replay is no longer a
+reference into a table but an inline {"$ask": ...} value standing where the
+argument goes, so $ask.anything in a string is now plain text like any other
 unknown root.
 
-``$item`` is the one root that only means something somewhere: it addresses the
-element a ``for_each`` step is currently on, so it resolves inside such a step
+$item is the one root that only means something somewhere: it addresses the
+element a for_each step is currently on, so it resolves inside such a step
 and is an error anywhere else. It is a root rather than a per-step convention
 because the validator and the evaluator have to agree on it like any other
 token, and a second grammar for one field is how the two drift apart.

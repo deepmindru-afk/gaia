@@ -153,7 +153,7 @@ class TestBuildSessionKey:
 
     def test_a_telegram_dm_keys_the_same_inbound_and_backend_originated(self) -> None:
         """Telegram's private chat id IS the user id, so the inbound path sends it
-        as ``channel_id`` while a workflow delivery has none. Both are the same DM."""
+        as channel_id while a workflow delivery has none. Both are the same DM."""
         inbound = BotService.build_session_key("telegram", self.TELEGRAM_USER, self.TELEGRAM_USER)
         backend_originated = BotService.build_session_key("telegram", self.TELEGRAM_USER, None)
 
@@ -317,8 +317,8 @@ class TestGetOrCreateSession:
 
 class TestADmKeysOffTheUserWhateverItsChannelId:
     """Discord and Slack DM channel ids differ from the user id, so an inbound
-    DM used to key ``platform:<user>:<dm-channel>`` while workflow delivery
-    keyed ``platform:<user>:<user>`` — one DM, two conversations, and the
+    DM used to key platform:<user>:<dm-channel> while workflow delivery
+    keyed platform:<user>:<user> — one DM, two conversations, and the
     second one carried none of the history. The bot now flags DMs, and a
     flagged claim keys off the user id and folds the channel-keyed row in."""
 

@@ -22,9 +22,9 @@ RESULT_DIGEST_MAX_CHARS = 4000
 
 
 def build_result_digest(output: object, max_chars: int = RESULT_DIGEST_MAX_CHARS) -> str:
-    """A tool's result, always within ``max_chars`` and never cut mid-structure.
+    """A tool's result, always within max_chars and never cut mid-structure.
 
-    The digest is not decoration. ``$last_run.<TOOL>.<path>`` resolves against
+    The digest is not decoration. $last_run.<TOOL>.<path> resolves against
     it and a replay's narration reads it as what the tool returned, so a blind
     slice breaks both at once: JSON cut mid-token stops parsing, a cursor then
     silently resolves to nothing, and the narration describes a fragment as if
@@ -33,7 +33,7 @@ def build_result_digest(output: object, max_chars: int = RESULT_DIGEST_MAX_CHARS
     loses whole elements off the end rather than half of one. Only a result that
     is not JSON is truncated as text.
 
-    The bound is guaranteed for every input: ``RecordedCall.result_digest``
+    The bound is guaranteed for every input: RecordedCall.result_digest
     enforces it, and a record that fails to build after the tool already ran
     loses the trace the run was keeping.
 
@@ -78,7 +78,7 @@ def _trim_strings(value: object, limit: int) -> object:
 def _fit_elements(
     items: list[Any], rebuild: Callable[[list[Any]], object], max_chars: int
 ) -> str | None:
-    """The value with elements shed off the end until it fits; ``None`` when not
+    """The value with elements shed off the end until it fits; None when not
     even the first element fits, so the caller keeps cutting strings instead of
     recording a list that had items as an empty one."""
     kept: list[Any] = []
@@ -93,13 +93,13 @@ def _fit_elements(
 
 
 def _bounded_json(value: object, max_chars: int) -> str:
-    """``value`` as compact JSON within the bound, valid JSON wherever that is possible.
+    """value as compact JSON within the bound, valid JSON wherever that is possible.
 
     Long strings are cut before any element is shed: three emails whose bodies
     each outweigh the bound must be recorded as three cut emails, not one whole
     one, because the ids and subjects are the record and the bodies are not.
     The cut applies to the whole value, so a big non-list sibling (a page's
-    ``html`` beside its ``links``) cannot hold the digest over the bound. When
+    html beside its links) cannot hold the digest over the bound. When
     that still does not fit, whole elements are shed off the end of the largest
     list; when even that is not enough the string limit halves and both steps
     repeat, down to strings that are only their cut marker. A value with no
@@ -129,10 +129,10 @@ def _as_is(items: list[Any]) -> object:
 def _largest_sequence(
     value: object,
 ) -> tuple[list[Any] | None, Callable[[list[Any]], object]]:
-    """The list inside ``value`` worth shedding, and how to put it back.
+    """The list inside value worth shedding, and how to put it back.
 
     Searched at any depth under dicts, because tool results are envelopes: the
-    list that carries the bulk sits under ``data``, and a search that stopped
+    list that carries the bulk sits under data, and a search that stopped
     at the top level found nothing to shed and fell back to a blind slice.
     """
     if isinstance(value, list):
@@ -171,7 +171,7 @@ def parse_result(text: str) -> object:
     """A tool result as JSON when it is a JSON document, and as its own text otherwise.
 
     The document may be followed by a note a middleware appended for the model
-    after ``TOOL_RESULT_NOTE_SEPARATOR``; the note is not part of the result.
+    after TOOL_RESULT_NOTE_SEPARATOR; the note is not part of the result.
     Anything else after a document means the text was never a document ("3
     items found" starts with a number and is prose).
     """
@@ -189,15 +189,15 @@ def parse_result(text: str) -> object:
 def carries_no_data(value: object) -> bool:
     """Whether a tool's result came back with nothing in it.
 
-    ``largest_list_len`` answers a different question: it finds the largest list
+    largest_list_len answers a different question: it finds the largest list
     ANYWHERE in the result, so an empty attribute of a record the call did
-    return reads as "no items". ``create_todo`` answers with the todo it just
-    made, whose ``labels`` is ``[]`` when the caller passed none, and four of
+    return reads as "no items". create_todo answers with the todo it just
+    made, whose labels is [] when the caller passed none, and four of
     the eight suspect playbooks in production were exactly that.
 
     So the question here is whether the result carries any DATA. Empty lists,
     empty dicts, empty strings and nulls are not data. Booleans are not data
-    either: ``successful: true`` is the provider envelope's bookkeeping, present
+    either: successful: true is the provider envelope's bookkeeping, present
     on every result whether or not it found anything. Anything left over, a
     string, a number, or a list with something in it, means the call answered
     with something and the run has no gap to paper over.
@@ -219,9 +219,9 @@ def carries_no_data(value: object) -> bool:
 
 
 def largest_list_len(value: object) -> int | None:
-    """Length of the largest list anywhere inside ``value``; ``None`` when it has none.
+    """Length of the largest list anywhere inside value; None when it has none.
 
-    Tool results are envelopes (``{"data": {"messages": [...]}}``), so "did this
+    Tool results are envelopes ({"data": {"messages": [...]}}), so "did this
     call return any items" has to look past the top level. Shared by the replay's
     empty-result check and the handoff call record, so both agree on what empty
     means.
@@ -327,9 +327,9 @@ class WorkflowExecutionsResponse(ResponseModel):
 class WorkflowExecutionDocument(WorkflowExecution, MongoDocument):
     """A workflow execution as stored in MongoDB.
 
-    Identity is the business key ``execution_id``; Mongo's ``_id`` is an
-    incidental ObjectId and the inherited ``id`` is unused. Being a subclass of
-    ``WorkflowExecution`` it doubles as the API/read model directly.
+    Identity is the business key execution_id; Mongo's _id is an
+    incidental ObjectId and the inherited id is unused. Being a subclass of
+    WorkflowExecution it doubles as the API/read model directly.
     """
 
 

@@ -503,7 +503,7 @@ async def get_workflow_status(
     Returns the workflow if it exists, otherwise returns None.
     Detects generating state when:
     - Workflow generation is queued (Redis flag)
-    - Workflow exists but has no steps yet
+    - Workflow exists but has no steps yet.
     """
     response.headers["Cache-Control"] = "private, max-age=15"
     log.set(

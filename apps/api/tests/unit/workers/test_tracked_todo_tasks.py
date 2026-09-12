@@ -4,13 +4,13 @@ The ARQ side of tracked todos: the lock-guarded entrypoint, the retry/backoff
 ladder, the recurrence re-enqueue, the agent execution path (canvas timeline
 markers), and the orphan safety net.
 
-The bug these tests pin down: ``scheduled_at`` was only ever moved forward for a
+The bug these tests pin down: scheduled_at was only ever moved forward for a
 *recurring* todo. After a one-shot run — and during the exponential-backoff
 window of a failed run — it kept pointing at a time in the past, which is
-exactly what ``find_due_tracked_all_users`` selects on, so
-``safety_net_check_orphaned_todos`` re-enqueued those todos every 30 minutes
+exactly what find_due_tracked_all_users selects on, so
+safety_net_check_orphaned_todos re-enqueued those todos every 30 minutes
 forever (one-shot) / every 30 minutes instead of after 1h then 4h (retry).
-``scheduled_at`` now always names the next planned execution, or nothing.
+scheduled_at now always names the next planned execution, or nothing.
 
 Recurrence/timezone resolution itself is covered by test_tracked_todo_recurrence.py.
 """
@@ -78,7 +78,7 @@ def _pool() -> MagicMock:
 
 
 def _updates(repo: MagicMock) -> list[dict]:
-    """The ``$set`` payloads (explicitly-set fields only) of every repo.update."""
+    """The $set payloads (explicitly-set fields only) of every repo.update."""
     return [c.kwargs["update"].model_dump(exclude_unset=True) for c in repo.update.call_args_list]
 
 
@@ -292,8 +292,8 @@ class TestExecutionContext:
 class TestTriggeredExecutionPrompt:
     """The payload has to be IN the prompt.
 
-    ``trigger_context`` only reaches the model through
-    ``format_workflow_execution_message``, which needs a selected workflow. The
+    trigger_context only reaches the model through
+    format_workflow_execution_message, which needs a selected workflow. The
     agent path has none, so a payload left there is metadata the model never sees
     — the todo would wake knowing it was woken but not by what.
     """
@@ -375,7 +375,7 @@ class TestTriggeredExecutionPrompt:
 
     def test_a_triggered_prompt_str_renders_non_json_payload_values(self):
         """A payload value the JSON encoder can't serialise (e.g. a datetime) must
-        be coerced via ``default=str`` — without it json.dumps raises and the whole
+        be coerced via default=str — without it json.dumps raises and the whole
         run dies before the model is ever called."""
         fired_at = datetime(2025, 3, 9, 12, 0, tzinfo=UTC)
         origin = TriggerOrigin(
@@ -1218,7 +1218,7 @@ class TestComputeNextRunExtra:
         assert _compute_next_run("daily", "UTC", anchor=anchor) == anchor
 
     def test_an_anchor_exactly_at_now_advances_by_a_full_step(self):
-        """The boundary: `<=` must advance, otherwise the next run is now and
+        """The boundary: <= must advance, otherwise the next run is now and
         the job re-fires immediately in a tight loop."""
         now = datetime.now(UTC)
         with patch(f"{MODULE}.datetime") as mock_dt:

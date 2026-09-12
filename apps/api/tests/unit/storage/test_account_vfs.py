@@ -1,11 +1,11 @@
 """Account-center VFS materializer: projection, hash-gating, self-healing.
 
-Mongo is the truth; the JSON files under ``account/`` are views. What's under
+Mongo is the truth; the JSON files under account/ are views. What's under
 test here is the on-disk contract — bodies land where the registry says, are
-read-only, aren't rewritten when unchanged, and a tampered file (bash `rm`/
-`echo`) heals back to the projected content on the next pass.
+read-only, aren't rewritten when unchanged, and a tampered file (bash rm/
+echo) heals back to the projected content on the next pass.
 
-``tmp_path`` is the real mount root — paths, mode bits and rewrites are
+tmp_path is the real mount root — paths, mode bits and rewrites are
 genuine; nothing is mocked.
 """
 
@@ -26,7 +26,7 @@ from app.services.storage.account_vfs import (
 
 
 def projection(rel_path: str, payload: dict[str, object]) -> AccountFileProjection:
-    """A projection exactly as ``build_account_projections`` emits it."""
+    """A projection exactly as build_account_projections emits it."""
     body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     return {"id": rel_path, "path": rel_path, "body": body}
 

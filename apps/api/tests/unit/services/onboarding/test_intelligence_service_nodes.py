@@ -1,6 +1,6 @@
 """Unit tests for the individual DAG nodes in intelligence_service.
 
-Each `_run_*` node is a fail-soft wrapper: it must emit its stage and return a
+Each _run_* node is a fail-soft wrapper: it must emit its stage and return a
 usable default even when its dependency raises, because the pipeline gathers all
 of them and a leaked exception would abort the personalization run. These tests
 pin that contract down, node by node, faking only the service/repository

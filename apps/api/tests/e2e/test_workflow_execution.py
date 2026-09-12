@@ -1,23 +1,23 @@
 """E2E tests: workflow execution, plus the agent-graph lifecycle it runs on.
 
-Sibling: ``tests/integration/test_workflow_execution.py`` covers the workflow
+Sibling: tests/integration/test_workflow_execution.py covers the workflow
 service layer in isolation (mocked I/O); this file drives the real compiled
 agent graphs end to end.
 
 WHAT THIS TESTS (REAL GAIA CODE):
-- ``execute_workflow_by_id`` / ``execute_workflow_as_chat`` from
-  ``app.workers.tasks.workflow_tasks`` — the real entry point a workflow fire
-  goes through — together with ``app.services.workflow.execution_service``:
+- execute_workflow_by_id / execute_workflow_as_chat from
+  app.workers.tasks.workflow_tasks — the real entry point a workflow fire
+  goes through — together with app.services.workflow.execution_service:
   a step that fails partway through a multi-step workflow must surface as a
-  ``failed`` execution record naming the failing step plus a user notification,
+  failed execution record naming the failing step plus a user notification,
   never as a silent success.
-- ``build_comms_graph`` / ``build_executor_graph`` from
-  ``app.agents.core.graph_builder.build_graph`` compile with the REAL middleware
-  stack (``create_comms_middleware`` / ``create_executor_middleware``) and that
+- build_comms_graph / build_executor_graph from
+  app.agents.core.graph_builder.build_graph compile with the REAL middleware
+  stack (create_comms_middleware / create_executor_middleware) and that
   stack is reachable at runtime: its hooks run and its tools are bound.
-- The GAIA ``State`` schema from ``app.override.langgraph_bigtool.utils``
-  contains the ``todos`` channel and ``selected_tool_ids``.
-- ``MemorySaver`` checkpointing accumulates state across multiple graph turns.
+- The GAIA State schema from app.override.langgraph_bigtool.utils
+  contains the todos channel and selected_tool_ids.
+- MemorySaver checkpointing accumulates state across multiple graph turns.
 - Graph thread isolation: separate thread_ids produce independent state.
 
 Mock surfaces (I/O edges only):
@@ -274,12 +274,12 @@ class TestWorkflowExecution:
         """build_comms_graph must wire the REAL comms middleware, and it must run.
 
         The middleware stack is core orchestration, not an I/O edge, so it is
-        deliberately NOT mocked here: ``create_comms_middleware`` builds the real
+        deliberately NOT mocked here: create_comms_middleware builds the real
         stack and the graph is invoked for real. A spy that delegates to the real
-        ``LLMAccountingMiddleware.aafter_model`` proves the stack is actually
+        LLMAccountingMiddleware.aafter_model proves the stack is actually
         reached during the turn rather than merely constructed — replacing the
-        middleware list with ``[]`` (or dropping the MiddlewareExecutor wiring in
-        ``create_agent``) makes this test fail.
+        middleware list with [] (or dropping the MiddlewareExecutor wiring in
+        create_agent) makes this test fail.
         """
 
         fake_llm = BindableToolsFakeModel(responses=[AIMessage(content="Comms agent response.")])
@@ -332,9 +332,9 @@ class TestWorkflowExecution:
     async def test_comms_graph_binds_its_memory_tools(self):
         """The comms agent's memory tools must be bound, not rejected as unbound.
 
-        ``search_memory`` is one of the three tools the comms agent is allowed to
+        search_memory is one of the three tools the comms agent is allowed to
         call. If it were dropped from the registry / initial_tool_ids, the real
-        ``reject_unbound_tools`` node would answer the call with an "is not bound"
+        reject_unbound_tools node would answer the call with an "is not bound"
         error instead of running it — which is what this asserts against.
         """
 
@@ -395,11 +395,11 @@ class TestWorkflowExecution:
     async def test_executor_graph_binds_the_real_subagent_middleware_tool(self):
         """build_executor_graph must wire the REAL executor middleware stack.
 
-        ``spawn_subagent`` exists only because ``create_executor_middleware``
-        contributes a ``SubagentMiddleware`` whose tools ``create_agent`` binds.
-        Mocking the middleware factory to ``[]`` (as this test used to) hides that
-        wiring completely: the model's ``spawn_subagent`` call then falls through
-        to ``reject_unbound_tools``. Asserting the call is NOT rejected proves the
+        spawn_subagent exists only because create_executor_middleware
+        contributes a SubagentMiddleware whose tools create_agent binds.
+        Mocking the middleware factory to [] (as this test used to) hides that
+        wiring completely: the model's spawn_subagent call then falls through
+        to reject_unbound_tools. Asserting the call is NOT rejected proves the
         real middleware stack is present and its tool is reachable.
         """
         import ast
@@ -500,10 +500,10 @@ class TestWorkflowExecution:
 
 
 class _InMemoryExecutionRecords:
-    """Stand-in for the Mongo side of ``workflow_executions_repository``.
+    """Stand-in for the Mongo side of workflow_executions_repository.
 
     Only the three base CRUD primitives are replaced, so the repository's own
-    ``complete()`` (status/duration/error-message assembly) and both execution
+    complete() (status/duration/error-message assembly) and both execution
     service functions still run for real.
     """
 
@@ -558,9 +558,9 @@ def _make_multi_step_workflow(user_id: str) -> Workflow:
 class TestWorkflowExecutionFailurePropagation:
     """E2E tests for the real workflow-execution path.
 
-    Drives ``execute_workflow_by_id`` — the function an actual workflow fire
+    Drives execute_workflow_by_id — the function an actual workflow fire
     (manual "run now", a schedule, or an integration trigger) lands on — through
-    ``execute_workflow_as_chat`` and ``app.services.workflow.execution_service``.
+    execute_workflow_as_chat and app.services.workflow.execution_service.
     Only I/O edges are replaced: the Redis-backed scheduler, the Mongo side of the
     execution/workflow repositories, notification delivery, and the agent turn
     that stands in for the LLM.
@@ -667,7 +667,7 @@ class TestWorkflowExecutionFailurePropagation:
 
         The user-visible outcome of a broken workflow run is its execution record
         and the failure notification. Both must say the run failed and carry the
-        failing step's identity — a swallowed step error (``execute_workflow_as_chat``
+        failing step's identity — a swallowed step error (execute_workflow_as_chat
         returning instead of re-raising) would silently record 'success'.
         """
 

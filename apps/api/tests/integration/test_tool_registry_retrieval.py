@@ -267,13 +267,13 @@ class TestToolIndexing:
     def _bypass_seed_lock(self):
         """Run the seeding work directly instead of taking the real Redis lease.
 
-        ``index_tools_to_store`` serializes its read-diff-write under a
-        ``DistributedLock`` backed by the module-level ``redis_cache.redis``
+        index_tools_to_store serializes its read-diff-write under a
+        DistributedLock backed by the module-level redis_cache.redis
         singleton, whose connection binds to the event loop that first used it.
         Under pytest's per-test loops that connection goes stale and the lock
-        raises ``RuntimeError: Event loop is closed``. These tests exercise the
+        raises RuntimeError: Event loop is closed. These tests exercise the
         indexing/diff logic the lock guards, not Redis — the lock itself is
-        proven in ``tests/integration/real/test_distributed_lock_real.py``.
+        proven in tests/integration/real/test_distributed_lock_real.py.
         """
 
         async def _run(self, work):

@@ -24,12 +24,12 @@ def _uid(prefix: str = "test") -> str:
 
 
 class _AcquireSignalingLock:
-    """A `threading.Lock` stand-in that fires an event the instant `acquire()`
+    """A threading.Lock stand-in that fires an event the instant acquire()
     is called, before it blocks on the real lock.
 
     Used to deterministically prove a second thread has passed its outer
-    quick-check and reached `with self._lock:` — without this, a plain
-    `threading.Event` set right before the call to `get()`/`aget()` leaves a
+    quick-check and reached with self._lock: — without this, a plain
+    threading.Event set right before the call to get()/aget() leaves a
     window where the thread hasn't actually reached the lock statement yet,
     so a caller could race past the outer check via ordinary scheduling
     luck rather than the deliberately red/green-checked inner branch.
@@ -60,16 +60,16 @@ def _run_two_threaded_lock_race(
     """Run the double-checked-locking race deterministically and report both
     callers' results plus how many times the loader actually ran.
 
-    Thread A holds `loader._lock` blocked inside the loader function; thread
-    B is proven (via `_AcquireSignalingLock`) to have reached `with
-    self._lock:` before A's `_is_configured` flip is released — so `B`'s
+    Thread A holds loader._lock blocked inside the loader function; thread
+    B is proven (via _AcquireSignalingLock) to have reached with
+    self._lock: before A's _is_configured flip is released — so B's
     result and the loader call count prove whether B took the inner
     double-check fast path or wastefully re-ran the loader.
 
-    `second_call` is B's actual call (`loader.get()` or
-    `asyncio.run(loader.aget())`), so the same race harness proves the fast
-    path for both the sync `get()` double-check and the
-    `aget()`-on-a-sync-loader double-check without duplicating the
+    second_call is B's actual call (loader.get() or
+    asyncio.run(loader.aget())), so the same race harness proves the fast
+    path for both the sync get() double-check and the
+    aget()-on-a-sync-loader double-check without duplicating the
     coordination.
     """
     call_count = 0
@@ -315,9 +315,9 @@ class TestLazyLoaderSyncGet:
 
     def test_get_double_check_lock_returns_true_without_reinit(self):
         """A caller that loses the race and blocks on the lock sees
-        `_is_configured` already flipped to True by the time it acquires the
+        _is_configured already flipped to True by the time it acquires the
         lock, and must take the inner double-check fast path instead of
-        calling the loader again. See `_run_two_threaded_lock_race` for how
+        calling the loader again. See _run_two_threaded_lock_race for how
         the race is made deterministic."""
         first, second, call_count = _run_two_threaded_lock_race(lambda loader: loader.get())
 
@@ -430,13 +430,13 @@ class TestLazyLoaderAsyncGet:
 
     async def test_aget_async_double_check_lock_returns_true_without_reinit(self):
         """Task B, which loses the race for the async lock while task A is
-        still initializing, must see `_is_configured` already True on the
+        still initializing, must see _is_configured already True on the
         inner double-check and return without re-running the loader.
 
-        Coordinated purely with `asyncio.Event` and `asyncio.sleep(0)` yields
+        Coordinated purely with asyncio.Event and asyncio.sleep(0) yields
         — deterministic cooperative scheduling, not a wall-clock race: only
         one coroutine ever runs at a time, and control only passes at an
-        explicit `await`.
+        explicit await.
         """
         call_count = 0
         release_loader = asyncio.Event()
@@ -473,14 +473,14 @@ class TestLazyLoaderAsyncGet:
         assert call_count == 1  # task B never re-ran the loader
 
     async def test_aget_sync_loader_double_check_lock_returns_true_without_reinit(self):
-        """A sync loader accessed only via `aget()`: a second caller that
-        blocks on `self._lock` (the branch at line ~213-222, taken when
-        `is_async` is False) must see `_is_configured` already True on the
+        """A sync loader accessed only via aget(): a second caller that
+        blocks on self._lock (the branch at line ~213-222, taken when
+        is_async is False) must see _is_configured already True on the
         inner double-check and skip re-initialization. Same
-        `_AcquireSignalingLock`-coordinated race as the sync `get()`
-        double-check test (both share `self._lock`) — see
-        `_run_two_threaded_lock_race`; only B's call differs here
-        (`asyncio.run(loader.aget())` instead of `loader.get()`)."""
+        _AcquireSignalingLock-coordinated race as the sync get()
+        double-check test (both share self._lock) — see
+        _run_two_threaded_lock_race; only B's call differs here
+        (asyncio.run(loader.aget()) instead of loader.get())."""
         first, second, call_count = _run_two_threaded_lock_race(
             lambda loader: asyncio.run(loader.aget())
         )

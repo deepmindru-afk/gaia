@@ -3,7 +3,7 @@
 The runner replaces the prepare/execute pair the oauth-registered subagents use,
 so the two things every handoff has to get right are its own here: it must
 inherit the executor's configurable (and with it the run's resolved lane), and it
-must never hand ``create_workflow`` an empty string as if it were a draft.
+must never hand create_workflow an empty string as if it were a draft.
 """
 
 from dataclasses import dataclass
@@ -28,7 +28,7 @@ _TEXT_DEPRECATION = "ignore::langchain_core._api.deprecation.LangChainDeprecatio
 
 
 class _NoTextChunk(AIMessageChunk):
-    """A chunk whose ``text`` attribute is absent, forcing the str(content) path."""
+    """A chunk whose text attribute is absent, forcing the str(content) path."""
 
     @property
     def text(self) -> str:
@@ -96,7 +96,7 @@ class TestTheDraftItHandsBack:
         assert run.result == '{"title": "Inbox digest"}'
 
     async def test_an_empty_answer_becomes_a_terminal_string_not_an_empty_draft(self) -> None:
-        """``create_workflow`` reads this as the agent's answer; "" would look like
+        """create_workflow reads this as the agent's answer; "" would look like
         a successful run that produced nothing."""
         run = await _execute("")
 
@@ -284,7 +284,7 @@ class TestConsumeMessageChunk:
 
     @pytest.mark.filterwarnings(_TEXT_DEPRECATION)
     def test_a_block_list_content_is_unwrapped_via_text_not_str(self) -> None:
-        """``text()`` extracts the blocks' text; ``str(content)`` would ship the
+        """text() extracts the blocks' text; str(content) would ship the
         raw repr of the block list to the user."""
         chunk = AIMessageChunk(content=[{"type": "text", "text": "abc", "index": 0}])
 

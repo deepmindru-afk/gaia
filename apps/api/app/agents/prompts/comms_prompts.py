@@ -303,12 +303,12 @@ _OPENUI_SECTION_END_MARKER = (
 
 
 def _strip_openui_section(prompt: str) -> str:
-    """Remove the embedded OpenUI component-instructions block from ``prompt``.
+    """Remove the embedded OpenUI component-instructions block from prompt.
 
-    The block is delimited by ``_OPENUI_SECTION_START_MARKER`` and
-    ``_OPENUI_SECTION_END_MARKER``. If either marker is missing we log a
-    loud warning and return ``prompt`` unchanged — silently re-introducing
-    the bug (plain prompt still telling the model to emit ``:::openui``)
+    The block is delimited by _OPENUI_SECTION_START_MARKER and
+    _OPENUI_SECTION_END_MARKER. If either marker is missing we log a
+    loud warning and return prompt unchanged — silently re-introducing
+    the bug (plain prompt still telling the model to emit :::openui)
     would be far worse than logging a noisy startup warning that someone
     edited the prompt and forgot to keep the markers in sync.
     """

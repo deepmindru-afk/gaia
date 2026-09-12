@@ -1,12 +1,12 @@
 """Run a real compiled agent graph and assert on what it did.
 
-``Transcript`` covers what the *client* sees. This covers what the *graph* does:
+Transcript covers what the *client* sees. This covers what the *graph* does:
 which tools the model called, which the graph actually let run, what each one
 returned, and how the run terminated. Those are different questions — a tool can
 be called and rejected, or run and produce nothing — and conflating them is how
 "the agent called the tool" gets asserted without the tool ever executing.
 
-Assertions go through :class:`GraphRun`, never through raw event tuples.
+Assertions go through :class:GraphRun, never through raw event tuples.
 """
 
 from __future__ import annotations
@@ -58,12 +58,12 @@ _SCRIPTED_MODELS: dict[int, RecordingFakeModel] = {}
 
 
 class RecordingStore(InMemoryStore):
-    """A real ``BaseStore`` that records every semantic search performed on it.
+    """A real BaseStore that records every semantic search performed on it.
 
-    Recording rather than raising: ``retrieve_tools`` degrades silently on a
-    search failure (``retrieval.py`` swallows partial failures), so an exception
+    Recording rather than raising: retrieve_tools degrades silently on a
+    search failure (retrieval.py swallows partial failures), so an exception
     raised here would be absorbed and the test would pass for the wrong reason.
-    Assert on ``searches`` after the run instead.
+    Assert on searches after the run instead.
     """
 
     def __init__(self) -> None:
@@ -111,7 +111,7 @@ class GraphRun:
         return self.bound[-1] if self.bound else []
 
     def system_slot(self, kwarg: str) -> str | None:
-        """Text of the system message a pre-model hook tagged with ``kwarg``."""
+        """Text of the system message a pre-model hook tagged with kwarg."""
         for message in self.last_prompt():
             if isinstance(message, SystemMessage) and message.additional_kwargs.get(kwarg):
                 return str(message.content)
@@ -150,9 +150,9 @@ class GraphRun:
         ]
 
     def result_for(self, tool_name: str) -> str | None:
-        """What a tool returned, joined to its call by ``tool_call_id``.
+        """What a tool returned, joined to its call by tool_call_id.
 
-        ``None`` means the tool never produced a result — it was rejected,
+        None means the tool never produced a result — it was rejected,
         never ran, or the run ended first.
         """
         ids = {call_id for name, _, call_id in self.tool_calls() if name == tool_name}
@@ -199,9 +199,9 @@ class RecordingFakeModel(BindableToolsFakeModel):
     ephemeral — it never lands in the checkpoint. So the only way to assert on a
     hook's effect is to record the prompt the model actually received.
 
-    ``last_chat_messages`` / ``chat_messages_log`` are the public recording API
-    (LlamaIndex's ``MockLLMWithChatMemoryOfLastCall`` namesake); ``prompts`` is
-    the same log, read by :func:`run_graph`.
+    last_chat_messages / chat_messages_log are the public recording API
+    (LlamaIndex's MockLLMWithChatMemoryOfLastCall namesake); prompts is
+    the same log, read by :func:run_graph.
     """
 
     _prompts: list[list[BaseMessage]] = PrivateAttr(default_factory=list)
@@ -228,11 +228,11 @@ class RecordingFakeModel(BindableToolsFakeModel):
     def bind_tools(self, tools: Any, **kwargs: Any) -> RecordingFakeModel:
         """Record what the model was actually handed.
 
-        The base fake returns ``self`` and throws the tool list away, which
+        The base fake returns self and throws the tool list away, which
         makes every binding assertion in the suite unfalsifiable: deleting the
-        whole of ``build_tools_to_bind`` leaves the model with nothing and no
+        whole of build_tools_to_bind leaves the model with nothing and no
         test can tell, because the only thing observable is
-        ``selected_tool_ids`` — what retrieval *decided*, not what was *bound*.
+        selected_tool_ids — what retrieval *decided*, not what was *bound*.
         """
         self._bound.append([getattr(tool, "name", str(tool)) for tool in tools])
         return self
@@ -267,7 +267,7 @@ class ToolCall(TypedDict):
 def call(name: str, args: dict[str, Any] | None = None, call_id: str = "c1") -> ToolCall:
     """One scripted tool call.
 
-    Lived in four e2e modules as identical copies until `acceptance_criteria`
+    Lived in four e2e modules as identical copies until acceptance_criteria
     became required and every one of them broke at once.
     """
     call_args = dict(args or {})
@@ -277,16 +277,16 @@ def call(name: str, args: dict[str, Any] | None = None, call_id: str = "c1") -> 
 
 
 def scripted_model(script: Sequence[Any]) -> RecordingFakeModel:
-    """A fake model that replays ``script``, one entry per model call.
+    """A fake model that replays script, one entry per model call.
 
     Four entry shapes, because a turn is not always one tool call:
 
-    * ``str`` — a plain assistant reply
-    * ``dict`` — a single tool call
-    * ``list[dict]`` — several tool calls in ONE turn, which is how a model
+    * str — a plain assistant reply
+    * dict — a single tool call
+    * list[dict] — several tool calls in ONE turn, which is how a model
       emits parallel work and the only way to reach the routing that picks
       between them
-    * ``BaseMessage`` — used as-is, for shapes the others cannot express
+    * BaseMessage — used as-is, for shapes the others cannot express
     """
     responses: list[BaseMessage] = []
     for item in script:
@@ -306,7 +306,7 @@ def call_all_tools_response_generator(
 ) -> AIMessage:
     """One tool call per bound tool, then a plain completion reply.
 
-    Mirrors LlamaIndex's ``_tool_calling_response_generator``: once any tool
+    Mirrors LlamaIndex's _tool_calling_response_generator: once any tool
     result is in the conversation, answer "Tool calls complete." instead of
     calling again (or the graph would loop forever); otherwise emit one call
     per tool, filling non-required args from the tool's schema defaults and
@@ -331,8 +331,8 @@ def call_all_tools_response_generator(
 class CallAllToolsModel(RecordingFakeModel):
     """A scripted model that calls EVERY bound tool on its first turn.
 
-    ``responses`` is accepted so construction stays drop-in with
-    :func:`scripted_model`, but never consumed: every call is auto-generated.
+    responses is accepted so construction stays drop-in with
+    :func:scripted_model, but never consumed: every call is auto-generated.
     After the results are back the generator replies "Tool calls complete.",
     so a run exercises every tool the graph bound and still terminates.
     """
@@ -358,27 +358,27 @@ async def executor_graph(
 ) -> AsyncIterator[Any]:
     """The REAL executor graph, with only the model and two I/O seams replaced.
 
-    Everything the tests assert on is production code: ``create_agent``, the
-    real tool registry, the real ``retrieve_tools`` and its binding validation,
+    Everything the tests assert on is production code: create_agent, the
+    real tool registry, the real retrieve_tools and its binding validation,
     the real middleware stack, the real todo hooks.
 
-    ``model`` swaps in a pre-built recording model (e.g. :class:`CallAllToolsModel`)
-    instead of one scripted from ``script``, which is then ignored.
+    model swaps in a pre-built recording model (e.g. :class:CallAllToolsModel)
+    instead of one scripted from script, which is then ignored.
 
     Two patches only, both narrow:
 
-    * ``get_tools_store`` — the ChromaDB-backed vector store, swapped for a real
-      ``InMemoryStore``. It must be a genuine ``BaseStore``: ``retrieve_tools``
-      declares it ``Annotated[BaseStore, InjectedStore]`` and pydantic rejects a
-      MagicMock. Binding by ``exact_tool_names`` never searches it, so exact
+    * get_tools_store — the ChromaDB-backed vector store, swapped for a real
+      InMemoryStore. It must be a genuine BaseStore: retrieve_tools
+      declares it Annotated[BaseStore, InjectedStore] and pydantic rejects a
+      MagicMock. Binding by exact_tool_names never searches it, so exact
       binding stays embedding-free and deterministic.
-    * ``get_checkpointer_manager`` — the Postgres checkpointer. Awaited
+    * get_checkpointer_manager — the Postgres checkpointer. Awaited
       unconditionally at build time even when an in-memory checkpointer is
       requested, and it raises when its provider is absent.
 
-    Deliberately NOT patched: ``get_tool_registry`` (the tests want the real 91
-    tools and their spaces) and ``create_executor_middleware`` (pure, and
-    stubbing it silently removes ``spawn_subagent``).
+    Deliberately NOT patched: get_tool_registry (the tests want the real 91
+    tools and their spaces) and create_executor_middleware (pure, and
+    stubbing it silently removes spawn_subagent).
     """
     # Registered rather than mocked: format_tool_call_entry and the retrieval
     # validator both resolve real categories through this provider singleton.
@@ -414,14 +414,14 @@ async def comms_graph(
 ) -> AsyncIterator[Any]:
     """The REAL comms graph, with only the model and the external edges replaced.
 
-    Comms is the front door: three tools (``call_executor``, ``cancel_executor``,
+    Comms is the front door: three tools (call_executor, cancel_executor,
     the memory pair), the filter/system-prompt/executor-status pre-model hooks,
     and two end-graph hooks. The end hooks are where the external edges are —
     follow-up generation calls a structured LLM and memory ingestion writes to
     the memory engine — so those are doubled; everything between is real.
 
-    ``model`` swaps in a pre-built recording model (e.g. :class:`CallAllToolsModel`)
-    instead of one scripted from ``script``, which is then ignored.
+    model swaps in a pre-built recording model (e.g. :class:CallAllToolsModel)
+    instead of one scripted from script, which is then ignored.
     """
     from app.agents.core.nodes.follow_up_actions_node import FollowUpActions
 
@@ -502,7 +502,7 @@ def memory_engine_of(graph: Any) -> Any:
 def scripted_model_of(graph: Any) -> RecordingFakeModel:
     """The scripted model a graph was built with — prompts, bindings, memory.
 
-    Only valid inside the graph's ``async with`` block: the harness unregisters
+    Only valid inside the graph's async with block: the harness unregisters
     the model when the graph is torn down.
     """
     return _SCRIPTED_MODELS[id(graph)]
@@ -519,7 +519,7 @@ async def run_graph(
 ) -> GraphRun:
     """Drive one turn and record every node update.
 
-    A ``GraphRecursionError`` is captured on the run rather than raised: an
+    A GraphRecursionError is captured on the run rather than raised: an
     agent spinning to its limit is a behaviour worth asserting, not a test error.
     """
     from langgraph.errors import GraphRecursionError

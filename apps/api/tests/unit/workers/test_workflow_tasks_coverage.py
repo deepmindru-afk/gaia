@@ -84,8 +84,8 @@ class TestLedgerAttribution:
     """Which run a workflow's model spend is attributed to.
 
     The execution id exists only inside this task — it never reaches
-    ``config.configurable``, so the ``llm_calls`` ledger reads it off the task's
-    wide event (``llm_metering._ambient_worker_context``). Without the stamp,
+    config.configurable, so the llm_calls ledger reads it off the task's
+    wide event (llm_metering._ambient_worker_context). Without the stamp,
     every model call a workflow makes lands in the ledger with no execution to
     attribute it to, and "what did this run cost" comes back empty rather than
     wrong — which is far harder to notice.
@@ -180,11 +180,11 @@ def _profile(timezone: str | None) -> dict[str, Any]:
 class TestResolveWorkflowUser:
     """The clock a scheduled run executes on.
 
-    An ARQ worker has no request and no ``X-Timezone`` header, so this function
+    An ARQ worker has no request and no X-Timezone header, so this function
     is the only thing standing between a user's 8am digest and one that arrives
     at 8am UTC. Both run paths read the zone straight back off
-    ``user_data["timezone"]``: the agent through ``build_agent_config`` and the
-    replay through ``$now`` / ``$today``.
+    user_data["timezone"]: the agent through build_agent_config and the
+    replay through $now / $today.
     """
 
     async def _resolve(

@@ -112,7 +112,7 @@ class TestGetRealtimeUsage:
     async def test_monthly_window_is_read_and_reported_alongside_the_daily_one(self) -> None:
         """Both windows are projected, not just the day.
 
-        Every other case here asserts ``periods["day"]``, so a service that
+        Every other case here asserts periods["day"], so a service that
         stopped reading the month — or asked Redis for a window name that does
         not exist — would look completely healthy.
         """
@@ -173,7 +173,7 @@ class TestGetRealtimeUsage:
     async def test_a_single_call_allowance_is_still_a_reported_window(self) -> None:
         """A limit of exactly 1 is a real limit.
 
-        The window filter is ``limit > 0``; nudged to ``> 1`` it would silently
+        The window filter is limit > 0; nudged to > 1 it would silently
         drop every allowance-of-one feature from the summary, and the real
         config has such features (free image generation).
         """

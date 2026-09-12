@@ -1,10 +1,10 @@
 """Dev-only identity + seeding service.
 
 Bootstraps users and sample data for agent-driven end-to-end testing. Every
-write reuses the real production path (``store_user_info``, ``create_todo``,
-``create_conversation_service``, ``PlatformLinkService.link_account``) so seeded
+write reuses the real production path (store_user_info, create_todo,
+create_conversation_service, PlatformLinkService.link_account) so seeded
 shapes can never drift from what the app actually produces. Mounted only in
-development behind the auth bypass — see ``create_app``.
+development behind the auth bypass — see create_app.
 """
 
 import asyncio
@@ -84,15 +84,15 @@ async def attach_dev_file(
 ) -> FileDocument:
     """Ingest a file for a dev user's conversation through the real upload path.
 
-    Calls the same ``FileService.upload`` the production ``POST /api/v1/upload``
+    Calls the same FileService.upload the production POST /api/v1/upload
     handler calls, so extraction (anydoc/pdf_inspector/vision), summarization,
     Mongo metadata and the ChromaDB index are the shipped ones, not a copy. The
     only production step skipped is the conversation-ownership check, which
     guards against one user polluting another's session tree — meaningless here,
     where the caller names the user and the router 404s outside development.
 
-    Pass the ``conversation_id`` that the subsequent ``POST /api/v1/dev/executor``
-    run uses: ``prepare_executor_execution`` reconstructs the conversation's
+    Pass the conversation_id that the subsequent POST /api/v1/dev/executor
+    run uses: prepare_executor_execution reconstructs the conversation's
     uploads from that id alone.
     """
     user = await require_dev_user(email)

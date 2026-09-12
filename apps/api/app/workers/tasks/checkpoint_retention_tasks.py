@@ -1,12 +1,12 @@
 """ARQ task that garbage-collects LangGraph Postgres checkpoints.
 
-`prune_checkpoint_versions`: nightly. Three phases against the
-`checkpoints` / `checkpoint_writes` / `checkpoint_blobs` tables written by
-`AsyncPostgresSaver`:
+prune_checkpoint_versions: nightly. Three phases against the
+checkpoints / checkpoint_writes / checkpoint_blobs tables written by
+AsyncPostgresSaver:
 
 1. **Orphan sweep** — a thread whose owning conversation no longer exists in
-   Mongo is deleted whole (`checkpointer.adelete_thread`). This is the backstop
-   for the best-effort thread cleanup in `conversation_service.delete_conversation`
+   Mongo is deleted whole (checkpointer.adelete_thread). This is the backstop
+   for the best-effort thread cleanup in conversation_service.delete_conversation
    (a delete that failed while Postgres was unreachable, or a bot conversation
    abandoned without an explicit delete).
 
@@ -20,11 +20,11 @@
    the superseded ancestor checkpoints of each thread's head.
 
    DeltaChannel constraint (see app/override/langgraph_bigtool/utils.py): the
-   `messages` channel stores only a per-step delta in most checkpoints, with a
+   messages channel stores only a per-step delta in most checkpoints, with a
    full snapshot every MESSAGES_SNAPSHOT_FREQUENCY updates. Reconstructing the
    head's state walks the parent chain back to the nearest checkpoint whose
-   `messages` blob is a real snapshot and replays the deltas after it (see
-   `BaseCheckpointSaver.aget_delta_channel_history`). Dropping any checkpoint
+   messages blob is a real snapshot and replays the deltas after it (see
+   BaseCheckpointSaver.aget_delta_channel_history). Dropping any checkpoint
    between the head and that snapshot would silently reconstruct the channel as
    empty. So the prune keeps the contiguous parent chain from the head back to
    (and including) the nearest snapshot, and deletes only the strictly-older
@@ -99,8 +99,8 @@ def _prune_ids_for_chain(
 ) -> list[str]:
     """Return the checkpoint ids safe to delete for one (thread, ns).
 
-    `checkpoint_rows` is `(checkpoint_id, parent_checkpoint_id, has_msg_snapshot)`.
-    Returns the strict ancestors of the nearest `messages` snapshot on the head's
+    checkpoint_rows is (checkpoint_id, parent_checkpoint_id, has_msg_snapshot).
+    Returns the strict ancestors of the nearest messages snapshot on the head's
     parent chain — everything older than the seed the head reconstructs from.
     Returns [] when the thread is in-flight, has no snapshot on its chain (a
     fresh DeltaChannel thread below the first snapshot must replay from root), or
@@ -209,10 +209,10 @@ async def sweep_orphan_threads(
 
 
 def _checkpoint_written_at(checkpoint_id: str) -> datetime | None:
-    """When the saver minted this checkpoint id, or ``None`` if it cannot be read.
+    """When the saver minted this checkpoint id, or None if it cannot be read.
 
-    `checkpoints` carries no timestamp column, but LangGraph mints ids with uuid6
-    (`langgraph.checkpoint.base.id`), whose leading 60 bits are the Gregorian
+    checkpoints carries no timestamp column, but LangGraph mints ids with uuid6
+    (langgraph.checkpoint.base.id), whose leading 60 bits are the Gregorian
     timestamp in 100ns units. The version prune below already depends on these ids
     being time-ordered; this reads the same clock rather than adding a column.
     """
@@ -240,7 +240,7 @@ async def sweep_stale_spawn_threads(
 
     Threads with pending writes are deliberately NOT spared, unlike the version
     prune below. A spawn parked on an approval that expired days ago is exactly the
-    leak this collects, and `_thread_is_orphan` can never reach it: the thread
+    leak this collects, and _thread_is_orphan can never reach it: the thread
     embeds a live conversation's uuid, so the orphan sweep reads it as owned.
     """
     cutoff = datetime.now(UTC) - timedelta(days=CHECKPOINT_SPAWN_THREAD_RETENTION_DAYS)

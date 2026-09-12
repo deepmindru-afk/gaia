@@ -1,10 +1,10 @@
 """Re-grading history must correct an outage, not re-affirm it.
 
-``rescore`` exists to fix published numbers from the journal alone. Pointed at
+rescore exists to fix published numbers from the journal alone. Pointed at
 the contaminated LongMemEval run it did the opposite of its job: the 64 cases
 that never ran carry an empty transcript, so it either re-scored the blank as a
 miss or filed them under "re-run these" — and either way they stayed in the
-denominator as ``failed``, which is the fabricated 0/64 still being reported.
+denominator as failed, which is the fabricated 0/64 still being reported.
 """
 
 from __future__ import annotations

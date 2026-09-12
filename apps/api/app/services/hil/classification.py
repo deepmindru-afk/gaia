@@ -3,9 +3,9 @@
 Resolution order (first match wins):
 
 1. Exempt orchestration/plumbing tools → safe.
-2. A server-declared MCP ``destructiveHint`` → destructive. Escalation-only: an
-   untrusted MCP server may flag danger but never clear it, so ``readOnlyHint``
-   and ``destructiveHint=False`` are ignored; a true hint gates even over a
+2. A server-declared MCP destructiveHint → destructive. Escalation-only: an
+   untrusted MCP server may flag danger but never clear it, so readOnlyHint
+   and destructiveHint=False are ignored; a true hint gates even over a
    reviewed-safe registry flag.
 3. The tool registry's flag — authoritative for internal tools and curated
    integration slugs.
@@ -43,10 +43,10 @@ async def is_tool_destructive(
     *,
     destructive_hint: bool | None = None,
 ) -> bool:
-    """Return whether ``tool_name`` must be gated by HIL. Fails closed.
+    """Return whether tool_name must be gated by HIL. Fails closed.
 
-    ``destructive_hint`` is the caller-read MCP ``destructiveHint`` (see
-    :func:`mcp_destructive_hint`); it escalates an otherwise-unclassified tool
+    destructive_hint is the caller-read MCP destructiveHint (see
+    :func:mcp_destructive_hint); it escalates an otherwise-unclassified tool
     to destructive without an LLM call.
     """
     if tool_name in HIL_EXEMPT_TOOLS:
@@ -74,11 +74,11 @@ async def is_tool_destructive(
 
 
 def mcp_destructive_hint(tool: BaseTool | None) -> bool | None:
-    """Return ``True`` only when an MCP tool declares itself destructive.
+    """Return True only when an MCP tool declares itself destructive.
 
-    Honors the ``destructiveHint`` annotation ``SanitizingLangChainAdapter``
+    Honors the destructiveHint annotation SanitizingLangChainAdapter
     stashes on tool metadata. Escalation-only (see module docstring): a falsey
-    or missing hint yields ``None`` (defer), never ``False``.
+    or missing hint yields None (defer), never False.
     """
     metadata = getattr(tool, "metadata", None)
     if not isinstance(metadata, dict):
@@ -104,7 +104,7 @@ async def _classify_unknown_tool(registry: ToolRegistry, tool_name: str, descrip
 
 
 async def _cached_classification(tool_name: str, description_hash: str) -> bool | None:
-    """A prior classification for this exact tool+description, or ``None``."""
+    """A prior classification for this exact tool+description, or None."""
     record = await hil_tool_risk_repository.find_classification(tool_name, description_hash)
     return record.is_destructive if record else None
 
@@ -114,7 +114,7 @@ async def _classify_with_llm(tool_name: str, description: str) -> _ClassifyResul
     user attribution. The verdict is cached per tool+description (DB + registry)
     and shared by every user, so billing its COGS to whichever user happened to
     trigger the first classification would be arbitrary. The unattributed-spend
-    warning from ``ainvoke_structured`` is expected here, and rare: this runs
+    warning from ainvoke_structured is expected here, and rare: this runs
     once per tool, not per call."""
     return await ainvoke_structured(
         _ClassifyResult,

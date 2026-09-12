@@ -1,22 +1,22 @@
 """E2E test: tool-call routing and filter_messages_node in a live GAIA graph.
 
-This file does NOT test email sending — the ``send_email`` tool below is a local
+This file does NOT test email sending — the send_email tool below is a local
 stub standing in for "any tool". Real send-email coverage lives in
-``tests/e2e/test_send_email_flow.py``, which drives the Gmail send path through
-the real HTTP route and ``app.services.mail.mail_service``.
+tests/e2e/test_send_email_flow.py, which drives the Gmail send path through
+the real HTTP route and app.services.mail.mail_service.
 
 
 WHAT THIS TESTS (REAL GAIA CODE):
-- ``filter_messages_node`` from ``app.agents.core.nodes.filter_messages``
-  is wired as a pre-model hook via ``create_agent`` from
-  ``app.override.langgraph_bigtool.create_agent``.
-- The GAIA ``State`` schema (``app.override.langgraph_bigtool.utils.State``)
-  is used throughout, not the generic ``MessagesState``.
+- filter_messages_node from app.agents.core.nodes.filter_messages
+  is wired as a pre-model hook via create_agent from
+  app.override.langgraph_bigtool.create_agent.
+- The GAIA State schema (app.override.langgraph_bigtool.utils.State)
+  is used throughout, not the generic MessagesState.
 - The graph runs the real hook pipeline on every model invocation.
 
 HOW IT'S TESTED:
 We inject AI messages with dangling tool calls (no corresponding ToolMessage)
-into the graph state and assert that ``filter_messages_node`` strips them
+into the graph state and assert that filter_messages_node strips them
 before the model is called again — which is what allows the fake LLM
 to respond correctly in turn 2 without being confused by stale tool calls.
 
@@ -26,8 +26,8 @@ Mock surfaces:
 - Checkpointer: MemorySaver (no PostgreSQL)
 - the routed tool itself: a @tool stub, but the graph infrastructure is real
 
-DELETE ``app/agents/core/nodes/filter_messages.py`` → these tests FAIL.
-DELETE ``app/override/langgraph_bigtool/create_agent.py`` → these tests FAIL.
+DELETE app/agents/core/nodes/filter_messages.py → these tests FAIL.
+DELETE app/override/langgraph_bigtool/create_agent.py → these tests FAIL.
 """
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage

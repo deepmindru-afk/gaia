@@ -277,7 +277,7 @@ def find_boundary(
 
 
 def shape(event: dict[str, Any], ignored: set[str]) -> dict[str, str]:
-    """key -> JSON type, minus the keys contract.json declares asymmetric."""
+    """Key -> JSON type, minus the keys contract.json declares asymmetric."""
     return {k: json_type(v) for k, v in event.items() if k not in ignored}
 
 

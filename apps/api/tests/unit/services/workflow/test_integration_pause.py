@@ -2,7 +2,7 @@
 
 An activated workflow whose integration is dead keeps firing on schedule and
 delivers a failed run, which reads to the user as "GAIA is broken" rather than
-"Gmail needs reconnecting". Both halves go through ``WorkflowService`` so the
+"Gmail needs reconnecting". Both halves go through WorkflowService so the
 workflow's Composio trigger follows the workflow's state upstream.
 """
 
@@ -48,11 +48,11 @@ def _workflow(workflow_id: str, title: str, *, activated: bool = True) -> MagicM
 
 
 def _paused_only_when_expired(workflows: list[MagicMock]) -> AsyncMock:
-    """``find_paused_for_reason`` as reality shapes it: a workflow is paused for
+    """find_paused_for_reason as reality shapes it: a workflow is paused for
     exactly one reason, so it comes back under that reason and no other.
 
-    Resume scans both system reasons — ``INTEGRATION_EXPIRED`` and
-    ``INTEGRATION_NEVER_CONNECTED`` — and a mock that ignores its argument hands
+    Resume scans both system reasons — INTEGRATION_EXPIRED and
+    INTEGRATION_NEVER_CONNECTED — and a mock that ignores its argument hands
     the same workflows back twice, which reads as double the resumes.
     """
 
@@ -227,7 +227,7 @@ class TestScanUsesItsArguments:
 
     @staticmethod
     def _requirements_of(*owners: MagicMock):
-        """``compute_required_integrations`` keyed on BOTH arguments of one workflow."""
+        """compute_required_integrations keyed on BOTH arguments of one workflow."""
 
         def _required(steps: object, trigger_config: object) -> set[str]:
             for owner in owners:
@@ -349,8 +349,8 @@ class TestSubscriptions:
 
     @staticmethod
     def _lookup_only(expected_id: str, slug: str):
-        """``get_integration_by_id`` that answers from its argument: the
-        trigger-bearing integration only for ``expected_id``, ``None`` for
+        """get_integration_by_id that answers from its argument: the
+        trigger-bearing integration only for expected_id, None for
         anything else. A lookup keyed on the wrong id (or a nulled one) resolves
         no triggers, so the subscription call changes instead of going unnoticed."""
 
@@ -436,7 +436,7 @@ class TestPauseAtFireTime:
 
     @staticmethod
     def _required_of(*owners: MagicMock):
-        """``compute_required_integrations`` answering from BOTH arguments.
+        """compute_required_integrations answering from BOTH arguments.
 
         A requirement lookup handed the wrong workflow's steps (or a nulled
         argument) resolves nothing, so the pause silently stops happening.
@@ -452,7 +452,7 @@ class TestPauseAtFireTime:
 
     @staticmethod
     def _missing_of(connected_for: str, connected: set[str]):
-        """``compute_missing_integrations`` answering from BOTH arguments.
+        """compute_missing_integrations answering from BOTH arguments.
 
         Keyed on the user id as well as the requirement set: asking on behalf of
         the wrong user would read a stranger's connections and let a workflow
@@ -532,7 +532,7 @@ class TestPauseAtFireTime:
         mock_log.warning.assert_not_called()
 
     async def test_an_unsaved_workflow_is_not_paused_by_id(self) -> None:
-        """``deactivate_workflow`` keys on the id; passing an empty one would
+        """deactivate_workflow keys on the id; passing an empty one would
         match no document (or, worse, be treated as a wildcard downstream), and
         the caller would still send a notice for a pause that never happened."""
         workflow = self._workflow_needing({"gmail"}, workflow_id="")

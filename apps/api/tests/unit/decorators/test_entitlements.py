@@ -100,7 +100,7 @@ class TestRequireActiveSubscription:
         plan.assert_awaited_once_with("u1")
 
     async def test_a_cached_free_is_confirmed_from_the_row_before_blocking(self) -> None:
-        """The gate runs the same ``is_paid`` rule as every other surface."""
+        """The gate runs the same is_paid rule as every other surface."""
         with (
             patch(
                 f"{ENT}.payment_service.get_cached_plan_type",
@@ -148,7 +148,7 @@ class TestRequireActiveSubscription:
         """The deny path costs one cached plan read and nothing else.
 
         This gate runs on every authenticated request, so anything it does per
-        block is paid per blocked request. Minting here put a ``get_plans``
+        block is paid per blocked request. Minting here put a get_plans
         call, an HTTP round-trip and a Mongo insert on each one, for a
         single-use link the user never asked for.
         """

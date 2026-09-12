@@ -1,7 +1,7 @@
 """Deliver a proactively-produced result into the user's linked messaging platforms.
 
 A result GAIA produces with no user watching — a finished workflow run, a fired
-reminder — is pushed by :func:`deliver_result_to_platforms` into the user's real
+reminder — is pushed by :func:deliver_result_to_platforms into the user's real
 Telegram/WhatsApp/Discord/Slack chats as natural GAIA messages (GAIA's voice, no
 notification chrome) so the thread can be continued there, AND recorded into that
 conversation's langgraph thread so a later turn remembers it. This is deliberately
@@ -49,9 +49,9 @@ async def deliver_result_to_platforms(
     that platform conversation's langgraph thread.
 
     The platform is the first in the user's chat-channel order that is linked
-    and left enabled (``resolve_chat_channel``); the web app always has the
-    result too. ``origin`` names what produced the result (workflow, reminder,
-    …) so the langgraph record can backtrack to the source. ``exclude_source``
+    and left enabled (resolve_chat_channel); the web app always has the
+    result too. origin names what produced the result (workflow, reminder,
+    …) so the langgraph record can backtrack to the source. exclude_source
     names a platform that already received the result in its own conversation,
     so the same platform is never pinged twice. Best-effort: a failure here
     never propagates to the caller.

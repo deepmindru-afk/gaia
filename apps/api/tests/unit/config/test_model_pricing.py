@@ -1,9 +1,9 @@
 """Model pricing: the in-code rate card and token cost arithmetic.
 
-Regression anchor: in production, ``gemini-3.1-flash-lite`` (the vision and
+Regression anchor: in production, gemini-3.1-flash-lite (the vision and
 memory model) was priced at DEFAULT_PRICING — ~10x its real input rate —
-because its row was missing from the prod ``ai_models`` Mongo collection and
-nothing enforced the seed. Pricing now ships in code (``MODEL_PRICING``), so a
+because its row was missing from the prod ai_models Mongo collection and
+nothing enforced the seed. Pricing now ships in code (MODEL_PRICING), so a
 runtime-referenced model without a rate fails this suite instead of silently
 distorting COGS in prod.
 """

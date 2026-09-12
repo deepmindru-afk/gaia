@@ -5,8 +5,8 @@ media is in play the list form carries base64 payloads that must never reach a
 logger, a stream, a memory ingest, or a char-based token estimate. These helpers
 are the single place that knows how to look inside that list.
 
-Image encoding and transcoding live in ``app/utils/image_codec.py``; per-lane
-delivery lives in ``app/agents/llm/vision/``.
+Image encoding and transcoding live in app/utils/image_codec.py; per-lane
+delivery lives in app/agents/llm/vision/.
 """
 
 from typing import Any, TypeAlias, TypeGuard
@@ -44,7 +44,7 @@ def is_media_block(block: object) -> TypeGuard[ContentBlock]:
 
 
 def media_blocks(content: MessageContent) -> list[ContentBlock]:
-    """The inline-media blocks in ``content``, in order; empty for text content."""
+    """The inline-media blocks in content, in order; empty for text content."""
     if not isinstance(content, list):
         return []
     return [block for block in content if is_media_block(block)]
@@ -62,9 +62,9 @@ def extract_text_content(content: object) -> str:
     rejoined with newlines, the separator their producers split on (an MCP result
     is one block per line), so extracting a block list round-trips its layout.
 
-    Typed ``object`` rather than ``MessageContent``: real callers (``msg.content``
-    on non-``BaseMessage`` objects, malformed upstream data) sometimes hand this a
-    bool/int/None, so the trailing ``str(content)`` fallback below is real,
+    Typed object rather than MessageContent: real callers (msg.content
+    on non-BaseMessage objects, malformed upstream data) sometimes hand this a
+    bool/int/None, so the trailing str(content) fallback below is real,
     reachable code, not dead code the type alias would otherwise imply.
     """
     if isinstance(content, str):

@@ -1,4 +1,4 @@
-"""Unit tests for app/api/v1/endpoints/integrations/user.py"""
+"""Unit tests for app/api/v1/endpoints/integrations/user.py."""
 
 from datetime import UTC, datetime
 from typing import Literal
@@ -25,7 +25,7 @@ def _user_integration(status: Literal["created", "connected"] = "connected") -> 
 
 
 class TestAddIntegrationToWorkspace:
-    """POST /api/v1/integrations/users/me/integrations"""
+    """POST /api/v1/integrations/users/me/integrations."""
 
     async def test_add_connected_captures_event(self, client: AsyncClient) -> None:
         with (
@@ -76,7 +76,7 @@ class TestAddIntegrationToWorkspace:
 
 
 class TestRemoveIntegrationFromWorkspace:
-    """DELETE /api/v1/integrations/users/me/integrations/{integration_id}"""
+    """DELETE /api/v1/integrations/users/me/integrations/{integration_id}."""
 
     async def test_remove_connected_captures_event(self, client: AsyncClient) -> None:
         with (

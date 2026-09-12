@@ -242,7 +242,7 @@ class TestReapStaleExecuting:
 
         If the worker is SIGKILLed mid-run (an ordinary rolling deploy), or arq
         cancels the job and the retry finds the row already claimed, the row
-        stays EXECUTING. The due-scan filters on ``status="scheduled"``, so
+        stays EXECUTING. The due-scan filters on status="scheduled", so
         nothing can ever see it again and the task simply never fires.
         """
         recurring_task.status = ScheduledTaskStatus.EXECUTING
@@ -304,13 +304,13 @@ class TestProcessTaskExecution:
 
         Two ARQ jobs for one reminder is the normal case, not a contrived race:
         the startup scan runs in every replica and every worker, and its job id
-        is derived from each process's own ``now`` (past-due reminders get
-        shifted to ``now + 120s``), so the ids differ and ARQ does not dedup
+        is derived from each process's own now (past-due reminders get
+        shifted to now + 120s), so the ids differ and ARQ does not dedup
         them. Both jobs then read status=SCHEDULED and run — the user gets the
         reminder twice and GAIA pays for two agent turns.
 
         The claim has to be the atomic SCHEDULED -> EXECUTING transition itself,
-        the way ``workflow_repository.claim_for_execution`` already does it.
+        the way workflow_repository.claim_for_execution already does it.
         """
         service.mock_get_task.return_value = sample_task
         claimed: list[str] = []

@@ -1,8 +1,8 @@
 """The middleware stack rides the graph's chat LLM — no separate model lane.
 
-Summarization and the compaction digest receive the same ``chat_llm`` instance
+Summarization and the compaction digest receive the same chat_llm instance
 the conversation runs on; per-request routing happens via the ambient
-configurable, exactly like the model node's ``llm.with_config(...)``. These
+configurable, exactly like the model node's llm.with_config(...). These
 tests pin that wiring so a separate resolution path can't creep back in.
 """
 
@@ -272,7 +272,7 @@ class TestStackConfigurationPropagation:
 
     def test_a_subagent_meters_under_its_own_name(self) -> None:
         """Every integration subagent shares one middleware factory. Without its
-        own name they all meter as ``provider_subagent``, so ~35 subagents
+        own name they all meter as provider_subagent, so ~35 subagents
         collapse into one bucket and per-subagent cost and cache behaviour cannot
         be told apart."""
         from app.agents.middleware.accounting import LLMAccountingMiddleware

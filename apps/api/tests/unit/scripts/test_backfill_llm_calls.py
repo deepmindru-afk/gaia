@@ -1,4 +1,4 @@
-"""Rebuilding the ``llm_calls`` ledger from log history.
+"""Rebuilding the llm_calls ledger from log history.
 
 The backfill writes rows that look exactly like live ones and are summed
 alongside them, so its transform is billing-adjacent: a doubled row inflates
@@ -66,14 +66,14 @@ class TestParsing:
 
     @pytest.mark.parametrize("poison", ["NaN", "Infinity", "-Infinity", "-0.5"])
     def test_a_cost_that_is_not_a_real_number_drops_the_line(self, poison: str) -> None:
-        """``json.loads`` accepts NaN and Infinity, and either one poisons every
+        """json.loads accepts NaN and Infinity, and either one poisons every
         sum it reaches — including the total this script reports."""
         line = _line().replace('"cost_usd": 0.004', f'"cost_usd": {poison}')
 
         assert parse_event(line) is None
 
     def test_a_sticky_flip_replay_is_background_even_without_the_flag(self) -> None:
-        """Replay events predate the ``background`` field, so the older marker is
+        """Replay events predate the background field, so the older marker is
         the only signal those rows carry — and they were never charged."""
         event = _event(sticky_flip_discarded=True)
 
@@ -181,7 +181,7 @@ class TestDocument:
         assert doc.backfill_key
 
     def test_the_key_is_the_same_every_run_for_the_same_event(self) -> None:
-        """This is what makes ``--apply`` re-runnable: the unique index can only
+        """This is what makes --apply re-runnable: the unique index can only
         absorb a repeat if the key is derived, not generated."""
         line = _line(generation_id="gen-1")
         first, second = parse_event(line), parse_event(line)

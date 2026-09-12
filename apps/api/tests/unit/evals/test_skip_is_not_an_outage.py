@@ -1,6 +1,6 @@
 """A skip scores zero and stays in the denominator; an outage leaves it.
 
-Both used to arrive as ``CaseRun(error=...)``, so both were recorded ``errored``
+Both used to arrive as CaseRun(error=...), so both were recorded errored
 and both left the denominator. GAIA's baseline records it exactly: graded 89,
 errored 76, accuracy 0.4045 — 36/89, published as "GAIA 40.4%" for a benchmark
 whose split is 165 questions. The honest figure over the split is 36/165 =
@@ -56,7 +56,7 @@ def test_an_outage_is_still_errored() -> None:
 
 
 def test_the_skip_beats_the_error_text() -> None:
-    """The transport signals a skip by setting `error`. Reading the error first
+    """The transport signals a skip by setting error. Reading the error first
     is precisely what filed every skip as an outage."""
     case = _case("gaia-zip", skip="archives have no ingestion path")
     assert runner._status_from_scores(case, {"gaia_exact": 0.0}, "skipped: archives") == "skipped"
@@ -121,7 +121,7 @@ def test_the_publish_gate_still_refuses_an_undeclared_silence() -> None:
 
 
 def test_a_denominator_change_is_not_reported_as_a_regression(tmp_path: Path) -> None:
-    """attach's work makes 28 declined cases actually run. The numerator barely
+    """Attach's work makes 28 declined cases actually run. The numerator barely
     moves, so the rate falls — that is the measurement improving."""
     baseline.write(
         "gaia_bench",

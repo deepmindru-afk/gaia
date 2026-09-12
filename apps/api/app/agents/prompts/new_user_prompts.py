@@ -8,7 +8,7 @@ picked, propose one concrete first thing to set up, and make the yes easy.
 
 Only the needs the user actually picked are rendered, so the block a founder
 who ticked "inbox" carries is three lines, not eight. The text lives here
-rather than in ``agents/context/text.py`` because it is prompt prose and is
+rather than in agents/context/text.py because it is prompt prose and is
 held to this package's rules (no dashes, human voice).
 """
 
@@ -267,12 +267,12 @@ def build_new_user_guidance(
     other_need: str | None = None,
     seeded_chips: list[str] | None = None,
 ) -> str:
-    """The guidance block for a user with these onboarding answers, or ``""``.
+    """The guidance block for a user with these onboarding answers, or "".
 
     Empty when the user picked nothing: with nothing to anchor on, the block
     would be the generic coaching it exists to prevent.
 
-    ``seeded_chips`` are the answers the seeded conversation offered. They are
+    seeded_chips are the answers the seeded conversation offered. They are
     the user's likely first message, and without them the model met "Growth"
     with no idea it was answering its own question.
     """

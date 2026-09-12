@@ -220,7 +220,7 @@ class TestTriggerDeliveryToQueuedExecution:
     ) -> None:
         """A tracked todo can be waiting on the same event a workflow matched.
 
-        The hand-off is queued from inside ``process_event``, before its
+        The hand-off is queued from inside process_event, before its
         no-matching-workflow return — the return that would otherwise drop the
         reply a todo has been waiting for.
         """

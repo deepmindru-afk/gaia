@@ -139,7 +139,7 @@ def _is_generic_url(url: str) -> bool:
 
 
 def _extract_handle(remainder: str) -> str | None:
-    """Take the handle out of the URL remainder produced by `_match_platform`."""
+    """Take the handle out of the URL remainder produced by _match_platform."""
     handle = remainder.split("/", maxsplit=1)[0].removeprefix("@")
     if not handle or len(handle) > _MAX_HANDLE_LEN:
         return None

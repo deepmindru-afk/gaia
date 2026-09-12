@@ -177,7 +177,7 @@ class TestGetAvailableProviders:
 
 class TestNextFallbackProvider:
     """What a caller that caught a provider failure retries onto. The graph
-    selects its lane by ``configurable["provider"]`` and never fails over itself,
+    selects its lane by configurable["provider"] and never fails over itself,
     so a wrong answer here is a turn that dies on the provider that just 402'd."""
 
     def _available(self, *names: LLMProviderName) -> Any:
@@ -214,8 +214,8 @@ class TestNextFallbackProvider:
             assert client_module.next_fallback_provider(LLMProviderName.OPENROUTER) is None
 
     def test_an_unconfigured_provider_is_skipped_not_returned_modelless(self) -> None:
-        """The custom dev endpoint's PROVIDER_MODELS entry is ``DEV_LLM_MODEL or
-        ""``; pinning ``""`` trades one dead provider for a guaranteed bad
+        """The custom dev endpoint's PROVIDER_MODELS entry is DEV_LLM_MODEL or
+        ""; pinning "" trades one dead provider for a guaranteed bad
         request."""
         with (
             self._available(LLMProviderName.OPENROUTER, LLMProviderName.CUSTOM),
@@ -795,7 +795,7 @@ class TestAinvokeLlm:
             await ainvoke_llm(primary, [HumanMessage(content="hi")])
 
     async def test_max_attempts_bounds_the_primary_retry(self) -> None:
-        """``max_attempts`` is a latency budget, so it has to reach the PRIMARY's
+        """max_attempts is a latency budget, so it has to reach the PRIMARY's
         retry wrapper. Dropped there, a caller that asked for one attempt
         silently spends the default three plus their exponential backoff — the
         stall the knob exists to prevent, and invisible from the outside because
@@ -910,7 +910,7 @@ class TestAinvokeLlm:
 
 
 class TestOneInvocationPerCall:
-    """``ainvoke_llm`` sends a graph call to the provider EXACTLY once, however
+    """ainvoke_llm sends a graph call to the provider EXACTLY once, however
     cold its prompt cache came back.
 
     A cold read used to trigger a second, byte-identical invocation whose answer
@@ -966,10 +966,10 @@ class TestFallbackHandover:
     def _bindable_runnable(result: Any) -> NonCallableMagicMock:
         """A fallback double that reports as OpenRouter-wire.
 
-        ``_resolve_fallback`` binds the sticky key only onto a runnable whose
+        _resolve_fallback binds the sticky key only onto a runnable whose
         underlying client is OpenRouter (a Google client raises on the unknown
         kwarg), and it decides that by walking the real wrapper chain — which a
-        bare mock has none of. ``spec`` makes the double a RunnableBinding
+        bare mock has none of. spec makes the double a RunnableBinding
         wrapping a real ChatOpenRouter, so these tests exercise the same branch
         production takes instead of silently landing in the "not sticky" one.
         """
@@ -1417,10 +1417,10 @@ class TestChatbot:
 class TestRecordAuxiliaryUsage:
     """What one-shot helper spend gets booked as.
 
-    ``ainvoke_structured`` runs outside the agent graph, so
-    ``LLMAccountingMiddleware`` never sees it — this is the only place auxiliary
-    COGS is recorded. ``record_llm_call`` is the persistence seam and is the only
-    thing mocked; the real ``UsageMetadataCallbackHandler`` carries the usage.
+    ainvoke_structured runs outside the agent graph, so
+    LLMAccountingMiddleware never sees it — this is the only place auxiliary
+    COGS is recorded. record_llm_call is the persistence seam and is the only
+    thing mocked; the real UsageMetadataCallbackHandler carries the usage.
     """
 
     @staticmethod
@@ -1452,8 +1452,8 @@ class TestRecordAuxiliaryUsage:
         assert mock_log.info.call_args.kwargs["generation_id"] == "gen-abc123"
 
     def test_the_generation_id_callback_reads_llm_output_then_generation_info(self) -> None:
-        """ChatOpenRouter puts the id in ``llm_output`` on the non-streaming
-        path and in ``generation_info`` when streaming; the callback must read
+        """ChatOpenRouter puts the id in llm_output on the non-streaming
+        path and in generation_info when streaming; the callback must read
         both, and report None — never a placeholder — when neither carries one."""
         from langchain_core.outputs import ChatGeneration, LLMResult
 
@@ -1578,7 +1578,7 @@ class TestRecordAuxiliaryUsage:
         assert rec.call_args.kwargs["usage"]["output_tokens"] == 0
 
     async def test_reasoning_defaults_to_zero_without_output_details(self) -> None:
-        """A non-reasoning model sends no ``output_token_details`` at all; that
+        """A non-reasoning model sends no output_token_details at all; that
         must book zero rather than a placeholder."""
         handler = self._handler(gemini={"input_tokens": 100, "output_tokens": 20})
 
@@ -1614,7 +1614,7 @@ class TestRecordAuxiliaryUsage:
         assert rec.call_args.kwargs["usage"]["reasoning_tokens"] == 0
 
     async def test_books_the_whole_token_breakdown_and_never_the_budget(self) -> None:
-        """``charge_to_budget=False`` is the load-bearing part: background work
+        """charge_to_budget=False is the load-bearing part: background work
         GAIA does on the user's behalf must not eat their chat allowance."""
         handler = self._handler(
             gemini={
@@ -1706,13 +1706,13 @@ class TestRecordAuxiliaryUsage:
 
 
 class TestAuxiliaryMeteringWiring:
-    """The plumbing between ``ainvoke_llm`` and the metering call: which config
-    the provider is handed, and what reaches ``_record_auxiliary_usage``."""
+    """The plumbing between ainvoke_llm and the metering call: which config
+    the provider is handed, and what reaches _record_auxiliary_usage."""
 
     @staticmethod
     def _reporting_runnable(usage: dict[str, Any]) -> NonCallableMagicMock:
         """A runnable that reports token usage the way a real provider does —
-        through the ``UsageMetadataCallbackHandler`` attached to its config."""
+        through the UsageMetadataCallbackHandler attached to its config."""
 
         async def _ainvoke(_messages: Any, config: RunnableConfig | None = None) -> AIMessage:
             for handler in (config or {}).get("callbacks") or []:
@@ -1726,7 +1726,7 @@ class TestAuxiliaryMeteringWiring:
         return runnable
 
     async def test_the_config_user_id_is_who_the_spend_is_booked_against(self) -> None:
-        """``configurable.user_id`` is the only thread between the caller and the
+        """configurable.user_id is the only thread between the caller and the
         COGS row; dropping it books every helper call against nobody."""
         primary = self._reporting_runnable({"input_tokens": 10, "output_tokens": 2})
 
@@ -1758,8 +1758,8 @@ class TestAuxiliaryMeteringWiring:
         assert [w["llm"]["label"] for w in warned] == ["memory_extraction"]
 
     async def test_skipping_metering_still_forwards_the_caller_config(self) -> None:
-        """``meter_auxiliary=False`` only means "attach no handler". Replacing the
-        caller's config with a fresh one strips ``configurable`` — the graph's
+        """meter_auxiliary=False only means "attach no handler". Replacing the
+        caller's config with a fresh one strips configurable — the graph's
         thread id, user id and run metadata all travel in there."""
         primary = self._reporting_runnable({"input_tokens": 10, "output_tokens": 2})
 
@@ -1777,7 +1777,7 @@ class TestAuxiliaryMeteringWiring:
 class TestAinvokeStructured:
     """The one canonical one-shot structured call.
 
-    It runs on ``get_helper_llm``, not ``get_default_llm``: structured output is
+    It runs on get_helper_llm, not get_default_llm: structured output is
     always a small JSON blob, so reserving the full output budget for it wastes
     the reservation on every helper call in the app.
     """
@@ -1787,8 +1787,8 @@ class TestAinvokeStructured:
 
     async def test_runs_on_the_capped_helper_re_pointed_at_the_aux_model(self) -> None:
         """Both halves of this lane at once: the runnable is built FROM
-        ``get_helper_llm`` (so the 8k output cap still applies) and then
-        re-pointed at ``AUX_MODEL_NAME`` (so the call lands in its own cache
+        get_helper_llm (so the 8k output cap still applies) and then
+        re-pointed at AUX_MODEL_NAME (so the call lands in its own cache
         namespace). Losing the first re-reserves 64k per helper call; losing
         the second puts aux blocks back in the conversation's namespace."""
         structured = MagicMock(name="structured_runnable")
@@ -1818,7 +1818,7 @@ class TestAinvokeStructured:
         assert result.answer == "42"
 
     async def test_the_label_and_config_reach_the_invoke(self) -> None:
-        """``label`` names the call in the COGS event and ``config`` carries the
+        """label names the call in the COGS event and config carries the
         user the spend is attributed to; losing either drops the attribution."""
         helper = MagicMock()
         helper.model_copy = MagicMock(return_value=MagicMock())
@@ -1866,11 +1866,11 @@ class TestAinvokeStructured:
         assert mock_invoke.call_args.kwargs["options"].timeout == 12.0
 
     async def test_the_aux_lane_runs_on_its_own_sticky_session(self) -> None:
-        """A suffixed session id, bound after ``with_structured_output``.
+        """A suffixed session id, bound after with_structured_output.
 
         Sharing the conversation's id re-pins its provider from a background
         one-shot; binding before the structured rebuild loses the key entirely,
-        because ``bind_tools`` drops the outer binding's kwargs.
+        because bind_tools drops the outer binding's kwargs.
         """
         bound = MagicMock(name="bound_runnable")
         structured = MagicMock(name="structured_runnable")
@@ -1938,16 +1938,16 @@ class TestStampFallback:
 class TestProviderModelFieldId:
     """Both provider lanes must read the model from the SAME configurable key.
 
-    They historically did not. Gemini's ``model`` attribute was bound to the
-    field id ``"model_name"`` while OpenRouter's ``model_name`` attribute was
-    bound to the field id ``"model"`` — two swapped ids sharing one flat
-    namespace (``prefix_keys=False``). That collision is the entire reason every
+    They historically did not. Gemini's model attribute was bound to the
+    field id "model_name" while OpenRouter's model_name attribute was
+    bound to the field id "model" — two swapped ids sharing one flat
+    namespace (prefix_keys=False). That collision is the entire reason every
     writer had to set both keys, and why a configurable carrying only one of them
     silently resolved a *different* model than the one it named.
 
     Scope: the OpenRouter case is exercised end-to-end through the real registry.
     The Gemini case is asserted on the field id directly, because the hermetic
-    env blanks ``GOOGLE_API_KEY`` and the provider therefore resolves to ``None``
+    env blanks GOOGLE_API_KEY and the provider therefore resolves to None
     — there is no Gemini client to drive here. The id is the whole contract.
     """
 
@@ -1959,7 +1959,7 @@ class TestProviderModelFieldId:
     def test_openrouter_exposes_its_model_under_the_same_id(self) -> None:
         """Driven through the real wire helper rather than the provider registry:
         the hermetic fence blanks OPENROUTER_API_KEY, so the registered provider
-        is ``None`` in CI and there is no client to resolve. The client is
+        is None in CI and there is no client to resolve. The client is
         constructed here with a dummy key — no network, construction only."""
         llm = _openrouter_wire_configurables(
             ChatOpenRouter(model="vendor/default", api_key=SecretStr("test-key"))
@@ -1975,7 +1975,7 @@ class TestProviderModelFieldId:
 class TestFallbackRunsOnTheOtherProvider:
     """The fallback must actually leave the failed lane.
 
-    Regression: the fallback runnable carried its lane via ``with_config``, but the
+    Regression: the fallback runnable carried its lane via with_config, but the
     invoke re-passed the run's own config — and LangChain merges a passed config
     OVER a bound one, so the just-failed provider, model and pin were all restored
     and the "failover" retried the same dead lane. Nothing caught it because no
@@ -2094,8 +2094,8 @@ class TestTheInvokeTimeoutIsEnforced:
 
 
 class TestTheStickyKeyNeverReachesANonOpenRouterFallback:
-    """``session_id`` is OpenRouter's sticky-routing hint. Binding it onto a
-    Google client raises ``ValidationError`` (GenerateContentConfig forbids
+    """session_id is OpenRouter's sticky-routing hint. Binding it onto a
+    Google client raises ValidationError (GenerateContentConfig forbids
     extra fields) BEFORE the request leaves the process — so a cross-provider
     fallback that inherits the primary's routing param does not degrade, it
     dies, taking the outage path down with it.
@@ -2111,7 +2111,7 @@ class TestTheStickyKeyNeverReachesANonOpenRouterFallback:
         """A fallback shaped like production's but on another provider.
 
         Structurally a RunnableBinding around a non-OpenRouter chat model —
-        the shape ``with_structured_output``/``bind_tools`` produce. A REAL
+        the shape with_structured_output/bind_tools produce. A REAL
         ChatGoogleGenerativeAI would be higher fidelity but pulls in gRPC,
         which segfaults mutmut's forking workers and takes this module's
         mutation gate down with it; the real client is covered by the live
@@ -2155,7 +2155,7 @@ class TestTheStickyKeyNeverReachesANonOpenRouterFallback:
     def test_a_wrapper_stack_deeper_than_the_bound_is_not_assumed_openrouter(self) -> None:
         """Running out of hops means the walk never SAW an OpenRouter client,
         so the honest answer is no. Answering yes there would bind
-        ``session_id`` onto whatever the stack actually wraps, and a provider
+        session_id onto whatever the stack actually wraps, and a provider
         that does not understand it rejects the call outright — the exact
         failure the bound exists to avoid, reintroduced by the safeguard."""
         from app.agents.llm.client import _WIRE_WALK_MAX_HOPS, _is_openrouter_wire
@@ -2218,14 +2218,14 @@ class TestReportedCost:
     This is the number that replaces the flat pricing table, and the table is
     wrong by more than 10x depending on which upstream served the request — so
     every shape that can carry a price has to be read, and anything that is not
-    a price has to come back as ``None`` rather than as a wrong number.
+    a price has to come back as None rather than as a wrong number.
     """
 
     def test_a_non_streaming_reply_carries_the_price_in_llm_output(self) -> None:
         assert _reported_cost(_result(llm_output={"cost": 0.0042})) == 0.0042
 
     def test_the_price_is_also_read_from_the_token_usage_block(self) -> None:
-        """The OpenAI-wire shape nests usage accounting under ``token_usage``;
+        """The OpenAI-wire shape nests usage accounting under token_usage;
         a reader that only looks one level up prices those calls from the table
         while logging that a provider figure was used."""
         assert _reported_cost(_result(llm_output={"token_usage": {"cost": 0.007}})) == 0.007
@@ -2235,8 +2235,8 @@ class TestReportedCost:
         assert _reported_cost(result) == 0.001
 
     def test_a_streamed_reply_carries_the_price_on_the_message_instead(self) -> None:
-        """Streaming leaves ``llm_output`` empty; ChatOpenRouter copies the
-        figure onto the message's ``response_metadata``."""
+        """Streaming leaves llm_output empty; ChatOpenRouter copies the
+        figure onto the message's response_metadata."""
         streamed = AIMessage(content="x", response_metadata={"cost": 0.0055})
         assert _reported_cost(_result(llm_output={}, message=streamed)) == 0.0055
 
@@ -2264,8 +2264,8 @@ class TestReportedCost:
         assert _reported_cost(_result(llm_output={"token_usage": {"cost": ["1"]}})) is None
 
     def test_a_generation_without_a_message_is_skipped_not_crashed(self) -> None:
-        """``generations`` also holds plain ``Generation`` objects, which have
-        no ``message`` at all."""
+        """generations also holds plain Generation objects, which have
+        no message at all."""
         assert _reported_cost(LLMResult(generations=[[Generation(text="x")]])) is None
 
     @pytest.mark.parametrize("poison", [float("inf"), float("-inf"), float("nan"), -0.5])
@@ -2279,7 +2279,7 @@ class TestReportedCost:
 
 class TestTheGenerationCallbackAccumulatesCostAcrossAttempts:
     """A retry or a fallback invokes the model more than once under ONE handler
-    pair. ``UsageMetadataCallbackHandler`` adds up every attempt's tokens, so
+    pair. UsageMetadataCallbackHandler adds up every attempt's tokens, so
     the price has to add up the same way — keeping only the last attempt's cost
     books one attempt's dollars against several attempts' tokens and silently
     under-counts spend on exactly the calls that went wrong.
@@ -2318,7 +2318,7 @@ class TestTheGenerationCallbackAccumulatesCostAcrossAttempts:
 
 class TestAuxiliaryCostSource:
     """The auxiliary lane books a provider price only where it can honestly
-    attribute one, and the ``llm_call`` event says which price it booked."""
+    attribute one, and the llm_call event says which price it booked."""
 
     @staticmethod
     def _handler(**usage_by_model: dict[str, Any]) -> UsageMetadataCallbackHandler:
@@ -2347,7 +2347,7 @@ class TestAuxiliaryCostSource:
     async def test_a_fan_out_across_models_falls_back_to_the_table(self) -> None:
         """One reported figure cannot be attributed to one of several models,
         so every row is priced from the table — and the event must say
-        ``table``, or coverage reporting counts a table guess as an invoice."""
+        table, or coverage reporting counts a table guess as an invoice."""
         handler = self._handler(
             gemini={"input_tokens": 10, "output_tokens": 2},
             openrouter={"input_tokens": 20, "output_tokens": 4},
@@ -2399,7 +2399,7 @@ class TestAuxiliaryCostSource:
 class TestAuxiliaryGenerationIdAttribution:
     """Which upstream generation each auxiliary ledger row names.
 
-    ``generation_id`` is the ONLY handle back to the upstream that served a
+    generation_id is the ONLY handle back to the upstream that served a
     call, and the ledger exists to be spot-audited against OpenRouter's
     generation-metadata endpoint. A row whose id is missing cannot be audited
     at all; a row carrying a NEIGHBOUR's id audits clean against a call that
@@ -2416,7 +2416,7 @@ class TestAuxiliaryGenerationIdAttribution:
     async def test_the_ledger_row_carries_the_generation_id_its_log_line_reports(self) -> None:
         """Observed live: every auxiliary doc (chatbot, follow_up_actions,
         memory:extraction, memory:reconcile) had no generation_id while its
-        matching ``llm_call`` log line carried one. The id reached the log and
+        matching llm_call log line carried one. The id reached the log and
         was dropped on the way to the ledger."""
         handler = self._handler(gemini={"input_tokens": 10, "output_tokens": 2})
 
@@ -2542,7 +2542,7 @@ class TestFailedCallsReachTheLedger:
         assert failed.await_args.kwargs["context"].channel == "telegram"
 
     async def test_the_error_row_classifies_the_failure_and_times_it(self) -> None:
-        """``error_family`` is what an operator groups by, and the latency says
+        """error_family is what an operator groups by, and the latency says
         whether the call died fast or hung — different incidents. The clock is
         pinned because a real elapsed time cannot tell a millisecond from a
         second-scaled one within its own noise."""
@@ -2563,7 +2563,7 @@ class TestFailedCallsReachTheLedger:
         assert failed.await_args.kwargs["context"].duration_ms == 50.12
 
     async def test_a_failure_with_no_user_records_none_rather_than_a_string(self) -> None:
-        """System lanes fail too. ``"None"`` would look like a real user id."""
+        """System lanes fail too. "None" would look like a real user id."""
         primary = self._runnable(TimeoutError("x"))
 
         with patch(f"{_CLIENT}.record_failed_llm_call", new_callable=AsyncMock) as failed:
@@ -2614,7 +2614,7 @@ class TestRequestedModel:
         assert _requested_model(runnable) == "deepseek/deepseek-v4-flash"
 
     def test_a_runnable_that_only_carries_model_is_still_read(self) -> None:
-        """The auxiliary lane's ``with_structured_output`` wrapper exposes the
+        """The auxiliary lane's with_structured_output wrapper exposes the
         name under a different attribute than a bare chat model does."""
         runnable = NonCallableMagicMock(spec=["model"])
         runnable.model = "gemini-3-pro"
@@ -2685,7 +2685,7 @@ class TestAuxiliaryResponseFacts:
 
     def test_the_finish_reason_is_read_from_generation_info_alone(self) -> None:
         """The NON-streaming path is the one that matters here: it leaves the
-        finish reason in ``generation_info`` and never copies it onto the
+        finish reason in generation_info and never copies it onto the
         message, so reading only the message would report nothing for every
         auxiliary one-shot — which is all of them on this route."""
         message = AIMessage(content="hi")
@@ -2775,7 +2775,7 @@ class TestWithUsageHandler:
         assert original["callbacks"] == []
 
     def test_a_live_manager_is_copied_and_extended(self) -> None:
-        """Graph nodes forward a config whose ``callbacks`` is a live manager,
+        """Graph nodes forward a config whose callbacks is a live manager,
         not a list. Adding to the caller's manager in place would leak this
         call's handler into the rest of the graph run."""
         manager = MagicMock()

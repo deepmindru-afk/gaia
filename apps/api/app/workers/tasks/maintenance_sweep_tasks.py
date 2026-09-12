@@ -156,7 +156,7 @@ async def _process_expired(
 ) -> tuple[int, int]:
     """Run the health-check agent on expired todos; archive or notify each.
 
-    Returns ``(archived_count, notified_count)``.
+    Returns (archived_count, notified_count).
     """
     archived = 0
     notified_expired = 0
@@ -228,7 +228,7 @@ async def _process_dormant(
     """Re-queue dormant todos via the agent, else collect them for the digest.
 
     Applies the escalating backoff once per surviving todo and drops any now muted.
-    Returns ``(requeued_count, needs_attention_todos)``.
+    Returns (requeued_count, needs_attention_todos).
     """
     requeued = 0
     # Collect dormant todos that need human attention, then apply the
@@ -556,9 +556,9 @@ async def _read_canvas(todo: TodoDocument) -> str:
 
 
 def _bounded_canvas(canvas: str) -> str:
-    """Trim an oversized canvas to its head and tail, within ``HEALTH_CHECK_CANVAS_MAX_CHARS``.
+    """Trim an oversized canvas to its head and tail, within HEALTH_CHECK_CANVAS_MAX_CHARS.
 
-    A canvas is sectioned markdown: ``Key Details`` and ``Current State`` sit
+    A canvas is sectioned markdown: Key Details and Current State sit
     near the top and are patched in place, while activity-log and timeline
     entries are appended to the bottom. Both ends carry what a health check
     needs, so the middle is what gets dropped, behind a marker that keeps the
@@ -678,7 +678,7 @@ def _strike_key(todo_id: str) -> str:
 
 
 async def _set_cooldown(pool: ArqRedis, todo_id: str, days: int) -> None:
-    """Throttle re-processing of a todo for ``days`` days."""
+    """Throttle re-processing of a todo for days days."""
     await pool.set(_cooldown_key(todo_id), "1", ex=days * SECONDS_PER_DAY)
 
 
@@ -686,10 +686,10 @@ async def _register_notification(pool: ArqRedis, todo_id: str) -> bool:
     """Advance a todo's escalating notification backoff.
 
     Returns True if a notification should be sent now and sets the next cooldown
-    from ``NOTIFICATION_BACKOFF_DAYS``. Returns False once the schedule is
-    exhausted: the todo is muted for ``NOTIFICATION_MUTE_DAYS`` and the caller
+    from NOTIFICATION_BACKOFF_DAYS. Returns False once the schedule is
+    exhausted: the todo is muted for NOTIFICATION_MUTE_DAYS and the caller
     must not send. The strike counter outlives each cooldown so the escalation
-    level survives between notifications, resetting only after ``STRIKE_TTL_DAYS``
+    level survives between notifications, resetting only after STRIKE_TTL_DAYS
     of silence.
     """
     strike_key = _strike_key(todo_id)
@@ -710,7 +710,7 @@ async def _register_notification(pool: ArqRedis, todo_id: str) -> bool:
 
 
 async def _is_user_daytime(user_id: str, now: datetime, cache: dict[str, bool]) -> bool:
-    """Whether it is currently daytime for ``user_id`` (cached per sweep).
+    """Whether it is currently daytime for user_id (cached per sweep).
 
     Proactive notifications are deferred outside the user's local daytime window
     so they never arrive overnight. Fails open (returns True) when the user or

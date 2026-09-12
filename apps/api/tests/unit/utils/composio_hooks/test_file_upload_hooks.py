@@ -2,11 +2,11 @@
 
 Covers the shape-scoped contract:
 - the schema modifier finds the tool's native upload param by Composio's
-  ``file_uploadable`` marker (whatever it is named), swaps it for friendly
-  ``attachments``, and records the swap,
+  file_uploadable marker (whatever it is named), swaps it for friendly
+  attachments, and records the swap,
 - the before-hook acts only on the tools that swap produced — a tool we never
-  touched keeps its own ``attachments`` argument, whatever it means to it,
-- for a tool we did swap, anything unexpected in ``attachments`` aborts rather
+  touched keeps its own attachments argument, whatever it means to it,
+- for a tool we did swap, anything unexpected in attachments aborts rather
   than reaching the tool.
 """
 

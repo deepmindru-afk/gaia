@@ -38,23 +38,23 @@ def _is_remove_all(message: BaseMessage) -> bool:
 
 
 def messages_delta_reducer(state: list[AnyMessage], writes: Sequence[Messages]) -> list[AnyMessage]:
-    """The canonical reducer for the ``messages`` channel.
+    """The canonical reducer for the messages channel.
 
-    LangGraph's `_messages_delta_reducer` documents that it does NOT implement
-    `REMOVE_ALL_MESSAGES`, so it passes that tombstone through as if it were an
-    ordinary message. `SummarizationMiddleware` clears history with exactly that
-    write, and every provider serializer rejects a `RemoveMessage` in a request
+    LangGraph's _messages_delta_reducer documents that it does NOT implement
+    REMOVE_ALL_MESSAGES, so it passes that tombstone through as if it were an
+    ordinary message. SummarizationMiddleware clears history with exactly that
+    write, and every provider serializer rejects a RemoveMessage in a request
     ("Unexpected message with type RemoveMessage at the position 0"). This wraps
-    the stock reducer with the one case it omits: a `REMOVE_ALL_MESSAGES`
+    the stock reducer with the one case it omits: a REMOVE_ALL_MESSAGES
     tombstone truncates everything accumulated so far and is itself consumed.
 
     Applying the sentinel in stream order — rather than, say, scanning for the
     last one — is what keeps the reducer batching-invariant, which
-    `DeltaChannel` requires: `reducer(reducer(s, xs), ys) == reducer(s, xs + ys)`.
+    DeltaChannel requires: reducer(reducer(s, xs), ys) == reducer(s, xs + ys).
 
-    Writes are `Messages`, not `list[AnyMessage]`: `RemoveMessage` is
-    deliberately absent from the `AnyMessage` union, so only the wider type
-    describes a batch that carries a tombstone. The return stays `AnyMessage` —
+    Writes are Messages, not list[AnyMessage]: RemoveMessage is
+    deliberately absent from the AnyMessage union, so only the wider type
+    describes a batch that carries a tombstone. The return stays AnyMessage —
     every tombstone has been consumed by then, so the channel's value really
     does hold nothing but real messages.
     """
@@ -117,7 +117,7 @@ PRUNED_MESSAGE_IDS_KEY = "_pruned_message_ids"
 
 
 def pop_pruned_tombstones(state: State) -> list[RemoveMessage]:
-    """Pop ``PRUNED_MESSAGE_IDS_KEY`` and return its ids as RemoveMessage tombstones."""
+    """Pop PRUNED_MESSAGE_IDS_KEY and return its ids as RemoveMessage tombstones."""
     raw = cast("dict[str, object]", state).pop(PRUNED_MESSAGE_IDS_KEY, None)
     if raw is None:
         # Absent is fine: the hook may not have run this call.

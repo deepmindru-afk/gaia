@@ -1,6 +1,6 @@
-"""Unit tests for ``app.memory.pg_store.graph`` — the entity register queries.
+"""Unit tests for app.memory.pg_store.graph — the entity register queries.
 
-Same seam and style as ``test_memories.py``: the ``memory_session`` seam is
+Same seam and style as test_memories.py: the memory_session seam is
 mocked and the built SQL is compiled against the Postgres dialect and
 asserted on, so scoping is pinned without I/O.
 """
@@ -17,7 +17,7 @@ from tests.unit.memory.pg_store.test_memories import _all_result, _compiled, _ex
 
 @contextmanager
 def _patched_graph_session(session: MagicMock) -> Iterator[MagicMock]:
-    """Patch ``graph.memory_session`` so ``async with`` yields ``session``."""
+    """Patch graph.memory_session so async with yields session."""
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=session)
     ctx.__aexit__ = AsyncMock(return_value=None)

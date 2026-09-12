@@ -1,6 +1,6 @@
 """A real executor resume arms the checkpoint probe; a fresh run does not.
 
-``_execute_executor`` stamping ``HIL_RESUME_CONFIG_KEY`` on a resume is the only
+_execute_executor stamping HIL_RESUME_CONFIG_KEY on a resume is the only
 thing that makes handoff/spawn recovery reachable in production — every replay
 guard downstream keys on it. Nothing else exercised these two lines: the e2e
 drivers patch the re-dispatch seam and the replay tests set the flag by hand,

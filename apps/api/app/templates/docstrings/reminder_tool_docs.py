@@ -1,6 +1,6 @@
 """Docstrings for reminder-rel3. Limits (only when user asks, explicitly or implicitly):
-   • If user says "stop after 5 days" (daily reminders), set `max_occurrences=5`.
-   • Or use `stop_after` (ISO 8601) to cut off after a date.
+   • If user says "stop after 5 days" (daily reminders), set max_occurrences=5.
+   • Or use stop_after (ISO 8601) to cut off after a date.
 
 PAYLOAD:
   STATIC → {"title": str, "body": str}n tools."""

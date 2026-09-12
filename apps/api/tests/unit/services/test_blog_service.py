@@ -1,6 +1,6 @@
 """Unit tests for the blog service.
 
-The service is thin orchestration over ``blog_repository`` (pagination + a 404):
+The service is thin orchestration over blog_repository (pagination + a 404):
 these tests mock that repository seam. The aggregation, author-join and content
 normalisation live in the repository and are covered by its real-DB contract
 suite; the regex-injection guard is asserted here against the repository's own

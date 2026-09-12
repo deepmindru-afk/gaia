@@ -177,10 +177,10 @@ def get_user_timezone(
         default="UTC", alias="x-timezone", description="User's timezone identifier"
     ),
 ) -> GET_USER_TZ_TYPE:
-    """Current time in the request's ``x-timezone`` header zone (defaults to UTC).
+    """Current time in the request's x-timezone header zone (defaults to UTC).
 
-    Returns ``(canonical_timezone, now)``. Offset-aware and never raises on a
-    malformed header (falls back to UTC) via ``Timezone.parse``.
+    Returns (canonical_timezone, now). Offset-aware and never raises on a
+    malformed header (falls back to UTC) via Timezone.parse.
     """
     tz = Timezone.parse(x_timezone)
     now = tz.now()
@@ -197,16 +197,16 @@ async def get_user_timezone_from_preferences(
     """
     Resolve the user's home timezone, healing a stale/junk stored "UTC".
 
-      1. A real (non-UTC) `user.timezone` stored in Mongo is authoritative.
+      1. A real (non-UTC) user.timezone stored in Mongo is authoritative.
       2. Otherwise — stored value is empty OR a low-confidence "UTC" (often a
          junk default that then sticks forever and silently runs everything in
-         UTC) — a valid non-UTC `x-timezone` header wins and is backfilled,
+         UTC) — a valid non-UTC x-timezone header wins and is backfilled,
          healing the stored value so header-less background paths (scheduled
          workflows, notifications) converge to the user's real zone.
       3. UTC as last resort, or a genuine stored "UTC" when there is no better
          signal.
 
-    Emits the wide-event field `timezone_source` so every request makes it
+    Emits the wide-event field timezone_source so every request makes it
     visible which branch was used.
     """
     user_id = user.get("user_id")

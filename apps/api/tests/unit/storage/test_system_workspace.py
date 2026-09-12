@@ -1,23 +1,23 @@
-"""Shared ``_system`` subtree + per-user symlinks: isolation, hash-gating, linking.
+"""Shared _system subtree + per-user symlinks: isolation, hash-gating, linking.
 
-``_system`` is the ONE copy of INDEX.md / the GUIDE.md docs / builtin skill bodies
+_system is the ONE copy of INDEX.md / the GUIDE.md docs / builtin skill bodies
 that every user's workspace points at. Two failure classes matter here and neither
 shows up in logs:
 
   - **isolation** — a link written for user A landing in the shared tree (or in
-    user B's tree) corrupts the single copy for everyone, and ``_place_symlink``
-    deliberately ``unlink()``s whatever it finds, so the real body is destroyed.
+    user B's tree) corrupts the single copy for everyone, and _place_symlink
+    deliberately unlink()s whatever it finds, so the real body is destroyed.
   - **hash-gating** — the signature marker is what makes bootstrap cheap. If it
     short-circuits when it shouldn't, users get stale docs forever; if it fails to
     short-circuit, every bootstrap rewrites the whole library on JuiceFS.
 
-The filesystem IS the thing under test, so ``tmp_path`` is used as a real mount
-root rather than mocking ``Path``. Mocked boundaries: the mount-detection
-primitives in ``juicefs`` and the ``system_files()`` manifest.
+The filesystem IS the thing under test, so tmp_path is used as a real mount
+root rather than mocking Path. Mocked boundaries: the mount-detection
+primitives in juicefs and the system_files() manifest.
 
-Note on patching: ``system_workspace`` does ``from ...juicefs import _mount_root``,
-so it holds its OWN reference — patching ``juicefs._mount_root`` alone does not
-reach ``system_subtree_available()``. Both bindings are patched below.
+Note on patching: system_workspace does from ...juicefs import _mount_root,
+so it holds its OWN reference — patching juicefs._mount_root alone does not
+reach system_subtree_available(). Both bindings are patched below.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ def unmount(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def age(path: Path) -> None:
-    """Backdate mtime so any rewrite of ``path`` becomes observable."""
+    """Backdate mtime so any rewrite of path becomes observable."""
     os.utime(path, (0, 0))
 
 

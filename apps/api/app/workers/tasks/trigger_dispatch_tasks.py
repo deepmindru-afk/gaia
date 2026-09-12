@@ -1,10 +1,10 @@
 """ARQ task: fan a fired trigger out to the tracked todos subscribed to it.
 
-The fan-out runs here rather than inline in ``TriggerHandler.process_event`` for a
+The fan-out runs here rather than inline in TriggerHandler.process_event for a
 dependency reason that is load-bearing, not cosmetic. Dispatch needs the todo
-completion path for its ``complete`` action, and that lifecycle service imports
+completion path for its complete action, and that lifecycle service imports
 the trigger stack back (to tear subscriptions down) — so calling it from
-``base.py`` closes a real import cycle, one mypy passes clean straight through.
+base.py closes a real import cycle, one mypy passes clean straight through.
 Handing the work to a task cuts it: the handler only needs a task *name*.
 
 It buys two things beyond that. The webhook path stays fast, so a Mongo scan
@@ -12,7 +12,7 @@ across every subscriber cannot delay the workflow queueing that follows it; and 
 failure lands in its own wide-event boundary instead of a handler's.
 
 This is not the endpoint-level second task the design rejected — it is enqueued
-from inside ``process_event``, after handler normalization, with the trigger names
+from inside process_event, after handler normalization, with the trigger names
 that handler owns.
 """
 

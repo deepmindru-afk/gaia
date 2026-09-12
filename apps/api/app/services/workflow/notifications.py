@@ -1,10 +1,10 @@
 """Proactive notifications for workflow runs.
 
-These fire from the executor delivery path (``deliver_result``) once a
+These fire from the executor delivery path (deliver_result) once a
 workflow's executor run finishes. The full result is delivered to the user's
 chat as real messages by that path; the completion notification here is just a
 short, human in-app heads-up (web only). They live in their own module to keep
-the executor runner free of a circular import on ``workflow_tasks`` (which
+the executor runner free of a circular import on workflow_tasks (which
 imports the agent stack).
 """
 

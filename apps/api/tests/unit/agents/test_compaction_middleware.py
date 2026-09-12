@@ -89,9 +89,9 @@ def _tool_msg(content: str, name: str = "search") -> ToolMessage:
 def _decide(
     mw: WorkspaceCompactionMiddleware, msg: ToolMessage, tool_name: str, usage: float
 ) -> tuple[bool, str]:
-    """Run the middleware's compaction decision the way ``awrap_tool_call`` does.
+    """Run the middleware's compaction decision the way awrap_tool_call does.
 
-    The decide logic now lives in the module-level ``should_compact_output``; the
+    The decide logic now lives in the module-level should_compact_output; the
     middleware only supplies its config and derives the per-tool flags. This
     mirrors that derivation so the behavioral assertions stay identical.
     """
@@ -651,7 +651,7 @@ class TestLLMSummary:
         assert _summary_input_sample(short) == short
 
     def test_summary_input_sample_boundary_is_inclusive(self) -> None:
-        """len == head+tail passes through untouched; one more char splits."""
+        """Len == head+tail passes through untouched; one more char splits."""
         from app.constants.summarization import (
             COMPACTION_SUMMARY_INPUT_HEAD_CHARS as HEAD,
             COMPACTION_SUMMARY_INPUT_TAIL_CHARS as TAIL,
@@ -850,7 +850,7 @@ class TestLLMSummarizeInternals:
         assert len(matches) == 1, log.records
 
     async def test_missing_content_attr_uses_empty_default(self) -> None:
-        """getattr's '' default must survive: a message without .content yields
+        """Getattr's '' default must survive: a message without .content yields
         an empty digest -> 'was empty' warning, not a crash or a phantom value."""
         from app.agents.middleware import compaction as cm
 

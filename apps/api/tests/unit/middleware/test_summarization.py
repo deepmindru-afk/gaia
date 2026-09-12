@@ -63,9 +63,9 @@ def _humans(count: int) -> list[AnyMessage]:
 
 
 def _graph_config(**configurable: Any) -> AbstractContextManager[None]:
-    """Stand in for LangGraph's runnable context var, which `get_config()` reads.
+    """Stand in for LangGraph's runnable context var, which get_config() reads.
 
-    The `runtime` object a middleware hook receives deliberately carries no
+    The runtime object a middleware hook receives deliberately carries no
     config, so this — not the runtime — is where the archive's user and
     conversation come from.
     """

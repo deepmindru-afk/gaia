@@ -1,12 +1,12 @@
 """Tools service for managing and retrieving tool information.
 
-`get_available_tools` is the single source for the tools a user can use: core
+get_available_tools is the single source for the tools a user can use: core
 (no-integration) tools plus the tools of integrations in their workspace. It is
 leak-safe (only the user's own added integrations, never another user's MCP) and
-self-describing — each tool carries server-computed `locked` (added but not
+self-describing — each tool carries server-computed locked (added but not
 connected), so the client never re-derives lock state. Per-user results cache
-under `tools:user:{user_id}:*`, which the integration mutators bust via
-`USER_INTEGRATION_CACHE_PATTERNS`.
+under tools:user:{user_id}:*, which the integration mutators bust via
+USER_INTEGRATION_CACHE_PATTERNS.
 """
 
 from typing import Any
@@ -38,7 +38,7 @@ def get_integration_name(integration_id: str) -> str | None:
 
 async def get_available_tools(user_id: str | None = None) -> ToolsListResponse:
     """Core tools + the tools of the user's workspace integrations, each tagged
-    with `locked`. Anonymous callers (warmup) get core tools only. Per-user
+    with locked. Anonymous callers (warmup) get core tools only. Per-user
     results are cached; the anonymous build is coalesced."""
     log.set(component="tools_service", operation="get_available_tools", user_id=user_id)
     if user_id is None:
@@ -227,8 +227,8 @@ async def get_integration_tool_list(integration_id: str) -> list[IntegrationTool
     catalog for Composio/platform toolkits, the MCP store for MCP/custom servers.
 
     Registry category ids may be upper/mixed case, so the match is case-insensitive.
-    ``destructive`` marks each tool's HIL default from the curated set (empty for
-    uncurated/MCP toolkits, so those tools report ``False``).
+    destructive marks each tool's HIL default from the curated set (empty for
+    uncurated/MCP toolkits, so those tools report False).
     """
     destructive = integration_destructive_tools(integration_id) or set()
     tool_registry = await get_tool_registry()

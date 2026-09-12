@@ -108,7 +108,7 @@ class TestMediaDeliveryPerLane:
     async def test_a_bogus_provider_fails_loudly_rather_than_silently_dropping_images(
         self,
     ) -> None:
-        """A lane names its provider as an ``LLMProviderName``. An unknown one is a
+        """A lane names its provider as an LLMProviderName. An unknown one is a
         bug in whatever wrote the bag, and it must surface there rather than
         degrade every image on the run to text."""
         with pytest.raises(ValueError, match="not a valid LLMProviderName"):

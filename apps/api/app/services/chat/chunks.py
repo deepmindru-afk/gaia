@@ -1,21 +1,21 @@
 """SSE chunk parsing and dispatch for the chat stream.
 
-The agent emits two flavors of chunk: plain ``data: {...}`` SSE frames (forwarded
-to the client) and ``nostream: {...}`` markers (consumed by the orchestrator and
-never sent on). :func:`process_data_chunk` is the per-chunk side-effecting
-dispatcher; :func:`extract_tool_data`, :func:`normalize_custom_event`, and
-:func:`extract_response_text` are pure parsers reused by the dispatcher, the
-LangGraph stream processor in ``stream_utils``, and the legacy
-``call_agent_silent`` path in ``agent_utils``.
+The agent emits two flavors of chunk: plain data: {...} SSE frames (forwarded
+to the client) and nostream: {...} markers (consumed by the orchestrator and
+never sent on). :func:process_data_chunk is the per-chunk side-effecting
+dispatcher; :func:extract_tool_data, :func:normalize_custom_event, and
+:func:extract_response_text are pure parsers reused by the dispatcher, the
+LangGraph stream processor in stream_utils, and the legacy
+call_agent_silent path in agent_utils.
 
-Two shapes here stay ``dict[str, Any]`` on purpose (Type Safety item 14):
+Two shapes here stay dict[str, Any] on purpose (Type Safety item 14):
 
 * the chunk payloads themselves — an agent chunk is arbitrary JSON emitted by
-  whichever tool/hook wrote it, and ``normalize_custom_event`` passes anything
+  whichever tool/hook wrote it, and normalize_custom_event passes anything
   it does not recognise straight through, so there is no closed shape to name;
-* :func:`extract_tool_data`'s ``{tool_data?, other_data?, tool_output?}``
-  envelope — it is consumed by ``utils/stream_publishers`` and
-  ``utils/agent_utils``, both of which declare it as a plain ``dict[str, Any]``
+* :func:extract_tool_data's {tool_data?, other_data?, tool_output?}
+  envelope — it is consumed by utils/stream_publishers and
+  utils/agent_utils, both of which declare it as a plain dict[str, Any]
   parameter, so naming it would have to retype those in the same pass.
 """
 
@@ -37,7 +37,7 @@ from app.utils.stream_publishers import (
 
 @dataclass(slots=True)
 class ChunkAccumulators:
-    """Per-turn accumulators that :func:`process_data_chunk` mutates in place."""
+    """Per-turn accumulators that :func:process_data_chunk mutates in place."""
 
     tool_data: dict[str, Any]
     tool_outputs: dict[str, str]
@@ -52,18 +52,18 @@ async def process_data_chunk(
     *,
     forward_subagents: bool = False,
 ) -> tuple[list[str], bool]:
-    """Process a ``data:``-prefixed agent chunk.
+    """Process a data:-prefixed agent chunk.
 
     Extracts tool data, follow-up actions, todo progress, and tool outputs,
     publishes appropriate sub-chunks to Redis, and updates stream progress.
 
-    When ``forward_subagents`` is set, ``subagent_start``/``subagent_end`` markers
-    are forwarded to the client and accumulated into ``tool_data`` for later
-    grouping by :func:`app.utils.stream_utils.reconstruct_subagent_groups`.
+    When forward_subagents is set, subagent_start/subagent_end markers
+    are forwarded to the client and accumulated into tool_data for later
+    grouping by :func:app.utils.stream_utils.reconstruct_subagent_groups.
 
-    Returns ``(follow_up_actions, published)`` where ``published`` indicates
-    whether the chunk was already sent (``True``) or should be sent as-is
-    (``False``).
+    Returns (follow_up_actions, published) where published indicates
+    whether the chunk was already sent (True) or should be sent as-is
+    (False).
     """
     chunk_payload = chunk[6:]
 
@@ -113,7 +113,7 @@ async def process_data_chunk(
 
 
 async def _settle_boundary(stream_id: str, chunk_json: dict[str, Any] | None) -> None:
-    """Apply a ``message_boundary`` frame to the Redis progress record.
+    """Apply a message_boundary frame to the Redis progress record.
 
     The frame is the turn's own verdict on the message that just ended — kept,
     or a discarded preamble to a tool call. The live client acts on it; the
@@ -135,7 +135,7 @@ async def _forward_subagent_lifecycle(
 ) -> bool:
     """Forward subagent start/end events to the client and accumulate them.
 
-    Returns ``True`` when a lifecycle frame was published, so the caller skips
+    Returns True when a lifecycle frame was published, so the caller skips
     the generic passthrough that would republish the same event.
     """
     forwarded = False
@@ -159,7 +159,7 @@ async def _forward_subagent_lifecycle(
 
 
 def _parse_chunk_json(chunk_payload: str) -> dict[str, Any] | None:
-    """Parse a chunk payload as JSON, returning ``None`` on malformed input."""
+    """Parse a chunk payload as JSON, returning None on malformed input."""
     try:
         return cast(dict[str, Any], json.loads(chunk_payload))
     except json.JSONDecodeError:
@@ -167,7 +167,7 @@ def _parse_chunk_json(chunk_payload: str) -> dict[str, Any] | None:
 
 
 def extract_response_text(chunk: str) -> str:
-    """Extract the ``response`` field from a ``data:`` chunk, or empty string."""
+    """Extract the response field from a data: chunk, or empty string."""
     try:
         chunk = chunk.removeprefix("data: ")
         data = json.loads(chunk)
@@ -222,14 +222,14 @@ def normalize_custom_event(payload: dict[str, Any]) -> dict[str, Any]:
 def extract_tool_data(json_str: str) -> dict[str, Any]:
     """Parse and extract structured tool output from an agent JSON chunk.
 
-    Converts individual tool fields (e.g. ``calendar_options``, ``search_results``)
-    into the unified ``ToolDataEntry`` array format the frontend consumes, using
-    :func:`normalize_custom_event` so the tool-field registry lives in one place.
+    Converts individual tool fields (e.g. calendar_options, search_results)
+    into the unified ToolDataEntry array format the frontend consumes, using
+    :func:normalize_custom_event so the tool-field registry lives in one place.
 
     Returns a dict that may contain:
-      - ``tool_data``: list of ``ToolDataEntry`` objects (if any tool data found)
-      - ``other_data``: non-tool fields like ``follow_up_actions``
-      - ``tool_output``: a single ``tool_output`` event to be merged before save
+      - tool_data: list of ToolDataEntry objects (if any tool data found)
+      - other_data: non-tool fields like follow_up_actions
+      - tool_output: a single tool_output event to be merged before save
 
     Malformed JSON or no recognized tool keys yields an empty dict.
     """

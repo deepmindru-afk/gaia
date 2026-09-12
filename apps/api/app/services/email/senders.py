@@ -262,7 +262,7 @@ async def send_badge_earned_email(
 ) -> None:
     """Congratulate a user the first time they reach an activity badge tier.
 
-    Send-once semantics live with the caller (``sync_activity_tiers`` promotes
+    Send-once semantics live with the caller (sync_activity_tiers promotes
     monotonically), so this stays a dumb sender like the rest of this module.
     """
     html_content = render_email_template(
@@ -295,7 +295,7 @@ async def _limit_email_recipient(user_id: str) -> UserDocument | None:
 
     Both limit emails — the interactive upsell and the background
     workflows-paused note — share this one weekly window via
-    ``last_limit_email_sent``, so a user never gets more than one limit email
+    last_limit_email_sent, so a user never gets more than one limit email
     of any kind in a 7-day span.
     """
     user = await user_repository.get(user_id)

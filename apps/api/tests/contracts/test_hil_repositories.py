@@ -1,8 +1,8 @@
 """Contract tests for the HIL repositories (approval records + tool-risk cache).
 
 The behaviors that must survive any backend: once-only record creation under the
-deterministic ``approval_id`` (a resume replay's duplicate insert is a no-op that
-never resets a decided record), the one-time ``pending -> decided`` transition,
+deterministic approval_id (a resume replay's duplicate insert is a no-op that
+never resets a decided record), the one-time pending -> decided transition,
 and the sweep/join finders' exact filters.
 """
 

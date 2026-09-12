@@ -1,8 +1,8 @@
 """The running stack, as the drive sees it: the API under the dev auth bypass.
 
-Every call goes through the real REST surface (`driving-gaia` skill §2 and §4):
+Every call goes through the real REST surface (driving-gaia skill §2 and §4):
 the drive never reaches into a service, so what it proves is what a user's
-client would get. ``wait_healthy`` exists because the API under test has been
+client would get. wait_healthy exists because the API under test has been
 killed from outside mid-drive; a scenario must wait for the port, not fail on it.
 """
 
@@ -86,7 +86,7 @@ class GaiaClient:
     # --- workflows -----------------------------------------------------------
 
     def create_workflow(self, title: str, prompt: str, category: str = "todos") -> WorkflowRef:
-        """A one-step workflow whose step text is ``prompt``: under the scripted
+        """A one-step workflow whose step text is prompt: under the scripted
         model that text IS the script (the step description is rendered verbatim
         into the run's user message)."""
         self.wait_healthy()
@@ -127,7 +127,7 @@ class GaiaClient:
 
     def pending_todos(self) -> list[TodoRef]:
         """Every pending todo, across every page: the list paginates with
-        ``per_page`` (max 100), and a page cap once left leftovers pending that a
+        per_page (max 100), and a page cap once left leftovers pending that a
         "suspect" scenario then saw as items."""
         found: list[TodoRef] = []
         page = 1

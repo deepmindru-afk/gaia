@@ -1,13 +1,13 @@
 """A percentage over n=1 is not a measurement.
 
-``expected.category`` is what the report and the baseline group on
-(``runner.py:508``, ``baseline.py:93``), and several categories shipped with one
+expected.category is what the report and the baseline group on
+(runner.py:508, baseline.py:93), and several categories shipped with one
 or two cases in them. "Composition 100%" was two cases; the hard tier was 17
 cases spread over 14 categories, so a single case flipping moved a category by
 50-100 points and the report presented that as a quality signal.
 
 This pins the floor. It also catches the quieter version of the bug: a typo in a
-``category:`` value silently creates a brand-new one-case category rather than
+category: value silently creates a brand-new one-case category rather than
 failing anything.
 
 Deliberately a data-only check — it reads the YAML directly rather than through

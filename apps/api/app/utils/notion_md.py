@@ -341,7 +341,7 @@ def blocks_to_markdown(
         nesting_level: Current nesting level for indentation
         include_block_ids: If True, prepend block IDs as HTML comments
                           (e.g., <!-- block:abc123 -->) so LLM can reference
-                          them for insertion positioning with `after` parameter.
+                          them for insertion positioning with after parameter.
 
     Returns:
         Markdown formatted string

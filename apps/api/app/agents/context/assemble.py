@@ -33,10 +33,10 @@ from shared.py.wide_events import log
 class AssembledContext:
     """The two system messages a tier's dynamic context becomes.
 
-    ``stable`` holds what changes only when the user edits a preference or
-    connects an integration, and sits inside the cacheable prefix. ``volatile``
+    stable holds what changes only when the user edits a preference or
+    connects an integration, and sits inside the cacheable prefix. volatile
     holds what was retrieved against this turn and sits at the tail of the system
-    block, so it can never shift the bytes ahead of it. ``volatile`` is ``None``
+    block, so it can never shift the bytes ahead of it. volatile is None
     when there is nothing per-turn to say.
     """
 
@@ -59,7 +59,7 @@ VOLATILE_BLOCK_TAIL_CHARS = 4_000
 
 
 def _bounded(volatile_text: str) -> str:
-    """The volatile block, clipped to :data:`VOLATILE_BLOCK_MAX_CHARS`."""
+    """The volatile block, clipped to :data:VOLATILE_BLOCK_MAX_CHARS."""
     if len(volatile_text) <= VOLATILE_BLOCK_MAX_CHARS:
         return volatile_text
     return (
@@ -82,10 +82,10 @@ async def _render_section(section: Section, ctx: SectionContext) -> tuple[str, s
 
 
 async def _gather_sections(ctx: SectionContext) -> AssembledContext:
-    """Gather every section that applies to ``ctx.tier`` and slot the results.
+    """Gather every section that applies to ctx.tier and slot the results.
 
-    A section that fails returns ``""`` rather than raising (see
-    ``fetchers``), so a degraded context never costs the user their turn.
+    A section that fails returns "" rather than raising (see
+    fetchers), so a degraded context never costs the user their turn.
     """
     stable_sections = sections_for(ctx.tier, PromptSlot.DYNAMIC_STABLE)
     volatile_sections = sections_for(ctx.tier, PromptSlot.MEMORY_RECALL)
@@ -137,7 +137,7 @@ async def _gather_sections(ctx: SectionContext) -> AssembledContext:
 
 
 async def assemble_context(ctx: SectionContext) -> AssembledContext:
-    """The context ``ctx.tier`` hands its model — the one entry point for it.
+    """The context ctx.tier hands its model — the one entry point for it.
 
     Degrades to an empty stable block if the gather itself fails. That block is
     byte-stable on purpose: a persistent failure here must not produce a

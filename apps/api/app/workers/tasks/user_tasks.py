@@ -1,6 +1,4 @@
-"""
-User-related ARQ tasks.
-"""
+"""User-related ARQ tasks."""
 
 from datetime import UTC, datetime, timedelta
 from typing import Any

@@ -1,41 +1,41 @@
-"""Stop a repeated cumulative ``usage`` frame from being billed once per stream chunk.
+"""Stop a repeated cumulative usage frame from being billed once per stream chunk.
 
-On the OpenAI wire, ``stream_options: {include_usage: true}`` asks for token
+On the OpenAI wire, stream_options: {include_usage: true} asks for token
 counts as a *cumulative snapshot of the whole response*. Nothing in the protocol
 says the snapshot arrives once, and providers differ: openrouter.ai sends it on
 a single terminal chunk, while the DEV_LLM lane (a deepseek-v4-flash endpoint)
 repeats it on nearly every chunk — a live 8-chunk answer carried five frames,
-each reporting ``prompt_tokens: 89`` with a completion count climbing
+each reporting prompt_tokens: 89 with a completion count climbing
 1 → 6 → 10 → 10 → 10.
 
-``ChatOpenRouter._stream``/``_astream`` attach every one of those snapshots to
-its chunk as ``usage_metadata``, and ``AIMessageChunk.__add__``
-(``langchain_core.messages.ai``) merges chunks with ``add_usage``, which ADDS.
+ChatOpenRouter._stream/_astream attach every one of those snapshots to
+its chunk as usage_metadata, and AIMessageChunk.__add__
+(langchain_core.messages.ai) merges chunks with add_usage, which ADDS.
 So the merged message claimed 445 input and 37 output tokens for a call that
 really spent 89 and 10 — the inflation factor being however many chunks the
 answer arrived in. Everything downstream reads that merged message:
-``extract_message_usage`` → ``record_llm_call`` (the daily USD budget and the
-per-request token ceiling), the ``model.*`` wide event, and the per-turn usage
-``UsageMetadataCallbackHandler`` hands the frontend.
+extract_message_usage → record_llm_call (the daily USD budget and the
+per-request token ceiling), the model.* wide event, and the per-turn usage
+UsageMetadataCallbackHandler hands the frontend.
 
 The fix is at the source: convert each snapshot into the delta since the last
 one before it leaves the stream. Summing deltas lands exactly on the final
 snapshot, so every additive consumer — the chunk merge, the callback handler,
 the tracers — arrives at the number the provider actually reported, and the
 single-frame providers are unaffected (their one frame's delta is itself).
-Deliberately NOT fixed in ``add_usage``: the same function is what
-``UsageMetadataCallbackHandler`` uses to total usage *across* calls, which must
+Deliberately NOT fixed in add_usage: the same function is what
+UsageMetadataCallbackHandler uses to total usage *across* calls, which must
 keep adding.
 
-Normalising the chunk is the whole fix: ``BaseChatModel`` fires
-``on_llm_new_token`` itself, with the chunk this wrapper just yielded, so the
+Normalising the chunk is the whole fix: BaseChatModel fires
+on_llm_new_token itself, with the chunk this wrapper just yielded, so the
 streamed view and the merged message agree without the wrapper touching
-callbacks. ``run_manager`` stays in the signature because it is part of the
+callbacks. run_manager stays in the signature because it is part of the
 method langchain declares, but langchain-core 1.4.8 never passes it — all four
-call sites (``stream``, ``astream``, ``_generate_with_cache``,
-``_agenerate_with_cache``) invoke ``_stream``/``_astream`` as
-``(messages, stop=stop, **kwargs)``. An earlier version of this patch fired the
-callback itself under ``if run_manager:``; that branch was verified to execute
+call sites (stream, astream, _generate_with_cache,
+_agenerate_with_cache) invoke _stream/_astream as
+(messages, stop=stop, **kwargs). An earlier version of this patch fired the
+callback itself under if run_manager:; that branch was verified to execute
 zero times across all four entry points and has been removed.
 """
 
@@ -85,9 +85,9 @@ def _delta(previous: Mapping[str, Any], current: Mapping[str, Any]) -> dict[str,
 def _normalise(
     chunk: ChatGenerationChunk, previous: Mapping[str, Any]
 ) -> tuple[ChatGenerationChunk, Mapping[str, Any]]:
-    """Replace a chunk's cumulative usage with the delta since ``previous``.
+    """Replace a chunk's cumulative usage with the delta since previous.
 
-    ``previous`` is the last snapshot seen, empty before the first one — an
+    previous is the last snapshot seen, empty before the first one — an
     empty mapping subtracts to itself, so the first frame's delta is the frame.
     Returns the chunk to emit and the snapshot to subtract from next time.
     Chunks carrying no usage pass through untouched.
@@ -110,10 +110,10 @@ def _normalise(
 def _warn_if_langchain_starts_passing_a_run_manager(run_manager: object) -> None:
     """Loud if langchain ever hands these wrappers a run_manager of their own.
 
-    It does not today: langchain-core 1.4.8 invokes ``_stream``/``_astream`` as
-    ``(messages, stop=stop, **kwargs)`` from all four call sites (``stream``,
-    ``astream``, ``_generate_with_cache``, ``_agenerate_with_cache``) and fires
-    ``on_llm_new_token`` itself with the chunk yielded here — which is why
+    It does not today: langchain-core 1.4.8 invokes _stream/_astream as
+    (messages, stop=stop, **kwargs) from all four call sites (stream,
+    astream, _generate_with_cache, _agenerate_with_cache) and fires
+    on_llm_new_token itself with the chunk yielded here — which is why
     normalising the chunk is the entire fix.
 
     If a future version starts passing one, this wrapper would have to forward
@@ -121,7 +121,7 @@ def _warn_if_langchain_starts_passing_a_run_manager(run_manager: object) -> None
     the raw cumulative snapshot while the merged message reports the delta. A
     silent divergence between the streamed numbers and the billed ones is the
     exact failure this patch exists to prevent, so it is a warning, not a
-    comment: ``log.warning`` puts it on the wide event's ``warnings[]``.
+    comment: log.warning puts it on the wide event's warnings[].
     """
     if run_manager is not None:
         log.warning(
@@ -137,7 +137,7 @@ def _stream(
     run_manager: CallbackManagerForLLMRun | None = None,
     **kwargs: object,
 ) -> Iterator[ChatGenerationChunk]:
-    """``ChatOpenRouter._stream`` with cumulative usage snapshots turned into deltas."""
+    """ChatOpenRouter._stream with cumulative usage snapshots turned into deltas."""
     _warn_if_langchain_starts_passing_a_run_manager(run_manager)
     previous: Mapping[str, Any] = {}
     for chunk in _ORIGINAL_STREAM(self, messages, stop=stop, **kwargs):
@@ -152,7 +152,7 @@ async def _astream(
     run_manager: AsyncCallbackManagerForLLMRun | None = None,
     **kwargs: object,
 ) -> AsyncIterator[ChatGenerationChunk]:
-    """``ChatOpenRouter._astream`` with cumulative usage snapshots turned into deltas."""
+    """ChatOpenRouter._astream with cumulative usage snapshots turned into deltas."""
     _warn_if_langchain_starts_passing_a_run_manager(run_manager)
     previous: Mapping[str, Any] = {}
     async for chunk in _ORIGINAL_ASTREAM(self, messages, stop=stop, **kwargs):

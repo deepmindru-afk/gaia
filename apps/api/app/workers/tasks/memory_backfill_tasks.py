@@ -1,14 +1,14 @@
 """Daily backfill of long-term memory for users who predate the memory engine.
 
 Users created before the live memory pipeline shipped have conversation history
-that never went through ``memory_node``. A daily cron (``backfill_active_users``)
+that never went through memory_node. A daily cron (backfill_active_users)
 scans for recently-active, pre-launch, not-yet-backfilled users and enqueues a
-per-user job (``backfill_user_memories``) that replays their conversations
-through ``memory_engine.retain`` and notifies them once their memory is ready.
+per-user job (backfill_user_memories) that replays their conversations
+through memory_engine.retain and notifies them once their memory is ready.
 
-The ``memory_backfilled`` marker makes the whole thing idempotent and, as a
+The memory_backfilled marker makes the whole thing idempotent and, as a
 free side effect, picks up users who only just became active again: when a
-dormant account logs back in its ``last_active_at`` is bumped, so the next cron
+dormant account logs back in its last_active_at is bumped, so the next cron
 run sees it as eligible and backfills it.
 """
 

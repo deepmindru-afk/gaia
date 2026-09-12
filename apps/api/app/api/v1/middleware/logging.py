@@ -109,9 +109,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     """Middleware that emits one structured wide event per HTTP request.
 
     Every scalar field is available for LogQL filtering in Grafana without any
-    pre-processing — just add `| json` to any query. The `errors`/`warnings`
-    arrays are the exception: bare `| json` drops arrays outright, and they are
-    absent (not empty) when nothing was recorded, so `| errors != "[]"` matches
+    pre-processing — just add | json to any query. The errors/warnings
+    arrays are the exception: bare | json drops arrays outright, and they are
+    absent (not empty) when nothing was recorded, so | errors != "[]" matches
     every line. Reach into them with an explicit JSON expression instead.
 
     LogQL examples:
@@ -142,8 +142,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     def _attach_user_context(request: Request) -> None:
         """Merge the authenticated user's identity into the wide event.
 
-        Called after ``call_next``: the auth middlewares run inside this
-        boundary and populate ``request.state.user`` during it. Attaching from
+        Called after call_next: the auth middlewares run inside this
+        boundary and populate request.state.user during it. Attaching from
         state here guarantees user identity on every event regardless of what
         the handler did; fields a handler set explicitly win over the
         automatic ones.

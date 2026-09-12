@@ -5,45 +5,45 @@ FORMAT/EMIT helpers build their payloads through these models instead of inline
 dict literals, so each shape is declared in exactly one place and can drift only
 if this file changes.
 
-Byte-compatibility contract: a model's ``model_dump()`` must serialize (via
-``json.dumps``) to the exact bytes the old inline literal produced — the
+Byte-compatibility contract: a model's model_dump() must serialize (via
+json.dumps) to the exact bytes the old inline literal produced — the
 frontend parser must not be able to tell the difference. That requires:
 
-* field declaration order matches the literal's key order (``json.dumps``
-  preserves dict insertion order; ``model_dump`` preserves field order);
-* fields the literal always included (even as ``null``) are dumped without
-  ``exclude_none``; fields the literal added conditionally use
-  ``exclude_none=True`` at the call site.
+* field declaration order matches the literal's key order (json.dumps
+  preserves dict insertion order; model_dump preserves field order);
+* fields the literal always included (even as null) are dumped without
+  exclude_none; fields the literal added conditionally use
+  exclude_none=True at the call site.
 
 Two frame families:
 
-* structured-payload frames (``tool_data``, ``tool_output``, ``reasoning``,
-  ``subagent_start``, ``subagent_end``) carry a nested object — the object is
+* structured-payload frames (tool_data, tool_output, reasoning,
+  subagent_start, subagent_end) carry a nested object — the object is
   modeled here and wrapped in its one-word envelope key at the emit site;
-* single-field frames (``response``, ``follow_up_actions``, ``error``,
-  ``main_response_complete``, ``todo_progress``, ``conversation_description``,
-  ``conversation_initialized``) are the envelope.
+* single-field frames (response, follow_up_actions, error,
+  main_response_complete, todo_progress, conversation_description,
+  conversation_initialized) are the envelope.
 
 Two frames are intentionally not modeled here:
 
-* ``keepalive`` is emitted by the stream manager as a compact literal
-  (``{"keepalive":true}``) whose byte shape differs from ``json.dumps`` output;
-* ``progress`` (``{"progress": "<text>"}``) is a trivial single-string frame
+* keepalive is emitted by the stream manager as a compact literal
+  ({"keepalive":true}) whose byte shape differs from json.dumps output;
+* progress ({"progress": "<text>"}) is a trivial single-string frame
   emitted from ~two dozen scattered tool sites; both remain documented in the
   frontend Zod schema, which the parser validates against.
 
-The frontend mirror of this vocabulary is ``libs/shared/ts/src/chat/schema.ts``.
+The frontend mirror of this vocabulary is libs/shared/ts/src/chat/schema.ts.
 
 Replay-completeness contract: the event log built from these frames is the
 turn's source of truth. A client attaching mid-turn (reload, second tab)
 reconstructs the ENTIRE turn from replay alone — so any new client-visible
 fact about a turn must be carried in a frame, never assumed to survive in
-client memory or local persistence (this is why ``conversation_initialized``
+client memory or local persistence (this is why conversation_initialized
 carries the user's message text, not just ids).
 
 Frames must not encode implicit request-shape assumptions. Example of the bug
-class: ``messages[-1]`` is the current user turn only when its role is
-``user`` — clients omit empty-text (file-only) turns from history, so the last
+class: messages[-1] is the current user turn only when its role is
+user — clients omit empty-text (file-only) turns from history, so the last
 entry can be the previous assistant reply. Derive such values defensively and
 in exactly one helper, so the frame and the persisted record can never
 disagree.

@@ -1,9 +1,9 @@
 """Checkpointed threads must not accumulate per-run prompt framing.
 
 Every run injects a fresh system-prompt stack (static + dynamic context + time
-clock) into the graph input, exactly as ``_core_agent_logic`` does. The
+clock) into the graph input, exactly as _core_agent_logic does. The
 pre-model hooks filter those per model call, but for months the filtering was
-request-only: the checkpointed ``messages`` channel kept every run's copy, and
+request-only: the checkpointed messages channel kept every run's copy, and
 the end-of-graph hook node echoed the entire accumulated list back through the
 reducer as a fresh write on every run. On a recurring workflow thread in
 production this reached 39 retained prompt copies and ~4.8 MB of checkpoint
@@ -31,7 +31,7 @@ END_HOOKS_NODE = "end_graph_hooks"
 
 
 def _run_input(run_no: int) -> dict:
-    """A graph input shaped like ``construct_langchain_messages`` output.
+    """A graph input shaped like construct_langchain_messages output.
 
     Fresh message objects per run (new ids), same slots: one static system
     prompt, one dynamic-context system message, one time-context clock line,
@@ -115,11 +115,11 @@ class TestPromptFramingIsPrunedFromCheckpointState:
 class TestEndGraphHooksWriteNothing:
     @pytest.mark.regression
     async def test_end_hooks_node_does_not_rewrite_the_message_list(self):
-        """The end-graph hook node must not emit a ``messages`` channel write.
+        """The end-graph hook node must not emit a messages channel write.
 
         Its hooks (follow-up streaming, fire-and-forget memory ingestion) never
         modify messages — echoing the full state back re-serializes the entire
-        thread into ``checkpoint_writes`` on every single run.
+        thread into checkpoint_writes on every single run.
         """
         async with comms_graph(["done"]) as graph:
             run = await run_graph(graph, "", thread_id=f"echo-{uuid4()}", state=_run_input(1))

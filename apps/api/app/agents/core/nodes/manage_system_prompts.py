@@ -3,17 +3,17 @@
 Stacking ten timestamped dynamic-context messages across a ten-turn conversation
 is what shatters the LLM's implicit prompt-cache prefix. This node discards every
 older copy of each slot and rebuilds the array in the order declared by
-:class:`~app.agents.context.slots.PromptSlot`, so the model sees the same shape
+:class:~app.agents.context.slots.PromptSlot, so the model sees the same shape
 on every turn.
 
 The ordering rationale lives with the enum, not here — this node only applies it.
 
-The bigtool override's ``acall_model`` calls hooks via
-``state = await execute_hooks(...)`` and then invokes the LLM with
-``state["messages"]`` directly, so this return value IS the request. The
-persistent checkpoint still grows unfiltered (LangGraph's ``add_messages``
+The bigtool override's acall_model calls hooks via
+state = await execute_hooks(...) and then invokes the LLM with
+state["messages"] directly, so this return value IS the request. The
+persistent checkpoint still grows unfiltered (LangGraph's add_messages
 reducer never reorders by id), which is why the dropped ids ride back on
-``PRUNED_MESSAGE_IDS_KEY`` for the model node to tombstone.
+PRUNED_MESSAGE_IDS_KEY for the model node to tombstone.
 
 Runs as a pre-model hook so it also fires when a generation is cancelled
 (end-of-graph hooks do not run on cancellation).
@@ -58,8 +58,8 @@ def manage_system_prompts_node(state: State, config: RunnableConfig, store: Base
     """Keep the latest message per slot and emit them in canonical slot order.
 
     The order depends on the provider the request is bound for — see
-    ``request_slot_order``. The lane's provider is read off the configurable,
-    which ``build_agent_config`` derives from the resolved ``ModelLane``.
+    request_slot_order. The lane's provider is read off the configurable,
+    which build_agent_config derives from the resolved ModelLane.
     """
     try:
         messages = state.get("messages", [])

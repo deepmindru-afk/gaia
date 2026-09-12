@@ -785,7 +785,7 @@ class TestBotAuthFullChain:
 
 @pytest.mark.integration
 class TestSessionTokenFastPathReachesBotRoutes:
-    """The real middleware in front of the real ``require_bot_api_key``.
+    """The real middleware in front of the real require_bot_api_key.
 
     Every other case here substitutes a header check for the dependency, which
     is exactly why the fast-path 401 survived: the guard reads middleware state,

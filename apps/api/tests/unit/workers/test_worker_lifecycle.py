@@ -164,8 +164,8 @@ class TestWorkerShutdown:
 class TestWorkerSettings:
     """Tests for WorkerSettings configuration class.
 
-    The class doubles as the ARQ wiring registry: ``app/worker.py`` assigns
-    ``functions`` / ``cron_jobs`` / ``on_startup`` / ``on_shutdown`` at
+    The class doubles as the ARQ wiring registry: app/worker.py assigns
+    functions / cron_jobs / on_startup / on_shutdown at
     import, and any test file importing it pollutes the class for the whole
     xdist worker. These tests pin the DECLARED defaults, so reset them in
     setup instead of depending on import order (pytest-randomly).
@@ -182,7 +182,7 @@ class TestWorkerSettings:
         assert WorkerSettings.redis_settings is not None
 
     def test_functions_default_empty_list(self):
-        """functions starts as an empty list (populated by the worker module)."""
+        """Functions starts as an empty list (populated by the worker module)."""
         assert isinstance(WorkerSettings.functions, list)
 
     def test_cron_jobs_default_empty_list(self):
@@ -232,8 +232,8 @@ class TestWorkerSettings:
     def test_health_check_key_is_per_worker(self):
         """Each worker must own its liveness key, or the probe stops being liveness.
 
-        ``scripts/arq_healthcheck.py`` runs INSIDE each worker container and is
-        just ``EXISTS <key>``. While the key was the global ``arq:health``,
+        scripts/arq_healthcheck.py runs INSIDE each worker container and is
+        just EXISTS <key>. While the key was the global arq:health,
         every worker wrote the same one, so a wedged worker's own probe was
         satisfied by a sibling still refreshing it — measured: worker 1 dead,
         worker 2 alive, worker 1's probe still HEALTHY. The container is never
@@ -246,9 +246,9 @@ class TestWorkerSettings:
         assert socket.gethostname() in WorkerSettings.health_check_key
 
     def test_healthcheck_probe_reads_the_key_this_worker_writes(self):
-        """The probe cannot import ``app``, so the two derivations must be pinned.
+        """The probe cannot import app, so the two derivations must be pinned.
 
-        ``arq_healthcheck.py`` deliberately imports nothing from the app (it runs
+        arq_healthcheck.py deliberately imports nothing from the app (it runs
         outside the entrypoint with no Infisical credentials), so the key format
         is duplicated on purpose. Nothing but this test stops the two sides from
         drifting apart — and a drifted probe reads a key nobody writes, which

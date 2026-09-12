@@ -23,7 +23,7 @@ def _forwarder(*, bot_message_id: str | None = "bot-msg-1") -> ArtifactForwarder
 
 
 class _FakePubSub:
-    """Yields pre-built pub/sub messages through ``.listen()``."""
+    """Yields pre-built pub/sub messages through .listen()."""
 
     def __init__(self, messages: list[dict[str, str]]) -> None:
         self._messages = messages

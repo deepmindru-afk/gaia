@@ -6,9 +6,9 @@ pipeline that silently stopped issuing INCRBYFLOAT would pass the latter.
 
 The invariant these tests exist to protect: work GAIA does on the user's behalf
 (memory extraction, onboarding questions, workflow generation — every
-``ainvoke_structured`` caller) must NEVER move the day/month cost windows the
-budget wall reads. It is still priced and booked durably, under ``aux_cost``, so
-per-user COGS stays measurable. See ``app.services.llm_metering``.
+ainvoke_structured caller) must NEVER move the day/month cost windows the
+budget wall reads. It is still priced and booked durably, under aux_cost, so
+per-user COGS stays measurable. See app.services.llm_metering.
 """
 
 from collections.abc import AsyncIterator, Iterator
@@ -96,7 +96,7 @@ class TestChargedSpend:
 
 @pytest.mark.unit
 class TestAuxiliarySpend:
-    """``ainvoke_structured``'s route: background work, measured but never charged."""
+    """ainvoke_structured's route: background work, measured but never charged."""
 
     async def test_never_moves_the_budget_windows_the_wall_reads(self) -> None:
         # The real auxiliary shape: no root_request_id (this work outlives the
@@ -237,11 +237,11 @@ class TestDegradation:
 class TestTokenOnlyCalls:
     """A priced-at-zero call still burned real tokens.
 
-    ``record_llm_call`` books ``cost_usd=0`` when the pricing lookup misses, so
+    record_llm_call books cost_usd=0 when the pricing lookup misses, so
     gating the durable rollup on spend alone would lose the token breakdown for
     exactly the calls that need re-pricing later. Each of the four counters has
     to be able to trigger the rollup on its own — the existing tests always send
-    input and output together, so a single ``or`` flipped to ``and`` in that
+    input and output together, so a single or flipped to and in that
     chain changes nothing they can see.
     """
 

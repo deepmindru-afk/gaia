@@ -203,7 +203,7 @@ class TestHandoffToolStructure:
     """Verify the handoff tool exposes the expected JSON schema."""
 
     def test_handoff_tool_is_importable(self):
-        """handoff must be importable from handoff_tools."""
+        """Handoff must be importable from handoff_tools."""
 
         assert handoff is not None
 
@@ -213,7 +213,7 @@ class TestHandoffToolStructure:
         assert handoff.name == "handoff"
 
     def test_handoff_tool_schema_contains_required_params(self):
-        """handoff schema must expose subagent_id and task as required inputs."""
+        """Handoff schema must expose subagent_id and task as required inputs."""
 
         schema = handoff.args_schema.schema() if handoff.args_schema else {}
         # args_schema may not be set; fall back to tool.schema()
@@ -237,7 +237,7 @@ class TestHandoffToolStructure:
         assert "task" in param_names, f"handoff must accept 'task'; found params: {param_names}"
 
     def test_handoff_tool_is_async(self):
-        """handoff must be an async function (coroutine function)."""
+        """Handoff must be an async function (coroutine function)."""
         import inspect
 
         # For async @tool-decorated functions LangChain stores the original coroutine
@@ -248,7 +248,7 @@ class TestHandoffToolStructure:
         assert inspect.iscoroutinefunction(underlying), "handoff tool must be async"
 
     def test_handoff_tool_has_docstring(self):
-        """handoff must have a non-empty description for the LLM."""
+        """Handoff must have a non-empty description for the LLM."""
 
         description = handoff.description
         assert description and len(description) > 10, "handoff tool description must be informative"
@@ -1013,7 +1013,7 @@ class TestCustomMCPPath:
     create_subagent_for_user must be called and agent_name must follow the
     'custom_mcp_{integration_id}' convention.
 
-    If the custom MCP path is broken (e.g. `isinstance(integration, dict)` check
+    If the custom MCP path is broken (e.g. isinstance(integration, dict) check
     removed), these tests MUST fail.
     """
 
@@ -1059,7 +1059,7 @@ class TestCustomMCPPath:
         """End-to-end: handoff() with a custom MCP subagent must reach the
         custom MCP branch, call create_subagent_for_user, and return a result.
 
-        Breaking the `isinstance(integration, dict)` guard at line 244 of
+        Breaking the isinstance(integration, dict) guard at line 244 of
         handoff_tools.py will cause this test to fail because the execution
         will fall through to the platform-integration branch which raises
         AttributeError (dict has no .subagent_config attribute).
@@ -1672,7 +1672,7 @@ def handoff_seams(gated_subagent):
 
 
 def _interrupt_payloads(events: list) -> list[dict[str, Any]]:
-    """The HIL payloads the parent graph paused on during ``events``."""
+    """The HIL payloads the parent graph paused on during events."""
     return [
         interrupt_payload(payload[LANGGRAPH_INTERRUPT_KEY])
         for mode, payload in events
@@ -1684,7 +1684,7 @@ class _ExecutorDriver:
     """Calls the real handoff tool from inside a parent node, as the executor does.
 
     A handoff drives its subagent imperatively, so the subagent's GraphInterrupt
-    only becomes a pause if ``_run_blocking_handoff`` re-raises it into a parent
+    only becomes a pause if _run_blocking_handoff re-raises it into a parent
     runtime — which needs a real checkpointed parent graph around the call.
     """
 

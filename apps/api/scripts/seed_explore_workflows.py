@@ -10,7 +10,7 @@ The explore use cases behind /use-cases, curated to poke.com's bar:
 - Run counts are curated display values (DISPLAY_RUN_COUNTS), not measured usage
 
 Categories: Study, Email, Meetings, Home admin, Content, Focus & planning,
-Dev, Health & habits. 8 workflows are flagged `featured` (impact-first).
+Dev, Health & habits. 8 workflows are flagged featured (impact-first).
 
 Usage:
   cd apps/api
@@ -964,7 +964,7 @@ def get_system_workflows() -> list[dict[str, Any]]:
     """The auto-provisioned workflows, as explore cards.
 
     Same definitions the provisioner uses, so the card shows exactly what a user
-    gets when they connect the integration. The ``system_workflow_key`` rides
+    gets when they connect the integration. The system_workflow_key rides
     along to the client, which is what stops "add this" from creating a second
     copy of one the user already has.
     """

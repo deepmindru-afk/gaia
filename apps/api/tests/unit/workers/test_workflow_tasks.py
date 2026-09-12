@@ -88,7 +88,7 @@ def _patch_scheduler(workflow=None):
     """Stand in for the process-wide workflow_scheduler singleton.
 
     Returns the mock plus its unstarted patcher, so callers can enter it in a
-    `with (...):` block alongside their other patches.
+    with (...): block alongside their other patches.
     """
     scheduler = AsyncMock()
     scheduler.get_task = AsyncMock(return_value=workflow)
@@ -103,8 +103,8 @@ def _no_analytics():
     """Neutralize the analytics capture on workflow-conversation creation.
 
     The generation task creates the workflow's conversation via
-    ``create_system_conversation``, which captures ``CONVERSATION_CREATED``
-    through ``capture_event`` — the PostHog provider is not registered in this
+    create_system_conversation, which captures CONVERSATION_CREATED
+    through capture_event — the PostHog provider is not registered in this
     test module's import chain, so the call must be mocked.
     """
     with patch("app.services.conversation_service.capture_event"):
@@ -1353,7 +1353,7 @@ class TestExecuteWorkflowByIdNotifications:
     def _make_error_patches(self, workflow, error):
         """Build the common with-block patches for an error scenario.
 
-        Returns individual patch objects so they can be used in a `with (...):`
+        Returns individual patch objects so they can be used in a with (...):
         block without needing iterable unpacking.
         """
         _, p_scheduler = _patch_scheduler(workflow)
@@ -1989,7 +1989,7 @@ MODULE = "app.workers.tasks.workflow_tasks"
 
 
 class _FirePatches:
-    """Every I/O edge one ``execute_workflow_by_id`` fire touches, mocked.
+    """Every I/O edge one execute_workflow_by_id fire touches, mocked.
 
     The by-id task is the only place several ids are threaded together (the
     batch key, the claim, the cost wall, the counters), so these tests assert
@@ -2140,7 +2140,7 @@ class TestTheByIdTaskThreadsItsIdsThrough:
 
 
 class TestTheCoalescedBatchIsTakenUnderItsOwnKey:
-    """Trigger events live in Redis under ``trigger_batch_key``, not in the job
+    """Trigger events live in Redis under trigger_batch_key, not in the job
     payload. Reading the wrong key drains nothing and the events are stranded
     until something else happens to fire the workflow."""
 
@@ -2271,7 +2271,7 @@ class TestTheByIdExceptPathsNameTheirCause:
 
 
 class TestTheWorkflowCardBothRunPathsAttach:
-    """``build_selected_workflow_data`` is the one builder behind the agent turn
+    """build_selected_workflow_data is the one builder behind the agent turn
     and the playbook replay. The card is read by the UI by key, so the whole
     payload is pinned: a renamed step key renders an empty row, and a dropped
     prompt loses what the run was asked to do."""
@@ -2449,7 +2449,7 @@ class TestTheChatRunsTriggerTurnIsBuiltExactly:
 @pytest.mark.unit
 class TestAnExecutorThatDiedIsNotASuccessfulRun:
     """Seen live: the executor's model call failed, comms apologised, and the
-    execution record said ``success`` / "Ran the full workflow" with the apology
+    execution record said success / "Ran the full workflow" with the apology
     as the result, while the delivery path had already sent the user a failure
     notification. The executor's outcome rides the session, not the prose."""
 

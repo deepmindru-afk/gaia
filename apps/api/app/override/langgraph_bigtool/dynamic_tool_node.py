@@ -39,7 +39,7 @@ from app.services.hil.gate import decide_tool_call
 def format_tool_error(exc: Exception) -> str:
     """Uniform error text for a failed tool call, with the exception type.
 
-    Passed to ToolNode as ``handle_tool_errors`` so parent-routed tools
+    Passed to ToolNode as handle_tool_errors so parent-routed tools
     (InjectedState / middleware tools) convert failures into error
     ToolMessages instead of crashing the whole run; also used by the
     middleware dispatch path so both paths speak the same format. The type
@@ -61,7 +61,7 @@ async def timeout_guarded_tool_call(
     request: ToolCallRequest,
     execute: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
 ) -> ToolMessage | Command:
-    """Per-call execution wrapper (ToolNode ``awrap_tool_call``): bound hung tools.
+    """Per-call execution wrapper (ToolNode awrap_tool_call): bound hung tools.
 
     A hung integration call previously hung the entire run forever. Long-running
     orchestration tools manage their own lifecycles and are exempt.
@@ -86,10 +86,10 @@ async def hil_and_timeout_guarded_tool_call(
     request: ToolCallRequest,
     execute: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
 ) -> ToolMessage | Command:
-    """Parent ToolNode ``awrap_tool_call`` for InjectedState/middleware tools.
+    """Parent ToolNode awrap_tool_call for InjectedState/middleware tools.
 
     The gate is asked first and separately: it only ever reads a decision the
-    ``approvals`` node already settled, so a blocked call costs nothing and never
+    approvals node already settled, so a blocked call costs nothing and never
     enters the timeout window meant for the tool itself.
     """
     blocked = await decide_tool_call(request)
@@ -100,7 +100,7 @@ async def hil_and_timeout_guarded_tool_call(
 
 @dataclass
 class ToolNodeOptions:
-    """Options forwarded verbatim to ``ToolNode.__init__`` — see its docstring."""
+    """Options forwarded verbatim to ToolNode.__init__ — see its docstring."""
 
     name: str = "tools"
     tags: list[str] | None = None
@@ -134,7 +134,7 @@ class DynamicToolNode(ToolNode):
 
         Args:
             tool_registry: Mapping of tool names to tool instances
-            options: Forwarded verbatim to ``ToolNode.__init__``
+            options: Forwarded verbatim to ToolNode.__init__
             middleware_executor: Optional middleware executor for wrap_tool_call hooks
             middleware_tools: Optional list of tools from middleware (e.g., SubagentMiddleware)
                 that need parent ToolNode handling (InjectedToolCallId, Command returns)
@@ -197,7 +197,7 @@ class DynamicToolNode(ToolNode):
     ) -> Any:  # noqa: ANN401 -- mirrors LangGraph ToolNode methods typed Any upstream
         """Override to inject dynamically added tools before execution.
 
-        Return type mirrors ``ToolNode._func``, which is itself typed ``Any``
+        Return type mirrors ToolNode._func, which is itself typed Any
         upstream (its shape varies: dict[str, list[BaseMessage]], a list of
         results, or a Command).
         """
@@ -212,8 +212,8 @@ class DynamicToolNode(ToolNode):
     ) -> Any:  # noqa: ANN401 -- mirrors LangGraph ToolNode methods typed Any upstream
         """Override to inject dynamically added tools before execution and apply middleware.
 
-        Return type mirrors ``ToolNode._afunc``, which is itself typed ``Any``
-        upstream — see ``_func`` above.
+        Return type mirrors ToolNode._afunc, which is itself typed Any
+        upstream — see _func above.
         """
         self._sync_registry()
 
@@ -243,9 +243,9 @@ class DynamicToolNode(ToolNode):
     ) -> Any:  # noqa: ANN401 -- mirrors LangGraph ToolNode methods typed Any upstream
         """Execute tools with middleware wrap_tool_call hooks.
 
-        Return type is ``Any``: two branches delegate straight to
-        ``ToolNode._afunc`` (itself typed ``Any`` upstream); the rest return
-        ``dict[str, list[ToolMessage | Command]] | list[ToolMessage | Command]``.
+        Return type is Any: two branches delegate straight to
+        ToolNode._afunc (itself typed Any upstream); the rest return
+        dict[str, list[ToolMessage | Command]] | list[ToolMessage | Command].
 
         This method is called when middleware with wrap_tool_call is present.
         It wraps each tool invocation with the middleware hooks.

@@ -125,16 +125,16 @@ class AsyncRedisCommands(Protocol):
     """The Redis commands this codebase issues, typed as the async client returns them.
 
     redis-py declares each command once, on a mixin shared by the sync and async
-    clients, annotated ``Awaitable[T] | T``. That union is honest for the pair but
-    wrong for ``redis.asyncio.Redis``, where every command returns an awaitable —
-    so ``await client.llen(key)`` does not type-check against the library's own
-    annotations, and the ones declared ``ResponseT`` (an alias containing bare
-    ``Any``) type-check but return ``Any`` and check nothing downstream.
+    clients, annotated Awaitable[T] | T. That union is honest for the pair but
+    wrong for redis.asyncio.Redis, where every command returns an awaitable —
+    so await client.llen(key) does not type-check against the library's own
+    annotations, and the ones declared ResponseT (an alias containing bare
+    Any) type-check but return Any and check nothing downstream.
 
     Restating the commands we actually use fixes both: awaits resolve, and results
-    arrive as real types (``hgetall`` is a ``dict[str, str]``, not ``dict[Any, Any]``).
-    Values are ``str`` rather than ``bytes`` because the client is constructed with
-    ``decode_responses=True``.
+    arrive as real types (hgetall is a dict[str, str], not dict[Any, Any]).
+    Values are str rather than bytes because the client is constructed with
+    decode_responses=True.
 
     Adding a command here is the cost of using a new one — mypy will name it.
     """
@@ -150,7 +150,7 @@ class AsyncRedisCommands(Protocol):
     async def set(
         self, name: str, value: str, *, ex: int | None = None, nx: bool = False
     ) -> bool | None:
-        """SET — with ``nx`` returns None when the key already existed."""
+        """SET — with nx returns None when the key already existed."""
         ...
 
     async def setex(self, name: str, time: int, value: str) -> bool:
@@ -262,7 +262,7 @@ class AsyncRedisCommands(Protocol):
         ...
 
     def pipeline(self, transaction: bool = True) -> Pipeline:
-        """A command pipeline; ``transaction=True`` wraps it in MULTI/EXEC."""
+        """A command pipeline; transaction=True wraps it in MULTI/EXEC."""
         ...
 
 
@@ -270,8 +270,8 @@ def _new_client(redis_url: str) -> AsyncRedisCommands:
     """Build the async client, described by what it really returns.
 
     The cast is the one place the library's sync/async-shared annotations are
-    traded for the async-accurate ones in ``AsyncRedisCommands``; see that
-    protocol for why they differ. ``from_url`` is lazy — this does not connect.
+    traded for the async-accurate ones in AsyncRedisCommands; see that
+    protocol for why they differ. from_url is lazy — this does not connect.
     """
     return cast(AsyncRedisCommands, redis.from_url(redis_url, decode_responses=True))
 
@@ -279,8 +279,8 @@ def _new_client(redis_url: str) -> AsyncRedisCommands:
 class RedisCache:
     """Async Redis wrapper with type-safe (de)serialization and graceful degradation.
 
-    The client is created lazily (``redis.from_url`` does not connect on
-    construction); call ``verify_connection`` at startup to assert reachability.
+    The client is created lazily (redis.from_url does not connect on
+    construction); call verify_connection at startup to assert reachability.
     When Redis is unavailable, read/write helpers no-op instead of raising.
     """
 
@@ -314,7 +314,7 @@ class RedisCache:
         Redis backs caching, SSE streaming, rate limiting and stream
         cancellation, so an unavailable Redis is a real outage — surface it
         loudly instead of silently degrading (the prior behavior optimistically
-        reported "connected" because ``from_url`` connects lazily). Fails fast
+        reported "connected" because from_url connects lazily). Fails fast
         in production; logs loudly elsewhere so local dev still runs.
         """
         if self.redis is None:
@@ -429,9 +429,7 @@ class RedisCache:
             return False
 
     async def delete(self, key: str) -> None:
-        """
-        Delete a cached key.
-        """
+        """Delete a cached key."""
         if not self.redis:
             log.warning(f"{LogTag.STORAGE} Redis is not initialized. Skipping delete operation.")
             return
@@ -450,9 +448,7 @@ class RedisCache:
 
     @property
     def client(self) -> AsyncRedisCommands:
-        """
-        Get the Redis client instance.
-        """
+        """Get the Redis client instance."""
         if not self.redis:
             self.redis = _new_client(self.redis_url)
             log.info(f"{LogTag.STORAGE} Re-initialized Redis connection.")
@@ -512,9 +508,7 @@ async def set_cache(
 
 
 async def delete_cache(key: str) -> None:
-    """
-    Delete a cached key.
-    """
+    """Delete a cached key."""
     # TODO: Optimize this
     if key.endswith("*"):
         await delete_cache_by_pattern(key)
@@ -541,7 +535,7 @@ async def get_and_delete_cache(key: str, model: type[T] | None = None) -> Any:
     Args:
         key: Cache key to get and delete
         model: Optional type to validate the stored value into. Passing it makes
-            the return type that model rather than ``Any``; omitting it keeps the
+            the return type that model rather than Any; omitting it keeps the
             untyped behaviour, since the one-time payloads here have no single
             shape.
 

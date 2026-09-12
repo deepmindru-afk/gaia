@@ -170,9 +170,9 @@ class TestTheAutoApprovalReceipt:
     """auto mode ALREADY RAN the action without asking, so its record is a receipt, not a
     request: born decided.
 
-    The repository contract test proves a record with ``status="auto_approved"`` resists
+    The repository contract test proves a record with status="auto_approved" resists
     every decision and every sweep — but it builds that record itself, with the status
-    hardcoded in the test. Nothing checked that the service writes one. Born ``pending``,
+    hardcoded in the test. Nothing checked that the service writes one. Born pending,
     an irreversible action that already happened would show a live Approve/Deny card, be
     resolvable by the decision endpoint, and be expirable by the timeout sweep.
     """

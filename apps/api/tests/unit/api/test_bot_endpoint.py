@@ -63,13 +63,13 @@ def _make_request(bot_api_key_valid: bool = True, **extra_state: object) -> Magi
 
 @pytest.fixture(autouse=True)
 def _no_real_redis_cost_budget():
-    """``bot_chat_stream`` calls ``enforce_daily_cost_budget`` -> ``get_cost``
+    """bot_chat_stream calls enforce_daily_cost_budget -> get_cost
     directly (unmocked in the tests below), which reads the module-singleton
-    ``redis_cache.redis`` — a real client pointed at the test env's local Redis
-    (``tests/conftest.py``). Under randomized test order a connection opened by
-    an earlier test's event loop can outlive it, and a later ``.get()`` on the
-    same pooled connection raises ``RuntimeError: Event loop is closed`` instead
-    of the ``RedisError``/``OSError`` ``get_cost`` actually catches — an
+    redis_cache.redis — a real client pointed at the test env's local Redis
+    (tests/conftest.py). Under randomized test order a connection opened by
+    an earlier test's event loop can outlive it, and a later .get() on the
+    same pooled connection raises RuntimeError: Event loop is closed instead
+    of the RedisError/OSError get_cost actually catches — an
     unhandled 500, not a flaky assertion. Nulling the client forces the
     documented fail-open (cost reads 0.0) with no network call at all.
     """
@@ -86,7 +86,7 @@ def _pro_plan_by_default():
     Most of these tests exercise chat mechanics, quota metering, or unrelated
     bot endpoints — not the paywall itself (see TestBotChatStreamSubscriptionGate
     for that). A test that needs FREE re-patches PLAN_PATCH inside its own
-    `with` block, which nests inside (and correctly overrides) this one.
+    with block, which nests inside (and correctly overrides) this one.
     """
     with patch(PLAN_PATCH, new_callable=AsyncMock, return_value=PlanType.PRO):
         yield
@@ -98,7 +98,7 @@ def _pro_plan_by_default():
 
 
 class TestResetSession:
-    """POST /api/v1/bot/reset-session"""
+    """POST /api/v1/bot/reset-session."""
 
     @patch("app.api.v1.endpoints.bot.capture_event")
     @patch("app.api.v1.endpoints.bot.BotService")
@@ -195,13 +195,13 @@ class TestResolveUserId:
         assert _resolve_user_id({"user_id": "uid1", "_id": "other"}) == "uid1"
 
     def test_falls_back_to_the_platform_link_shape(self):
-        """PlatformLinkService returns `_id` with no `user_id`."""
+        """PlatformLinkService returns _id with no user_id."""
         from app.api.v1.endpoints.bot import _resolve_user_id
 
         assert _resolve_user_id({"_id": "507f1f77bcf86cd799439011"}) == ("507f1f77bcf86cd799439011")
 
     def test_a_document_with_neither_key_yields_empty_not_the_string_none(self):
-        """`str(user.get("_id", None))` would return the literal "None" here —
+        """str(user.get("_id", None)) would return the literal "None" here —
         a garbage distinct_id that looks valid and silently creates a profile."""
         from app.api.v1.endpoints.bot import _resolve_user_id
 
@@ -219,7 +219,7 @@ class TestResolveUserId:
 
 
 class TestCheckAuthStatus:
-    """GET /api/v1/bot/auth-status/{platform}/{platform_user_id}"""
+    """GET /api/v1/bot/auth-status/{platform}/{platform_user_id}."""
 
     @patch(
         "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
@@ -297,7 +297,7 @@ class TestCheckAuthStatus:
 
 
 class TestGetSettings:
-    """GET /api/v1/bot/settings/{platform}/{platform_user_id}"""
+    """GET /api/v1/bot/settings/{platform}/{platform_user_id}."""
 
     @patch(
         "app.api.v1.endpoints.bot.get_user_integration_records",
@@ -361,7 +361,7 @@ class TestGetSettings:
 
 
 class TestUnlinkAccount:
-    """POST /api/v1/bot/unlink"""
+    """POST /api/v1/bot/unlink."""
 
     @patch("app.api.v1.endpoints.bot.capture_event")
     @patch("app.api.v1.endpoints.bot.redis_cache")
@@ -455,7 +455,7 @@ class TestUnlinkAccount:
 
 
 class TestBotChatStream:
-    """POST /api/v1/bot/chat-stream"""
+    """POST /api/v1/bot/chat-stream."""
 
     async def test_chat_stream_no_api_key(self, client: AsyncClient):
         response = await client.post(
@@ -990,7 +990,7 @@ class TestBotChatStreamBody:
     web-only frame, and nothing checked that anything at all still reached the
     socket while it did so.
 
-    `with_heartbeat` is exercised for real here — only its interval is shortened,
+    with_heartbeat is exercised for real here — only its interval is shortened,
     so the padding behaviour under test is the shipped implementation.
     """
 
@@ -1077,7 +1077,7 @@ class TestBotChatStreamBody:
         convert, not drop — and it is minted for the RESOLVED user, so the
         checkout link inside it attributes to their account.
 
-        It converts to a typed ``notice`` frame, never to reply text: text
+        It converts to a typed notice frame, never to reply text: text
         belongs to the assistant message in flight, so a notice sent that way
         went down with any message that got discarded (a handoff preamble, a
         rewritten draft) and the user hit a wall in silence."""
@@ -1126,7 +1126,7 @@ class TestBotChatStreamBody:
     async def test_a_message_boundary_reaches_the_bot_intact(self, client: AsyncClient):
         """The one web frame the translator forwards verbatim.
 
-        A bot needs it twice over: to close a bubble, and — when ``discarded`` —
+        A bot needs it twice over: to close a bubble, and — when discarded —
         to take back a handoff preamble it has already shown the user. Both the
         key and the payload underneath it are the contract, so this reads the
         frame back rather than checking the word appears somewhere.
@@ -1164,8 +1164,8 @@ class TestBotChatStreamBody:
     async def test_a_disconnected_client_stops_forwarding_before_any_frame(
         self, client: AsyncClient
     ):
-        """`request.is_disconnected()` is checked before translating each chunk —
-        a client gone before the first one gets neither text nor `done`, and the
+        """request.is_disconnected() is checked before translating each chunk —
+        a client gone before the first one gets neither text nor done, and the
         background task (already launched) is left to persist the result alone."""
 
         async def answer() -> AsyncGenerator[str, None]:
@@ -1180,7 +1180,7 @@ class TestBotChatStreamBody:
         assert '"session_token": "tok"' in body
 
     async def test_a_subscription_error_yields_a_generic_error_frame(self, client: AsyncClient):
-        """An exception from `subscribe_stream` must still end the turn with a
+        """An exception from subscribe_stream must still end the turn with a
         frame the bot can render, not a silently dead connection."""
 
         async def broken() -> AsyncGenerator[str, None]:
@@ -1303,7 +1303,7 @@ class TestBotChatStreamBody:
 
 
 class TestBotTranscribe:
-    """POST /api/v1/bot/transcribe"""
+    """POST /api/v1/bot/transcribe."""
 
     async def test_transcribe_no_api_key(self, client: AsyncClient):
         response = await client.post(
@@ -1552,12 +1552,12 @@ class TestBotChatRequestFiles:
 class TestBotChatStreamMetering:
     """A bot turn must charge the same plan quota as a web chat turn.
 
-    `bot_chat_stream` resolves its caller from a platform link inside the body,
-    so it can never be metered by `@tiered_rate_limit`. Before it called
-    `enforce_tiered_limit` explicitly it went entirely unmetered: a free user had
+    bot_chat_stream resolves its caller from a platform link inside the body,
+    so it can never be metered by @tiered_rate_limit. Before it called
+    enforce_tiered_limit explicitly it went entirely unmetered: a free user had
     no message limit through Telegram/Discord/Slack/WhatsApp, and because
-    `record_activity` fires from the limiter, bot turns never reached
-    `usage_daily` either — leaving those users off the heatmap, streak and badge.
+    record_activity fires from the limiter, bot turns never reached
+    usage_daily either — leaving those users off the heatmap, streak and badge.
     """
 
     @staticmethod
@@ -1673,12 +1673,12 @@ class TestBotChatStreamMetering:
 def upgrade_link_window_open():
     """Open the once-per-window mint gate, so link tests are about the link.
 
-    ``_bot_upgrade_url`` mints at most once per user per window, gated by a
-    Redis ``SET NX EX``. Without this the second test in a run to use the same
+    _bot_upgrade_url mints at most once per user per window, gated by a
+    Redis SET NX EX. Without this the second test in a run to use the same
     user id takes the pricing-page branch and passes for the wrong reason —
-    which is exactly what ``test_dodo_failure_degrades_to_the_pricing_page``
+    which is exactly what test_dodo_failure_degrades_to_the_pricing_page
     did the moment the window landed. The window's own behaviour is proven in
-    ``TestBotUpgradeLinkWindow``.
+    TestBotUpgradeLinkWindow.
     """
     with patch(
         "app.api.v1.endpoints.bot._may_mint_bot_upgrade_link",
@@ -1694,7 +1694,7 @@ class TestBotChatStreamSubscriptionGate:
 
     Distinct from platform_requires_upgrade above, which only gates premium
     platforms (iMessage) — this gates every platform. The refusal must reach
-    the bot as a real outbound message (a `notice` frame), not a bare error
+    the bot as a real outbound message (a notice frame), not a bare error
     code, because it carries a per-user checkout link.
     """
 
@@ -1825,7 +1825,7 @@ class TestBotChatStreamSubscriptionGate:
 class TestBotRateLimitNotice:
     """Rate limits reach bots as text, so the upgrade path has to be a link.
 
-    Bots drop `tool_data`, so the web's RateLimitCard (and its pricing-modal CTA)
+    Bots drop tool_data, so the web's RateLimitCard (and its pricing-modal CTA)
     never renders for them. A checkout link is the only one-tap route a WhatsApp
     or Telegram user has.
     """
@@ -1911,10 +1911,10 @@ class TestBotUpgradeLinkWindow:
     """A bot turn mints at most one Dodo session per user per window.
 
     Both bot walls — the paid-only gate and the rate-limit notice — repeat for
-    every message until the user acts on them, and each mint is a ``get_plans``
-    call, a Dodo round-trip and a ``checkout_sessions`` insert. Unbounded, a
+    every message until the user acts on them, and each mint is a get_plans
+    call, a Dodo round-trip and a checkout_sessions insert. Unbounded, a
     lapsed user who keeps typing leaves a trail of throwaway sessions, and the
-    newest of them is what ``checkout_session_repository.get_latest_for_user``
+    newest of them is what checkout_session_repository.get_latest_for_user
     finds when the webhook-race recovery goes looking for the session they
     actually paid on.
 

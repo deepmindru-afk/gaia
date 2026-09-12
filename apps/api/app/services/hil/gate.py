@@ -1,15 +1,15 @@
 """The HIL approval gate: it decides whether a tool call may run, and never runs one.
 
-One entry point, ``decide_tool_call``: the caller asks, and runs the tool only if the
-answer is "yes". Every ``return await handler(request)`` this module used to contain is
+One entry point, decide_tool_call: the caller asks, and runs the tool only if the
+answer is "yes". Every return await handler(request) this module used to contain is
 gone, so there is exactly one place in the system a tool can run from.
 
 A call the user has not answered pauses here. Its siblings are unaffected: each tool call
-is its own node task (``create_agent`` fans them out with ``Send``), and LangGraph
+is its own node task (create_agent fans them out with Send), and LangGraph
 persists the writes of the tasks that COMPLETED in an interrupting step, so they are not
 re-run on resume. That only holds while the run's checkpoint actually gets written —
-see the drain note in ``subagent_runner``, where breaking out of the stream early under
-``durability="exit"`` used to throw it away and re-run the completed siblings.
+see the drain note in subagent_runner, where breaking out of the stream early under
+durability="exit" used to throw it away and re-run the completed siblings.
 
 The gate orchestrates; it does not decide or render. Each step is somebody else's job:
 
@@ -21,11 +21,11 @@ The gate orchestrates; it does not decide or render. Each step is somebody else'
 
 Three invariants hold this together:
 
-* ``interrupt()`` raises ``GraphInterrupt``. It is control flow, never an error — it must
-  never be caught here, nor by the wrappers above (see the ``GraphBubbleUp`` guards in
-  ``executor.py`` / ``dynamic_tool_node.py``).
-* **A decision is a record**, never a resume payload. ``resolve_approval`` writes it to
-  Mongo; the ``Command(resume=...)`` that follows is only a wake-up, and its value is
+* interrupt() raises GraphInterrupt. It is control flow, never an error — it must
+  never be caught here, nor by the wrappers above (see the GraphBubbleUp guards in
+  executor.py / dynamic_tool_node.py).
+* **A decision is a record**, never a resume payload. resolve_approval writes it to
+  Mongo; the Command(resume=...) that follows is only a wake-up, and its value is
   deliberately ignored. That is what lets one decision wake a run with several approvals
   outstanding without anything being lost or double-applied.
 * Everything before a pause runs again on the replay, so all of it is idempotent: every
@@ -108,14 +108,14 @@ class _Pending:
 
 
 async def decide_tool_call(request: ToolCallRequest) -> ToolMessage | None:
-    """HIL's verdict for one call. ``None`` clears it to run.
+    """HIL's verdict for one call. None clears it to run.
 
     A ToolMessage IS the call's whole result — it was denied, timed out, or the gate
     itself failed, and nothing will execute. The gate decides and never executes: the
     caller runs the tool, so there is exactly one place a tool can run from.
 
     Pauses here when the user has not answered yet. The run checkpoints and EXITS on
-    that ``interrupt()``; on resume the node replays from the top and this same call
+    that interrupt(); on resume the node replays from the top and this same call
     finds its decision on the record.
     """
     verdict = await _verdict(request)
@@ -146,7 +146,7 @@ async def decide_tool_call(request: ToolCallRequest) -> ToolMessage | None:
 
 
 async def _verdict(request: ToolCallRequest) -> ToolMessage | _Pending | None:
-    """Where one call stands with HIL: cleared (``None``), blocked, or awaiting a user."""
+    """Where one call stands with HIL: cleared (None), blocked, or awaiting a user."""
     call = unpack_tool_call(request)
     if call.name in HIL_EXEMPT_TOOLS:
         return None
@@ -180,12 +180,12 @@ async def _verdict(request: ToolCallRequest) -> ToolMessage | _Pending | None:
 
 
 def read_gate_context(request: ToolCallRequest) -> GateContext | None:
-    """The run's approval identity, or ``None`` when the user cannot be identified.
+    """The run's approval identity, or None when the user cannot be identified.
 
-    A background/queued run *is* returned (with ``pausable=False``): it has no live client
+    A background/queued run *is* returned (with pausable=False): it has no live client
     to approve, so the gate cannot ask — but a gated call there must be failed closed, not
     silently allowed, which is why it is no longer discarded here. Only a run missing an
-    identity field is ``None``, since without a user there is no policy to resolve.
+    identity field is None, since without a user there is no policy to resolve.
     """
     configurable = configurable_of(request)
     stream_id = configurable.get("stream_id")
@@ -286,7 +286,7 @@ async def _decide(
 async def _apply(
     record: HILApprovalRecord, context: GateContext, call: GatedCall
 ) -> ToolMessage | None:
-    """Turn a settled record into the call's fate: ``None`` runs it, a message blocks it.
+    """Turn a settled record into the call's fate: None runs it, a message blocks it.
 
     The record is the decision — never the resume payload, which is only a wake-up.
     """
@@ -315,14 +315,14 @@ async def _judge(
 ) -> IntentDecision | None:
     """Ask the intent judge whether the user's request authorizes this call.
 
-    ``None`` means "don't auto-approve, don't spend a judge call", for the two cases where
+    None means "don't auto-approve, don't spend a judge call", for the two cases where
     auto-approval is off the table before the question is even worth asking:
 
     * **A record already exists** — a card is already up for this call, so the user has
       been asked and the answer is theirs to give. Re-judging would also re-run a
       non-deterministic LLM call on every replay of this node.
     * **A sibling call will pause** — this node will replay, and the judge is the one
-      thing in it that is not idempotent; see ``policy.has_pausing_sibling``.
+      thing in it that is not idempotent; see policy.has_pausing_sibling.
     """
     if record is not None:
         return None
@@ -346,8 +346,8 @@ async def _judge(
 def _outcome_from_record(record: HILApprovalRecord) -> ApprovalOutcome:
     """The decision as the record holds it — the one durable copy.
 
-    ``AUTO_APPROVED`` reads as a plain approval: it means the user was not asked, not
-    that anything happened. ``ABANDONED`` reads as a denial — the user moved on, so the
+    AUTO_APPROVED reads as a plain approval: it means the user was not asked, not
+    that anything happened. ABANDONED reads as a denial — the user moved on, so the
     agent must not act.
     """
     if record.status is HILApprovalStatus.AUTO_APPROVED:

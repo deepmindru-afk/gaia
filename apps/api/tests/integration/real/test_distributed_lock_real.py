@@ -1,4 +1,4 @@
-"""``DistributedLock`` against real Redis.
+"""DistributedLock against real Redis.
 
 Only real Redis proves this: the lock is a SET NX lease with a token-checked Lua
 release, and the properties under test are what happens to that lease *over
@@ -6,7 +6,7 @@ time* — two processes must never hold it at once, a holder still working withi
 its budget must keep it via the watchdog, and a holder wedged past the max-hold
 cap must be forcibly evicted so it can't freeze the system forever.
 
-These are the guarantees ``run_idempotent`` leans on to stop a cold-start replica
+These are the guarantees run_idempotent leans on to stop a cold-start replica
 herd from each re-embedding the whole tool catalog: the herd serializes on the
 lease, and a follower that acquires after the leader finishes re-runs the
 now-empty diff instead of racing it.

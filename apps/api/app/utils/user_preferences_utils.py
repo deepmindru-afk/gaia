@@ -13,13 +13,13 @@ from shared.py.wide_events import log
 def onboarding_preferences(
     onboarding: OnboardingSubdocument | dict[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """The ``(preferences, writing_style)`` pair off a user's onboarding data.
+    """The (preferences, writing_style) pair off a user's onboarding data.
 
     Every root call site that hands a user's onboarding data to
-    ``build_agent_config`` or a comms ``SectionContext`` reads the same two keys
+    build_agent_config or a comms SectionContext reads the same two keys
     — pulled out once so that reading doesn't drift between call sites. Takes
-    both shapes because ``UserDocument.onboarding`` is the typed subdocument
-    while ``AuthenticatedUser.onboarding`` is still the raw Mongo dict the auth
+    both shapes because UserDocument.onboarding is the typed subdocument
+    while AuthenticatedUser.onboarding is still the raw Mongo dict the auth
     layer spreads, and returns dicts because the prompt formatters below and the
     context fetchers consume them that way.
     """

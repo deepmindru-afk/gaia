@@ -1,15 +1,15 @@
 """The vision fallback's own model must be able to see, and the fallback's
 behavior must degrade gracefully.
 
-``describe_image`` is what a blind lane falls back to, and it fails SILENTLY —
-a failed call returns ``None`` and every caller degrades to "couldn't look". So
+describe_image is what a blind lane falls back to, and it fails SILENTLY —
+a failed call returns None and every caller degrades to "couldn't look". So
 pointing it at a text-only model does not raise anywhere; images simply stop
 being understood. These tests pin the invariant that makes the fallback work at
-all, separately from ``test_vision_tool_media``, which pins the other half (a
+all, separately from test_vision_tool_media, which pins the other half (a
 lane that CAN see never pays for a description).
 
 Plus the call contract: the image is attached as an inline block, the text is
-flattened, and provider failure or an empty completion degrades to ``None``
+flattened, and provider failure or an empty completion degrades to None
 instead of failing the whole tool.
 """
 

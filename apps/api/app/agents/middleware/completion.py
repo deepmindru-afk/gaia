@@ -1,15 +1,15 @@
 """Harness-owned completion: the executor cannot silently quit early.
 
-``work_looks_unfinished`` is the prematurity check the executor's graph loop
+work_looks_unfinished is the prematurity check the executor's graph loop
 runs before honouring a plain-text stop. True on a concrete "too shallow"
-signal: a tracked todo still pending, fewer than ``COMPLETION_NON_WORK_TOOLS``
+signal: a tracked todo still pending, fewer than COMPLETION_NON_WORK_TOOLS
 tools executed on a delegated task, or a final reply that PROMISES future work
 ("hang tight", "still digging") — nothing runs after the reply ends, so a
 promise-to-continue is never a valid ending. Kept here so the graph builder
 stays generic; only the executor opts in via
-``create_agent(require_finish_to_end=True)``.
+create_agent(require_finish_to_end=True).
 
-Everything here counts over ``current_delegation`` rather than the whole
+Everything here counts over current_delegation rather than the whole
 thread, because the executor's thread spans every delegation of a conversation.
 Counting the thread let delegation two inherit delegation one's tool calls and
 nudges, so the guard fired exactly once per conversation and was dead for the
@@ -51,12 +51,12 @@ def _is_playbook_nudge(message: AnyMessage) -> bool:
 def current_delegation(state: State) -> list[AnyMessage]:
     """The messages belonging to the delegation that is running right now.
 
-    The executor keeps ONE thread per conversation (``executor_{thread_id}``),
+    The executor keeps ONE thread per conversation (executor_{thread_id}),
     so a whole-history scan counts the PREVIOUS delegation's tool calls and
     nudges — and the guard switches itself off for every delegation after the
-    first. The boundary is the newest genuine task turn: the ``HumanMessage``
-    ``build_initial_messages`` appends per delegation. The clock message and
-    the nudges themselves arrive as ``HumanMessage`` too, so all are skipped over.
+    first. The boundary is the newest genuine task turn: the HumanMessage
+    build_initial_messages appends per delegation. The clock message and
+    the nudges themselves arrive as HumanMessage too, so all are skipped over.
     """
     messages = state.get("messages", [])
     for index in range(len(messages) - 1, -1, -1):
@@ -119,7 +119,7 @@ def playbook_nudges_spent(state: State) -> int:
 
 
 def _is_stop(message: AnyMessage) -> bool:
-    """A plain-text reply or a ``finish_task`` result: the executor's two ways
+    """A plain-text reply or a finish_task result: the executor's two ways
     to end a run. A tool-calling turn is not a stop; the run is still going."""
     if isinstance(message, AIMessage):
         return not message.tool_calls
@@ -128,12 +128,12 @@ def _is_stop(message: AnyMessage) -> bool:
 
 def playbook_decision_pending(state: State) -> bool:
     """True when this delegation was briefed for a playbook decision and is
-    stopping, in plain text or through ``finish_task``, without having made one.
+    stopping, in plain text or through finish_task, without having made one.
 
     The brief is recognised by its tag on the task turn. A decision is a call
     to one of the decision tools whose result is not an error envelope: a
-    refused ``write_playbook`` leaves the run exactly where it was, and the
-    brief says so. Seen live: a briefed run that ended with ``finish_task`` and
+    refused write_playbook leaves the run exactly where it was, and the
+    brief says so. Seen live: a briefed run that ended with finish_task and
     no decision was never nudged, so no decline was counted and the same brief
     came back on every later fire.
     """

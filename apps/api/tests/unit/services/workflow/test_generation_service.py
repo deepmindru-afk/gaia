@@ -1,7 +1,7 @@
 """Unit tests for the pure helpers behind workflow step generation.
 
-These pin the four helpers extracted out of ``WorkflowGenerationService`` in
-``app/services/workflow/generation_service.py``: the user-facing failure
+These pin the four helpers extracted out of WorkflowGenerationService in
+app/services/workflow/generation_service.py: the user-facing failure
 summary, the structured one-shot's call shape, and the two category collectors
 that decide what the generator is allowed to reach for. Each is a pure function
 over a seam (an exception, the LLM lane, the tool registry, the OAuth catalog),
@@ -73,7 +73,7 @@ class TestFailureReason:
         )
 
     def test_an_empty_message_falls_back_to_the_class_name(self):
-        """``raise TimeoutError`` carries no message at all; "TimeoutError: "
+        """raise TimeoutError carries no message at all; "TimeoutError: "
         with nothing after it tells the user nothing."""
         assert _failure_reason(TimeoutError()) == "TimeoutError: TimeoutError"
         assert _failure_reason(TimeoutError("   ")) == "TimeoutError: TimeoutError"
@@ -114,7 +114,7 @@ class TestStructuredOneShot:
     """The lane a workflow draft is actually asked for."""
 
     async def test_it_meters_the_user_and_runs_the_schema_on_this_deployments_lane(self):
-        """``metered_config`` is what bills the request to the user, and the SAME
+        """metered_config is what bills the request to the user, and the SAME
         config has to reach both the runnable and the invoke: a deployment on a
         custom endpoint has no OpenRouter route, and a lost config sends the
         call back to the lane that does not exist here."""
@@ -196,7 +196,7 @@ class TestStructuredOneShot:
 
 
 class _FakeTool:
-    """A tool object carrying a name, whose ``str()`` is deliberately different."""
+    """A tool object carrying a name, whose str() is deliberately different."""
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -230,7 +230,7 @@ class TestCollectRegistryCategories:
     """What the generator is told it may build steps out of."""
 
     def test_core_categories_are_always_offered_with_their_tool_names(self):
-        """A tool is named to the model by ``.name``; its repr would be a string
+        """A tool is named to the model by .name; its repr would be a string
         the model cannot call."""
         registry = _registry(
             {"productivity": _FakeCategory([_FakeTool("create_todo"), _FakeTool("list_todos")])}
@@ -267,8 +267,8 @@ class TestCollectRegistryCategories:
         assert _collect_registry_categories(registry, {"notion"}) == ([], [])
 
     def test_the_active_set_is_matched_on_the_integration_name_not_the_category(self):
-        """The category key and the integration slug differ (``gh_tools`` vs
-        ``github``); matching on the wrong one hides every connected provider."""
+        """The category key and the integration slug differ (gh_tools vs
+        github); matching on the wrong one hides every connected provider."""
         registry = _registry(
             {
                 "gh_tools": _FakeCategory(
@@ -291,7 +291,7 @@ class TestCollectRegistryCategories:
         assert _collect_registry_categories(registry, set()) == ([], [])
 
     def test_one_skipped_provider_does_not_hide_the_categories_after_it(self):
-        """The skip is a `continue`, not a `break`: a single unconnected provider
+        """The skip is a continue, not a break: a single unconnected provider
         early in the registry must not cost the model every category behind it."""
         registry = _registry(
             {
@@ -321,7 +321,7 @@ class _FakeSubagentConfig:
 
 @dataclass
 class _FakeIntegration:
-    """A stand-in for an ``OAUTH_INTEGRATIONS`` entry.
+    """A stand-in for an OAUTH_INTEGRATIONS entry.
 
     Carries every attribute the module reads off the catalog — the subagent
     collector, the friendly-name lookup, the explicit-mention scan and the
@@ -395,7 +395,7 @@ class TestCollectSubagentCategories:
             )
 
     def test_one_unconnected_provider_does_not_hide_the_subagents_after_it(self):
-        """The skip is a `continue`, not a `break`: the catalog is mostly
+        """The skip is a continue, not a break: the catalog is mostly
         unconnected providers, so stopping at the first one would leave the
         generator with nothing — including the internal capabilities."""
         with _catalog(
@@ -432,7 +432,7 @@ class TestWorkflowStepGenerationError:
     """The typed error the API turns into a message the modal can render."""
 
     def test_the_reason_is_readable_off_the_error_and_off_its_str(self):
-        """The endpoint reads ``.reason``; a logger that only str()s the
+        """The endpoint reads .reason; a logger that only str()s the
         exception must not print an empty line instead."""
         error = WorkflowStepGenerationError("the provider refused")
 
@@ -491,7 +491,7 @@ class TestBuildIntegrationHints:
 
     def test_preferred_integrations_are_named_with_their_category_id(self):
         """The name tells the model what the user meant; the id is what a step's
-        ``category`` must be set to for that integration's tools to resolve."""
+        category must be set to for that integration's tools to resolve."""
         with _catalog(_FakeIntegration("gmail", name="Gmail")):
             assert _build_integration_hints({"gmail"}, set(), {}) == [
                 "Preferred integrations (use where the workflow makes sense): "
@@ -548,7 +548,7 @@ class TestBuildIntegrationHints:
         ]
 
     def test_a_custom_integrations_uuid_is_labelled_from_the_display_names_map(self):
-        """Custom integrations are keyed by an opaque uuid ``OAUTH_INTEGRATIONS``
+        """Custom integrations are keyed by an opaque uuid OAUTH_INTEGRATIONS
         knows nothing about; without the map the model is shown the raw uuid."""
         with _catalog(_FakeIntegration("gmail", name="Gmail")):
             assert _build_integration_hints({"abc-123"}, set(), {"abc-123": "My CRM"}) == [
@@ -564,7 +564,7 @@ class TestBuildIntegrationHints:
             ]
 
     def test_an_unknown_slug_is_printed_once_instead_of_twice(self):
-        """``_slug_to_friendly_name`` returns the slug itself when it resolves
+        """_slug_to_friendly_name returns the slug itself when it resolves
         nothing; "foo (category: foo)" is noise the model has to parse."""
         with _catalog(_FakeIntegration("gmail", name="Gmail")):
             assert _build_integration_hints({"mystery"}, set(), {}) == [
@@ -619,8 +619,8 @@ class TestCollectCustomIntegrationCategories:
         assert lines == ["abc-123 (custom integration): My CRM. My CRM"]
 
     async def test_a_built_in_integration_is_not_re_offered_as_a_custom_one(self):
-        """``get_my_integrations`` returns the whole catalog; only ``source ==
-        "custom"`` entries are missing from the static registry."""
+        """get_my_integrations returns the whole catalog; only source ==
+        "custom" entries are missing from the static registry."""
         with _my_integrations(
             _FakeCustomIntegration("gmail", "Gmail", source="oauth"),
             _FakeCustomIntegration("abc-123", "My CRM"),
@@ -659,7 +659,7 @@ class TestCollectCustomIntegrationCategories:
         assert display == {"abc-123": "My CRM"}
 
     async def test_one_unselected_integration_does_not_hide_the_ones_after_it(self):
-        """The skips are `continue`, not `break`: most of the list is neither
+        """The skips are continue, not break: most of the list is neither
         custom nor selected."""
         with _my_integrations(
             _FakeCustomIntegration("gmail", "Gmail", source="oauth"),
@@ -734,7 +734,7 @@ class TestCollectCustomIntegrationCategories:
 
 
 def _llm(**kwargs):
-    """Patch the LLM seam ``_structured_one_shot`` actually calls."""
+    """Patch the LLM seam _structured_one_shot actually calls."""
     return patch(f"{MODULE}.ainvoke_llm", new_callable=AsyncMock, **kwargs)
 
 
@@ -843,7 +843,7 @@ class TestRunGenerationAttempt:
         assert isinstance(error, ValueError)
 
     async def test_an_empty_draft_logs_the_attempt_number_one_based(self):
-        """``attempt`` is a zero-based loop index; logging it raw makes the first
+        """attempt is a zero-based loop index; logging it raw makes the first
         attempt read as attempt 0 in every incident thread."""
         metered, runnable = _llm_plumbing()
         with metered, runnable, _llm(return_value=_draft()), patch(f"{MODULE}.log") as mock_log:
@@ -856,7 +856,7 @@ class TestRunGenerationAttempt:
         }
 
     async def test_schema_invalid_output_is_returned_for_a_retry_not_raised(self):
-        """The provider's own retry already ran inside ``ainvoke_llm``; a
+        """The provider's own retry already ran inside ainvoke_llm; a
         malformed structured payload is worth asking the model again."""
         invalid = _invalid_output_error()
         metered, runnable = _llm_plumbing()

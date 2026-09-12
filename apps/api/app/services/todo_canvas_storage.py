@@ -1,13 +1,13 @@
 """MongoDB-backed canvas/log storage for tracked todos.
 
-Canvas (`canvas.md`) and log (`log.md`) content live as fields on the
-todo document itself: ``canvas_content`` and ``log_content``. Reading,
+Canvas (canvas.md) and log (log.md) content live as fields on the
+todo document itself: canvas_content and log_content. Reading,
 writing, and appending go through the todos repository — no FUSE mount or
 JuiceFS required, so tracked todos work in every dev mode.
 
-The legacy ``vfs_path`` field on the todo doc is retained as a stable
-display label (``/workspace/gaia-tasks/{todo_id}``) but is no longer a
-real filesystem path. It never carries the host-side ``/users/<uid>``
+The legacy vfs_path field on the todo doc is retained as a stable
+display label (/workspace/gaia-tasks/{todo_id}) but is no longer a
+real filesystem path. It never carries the host-side /users/<uid>
 prefix — the LLM only ever sees the sandbox-visible workspace path.
 """
 

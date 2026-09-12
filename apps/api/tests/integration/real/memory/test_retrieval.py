@@ -385,10 +385,10 @@ async def test_warm_recall_returns_results_and_reports_latency(corpus_user: str)
     memories (a dropped index / broken hydrate / empty rerank surfaces here).
     Models are warmed by the session fixture, so each probe measures the full
     uncached path (embed + ANN + FTS + RRF + rerank + hydrate); DISTINCT queries
-    are used because ``recall`` is ``@Cacheable`` and a repeat would time Redis.
+    are used because recall is @Cacheable and a repeat would time Redis.
 
     Latency is printed against a soft target, NOT asserted. This replaced a
-    single-sample wall-clock ``assert`` that flaked: the pipeline's cost is
+    single-sample wall-clock assert that flaked: the pipeline's cost is
     reranker-bound and swings ~10x across GPU CI / CPU laptop / contended
     workers, so no fixed bound is a stable line here. Latency regressions belong
     in a dedicated perf environment with a stable baseline, not a correctness
@@ -459,7 +459,7 @@ async def test_graph_expansion_siblings_respect_kinds_filter(
     """Expansion siblings must obey the kinds filter.
 
     Graph expansion intentionally crosses category boundaries (that is the
-    feature), but it must still honour the ``kinds`` filter so callers that
+    feature), but it must still honour the kinds filter so callers that
     request only facts do not receive experience siblings.
     """
     from app.constants.memory import MemoryKind

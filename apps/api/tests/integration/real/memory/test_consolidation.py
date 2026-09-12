@@ -1,6 +1,6 @@
 """Core documents + consolidation — rewrites, versioning, debounce, hot cache.
 
-The consolidation LLM is canned (``ConsolidatedDocument``); everything else
+The consolidation LLM is canned (ConsolidatedDocument); everything else
 (fact gathering from Postgres, document versioning, Redis pending set,
 debounce waiter, hot-context invalidation) runs for real. The debounce wait
 is a monkeypatched seam the test releases — no sleeps against the production

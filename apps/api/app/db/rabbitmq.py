@@ -101,9 +101,9 @@ class RabbitMQPublisher:
         """Publish to the default exchange, reconnecting and retrying once.
 
         The reconnect path handles ARQ-worker idle timeouts (workers publish
-        sporadically). ``declare`` controls whether the queue is declared first:
+        sporadically). declare controls whether the queue is declared first:
         the WebSocket relay queue is declared on demand, while outbound work
-        queues are pre-declared by ``declare_outbound_topology`` and pass False.
+        queues are pre-declared by declare_outbound_topology and pass False.
         """
         message = Message(
             body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT, expiration=expiration
@@ -145,14 +145,14 @@ class RabbitMQPublisher:
             )
 
     async def publish(self, queue_name: str, body: bytes) -> None:
-        """Publish to ``queue_name`` (declared on demand) with one retry."""
+        """Publish to queue_name (declared on demand) with one retry."""
         await self._publish_with_retry(queue_name, body, declare=True)
 
     async def declare_outbound_topology(self) -> None:
         """Idempotently declare the outbound DLX, work queues, and DLQs.
 
         Declaration arguments MUST match the bot consumer's (see
-        ``libs/shared/ts/src/bots/consumer/topology.ts``) or RabbitMQ rejects
+        libs/shared/ts/src/bots/consumer/topology.ts) or RabbitMQ rejects
         the redeclare with PRECONDITION_FAILED. Safe to call on every startup;
         the durable queues persist so messages survive while a bot is offline.
         """
@@ -180,7 +180,7 @@ class RabbitMQPublisher:
     ) -> None:
         """Publish to an outbound work queue with one retry.
 
-        ``expiration`` is the broker-side TTL in seconds: past it the message
+        expiration is the broker-side TTL in seconds: past it the message
         dead-letters instead of delivering to a bot that comes back late.
 
         Declares the outbound topology once (lazily) before the first publish so

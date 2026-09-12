@@ -107,7 +107,7 @@ class TestPostLinkMessage:
 
 
 class TestLinkAnalytics:
-    """``integration_connected`` counts connections, not taps."""
+    """integration_connected counts connections, not taps."""
 
     async def test_a_new_link_is_captured_once(self, side_effects) -> None:
         with patch(f"{MODULE}.capture_event") as capture:
@@ -121,7 +121,7 @@ class TestLinkAnalytics:
     async def test_a_repeat_link_is_not_captured_again(self, side_effects) -> None:
         """Re-tapping a link the user already has is not a new connection.
 
-        Every idempotent re-link counted as one more ``integration_connected``,
+        Every idempotent re-link counted as one more integration_connected,
         so the connection count rose with the number of taps.
         """
         _, _, link = side_effects
@@ -134,11 +134,11 @@ class TestLinkAnalytics:
 class TestLinkConflicts:
     """The two 409s are not interchangeable.
 
-    ``PlatformAccountTakenError`` is proved end to end through the route in
-    ``tests/unit/api/test_platform_links_endpoint.py::test_link_conflict``; this
+    PlatformAccountTakenError is proved end to end through the route in
+    tests/unit/api/test_platform_links_endpoint.py::test_link_conflict; this
     is its sibling, where the conflict is on the GAIA side and the fix is the
-    opposite one. The bots pick the message they show from ``code`` alone
-    (``libs/shared/ts/src/bots/link-codes.ts::classifyLinkFailure``), so the
+    opposite one. The bots pick the message they show from code alone
+    (libs/shared/ts/src/bots/link-codes.ts::classifyLinkFailure), so the
     exact body is a cross-language contract, not a message anyone may reword.
     """
 

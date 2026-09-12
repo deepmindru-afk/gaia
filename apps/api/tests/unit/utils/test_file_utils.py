@@ -25,8 +25,8 @@ from app.utils.file_utils import DocumentProcessor, generate_file_summary
 def _mock_llm(invoke_return: Any = "Mock summary", batch_return: Any = None) -> AsyncMock:
     """Return an AsyncMock LLM with configurable ainvoke/abatch responses.
 
-    ``ainvoke_llm`` returns the model's ``AIMessage`` and callers read ``.text``,
-    so a plain-string ``invoke_return`` is wrapped in an ``AIMessage`` to match
+    ainvoke_llm returns the model's AIMessage and callers read .text,
+    so a plain-string invoke_return is wrapped in an AIMessage to match
     that contract.
     """
     llm = AsyncMock()
@@ -55,7 +55,7 @@ def _encode_image(fmt: str, size: tuple[int, int] = (16, 16)) -> bytes:
 
 
 def _mock_vision(description: str | None):
-    """Patch the one vision call ``process_image`` makes."""
+    """Patch the one vision call process_image makes."""
     return patch("app.utils.file_utils.describe_image", AsyncMock(return_value=description))
 
 
@@ -65,8 +65,8 @@ def _strip_ws(text: str) -> str:
 
 
 def _slow_block(seconds: float = 0.2) -> None:
-    """Block in a thread (async tests call this via ``asyncio.to_thread``), so a
-    patched parser can exceed ``asyncio.wait_for`` and trigger a timeout."""
+    """Block in a thread (async tests call this via asyncio.to_thread), so a
+    patched parser can exceed asyncio.wait_for and trigger a timeout."""
     time.sleep(seconds)
 
 
@@ -87,8 +87,8 @@ def processor() -> DocumentProcessor:
 
 
 class TestDocumentProcessorInit:
-    """Every other test in this file reassigns ``processor.llm``, so what
-    ``__init__`` actually wired up is only proven here."""
+    """Every other test in this file reassigns processor.llm, so what
+    __init__ actually wired up is only proven here."""
 
     async def test_summarization_runs_on_the_helper_llm_the_constructor_built(self) -> None:
         helper = _mock_llm(batch_return=[AIMessage(content="Summary 1")])
@@ -105,8 +105,8 @@ class TestDocumentProcessorInit:
         assert [r.summary for r in result] == ["Summary 1"]
 
     def test_the_processor_llm_carries_the_helper_output_cap(self) -> None:
-        """The real factory, not a stand-in: the point of ``get_helper_llm`` over
-        ``get_default_llm`` is the 8k output cap, and a mocked factory would
+        """The real factory, not a stand-in: the point of get_helper_llm over
+        get_default_llm is the 8k output cap, and a mocked factory would
         assert the mock rather than the cap. Only the key is pinned — the
         hermetic conftest blanks it, and building the client dials nothing."""
         with (
@@ -239,7 +239,7 @@ class TestProcessImage:
     async def test_the_mime_is_sniffed_from_the_bytes_not_assumed(
         self, processor: DocumentProcessor
     ) -> None:
-        """Every `image/*` upload used to be labelled `image/jpeg`, whatever it
+        """Every image/* upload used to be labelled image/jpeg, whatever it
         actually was. A block whose mime_type contradicts its payload is rejected
         outright by the provider, so a PNG upload silently lost its summary."""
         with _mock_vision("desc") as vision:
@@ -465,7 +465,7 @@ class TestProcessOfficeDocument:
         processor.llm.abatch.assert_not_called()
 
     async def test_extraction_receives_bytes_and_suffix(self, processor: DocumentProcessor) -> None:
-        """anydoc gets the raw bytes plus the format-carrying suffix; no temp file."""
+        """Anydoc gets the raw bytes plus the format-carrying suffix; no temp file."""
         processor.llm = _mock_llm(batch_return=[AIMessage(content="Sum")])
 
         with patch(
@@ -696,7 +696,7 @@ class TestGenerateTextSummary:
         assert result == "A concise summary"
 
     async def test_list_content_blocks_flattened(self, processor: DocumentProcessor) -> None:
-        """Gemini returns content as a list of blocks; ``.text`` flattens it to a string."""
+        """Gemini returns content as a list of blocks; .text flattens it to a string."""
         processor.llm = _mock_llm(
             invoke_return=AIMessage(
                 content=[

@@ -5,9 +5,9 @@ Deliberately not a general snapshot library: the value here is that a reviewer
 can read the file and answer "should the model be seeing this?" line by line, so
 the rendering names each message's slot markers instead of dumping a repr.
 
-Re-record with ``RECORD_CONTEXT_SNAPSHOTS=1``. A snapshot is scaffolding — it
+Re-record with RECORD_CONTEXT_SNAPSHOTS=1. A snapshot is scaffolding — it
 records whatever the code does and so cannot fail meaningfully on its own. Every
-snapshot here ships beside real assertions in ``test_context_invariants.py``;
+snapshot here ships beside real assertions in test_context_invariants.py;
 a movement in one of these files is only acceptable when a named test demanded it.
 """
 
@@ -58,7 +58,7 @@ def _body(message: AnyMessage) -> str:
 
 
 def assert_snapshot(name: str, messages: list[AnyMessage]) -> None:
-    """Compare ``messages`` against the recorded rendering of ``name``."""
+    """Compare messages against the recorded rendering of name."""
     path = SNAPSHOT_DIR / f"{name}.txt"
     actual = render(messages)
 

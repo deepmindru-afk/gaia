@@ -5,40 +5,40 @@ Two families, one transport.
 **The gate family** drives the REAL human-in-the-loop machinery end to end, over
 plain HTTP, with nothing simulated:
 
-1. mint a fresh dev user per case (``POST /api/v1/dev/users``) — HIL preferences
+1. mint a fresh dev user per case (POST /api/v1/dev/users) — HIL preferences
    and tool overrides are per-user, so a shared identity would leak one case's
-   ``always_tool`` write into the next case's policy;
-2. arm the gate (``PUT /api/v1/approvals/preferences`` with ``mode`` and
-   ``tool_overrides``). This matters: ``HIL_DEFAULT_MODE`` is ``always_allow``
-   (``app/models/hil_models.py``), so HIL is OFF until a user turns it on — a
+   always_tool write into the next case's policy;
+2. arm the gate (PUT /api/v1/approvals/preferences with mode and
+   tool_overrides). This matters: HIL_DEFAULT_MODE is always_allow
+   (app/models/hil_models.py), so HIL is OFF until a user turns it on — a
    suite that skipped this step would prove nothing and pass everything;
-3. send the turn to ``POST /api/v1/chat-stream``. When a gated call is reached,
-   ``services/hil/gate.decide_tool_call`` raises LangGraph's ``interrupt()``;
-   ``bridge.publish_approval_request`` puts an ``approval_request`` card on the
+3. send the turn to POST /api/v1/chat-stream. When a gated call is reached,
+   services/hil/gate.decide_tool_call raises LangGraph's interrupt();
+   bridge.publish_approval_request puts an approval_request card on the
    turn's stream, and the pause signals the executor done — so the SSE response
    ends with the card in it and nothing executed;
-4. answer it (``POST /api/v1/approvals/{approval_id}/decision``), which resumes
-   the run on a NEW ``queued_*`` stream;
-5. re-read ``GET /api/v1/conversations/{id}`` until the card settles, and read the
-   REAL effect back from the domain API (``GET /api/v1/todos``,
-   ``GET /api/v1/notifications``).
+4. answer it (POST /api/v1/approvals/{approval_id}/decision), which resumes
+   the run on a NEW queued_* stream;
+5. re-read GET /api/v1/conversations/{id} until the card settles, and read the
+   REAL effect back from the domain API (GET /api/v1/todos,
+   GET /api/v1/notifications).
 
-Which tools are gated is not invented either. ``send_notification`` is one of the
-three code-reviewed destructive built-ins (``agents/tools/core/registry.py``), so
-``mode: always_ask`` alone gates it. Everything else is gated the way a user
-would gate it, through ``tool_overrides`` — the same per-user map the settings UI
-writes and ``services/hil/policy.resolve_policy`` reads first.
+Which tools are gated is not invented either. send_notification is one of the
+three code-reviewed destructive built-ins (agents/tools/core/registry.py), so
+mode: always_ask alone gates it. Everything else is gated the way a user
+would gate it, through tool_overrides — the same per-user map the settings UI
+writes and services/hil/policy.resolve_policy reads first.
 
 **The comprehension family** needs no gate: underspecified, self-contradictory
 and multi-step requests where the agent has to restate what it is about to do, or
-ask one question, before acting. Those run with ``mode: always_allow`` and are
+ask one question, before acting. Those run with mode: always_allow and are
 gated on what was said and on what was NOT called.
 
 Known boundary — say it out loud: the resumed run publishes on a stream this
 client never sees (its id is announced over WebSocket only), so everything after
 the decision is read from Mongo through the conversations API and from the domain
 APIs. That is the durable end state, not the live frames; the frame-level
-behaviour of a resume is pinned by ``tests/e2e/test_hil_streaming.py``.
+behaviour of a resume is pinned by tests/e2e/test_hil_streaming.py.
 """
 
 from __future__ import annotations
@@ -95,9 +95,9 @@ def _url(path: str) -> str:
 def _reduce(frames: list[Frame]) -> dict[str, Any]:
     """The parts of a turn this suite gates on: id, text, calls, approval cards.
 
-    Deliberately narrower than ``quality._parse_frames``: that reduction exists to
-    journal a readable summary of every frame kind, and truncates ``tool_data``
-    payloads to 200 chars — which would cut an approval card's ``status`` off.
+    Deliberately narrower than quality._parse_frames: that reduction exists to
+    journal a readable summary of every frame kind, and truncates tool_data
+    payloads to 200 chars — which would cut an approval card's status off.
     """
     conversation_id: str | None = None
     chunks: list[str] = []
@@ -329,8 +329,8 @@ class HilTransport:
     ) -> dict[str, Any] | None:
         """Answer the pending approval and wait for the resumed run to land.
 
-        Returns ``None`` when the case declares no decision, and also when the
-        gate never paused — the missing card is exactly what the ``cards``
+        Returns None when the case declares no decision, and also when the
+        gate never paused — the missing card is exactly what the cards
         end-state assertion is there to catch, so it is recorded, not raised.
         """
         decision = case.setup.get("decision")
@@ -373,9 +373,9 @@ class HilTransport:
     ) -> dict[str, Any]:
         """Poll the conversation until this approval's card settles.
 
-        The resumed run publishes on a ``queued_*`` stream whose id is announced
+        The resumed run publishes on a queued_* stream whose id is announced
         over WebSocket only, so Mongo — re-read through the conversations API — is
-        the observable an HTTP client has. ``publish_decision`` writes the settled
+        the observable an HTTP client has. publish_decision writes the settled
         card onto that run's session, and the executor drain persists it.
         """
         deadline = time.monotonic() + RESUME_TIMEOUT_S

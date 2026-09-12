@@ -1,22 +1,22 @@
 """Embedding + reranking for the memory engine.
 
-Wraps fastembed's ONNX ``TextEmbedding`` (mxbai-embed-large, 1024-dim) and
-``TextCrossEncoder`` reranker behind lazy process-wide singletons. Unlike the
-providers in ``app.core.lazy_loader`` these do not depend on settings keys or
+Wraps fastembed's ONNX TextEmbedding (mxbai-embed-large, 1024-dim) and
+TextCrossEncoder reranker behind lazy process-wide singletons. Unlike the
+providers in app.core.lazy_loader these do not depend on settings keys or
 the registry's startup registration step, so they work identically in the API
 process and any background context.
 
 Two backends, chosen at call time:
 
-- **Sidecar** (``MEMORY_EMBEDDING_SIDECAR_URL`` set): embed/rerank are HTTP
+- **Sidecar** (MEMORY_EMBEDDING_SIDECAR_URL set): embed/rerank are HTTP
   calls to the shared sidecar process, so the model weights load ONCE for the
   whole deployment instead of in every container (~1.8 GB each). The sidecar
-  reuses these exact ``*_sync`` helpers, so the numbers are identical.
+  reuses these exact *_sync helpers, so the numbers are identical.
 - **Local** (default / dev): each process loads its own model on first use.
 
 fastembed is sync and CPU-bound; the async API runs it in a thread so the
-event loop is never blocked. The locks are ``threading.Lock`` (not
-``asyncio.Lock``) because loading happens inside ``asyncio.to_thread``.
+event loop is never blocked. The locks are threading.Lock (not
+asyncio.Lock) because loading happens inside asyncio.to_thread.
 """
 
 import asyncio
@@ -93,7 +93,7 @@ async def _observed(operation: str, backend: str, count: int, awaitable: Awaitab
 
     The embedding sidecar (HTTP) and the local ONNX model are the most
     failure-prone parts of the memory path (timeouts, 5xx, OOM, dimension
-    mismatch). This makes those failures queryable by ``backend``/``error_type``
+    mismatch). This makes those failures queryable by backend/error_type
     instead of propagating as an opaque exception with no memory context.
     """
     started = time.perf_counter()
@@ -157,7 +157,7 @@ def _get_reranker_model() -> TextCrossEncoder:
 def _embed_sync(texts: list[str]) -> list[list[float]]:
     """Embed passage texts synchronously (CPU-bound; call from a thread).
 
-    ``batch_size`` bounds the ONNX forward pass — fastembed's default of 256
+    batch_size bounds the ONNX forward pass — fastembed's default of 256
     texts per pass materializes multi-GB activations and OOM-killed the
     sidecar (#918).
     """
@@ -174,7 +174,7 @@ def _embed_query_sync(text: str) -> list[float]:
     BGE models are asymmetric: queries must be prefixed with the model's
     retrieval instruction ("Represent this sentence for searching relevant
     passages: ...") to match against plain passage embeddings.
-    ``query_embed`` applies it; plain ``embed`` does not — using the latter
+    query_embed applies it; plain embed does not — using the latter
     for queries measurably degrades ANN recall on paraphrased questions.
     """
     model = _get_embedding_model()

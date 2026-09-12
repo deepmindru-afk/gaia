@@ -321,7 +321,7 @@ class TestValidateAndConsumeOAuthState:
         assert result is None
 
     async def test_all_fields_missing_returns_none(self, mock_redis_client):
-        """hgetall returns data with empty-string defaults for missing keys."""
+        """Hgetall returns data with empty-string defaults for missing keys."""
         mock_redis_client.hgetall = AsyncMock(
             return_value={
                 "user_id": "",

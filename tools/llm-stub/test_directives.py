@@ -149,7 +149,7 @@ def test_parse_json_string_may_contain_literal_close_delimiter():
 
 
 def test_parse_nested_directive_one_level():
-    """comms → executor → subagent: handoff carries the subagent's script."""
+    """Comms → executor → subagent: handoff carries the subagent's script."""
     inner = _tool_directive("fetch_emails", {"max_results": 5})
     script = _tool_directive("handoff", {"subagent_id": "gmail", "task": inner})
     assert parse_directives(script) == [

@@ -3,15 +3,15 @@
 Used by the subagent runner, the workflow subagent, the background executor
 collector, and the chat-stream orchestrator's turn finalization.
 
-Every entry these helpers move around is a :class:`ToolDataEntry` — that shape
+Every entry these helpers move around is a :class:ToolDataEntry — that shape
 is closed and is what reaches MongoDB, so an emitted key it does not declare is
 dropped on persist (see the type's own docstring).
 
-The accumulator ENVELOPE around it (``{"tool_data": [...], "subagent_starts":
-{...}, "subagent_ends": {...}}``) stays ``dict[str, Any]`` deliberately: the
-chat and silent paths also merge whatever non-``tool_data`` keys a custom event
-produced (``follow_up_actions``, …) into the same dict, and
-``services/chat/persistence`` then ``setattr``s each of them onto the message.
+The accumulator ENVELOPE around it ({"tool_data": [...], "subagent_starts":
+{...}, "subagent_ends": {...}}) stays dict[str, Any] deliberately: the
+chat and silent paths also merge whatever non-tool_data keys a custom event
+produced (follow_up_actions, …) into the same dict, and
+services/chat/persistence then setattrs each of them onto the message.
 It is an open bag by design, so a TypedDict would misdescribe it.
 """
 
@@ -24,9 +24,9 @@ from app.utils.agent_utils import IntegrationMetadata, format_tool_call_entry
 
 
 class SubagentGroup(TypedDict):
-    """One delegated subagent's rolled-up record, persisted as the ``data`` of a
-    ``subagent_group`` tool_data entry. Built by
-    :func:`reconstruct_subagent_groups` from the turn's start/end events."""
+    """One delegated subagent's rolled-up record, persisted as the data of a
+    subagent_group tool_data entry. Built by
+    :func:reconstruct_subagent_groups from the turn's start/end events."""
 
     subagent_id: str
     #: The subagent's stable id, from the start event; ``None`` for a spawned
@@ -52,13 +52,13 @@ async def extract_tool_entries_from_update(
     """Extract new tool_data entries from a LangGraph state update.
 
     Formats each tool call for frontend streaming, deduplicating against
-    ``emitted_tool_calls`` (mutated in place). ``integration_metadata``, if
+    emitted_tool_calls (mutated in place). integration_metadata, if
     given, is applied to every entry. Returns (tool_call_id, tool_entry) tuples
     for tool calls not yet emitted.
 
-    ``state_update`` is typed ``object``: callers pass whatever a node yielded
-    from an ``updates`` stream event, which is not always a mapping — the
-    ``isinstance`` guard below is load-bearing, not defensive padding.
+    state_update is typed object: callers pass whatever a node yielded
+    from an updates stream event, which is not always a mapping — the
+    isinstance guard below is load-bearing, not defensive padding.
     """
     entries: list[tuple[str, ToolDataEntry]] = []
 
@@ -94,7 +94,7 @@ async def extract_tool_entries_from_update(
 
 
 def _approval_id_of(entry: ToolDataEntry) -> str | None:
-    """The approval_id of a HIL ``approval_request`` tool_data entry, or None."""
+    """The approval_id of a HIL approval_request tool_data entry, or None."""
     if entry.get("tool_name") != APPROVAL_REQUEST_TOOL_NAME:
         return None
     data = entry.get("data")
@@ -105,7 +105,7 @@ def _approval_id_of(entry: ToolDataEntry) -> str | None:
 
 
 def _append_or_upsert_tool_data(entries: list[ToolDataEntry], entry: ToolDataEntry) -> None:
-    """Append ``entry``, except a HIL approval frame replaces the prior frame for
+    """Append entry, except a HIL approval frame replaces the prior frame for
     the same approval_id in place — so the persisted turn carries exactly one
     entry per approval, in its final (resolved) status rather than a stuck one."""
     approval_id = _approval_id_of(entry)
@@ -149,10 +149,10 @@ def _absorb_reasoning(reasoning: dict[str, Any], tool_data: list[ToolDataEntry])
     """Persist a streamed thinking block into tool_data as a reasoning step.
 
     Mirrors the frontend (streamHandlers.handleReasoning): a reasoning step rides a
-    ``tool_calls_data`` entry so it persists + renders alongside tool calls; the
-    ``subagent_id`` tag lets reconstruct_subagent_groups nest subagent thinking.
+    tool_calls_data entry so it persists + renders alongside tool calls; the
+    subagent_id tag lets reconstruct_subagent_groups nest subagent thinking.
 
-    One event is already one step's worth of thinking — ``_ReasoningBuffer`` in the
+    One event is already one step's worth of thinking — _ReasoningBuffer in the
     subagent runner accumulates the deltas and flushes at each tool boundary — so
     this appends. Merging here was what kept an event-per-token stream readable;
     it never bounded what got persisted, and the entries are the cost.
@@ -186,10 +186,10 @@ def apply_outputs_to_tool_data(
     *,
     only_tool_name: str | None = None,
 ) -> None:
-    """Backfill each tool_data entry's `data.output` from the collected outputs map.
+    """Backfill each tool_data entry's data.output from the collected outputs map.
 
-    Pass `only_tool_name` to restrict the update to entries with that
-    `tool_name` (e.g. `"tool_calls_data"` for the chat_service path, which only
+    Pass only_tool_name to restrict the update to entries with that
+    tool_name (e.g. "tool_calls_data" for the chat_service path, which only
     enriches tool_calls_data entries; the executor_runner path applies to all).
     """
     for entry in entries:

@@ -1,8 +1,8 @@
 """Chat-stream scenarios driven through the real compiled comms graph.
 
-Where ``test_tool_visibility.py`` pins the frame contract with a scripted event
-sequence, this file runs the actual GAIA graph — ``build_comms_graph``, the real
-pre-model hooks, the real ``ToolNode``, the real memory tools — and asserts on
+Where test_tool_visibility.py pins the frame contract with a scripted event
+sequence, this file runs the actual GAIA graph — build_comms_graph, the real
+pre-model hooks, the real ToolNode, the real memory tools — and asserts on
 the SSE transcript the client would receive. Only the model is faked, and only
 because a real one is not deterministic.
 
@@ -34,9 +34,9 @@ def _registry(real_tool_registry):
 async def stream_turn(graph: Any, prompt: str, thread_id: str, user_id: str) -> Transcript:
     """Run one user turn through the graph and parse what the client sees.
 
-    The run config comes from the production ``build_agent_config`` rather than
-    a hand-rolled dict: tools read the user from ``config["metadata"]`` while the
-    graph reads it from ``config["configurable"]``, and only the real builder
+    The run config comes from the production build_agent_config rather than
+    a hand-rolled dict: tools read the user from config["metadata"] while the
+    graph reads it from config["configurable"], and only the real builder
     populates both.
     """
     config = await build_agent_config(
@@ -62,7 +62,7 @@ def _call(name: str, args: dict[str, Any], call_id: str) -> dict[str, Any]:
 
 class TestPlainReply:
     async def test_a_plain_answer_streams_text_and_nothing_else(self):
-        """No tool ran, so no tool card may appear. A stray ``tool_data`` frame
+        """No tool ran, so no tool card may appear. A stray tool_data frame
         here is a card the user sees for work that never happened."""
         async with comms_graph(["The answer is 42."]) as graph:
             transcript = await stream_turn(graph, "What is the meaning?", "t1", "u1")
@@ -131,7 +131,7 @@ class TestToolTurn:
         assert [o.tool_call_id for o in transcript.outputs()] == ["tc_join"]
 
     async def test_the_executor_handoff_is_visible_as_its_own_card(self):
-        """``call_executor`` is how every non-trivial request leaves the comms
+        """call_executor is how every non-trivial request leaves the comms
         tier; if it does not stream, the UI goes silent while work happens."""
         async with comms_graph(
             [_call("call_executor", {"task": "book a flight"}, call_id="tc_exec"), "On it."]
@@ -165,8 +165,8 @@ class TestToolTurn:
 
 class TestAcrossTurns:
     async def test_last_turns_tool_card_does_not_replay_into_this_turn(self):
-        """Turn 2's pre-model hooks re-emit turn 1's ``AIMessage``, tool calls
-        and all. Without the node gate in ``execute_graph_streaming`` the user
+        """Turn 2's pre-model hooks re-emit turn 1's AIMessage, tool calls
+        and all. Without the node gate in execute_graph_streaming the user
         sees turn 1's card appear again under turn 2's reply."""
         thread = f"t-{uuid4()}"
         async with comms_graph(

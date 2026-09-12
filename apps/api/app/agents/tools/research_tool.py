@@ -33,12 +33,12 @@ from shared.py.wide_events import log
 
 
 class ResearchResult(TypedDict):
-    """The ``research_data`` frame — also what gets cached and what the tool
-    returns (plus ``cached``/``instructions``, added per call site).
+    """The research_data frame — also what gets cached and what the tool
+    returns (plus cached/instructions, added per call site).
 
-    ``sources`` entries stay open dicts: each one is a ranked-URL record from
-    ``rank_and_deduplicate_urls`` (built by spreading a search provider's own
-    result item) with ``content``/``fetch_error`` layered on, so the provider —
+    sources entries stay open dicts: each one is a ranked-URL record from
+    rank_and_deduplicate_urls (built by spreading a search provider's own
+    result item) with content/fetch_error layered on, so the provider —
     not this module — owns their shape.
     """
 

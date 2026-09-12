@@ -1,7 +1,7 @@
 """Unit tests for the todo service layer.
 
 Persistence and caching now live in the todos/projects repositories (exercised
-by the contract suite in ``tests/contracts``). These tests mock the repository
+by the contract suite in tests/contracts). These tests mock the repository
 singletons and verify the *service orchestration*: inbox assignment, workflow
 queueing, search indexing, tracked-todo completion routing, response mapping,
 and the ProjectService guards.
@@ -64,7 +64,7 @@ NOW = datetime.now(UTC)
 def _no_analytics():
     """Neutralize analytics captures for tests not asserting on them.
 
-    ``capture_event`` resolves the PostHog provider at call time, which is not
+    capture_event resolves the PostHog provider at call time, which is not
     registered in this test module's import chain — capture-specific tests
     patch the call explicitly and assert on it.
     """

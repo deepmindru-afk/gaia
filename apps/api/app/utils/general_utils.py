@@ -9,7 +9,7 @@ ELLIPSIS = "…"
 
 
 def is_json_safe(value: object) -> bool:
-    """Whether ``value`` survives a JSON round trip — the honest test for
+    """Whether value survives a JSON round trip — the honest test for
     "can this be persisted", rather than a proxy like isinstance-on-scalars."""
     try:
         json.dumps(value)
@@ -19,7 +19,7 @@ def is_json_safe(value: object) -> bool:
 
 
 def clip_text(text: str, limit: int) -> str:
-    """Cap ``text`` at ``limit`` characters, marking the cut so a reader (or a model)
+    """Cap text at limit characters, marking the cut so a reader (or a model)
     can tell truncation apart from the real end of the value."""
     return text if len(text) <= limit else f"{text[:limit]}{ELLIPSIS}"
 

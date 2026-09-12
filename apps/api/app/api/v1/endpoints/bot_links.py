@@ -1,9 +1,9 @@
 """Platform account linking routes for the bot API.
 
-Split out of ``endpoints/bot.py``: these three routes are the linking
+Split out of endpoints/bot.py: these three routes are the linking
 handshake (mint a token, redeem a one-tap code, read a token's display
 metadata) and share nothing with the chat/stream transport beyond the bot API
-key check. Mounted on the same ``/api/v1/bot`` prefix, so no URL moved.
+key check. Mounted on the same /api/v1/bot prefix, so no URL moved.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -257,7 +257,7 @@ async def _persist_first_contact(
 
     Nothing else does it: no chat turn ran, so without this the user's next
     message arrives into an empty thread and GAIA has no idea it just introduced
-    itself. Stored through the same ``update_messages`` path the chat stream
+    itself. Stored through the same update_messages path the chat stream
     uses, so the turn looks identical to a real one on reload and on the web.
 
     Best-effort: a linked account is the thing the caller asked for, and losing

@@ -1,6 +1,6 @@
 """The exact words, keys and budgets behind GAIA's one LLM-written opening line.
 
-``tests/unit/services/test_first_question.py`` next door covers the shape of the
+tests/unit/services/test_first_question.py next door covers the shape of the
 feature — a good draft comes back, a bad one falls back, the cache key changes
 when the answers do. This module pins the *values*: the literal text handed to
 the model, the literal hash the cache key is built from, the retry and timeout
@@ -304,7 +304,7 @@ class TestComposeFirstQuestionPrompt:
 
     async def test_the_call_runs_the_draft_schema_on_the_cheap_lane(self) -> None:
         """The schema IS the validation, so the runnable must be built from
-        ``_QuestionDraft`` — and it is that runnable, not another, that is
+        _QuestionDraft — and it is that runnable, not another, that is
         invoked."""
         runnable, invoke = _llm_patches(_QuestionDraft(chips=GOOD_CHIPS))
         with (
@@ -427,9 +427,9 @@ class TestComposeFirstQuestionDraft:
 
     async def test_the_fallback_records_why_and_how_long_it_waited(self) -> None:
         """A fallback is silent in the product, so the wide event is the only
-        trace. ``log.warning`` writes message and kwargs into ``warnings[]``
+        trace. log.warning writes message and kwargs into warnings[]
         (libs/shared/py/wide_events.py), which makes both a queryable surface:
-        without ``reason`` a timeout is indistinguishable from a bad key."""
+        without reason a timeout is indistinguishable from a bad key."""
         runnable, invoke = _llm_patches(error=TimeoutError())
         clock = MagicMock()
         clock.monotonic.side_effect = [1.0, 1.0005678]

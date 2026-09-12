@@ -62,7 +62,7 @@ class NotificationOrchestrator:
 
     # INITIALIZATION & REGISTRATION METHODS
     def _register_default_components(self) -> None:
-        """Register default adapters, handlers, and sources"""
+        """Register default adapters, handlers, and sources."""
         # Channel adapters
         self.register_channel_adapter(InAppChannelAdapter())
         self.register_channel_adapter(TelegramChannelAdapter())
@@ -77,14 +77,14 @@ class NotificationOrchestrator:
         self.register_action_handler(ModalActionHandler())
 
     def register_channel_adapter(self, adapter: ChannelAdapter[Any]) -> None:
-        """Register a new channel adapter"""
+        """Register a new channel adapter."""
         self.channel_adapters[adapter.channel_type] = adapter
         log.info(
             f"{LogTag.NOTIFICATION} Registered channel adapter", channel_type=adapter.channel_type
         )
 
     def register_action_handler(self, handler: ActionHandler) -> None:
-        """Register a new action handler"""
+        """Register a new action handler."""
         self.action_handlers[handler.action_type] = handler
         log.info(
             f"{LogTag.NOTIFICATION} Registered action handler", action_type=handler.action_type
@@ -225,8 +225,8 @@ class NotificationOrchestrator:
     ) -> ChannelDeliveryStatus:
         """Deliver a notification via a specific channel adapter.
 
-        ``TContent`` binds to this adapter's own payload type, so the value
-        flowing from ``transform`` into ``deliver`` is checked per adapter even
+        TContent binds to this adapter's own payload type, so the value
+        flowing from transform into deliver is checked per adapter even
         though the registry itself is erased.
         """
         try:
@@ -390,7 +390,7 @@ class NotificationOrchestrator:
     async def get_user_notifications(
         self, user_id: str, query: NotificationQuery | None = None
     ) -> list[NotificationView]:
-        """A user's notifications, filtered and paged by ``query``."""
+        """A user's notifications, filtered and paged by query."""
         q = query or NotificationQuery()
         notifications = await self.storage.get_user_notifications(
             user_id, q.status, q.limit, q.offset, q.channel_type, q.notification_type, q.source
@@ -436,8 +436,8 @@ class NotificationOrchestrator:
     def _serialize_notification(self, notification: NotificationRecord) -> NotificationView:
         """Flatten a stored record into the view API/tool consumers read.
 
-        Timestamps are emitted as ISO strings because ``NotificationView`` publishes
-        them as ``str`` — that is the established wire contract.
+        Timestamps are emitted as ISO strings because NotificationView publishes
+        them as str — that is the established wire contract.
         """
         request = notification.original_request
         return NotificationView(

@@ -1,5 +1,5 @@
-"""Usage summary assembly — the shared source for ``GET /usage/summary`` and
-the ``account/usage.json`` workspace projection.
+"""Usage summary assembly — the shared source for GET /usage/summary and
+the account/usage.json workspace projection.
 
 Lives in the service layer so the endpoint stays a delegate and every consumer
 (the UI API, the agent's account view) reads the same numbers from the same

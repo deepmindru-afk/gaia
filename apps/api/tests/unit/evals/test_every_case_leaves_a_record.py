@@ -2,7 +2,7 @@
 
 Provider rotation used to advance a single counter that was initialised once,
 outside the case loop. One case that exhausted the rotation left the counter at
-``len(healthy)``, so every later case skipped the attempt loop entirely: no
+len(healthy), so every later case skipped the attempt loop entirely: no
 request, no error, and — because the fallback record was guarded on an error
 having been seen — no journal entry either. The run simply reported fewer cases
 than it was given, and nothing said so.

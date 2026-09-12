@@ -64,7 +64,7 @@ from shared.py.wide_events import log
 def _capture_finish_task_content(chunk: ToolMessage, current_message: str) -> str:
     """Return the finish_task chunk's textual content if applicable.
 
-    `finish_task` (when used by a subagent) carries the final answer in its
+    finish_task (when used by a subagent) carries the final answer in its
     return value. Capture it as the complete message so the parent handoff
     returns the actual content rather than the literal "Task completed"
     fallback. Subagents with include_finish_task=False terminate via a
@@ -78,8 +78,8 @@ def _capture_finish_task_content(chunk: ToolMessage, current_message: str) -> st
 def _extract_reasoning_delta(chunk: AIMessageChunk) -> str:
     """Pull this chunk's reasoning ("thinking") text, model-agnostic.
 
-    ChatOpenRouter surfaces reasoning as standard ``reasoning`` content blocks;
-    other providers (DeepSeek-style) put it in ``additional_kwargs.reasoning_content``.
+    ChatOpenRouter surfaces reasoning as standard reasoning content blocks;
+    other providers (DeepSeek-style) put it in additional_kwargs.reasoning_content.
     Returns "" when the chunk carries no thinking (e.g. non-reasoning models), so
     the caller emits nothing for them.
     """
@@ -105,14 +105,14 @@ def _extract_reasoning_delta(chunk: AIMessageChunk) -> str:
 class SubagentOutcome:
     """One graph run's result: its text, or the HIL approval it paused on.
 
-    ``interrupt`` carries the payload the gate passed to ``interrupt()``. When it
-    is set the graph is checkpointed mid-run and ``text`` is meaningless — the
+    interrupt carries the payload the gate passed to interrupt(). When it
+    is set the graph is checkpointed mid-run and text is meaningless — the
     caller must bubble the pause up rather than treat it as an answer.
 
-    ``run_messages`` are THIS run's tool-bearing messages captured off the
+    run_messages are THIS run's tool-bearing messages captured off the
     stream — the agent node's AIMessages (complete tool_calls) and the
     ToolMessages answering them. Workflow handoffs render them into the call
-    record the executor transcribes playbook steps from (see ``call_record``).
+    record the executor transcribes playbook steps from (see call_record).
     """
 
     text: str
@@ -142,15 +142,15 @@ def resume_for_gate(interrupt_payload: dict[str, Any]) -> object:
     """The decision belonging to the subagent gate now paused.
 
     A synchronous spawn/handoff drives its subagent imperatively, bubbling each HIL
-    pause up with ``interrupt()``. When the executor resumes, ``recover_from_checkpoint``
+    pause up with interrupt(). When the executor resumes, recover_from_checkpoint
     fast-forwards the subagent to its LATEST parked gate, but the executor replays its
-    ``interrupt()`` resume list positionally from zero — so for a task that gated several
+    interrupt() resume list positionally from zero — so for a task that gated several
     calls in sequence, the first values replayed belong to gates the subagent already ran.
     Feeding one of those to the current gate would apply an earlier decision to a later
-    action. Each resume payload carries its own ``approval_id`` (see
-    ``resolution._dispatch_resume``); skip any that is not this gate's.
+    action. Each resume payload carries its own approval_id (see
+    resolution._dispatch_resume); skip any that is not this gate's.
 
-    Only skips a payload whose ``approval_id`` is present and differs from the paused
+    Only skips a payload whose approval_id is present and differs from the paused
     gate's — a payload without one (or a matching one) is delivered as-is, so this can
     never over-consume the list and strand the decision.
     """
@@ -213,8 +213,8 @@ async def build_initial_messages(
         agent_name: Stamped on the human turn as visibility metadata.
         task: The task text the agent acts on.
         retrieval_query: What the volatile sections retrieve against. Defaults
-            to ``task``, but callers set it to the original unenhanced task when
-            ``task`` carries injected hints that would pollute semantic search.
+            to task, but callers set it to the original unenhanced task when
+            task carries injected hints that would pollute semantic search.
         integration_id: For a provider subagent, the underlying integration id
             — what provider metadata and custom instructions are looked up by.
     """
@@ -261,12 +261,12 @@ async def build_initial_messages(
 def _with_current_time(resume: Command, configurable: AgentConfigurable) -> Command:
     """Re-clock a resumed run.
 
-    A resume replaces ``initial_state``, so the fresh time message
-    ``build_initial_messages`` would have added never reaches the graph and the
+    A resume replaces initial_state, so the fresh time message
+    build_initial_messages would have added never reaches the graph and the
     thread keeps the clock from when it STARTED. A HIL approval pause can leave
     that hours stale — long enough for the model to act on the wrong day.
 
-    Appending it is safe even mid tool-call: ``manage_system_prompts_node`` lifts
+    Appending it is safe even mid tool-call: manage_system_prompts_node lifts
     the latest time message to the tail of the conversation (so the
     AIMessage/ToolMessage pairing is untouched) and drops the older copy.
     """
@@ -292,18 +292,18 @@ def _process_messages_payload(
     Accumulates AI content, streams reasoning deltas, and emits tool_output for
     ToolMessages — all gated on a non-silent payload and an available writer.
 
-    ``claim_tool_output`` keeps each result to one emission per stream. A
+    claim_tool_output keeps each result to one emission per stream. A
     subagent invoked from a tool of this graph is a nested run, and "messages"
     mode carries its chunks up to this stream annotated with the *inner* run's
-    metadata — same ``langgraph_node``, same ``langgraph_checkpoint_ns`` — so
+    metadata — same langgraph_node, same langgraph_checkpoint_ns — so
     nothing about the payload distinguishes it from our own. Ungated, the
     executor re-emits every result the subagent already reported, and the second
-    copy carries no ``subagent_id``, so the client renders it a second time
+    copy carries no subagent_id, so the client renders it a second time
     outside the subagent's row. The "updates" branch has the equivalent
-    protection in its ``node_name != "agent"`` gate, which is why tool_data
+    protection in its node_name != "agent" gate, which is why tool_data
     never doubled and only tool_output did.
 
-    The claim goes to whichever run ANNOUNCED the call (``note_tool_output_owner``,
+    The claim goes to whichever run ANNOUNCED the call (note_tool_output_owner,
     in the "updates" branch), not to whichever looks first: both drivers race for
     the same ToolMessage, and on a slow machine the executor won and published the
     untagged copy. A call nobody announced still fails open, so a HIL resume — where
@@ -352,7 +352,7 @@ def _process_messages_payload(
 
 @dataclass
 class _StreamRun:
-    """One drive of ``execute_subagent_stream``: its emitters and its running state.
+    """One drive of execute_subagent_stream: its emitters and its running state.
 
     Mutable and passed by reference to the per-stream-mode handlers, so the loop
     keeps a single copy of the state every branch accumulates into.
@@ -468,8 +468,8 @@ async def execute_subagent_stream(
         - "messages": stream content, emit tool_output when a ToolMessage arrives
         - "custom": forward custom events (progress, etc.) to the parent
 
-    ``resume`` continues a thread already paused on a HIL ``interrupt()`` instead
-    of starting from ``ctx.initial_state``. When the run pauses, the returned
+    resume continues a thread already paused on a HIL interrupt() instead
+    of starting from ctx.initial_state. When the run pauses, the returned
     outcome carries the approval payload and the caller must bubble it up.
     """
     log.set(subagent={"name": ctx.agent_name, "provider": ctx.integration_id})
@@ -575,18 +575,18 @@ def _final_text_from_snapshot(snapshot: StateSnapshot) -> str:
 
 
 async def recover_from_checkpoint(ctx: SubagentExecutionContext) -> SubagentOutcome | None:
-    """What this subagent's own thread already holds, or ``None`` if it never ran.
+    """What this subagent's own thread already holds, or None if it never ran.
 
     Three states, and conflating the last two is how a completed subagent gets driven a
     second time:
 
-    * **Parked** (``snapshot.next``) — mid-run on a HIL interrupt. Returned as a paused
+    * **Parked** (snapshot.next) — mid-run on a HIL interrupt. Returned as a paused
       outcome so the caller bubbles the approval up. A paused outcome with an empty
       payload means the interrupt is unreadable, which downstream treats as a malformed
       approval and fails the run rather than act.
     * **Finished** — no pending work but state on the thread. Returned as its
       checkpointed final answer: re-running would repeat every action it took.
-    * **Never ran** — no state at all. ``None``, so the caller starts it normally.
+    * **Never ran** — no state at all. None, so the caller starts it normally.
     """
     snapshot = await ctx.subagent_graph.aget_state(cast(RunnableConfig, ctx.config))
     if snapshot.next:
@@ -601,9 +601,9 @@ async def recover_from_checkpoint(ctx: SubagentExecutionContext) -> SubagentOutc
 async def _address_resume(
     graph: CompiledAgentGraph, config: RunnableConfig, resume: Command
 ) -> Command | None:
-    """Aim a resume at the one interrupt it answers, or ``None`` if there is none left.
+    """Aim a resume at the one interrupt it answers, or None if there is none left.
 
-    A bare ``Command(resume=value)`` feeds the next interrupt positionally, and
+    A bare Command(resume=value) feeds the next interrupt positionally, and
     LangGraph refuses it outright once a thread holds more than one pending
     interrupt — which is the ordinary case here, because two destructive calls
     in one AI message both reach the gate in a single node pass and both park.
@@ -611,11 +611,11 @@ async def _address_resume(
     runs, LangGraph's own error text reaches them, and the second approval stays
     pending forever with every retry re-entering the same failure.
 
-    ``None`` means the thread has already consumed this decision and finished: a
+    None means the thread has already consumed this decision and finished: a
     resume dispatched at it would run no node at all, and the caller would read the
     empty result as a completed task and tell the user an action succeeded that this
     run never performed. The sweep re-dispatches any decision it cannot prove reached
-    a run (``list_decided_unresumed``), so a crash between resuming and stamping the
+    a run (list_decided_unresumed), so a crash between resuming and stamping the
     record puts a second, redundant resume on a thread that is already done.
 
     The interrupts are read from the live checkpoint rather than from anything
@@ -623,7 +623,7 @@ async def _address_resume(
     pending now, and a stored copy can only disagree with it.
 
     Falls through unchanged when the thread holds exactly one interrupt, or when none
-    of them carries this decision's ``approval_id`` — a bare resume is correct in the
+    of them carries this decision's approval_id — a bare resume is correct in the
     first case, and in the second there is nothing better to do than let the existing
     path report the mismatch.
     """
@@ -672,24 +672,24 @@ def _approval_id_of(resume: Command) -> str | None:
 
 def interrupt_payload(raw: object) -> dict[str, Any]:
     """The HIL payload inside LangGraph Interrupt object(s) — from a stream event's
-    ``__interrupt__`` tuple or a state snapshot's ``interrupts``.
+    __interrupt__ tuple or a state snapshot's interrupts.
 
     Carries EVERY pending approval, not just the first. Two destructive calls in one AI
     message park two tasks in the same step, and the caller stamps re-dispatch context
-    onto each id this returns (``executor_runner._record_pause``). Returning only the
-    first left the second with no ``resume_item`` at all, so approving it raised
-    ``ApprovalNotResumableError`` and the decision could never be applied.
+    onto each id this returns (executor_runner._record_pause). Returning only the
+    first left the second with no resume_item at all, so approving it raised
+    ApprovalNotResumableError and the decision could never be applied.
 
     The first payload's own fields stay at the top level, so callers that read a single
-    approval (``resume_for_gate``) are unaffected; ``approval_ids`` is what the batch
-    readers use. ``{}`` when no object carries a dict value (downstream treats that as
+    approval (resume_for_gate) are unaffected; approval_ids is what the batch
+    readers use. {} when no object carries a dict value (downstream treats that as
     malformed → deny).
     """
     return merge_approvals(interrupt_values(raw))
 
 
 def interrupt_values(raw: object) -> list[dict[str, Any]]:
-    """The dict payloads inside one or more LangGraph ``Interrupt`` objects."""
+    """The dict payloads inside one or more LangGraph Interrupt objects."""
     items = raw if isinstance(raw, (list, tuple)) else (raw,)
     return [
         value
@@ -702,8 +702,8 @@ def merge_approvals(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     """Fold several pending approvals into one payload carrying ALL their ids.
 
     The first payload's own fields stay at the top level, so callers reading a single
-    approval (``resume_for_gate``) are unaffected; ``approval_ids`` is what the batch
-    readers use (``executor_runner._paused_approval_ids``).
+    approval (resume_for_gate) are unaffected; approval_ids is what the batch
+    readers use (executor_runner._paused_approval_ids).
     """
     if not payloads:
         return {}
@@ -723,13 +723,13 @@ def compose_executor_brief(
 ) -> str:
     """Fold the definition-of-done (and verbatim request, previous run) into the brief.
 
-    ``last_run`` is a workflow's previous run, already rendered by
-    ``run_trace.render_last_run`` — the workflow's memory now that its checkpoint
+    last_run is a workflow's previous run, already rendered by
+    run_trace.render_last_run — the workflow's memory now that its checkpoint
     threads are dropped before each fire.
 
-    ``playbook_check`` asks the executor, once the work is done, whether the
+    playbook_check asks the executor, once the work is done, whether the
     sequence it just ran is worth freezing as a playbook. It rides in the brief
-    rather than in the finished result's narration because ``write_playbook`` is
+    rather than in the finished result's narration because write_playbook is
     an executor tool and comms cannot reach it. Placed last, after the
     definition of done, so it reads as the closing instruction it is.
     """

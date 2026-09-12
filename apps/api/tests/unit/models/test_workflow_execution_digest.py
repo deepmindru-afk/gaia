@@ -23,7 +23,7 @@ pytestmark = pytest.mark.unit
 class TestADigestNeverShedsAListToNothing:
     def test_one_oversized_element_is_cut_harder_rather_than_dropped(self) -> None:
         """Five wide messages under a 1.2 KB bound used to come out as
-        ``{"data":{"messages":[]}}``: the first element did not fit even after
+        {"data":{"messages":[]}}: the first element did not fit even after
         the first string trim, so every element was shed and a full result was
         recorded as an empty one, which the empty-result checks then believed."""
         wide = {"id": "m1", **{f"field_{n}": "x" * 9_000 for n in range(8)}}
@@ -41,7 +41,7 @@ class TestADigestNeverShedsAListToNothing:
 
 
 class TestTheBoundIsInclusive:
-    """Every ``<=`` here decides what a result exactly at its limit becomes. Off by
+    """Every <= here decides what a result exactly at its limit becomes. Off by
     one and a result that fits is re-serialised, re-trimmed, or marked as cut —
     which is a digest that says the tool returned something it did not."""
 
@@ -105,7 +105,7 @@ class TestTheSheddableListIsChosenOnce:
 @pytest.mark.unit
 class TestCarriesNoData:
     """What "this call returned nothing" means, against every result shape seen
-    in production and in live driving. ``largest_list_len`` answers a different
+    in production and in live driving. largest_list_len answers a different
     question and must not be used for this: it finds the largest list anywhere,
     so a record's own empty attribute reads as an empty result.
     """

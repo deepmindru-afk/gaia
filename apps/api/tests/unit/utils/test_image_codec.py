@@ -46,7 +46,7 @@ def _sniff(inline: InlineImage) -> str | None:
 
 class TestMimeIsSniffedNotDeclared:
     async def test_png_bytes_are_labelled_png_regardless_of_file_extension(self) -> None:
-        """A PNG saved as `photo.jpg` must not be labelled image/jpeg.
+        """A PNG saved as photo.jpg must not be labelled image/jpeg.
 
         This is the bug: the extension said JPEG, the payload was PNG, and the
         block went to Gemini as inline_data(mime_type=image/jpeg) with PNG bytes.
@@ -63,7 +63,7 @@ class TestMimeIsSniffedNotDeclared:
         """A lying MCP server declaring a GIF as image/png must still transcode.
 
         GIF is not in PROVIDER_SAFE_IMAGE_MIMES (Gemini 400s on it). If the
-        declared MIME were trusted, `image/png` would wave the GIF straight
+        declared MIME were trusted, image/png would wave the GIF straight
         through untouched.
         """
         inline = await ImageCodec.from_base64(base64.b64encode(_encode("GIF")).decode())
@@ -103,8 +103,8 @@ class TestDecodeFailuresAreTyped:
     async def test_truncated_image_on_the_transcode_path_raises_invalid_image(self) -> None:
         """verify() only reads the header; the full decode in _transcode is what fails.
 
-        Callers guard with `except InvalidImageError`. A raw OSError escaping here
-        propagates out of the `read` tool and fails the turn. The transcode path
+        Callers guard with except InvalidImageError. A raw OSError escaping here
+        propagates out of the read tool and fails the turn. The transcode path
         is the common one — every GIF, and every image over the size/edge budget.
         """
         full = _encode("JPEG", size=(3000, 3000), quality=95)  # oversized -> transcodes
@@ -150,7 +150,7 @@ class TestBudgets:
         assert max(width, height) <= DOWNSCALE_LONGEST_EDGE
 
     async def test_an_image_exactly_at_the_edge_limit_is_not_downscaled(self) -> None:
-        """Boundary: `<=` not `<`. Exactly-at-the-limit must pass through."""
+        """Boundary: <= not <. Exactly-at-the-limit must pass through."""
         data = _encode("PNG", size=(DOWNSCALE_LONGEST_EDGE, 100), color="white")
         inline = await ImageCodec.from_bytes(data)
 
@@ -219,7 +219,7 @@ class TestMimeForPathAndBlock:
 
     async def test_to_block_emits_the_canonical_v1_data_content_block(self) -> None:
         """The block shape is a provider contract — langchain_openrouter converts
-        `{"type": "image", "base64": ...}` in a user message to an image_url data
+        {"type": "image", "base64": ...} in a user message to an image_url data
         URL, and Gemini reads it as inline_data. A renamed key breaks both."""
         inline = await ImageCodec.from_bytes(_encode("PNG"))
         block = inline.to_block()

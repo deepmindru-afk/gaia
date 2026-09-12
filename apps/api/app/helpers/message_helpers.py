@@ -49,7 +49,7 @@ def create_system_message(
     addendum (OpenUI on web/mobile/desktop; text-only restrictions on
     messaging platforms). The executor prompt is single-variant.
 
-    All user, time, and memory context is assembled by ``app.agents.context``
+    All user, time, and memory context is assembled by app.agents.context
     and delivered in its own messages — never in this static prefix.
     """
     del user_id, user_name  # intentionally unused — static prefix only
@@ -63,14 +63,14 @@ def build_current_time_message(
 ) -> HumanMessage:
     """Return a tiny HumanMessage carrying the current UTC + local time.
 
-    We keep the clock OUT of ``system_instruction`` and put it in
-    ``contents`` instead. Reason: Gemini's implicit cache matches the
-    longest common prefix. Any byte in ``system_instruction`` that ticks
+    We keep the clock OUT of system_instruction and put it in
+    contents instead. Reason: Gemini's implicit cache matches the
+    longest common prefix. Any byte in system_instruction that ticks
     every minute would push the cache boundary back to just before that
     byte, so a call at 00:59 and a call at 01:01 would share less prefix
-    than they need to. Since ``contents`` already differ per turn anyway
+    than they need to. Since contents already differ per turn anyway
     (the user's actual message differs), attaching the clock to contents
-    costs us nothing on the cache budget but keeps ``system_instruction``
+    costs us nothing on the cache budget but keeps system_instruction
     fully stable.
     """
     utc_now = datetime.now(UTC).strftime("%A, %B %d, %Y, %H:%M UTC")
@@ -278,7 +278,7 @@ async def get_onboarding_system_prompt_if_applicable(
     conversation_id: str,
     latest_user_message: str | None = None,
 ) -> str | None:
-    """Return the onboarding system prompt for a run-now demo turn, else ``None``."""
+    """Return the onboarding system prompt for a run-now demo turn, else None."""
     try:
         is_run_now_demo = bool(
             latest_user_message and latest_user_message.lstrip().startswith(_RUN_NOW_DEMO_PREFIX)
@@ -326,7 +326,7 @@ async def get_onboarding_system_prompt_if_applicable(
 def _uploaded_file_lines(
     file: FileData, conversation_id: str | None, include_processing_guide: bool
 ) -> tuple[list[str], bool] | None:
-    """One file's lines and whether it is on disk; ``None`` for an unsafe filename."""
+    """One file's lines and whether it is on disk; None for an unsafe filename."""
     try:
         on_disk = safe_upload_filename(file.filename)
     except ValueError:
@@ -375,10 +375,10 @@ def format_files_list(
     enriched server-side by the caller; this helper only formats. Pure — no
     DB/FS access.
 
-    ``include_processing_guide`` controls the audience:
-    - ``True`` (executor): adds the `full summary` sidecar pointer and the full
+    include_processing_guide controls the audience:
+    - True (executor): adds the full summary sidecar pointer and the full
       read/bash/scratch/artifacts how-to — the executor holds those tools.
-    - ``False`` (comms): a lean block — name, path, summary, and a single line
+    - False (comms): a lean block — name, path, summary, and a single line
       telling it to delegate real file work. Comms has no file tools; the
       executor-voice how-to only baits it into over-delegating.
     """

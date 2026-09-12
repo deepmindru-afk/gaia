@@ -7,28 +7,28 @@ agent is handed reflects all of it. Each of those lives in a different module an
 nothing else in the repo checks they line up.
 
 The invalidation is the load-bearing one, and it has already been wrong once —
-``registry._SKILLS_INVALIDATION_PATTERNS`` carries a comment saying the glob must
-track the ``v2:`` prefix in ``SKILLS_TEXT_CACHE_KEY``, because without it the glob
+registry._SKILLS_INVALIDATION_PATTERNS carries a comment saying the glob must
+track the v2: prefix in SKILLS_TEXT_CACHE_KEY, because without it the glob
 matches nothing and a disabled skill keeps being advertised to the agent for the
 full 12h TTL. Nothing failed when that happened: the write "succeeded", the Redis
 DEL matched zero keys, and the agent kept firing a skill the user had turned off.
-So these tests run the real ``@CacheInvalidator``/``@Cacheable`` decorators
+So these tests run the real @CacheInvalidator/@Cacheable decorators
 against a cache that implements Redis' glob semantics, and read the result back
-through ``get_available_skills_text`` — the same function that builds the prompt.
+through get_available_skills_text — the same function that builds the prompt.
 
 What is real: the installer, the registry (decorators included), the parser and
 validator, the discovery/formatting layer, and the filesystem — the mount root is
-a real ``tmp_path`` (the ``test_juicefs.py`` recipe), so ``write_skill_file`` and
-``delete_user_skill`` do real I/O.
+a real tmp_path (the test_juicefs.py recipe), so write_skill_file and
+delete_user_skill do real I/O.
 
-What is doubled: MongoDB (an in-memory repository mirroring ``SkillsRepository``'s
+What is doubled: MongoDB (an in-memory repository mirroring SkillsRepository's
 query semantics — those semantics themselves are pinned against real Mongo in
-``tests/contracts/test_skills_repository.py``, so nothing here re-asserts them)
-and Redis (an in-memory store whose ``delete`` globs exactly like ``delete_cache``
-→ ``delete_cache_by_pattern``). GitHub is respx-mocked.
+tests/contracts/test_skills_repository.py, so nothing here re-asserts them)
+and Redis (an in-memory store whose delete globs exactly like delete_cache
+→ delete_cache_by_pattern). GitHub is respx-mocked.
 
-Builtin skills are covered by ``test_builtin_skills.py`` and
-``test_skills_reach_the_agent.py``; the executor listing contains them here too,
+Builtin skills are covered by test_builtin_skills.py and
+test_skills_reach_the_agent.py; the executor listing contains them here too,
 so every assertion is on membership of a specific user skill, never on the whole
 string.
 """
@@ -83,11 +83,11 @@ INSTRUCTIONS = "Read the quarterly numbers, then summarise the top three movers.
 
 
 class _FakeSkillsRepository:
-    """In-memory stand-in for ``SkillsRepository``.
+    """In-memory stand-in for SkillsRepository.
 
-    Mirrors the real query semantics that the lifecycle depends on: ``for_agent``
-    filters on enabled + target + (owner or system), ``set_enabled`` reports
-    ``False`` for a no-op flip (the real ``$ne`` guard), and every read hands back
+    Mirrors the real query semantics that the lifecycle depends on: for_agent
+    filters on enabled + target + (owner or system), set_enabled reports
+    False for a no-op flip (the real $ne guard), and every read hands back
     a copy so a test cannot mutate stored state through a returned model.
     """
 
@@ -159,10 +159,10 @@ class _FakeSkillsRepository:
 
 
 class _FakeCache:
-    """In-memory Redis with the same glob contract as ``app.db.redis``.
+    """In-memory Redis with the same glob contract as app.db.redis.
 
-    ``delete_cache`` only fans out to ``delete_cache_by_pattern`` when the key
-    ends with ``*``; anything else is an exact DEL. Reproducing that exactly is
+    delete_cache only fans out to delete_cache_by_pattern when the key
+    ends with *; anything else is an exact DEL. Reproducing that exactly is
     the point — an invalidation pattern that has drifted from the cache key (or
     lost its trailing star) must silently match nothing here, just as it does in
     production.
@@ -196,8 +196,8 @@ class _FakeCache:
 def mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A real directory that reports itself as the JuiceFS mount.
 
-    ``Path.is_mount()`` is False for any tmpdir, so without the lie every storage
-    helper raises ``JuiceFSUnavailable`` and the install assertions would pass or
+    Path.is_mount() is False for any tmpdir, so without the lie every storage
+    helper raises JuiceFSUnavailable and the install assertions would pass or
     fail for reasons that have nothing to do with skills.
     """
     root = tmp_path / "jfs"
@@ -216,9 +216,9 @@ def mongo() -> Iterator[_FakeSkillsRepository]:
 
 @pytest.fixture
 def cache() -> Iterator[_FakeCache]:
-    """Wire the real ``Cacheable``/``CacheInvalidator`` decorators to a fake Redis.
+    """Wire the real Cacheable/CacheInvalidator decorators to a fake Redis.
 
-    Patched at ``app.decorators.caching`` because that is where both decorators
+    Patched at app.decorators.caching because that is where both decorators
     resolve the three functions — the registry and discovery modules never touch
     the cache directly.
     """
@@ -310,7 +310,7 @@ class TestInstall:
         assert "---" not in written
 
     async def test_the_record_points_at_the_file_that_was_written(self, stack):
-        """``vfs_path`` is what the prompt advertises and what ``read`` resolves.
+        """vfs_path is what the prompt advertises and what read resolves.
         A record pointing somewhere the writer did not write is a skill the agent
         is told about and can never open."""
         mount, _, _ = stack
@@ -340,7 +340,7 @@ class TestInstall:
         assert "quarterly-report" not in await _listing(EXECUTOR)
 
     async def test_a_skill_is_not_listed_to_another_user(self, stack):
-        """``for_agent`` unions the owner with ``system``. Widening that is a
+        """for_agent unions the owner with system. Widening that is a
         cross-tenant leak of whatever the other user wrote in their skill."""
         await _install()
 
@@ -381,7 +381,7 @@ class TestInstall:
     async def test_an_empty_description_is_rejected(self, stack):
         """The description is the only thing the model selects on; a blank one
         makes the skill listed but unselectable. Rejected twice over — by
-        ``SkillMetadata`` and again by the generated file's round-trip
+        SkillMetadata and again by the generated file's round-trip
         validation — so this only goes red when both stop guarding it."""
         mount, mongo, _ = stack
 
@@ -447,7 +447,7 @@ class TestInvalidationReachesTheAgent:
         assert executor_key not in cache.store
 
     async def test_one_users_write_does_not_flush_another_users_listing(self, stack):
-        """The other half of the glob: ``skills:text:v2:*`` would also make the
+        """The other half of the glob: skills:text:v2:* would also make the
         disable test pass, while stampeding every user's cache on every install."""
         _, _, cache = stack
         skill = await _install()
@@ -541,7 +541,7 @@ class TestUpdate:
 
     async def test_retargeting_onto_an_occupied_name_is_rejected(self, stack):
         """Retargeting is the one edit that can break the (user, name, target)
-        invariant, since ``update`` does not go through the install duplicate
+        invariant, since update does not go through the install duplicate
         check. Without the guard the collision lands and the agent gets two
         entries with the same name."""
         keeper = await _install()
@@ -593,7 +593,7 @@ class TestUpdate:
 
         The owner-succeeds half is what makes this falsifiable. Whether a given
         id is refused is decided inside the repository, which is doubled here
-        (and pinned against real Mongo in ``tests/contracts/test_skills_repository``),
+        (and pinned against real Mongo in tests/contracts/test_skills_repository),
         so the negative alone is satisfied by a lookup that returns None for
         everybody — including one whose arguments have simply been swapped.
         """
@@ -638,7 +638,7 @@ class TestUninstall:
         assert "quarterly-report" not in await _listing()
 
     async def test_uninstalling_one_skill_leaves_the_others_on_disk(self, stack):
-        """``delete_user_skill`` takes a skill name and rmtree's it. Widening
+        """delete_user_skill takes a skill name and rmtree's it. Widening
         that by one path segment deletes the user's entire skill library."""
         mount, _, _ = stack
         doomed = await _install(name="alpha")
@@ -672,7 +672,7 @@ class TestUninstall:
 
     async def test_an_unavailable_mount_still_removes_the_registry_record(self, stack):
         """Storage cleanup is best-effort on purpose: a native API run has no
-        JuiceFS mount, and letting ``JuiceFSUnavailable`` escape would leave the
+        JuiceFS mount, and letting JuiceFSUnavailable escape would leave the
         skill permanently un-uninstallable — still listed, still firing, with the
         delete button reporting an error every time."""
         _, mongo, _ = stack
@@ -706,7 +706,7 @@ class TestUninstall:
 
 
 class TestGithubInstallLifecycle:
-    """``test_installer_github.py`` covers the fetch/parse/recursion with the
+    """test_installer_github.py covers the fetch/parse/recursion with the
     filesystem and Mongo mocked out. These two run the same path against the real
     filesystem, the real registry and the real caches — the part that decides
     whether a GitHub skill actually reaches the agent and actually goes away."""

@@ -33,7 +33,7 @@ class HookAbortError(Exception):
     one must not fail the tool). This one is different — it means the hook found a
     condition that makes executing the tool wrong (e.g. a requested attachment
     could not be resolved), so letting the call run would produce a silently
-    incorrect result. ``execute_before_hooks`` re-raises it so it propagates
+    incorrect result. execute_before_hooks re-raises it so it propagates
     through Composio's executor and fails the tool loudly.
     """
 
@@ -158,17 +158,17 @@ hook_registry = ComposioHookRegistry()
 def _resolve_call_identity(tool: str, toolkit: str, params: ToolExecuteParams) -> None:
     """Establish the calling user from RunnableConfig metadata, ahead of every hook.
 
-    The agent flow binds its tools once with ``user_id=""`` and names the real
+    The agent flow binds its tools once with user_id="" and names the real
     user per invocation through runnable metadata, so this is where identity
     becomes known. It runs before the hook chain because hooks act on it (file
     uploads, share grants) and must never see a stale or model-supplied one:
-    ``params["user_id"]`` comes from the Composio executor, so the id our own
+    params["user_id"] comes from the Composio executor, so the id our own
     server injected wins on conflict (logged). Trigger flows carry no metadata
-    and keep whatever the SDK bound at ``tools.get(user_id=...)`` time.
+    and keep whatever the SDK bound at tools.get(user_id=...) time.
 
-    ``__runnable_config__`` is popped rather than read: it is our transport, not
-    a tool argument, and must not travel on to Composio. ``entity_id`` is set
-    alongside ``user_id`` for Composio's legacy connected-account auth.
+    __runnable_config__ is popped rather than read: it is our transport, not
+    a tool argument, and must not travel on to Composio. entity_id is set
+    alongside user_id for Composio's legacy connected-account auth.
     """
     # Typed as object (not the declared arguments shape): real params arrive as
     # plain dicts that may omit keys or carry non-dict values, and each guard
@@ -222,11 +222,11 @@ def master_after_execute_hook(
     1. All registered tool-specific output processing hooks
     2. Any global response transformations
 
-    Composio's own `AfterExecute` protocol declares this call signature as
-    returning `ToolExecutionResponse`, but registered hooks legitimately return a
-    trimmed dict subset for the LLM (see `AfterHookResponse`) rather than the full
+    Composio's own AfterExecute protocol declares this call signature as
+    returning ToolExecutionResponse, but registered hooks legitimately return a
+    trimmed dict subset for the LLM (see AfterHookResponse) rather than the full
     envelope. Composio's own SDK doesn't enforce the shape at runtime either — it
-    casts the modifier chain's result straight to `Dict` before using it — so this
+    casts the modifier chain's result straight to Dict before using it — so this
     cast matches the SDK's actual behavior at the boundary it declared, not just
     its type hint.
     """

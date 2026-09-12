@@ -5,7 +5,7 @@ the graph state, the untrusted argument payload — is read through here, so the
 that make decisions stay about decisions.
 
 The graph-state readers deliberately expose tool *calls* and never message *content*: the
-assistant's prose must never reach its own gate (see ``intent.py``).
+assistant's prose must never reach its own gate (see intent.py).
 """
 
 from dataclasses import dataclass
@@ -76,7 +76,7 @@ def tool_description(tool: BaseTool | None) -> str:
 
 
 def configurable_of(request: ToolCallRequest) -> AgentConfigurable:
-    """The run's ``configurable``, under this module's HIL-facing vocabulary."""
+    """The run's configurable, under this module's HIL-facing vocabulary."""
     return runtime_configurable(request)
 
 
@@ -99,12 +99,12 @@ def current_tool_calls(state: object) -> list[dict[str, Any]]:
 def prior_tool_calls(state: object, exclude_id: str) -> list[PriorCall]:
     """The tool calls this run already made, oldest first — names and args only.
 
-    ``AIMessage.content`` (the assistant's prose) is deliberately never read: it is the
+    AIMessage.content (the assistant's prose) is deliberately never read: it is the
     one channel through which the agent could argue with its own gate. Tool calls carry
     the provenance the judge legitimately needs — "where did this recipient come from?" —
     without carrying an argument.
 
-    ``exclude_id`` drops the pending call itself, which is already in state. Matched on
+    exclude_id drops the pending call itself, which is already in state. Matched on
     tool_call id, not name: an earlier call of the *same* tool is real prior context.
     """
     calls = [
@@ -150,7 +150,7 @@ def approval_window_label() -> str:
     """How long the gate waited, in words, for the expiry message to the model.
 
     The configured window, not a measured elapsed time: the sweep resolves an
-    approval within a tick of ``expires_at``, so the two agree to within a minute
+    approval within a tick of expires_at, so the two agree to within a minute
     out of hours. Threading a real duration through the resume payload would buy
     nothing the user could notice.
     """

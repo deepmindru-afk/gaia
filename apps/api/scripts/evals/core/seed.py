@@ -6,7 +6,7 @@ every terminal case of every run into its suite's project, and is:
 * **idempotent** — a case already present *for that run* is skipped, so the same
   case legitimately re-run in a later run still lands as its own trace;
 * **self-healing** — duplicate traces left by earlier partial seeds are pruned
-  down to one per ``CaseTrace.key``;
+  down to one per CaseTrace.key;
 * **resilient** — a record that fails to write is counted and reported, never
   allowed to abort the rest of the backfill.
 """
@@ -113,11 +113,11 @@ def seed(
     """Replay run journals into Opik. Safe to run repeatedly.
 
     Every write is an upsert keyed on the case's identity, so a re-seed refreshes
-    what is already there rather than duplicating or skipping it. ``reset``
+    what is already there rather than duplicating or skipping it. reset
     additionally deletes a project's existing case traces first, which is only
     needed to evict traces whose source journal is gone.
 
-    ``only_runs`` limits the backfill to named run ids — the pilot path, where
+    only_runs limits the backfill to named run ids — the pilot path, where
     one small suite is ingested and checked before the rest follows.
     """
     prices = price_book(cfg)
@@ -170,7 +170,7 @@ def _seed_project(
     """Write every seedable record of every run. Always writes, never queries.
 
     Idempotency comes from the trace id being derived from the case's identity
-    (:func:`opiksink.trace_id_for`), so re-writing a case updates its row instead
+    (:func:opiksink.trace_id_for), so re-writing a case updates its row instead
     of adding one. The previous design asked Opik what already existed and
     skipped those — which duplicated any trace whose first write had not yet
     become queryable, and could never refresh a trace whose contents had changed.
@@ -218,10 +218,10 @@ def _with_adopted_rescore(record: dict[str, Any], runs_dir: Path, run_id: str) -
     """Adopt a rescore sibling's verdict for this case, if one exists.
 
     Re-scoring never rewrites the append-only journal; it records corrected
-    verdicts in ``rescore.json`` beside it. Without adoption those corrections
+    verdicts in rescore.json beside it. Without adoption those corrections
     stayed on disk while Opik and every dashboard kept showing verdicts the
     gate fixes had already overturned. Adoption is visible: the trace metadata
-    gains ``rescored: true`` so a reader can tell a re-graded verdict from an
+    gains rescored: true so a reader can tell a re-graded verdict from an
     original one.
     """
     sibling = runs_dir / run_id / "rescore.json"
@@ -245,7 +245,7 @@ def _with_adopted_rescore(record: dict[str, Any], runs_dir: Path, run_id: str) -
 def _with_resolved_token_source(record: dict[str, Any], suite: str) -> dict[str, Any]:
     """Label a pre-fix record's token provenance so cost can be withheld from it.
 
-    A journal written before ``tokens.source`` existed says nothing about how its
+    A journal written before tokens.source existed says nothing about how its
     numbers were obtained, and for seven suites they were obtained wrongly. The
     accuracy in those runs is sound, so they are still worth ingesting — the
     tokens and the cost derived from them are not, and are dropped rather than
@@ -288,7 +288,7 @@ def _refuse_to_double(project: str, traces: list[CaseTrace]) -> None:
     This is the loud half of the fix. Idempotency is no longer defeatable by a
     metadata rename (the id comes from the journal, never from Opik), but it is
     still defeatable by legacy rows, and that has to fail rather than pass
-    quietly. `ingest` tears the project down first, so it never trips.
+    quietly. ingest tears the project down first, so it never trips.
     """
     expected = {opiksink.trace_id_for(project, trace) for trace in traces}
     legacy = opiksink.legacy_case_traces(project, expected)

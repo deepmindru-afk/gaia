@@ -1,12 +1,12 @@
 """Chat-stream orchestrator: one full turn through LangGraph.
 
-:func:`run_chat_stream_background` is the public entry point — wraps a wide
-event and delegates to :func:`_run_chat_stream`, which is structured as a
+:func:run_chat_stream_background is the public entry point — wraps a wide
+event and delegates to :func:_run_chat_stream, which is structured as a
 linear sequence of *phase* helpers (setup, init, loop, finalize). Each phase
 helper does one thing the orchestrator name claims.
 
 The orchestrator runs decoupled from the HTTP request: chunks are published to
-a Redis channel via ``stream_manager`` and the conversation is always persisted
+a Redis channel via stream_manager and the conversation is always persisted
 on completion, even if the client disconnects mid-stream.
 """
 
@@ -313,8 +313,8 @@ def _recent_history(messages: list[MessageDict]) -> list[MessageDict]:
     """Recent prior turns for the approval classifier's context.
 
     The client includes the current turn as the trailing entry when its role is
-    ``user`` (see ``user_message_content_from``); drop it so the window is only
-    prior context, then keep the last ``HIL_CLASSIFIER_HISTORY_TURNS``.
+    user (see user_message_content_from); drop it so the window is only
+    prior context, then keep the last HIL_CLASSIFIER_HISTORY_TURNS.
     """
     prior = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
     return prior[-HIL_CLASSIFIER_HISTORY_TURNS:]
@@ -330,7 +330,7 @@ async def _resolve_pending_approval_turn(
 ) -> bool:
     """Resolve a pending HIL approval from the user's chat reply — BOT CHANNELS ONLY.
 
-    The fast LLM classifier behind this (``resolve_pending_from_message``) reads
+    The fast LLM classifier behind this (resolve_pending_from_message) reads
     "yes" / "no" / "do X instead" out of a free-text chat reply and turns it into
     an approve/deny on the pending approval. It exists SOLELY for button-less
     messaging platforms — WhatsApp, Telegram, Slack, Discord — where a typed
@@ -338,22 +338,22 @@ async def _resolve_pending_approval_turn(
 
     First-party UI clients (web / mobile / desktop) render the approval card with
     real Approve/Deny buttons, and a click is resolved deterministically through
-    ``POST /approvals/{id}/decision``. On those clients we deliberately DO NOT run
+    POST /approvals/{id}/decision. On those clients we deliberately DO NOT run
     the classifier: asking an LLM to *guess* intent when an unambiguous button
     already exists is pure downside — a misread could approve or decline a
     destructive action the user never chose. The button is the source of truth on
     any client that has one; the classifier is a fallback for the clients that
     don't.
 
-    So this returns early for every non-bot source (``is_bot_platform`` is False
-    for web/mobile/desktop, and for the ``None``/background/workflow sources):
+    So this returns early for every non-bot source (is_bot_platform is False
+    for web/mobile/desktop, and for the None/background/workflow sources):
     the message just runs as a normal turn and the approval stays pending for a
     button click or the timeout sweep. Only the button-less bot channels reach
     the classifier.
 
-    Returns ``True`` only when a bot reply approved/declined the pending action
+    Returns True only when a bot reply approved/declined the pending action
     (the turn is fully handled here — ack streamed + persisted — and the caller
-    must return without running the agent). Returns ``False`` otherwise: a non-bot
+    must return without running the agent). Returns False otherwise: a non-bot
     source, nothing pending, an unrelated message (already auto-denied), or no
     user/message.
     """
@@ -457,7 +457,7 @@ async def _publish_description_if_ready(
     stream_id: str,
     description_task: asyncio.Task[str] | None,
 ) -> asyncio.Task[str] | None:
-    """Publish the description chunk if the task has completed. Returns ``None``
+    """Publish the description chunk if the task has completed. Returns None
     to clear the task reference."""
     if not description_task or not description_task.done():
         return description_task
@@ -535,7 +535,7 @@ async def _consume_agent_stream(
 ) -> asyncio.Task[str] | None:
     """Iterate the agent's SSE chunks and dispatch each to the right path.
 
-    Returns the (possibly-cleared) ``description_task`` so the orchestrator can
+    Returns the (possibly-cleared) description_task so the orchestrator can
     await whatever's left.
     """
     stream_id = turn.stream_id
@@ -607,9 +607,9 @@ async def _consume_agent_stream(
 
 
 def _parse_complete_message(chunk: str) -> tuple[str, bool]:
-    """Pull ``(complete_message, cancelled)`` out of a ``nostream: {...}`` marker.
+    """Pull (complete_message, cancelled) out of a nostream: {...} marker.
 
-    A run cut short mid-sentinel leaves a truncated ``<NEW_MESSAGE_B`` on the
+    A run cut short mid-sentinel leaves a truncated <NEW_MESSAGE_B on the
     end; it must never reach the persisted turn, where every reader (web, bots,
     the next turn's history) would render it as literal text.
     """
@@ -624,9 +624,9 @@ def _log_usage_summary(state: _StreamState) -> None:
     """Aggregate usage metadata and emit the per-turn token totals to the wide
     event.
 
-    Reads ``cache_read`` from the LangChain ``UsageMetadataCallback`` rather
-    than the wide-event ``ContextVar``. Not because in-node writes are lost —
-    since the mutable-state fix, ``LLMAccountingMiddleware``'s ``log.set``
+    Reads cache_read from the LangChain UsageMetadataCallback rather
+    than the wide-event ContextVar. Not because in-node writes are lost —
+    since the mutable-state fix, LLMAccountingMiddleware's log.set
     calls share this task's accumulator and do land on the event — but because
     the callback is the turn's authoritative usage source: LangChain's tracer
     feeds it every model call, so the totals here are computed from raw
@@ -679,7 +679,7 @@ async def _handle_stream_error(
     """Publish the error to the client, flag the stream as failed, and return
     the user-facing message so the caller can persist the SAME text.
 
-    Order matters: ``set_error`` publishes the ``STREAM_ERROR_SIGNAL`` which
+    Order matters: set_error publishes the STREAM_ERROR_SIGNAL which
     breaks the subscriber loop, so the error chunk must go on the wire first.
     """
     log.error(f"{LogTag.CHAT} Background stream error for", stream_id=stream_id, error=error)
@@ -701,16 +701,16 @@ async def _handle_stream_error(
 async def _substitute_empty_completion(stream_id: str, state: _StreamState) -> None:
     """Replace a contentless turn with one honest line, and record why.
 
-    The LAST resort, not the first. ``EmptyCompletionRetryMiddleware`` has
+    The LAST resort, not the first. EmptyCompletionRetryMiddleware has
     already repeated the model call once by the time a turn gets here, so this
     only fires when the model went silent twice — the persisted turn still needs
     a body, because every renderer drops an empty one.
 
     A turn reaches persistence with no text whenever the model returned no
-    content — reasoning-only output, ``max_tokens`` spent before the first
+    content — reasoning-only output, max_tokens spent before the first
     visible token, a content filter — and neither an error nor a cancellation
     explains it. Persisting that empty string is what users read as being
-    ignored, so they resend; every renderer (web bubble, ``deliverBubble`` in
+    ignored, so they resend; every renderer (web bubble, deliverBubble in
     the bot streaming adapter) drops an empty body silently, which is why the
     failure never surfaced anywhere but the conversation itself.
 
@@ -744,9 +744,9 @@ async def _persist_turn(
 ) -> None:
     """Recover final state, group subagents, persist the turn, mark it saved.
 
-    On cancellation/error paths ``complete_message`` may be empty because the
-    ``nostream`` marker never arrived — ``recover_stream_state`` rebuilds it from
-    Redis progress. Callers guard re-entry with ``state.saved``.
+    On cancellation/error paths complete_message may be empty because the
+    nostream marker never arrived — recover_stream_state rebuilds it from
+    Redis progress. Callers guard re-entry with state.saved.
     """
     state.complete_message, state.tool_data = await recover_stream_state(
         stream_id, state.complete_message, state.tool_data

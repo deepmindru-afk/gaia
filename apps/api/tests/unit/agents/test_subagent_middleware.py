@@ -95,10 +95,10 @@ def _spawn_harness(outcomes, decisions=("approved",), recovered=None):
 
 @contextmanager
 def _context_harness(spawn_configurable=None):
-    """Capture what ``_build_context`` hands the two config builders.
+    """Capture what _build_context hands the two config builders.
 
     The fakes spell out the real keyword-only signatures rather than standing in
-    as ``AsyncMock``: every field ``_build_context`` fills is a dataclass field
+    as AsyncMock: every field _build_context fills is a dataclass field
     with a default, so one that is dropped or nulled still builds a valid object
     and only shows up as the spawn running as the wrong user, on the parent's
     thread, or with the wrong turn limit.
@@ -161,8 +161,8 @@ class TestSubagentMiddlewareInit:
         assert "spawn_subagent" in mw._excluded_tools
 
     async def test_default_available_tools_yield_an_empty_spawn_registry(self):
-        """``available_tools or []`` — dropping the fallback survives construction
-        and only explodes mid-spawn, inside ``_build_context``'s comprehension.
+        """available_tools or [] — dropping the fallback survives construction
+        and only explodes mid-spawn, inside _build_context's comprehension.
         """
         mw = _ready_middleware(available_tools=None)
 
@@ -194,7 +194,7 @@ class TestSubagentMiddlewareInit:
         assert mw._tool_runtime_config.enable_retrieve_tools is False
 
     def test_the_configured_store_is_kept(self):
-        """``set_store`` is the usual path, so a constructor that dropped the
+        """set_store is the usual path, so a constructor that dropped the
         configured store would only be noticed by a caller that passes one."""
         store = MagicMock()
 
@@ -408,9 +408,9 @@ class TestSpawnSubagentTool:
 class TestSpawnNesting:
     """A spawn inherits its parent's row id so the UI can nest it.
 
-    ``subagent_start`` carries ``parent_subagent_id``, read straight off the
+    subagent_start carries parent_subagent_id, read straight off the
     running config. The client builds its subagent tree from that field alone
-    (``stream_utils.reconstruct_subagent_groups``), so a spawn that loses it does
+    (stream_utils.reconstruct_subagent_groups), so a spawn that loses it does
     not render in the wrong place — it renders at the top level, as a sibling of
     the very subagent that started it.
     """
@@ -511,7 +511,7 @@ class TestBuildContextWiring:
         )
 
     async def test_the_spawn_gets_its_own_thread_and_its_own_turn_limit(self):
-        """``max_turns`` is the spawn loop's budget and the thread id is what
+        """max_turns is the spawn loop's budget and the thread id is what
         keeps a resumed spawn finding its own checkpoint rather than the
         parent's. Both silently fall back to a working default when dropped.
         """
@@ -552,9 +552,9 @@ class TestBuildContextWiring:
 
 class TestSpawnStartEvent:
     async def test_the_start_event_is_pinned_whole(self):
-        """The client renders the row from this payload alone. ``tool_category``
+        """The client renders the row from this payload alone. tool_category
         is what marks it a spawn rather than a handoff, and it drops out of the
-        payload entirely when nulled (``exclude_none``), so a substring or
+        payload entirely when nulled (exclude_none), so a substring or
         key-by-key check would not see it go.
         """
         from app.agents.core.subagents.subagent_runner import subagent_row_id

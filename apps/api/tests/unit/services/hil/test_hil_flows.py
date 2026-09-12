@@ -4,12 +4,12 @@ The existing gate tests attack its *edges* — malformed resume payloads, missin
 broken dependencies. This file attacks the **journeys**: ask → approve → the tool runs,
 ask → deny → it never does, expiry → the model is told it expired, auto → receipt → run.
 
-Each drives the real ``decide_tool_call``, so the assertions are about the seam between its
+Each drives the real decide_tool_call, so the assertions are about the seam between its
 steps rather than any one of them: does an approval actually reach the handler, does a
 denial actually stop it, does an expiry produce a *different* message from a refusal, and
 does the receipt land before the action rather than after it.
 
-Mocked: the store, the publish/notify side, the intent judge, and ``interrupt()`` — the
+Mocked: the store, the publish/notify side, the intent judge, and interrupt() — the
 I/O edges. The orchestration between them is the production code under test.
 """
 
@@ -94,11 +94,11 @@ def gate():
 
 
 async def asks(gate: dict, request: Any) -> None:
-    """Pass one: the card goes up and the run parks on ``interrupt()``.
+    """Pass one: the card goes up and the run parks on interrupt().
 
     Every journey below starts here, because that is the only place a card is ever
     published. Skipping it would let a test assert an approval the user was never shown.
-    ``interrupt`` is patched to RAISE, exactly as LangGraph's does — it is control flow
+    interrupt is patched to RAISE, exactly as LangGraph's does — it is control flow
     that exits the run, not a call that returns a decision.
     """
     del gate
@@ -109,8 +109,8 @@ async def asks(gate: dict, request: Any) -> None:
 def decides(gate: dict, *, status: str, scope: str = "once", feedback: str | None = None) -> None:
     """The user's decision, as the gate reads it: a SETTLED RECORD.
 
-    Never a resume payload. ``resolve_approval`` writes the decision to Mongo and the
-    ``Command(resume=...)`` that follows is only a wake-up whose value is ignored — so a
+    Never a resume payload. resolve_approval writes the decision to Mongo and the
+    Command(resume=...) that follows is only a wake-up whose value is ignored — so a
     test that fed a payload would be exercising a path production no longer has.
     """
     gate["approval"].return_value = make_record(

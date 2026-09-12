@@ -59,7 +59,7 @@ def _lines(ranges: list[list[int]]) -> list[int]:
 
 
 def test_imports_and_constants_are_not_a_gap() -> None:
-    """mutmut does mutate a module-level constant, but it credits kills through
+    """Mutmut does mutate a module-level constant, but it credits kills through
     a trampoline that only functions have — so nothing can ever kill it."""
     assert _lines([[1, 2]]) == []
 
@@ -73,7 +73,7 @@ def test_statement_lines_in_a_plain_function_are_reported() -> None:
 
 
 def test_an_interior_line_of_a_multi_line_call_is_never_a_gap() -> None:
-    """mutmut scopes by a node's start line: `url=SETTINGS_URL` on line 12
+    """Mutmut scopes by a node's start line: url=SETTINGS_URL on line 12
     belongs to the call that opens on line 11, so a PR that changed only that
     line gets no mutant there — and no test can be asked to kill one. A string
     literal is different: it is its own node, so line 13 does host mutants."""
@@ -92,7 +92,7 @@ def test_a_decorated_function_counts_because_the_lane_patches_mutmut_to_mutate_i
 
 
 def test_class_fields_and_enum_members_are_not_a_gap() -> None:
-    """mutmut mutates a class-body assignment and tags it with the STATEMENT as
+    """Mutmut mutates a class-body assignment and tags it with the STATEMENT as
     its enclosing node, so a truthiness check reads it as function-contained.
     Only a def gets a trampoline; a field default or an enum member has no
     function to be credited through. Every changed model file read as a gap

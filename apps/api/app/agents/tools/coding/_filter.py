@@ -1,11 +1,11 @@
-"""Shared execution for the read-only `grep` file-mining tool.
+"""Shared execution for the read-only grep file-mining tool.
 
-Resolves a workspace path with the same canonical resolver `read` uses, then runs
+Resolves a workspace path with the same canonical resolver read uses, then runs
 the binary over a SINGLE workspace file. Hardening (this runs in the API process,
 not the sandbox):
 
-- **No shell.** ``create_subprocess_exec`` takes an argv list, so the model's
-  pattern is data, never parsed by a shell (`;`, `|`, `$()`, backticks, redirects
+- **No shell.** create_subprocess_exec takes an argv list, so the model's
+  pattern is data, never parsed by a shell (;, |, $(), backticks, redirects
   cannot escape). The file is a separate, absolute-path arg, so it can't be read
   as a flag.
 - **No inherited environment.** The child gets a minimal, secret-free env, so it
@@ -58,7 +58,7 @@ def _apply_child_limits() -> None:
     is unaffected).
 
     Each limit is set independently and tolerantly: macOS (dev) rejects
-    ``RLIMIT_AS``, and a failure here would otherwise abort the whole exec. The
+    RLIMIT_AS, and a failure here would otherwise abort the whole exec. The
     memory ceiling is the one that matters in prod (Linux), where it applies.
     """
     limits = [
@@ -103,10 +103,10 @@ async def run_file_filter(
     empty_message: str,
     error_label: str,
 ) -> str:
-    """Run ``binary args… <file>`` over ONE workspace file and return its output.
+    """Run binary args… <file> over ONE workspace file and return its output.
 
-    ``ok_returncodes`` lists non-error exit codes (e.g. grep returns 1 for "no
-    match"); ``empty_message`` is returned when the run succeeds with no output.
+    ok_returncodes lists non-error exit codes (e.g. grep returns 1 for "no
+    match"); empty_message is returned when the run succeeds with no output.
     """
     try:
         user_id = get_user_id(config)
@@ -185,7 +185,7 @@ async def _read_bounded(proc: asyncio.subprocess.Process) -> tuple[bytes, bytes,
 
     Draining past the cap is what makes the overrun kill safe. asyncio pauses a
     pipe transport once its buffer passes the high-water mark and only completes
-    ``wait()`` once every pipe has seen EOF, so reaping the child from inside
+    wait() once every pipe has seen EOF, so reaping the child from inside
     this loop — while stdout sits paused and unread — hangs until the timeout.
     Signal the child, keep reading to EOF, and let the caller reap it.
     """
@@ -240,7 +240,7 @@ def _kill(proc: asyncio.subprocess.Process) -> None:
 async def _kill_and_reap(proc: asyncio.subprocess.Process) -> None:
     """Kill the child and reap it, for callers that are no longer draining it.
 
-    ``communicate()`` rather than ``wait()``: asyncio completes ``wait()`` only
+    communicate() rather than wait(): asyncio completes wait() only
     once every pipe transport has seen EOF, so a child whose stdout is still
     buffered would never be reaped. The child is already dead, so what is left to
     read is bounded by the pipe and the reader's buffer.

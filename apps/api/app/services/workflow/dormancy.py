@@ -1,23 +1,23 @@
 """Pause the workflows of users who have stopped using GAIA, and resume them on return.
 
 Nothing else deactivates a workflow on inactivity: the only automatic paths are
-``mark_error`` (unrunnable) and ``set_steps`` (missing integration), neither of
+mark_error (unrunnable) and set_steps (missing integration), neither of
 which knows when a user was last seen. So a workflow armed months ago keeps
 firing — burning LLM spend and delivering notifications nobody is reading.
 
-Pausing goes through ``WorkflowService.deactivate_workflow`` rather than a bulk
+Pausing goes through WorkflowService.deactivate_workflow rather than a bulk
 write: that is the path that also unregisters the workflow's Composio triggers,
 and an integration workflow whose webhook is still registered keeps firing no
-matter what ``activated`` says.
+matter what activated says.
 
-Resume only ever touches workflows carrying ``DeactivationReason.USER_DORMANT``.
+Resume only ever touches workflows carrying DeactivationReason.USER_DORMANT.
 A workflow the user switched off themselves records no reason, so coming back
 from dormancy can never silently re-enable something they deliberately disabled.
 
-"Dormant" is decided across every signal available, never ``last_active_at``
+"Dormant" is decided across every signal available, never last_active_at
 alone: that field is bumped only by a WorkOS web login, so on its own it means
 "hasn't opened the web app" and a bot-only user looks dormant while using GAIA
-daily. See ``_is_really_dormant``.
+daily. See _is_really_dormant.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -66,9 +66,9 @@ class DormancySweepResult(BaseModel):
 
 
 async def _is_really_dormant(user_id: str, cutoff: datetime) -> bool:
-    """Whether ``user_id`` shows no activity on ANY signal since ``cutoff``.
+    """Whether user_id shows no activity on ANY signal since cutoff.
 
-    ``users.last_active_at`` is bumped only by a WorkOS web login, so on its own
+    users.last_active_at is bumped only by a WorkOS web login, so on its own
     it reports "hasn't opened the web app", not "hasn't used GAIA" — a user who
     lives in Telegram looks permanently dormant. Chat activity and metered
     feature use are checked too, and any one of them being recent keeps the
@@ -89,17 +89,17 @@ async def find_dormancy_candidates(
     """Dormant users that still own at least one activated workflow, with the
     cutoff the cohort was resolved against.
 
-    ``find_dormant_since`` is the pre-filter, not the verdict: a user dormant on
-    every signal is necessarily dormant on ``last_active_at`` too, so it returns
-    a superset that ``_is_really_dormant`` then narrows.
+    find_dormant_since is the pre-filter, not the verdict: a user dormant on
+    every signal is necessarily dormant on last_active_at too, so it returns
+    a superset that _is_really_dormant then narrows.
 
-    ``max_users`` stops after that many candidates. Pausing unregisters each
+    max_users stops after that many candidates. Pausing unregisters each
     workflow's Composio triggers, so the first run over a long-standing backlog
     is a burst of third-party calls — the bound lets an operator drain it in
     batches. Unbounded by default: the daily cron only ever sees newly dormant
     users once the backlog is cleared.
 
-    Raises ``ValueError`` for a non-positive ``threshold``: a zero threshold puts
+    Raises ValueError for a non-positive threshold: a zero threshold puts
     the cutoff at the current instant, so every prior activity timestamp falls
     before it and EVERY user reads as dormant. The guard sits here rather than
     only in the CLI so no caller can reach the pause loop with it.
@@ -134,13 +134,13 @@ async def sweep_dormant_workflows(
     dry_run: bool = False,
     max_users: int | None = None,
 ) -> DormancySweepResult:
-    """Pause every activated workflow owned by a user dormant for ``threshold``.
+    """Pause every activated workflow owned by a user dormant for threshold.
 
-    ``dry_run`` resolves the same cohort and reports it without writing anything.
-    ``max_users`` bounds how many dormant users one run processes. A single
+    dry_run resolves the same cohort and reports it without writing anything.
+    max_users bounds how many dormant users one run processes. A single
     workflow that fails to pause (e.g. Composio unregistration errors) is counted
     and skipped rather than aborting the sweep for every other user. Raises
-    ``ValueError`` for a non-positive ``threshold`` (see ``find_dormancy_candidates``).
+    ValueError for a non-positive threshold (see find_dormancy_candidates).
     """
     cutoff, candidates = await find_dormancy_candidates(threshold=threshold, max_users=max_users)
     paused: int = 0
@@ -177,7 +177,7 @@ async def sweep_dormant_workflows(
 
 
 async def resume_dormancy_paused_workflows(user_id: str) -> int:
-    """Re-activate the workflows this sweep paused for ``user_id``. Returns the count
+    """Re-activate the workflows this sweep paused for user_id. Returns the count
     resumed. A workflow whose integrations are no longer connected cannot be
     re-activated — it is left paused and logged rather than failing the others."""
     resumed = 0

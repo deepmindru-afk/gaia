@@ -448,12 +448,12 @@ async def client(test_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest.fixture
 async def gated_client(test_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
-    """``client`` with the real ``EntitlementMiddleware`` in front of the app.
+    """client with the real EntitlementMiddleware in front of the app.
 
     The test app strips every middleware, so a route's 402 contract cannot be
-    proved through ``client``: the deny-by-default gate lives in the middleware,
+    proved through client: the deny-by-default gate lives in the middleware,
     not in the route. This stacks the gate exactly as production does (auth
-    outside it, writing ``request.state.user``; the gate inside) around the
+    outside it, writing request.state.user; the gate inside) around the
     same app, so a test asserts what a FREE caller really gets.
     """
     from starlette.middleware.base import BaseHTTPMiddleware
@@ -506,10 +506,10 @@ def fake_user_2() -> dict:
 def pro_user() -> dict:
     """Authenticated user dict for a paying PRO user.
 
-    FAKE_USER-shaped, plus a ``subscription`` key holding the real
-    ``UserSubscriptionStatus`` for a PRO plan. The global
-    ``get_user_subscription_status`` patch always reports FREE, so PRO-tier
-    tests patch that seam with ``pro_user["subscription"]``.
+    FAKE_USER-shaped, plus a subscription key holding the real
+    UserSubscriptionStatus for a PRO plan. The global
+    get_user_subscription_status patch always reports FREE, so PRO-tier
+    tests patch that seam with pro_user["subscription"].
     """
     return PRO_USER.copy()
 
@@ -518,12 +518,12 @@ def pro_user() -> dict:
 def pro_plan() -> Iterator[MagicMock]:
     """Make the paid-only gate see a PRO caller for the duration of a test.
 
-    Patches the single seam every gate reads — ``get_cached_plan_type`` — so it
-    covers the ``EntitlementMiddleware``, the imperative ``require_active_subscription``
-    decorator and the imperative ``is_paid`` helper at once.
+    Patches the single seam every gate reads — get_cached_plan_type — so it
+    covers the EntitlementMiddleware, the imperative require_active_subscription
+    decorator and the imperative is_paid helper at once.
 
     Deliberately NOT autouse. The suite's default caller is FREE (the global
-    ``get_user_subscription_status`` patch reports a free plan), and a dozen
+    get_user_subscription_status patch reports a free plan), and a dozen
     existing tests assert the 402 that falls out of that default. Flipping the
     default to PRO would turn those green-for-the-wrong-reason.
     """
@@ -576,8 +576,8 @@ def skip_destructive(request):
 def fake_auth_credentials() -> dict:
     """Auth credentials shape that matches the post-migration contract.
 
-    Composio no longer returns `access_token` in connected-account credentials.
-    The patched `CustomTool.__call__` injects only `user_id`. Tests that exercise
+    Composio no longer returns access_token in connected-account credentials.
+    The patched CustomTool.__call__ injects only user_id. Tests that exercise
     custom tools should use this fixture instead of hand-rolling a bearer token.
     """
     return {"user_id": "test_user_123"}
@@ -610,15 +610,15 @@ _ENQUEUE_CALL_SITES = (
 
 @pytest.fixture
 def route_enqueue_via_pool():
-    """Route the wide-event enqueue wrapper through ``pool.enqueue_job``.
+    """Route the wide-event enqueue wrapper through pool.enqueue_job.
 
-    Services enqueue ARQ jobs through ``enqueue_worker_job`` (the wide-event
-    wrapper in ``app.workers.queue``), which forwards to the pool's
-    ``enqueue_job`` with the same args. Tests that mock the pool directly
-    (``pool.enqueue_job = AsyncMock(...)``) therefore never see the call
+    Services enqueue ARQ jobs through enqueue_worker_job (the wide-event
+    wrapper in app.workers.queue), which forwards to the pool's
+    enqueue_job with the same args. Tests that mock the pool directly
+    (pool.enqueue_job = AsyncMock(...)) therefore never see the call
     unless the wrapper is routed through the pool. Requesting this fixture
     patches the wrapper at every call site with a forwarding side effect so
-    the tests' existing ``pool.enqueue_job`` mocks and assertions stay
+    the tests' existing pool.enqueue_job mocks and assertions stay
     authoritative.
     """
     with contextlib.ExitStack() as stack:
@@ -639,9 +639,9 @@ def route_enqueue_via_pool():
 def posthog_provider() -> Iterator[Callable[..., None]]:
     """Install a controllable "posthog" provider under the real registry.
 
-    The env fence blanks ``POSTHOG_PROJECT_TOKEN``, so the production provider
+    The env fence blanks POSTHOG_PROJECT_TOKEN, so the production provider
     is unavailable for the whole suite. Tests go through the real registry
-    rather than patching ``providers`` because the provider NAME is part of
+    rather than patching providers because the provider NAME is part of
     what they pin: a lookup under any other key finds nothing, and the code
     under test then silently attributes nobody. Production's provider is
     re-registered on teardown.
@@ -681,12 +681,12 @@ def _reset_limit_origin() -> Iterator[None]:
 def _isolate_wide_event_state() -> Iterator[None]:
     """Keep one test's wide-event boundary from leaking into the next.
 
-    ``log.reset()`` (used bare in ~8 unit test files to simulate a request)
-    seeds the runner ContextVar with a shared, MUTABLE ``_EventState``. A later
-    async test's ``log.set(...)`` mutates that same object in place — the async
+    log.reset() (used bare in ~8 unit test files to simulate a request)
+    seeds the runner ContextVar with a shared, MUTABLE _EventState. A later
+    async test's log.set(...) mutates that same object in place — the async
     context copy shares the reference — so its fields surface back in the sync
     runner context and bleed into subsequent tests. That is how a workflow
-    execution id set in one test made ``current_workflow_execution_id()`` return
+    execution id set in one test made current_workflow_execution_id() return
     non-None in a test that opened no boundary at all. Reset to the module
     defaults after every test so no shared object survives.
     """

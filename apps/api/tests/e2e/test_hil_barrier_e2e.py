@@ -3,15 +3,15 @@
 Real PostgreSQL (the LangGraph checkpointer, so the interrupt and the node replay
 are genuine), real MongoDB (approval records, user preferences), real Redis (the
 background-results bucket, the resume slot, stream publish). Two subagent graphs
-guard a destructive side effect with the REAL gate; the REAL ``wait_for_subagents``
+guard a destructive side effect with the REAL gate; the REAL wait_for_subagents
 barrier collects them; the REAL resolution layer applies the decisions.
 
 What is substituted, and why — each needs infra unrelated to the barrier itself:
 
-* ``handoff_tools._resolve_subagent`` — name → graph lookup (OAuth/provider registry).
-* ``gate._integration_name_for`` — the cosmetic card label (ChromaDB tool registry).
-* ``resolution.prepare_run_from_item`` / ``run_executor_background`` — the re-dispatch
-  target is the full executor agent (LLM + tool registry). The resume ``Command`` is
+* handoff_tools._resolve_subagent — name → graph lookup (OAuth/provider registry).
+* gate._integration_name_for — the cosmetic card label (ChromaDB tool registry).
+* resolution.prepare_run_from_item / run_executor_background — the re-dispatch
+  target is the full executor agent (LLM + tool registry). The resume Command is
   captured and driven into the executor graph directly, so the dispatch decision is
   still the real one; only the agent it would wake is stood in for.
 
@@ -20,7 +20,7 @@ records, checkpoint/interrupt, the barrier loop, the resume slot, the results
 bucket, and exactly-once collection.
 
 The journey is one causal chain — nothing can be approved before both subagents
-park — so it is one test, in the shape of ``test_device_bridge_e2e``'s lifecycle
+park — so it is one test, in the shape of test_device_bridge_e2e's lifecycle
 test rather than split into steps that would each have to re-run the setup.
 """
 
@@ -70,7 +70,7 @@ SLACK = "slack"
 async def gated_user(mongo_db):
     """A real user with HIL on and both test tools explicitly gated.
 
-    Written through ``mongo_db`` so it lands in the same database the repository
+    Written through mongo_db so it lands in the same database the repository
     layer is patched at — a direct accessor would seed a database the gate never
     reads. Explicit per-tool overrides decide gating without the classifier's
     LLM call.

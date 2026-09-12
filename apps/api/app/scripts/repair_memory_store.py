@@ -11,7 +11,7 @@ already there, and what is already there is the problem:
 - **State rows that never expire.** The extractor almost never set an expiry
   (19 of 1,028 rows), so counts, balances, connection statuses and deployment
   states are still live months later. Rows already carrying
-  ``shelf_life='state'`` are retired past the window; older rows all read as
+  shelf_life='state' are retired past the window; older rows all read as
   'durable' because the column post-dates them, so those fall back to a
   phrase heuristic ("as of", "currently", "is failing", "disconnected",
   "pending").
@@ -25,13 +25,13 @@ Usage::
     uv run python -m app.scripts.repair_memory_store --user <id>            # dry run
     uv run python -m app.scripts.repair_memory_store --user <id> --apply    # commit
 
-Run ``--help`` for the flags: this docstring IS the parser's description, so a
+Run --help for the flags: this docstring IS the parser's description, so a
 second copy of them here renders twice and drifts from the one argparse builds.
 
-``--retire-ids`` is the one that needs more than its one-liner: it forgets a
+--retire-ids is the one that needs more than its one-liner: it forgets a
 memory id outright, for rows a human has read and judged wrong.
 
-Every mode prints the full plan first. Nothing is written without ``--apply``.
+Every mode prints the full plan first. Nothing is written without --apply.
 """
 
 from __future__ import annotations
@@ -163,7 +163,7 @@ def _subject_tokens(content: str) -> set[str]:
 
 
 def containment_share(raw: str) -> float:
-    """argparse type for --extends-containment: a share, so 0.0 to 1.0 inclusive."""
+    """Argparse type for --extends-containment: a share, so 0.0 to 1.0 inclusive."""
     value = float(raw)
     if math.isnan(value) or not 0.0 <= value <= 1.0:
         raise argparse.ArgumentTypeError(f"{raw!r} is not a share between 0.0 and 1.0")
@@ -184,7 +184,7 @@ def extends_parents_to_retire(
     *,
     containment: float = _DEFAULT_EXTENDS_CONTAINMENT,
 ) -> list[tuple[MemoryRecord, MemoryRecord]]:
-    """``(parent, newest child)`` for every live parent its child truly covers.
+    """(parent, newest child) for every live parent its child truly covers.
 
     Only EXTENDS pairs qualify: an UPDATES child already flipped its parent out
     of the live set when it was written. A pair whose child does not cover the
@@ -213,7 +213,7 @@ def state_rows_to_forget(
 ) -> list[MemoryRecord]:
     """Live rows old enough that their snapshot value is certainly stale.
 
-    A row that already carries ``shelf_life='state'`` qualifies on age alone.
+    A row that already carries shelf_life='state' qualifies on age alone.
     Everything older than the column reads as 'durable', so those qualify only
     when the text itself reads as a snapshot.
     """
@@ -279,8 +279,8 @@ async def _run(args: argparse.Namespace) -> int:
 
     Mongo self-initialises on first collection access, but the memory store's
     Postgres engine is a lazy provider, and outside the API process nobody has
-    registered it: every query raised ``Provider 'postgresql_engine' not found in
-    registry``. Registration is bookkeeping only (no I/O); the engine itself is
+    registered it: every query raised Provider 'postgresql_engine' not found in
+    registry. Registration is bookkeeping only (no I/O); the engine itself is
     built on first use and disposed here so the script exits without a warning
     about an open pool.
     """

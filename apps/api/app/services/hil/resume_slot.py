@@ -2,7 +2,7 @@
 
 A batch pause has several approvals sharing one executor thread; two decisions
 landing close together must not start two concurrent LangGraph runs on it
-(checkpoint corruption). ``resolution`` claims the slot before dispatching a
+(checkpoint corruption). resolution claims the slot before dispatching a
 resume; the dispatched run releases it when it finalizes (completes, errors, or
 pauses again). A decision that loses the claim skips dispatch — it is already
 durable on its record, and the in-flight join round or the sweep collects it.

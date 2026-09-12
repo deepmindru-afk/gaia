@@ -128,13 +128,13 @@ class TestRemindersScheduler:
         minutes apart each enqueue a job for the same overdue reminder under a
         different id (the past-due re-arm uses each process's own clock), so ARQ
         does not dedup them. The first job claims, runs, and
-        ``handle_recurring_task`` puts the row back to SCHEDULED for the NEXT
+        handle_recurring_task puts the row back to SCHEDULED for the NEXT
         occurrence — at which point the second job finds status="scheduled"
         again, claims it, and delivers the same reminder a second time while
         also eating an occurrence out of the series.
 
         Pinning the armed occurrence is what closes it, exactly as
-        ``WorkflowsRepository.claim_for_execution`` pins ``next_run``.
+        WorkflowsRepository.claim_for_execution pins next_run.
         """
         first_run = (datetime.now(UTC) - timedelta(minutes=5)).replace(microsecond=0)
         next_run = first_run + timedelta(days=1)
@@ -160,7 +160,7 @@ class TestRemindersScheduler:
         A claim flips SCHEDULED -> EXECUTING with no lease. If the worker dies
         before re-arming (a rolling deploy SIGKILLs it, or the job is cancelled
         and its retry finds the row already claimed), the row stays EXECUTING
-        forever — and ``find_pending_before`` filters on ``status="scheduled"``,
+        forever — and find_pending_before filters on status="scheduled",
         so nothing can ever see it again. The reminder simply never fires.
         """
         now = datetime.now(UTC)
@@ -191,7 +191,7 @@ class TestRemindersScheduler:
     async def test_claim_pin_survives_the_real_stamp_round_trip(self, repo):
         """The pin must match the armed occurrence through ARQ's serialized args.
 
-        "Remind me in 10 minutes" arms ``now + delta``, which carries
+        "Remind me in 10 minutes" arms now + delta, which carries
         microseconds. The stamp the job travels with is a unix int, so it comes
         back floored to the second, while Mongo holds the armed instant at BSON's
         millisecond precision — an equality pin never matched and the reminder

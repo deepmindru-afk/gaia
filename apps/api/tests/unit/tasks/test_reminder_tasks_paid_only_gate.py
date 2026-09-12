@@ -2,13 +2,13 @@
 
 The HTTP paywall is a middleware; the scheduler never makes an HTTP request, so
 a reminder created while subscribed would keep firing (and keep spending) after
-the subscription lapsed. ``execute_reminder_by_agent`` is the single choke point
+the subscription lapsed. execute_reminder_by_agent is the single choke point
 every fire passes through, so the gate lives there.
 
-The gate only SKIPS. It used to write ``PAUSED`` as well, which was invisible:
-``BaseSchedulerService.process_task_execution`` writes the reminder's status
-again the moment the fire returns — ``SCHEDULED`` for a recurring reminder,
-``COMPLETED`` for a one-off — so the pause was overwritten every time and no
+The gate only SKIPS. It used to write PAUSED as well, which was invisible:
+BaseSchedulerService.process_task_execution writes the reminder's status
+again the moment the fire returns — SCHEDULED for a recurring reminder,
+COMPLETED for a one-off — so the pause was overwritten every time and no
 subscription-restore path had anything to resume from. Skipping instead lets
 the scheduler's own re-arm bring a recurring reminder back by itself, which is
 what the workflow gate does for the same reason.
@@ -73,7 +73,7 @@ async def test_free_user_reminder_does_not_fire() -> None:
 async def test_the_block_reaches_the_funnel_under_the_blocked_users_own_id() -> None:
     """Every other paywall block in the app is attributable; this one must be too.
 
-    This gate cannot go through ``require_active_subscription`` — that raises,
+    This gate cannot go through require_active_subscription — that raises,
     and a worker must skip — so the event it would have fired has to be fired
     here. Without it "how many users lost a reminder to the wall" is
     unanswerable while every other surface answers it, and a worker has no
@@ -111,7 +111,7 @@ async def test_a_paying_users_reminder_is_never_captured_as_blocked() -> None:
 async def test_the_skip_is_recorded_on_the_wide_event_with_both_ids() -> None:
     """A skipped reminder is silent: the wide event is the only trace.
 
-    ``log.warning`` writes message AND kwargs into the event's ``warnings[]``
+    log.warning writes message AND kwargs into the event's warnings[]
     (see libs/shared/py/wide_events.py), so both ids are a queried surface —
     without them "why did my reminder stop?" is unanswerable from Loki.
     """
@@ -179,7 +179,7 @@ async def test_a_recurring_reminder_the_gate_skipped_is_left_armed_for_its_next_
 ):
     """Driven through the scheduler, because the scheduler is what overwrote the pause.
 
-    ``process_task_execution`` is the path the ARQ job takes: claim, execute,
+    process_task_execution is the path the ARQ job takes: claim, execute,
     then write the status again. Testing the gate alone cannot see that second
     write, which is why the pause it used to take looked correct in isolation
     and was gone in production. Only the reminder repository and the ARQ pool

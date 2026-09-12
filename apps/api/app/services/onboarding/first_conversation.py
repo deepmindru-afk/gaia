@@ -2,7 +2,7 @@
 
 Deterministic and model-free here: the same answers always produce the same two
 bubbles. The only model-written part, the four starting jobs offered as chips,
-comes from :mod:`first_question` at Q2 and is merged by :func:`with_starting_jobs`;
+comes from :mod:first_question at Q2 and is merged by :func:with_starting_jobs;
 when that call failed there are no job chips, only the escape hatch.
 
 This is post-onboarding, not a pitch. The user has just sat through the wizard,
@@ -139,7 +139,7 @@ def compose_first_conversation(
     preferences: OnboardingPreferences, connected_platform: str | None
 ) -> FirstConversation:
     """The bubbles GAIA opens with. The escape-hatch chip is always offered;
-    the model-written jobs join it in :func:`with_starting_jobs`."""
+    the model-written jobs join it in :func:with_starting_jobs."""
     return FirstConversation(
         opening=[
             WELCOME,

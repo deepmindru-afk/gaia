@@ -174,8 +174,8 @@ class TestGenerateProfileCardDesign:
 
 class TestGetUserMetadata:
     """account_number is now derived from the ObjectId creation timestamp
-    (``int(oid.generation_time.timestamp()) % 1_000_000``) rather than a
-    ``count_documents`` query.  member_since falls back to today's date (UTC)
+    (int(oid.generation_time.timestamp()) % 1_000_000) rather than a
+    count_documents query.  member_since falls back to today's date (UTC)
     when the stored created_at is missing or not a datetime instance.
     """
 

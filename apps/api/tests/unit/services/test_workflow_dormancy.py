@@ -135,7 +135,7 @@ class TestSweepDormantWorkflows:
     # refuses to accept as proof. Both tests below are still mutation-checked on
     # this branch (drop the `_is_really_dormant` call and they go red).
     async def test_recent_chat_keeps_a_user_out_of_the_cohort(self):
-        """`last_active_at` is bumped only by a WorkOS web login, so a user who
+        """last_active_at is bumped only by a WorkOS web login, so a user who
         lives in a bot looks dormant on it while using GAIA daily. On production
         that was 210 users owning 1,965 activated workflows at a 30-day cutoff."""
         deactivate = AsyncMock()
@@ -221,7 +221,7 @@ class TestSweepDormantWorkflows:
     async def test_a_non_positive_threshold_is_refused(self, bad: timedelta):
         """A zero threshold puts the cutoff at this instant, so EVERY prior
         activity timestamp falls before it and every user reads as dormant —
-        `--days 0` would pause the whole product. A negative one is worse: the
+        --days 0 would pause the whole product. A negative one is worse: the
         cutoff moves into the future."""
         find_dormant = AsyncMock(return_value=[])
         with (
@@ -235,7 +235,7 @@ class TestSweepDormantWorkflows:
 
     async def test_both_activity_signals_are_asked_about_the_same_cutoff(self):
         """The cutoff must reach BOTH repositories, and reach usage_daily in the
-        `YYYY-MM-DD` shape its `date` field is stored as. Nothing else pins this:
+        YYYY-MM-DD shape its date field is stored as. Nothing else pins this:
         the doubles elsewhere discard the argument, so a wrong (or wrongly
         formatted) cutoff would still report the user dormant — the direction
         that pauses a live user's workflows."""

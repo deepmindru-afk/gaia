@@ -187,7 +187,7 @@ class TestComposeFirstContact:
         assert promise == 'You also said "Book my travel". That\'s mine too.'
 
     def test_trimming_their_words_never_eats_a_real_last_letter(self) -> None:
-        """Only sentence punctuation comes off the end. ``rstrip`` takes a SET of
+        """Only sentence punctuation comes off the end. rstrip takes a SET of
         characters, so widening it by one letter silently truncates every answer
         that ends in that letter — "plan X" would be quoted back as "plan"."""
         _, promise, _ = compose_first_contact("telegram", None, _prefs([], "plan X"), [])
@@ -297,8 +297,8 @@ class TestBuildFirstContact:
     ) -> None:
         """Dropping the link is silent in the product: nothing retries the mint
         and the user simply never connects, so this line is the only trace that
-        a first contact shipped without the tap it exists to offer. ``log.error``
-        appends message AND kwargs to the wide event's ``errors[]``, which makes
+        a first contact shipped without the tap it exists to offer. log.error
+        appends message AND kwargs to the wide event's errors[], which makes
         every field a queryable surface — without them a Gmail mint failing on
         Telegram is indistinguishable from a calendar one failing on WhatsApp,
         and without the user nobody can be told to connect by hand."""

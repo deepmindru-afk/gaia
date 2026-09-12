@@ -3,8 +3,8 @@
 Both properties failed in production and neither was caught, because both were
 checked by reading the writer rather than the result:
 
-* every case trace carried its run under the key ``run``, so an audit looking
-  for ``run_id`` concluded nothing was attributable and that the corrupt runs
+* every case trace carried its run under the key run, so an audit looking
+  for run_id concluded nothing was attributable and that the corrupt runs
   could not be excluded from a total;
 * seeding deduplicated by querying Opik for what already existed, which loses to
   the SDK's write buffering and left 61 duplicate traces.
@@ -53,7 +53,7 @@ def _trace(**overrides: object) -> CaseTrace:
 def test_metadata_carries_every_key_the_check_requires(key: str) -> None:
     """The writer and the verifier must not be able to drift apart.
 
-    Parametrising over ``REQUIRED_METADATA`` means adding a key to the check
+    Parametrising over REQUIRED_METADATA means adding a key to the check
     without emitting it fails here, rather than silently failing every future
     ingest.
     """
@@ -61,7 +61,7 @@ def test_metadata_carries_every_key_the_check_requires(key: str) -> None:
 
 
 def test_run_id_is_not_published_under_the_old_name() -> None:
-    """`run` was the name that made the data look absent. It must not come back."""
+    """run was the name that made the data look absent. It must not come back."""
     metadata = _trace().metadata
     assert metadata["run_id"] == "capability-20260808-093921-98a7ac"
     assert "run" not in metadata
@@ -155,7 +155,7 @@ def test_ids_are_stable_across_processes() -> None:
 
 
 def test_uuid7_derivation_matches_the_sdk() -> None:
-    """``_uuid4_to_uuid7`` is a copy of the SDK's; a drift would re-key every trace."""
+    """_uuid4_to_uuid7 is a copy of the SDK's; a drift would re-key every trace."""
     from datetime import UTC, datetime
     import uuid
 

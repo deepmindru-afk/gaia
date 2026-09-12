@@ -30,7 +30,7 @@ from app.services.connect_link_service import build_connect_link_url
 def _current_source_category() -> str | None:
     """Read the generalized source category (ui/bot/bg) from the active graph run.
 
-    Uses LangGraph's ambient config (same mechanism as ``get_stream_writer``), so
+    Uses LangGraph's ambient config (same mechanism as get_stream_writer), so
     no config threading is needed. Returns None outside a runnable context.
     """
     try:

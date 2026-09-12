@@ -1,7 +1,7 @@
 """Regex-injection hardening for the community-integration search fallback.
 
 The escaping now lives in the repository's filter builder — a raw metacharacter
-query must be fed to ``$regex`` as a *literal* (escaped) pattern, never run as an
+query must be fed to $regex as a *literal* (escaped) pattern, never run as an
 attacker-controlled pattern against the public collection.
 """
 

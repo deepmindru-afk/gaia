@@ -7,7 +7,7 @@ Not a test: it drives a REAL running API and a REAL model, so it goes red when t
 provider or the local stack is down, which is a useless CI signal. It exists to
 answer one question a scripted eval cannot: *would this person come back tomorrow?*
 
-The difference from ``chat_quality.py`` is the second model call per turn. There is
+The difference from chat_quality.py is the second model call per turn. There is
 no fixed script. A persona card (a goal, a temperament, a stop condition) is handed
 to a simulated user who READS GAIA's actual last reply and writes the next message
 in character: they correct her, lose patience, switch language, go quiet, or leave
@@ -15,10 +15,10 @@ early and say why. A scripted turn cannot catch "she answered the question I alr
 answered", because a script asks it anyway.
 
 Persona cards come from two places:
-  * ``.agents/prod-convos/hard_scenarios.json`` (25 shapes paraphrased from real prod
+  * .agents/prod-convos/hard_scenarios.json (25 shapes paraphrased from real prod
     usage). They are LOADED AT RUNTIME, never copied into this file, so the prod
     paraphrase lives in one place and this script stays free of user text.
-  * ``EXTRA_PERSONAS`` below: 10 shapes that corpus under-covers (honesty tester,
+  * EXTRA_PERSONAS below: 10 shapes that corpus under-covers (honesty tester,
     "no, the other one", the "I just connected it" liar, the thanks-ender).
 
 Usage (from apps/api/, with the worktree API already running):
@@ -316,7 +316,7 @@ def _slug(label: str) -> str:
 def load_prod_personas() -> list[Persona]:
     """Turn the paraphrased prod scenario file into persona cards, at runtime.
 
-    The file's ``turns`` are a SCRIPT; we take only the first user message as the
+    The file's turns are a SCRIPT; we take only the first user message as the
     opener and let the simulated user improvise the rest, because the whole point
     of this harness is that turn 2 reacts to what GAIA actually said. The rest of
     the script becomes the persona's goal, so the intent survives without the
@@ -420,7 +420,7 @@ def _structural_errors(code: str) -> tuple[list[str], list[str]]:
     """Cheap parse check: would this code plausibly evaluate, and what does it use?
 
     Not a full OpenUI interpreter. It catches the failures that actually reach
-    users: an unbalanced call, a stray quote, no ``root``, and a component name
+    users: an unbalanced call, a stray quote, no root, and a component name
     that does not exist in the shipped library.
     """
     errors: list[str] = []

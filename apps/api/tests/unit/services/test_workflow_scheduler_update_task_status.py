@@ -1,11 +1,11 @@
-"""``WorkflowScheduler.update_task_status`` — the run-state write used by the
+"""WorkflowScheduler.update_task_status — the run-state write used by the
 scheduler and the worker's re-arm paths.
 
-Threads the caller's ``update_data`` dict into the typed ``WorkflowRearm``
-the repository's ``set_status`` expects (see ``app/models/workflow_models.py``
+Threads the caller's update_data dict into the typed WorkflowRearm
+the repository's set_status expects (see app/models/workflow_models.py
 and the refactor in commit 58a9f12fa5 that replaced a kwargs bag with this
 typed object). Direct tests — the base-class tests in
-``test_scheduler_service.py`` exercise a test double, never this real method.
+test_scheduler_service.py exercise a test double, never this real method.
 """
 
 from datetime import UTC, datetime
@@ -121,8 +121,8 @@ class TestUpdateTaskStatusBuildsTheRearm:
         self, scheduler: WorkflowScheduler
     ) -> None:
         """The recovery scan reaps a non-recurring workflow by writing
-        ``scheduled_at: None`` — that must reach the repository as a real
-        ``None``, not the UNSET sentinel (which means "leave untouched")."""
+        scheduled_at: None — that must reach the repository as a real
+        None, not the UNSET sentinel (which means "leave untouched")."""
         mock_set_status = AsyncMock(return_value=True)
         with patch(
             "app.services.workflow.scheduler.workflow_repository.set_status", mock_set_status

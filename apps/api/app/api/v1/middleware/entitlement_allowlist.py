@@ -1,16 +1,16 @@
 """The single list of paths that stay free when the paywall is deny-by-default.
 
-``EntitlementMiddleware`` blocks every authenticated request whose caller is not
+EntitlementMiddleware blocks every authenticated request whose caller is not
 on PRO. That is only safe because the handful of surfaces a lapsed user still
 needs — to see who they are, to pay, to log out, to let a provider call us back —
 are enumerated here and nowhere else. A second copy of this list would drift and
 silently open a paid surface, which is the exact bug the middleware exists to
 prevent.
 
-Matching is a plain ``startswith`` on ``request.url.path``, so an entry frees a
+Matching is a plain startswith on request.url.path, so an entry frees a
 whole subtree. Keep entries as specific as the surface actually needs: every
 extra character is a route that can never be monetised. The two liveness
-aliases that are themselves prefixes of everything live in ``FREE_EXACT_PATHS``
+aliases that are themselves prefixes of everything live in FREE_EXACT_PATHS
 and are matched whole.
 """
 
@@ -82,5 +82,5 @@ FREE_PATH_PREFIXES: tuple[str, ...] = (
 
 
 def is_free_path(path: str) -> bool:
-    """Whether ``path`` is exempt from the paid-only gate."""
+    """Whether path is exempt from the paid-only gate."""
     return path in FREE_EXACT_PATHS or path.startswith(FREE_PATH_PREFIXES)

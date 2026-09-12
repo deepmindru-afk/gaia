@@ -1,6 +1,6 @@
 """Behavior tests for app.agents.core.background.workflow_platform_delivery.
 
-Locks: a result goes to the ONE platform ``resolve_chat_channel`` picks; the
+Locks: a result goes to the ONE platform resolve_chat_channel picks; the
 notification text is split into bubbles on the break sentinel; that platform
 gets a persisted bot message and one outbound publish; the platform that
 already has the result in its own conversation is never pinged again; and
@@ -239,8 +239,8 @@ class TestDeliveredResultsReachTheSessionThread:
             assert "<NEW" not in text
 
     async def test_whatsapp_display_name_preserves_casing(self) -> None:
-        """WhatsApp's display name is ``WhatsApp``, not ``Whatsapp`` — a
-        ``.capitalize()`` fallback would be observable here."""
+        """WhatsApp's display name is WhatsApp, not Whatsapp — a
+        .capitalize() fallback would be observable here."""
         recorder = AsyncMock()
         with (
             _channel(ChatChannel(source=ConversationSource.WHATSAPP, platform_user_id="wa-1")),
@@ -261,7 +261,7 @@ class TestDeliveredResultsReachTheSessionThread:
         assert recorder.await_args.args[1].startswith("[Delivered to the user on WhatsApp —")
 
     async def test_imessage_is_spelled_the_way_apple_spells_it(self) -> None:
-        """iMessage is the one platform whose display name is not a plain
+        """IMessage is the one platform whose display name is not a plain
         capitalization, so the map must carry it rather than fall back."""
         recorder = AsyncMock()
         with (

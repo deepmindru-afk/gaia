@@ -75,7 +75,7 @@ async def run_subagent_background(
         integration_id: Releases this integration's background slot on exit.
         record_calls: Workflow runs only — append the subagent's successful tool
             calls to the stored result so the executor can transcribe them into
-            a playbook (see ``call_record``).
+            a playbook (see call_record).
     """
     handoff = handoff or BackgroundHandoff()
     integration_metadata, subagent_id, integration_id = (

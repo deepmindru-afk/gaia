@@ -1,16 +1,16 @@
 """Tests for the OpenRouter provider-name patch.
 
 OpenRouter returns the name of the upstream that actually served a call in a
-top-level ``provider`` field. Two layers used to lose it: the ``openrouter``
+top-level provider field. Two layers used to lose it: the openrouter
 SDK's response models drop the unknown key during pydantic validation, and
-``ChatOpenRouter`` never reads it and reports ``model_provider="openrouter"`` —
+ChatOpenRouter never reads it and reports model_provider="openrouter" —
 the aggregator's own name. The patch restores the real name into
-``response_metadata[PROVIDER_NAME_METADATA_KEY]`` on both the streaming and
+response_metadata[PROVIDER_NAME_METADATA_KEY] on both the streaming and
 non-streaming paths.
 
-The streaming tests drive the real ``ChatOpenRouter`` against a loopback SSE
+The streaming tests drive the real ChatOpenRouter against a loopback SSE
 endpoint, so they exercise the SDK's parsing (where the drop happened) and
-``AIMessageChunk.__add__``'s merge (where the repeated value would concatenate)
+AIMessageChunk.__add__'s merge (where the repeated value would concatenate)
 rather than just the wrapper's own arithmetic.
 """
 
@@ -66,7 +66,7 @@ def _chunk(content: str, *, provider: str | None, finish: str | None = None) -> 
 
 
 def _turn(*, provider: str | None) -> list[str]:
-    """A three-chunk answer, with `provider` repeated on every chunk as the wire does."""
+    """A three-chunk answer, with provider repeated on every chunk as the wire does."""
     return [
         _sse(_chunk("he", provider=provider)),
         _sse(_chunk("ll", provider=provider)),
@@ -122,14 +122,14 @@ def _throwaway_model(name: str) -> type[SDKBaseModel]:
     """A disposable stand-in for an SDK response model.
 
     The declaration logic is exercised against these rather than against the real
-    `ChatResult`/`ChatStreamChunk`, which the patch has already modified at import
-    and whose rebuilt validators would outlive any monkeypatch of `model_fields`.
+    ChatResult/ChatStreamChunk, which the patch has already modified at import
+    and whose rebuilt validators would outlive any monkeypatch of model_fields.
     """
     return type(name, (SDKBaseModel,), {"__annotations__": {"model": str}})
 
 
 class TestFieldDeclaration:
-    """`_declare_provider_field`, driven over disposable models."""
+    """_declare_provider_field, driven over disposable models."""
 
     def test_the_field_is_added_and_actually_takes_effect(
         self, monkeypatch: pytest.MonkeyPatch
@@ -157,7 +157,7 @@ class TestFieldDeclaration:
     def test_a_field_the_sdk_declares_itself_fails_loudly_as_a_stale_patch(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A dependency bump that adds `provider` upstream must not pass silently."""
+        """A dependency bump that adds provider upstream must not pass silently."""
         model = _throwaway_model("ChatResult")
         model.model_fields["provider"] = FieldInfo(annotation=str, default=None)
         monkeypatch.setattr(_patch, "_SDK_RESPONSE_MODELS", (model,))
@@ -175,7 +175,7 @@ class TestFieldDeclaration:
 class TestWiring:
     """apply() must rebind the two specific seams, on the right objects.
 
-    These re-run `apply()` rather than only inspecting the state left by import,
+    These re-run apply() rather than only inspecting the state left by import,
     so the wiring is actually exercised: a rebind pointed at the wrong attribute
     or the wrong function would otherwise never be executed by the suite.
     """
@@ -233,7 +233,7 @@ class TestWiring:
 
 
 class _ResultWithoutProvider(SDKBaseModel):
-    """A chat-completion response model from before `provider` was declared."""
+    """A chat-completion response model from before provider was declared."""
 
     choices: list[dict[str, Any]]
     created: int
@@ -263,7 +263,7 @@ class TestNonStreaming:
         assert PROVIDER_NAME_METADATA_KEY not in result.generations[0].message.response_metadata
 
     def test_an_already_dumped_payload_works_too(self) -> None:
-        """`_create_chat_result` accepts a plain dict as well as an SDK object."""
+        """_create_chat_result accepts a plain dict as well as an SDK object."""
         llm = _client("http://127.0.0.1:1/v1")
         payload = _sdk_result(provider="Baidu").model_dump(by_alias=True)
         result = llm._create_chat_result(payload)
@@ -272,7 +272,7 @@ class TestNonStreaming:
         )
 
     def test_the_model_name_falls_back_to_the_client(self) -> None:
-        """A payload with no `model` makes the original read `self.model_name` —
+        """A payload with no model makes the original read self.model_name —
         so the wrapper has to forward the real instance, not drop it."""
         llm = _client("http://127.0.0.1:1/v1")
         payload = _sdk_result(provider="Baidu").model_dump(by_alias=True)
@@ -284,7 +284,7 @@ class TestNonStreaming:
         assert result.llm_output["model_name"] == MODEL
 
     def test_an_object_without_the_field_is_treated_as_absent(self) -> None:
-        """A response model that never declared `provider` must read as "no name",
+        """A response model that never declared provider must read as "no name",
         not raise."""
         llm = _client("http://127.0.0.1:1/v1")
         payload = _sdk_result(provider=None).model_dump(by_alias=True)
@@ -314,7 +314,7 @@ class TestKeepFirstResponseKey:
     """The per-stream de-duplicator, exercised directly.
 
     Its branches are unreachable through a scripted wire — every chunk a real
-    stream yields is an `AIMessageChunk` — so the contract is pinned here.
+    stream yields is an AIMessageChunk — so the contract is pinned here.
     """
 
     def test_the_first_stamped_chunk_keeps_the_name_and_counts(self) -> None:
@@ -344,13 +344,13 @@ class TestKeepFirstResponseKey:
 
 
 class TestFinishReasonIsNotDoubled:
-    """``finish_reason`` hits the same merge_dicts trap as the provider name.
+    """finish_reason hits the same merge_dicts trap as the provider name.
 
-    Observed live: 8 ledger rows stored ``"stopstop"`` and 3 stored
-    ``"tool_callstool_calls"``, because a streamed answer carries more than one
+    Observed live: 8 ledger rows stored "stopstop" and 3 stored
+    "tool_callstool_calls", because a streamed answer carries more than one
     finish event (one closing the reasoning block, one closing the content) and
-    ``merge_dicts`` concatenates equal strings. A doubled value means a query
-    for ``length`` can never match, which is the entire reason the field exists
+    merge_dicts concatenates equal strings. A doubled value means a query
+    for length can never match, which is the entire reason the field exists
     — a truncation alarm that can never fire.
     """
 
@@ -361,7 +361,7 @@ class TestFinishReasonIsNotDoubled:
         assert "finish_reason" not in chunk.message.response_metadata
 
     def test_a_key_present_only_in_generation_info_is_stripped_safely(self) -> None:
-        """``finish_reason`` lives in generation_info and is only mirrored onto
+        """finish_reason lives in generation_info and is only mirrored onto
         response_metadata by the streaming builder — so a later chunk can carry
         it in one place and not the other. Popping without a default would raise
         on exactly that chunk and kill the stream."""
@@ -380,7 +380,7 @@ class TestFinishReasonIsNotDoubled:
 
     def test_a_two_finish_chunk_stream_merges_to_one_value(self) -> None:
         """The end-to-end shape of the live defect: a reasoning finish followed
-        by a content finish must merge to ``"stop"``, never ``"stopstop"``."""
+        by a content finish must merge to "stop", never "stopstop"."""
         turn = [
             _sse(_chunk("he", provider=UPSTREAM)),
             _sse(_chunk("ll", provider=UPSTREAM, finish="stop")),
@@ -397,7 +397,7 @@ class TestFinishReasonIsNotDoubled:
 
 class TestStreaming:
     def test_merged_message_reports_the_upstream_exactly_once(self) -> None:
-        """The merge_dicts trap: `provider` arrives on every chunk, so an
+        """The merge_dicts trap: provider arrives on every chunk, so an
         unguarded merge would report "StreamLakeStreamLakeStreamLake"."""
         with _ScriptedWire(_turn(provider=UPSTREAM)) as wire:
             merged = None
@@ -407,7 +407,7 @@ class TestStreaming:
         assert merged.response_metadata[PROVIDER_NAME_METADATA_KEY] == UPSTREAM
 
     def test_exactly_one_chunk_carries_the_upstream(self) -> None:
-        """OpenRouter repeats `provider` on all three scripted chunks; only the
+        """OpenRouter repeats provider on all three scripted chunks; only the
         first may come out carrying it, or the merge concatenates the repeats."""
         with _ScriptedWire(_turn(provider=UPSTREAM)) as wire:
             metadata = [c.response_metadata for c in _client(wire.base_url).stream("hi")]
@@ -459,8 +459,8 @@ class TestStreaming:
         assert merged.response_metadata[PROVIDER_NAME_METADATA_KEY] == UPSTREAM
 
     def test_a_delta_without_a_role_still_gets_the_name(self) -> None:
-        """Continuation deltas carry no `role`, so the chunk class comes from
-        `default_class` — which the wrapper must keep passing through."""
+        """Continuation deltas carry no role, so the chunk class comes from
+        default_class — which the wrapper must keep passing through."""
         chunk = _chunk("x", provider=UPSTREAM, finish="stop")
         del chunk["choices"][0]["delta"]["role"]
 

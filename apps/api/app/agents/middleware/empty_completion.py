@@ -1,15 +1,15 @@
 """Ask the model again when it answered with nothing at all.
 
 A comms turn sometimes comes back with no content: no text, no tool call —
-reasoning-only output, ``max_tokens`` spent before the first visible token, a
+reasoning-only output, max_tokens spent before the first visible token, a
 content filter, a provider dropping the body. Nothing errored and nothing was
 cancelled, so every layer downstream treats the silence as a real answer, and
-``_substitute_empty_completion`` in ``app/services/chat/stream.py`` turns it
+_substitute_empty_completion in app/services/chat/stream.py turns it
 into one fixed apology the user has to act on ("say it again?").
 
 Asking the user to retype what the model failed to answer is the wrong place to
 recover: the model call is what failed, so the model call is what should be
-retried. This middleware sits innermost in the comms ``wrap_model_call`` chain
+retried. This middleware sits innermost in the comms wrap_model_call chain
 and repeats the call ONCE on a genuinely empty completion.
 
 Bounded to one, for the same reasons as the style guard: the second call is
@@ -19,10 +19,10 @@ something that converges over rounds.
 
 What is deliberately NOT retried:
 
-- **Errors.** A failed call raises through ``handler`` and never reaches the
+- **Errors.** A failed call raises through handler and never reaches the
   empty check; the turn's error path already owns it.
-- **Cancellations.** A user stop cancels this task, so ``await handler(...)``
-  raises ``CancelledError`` rather than returning an empty message.
+- **Cancellations.** A user stop cancels this task, so await handler(...)
+  raises CancelledError rather than returning an empty message.
 - **Tool calls.** A message with tool calls and no prose is the model acting,
   which is content of its own — cards, the connect frame, a delegation.
 
@@ -52,7 +52,7 @@ ModelCallHandler = Callable[[ModelRequest], Awaitable[ModelResponse]]
 def is_empty_completion(response: ModelResponse) -> bool:
     """True when the model returned nothing a user or the graph can use.
 
-    Empty means: no message at all, or an ``AIMessage`` with no tool calls and
+    Empty means: no message at all, or an AIMessage with no tool calls and
     no non-whitespace text. A non-AI result is left alone — this seam only
     judges the model's own output.
     """
@@ -69,7 +69,7 @@ def is_empty_completion(response: ModelResponse) -> bool:
 class EmptyCompletionRetryMiddleware(AgentMiddleware):
     """Retry the model call once when the completion is genuinely empty.
 
-    Comms tier only — registered by ``create_comms_middleware``. The executor's
+    Comms tier only — registered by create_comms_middleware. The executor's
     empty turn is read by comms, which can act on it; a user's empty turn is
     read by a person, who cannot.
     """

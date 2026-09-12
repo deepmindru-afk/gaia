@@ -1,14 +1,14 @@
 """Gaia-tasks VFS projection: staleness, naming, hash gating, legacy cleanup.
 
-MongoDB is the truth; ``/workspace/gaia-tasks/`` is a derived copy the agent
+MongoDB is the truth; /workspace/gaia-tasks/ is a derived copy the agent
 reads as if it were the truth. Two failure classes matter and neither shows up
 in a log line: a projection that outlives its Mongo document (the agent acts on
 a task the user deleted) and a projection that writes outside the tree it owns
 (one user's data landing in another's, or a sibling projection getting wiped).
 
-``tmp_path`` is the real mount root — every path, mode bit and rmtree here is
+tmp_path is the real mount root — every path, mode bit and rmtree here is
 genuine filesystem behavior. Nothing is mocked except one deliberate mid-write
-failure injection; these functions take a ``Path`` and touch no network or DB.
+failure injection; these functions take a Path and touch no network or DB.
 """
 
 from __future__ import annotations

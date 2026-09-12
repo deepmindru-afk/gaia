@@ -1,10 +1,10 @@
 """Resource + concurrency benchmark for the embedding sidecar (#918).
 
-Spawns the real sidecar (``app.services.embedding_sidecar.server:app``) as a
-uvicorn subprocess under configurable ``MEMORY_ONNX_THREADS`` /
-``MEMORY_EMBEDDING_SIDECAR_CONCURRENCY``, polls its RSS with psutil, drives
+Spawns the real sidecar (app.services.embedding_sidecar.server:app) as a
+uvicorn subprocess under configurable MEMORY_ONNX_THREADS /
+MEMORY_EMBEDDING_SIDECAR_CONCURRENCY, polls its RSS with psutil, drives
 HTTP load with httpx, and writes one JSON file per scenario under
-``results/<tag>/``.
+results/<tag>/.
 
 Scenarios:
 - batch_sweep        peak RSS + latency vs request batch size (OOM cliff)
@@ -13,7 +13,7 @@ Scenarios:
 - soak               mixed realistic load; RSS drift over time
 - equivalence        chunked-vs-whole vector identity (quality gate)
 
-Run from ``apps/api``::
+Run from apps/api::
 
     uv run python -m scripts.sidecar_benchmark --tag baseline
 """

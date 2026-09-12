@@ -24,7 +24,7 @@ def _no_playbook():
     The worker asks the playbook repository before choosing a run path, so
     without this every existing agent-path test would reach Mongo for an answer
     it does not care about. The replay tests
-    (``test_workflow_tasks_playbook.py``) patch the same seam with a real
+    (test_workflow_tasks_playbook.py) patch the same seam with a real
     playbook to take the other branch.
     """
     with patch(

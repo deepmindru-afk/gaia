@@ -1,8 +1,8 @@
-"""Canonical `/workspace` layout + path classification.
+"""Canonical /workspace layout + path classification.
 
 Pure functions, no I/O. Everything that needs to reason about where a file
-lives inside the sandbox imports from here — never hardcode `artifacts`
-or `sessions/` anywhere else.
+lives inside the sandbox imports from here — never hardcode artifacts
+or sessions/ anywhere else.
 """
 
 from __future__ import annotations
@@ -166,12 +166,12 @@ def session_artifacts(conv_id: str) -> str:
 # `artifacts/` — the watcher only tails that dir, so a capture of the user's screen
 # never lands in their file panel or reaches a bot user as an outbound file.
 def session_screenshot_relpath(filename: str) -> str:
-    """Session-relative path of a captured screenshot (what ``write_session_file`` takes)."""
+    """Session-relative path of a captured screenshot (what write_session_file takes)."""
     return f"{SCREENSHOTS_DIRNAME}/{filename}"
 
 
 def session_download_relpath(filename: str) -> str:
-    """Session-relative path of a file the `download` tool fetched from a URL."""
+    """Session-relative path of a file the download tool fetched from a URL."""
     return f"{DOWNLOADS_DIRNAME}/{filename}"
 
 
@@ -181,7 +181,7 @@ def runs_log_dir() -> str:
 
 
 def is_under_workspace(abs_path: str) -> bool:
-    """Return True if ``abs_path`` is the workspace root or nested under it."""
+    """Return True if abs_path is the workspace root or nested under it."""
     return abs_path == WORKSPACE_ROOT or abs_path.startswith(WORKSPACE_ROOT + "/")
 
 
@@ -225,7 +225,7 @@ def classify(abs_path: str) -> tuple[MountRole, str | None]:
 def detect_content_type(path: str) -> str | None:
     """Best-effort MIME type from extension. Returns None if unknown.
 
-    Dotless filenames (``Dockerfile``, ``Makefile``) are matched on the whole
+    Dotless filenames (Dockerfile, Makefile) are matched on the whole
     basename so the plain-text entries for them actually resolve.
     """
     name = path.rsplit("/", 1)[-1].lower()

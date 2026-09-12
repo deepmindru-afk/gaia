@@ -78,7 +78,7 @@ class TestSkillsRepository:
 
     async def test_get_for_user_is_scoped(self, repo):
         """Owner scoping on the read path. Skill ids appear in API routes, so
-        without the ``user_id`` term any user who supplies another user's id
+        without the user_id term any user who supplies another user's id
         reads their skill body — there is no separate owner check upstream.
 
         Deleting that term from the query passes every other skills test in the

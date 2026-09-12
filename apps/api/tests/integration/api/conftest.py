@@ -66,7 +66,7 @@ async def test_client(test_user):
 
 @pytest.fixture
 async def gated_test_client(test_user):
-    """``test_client`` with the real ``EntitlementMiddleware`` in the stack, for
+    """test_client with the real EntitlementMiddleware in the stack, for
     the routes whose 402 contract is the middleware's (the test app otherwise
     carries no middleware, so a FREE caller would reach the handler)."""
     from app.api.v1.middleware.entitlement import EntitlementMiddleware

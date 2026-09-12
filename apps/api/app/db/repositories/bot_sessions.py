@@ -1,7 +1,7 @@
-"""Repository for the ``bot_sessions`` collection — platform→conversation mapping.
+"""Repository for the bot_sessions collection — platform→conversation mapping.
 
-Global, keyed by a unique ``session_key``. ``claim_session`` is an atomic
-get-or-create: the ``conversation_id`` is minted exactly once via ``$setOnInsert``
+Global, keyed by a unique session_key. claim_session is an atomic
+get-or-create: the conversation_id is minted exactly once via $setOnInsert
 under the unique index, so two racing first-messages can never fork a session.
 """
 
@@ -39,11 +39,11 @@ class BotSessionsRepository(MongoRepository[BotSessionDocument, BotSessionUpdate
         candidate_conversation_id: str,
         timestamp: str,
     ) -> BotSessionDocument:
-        """Atomically reuse or create the session for ``session_key``.
+        """Atomically reuse or create the session for session_key.
 
-        On an existing session the stored ``conversation_id`` is returned and the
-        ``candidate`` is discarded; on a fresh session the candidate is committed
-        via ``$setOnInsert``. ``timestamp`` is an ISO-format string (the TTL anchor),
+        On an existing session the stored conversation_id is returned and the
+        candidate is discarded; on a fresh session the candidate is committed
+        via $setOnInsert. timestamp is an ISO-format string (the TTL anchor),
         written raw so the on-disk string shape is preserved."""
         session = await self._apply_raw_update(
             {"session_key": session_key},
@@ -69,24 +69,24 @@ class BotSessionsRepository(MongoRepository[BotSessionDocument, BotSessionUpdate
         return session
 
     async def get_by_session_key(self, session_key: str) -> BotSessionDocument | None:
-        """The session on this key, or ``None``. Read-only counterpart to
-        ``claim_session`` for callers that must not mint one on a miss."""
+        """The session on this key, or None. Read-only counterpart to
+        claim_session for callers that must not mint one on a miss."""
         return await self._find_one({"session_key": session_key})
 
     async def get_by_conversation_id(self, conversation_id: str) -> BotSessionDocument | None:
-        """The bot session whose conversation this is, or ``None`` for a non-bot
-        (web/mobile) conversation. Carries the ``channel_id`` a proactive delivery
+        """The bot session whose conversation this is, or None for a non-bot
+        (web/mobile) conversation. Carries the channel_id a proactive delivery
         needs to reach the group/channel the chat lives in. Indexed on
-        ``conversation_id`` (see ``app/db/mongodb/indexes.py``)."""
+        conversation_id (see app/db/mongodb/indexes.py)."""
         return await self._find_one({"conversation_id": conversation_id})
 
     async def list_legacy_dm_sessions(
         self, *, platform: str | None = None
     ) -> list[BotSessionDocument]:
-        """Every session still keyed with the retired ``:dm`` suffix.
+        """Every session still keyed with the retired :dm suffix.
 
         Anchored at the end of the key on purpose: a live Slack or Discord channel
-        id can CONTAIN ``dm``, and rewriting one of those would fork the very chat
+        id can CONTAIN dm, and rewriting one of those would fork the very chat
         this repairs.
         """
         filter_: dict[str, object] = {"session_key": {"$regex": f"{LEGACY_DM_SESSION_KEY_SUFFIX}$"}}
@@ -100,7 +100,7 @@ class BotSessionsRepository(MongoRepository[BotSessionDocument, BotSessionUpdate
         """Move a session onto a different key, restamping the channel it belongs
         to. False when the filter matched nothing.
 
-        The unique index on ``session_key`` makes this safe only against a key
+        The unique index on session_key makes this safe only against a key
         nothing else holds — the caller checks that first.
         """
         matched = await self._apply_raw_update_unfetched(

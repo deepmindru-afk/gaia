@@ -1,10 +1,10 @@
-"""Unit tests for ``manage_system_prompts_node`` pure logic.
+"""Unit tests for manage_system_prompts_node pure logic.
 
-These tests call ``app.agents.core.nodes.manage_system_prompts`` directly
+These tests call app.agents.core.nodes.manage_system_prompts directly
 (input dict → output dict) rather than through the compiled graph, verifying
 the node's contract in isolation. Graph-wiring coverage (that the node is
-registered as a pre-model hook inside ``create_agent``) lives in
-``tests/e2e/test_multi_tool_scenario.py`` (``TestMultiToolScenario``).
+registered as a pre-model hook inside create_agent) lives in
+tests/e2e/test_multi_tool_scenario.py (TestMultiToolScenario).
 """
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage

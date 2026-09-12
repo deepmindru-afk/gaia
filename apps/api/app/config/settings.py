@@ -1,16 +1,16 @@
 """Application settings: load from env, validate, and expose typed access.
 
 Flow
-- `.env` loaded first, then external secrets via `inject_infisical_secrets()`.
-- Pick settings class by `ENV` (production/development).
-- Pydantic builds the object; `settings_validator` logs missing groups.
-- `get_settings()` memoizes the instance for fast imports.
+- .env loaded first, then external secrets via inject_infisical_secrets().
+- Pick settings class by ENV (production/development).
+- Pydantic builds the object; settings_validator logs missing groups.
+- get_settings() memoizes the instance for fast imports.
 
 Add env vars
-1) Add fields to `CommonSettings`/`ProductionSettings`/`DevelopmentSettings`.
+1) Add fields to CommonSettings/ProductionSettings/DevelopmentSettings.
 2) Use Optional[...] in dev if it’s not required there.
-3) If you want warnings, register a group in `config/settings_validator.py`.
-4) Read values via `from app.config.settings import settings`.
+3) If you want warnings, register a group in config/settings_validator.py.
+4) Read values via from app.config.settings import settings.
 """
 
 from functools import lru_cache
@@ -757,15 +757,15 @@ def get_settings() -> Any:  # noqa: ANN401 -- framework contract
     This function uses LRU cache to ensure settings are instantiated only once,
     avoiding expensive Pydantic validation on every import.
 
-    The return stays `Any`. Measured, don't re-litigate: annotating it
-    `-> CommonSettings` produced **129 new mypy errors** — the concrete keys live
-    on ProductionSettings/DevelopmentSettings or arrive via `extra="allow"`, so
-    every `settings.TAVILY_API_KEY` / `R2_*` / `JUICEFS_*` read across the
-    storage, search-provider and sandbox layers becomes `has no attribute`.
+    The return stays Any. Measured, don't re-litigate: annotating it
+    -> CommonSettings produced **129 new mypy errors** — the concrete keys live
+    on ProductionSettings/DevelopmentSettings or arrive via extra="allow", so
+    every settings.TAVILY_API_KEY / R2_* / JUICEFS_* read across the
+    storage, search-provider and sandbox layers becomes has no attribute.
     Narrowing means hoisting those declarations onto the common base, which is a
     settings-model redesign, not a typing fix (Type Safety item 14). The same run
-    showed `from_env(**kwargs: object)` adds 4 more: `cls(**kwargs)` feeds
-    per-field types (`ENV: Literal[...]`, `SHOW_MISSING_KEY_WARNINGS: bool`).
+    showed from_env(**kwargs: object) adds 4 more: cls(**kwargs) feeds
+    per-field types (ENV: Literal[...], SHOW_MISSING_KEY_WARNINGS: bool).
     """
     log.info(f"{LogTag.STARTUP} Starting settings initialization...")
 

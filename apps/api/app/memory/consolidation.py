@@ -1,15 +1,15 @@
 """Core documents: the debounced LLM rewrites plus the rendered agenda.
 
-Three of the four documents (``user.md``, ``memory.md``, ``people.md``) are
+Three of the four documents (user.md, memory.md, people.md) are
 written by an LLM. After every ingestion the affected doc types are merged into
 a per-user Redis pending set and a single in-process waiter sleeps out the
 debounce window before rewriting them (plan F2.5). Each rewrite is fed the
 document's WHOLE live fact corpus — not a recency window — because a rewrite
 that cannot see the fact it corrupted can never be corrected by it. The result
 is size-checked, then fact-checked against those same facts, before it lands
-through ``management.update_document``.
+through management.update_document.
 
-``agenda.md`` is not written by an LLM at all: it is rendered from the agenda
+agenda.md is not written by an LLM at all: it is rendered from the agenda
 memory rows, so every item on it can be searched, corrected, superseded and
 expired like any other memory.
 """
@@ -98,9 +98,9 @@ _waiters: dict[str, asyncio.Task] = {}
 def infer_doc_types(facts: list[ExtractedFact]) -> set[MemoryDocType]:
     """Which LLM-written core documents this ingestion's facts touch.
 
-    Only durable facts qualify. A ``state`` value ("18 workflows active") must
+    Only durable facts qualify. A state value ("18 workflows active") must
     never be consolidated into a document that is injected into every prompt,
-    and ``task``/``journal`` assertions are not facts at all by the time they
+    and task/journal assertions are not facts at all by the time they
     get here — they were routed to the agenda and the journal upstream.
     """
     doc_types: set[MemoryDocType] = set()
@@ -161,7 +161,7 @@ async def _debounce_wait() -> None:
 async def _debounce_waiter(user_id: str) -> None:
     """Sleep out the debounce window, then consume the pending set and consolidate.
 
-    Runs in its own ``wide_task`` scope: this is a fire-and-forget background
+    Runs in its own wide_task scope: this is a fire-and-forget background
     task with no request middleware, so the scope is what makes consolidation
     outcomes and failures emit a queryable wide event.
     """
@@ -243,7 +243,7 @@ async def render_agenda_document(user_id: str) -> None:
     The agenda used to be an LLM-maintained document fed by a Redis
     side-channel, which meant no tool could correct an item and nothing could
     expire one. Rendering from rows makes every line a real memory: searchable,
-    correctable with update_memory, retired by ``forget_memory`` when the
+    correctable with update_memory, retired by forget_memory when the
     conversation closes it, and swept when it ages out.
     """
     rows = await pg_store.get_agenda_memories(user_id, limit=AGENDA_INJECTED_ITEM_CAP)
@@ -411,7 +411,7 @@ async def _get_user_name(user_id: str) -> str:
 
 
 def _prefixes_for(doc_type: MemoryDocType) -> list[str]:
-    """Category folders that feed this document, per ``CATEGORY_DOC_MAP``."""
+    """Category folders that feed this document, per CATEGORY_DOC_MAP."""
     return [prefix for prefix, docs in CATEGORY_DOC_MAP.items() if doc_type in docs]
 
 
@@ -420,7 +420,7 @@ async def _gather_facts(user_id: str, doc_type: MemoryDocType) -> list[MemoryRec
 
     Not a recency window: a rewrite fed only the 50 freshest facts can never be
     contradicted by the fact it corrupted, so a bad name or date survives every
-    subsequent pass. ``CONSOLIDATION_FACTS_LIMIT`` is a safety valve, not a
+    subsequent pass. CONSOLIDATION_FACTS_LIMIT is a safety valve, not a
     window.
     """
     prefixes = None if doc_type is MemoryDocType.USER_MD else _prefixes_for(doc_type)

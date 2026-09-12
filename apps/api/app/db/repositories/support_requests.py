@@ -1,6 +1,6 @@
-"""Repository for the ``support_requests`` collection — user-scoped tickets.
+"""Repository for the support_requests collection — user-scoped tickets.
 
-Identity is a caller-minted UUID stored as the string ``_id`` (not an ObjectId).
+Identity is a caller-minted UUID stored as the string _id (not an ObjectId).
 Reads are always scoped to the owning user; the listing supports an optional
 status filter with newest-first pagination.
 """

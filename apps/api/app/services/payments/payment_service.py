@@ -64,7 +64,7 @@ from shared.py.wide_events import log
 class CheckoutScanOutcome(StrEnum):
     """Why a verify found no subscription behind the user's checkout sessions.
 
-    Only ``MISS`` — every session answered, none paid — is cached; the other
+    Only MISS — every session answered, none paid — is cached; the other
     two are exactly what the client's next retry should ask about again.
     """
 
@@ -74,8 +74,8 @@ class CheckoutScanOutcome(StrEnum):
 
 
 def _is_free_plan(name: str, amount: int) -> bool:
-    """GAIA is paid-only — the seeded Free row (``amount=0``, ``name="Free"``)
-    must never reach the frontend. ``amount`` alone would also catch Enterprise
+    """GAIA is paid-only — the seeded Free row (amount=0, name="Free")
+    must never reach the frontend. amount alone would also catch Enterprise
     ($0, contact-sales), so both must match."""
     return amount == 0 and name.strip().lower() == PlanType.FREE.value
 
@@ -170,7 +170,7 @@ class DodoPaymentService:
     ) -> CreateSubscriptionResponse:
         """Create subscription via Checkout Sessions; show promo code field and get hosted checkout url.
 
-        ``return_path`` is where Dodo sends the browser afterwards, relative to
+        return_path is where Dodo sends the browser afterwards, relative to
         the frontend origin; the caller derives it from the checkout's source.
         """
         log.set(payment={"event_type": "create_subscription", "status": "initiated"})
@@ -289,7 +289,7 @@ class DodoPaymentService:
     async def cancel_subscription(self, user_id: str) -> UserSubscriptionStatus:
         """Cancel the user's subscription in Dodo and mirror it locally.
 
-        Cancels at the end of the current billing period (``cancel_at_next_billing_date``)
+        Cancels at the end of the current billing period (cancel_at_next_billing_date)
         so the user keeps Pro access until the period ends — matching the Terms'
         auto-renewal promise. Dodo returns the updated subscription; the local
         row is synced with it.
@@ -349,9 +349,9 @@ class DodoPaymentService:
     async def _reconcile_subscription_with_dodo(
         self, user_id: str, subscription_id: str
     ) -> SubscriptionDocument | None:
-        """Recover a paid user whose ``subscription.active`` webhook never landed.
+        """Recover a paid user whose subscription.active webhook never landed.
 
-        ``subscription_id`` comes off the Dodo return URL, so it is a hint the
+        subscription_id comes off the Dodo return URL, so it is a hint the
         client could forge: Dodo is asked what it actually is, and it is only
         acted on once it is both active and demonstrably this user's. Activation
         then runs through the same path the webhook uses, so the recovered state
@@ -372,7 +372,7 @@ class DodoPaymentService:
     async def _activate_verified_subscription(
         self, user_id: str, remote: Subscription
     ) -> SubscriptionDocument | None:
-        """Record a Dodo subscription for ``user_id`` through the shared write path.
+        """Record a Dodo subscription for user_id through the shared write path.
 
         Both recovery routes end here, so neither can drift from the webhook:
         the subscription is acted on only once Dodo reports it active and it is
@@ -414,7 +414,7 @@ class DodoPaymentService:
     ) -> Subscription | None:
         """The Dodo subscription this checkout session was paid for, if it was.
 
-        ``None`` is the ordinary answer for a session nobody paid, or for a
+        None is the ordinary answer for a session nobody paid, or for a
         settled one-off payment with no subscription behind it. A Dodo API
         failure propagates: the scan decides what one unanswerable session
         means for the rest.
@@ -453,15 +453,15 @@ class DodoPaymentService:
         session does not end the scan for the same reason.
 
         A scan that found nothing paid is cached for the result page's retry
-        window (``CHECKOUT_SCAN_MISS_TTL``): the web client verifies eight
+        window (CHECKOUT_SCAN_MISS_TTL): the web client verifies eight
         times over about fifty seconds, and each verify re-asked Dodo about
         every session. Only a conclusive miss is cached — a session Dodo could
         not answer for, or a paid one whose subscription is not active yet, is
         exactly what the next retry should ask about again.
 
         The sessions name the purchase; they do not authorise it. Ownership and
-        the write itself are settled by ``_activate_verified_subscription``,
-        the same way the ``subscription_id`` hint route settles them.
+        the write itself are settled by _activate_verified_subscription,
+        the same way the subscription_id hint route settles them.
         """
         miss_key = f"{CHECKOUT_SCAN_MISS_CACHE_PREFIX}{user_id}"
         if await redis_cache.get(miss_key):
@@ -610,7 +610,7 @@ class DodoPaymentService:
 
         Identified by shape rather than by name: Free and Enterprise are both
         priced at 0 with no Dodo product, so the one active plan that costs money
-        and has a product id for a given cycle IS Pro (``PlanType`` has no other
+        and has a product id for a given cycle IS Pro (PlanType has no other
         paid tier).
         """
         plans = await self.get_plans(active_only=True)
@@ -646,7 +646,7 @@ class DodoPaymentService:
         "link expired". A per-user cache of the last session handed exactly
         that page back after a failed card, so there is no cache.
 
-        ``settings.PAYWALL_DISCOUNT_CODE`` is pre-applied here rather than passed
+        settings.PAYWALL_DISCOUNT_CODE is pre-applied here rather than passed
         in by callers: every caller (the 402 paywall body, the bot notice, the
         subscription tool) advertises that same code, so applying it at the one
         place the session is minted keeps the link and the pitch from drifting.
@@ -667,7 +667,7 @@ class DodoPaymentService:
         """This user's charges, newest first.
 
         Dodo is the ledger — nothing local records individual charges — so this
-        reads ``payments.list`` for every subscription the user has ever had,
+        reads payments.list for every subscription the user has ever had,
         including cancelled and expired ones.
         """
         subscriptions = await subscription_repository.list_for_user(user_id)
@@ -733,7 +733,7 @@ class DodoPaymentService:
 
         Both branches record the tier and where it came from. The gate's entire
         decision is this one value, and a stale cached FREE is indistinguishable
-        downstream from a user who really is free — so without ``plan_source``
+        downstream from a user who really is free — so without plan_source
         the first question of every paywall incident has no answer.
         """
         cache_key = f"{SUBSCRIPTION_PLAN_CACHE_PREFIX}{user_id}"

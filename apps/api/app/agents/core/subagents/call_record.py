@@ -46,7 +46,7 @@ def _truncated_arg(value: object) -> object:
 
 
 def parsed_result(message: ToolMessage) -> object | None:
-    """The tool result parsed as the record parses it; ``None`` for block content."""
+    """The tool result parsed as the record parses it; None for block content."""
     content = message.content
     return parse_result(content) if isinstance(content, str) else None
 
@@ -54,7 +54,7 @@ def parsed_result(message: ToolMessage) -> object | None:
 def is_error_envelope(result: object) -> bool:
     """A "successful" tool message whose body says the call failed.
 
-    Many tools answer with ``{"success": false, ...}`` or ``{"error": "..."}``
+    Many tools answer with {"success": false, ...} or {"error": "..."}
     under a normal status, so status alone does not say the call worked.
     """
     if not isinstance(result, dict):
@@ -66,10 +66,10 @@ def is_error_envelope(result: object) -> bool:
 
 
 def successful_call_lines(messages: Sequence[AnyMessage]) -> list[str]:
-    """One ``TOOL_NAME({"arg":value})`` line per successful call, in call order.
+    """One TOOL_NAME({"arg":value}) line per successful call, in call order.
 
-    A call counts as successful only when a non-error ``ToolMessage`` answers its
-    id and its body is not an error envelope. ``finish_task`` is infrastructure,
+    A call counts as successful only when a non-error ToolMessage answers its
+    id and its body is not an error envelope. finish_task is infrastructure,
     never a playbook step, so it is dropped even when it succeeded. A call whose
     result carried no items is kept but marked, so the executor sees an empty
     step before freezing it.
@@ -103,7 +103,7 @@ def successful_call_lines(messages: Sequence[AnyMessage]) -> list[str]:
 
 
 def append_call_record(text: str, messages: Sequence[AnyMessage]) -> str:
-    """``text`` with the run's call record appended, unchanged when there is
+    """text with the run's call record appended, unchanged when there is
     nothing to record."""
     lines = successful_call_lines(messages)
     if not lines:

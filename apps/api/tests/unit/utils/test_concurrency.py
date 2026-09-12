@@ -1,10 +1,10 @@
 """Unit tests for app.utils.concurrency.
 
-``run_on_captured_loop`` is the sync->async bridge the calendar Composio tools
-use. The bug it fixes: the old bridge ran coroutines on a fresh ``asyncio.run``
+run_on_captured_loop is the sync->async bridge the calendar Composio tools
+use. The bug it fixes: the old bridge ran coroutines on a fresh asyncio.run
 loop, so a coroutine that awaited a loop-bound client (Motor) raised
-``RuntimeError: ... attached to a different loop``. The regression is pinned with
-a loop-bound ``asyncio.Future`` standing in for that client — a fresh loop cannot
+RuntimeError: ... attached to a different loop. The regression is pinned with
+a loop-bound asyncio.Future standing in for that client — a fresh loop cannot
 await it, the captured loop can.
 """
 

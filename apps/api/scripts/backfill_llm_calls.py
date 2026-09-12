@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""Rebuild the ``llm_calls`` ledger from the log history that predates it.
+"""Rebuild the llm_calls ledger from the log history that predates it.
 
 The ledger starts empty on the day it ships, so every cost question about the
 past still has to be answered by scraping logs — which is the problem it exists
-to end. Loki holds one ``llm_call`` wide event per model call for 30 days, and
+to end. Loki holds one llm_call wide event per model call for 30 days, and
 those events carry almost everything a ledger row needs, so the recent past can
 be reconstructed instead of lost.
 
 Sources, in the order a row's cost is trusted:
 
-- **OpenRouter** ``GET /api/v1/generation?id=<id>`` — what was actually charged.
-  The same lookup ``backfill_true_cost.py`` uses, cached per day so a re-run
+- **OpenRouter** GET /api/v1/generation?id=<id> — what was actually charged.
+  The same lookup backfill_true_cost.py uses, cached per day so a re-run
   only asks about ids it has not resolved.
-- **The event itself**, when it recorded ``cost_source="provider"`` — the
+- **The event itself**, when it recorded cost_source="provider" — the
   provider's own figure, captured live.
-- **The current price table** (``app/config/model_pricing.py``), recomputed from
+- **The current price table** (app/config/model_pricing.py), recomputed from
   the event's token counts. Today's rates applied to old calls, which is a
   better estimate than the rate that was in the table at the time.
 - **The logged cost**, for a model the table does not know. Kept rather than
   zeroed, and counted separately so the fallback's share is visible.
 
-Reconstructed rows are stamped ``backfilled: true`` and carry a deterministic
-``backfill_key``, so ``--apply`` is safe to re-run: the key is derived from the
+Reconstructed rows are stamped backfilled: true and carry a deterministic
+backfill_key, so --apply is safe to re-run: the key is derived from the
 event, a unique index enforces it, and a second run inserts nothing.
 
 Dropped deliberately: events with neither tokens nor cost (heartbeat echoes that
-would inflate the row count without adding spend), non-finite costs (``json``
-parses ``NaN``/``Infinity`` happily and one poisons every sum), and exact
-duplicate events. Doubled model ids (``a/b/a/b``, from a lane that stamped the
+would inflate the row count without adding spend), non-finite costs (json
+parses NaN/Infinity happily and one poisons every sum), and exact
+duplicate events. Doubled model ids (a/b/a/b, from a lane that stamped the
 alias twice) are normalised back to one. Sticky-flip replays are recorded the
-way the live path recorded them — ``background``, never charged.
+way the live path recorded them — background, never charged.
 
 Floors at 2026-08-10: before that the events lack the cost fields this depends
 on, so older rows would be fiction.
@@ -58,9 +58,9 @@ Run from the api directory (or /app inside the container)::
     python scripts/backfill_llm_calls.py --days 7 --dry-run
     python scripts/backfill_llm_calls.py --apply
 
-Environment: ``LOKI_URL`` (default ``http://loki:3100``) and
-``OPENROUTER_API_KEY``. Generation lookups are cached per day under
-``--cache-dir``, so an interrupted backfill costs nothing to restart.
+Environment: LOKI_URL (default http://loki:3100) and
+OPENROUTER_API_KEY. Generation lookups are cached per day under
+--cache-dir, so an interrupted backfill costs nothing to restart.
 """
 
 import argparse
@@ -160,7 +160,7 @@ def normalise_model(model: str) -> str:
         deepseek/deepseek-v4-flash-0731deepseek/deepseek-v4-flash-0731
 
     Note there is NO separator between the halves — the second copy runs
-    straight into the first. A rule that split on ``/`` and compared path
+    straight into the first. A rule that split on / and compared path
     segments therefore never fired on the real data (the segment count is odd),
     which is how 9,209 rows fell through to the unknown-model branch and kept
     the dead pre-2026-08-24 table prices instead of being re-priced. So the
@@ -184,7 +184,7 @@ def normalise_model(model: str) -> str:
 
 
 def parse_event(line: str) -> LedgerEvent | None:
-    """One Loki line as a ledger event, or ``None`` if it is not usable."""
+    """One Loki line as a ledger event, or None if it is not usable."""
     try:
         raw = json.loads(line)
     except json.JSONDecodeError:
@@ -268,9 +268,9 @@ def build_document(event: LedgerEvent, record: GenerationRecord | None) -> LLMCa
     """One reconstructed ledger row.
 
     The context ids are only as good as the event carried — the wide event never
-    logged ``workflow_execution_id``, ``job_id`` or latency, so those stay unset
+    logged workflow_execution_id, job_id or latency, so those stay unset
     rather than being invented. That is exactly why rows are marked
-    ``backfilled``: an analysis needing first-party precision can exclude them.
+    backfilled: an analysis needing first-party precision can exclude them.
     """
     priced = price_event(event, record)
     lane = split_lane_thread(event.thread_id)
@@ -366,7 +366,7 @@ def select_events(
 
     Echoes (no tokens, no cost) and exact duplicates — the same call logged
     twice, which the ledger would otherwise count twice. Both are counted into
-    ``anomalies`` rather than silently discarded.
+    anomalies rather than silently discarded.
     """
     tally = anomalies if anomalies is not None else Anomalies()
     seen: set[str] = set()
@@ -428,7 +428,7 @@ def render(rows: Sequence[DaySummary]) -> None:
 
 
 def wanted_days(days: int) -> list[str]:
-    """The trailing window, floored at :data:`EARLIEST_DAY`."""
+    """The trailing window, floored at :data:EARLIEST_DAY."""
     today = datetime.now(UTC).date()
     floor = date.fromisoformat(EARLIEST_DAY)
     candidates = [today - timedelta(days=offset) for offset in reversed(range(days))]

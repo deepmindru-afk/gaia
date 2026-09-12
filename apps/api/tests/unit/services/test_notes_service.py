@@ -1,10 +1,10 @@
 """Unit tests for notes service operations.
 
-The service now delegates all persistence and caching to ``note_repository`` (the
+The service now delegates all persistence and caching to note_repository (the
 DB/cache behaviour is covered by the repository contract tests). These tests mock
 the repository singleton and assert the service's own responsibilities: delegating
 correctly, mapping the not-found case to 404, orchestrating the ChromaDB side
-effects, and shaping the ``NoteResponse``.
+effects, and shaping the NoteResponse.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -50,12 +50,12 @@ def mock_repo():
 
 @pytest.fixture
 def mock_chroma():
-    """The patched collection lookup; ``.return_value`` is the collection it hands back.
+    """The patched collection lookup; .return_value is the collection it hands back.
 
     Yielding the lookup rather than the collection is what lets a test pin WHICH
     collection the service opens. That matters because the name carries the
-    ``GAIA_CHROMA_COLLECTION_SUFFIX`` lane namespace — a service that opened a
-    hardcoded ``"notes"`` would read and write a different collection from the
+    GAIA_CHROMA_COLLECTION_SUFFIX lane namespace — a service that opened a
+    hardcoded "notes" would read and write a different collection from the
     one the app indexes into, and every assertion about "it called Chroma"
     would still pass.
     """

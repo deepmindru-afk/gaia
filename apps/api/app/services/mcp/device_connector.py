@@ -1,6 +1,6 @@
 """An mcp_use connector that speaks MCP over the device tunnel.
 
-The cloud runs a real ``mcp.ClientSession``; its read/write streams are pumped
+The cloud runs a real mcp.ClientSession; its read/write streams are pumped
 through the device bridge (Redis pub/sub → the owning pod → the daemon → the
 local MCP server) and back. To the rest of GAIA's MCP stack this connector is
 indistinguishable from an HTTP one, so tool conversion, subagents and namespacing
@@ -228,10 +228,10 @@ class DeviceConnector(BaseConnector):
     async def _fail_open(self) -> None:
         """Clean up after a failed open. Cancels the reader task first.
 
-        The reader (``_drain_inbox``) is parked on ``inbox.get()``; unregistering
+        The reader (_drain_inbox) is parked on inbox.get(); unregistering
         the inbox and closing the streams does not wake it (the queue has no
         close), so without an explicit cancel it would leak, blocked forever.
-        ``disconnect()`` is never reached on this path — ``_build_device_client``
+        disconnect() is never reached on this path — _build_device_client
         raises before the session is registered with any client.
         """
         if self._reader_task is not None:

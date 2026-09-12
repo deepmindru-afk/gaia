@@ -1,12 +1,12 @@
-"""Hermetic unit tests for ``ConversationRepository``'s in-place message writes
+"""Hermetic unit tests for ConversationRepository's in-place message writes
 and its activation-signal count.
 
 The real-Mongo proof of these methods lives in
-``tests/contracts/test_conversations_repository.py``; this tier pins the exact
-filter, update document and ``array_filters`` the repository hands the driver,
+tests/contracts/test_conversations_repository.py; this tier pins the exact
+filter, update document and array_filters the repository hands the driver,
 which is what the contracts tier cannot see and what the mutation gate needs a
 hermetic suite to kill mutants on. The driver is mocked at
-``app.db.repositories.base.get_async_collection`` — the single seam every write
+app.db.repositories.base.get_async_collection — the single seam every write
 in the base repository goes through.
 """
 
@@ -49,7 +49,7 @@ def repo() -> ConversationRepository:
 
 
 def _update_call(collection: MagicMock) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """The single ``update_one`` call's filter, update document and kwargs."""
+    """The single update_one call's filter, update document and kwargs."""
     collection.update_one.assert_awaited_once()
     args, kwargs = collection.update_one.await_args
     return args[0], args[1], kwargs
@@ -60,13 +60,13 @@ def _matched(collection: MagicMock, count: int) -> None:
 
 
 def _count_filter(collection: MagicMock) -> dict[str, Any]:
-    """The single ``count_documents`` call's filter."""
+    """The single count_documents call's filter."""
     collection.count_documents.assert_awaited_once()
     return collection.count_documents.await_args.args[0]
 
 
 class TestSetMessageResponse:
-    """``set_message_response`` — background delivery settling a message's text."""
+    """set_message_response — background delivery settling a message's text."""
 
     async def test_targets_the_named_message_of_the_owning_user(
         self, repo: ConversationRepository, collection: MagicMock
@@ -88,7 +88,7 @@ class TestSetMessageResponse:
     async def test_does_not_advance_the_sync_clock(
         self, repo: ConversationRepository, collection: MagicMock
     ) -> None:
-        """Documented invariant: this write leaves ``updatedAt`` alone."""
+        """Documented invariant: this write leaves updatedAt alone."""
         await repo.set_message_response(
             CONVERSATION_ID, user_id=USER_ID, message_id=MESSAGE_ID, response="the answer"
         )
@@ -121,7 +121,7 @@ class TestSetMessageResponse:
 
 
 class TestSetMessageToolData:
-    """``set_message_tool_data`` — delivery re-persisting a message's whole frame list."""
+    """set_message_tool_data — delivery re-persisting a message's whole frame list."""
 
     async def test_replaces_the_whole_list_on_the_named_message(
         self, repo: ConversationRepository, collection: MagicMock
@@ -176,13 +176,13 @@ class TestSetMessageToolData:
 
 
 class TestSetMessageApprovalStatus:
-    """``set_message_approval_status`` — the HIL bridge settling a persisted
+    """set_message_approval_status — the HIL bridge settling a persisted
     approval frame wherever it sits in the messages array."""
 
     async def test_narrows_the_match_by_approval_id_not_just_conversation(
         self, repo: ConversationRepository, collection: MagicMock
     ) -> None:
-        """The array filters pick the element but never narrow ``matched_count``,
+        """The array filters pick the element but never narrow matched_count,
         so the approval must be in the query filter too."""
         await repo.set_message_approval_status(
             CONVERSATION_ID, user_id=USER_ID, approval_id=APPROVAL_ID, status="approved"
@@ -270,7 +270,7 @@ class TestSettlementWritesRefreshTheCache:
     """Every settlement write names its cache scope (the owning user) and the
     document it touched.
 
-    The repository ships with ``cache_policy = None``, so those arguments are
+    The repository ships with cache_policy = None, so those arguments are
     inert today — the module docstring's stated reason for passing them anyway
     is that turning a policy on later must need no call-site change. That only
     holds if they are correct now, which is what these tests pin: the policy is
@@ -327,12 +327,12 @@ class TestSettlementWritesRefreshTheCache:
 
 
 class TestHasSentMessage:
-    """``has_sent_message`` — the activation checklist's "say hi" signal.
+    """has_sent_message — the activation checklist's "say hi" signal.
 
     The service tier mocks this method away entirely, so the predicate it hands
     Mongo is only visible here. Every clause is load-bearing: drop the
-    ``is_system_generated`` guard and a workflow execution's own prompt vouches
-    for a user who never typed anything, and drop the ``messages.type`` clause
+    is_system_generated guard and a workflow execution's own prompt vouches
+    for a user who never typed anything, and drop the messages.type clause
     and an empty conversation counts as a sent message.
     """
 

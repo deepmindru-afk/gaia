@@ -1,7 +1,7 @@
 """The judge's parser must obey the judge's own prompt.
 
 The prompt promised "only the final CRITERION/VERDICT/REASON block counts", and
-the parser collected every `VERDICT: n` in the reply and averaged them — so a
+the parser collected every VERDICT: n in the reply and averaged them — so a
 judge that deliberated "this looks like a 4... actually a 2" scored 3. That
 contradiction is the mechanical reason judged scores clustered in the mushy
 middle, and these pin the fix.

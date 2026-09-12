@@ -1,25 +1,25 @@
 """GAIA's operating manual: the single source of truth for self-knowledge.
 
 This module consolidates what used to be smeared across the static prompts,
-the per-directory ``GUIDE.md`` files, and the ``gaia-*`` built-in skills into
+the per-directory GUIDE.md files, and the gaia-* built-in skills into
 ONE canonical place, structured as:
 
-- ``GAIA_CORE``: the always-on operating core (the "solid start"). It is
+- GAIA_CORE: the always-on operating core (the "solid start"). It is
   user-independent, so it lives in the *static* prompt prefix and rides the
   provider's prompt cache. It orients the agent and routes to the topic docs.
-- ``MANUAL_DOCS``: one self-contained doc per concern (integrations, tracked
+- MANUAL_DOCS: one self-contained doc per concern (integrations, tracked
   todos, user todos, sessions/artifacts, notifications). Each doc is the single
-  unit that gets surfaced, today on demand via the ``read_manual`` tool or
+  unit that gets surfaced, today on demand via the read_manual tool or
   signal-gated injection, later auto-injected on semantic similarity. One file
   per concern == one clean embedding unit.
 
 Crucially these are *app-owned constants loaded in the API process*. Reading
 them must NOT spin up the E2B sandbox: the sandbox is for the user's real
 files and code execution, not for the agent reading its own manual. So the
-agent gets this content by injection or via ``read_manual`` (process memory),
-never by ``cat``-ing a file inside the sandbox.
+agent gets this content by injection or via read_manual (process memory),
+never by cat-ing a file inside the sandbox.
 
-``system_docs.py`` re-exports the per-directory guide bodies from here so the
+system_docs.py re-exports the per-directory guide bodies from here so the
 on-disk projections stay a thin, non-duplicated view of this source.
 
 Scale note: these docs are app-authored constants held in process memory (one
@@ -828,8 +828,8 @@ context. It is cheap and keeps you from guessing how your own machinery works.
 class ManualDoc(NamedTuple):
     """One self-contained operating-manual topic.
 
-    ``name`` is the stable handle passed to ``read_manual`` and used as the
-    embedding key for future similarity routing. ``description`` is the
+    name is the stable handle passed to read_manual and used as the
+    embedding key for future similarity routing. description is the
     one-line trigger shown in indexes.
     """
 

@@ -4,15 +4,15 @@ Why
 - Avoid importing/connecting providers at startup; defer until first use.
 
 Flow
-- Register providers via `providers.register(...)` or `@lazy_provider(...)`.
-- Provide `required_keys` (usually env-backed fields from `settings`).
-- On first `get()/aget()`, initialize the provider; warn or error if keys are missing.
+- Register providers via providers.register(...) or @lazy_provider(...).
+- Provide required_keys (usually env-backed fields from settings).
+- On first get()/aget(), initialize the provider; warn or error if keys are missing.
 - Supports async, sync, and global side-effect configuration (e.g., Cloudinary).
 
 Add a new provider
-1) Ensure env fields exist in `app.config.settings` (and optionally groups in `config/settings_validator.py`).
-2) Create a factory function and decorate with `@lazy_provider(name=..., required_keys=[...])`.
-3) Resolve the provider via `providers.get(...)` or `await providers.aget(...)`.
+1) Ensure env fields exist in app.config.settings (and optionally groups in config/settings_validator.py).
+2) Create a factory function and decorate with @lazy_provider(name=..., required_keys=[...]).
+3) Resolve the provider via providers.get(...) or await providers.aget(...).
 """
 
 import asyncio
@@ -38,7 +38,7 @@ T = TypeVar("T")
 
 
 class MissingKeyStrategy(Enum):
-    """Strategy for handling missing keys"""
+    """Strategy for handling missing keys."""
 
     ERROR = "error"  # Raise exception on get() call
     WARN = "warn"  # Log warning on registration and return None on get()
@@ -71,7 +71,7 @@ class LazyLoader(Generic[T]):
         Args:
             loader_func: Function that creates the provider instance or configures global context (can be sync or async)
             required_keys: List of direct values that are required (can be None individually).
-                Typed ``object``: these are already-resolved settings values (API keys,
+                Typed object: these are already-resolved settings values (API keys,
                 URLs, ints) and the loader only ever checks them for None/emptiness.
             strategy: How to handle missing values
             warning_message: Custom warning message
@@ -401,9 +401,9 @@ class LazyLoader(Generic[T]):
         return self._instance is not None
 
     async def areset(self) -> None:
-        """Awaitable reset that takes the async lock, so it cannot race ``aget()``.
+        """Awaitable reset that takes the async lock, so it cannot race aget().
 
-        The async initializer holds ``_async_lock`` while ``loader_func`` runs;
+        The async initializer holds _async_lock while loader_func runs;
         clearing the fields without that lock lets an in-flight initialization
         repopulate the instance after the reset, silently undoing it. Await this
         whenever a loop is already running.
@@ -583,8 +583,8 @@ class ProviderRegistry:
         This is designed for background warmup in production.
 
         Key guarantees / gotchas:
-        - It uses `aget()` which is safe for both sync and async providers.
-        - If a request handler calls `providers.aget(name)` while warmup is
+        - It uses aget() which is safe for both sync and async providers.
+        - If a request handler calls providers.aget(name) while warmup is
           initializing the same provider, the request will wait on the same
           per-provider lock (no double initialization).
         - Providers that are not available are skipped (missing required keys).
@@ -655,9 +655,9 @@ class ProviderRegistry:
     def get(self, name: str) -> Any | None:  # noqa: ANN401 -- framework contract
         """Get a provider instance by name synchronously - only works for sync providers.
 
-        Returns ``Any`` because the registry is keyed by name, not by type: the
+        Returns Any because the registry is keyed by name, not by type: the
         concrete provider type is only knowable at the call site. Callers narrow
-        with ``cast(TheProvider, ...)`` rather than ``isinstance`` (Type Safety
+        with cast(TheProvider, ...) rather than isinstance (Type Safety
         item 12) — the registered value is correct by construction.
         """
         if name not in self._providers:
@@ -677,7 +677,7 @@ class ProviderRegistry:
     async def aget(self, name: str) -> Any | None:  # noqa: ANN401 -- framework contract
         """Get a provider instance by name asynchronously - works for both sync and async providers.
 
-        Returns ``Any`` for the same reason as :meth:`get`; narrow with ``cast``.
+        Returns Any for the same reason as :meth:get; narrow with cast.
         """
         if name not in self._providers:
             raise KeyError(f"Provider '{name}' not found in registry")
@@ -714,14 +714,14 @@ class ProviderRegistry:
         For testing only: a process-lifetime resource (e.g. an asyncpg engine)
         that gets disposed but not reset here would otherwise be handed back,
         already-closed, to a later test running under a different event loop.
-        Inside a running event loop use :meth:`areset` instead — a sync reset
+        Inside a running event loop use :meth:areset instead — a sync reset
         of an async provider there could be overwritten by an in-flight init.
         """
         if name in self._providers:
             self._providers[name].reset()
 
     async def areset(self, name: str) -> None:
-        """Awaited variant of :meth:`reset` — safe inside a running event loop."""
+        """Awaited variant of :meth:reset — safe inside a running event loop."""
         if name in self._providers:
             await self._providers[name].areset()
 
@@ -731,16 +731,16 @@ providers = ProviderRegistry()
 
 
 class _ProviderDecorator(Protocol):
-    """What ``lazy_provider(...)`` hands back — a decorator that keeps ``T``.
+    """What lazy_provider(...) hands back — a decorator that keeps T.
 
-    A ``Protocol`` with an overloaded ``__call__`` rather than a plain
-    ``Callable[...]`` return: a two-step decorator factory has nothing to solve
-    ``T`` against at the *outer* call, so a plain annotation collapses every
-    decorated provider to ``LazyLoader[Any]`` (Type Safety item 9). Deferring
-    inference to ``__call__`` recovers the provider's real type. The overloads
+    A Protocol with an overloaded __call__ rather than a plain
+    Callable[...] return: a two-step decorator factory has nothing to solve
+    T against at the *outer* call, so a plain annotation collapses every
+    decorated provider to LazyLoader[Any] (Type Safety item 9). Deferring
+    inference to __call__ recovers the provider's real type. The overloads
     (async first — a coroutine function also matches the sync form, with
-    ``T`` bound to the coroutine) are what makes ``async def`` factories infer;
-    a single union parameter leaves mypy solving ``T`` to ``Never``.
+    T bound to the coroutine) are what makes async def factories infer;
+    a single union parameter leaves mypy solving T to Never.
     """
 
     @overload

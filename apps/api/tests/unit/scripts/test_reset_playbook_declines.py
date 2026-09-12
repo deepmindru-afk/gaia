@@ -1,4 +1,4 @@
-"""``reset_playbook_declines``: the one-off that gives back chances blocked runs spent."""
+"""reset_playbook_declines: the one-off that gives back chances blocked runs spent."""
 
 from __future__ import annotations
 

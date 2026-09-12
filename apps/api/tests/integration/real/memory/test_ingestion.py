@@ -1,9 +1,9 @@
 """Ingestion end-to-end — retain pipelines against real stores.
 
-Extraction is canned per test (``ExtractedMemoryBatch``); embeddings,
+Extraction is canned per test (ExtractedMemoryBatch); embeddings,
 reconciliation thresholds, Postgres writes, Chroma upserts and the entity
 graph all run for real. Every assertion reads persisted state back out of
-the stores, not just the ``RetainResult`` counters.
+the stores, not just the RetainResult counters.
 """
 
 import asyncio

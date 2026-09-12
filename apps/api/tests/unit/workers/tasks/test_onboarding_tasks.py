@@ -4,7 +4,7 @@ One task remains: the Gmail personalization pipeline, enqueued when a user
 connects Gmail. It owns exactly one thing beyond calling the pipeline:
 reporting the outcome. It deliberately owns neither the onboarding phase
 (completion is written when the form is submitted) nor the
-``onboarding:completed`` analytics event (captured by ``complete_onboarding``).
+onboarding:completed analytics event (captured by complete_onboarding).
 """
 
 from unittest.mock import AsyncMock, patch
@@ -60,7 +60,7 @@ class TestTheTaskOwnsNeitherThePhaseNorTheEvent:
         repo.complete_onboarding.assert_not_awaited()
 
     async def test_no_completion_event_is_captured_here(self, pipeline: AsyncMock) -> None:
-        """``complete_onboarding`` emits the milestone. A second emitter would
+        """complete_onboarding emits the milestone. A second emitter would
         count every Gmail connect as another onboarding completion."""
         with patch("app.services.analytics_service.capture_event") as capture:
             await process_onboarding_intelligence_task({}, USER)

@@ -1,6 +1,6 @@
 """Unit tests for the Gmail personalization pipeline orchestration.
 
-`process_onboarding_intelligence` runs once, when a user connects Gmail. The
+process_onboarding_intelligence runs once, when a user connects Gmail. The
 tests below pin down its two early exits (already personalized, Gmail not
 connected), which nodes the happy path runs and in what shape, that the pipeline
 creates nothing the user has to clean up (no todos, no workflows), and that the
@@ -109,7 +109,7 @@ def _user(**overrides: Any) -> UserDocument:
 
 
 def _expected_ctx() -> OnboardingContext:
-    """The context `_user()` must produce, field for field."""
+    """The context _user() must produce, field for field."""
     return OnboardingContext(
         user_id=USER,
         name="Ann",
@@ -167,7 +167,7 @@ class TestScanThenEnqueueMemory:
 def pipeline_stack() -> Any:
     """Fakes every node so only the orchestration is exercised.
 
-    `personalization_already_ran` is deliberately NOT faked — the guard reads the
+    personalization_already_ran is deliberately NOT faked — the guard reads the
     user's real onboarding subdoc, so the tests drive it with real markers.
     """
     with (
@@ -261,8 +261,8 @@ class TestProcessOnboardingIntelligenceGuards:
     async def test_an_already_personalized_user_is_logged_as_skipped_not_failed(
         self, pipeline_stack: Any
     ) -> None:
-        """Three no-op exits look identical from outside the job; `outcome` and
-        `reason` are the only things that tell a skipped reconnect apart from a
+        """Three no-op exits look identical from outside the job; outcome and
+        reason are the only things that tell a skipped reconnect apart from a
         user whose Gmail fell off, and the second needs chasing."""
         user = _user(onboarding={GMAIL_PERSONALIZATION_MARKER: "2026-08-01T00:00:00Z"})
         pipeline_stack["repo"].get = AsyncMock(return_value=user)
@@ -329,7 +329,7 @@ class TestProcessOnboardingIntelligenceHappyPath:
     async def test_the_pipeline_brackets_itself_with_a_start_and_a_done_line(
         self, pipeline_stack: Any
     ) -> None:
-        """A personalization run has no other trace: `phase` is what pairs the
+        """A personalization run has no other trace: phase is what pairs the
         two lines into a duration, and the counts are the only record of what a
         given user actually got out of it."""
         triage = _triage()
@@ -356,7 +356,7 @@ class TestProcessOnboardingIntelligenceHappyPath:
         assert done.kwargs["outcome"] == "ok"
 
     async def test_a_run_that_found_nothing_reports_zero_not_one(self, pipeline_stack: Any) -> None:
-        """`triage_important_count` is the volume metric for the whole feature —
+        """triage_important_count is the volume metric for the whole feature —
         a floor of 1 on empty runs invents inbox findings that never existed."""
         await process_onboarding_intelligence(USER)
 
@@ -387,7 +387,7 @@ class TestProcessOnboardingIntelligenceHappyPath:
         self, pipeline_stack: Any
     ) -> None:
         """The two slowest nodes land after the base context is built, so they are
-        folded in with `replace`. Losing either leaves the holo card blind to the
+        folded in with replace. Losing either leaves the holo card blind to the
         inbox the user just waited on."""
         triage, style = _triage(), _style()
         pipeline_stack["triage"].return_value = triage
@@ -560,7 +560,7 @@ class TestHoloCardUrl:
             assert holo_card_url(USER) == CARD_URL
 
     def test_only_the_trailing_separator_is_trimmed(self) -> None:
-        """`rstrip("/")` takes a character SET, so a widened set would eat real
+        """rstrip("/") takes a character SET, so a widened set would eat real
         characters off the end of a deployment URL and 404 the card page."""
         frontend = MagicMock()
         frontend.FRONTEND_URL = "https://app.example.test/X/"
@@ -651,9 +651,9 @@ class TestAnnouncePersonalization:
 
     async def test_the_notification_is_built_field_for_field(self, announce_stack: Any) -> None:
         """Every field here is rendered or acted on by the client: the labels are
-        the buttons, the styles decide which one is primary, `open_in_new_tab`
-        and `close_notification` decide whether the user loses the notification
-        on the way to their memories, and `metadata.source` is what attributes
+        the buttons, the styles decide which one is primary, open_in_new_tab
+        and close_notification decide whether the user loses the notification
+        on the way to their memories, and metadata.source is what attributes
         the notification to this pipeline in analytics."""
         notifications, _ = announce_stack
 
@@ -699,7 +699,7 @@ class TestAnnouncePersonalization:
     async def test_the_announce_line_reports_which_half_landed(
         self, announce_stack: Any, seeded: str | None, outcome: str
     ) -> None:
-        """`outcome` is what separates a user who got their card handed over from
+        """outcome is what separates a user who got their card handed over from
         one who got only a notification — the two are indistinguishable
         otherwise, and only this line records which happened."""
         with patch(f"{MODULE}.seed_holo_card_conversation", AsyncMock(return_value=seeded)):

@@ -2,13 +2,13 @@
 
 Pins the two live-path persistence fixes:
 1. _attach_executor_tool_data runs on CANCELLED streams too — reintroducing the
-   old `if state.is_cancelled: return` early-exit makes every stopped turn lose
+   old if state.is_cancelled: return early-exit makes every stopped turn lose
    its executor cards and fails these tests.
 2. _finalize_stream tears the session down only AFTER the fallback save — the
    backstop attach drains the session, so teardown-first turns it into dead
    code (this exact bug existed and was caught by writing these tests).
 
-The persist itself goes through ``conversation_repository.append_message_tool_data``;
+The persist itself goes through conversation_repository.append_message_tool_data;
 these tests mock that repository method (never the DB).
 """
 
@@ -111,12 +111,12 @@ class TestAttachExecutorToolData:
             )
 
     async def test_a_write_that_matched_no_message_is_reported(self) -> None:
-        """``append_message_tool_data`` returns False when its
-        ``messages.message_id`` filter matched nothing — nothing was written and
+        """append_message_tool_data returns False when its
+        messages.message_id filter matched nothing — nothing was written and
         nothing raised. Swallowing that means every executor tool card the user
         watched live is missing after a reload, with no trace in the logs.
 
-        The sibling write in ``result_delivery._persist_follow_up_actions``
+        The sibling write in result_delivery._persist_follow_up_actions
         already checks the same flag and logs; this path must not be quieter.
         """
         _ready_session_with_cards("s1")
@@ -193,7 +193,7 @@ class TestFinalizeStreamBackstop:
 
 class TestResolvePendingApprovalTurnDegradesOnFailure:
     """A bot-channel classifier lookup failing must not take chat down —
-    ``_resolve_pending_approval_turn`` must return False so the message runs
+    _resolve_pending_approval_turn must return False so the message runs
     as a normal turn (see the docstring on the guarded except block)."""
 
     def _bot_reply_body(self) -> MessageRequestWithHistory:
@@ -247,10 +247,10 @@ class TestResolvePendingApprovalTurnDegradesOnFailure:
 
 
 class TestConsumeAgentStreamCallsTheAgent:
-    """``_consume_agent_stream`` is the only place the turn's identity is handed
-    to ``call_agent``: the request, the user, the conversation, the usage
-    collector + source (as ``AgentRunOptions``) and the three message ids (as
-    ``StreamMessageIds``). Every one of them is a keyword the agent reads and
+    """_consume_agent_stream is the only place the turn's identity is handed
+    to call_agent: the request, the user, the conversation, the usage
+    collector + source (as AgentRunOptions) and the three message ids (as
+    StreamMessageIds). Every one of them is a keyword the agent reads and
     nothing here reads back, so a dropped or nulled argument produces a turn
     that streams normally and is attributed to nobody.
     """
@@ -374,8 +374,8 @@ class TestConsumeAgentStreamAccumulatesAcrossChunks:
 
 
 class TestRunChatStreamTurnDerivations:
-    """``_run_chat_stream`` derives two values before any collaborator runs — the
-    turn state (whose ``user_message_id`` IS the client's send id) and the
+    """_run_chat_stream derives two values before any collaborator runs — the
+    turn state (whose user_message_id IS the client's send id) and the
     new-conversation flag — then passes both on by value. Neither is read back,
     so a wrong derivation streams a perfectly normal-looking turn: the reply is
     persisted under an id the client never optimistically rendered, or the

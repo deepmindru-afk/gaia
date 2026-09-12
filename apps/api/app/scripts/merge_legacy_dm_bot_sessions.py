@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fold legacy ``:dm`` bot sessions onto the canonical DM session key.
+"""Fold legacy :dm bot sessions onto the canonical DM session key.
 
-``BotService.build_session_key`` used to key a channel-less session as the
-literal ``"dm"``, so one Telegram DM lived under two keys at once —
-``telegram:<id>:<id>`` written by the inbound chat (Telegram sends the private
-chat id, which IS the user id) and ``telegram:<id>:dm`` written by workflow
+BotService.build_session_key used to key a channel-less session as the
+literal "dm", so one Telegram DM lived under two keys at once —
+telegram:<id>:<id> written by the inbound chat (Telegram sends the private
+chat id, which IS the user id) and telegram:<id>:dm written by workflow
 platform delivery, which has no channel. The user's chat silently forked into a
 second conversation with none of the history. The key derivation is fixed; this
 retires the rows the old format left behind so no lookup can resurrect them.
@@ -23,7 +23,7 @@ Message histories are NOT merged — deliberately out of scope. The losing
 conversation stays in Mongo, just unreferenced by any session; only which
 conversation the platform's next message continues changes.
 
-Idempotent: it leaves no ``:dm`` row behind, so a second run finds nothing.
+Idempotent: it leaves no :dm row behind, so a second run finds nothing.
 
 Usage::
 
@@ -60,7 +60,7 @@ from shared.py.wide_events import log
 def canonical_key_for(session: BotSessionDocument) -> str:
     """The key this session's DM belongs under today.
 
-    Derived through ``BotService.build_session_key`` rather than a format restated
+    Derived through BotService.build_session_key rather than a format restated
     here, so the migration can never disagree with the code that will do the next
     lookup.
     """

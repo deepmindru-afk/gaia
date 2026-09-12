@@ -952,7 +952,7 @@ class TestExecuteGraphSilent:
     @patch("app.helpers.agent_helpers.format_tool_call_entry", new_callable=AsyncMock)
     @patch("app.helpers.agent_helpers.get_handoff_metadata", new_callable=AsyncMock)
     async def test_updates_handoff_tool_calls(self, mock_handoff, mock_format):
-        """handoff tool calls on the agent node resolve + forward handoff metadata."""
+        """Handoff tool calls on the agent node resolve + forward handoff metadata."""
         mock_handoff.return_value = {
             "icon_url": "https://icon.png",
             "integration_id": "github",

@@ -183,8 +183,8 @@ class TestChromaClientGetLangchainClient:
 
 
 class TestChromaClientGetLangchainClientLoaderBody:
-    """`test_new_collection_registered` mocks `providers.register` entirely,
-    so the `_loader` closure it captures is registered but never actually
+    """test_new_collection_registered mocks providers.register entirely,
+    so the _loader closure it captures is registered but never actually
     called — these tests capture that closure and await it directly to
     exercise its body (collection creation / skip)."""
 
@@ -336,7 +336,7 @@ class TestChromaClientGetLangchainClientLoaderBody:
         *,
         create_if_not_exists: bool,
     ) -> Any:
-        """The registered `_loader` closure, captured with the flag it was built for."""
+        """The registered _loader closure, captured with the flag it was built for."""
         mock_providers.is_initialized.return_value = False
         mock_settings.CHROMADB_HOST = "localhost"
         mock_settings.CHROMADB_PORT = 8000

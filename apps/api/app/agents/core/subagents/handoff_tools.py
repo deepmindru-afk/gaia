@@ -1,5 +1,5 @@
 """
-Subagent Tools - Consolidated Delegation Pattern
+Subagent Tools - Consolidated Delegation Pattern.
 
 This module provides two tools for subagent delegation:
 1. search_subagents - Semantic search for available subagents
@@ -251,7 +251,7 @@ async def index_custom_mcp_as_subagent(
     Args:
         store: The ChromaStore instance
         request: The integration's identity, description and tools — see
-            :class:`CustomMcpIndexRequest`.
+            :class:CustomMcpIndexRequest.
     """
     integration_id = request.integration_id
     name = request.name
@@ -299,7 +299,7 @@ async def _resolve_custom_mcp_subagent(
     resolved: dict[str, Any],
     user_id: str | None,
 ) -> tuple[CompiledAgentGraph | None, str | None, str | None, bool]:
-    """Resolve a custom MCP (a MongoDB dict) into the `_resolve_subagent` tuple."""
+    """Resolve a custom MCP (a MongoDB dict) into the _resolve_subagent tuple."""
     integration_id = str(resolved.get("id", ""))
     integration_name = str(resolved.get("name", integration_id))
 
@@ -475,7 +475,7 @@ async def prepare_subagent_execution(
     """Resolve a subagent and build everything needed to execute it.
 
     The single preparation path for running one subagent — used by the
-    executor's `handoff` tool and the dev direct-invocation endpoint.
+    executor's handoff tool and the dev direct-invocation endpoint.
     Returns (ctx, integration_metadata, None) on success or
     (None, None, error_message) when the subagent can't be resolved.
     """
@@ -587,7 +587,7 @@ async def _run_blocking_handoff(
 ) -> str:
     """Run a handoff subagent synchronously, emitting lifecycle SSE events.
 
-    ``dispatch.record_calls`` (workflow runs only) appends the subagent's successful
+    dispatch.record_calls (workflow runs only) appends the subagent's successful
     tool calls to the result so the executor can transcribe them into a playbook.
     """
     metadata = dispatch.metadata
@@ -755,7 +755,7 @@ async def resume_parked_subagent(
 def _subagent_resume_status(status: HILApprovalStatus) -> HILApprovalStatus:
     """Map a record's terminal status onto the gate's resumable statuses.
 
-    ``abandoned`` resumes as a denial — the gate accepts only
+    abandoned resumes as a denial — the gate accepts only
     approved/denied/timeout, and abandonment means "do not act."
     """
     if status in (HILApprovalStatus.APPROVED, HILApprovalStatus.TIMEOUT):

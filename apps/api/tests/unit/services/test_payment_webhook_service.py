@@ -1,8 +1,8 @@
-"""``PaymentWebhookService`` — signature verification, the once-only claim,
+"""PaymentWebhookService — signature verification, the once-only claim,
 and what each delivery is owed: acknowledge, retry, or give up.
 
 The subscription state changes themselves are the reducer's
-(``test_subscription_events.py``); these tests pin how a delivery reaches it
+(test_subscription_events.py); these tests pin how a delivery reaches it
 and what comes back.
 """
 
@@ -509,7 +509,7 @@ class TestHandlePaymentCancelled:
 
 
 class TestHandleSubscriptionActive:
-    """``subscription.active`` through process_webhook: the one event that
+    """subscription.active through process_webhook: the one event that
     may create the row."""
 
     @pytest.fixture(autouse=True)
@@ -704,7 +704,7 @@ class TestHandleSubscriptionRenewed:
 
         Passing them to SubscriptionUpdate marks them in model_fields_set even
         when None, so the repository's model_dump(exclude_unset=True) emits
-        ``next_billing_date: None`` and the $set overwrites good stored values
+        next_billing_date: None and the $set overwrites good stored values
         with null.
         """
         mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(
@@ -735,7 +735,7 @@ class TestHandleSubscriptionRenewed:
     ):
         """Nothing was renewed, so nothing is captured — a renewal event for a
         subscription GAIA has no row for is a failure to mirror, not a renewal.
-        ``TestAFailedHandlerReleasesItsClaim`` covers what that failure costs
+        TestAFailedHandlerReleasesItsClaim covers what that failure costs
         the delivery."""
         mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(return_value=None)
         event_data = _make_webhook_event("subscription.renewed", SUBSCRIPTION_DATA_PAYLOAD)
@@ -917,7 +917,7 @@ class TestHandleSubscriptionCancelled:
         mock_deactivate_workflows,
     ):
         """A cancel scheduled for period end keeps the user on Pro (and their
-        workflows running) until `subscription.expired` actually fires."""
+        workflows running) until subscription.expired actually fires."""
         payload = {**SUBSCRIPTION_DATA_PAYLOAD, "cancel_at_next_billing_date": True}
         event_data = _make_webhook_event("subscription.cancelled", payload)
 
@@ -1275,8 +1275,8 @@ class TestASilentSkipIsOnTheRecord:
 
 
 class TestAFailedHandlerReleasesItsClaim:
-    """The bug: ``record_outcome`` is an update, so a handler that *returned*
-    ``failed`` (rather than raising) kept its webhook-id claim while the
+    """The bug: record_outcome is an update, so a handler that *returned*
+    failed (rather than raising) kept its webhook-id claim while the
     endpoint answered 200. Dodo does not resend a 200, and a manual redelivery
     of the same id is turned away at the claim — so a state change that never
     landed had no way left to be re-driven."""
@@ -1302,18 +1302,18 @@ class TestAFailedHandlerReleasesItsClaim:
         webhook_side_effects_stubbed,
     ):
         """No row matched means Dodo's state was never mirrored. The row may
-        still be on its way — ``subscription.active`` is a separate delivery
+        still be on its way — subscription.active is a separate delivery
         with its own retries — so acknowledging drops the change for good and
         leaves the user on a tier they no longer have.
 
         Asserted down to the two error entries and every field of the result,
-        not just ``status == "failed"``. Whoever picks this up in Grafana has
+        not just status == "failed". Whoever picks this up in Grafana has
         only the wide event: which delivery, which subscription, and why it was
         handed back. Nineteen mutants lived in exactly those fields — blanking
-        the reason to ``None``, dropping ``subscription_id`` from the log, or
+        the reason to None, dropping subscription_id from the log, or
         rewriting the message — because a status-only assertion cannot see any
         of it. Both entries land on one event: the handler reports the miss,
-        then ``process_webhook`` records that it is releasing the claim.
+        then process_webhook records that it is releasing the claim.
         """
         webhook_id = f"wh_{event_type}_unmatched"
         mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(return_value=None)
@@ -1437,7 +1437,7 @@ class TestAnUnlistedEventTypeIsAcknowledged:
     ) -> None:
         """Dodo adds event types without asking. The strict enum turned an
         unknown one into a validation error, the blanket handler into
-        ``failed``, and the endpoint into a 503 — so Dodo redelivered an event
+        failed, and the endpoint into a 503 — so Dodo redelivered an event
         GAIA would never act on, on every retry, until it gave up."""
         event_data = _make_webhook_event("subscription.brand_new_thing", {})
 
@@ -1458,7 +1458,7 @@ class TestAnUnlistedEventTypeIsAcknowledged:
 
 
 class TestAPermanentFailureIsAbandonedNotRetried:
-    """``failed`` asks Dodo to redeliver, which only helps when a retry can
+    """failed asks Dodo to redeliver, which only helps when a retry can
     succeed. An activation for a subscription no GAIA user owns, or a lifecycle
     event for a row that has had an hour to arrive and never did, fails the
     same way on every redelivery — so it is abandoned: acknowledged, claim
@@ -1489,7 +1489,7 @@ class TestAPermanentFailureIsAbandonedNotRetried:
         mock_processed_webhook_repository,
         mock_webhook_subscription_repository,
     ) -> None:
-        """``subscription.active`` is its own delivery with its own retries;
+        """subscription.active is its own delivery with its own retries;
         while it may still be on its way, the row-less renewal is owed one."""
         mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(return_value=None)
         event_data = _make_webhook_event("subscription.renewed", SUBSCRIPTION_DATA_PAYLOAD)

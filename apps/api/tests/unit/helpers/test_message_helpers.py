@@ -1,4 +1,4 @@
-"""Tests for app/helpers/message_helpers.py"""
+"""Tests for app/helpers/message_helpers.py."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,8 +39,8 @@ from tests.helpers import captured_wide_event
 
 class TestCreateSystemMessage:
     """The main system prompt must be byte-identical across users/channels so
-    implicit LLM caching hits. No `{user_name}` interpolation lives here —
-    per-user context is assembled separately by ``app.agents.context``."""
+    implicit LLM caching hits. No {user_name} interpolation lives here —
+    per-user context is assembled separately by app.agents.context."""
 
     def test_comms_agent_static_is_per_channel(self) -> None:
         """Different user_name must produce identical content on the same
@@ -264,10 +264,10 @@ class TestSignalMatchingSectionRenders:
     async def test_an_integration_fire_with_tracked_todos_renders_the_signal_section(
         self,
     ) -> None:
-        """Production: every ``calendar_event_starting_soon`` fire for a user with
-        tracked todos failed with ``KeyError: 'date'`` (54 in one day). The signal
-        matching instructions carry a literal example, ``"- {date}: {what happened}"``,
-        and ``str.format`` read it as two placeholders. The example must reach the
+        """Production: every calendar_event_starting_soon fire for a user with
+        tracked todos failed with KeyError: 'date' (54 in one day). The signal
+        matching instructions carry a literal example, "- {date}: {what happened}",
+        and str.format read it as two placeholders. The example must reach the
         agent verbatim, braces and all, and the section must render at all.
         """
         selected = SelectedWorkflowData(
@@ -455,7 +455,7 @@ class TestFormatFilesList:
 
 
 class TestWorkflowExecutionMessageBranches:
-    """The branch choices and bounds inside ``format_workflow_execution_message``.
+    """The branch choices and bounds inside format_workflow_execution_message.
 
     The existing tests above assert a title survives into the output, which a
     great many wrong implementations also satisfy. These pin the decisions: which
@@ -584,7 +584,7 @@ class TestWorkflowExecutionMessageBranches:
     async def test_a_gmail_trigger_missing_every_field_renders_the_stated_defaults(self) -> None:
         """A Gmail trigger can arrive with an unparsed header or no timestamp. The
         prompt still has to read as a sentence, so each blank renders its own named
-        placeholder rather than the literal ``None`` a bare ``.get`` would leave."""
+        placeholder rather than the literal None a bare .get would leave."""
         with self._no_db_workflow():
             result = await format_workflow_execution_message(
                 self._selected(),
@@ -655,7 +655,7 @@ class TestWorkflowExecutionMessageBranches:
 
 
 class TestUploadedFileLines:
-    """One attachment's rendered lines. ``format_files_list`` only joins these, so
+    """One attachment's rendered lines. format_files_list only joins these, so
     the path, the id and the summary bound are all decided here."""
 
     @staticmethod
@@ -761,7 +761,7 @@ class TestGetOnboardingSystemPromptIfApplicable:
     async def test_a_demo_turn_renders_the_profession_and_only_the_triage_summary_line(
         self,
     ) -> None:
-        """``triage_summary`` is the persisted dump of the triage model, so keying
+        """triage_summary is the persisted dump of the triage model, so keying
         off it wholesale would leak the rest of that dump into the prompt."""
         onboarding = OnboardingSubdocument(
             preferences=OnboardingPreferences(profession="doctor"),
@@ -784,7 +784,7 @@ class TestGetOnboardingSystemPromptIfApplicable:
         repository.get.assert_awaited_once_with("u1")
 
     async def test_a_triage_dump_without_a_summary_line_renders_no_inbox_line(self) -> None:
-        """Older personalization runs stored a dump with no ``summary`` key; the
+        """Older personalization runs stored a dump with no summary key; the
         prompt must then carry the profession alone, not a placeholder line."""
         onboarding = OnboardingSubdocument(
             preferences=OnboardingPreferences(profession="doctor"),

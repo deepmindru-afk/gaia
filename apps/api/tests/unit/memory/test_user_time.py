@@ -1,4 +1,4 @@
-"""Journal-day bucketing on the user's wall clock (``app.memory.user_time``)."""
+"""Journal-day bucketing on the user's wall clock (app.memory.user_time)."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager

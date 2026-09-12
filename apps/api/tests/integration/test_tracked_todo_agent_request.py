@@ -1,19 +1,19 @@
 """The request a tracked-todo run hands the agent must actually carry its prompt.
 
-``construct_langchain_messages`` reads the user's content from ``messages[-1]``;
-``request.message`` is only passed along as ``query=`` for memory retrieval. A
-caller that fills ``message`` but leaves ``messages`` empty, and supplies no
+construct_langchain_messages reads the user's content from messages[-1];
+request.message is only passed along as query= for memory retrieval. A
+caller that fills message but leaves messages empty, and supplies no
 selected workflow/tool/calendar event either, produces empty content and the
 whole run raises before the model is ever called.
 
 That is not hypothetical. Every agent-path tracked todo — any tracked todo
-without a ``workflow_id`` — failed exactly this way on every attempt, burned its
+without a workflow_id — failed exactly this way on every attempt, burned its
 three retries and was marked failed. The unit tests never saw it because they
-mock ``call_agent_silent``, so the real message construction never ran.
+mock call_agent_silent, so the real message construction never ran.
 
-``workflow_tasks`` looks like the same shape but is not: it passes
-``selectedWorkflow``, and that branch builds content without ever reading
-``messages``.
+workflow_tasks looks like the same shape but is not: it passes
+selectedWorkflow, and that branch builds content without ever reading
+messages.
 """
 
 from unittest.mock import AsyncMock, patch

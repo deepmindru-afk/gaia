@@ -1,13 +1,13 @@
 """What the provider actually receives.
 
 Every other lane test asserts on the configurable — a dict GAIA controls. This one
-asserts on the HTTP request body the real ``ChatOpenRouter`` builds from it, which
+asserts on the HTTP request body the real ChatOpenRouter builds from it, which
 is the only place a provider-routing pin either exists or does not.
 
 The gap this closes: a pinned lane must route to the provider it names and an
 unpinned one must carry no routing at all — the default and paid lanes rely on
 OpenRouter's own sticky routing being left alone, which a stray pin would
-override. Nothing proved either survived the trip from ``ModelLane`` through
+override. Nothing proved either survived the trip from ModelLane through
 LangChain's ConfigurableField layer onto the wire. It is also where the
 provider-failover bug lived — two individually-correct pieces composing wrong —
 so a test one layer above the request could not have caught it.

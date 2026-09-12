@@ -33,7 +33,7 @@ class ConnectionRejected:
 async def stored_connected_account_id(state_data: dict[str, str]) -> str | None:
     """The id minted at initiate time — the source of truth for the callback.
 
-    Composio's hosted Connect Link redirects back without the ``connectedAccountId``
+    Composio's hosted Connect Link redirects back without the connectedAccountId
     the retired initiate() flow appended, and the parameter is documented
     nowhere, so it cannot be relied on either way. Failing on the query string
     alone rejected connections that had actually succeeded.

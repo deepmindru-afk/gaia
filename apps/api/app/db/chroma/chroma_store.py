@@ -94,10 +94,10 @@ class ChromaStore(BaseStore):
     async def _get_collection(self) -> AsyncCollection:
         """Get or create the ChromaDB collection.
 
-        Uses ``NoOpEmbeddingFunction`` as the collection-level embedding function so
+        Uses NoOpEmbeddingFunction as the collection-level embedding function so
         ChromaDB never attempts to load its default ONNX model.  ChromaStore
-        manages embeddings itself via ``self.embeddings`` and always passes
-        them explicitly to ``collection.upsert()``.
+        manages embeddings itself via self.embeddings and always passes
+        them explicitly to collection.upsert().
         """
         if self._collection_cache is None:
             log.set(
@@ -183,7 +183,7 @@ class ChromaStore(BaseStore):
         """Prepare operations for execution.
 
         Search filtering runs here; a filter failure is captured and returned
-        (not raised) so ``abatch`` can still apply sibling writes before it
+        (not raised) so abatch can still apply sibling writes before it
         surfaces the error.
         """
         ops_list = list(ops)

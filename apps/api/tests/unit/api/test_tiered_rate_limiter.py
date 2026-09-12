@@ -77,7 +77,7 @@ MODULE = "app.api.v1.middleware.tiered_rate_limiter"
 class TestPlanRequired:
     """The whole-feature gate: is "pro" the answer to a fully-zeroed plan?
 
-    `plan_required` is what turns a 429 into an upgrade prompt in the UI, so a
+    plan_required is what turns a 429 into an upgrade prompt in the UI, so a
     wrong answer either hides the paywall or shows it to someone who already paid.
     """
 
@@ -292,7 +292,7 @@ class TestCheckAndIncrement:
     async def test_a_fully_zeroed_plan_is_blocked_with_an_upgrade_prompt(
         self, mock_limits: MagicMock, mock_feature_limits: MagicMock
     ) -> None:
-        """day and month both 0 means no access at all — and because Pro does have
+        """Day and month both 0 means no access at all — and because Pro does have
         access, the 429 carries the upsell the paywall UI keys off."""
         mock_limits.return_value = RateLimitConfig(day=0, month=0)
         mock_feature_limits.return_value = _tiered(

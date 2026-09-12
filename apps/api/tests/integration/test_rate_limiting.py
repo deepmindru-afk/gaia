@@ -1,5 +1,5 @@
 """
-TEST 12: Rate Limiting Under Load
+TEST 12: Rate Limiting Under Load.
 
 Integration tests for the tiered rate limiting system.
 Tests rate limit configuration, enforcement, tier differentiation,
@@ -42,7 +42,7 @@ from tests.helpers import effective_limit
 
 @contextmanager
 def frozen_time(iso: str) -> Generator[datetime, None, None]:
-    """Patch ``datetime.now`` in the rate_limits and tiered_rate_limiter modules
+    """Patch datetime.now in the rate_limits and tiered_rate_limiter modules
     to return a fixed UTC datetime.  Unlike freezegun this does not touch every
     module in the process, avoiding the transformers/torch NameError."""
     frozen = datetime.fromisoformat(iso).replace(tzinfo=UTC)
@@ -77,7 +77,7 @@ def _make_limiter_with_fake_redis() -> tuple[TieredRateLimiter, fakeredis.aiored
 
 
 class _FakeRedisCache:
-    """Minimal stand-in for ``app.db.redis.RedisCache`` backed by fakeredis."""
+    """Minimal stand-in for app.db.redis.RedisCache backed by fakeredis."""
 
     def __init__(self, fake_redis: fakeredis.aioredis.FakeRedis) -> None:
         self.redis = fake_redis

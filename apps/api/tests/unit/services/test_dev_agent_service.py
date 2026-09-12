@@ -1,6 +1,6 @@
 """A direct dev run that parks on a HIL approval must fail loud, not answer empty.
 
-When a run pauses, ``SubagentOutcome.text`` is ``""`` — returning it would present
+When a run pauses, SubagentOutcome.text is "" — returning it would present
 an empty string as the agent's answer. A direct run has no approval channel to
 resume on, so the only honest outcome is an error naming that.
 """
@@ -88,10 +88,10 @@ class TestTheParentConfigurableADirectRunBuilds:
 
 
 async def test_the_dev_users_onboarding_data_reaches_the_configurable() -> None:
-    """``_dev_base_configurable`` is the root of both direct-run paths
-    (``run_executor_direct`` / ``run_subagent_direct``) — it already has the
-    full ``UserDocument`` from ``require_dev_user`` in hand, so it must thread
-    ``onboarding`` into ``build_agent_config`` the same way comms does, not
+    """_dev_base_configurable is the root of both direct-run paths
+    (run_executor_direct / run_subagent_direct) — it already has the
+    full UserDocument from require_dev_user in hand, so it must thread
+    onboarding into build_agent_config the same way comms does, not
     leave a direct run blind to preferences a real chat turn would carry."""
     user_doc = MagicMock(
         id="dev-user-1",

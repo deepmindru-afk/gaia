@@ -1,19 +1,19 @@
 """Every piece of context an agent can be given, declared once.
 
 A section says three things: which slot it belongs in, which tiers get it, and
-how to fetch its text. Tier differences are therefore rows in :data:`SECTIONS`
+how to fetch its text. Tier differences are therefore rows in :data:SECTIONS
 rather than branches in five separate builders — adding a section to a tier is
-one edit to one ``applies_to`` set.
+one edit to one applies_to set.
 
-A row points straight at its body in ``fetchers``; the private functions here are
+A row points straight at its body in fetchers; the private functions here are
 only the sections that genuinely branch before rendering, and exist because they
 branch, not to adapt one signature to another.
 
 The slot each section declares is the correctness-critical part. Anything whose
 text depends on the current query or turn is volatile and belongs in
-``MEMORY_RECALL``, at the tail of the system block. Anything that changes only
+MEMORY_RECALL, at the tail of the system block. Anything that changes only
 when the user edits a preference or connects an integration is stable and
-belongs in ``DYNAMIC_STABLE``, inside the cacheable prefix. Getting that
+belongs in DYNAMIC_STABLE, inside the cacheable prefix. Getting that
 backwards is what silently destroys the prompt cache.
 """
 
@@ -252,7 +252,7 @@ SECTIONS: tuple[Section, ...] = (
 
 
 def sections_for(tier: AgentTier, slot: PromptSlot) -> list[Section]:
-    """The sections ``tier`` gets in ``slot``, in intra-slot order."""
+    """The sections tier gets in slot, in intra-slot order."""
     return sorted(
         (s for s in SECTIONS if s.slot is slot and s.applies(tier)), key=lambda s: s.order
     )

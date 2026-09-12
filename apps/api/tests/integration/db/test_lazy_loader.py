@@ -197,7 +197,7 @@ class TestProviderRegistryExtended:
         single LazyLoader with WARN_ONCE only logs one warning at construction
         time rather than logging on every get() call.
 
-        The app uses loguru (not stdlib logging), so we mock `logger.warning`
+        The app uses loguru (not stdlib logging), so we mock logger.warning
         at the module level rather than using pytest's caplog fixture.
         """
         from unittest.mock import patch

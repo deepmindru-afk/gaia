@@ -1,10 +1,10 @@
 """
 Tiered rate limiting engine.
 
-Provides the ``TieredRateLimiter`` (Redis-backed per-user, per-feature daily and
-monthly counters), the ``tiered_limiter`` singleton, and the 429 exception types.
-The ``@tiered_rate_limit`` endpoint decorator that wraps this engine lives in
-``app.decorators.rate_limiting`` (the canonical home for rate-limit decorators).
+Provides the TieredRateLimiter (Redis-backed per-user, per-feature daily and
+monthly counters), the tiered_limiter singleton, and the 429 exception types.
+The @tiered_rate_limit endpoint decorator that wraps this engine lives in
+app.decorators.rate_limiting (the canonical home for rate-limit decorators).
 """
 
 import asyncio
@@ -135,11 +135,11 @@ class TieredRateLimiter:
     ) -> dict[str, UsageInfo]:
         """Enforce all limits for a feature, then atomically count this use.
 
-        Raises ``RateLimitExceededException`` when any window is exhausted or
+        Raises RateLimitExceededException when any window is exhausted or
         the user's plan has no access to the feature at all. Every exceed for
         a FREE user also fires the upsell side effects (analytics event +
         weekly-deduped email) — one seam covering all decorated endpoints and
-        agent tools. ``origin`` selects the email: interactive surfaces get the
+        agent tools. origin selects the email: interactive surfaces get the
         upsell, background runs (worker-executed workflows) get the
         workflows-paused note.
         """
@@ -157,7 +157,7 @@ class TieredRateLimiter:
 
     @staticmethod
     def _plan_required(feature_key: str, user_plan: PlanType) -> str | None:
-        """``"pro"`` when a FREE user needs the paid tier to reach this feature."""
+        """ "pro" when a FREE user needs the paid tier to reach this feature."""
         paid_limits = get_feature_limits(feature_key).pro
         paid_has_access = paid_limits.day > 0 or paid_limits.month > 0
         return "pro" if (user_plan == PlanType.FREE and paid_has_access) else None

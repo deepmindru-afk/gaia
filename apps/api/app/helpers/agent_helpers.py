@@ -72,12 +72,12 @@ class HandoffMetadata(TypedDict, total=False):
 def announces_tool_call(chunk: AIMessage) -> bool:
     """True when this chunk already carries a tool call.
 
-    Complete on an ``AIMessage`` (``tool_calls``), still assembling on an
-    ``AIMessageChunk`` (``tool_call_chunks``) — both mean the model is handing
+    Complete on an AIMessage (tool_calls), still assembling on an
+    AIMessageChunk (tool_call_chunks) — both mean the model is handing
     off, so whatever text rides along is narration, not a reply.
 
-    Only the second read needs ``getattr``: every AIMessage carries
-    ``tool_calls`` (it defaults to []), while ``tool_call_chunks`` exists on the
+    Only the second read needs getattr: every AIMessage carries
+    tool_calls (it defaults to []), while tool_call_chunks exists on the
     chunk subclass alone.
     """
     return bool(chunk.tool_calls or getattr(chunk, "tool_call_chunks", None))
@@ -95,7 +95,7 @@ def drop_retracted_text(payload: object, held: dict[str, str]) -> None:
     """Forget text whose message was retracted mid-node, before its boundary.
 
     Both retractions the drivers know about are announced at the END of a node,
-    from the ``updates`` payload — except the style guard's, which retracts a
+    from the updates payload — except the style guard's, which retracts a
     draft it is about to replace with a second model call inside the SAME node.
     It has to announce that on the custom stream, between the draft's tokens and
     the rewrite's, or a bot would drop the replacement along with the draft. So
@@ -112,7 +112,7 @@ def drop_retracted_text(payload: object, held: dict[str, str]) -> None:
 def last_ai_message(messages: Sequence[AnyMessage]) -> AIMessage | None:
     """The model's own reply in a node update.
 
-    A node update also carries ``RemoveMessage`` tombstones for pruned history,
+    A node update also carries RemoveMessage tombstones for pruned history,
     so "the message this node produced" is the last AI one, not the last one.
     """
     for message in reversed(messages):
@@ -212,16 +212,16 @@ def _inherit_from_parent_configurable(
     base_configurable: AgentConfigurable | None,
     current: AgentConfigurable,
 ) -> AgentConfigurable:
-    """Merge `current` with optional inheritance from a parent agent's configurable.
+    """Merge current with optional inheritance from a parent agent's configurable.
 
     - Fallback fields (tool / subagent / vfs / todo / mode / source): child wins; parent
       only fills in blanks.
     - Pass-through (stream_id): always comes from parent.
 
     The model is NOT merged here. A child inherits its parent's lane whole (see
-    ``build_agent_config``) — one rule for one value, replacing a per-key table in
-    which provider/model_name were parent-overrides, ``model_kwargs`` was
-    conditional and ``reasoning`` was deliberately not inherited at all.
+    build_agent_config) — one rule for one value, replacing a per-key table in
+    which provider/model_name were parent-overrides, model_kwargs was
+    conditional and reasoning was deliberately not inherited at all.
     """
     merged: AgentConfigurable = {**current, "stream_id": None}
 
@@ -274,10 +274,10 @@ def _inherit_from_parent_configurable(
 
 
 def recent_user_messages(history: list[MessageDict], current: str) -> list[str]:
-    """The user's own recent turns, verbatim and oldest first, ending with ``current``.
+    """The user's own recent turns, verbatim and oldest first, ending with current.
 
     Intent routinely spans turns — "draft an email to Bob" … "looks good, send it" — so
-    the latest message alone cannot be grounded against. Only ``role == "user"`` turns
+    the latest message alone cannot be grounded against. Only role == "user" turns
     are kept: the HIL intent judge must never see assistant text, or the agent can talk
     it into approving (see services/hil/intent.py).
     """
@@ -320,7 +320,7 @@ class AgentIdentity:
 class AgentLane:
     """The model lane inputs.
 
-    Only consulted for a TOP-LEVEL run (no ``AgentThread.base_configurable``), which
+    Only consulted for a TOP-LEVEL run (no AgentThread.base_configurable), which
     is the one that resolves a lane; a child inherits its parent's lane whole and
     ignores both fields.
     """
@@ -450,12 +450,12 @@ async def build_agent_config(
     """Build the LangGraph execution config (user context, model, auth, execution params).
 
     Args:
-        identity: Who is running, and where — see :class:`AgentIdentity`.
+        identity: Who is running, and where — see :class:AgentIdentity.
         lane: Model lane inputs, consulted only for a top-level run — see
-            :class:`AgentLane`.
-        thread: Where the run lives and what it inherits — see :class:`AgentThread`.
-        turn: What this turn is about — see :class:`AgentTurn`.
-        tracing: Usage and Langfuse wiring — see :class:`AgentTracing`.
+            :class:AgentLane.
+        thread: Where the run lives and what it inherits — see :class:AgentThread.
+        turn: What this turn is about — see :class:AgentTurn.
+        tracing: Usage and Langfuse wiring — see :class:AgentTracing.
 
     An omitted group is its all-defaults instance; the per-field notes live on the
     dataclasses above.
@@ -705,7 +705,7 @@ def _held_chunk_text(
     is_comms: bool,
     tool_call_message_ids: set[str],
 ) -> tuple[str, str]:
-    """The chunk's message id plus the text to hold — ``""`` when it is not a held reply."""
+    """The chunk's message id plus the text to hold — "" when it is not a held reply."""
     message_id = chunk.id or ""
     if announces_tool_call(chunk):
         tool_call_message_ids.add(message_id)
@@ -724,8 +724,8 @@ def _settle_message_boundary(
 ) -> tuple[str, str | None, bool]:
     """Decide the fate of the message a node just produced: kept, or a handoff preamble.
 
-    Returns the updated ``complete_message`` plus the boundary's message id
-    (``None`` when the node produced none) and whether it was discarded.
+    Returns the updated complete_message plus the boundary's message id
+    (None when the node produced none) and whether it was discarded.
     """
     boundary = last_ai_message(messages) if is_comms else None
     if boundary is None:
@@ -939,7 +939,7 @@ def _json_safe_tool_result(content: Any) -> Any:  # noqa: ANN401 -- framework co
 
 @dataclass
 class _StreamAccumulators:
-    """The per-run state ``execute_graph_streaming`` threads through its stream handlers."""
+    """The per-run state execute_graph_streaming threads through its stream handlers."""
 
     complete_message: str = ""
     # Emit the model-fallback notice at most once per stream
@@ -1282,10 +1282,10 @@ async def _record_interruption_quietly(
 
 def _parse_stream_event(event: tuple[Any, ...]) -> tuple[str, Any] | None:
     """The (mode, payload) of a stream event; handles both the 2-tuple and the
-    3-tuple (subgraphs=True) shapes, and ``None`` for anything else.
+    3-tuple (subgraphs=True) shapes, and None for anything else.
 
     NOT traceable: this runs once per LangGraph stream event (dozens/hundreds per
-    turn). Decorating it as an ``llm`` run emitted one empty "Call Agent" root run
+    turn). Decorating it as an llm run emitted one empty "Call Agent" root run
     to LangSmith per chunk, flooding the project with hundreds of empty traces.
     """
     if len(event) == 3:

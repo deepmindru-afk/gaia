@@ -37,7 +37,7 @@ CONV_SERVICE = "app.api.v1.endpoints.conversations"
 
 
 class TestCreateConversation:
-    """POST /api/v1/conversations"""
+    """POST /api/v1/conversations."""
 
     async def test_create_returns_response(self, client: AsyncClient):
         mock_resp = CreateConversationResponse(
@@ -69,7 +69,7 @@ class TestCreateConversation:
 
 
 class TestListConversations:
-    """GET /api/v1/conversations"""
+    """GET /api/v1/conversations."""
 
     async def test_list_default_pagination(self, client: AsyncClient):
         mock_resp = ConversationListResponse(
@@ -113,8 +113,8 @@ class TestListConversations:
     ) -> None:
         """A page too large to page with is a 422, not a 500.
 
-        `page` was bounded below (ge=1) but not above, and the service turns it
-        into `skip = (page - 1) * limit`. These exact values came from the
+        page was bounded below (ge=1) but not above, and the service turns it
+        into skip = (page - 1) * limit. These exact values came from the
         schemathesis contract gate, which drove GET /api/v1/conversations to a
         500: the product is 10534517480782774985, past int64 max, so BSON cannot
         encode the skip and the driver error escapes as a server error.
@@ -125,7 +125,7 @@ class TestListConversations:
 
 
 class TestGetConversation:
-    """GET /api/v1/conversations/{id}"""
+    """GET /api/v1/conversations/{id}."""
 
     async def test_get_existing(self, client: AsyncClient):
         # A stray top-level field a legacy row carries must still reach the
@@ -160,7 +160,7 @@ class TestGetConversation:
 
 
 class TestDeleteConversation:
-    """DELETE /api/v1/conversations/{id}"""
+    """DELETE /api/v1/conversations/{id}."""
 
     async def test_delete_single(self, client: AsyncClient):
         mock_resp = ConversationActionResponse(
@@ -190,7 +190,7 @@ class TestDeleteConversation:
 
 
 class TestStarConversation:
-    """PUT /api/v1/conversations/{id}/star"""
+    """PUT /api/v1/conversations/{id}/star."""
 
     async def test_star(self, client: AsyncClient):
         mock_resp = StarConversationResponse(message="Conversation starred", starred=True)
@@ -209,7 +209,7 @@ class TestStarConversation:
 
 
 class TestUpdateDescription:
-    """PUT /api/v1/conversations/{id}/description"""
+    """PUT /api/v1/conversations/{id}/description."""
 
     async def test_update_description(self, client: AsyncClient):
         mock_resp = UpdateDescriptionResponse(
@@ -232,7 +232,7 @@ class TestUpdateDescription:
 
 
 class TestReadUnread:
-    """PATCH /api/v1/conversations/{id}/read and /unread"""
+    """PATCH /api/v1/conversations/{id}/read and /unread."""
 
     async def test_mark_as_read(self, client: AsyncClient):
         mock_resp = ConversationActionResponse(
@@ -264,7 +264,7 @@ class TestReadUnread:
 
 
 class TestPinnedMessages:
-    """GET /api/v1/messages/pinned"""
+    """GET /api/v1/messages/pinned."""
 
     async def test_get_pinned(self, client: AsyncClient):
         # The payload key is "results", not "messages" — the old dict mock made

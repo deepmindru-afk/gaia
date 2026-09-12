@@ -1,18 +1,18 @@
 """JuiceFS bootstrap — mounts the host-side sidecar at app startup.
 
 Why this lives in Python (not the docker entrypoint):
-Production secrets are pulled by `inject_infisical_secrets()` during Pydantic
+Production secrets are pulled by inject_infisical_secrets() during Pydantic
 settings load. By that point the bash entrypoint has already exec-ed Python,
 so the R2/JuiceFS env vars are only available *inside* the Python process.
 
 Design (production-manageable):
 - **Non-blocking**: the lazy provider spawns a daemon thread and returns
   immediately. App startup is never gated on the mount; the storage helpers
-  already soft-fail (`JuiceFSUnavailable`) until `/mnt/jfs` is ready, and
+  already soft-fail (JuiceFSUnavailable) until /mnt/jfs is ready, and
   converge automatically once it is.
-- **Supervised foreground mount**: we run `juicefs mount` in the foreground
+- **Supervised foreground mount**: we run juicefs mount in the foreground
   as a detached child and poll the mountpoint ourselves, instead of relying
-  on `juicefs mount --background`'s aggressive internal 10s readiness check
+  on juicefs mount --background's aggressive internal 10s readiness check
   (which FATALs under high managed-Postgres meta latency even though the
   mount would have succeeded).
 - **Retry with backoff** on transient meta failures (serverless Postgres
@@ -88,12 +88,12 @@ def _meta_err_tail(stderr: str) -> str:
     """Return the most diagnostic slice of a juicefs CLI failure.
 
     juicefs logs a banner ("Meta address: postgres://...") first and the actual
-    cause last, on a ``<FATAL>``/``<ERROR>`` line — so head-truncating the stderr
-    (``[:300]``) drops exactly the reason and leaves only the (masked) URL.
+    cause last, on a <FATAL>/<ERROR> line — so head-truncating the stderr
+    ([:300]) drops exactly the reason and leaves only the (masked) URL.
 
-    The pgx/pgconn driver wraps the real cause (``dial tcp ... i/o timeout``,
-    ``connection refused``, ``too many connections``, ...) on *continuation*
-    lines below the ``<FATAL>:`` header, so a single-line grab clips it right at
+    The pgx/pgconn driver wraps the real cause (dial tcp ... i/o timeout,
+    connection refused, too many connections, ...) on *continuation*
+    lines below the <FATAL>: header, so a single-line grab clips it right at
     the trailing colon. Keep the FATAL/ERROR line through the end of stderr.
     """
     text = (stderr or "").strip()
@@ -150,7 +150,7 @@ _MountState = Literal["present", "absent", "broken"]
 def _mount_state(path: Path) -> _MountState:
     """Classify a mountpoint path by stat-ing it directly.
 
-    On Python 3.12 ``Path.exists()`` only swallows ENOENT/ENOTDIR/EBADF/ELOOP;
+    On Python 3.12 Path.exists() only swallows ENOENT/ENOTDIR/EBADF/ELOOP;
     a disconnected FUSE mountpoint ("Transport endpoint is not connected")
     makes stat raise ENOTCONN, which would otherwise escape the mount checks
     and make the stale-mount recovery below unreachable. Unexpected OSErrors
@@ -218,11 +218,11 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     """Run a short-lived subprocess and capture output for logging.
 
-    When ``env`` is provided, it is merged onto the inherited environment
+    When env is provided, it is merged onto the inherited environment
     (rather than replacing it) so the child still sees PATH / LD_LIBRARY_PATH
     / etc. We use this to feed R2 credentials via env instead of argv when
-    invoking ``juicefs format`` — argv is visible to anyone with shell on the
-    host via ``ps auxww`` during the format window.
+    invoking juicefs format — argv is visible to anyone with shell on the
+    host via ps auxww during the format window.
     """
     merged_env: dict[str, str] | None = None if env is None else {**os.environ, **env}
     return subprocess.run(  # nosec B603 - argv list, no shell
@@ -317,9 +317,9 @@ def _format_if_needed(meta_url: str, encrypt_key: Path | None) -> str:
 
 
 def _mount(meta_url: str, mount_path: Path) -> str:
-    """Daemonize `juicefs mount` and supervise readiness by polling.
+    """Daemonize juicefs mount and supervise readiness by polling.
 
-    `juicefs mount --background` forks a detached child + watchdog. Its
+    juicefs mount --background forks a detached child + watchdog. Its
     supervisor self-exits non-zero after an internal ~10s mountpoint-ready
     check, but the *detached child keeps initializing* and the mount appears
     seconds later — so we ignore the invocation's exit code and poll the
@@ -494,7 +494,7 @@ async def init_juicefs_mount() -> str:
 
     Startup is never blocked on the mount: a daemon thread formats (if
     needed) and mounts with retry/backoff while the app serves traffic. The
-    storage helpers raise `JuiceFSUnavailable` until `/mnt/jfs` converges,
+    storage helpers raise JuiceFSUnavailable until /mnt/jfs converges,
     which every caller already treats as a soft-fail.
     """
     # settings is Any (app.config.settings.get_settings() is untyped upstream);

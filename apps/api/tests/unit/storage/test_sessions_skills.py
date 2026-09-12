@@ -2,14 +2,14 @@
 
 This module is what the agent actually reads at inference time. A wrong write here
 is invisible in logs: a skill body that never lands means the agent silently loses
-a capability, a stale `.connected` marker means it claims an integration the user
+a capability, a stale .connected marker means it claims an integration the user
 disconnected, and a prune that is too eager deletes the system-file symlinks the
 linker owns. All of those are caught here.
 
-The functions take a `user_root: Path` — there is no mount lookup inside them — so
-`tmp_path` IS the boundary and the real filesystem logic (`matches_text`,
-`rglob` pruning, `ensure_safe_path_id`) runs unmocked. The only stub is the
-in-memory skill registry (`skills_by_subagent`), which reads the repo's builtin
+The functions take a user_root: Path — there is no mount lookup inside them — so
+tmp_path IS the boundary and the real filesystem logic (matches_text,
+rglob pruning, ensure_safe_path_id) runs unmocked. The only stub is the
+in-memory skill registry (skills_by_subagent), which reads the repo's builtin
 SKILL.md library off disk.
 """
 
@@ -57,7 +57,7 @@ def make_skill(
 def registry(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[BuiltinSkill]]:
     """Drive materialize_skills from an in-test catalog.
 
-    The real ``skills_by_subagent`` walks the repo's builtin SKILL.md library, so
+    The real skills_by_subagent walks the repo's builtin SKILL.md library, so
     every assertion would otherwise depend on whichever skills happen to be
     checked in today.
     """

@@ -1,6 +1,6 @@
 """Contract tests for BotSessionsRepository (global, atomic session claim).
 
-The unique ``session_key`` index is what makes the claim atomic, so the fixture
+The unique session_key index is what makes the claim atomic, so the fixture
 mirrors it on the throwaway collection before asserting get-or-create semantics.
 """
 
@@ -99,7 +99,7 @@ class TestBotSessionsRepository:
         assert await repo.delete_by_session_key(f"discord:{uuid.uuid4().hex}:dm") == 0
 
     async def test_get_by_session_key_reads_without_minting(self, repo, raw_collection):
-        """Unlike ``claim_session``, a miss must stay a miss — the migration asks
+        """Unlike claim_session, a miss must stay a miss — the migration asks
         whether the canonical key is taken, and an upsert there would create the
         very row it is checking for."""
         key = f"telegram:{uuid.uuid4().hex}:dm"
@@ -120,7 +120,7 @@ class TestBotSessionsRepository:
 
 
 class TestLegacyDmSessionRepair:
-    """The finders and mutators ``app.scripts.merge_legacy_dm_bot_sessions`` runs
+    """The finders and mutators app.scripts.merge_legacy_dm_bot_sessions runs
     against real rows."""
 
     async def _claim(self, repo, key: str, platform: str = "telegram") -> str:

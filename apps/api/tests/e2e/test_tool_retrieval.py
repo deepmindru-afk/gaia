@@ -2,15 +2,15 @@
 binding fails.
 
 The executor is bound to fourteen tools at build time and must *retrieve* every
-other one before it can call it (`build_graph.py` `initial_tool_ids`). That
+other one before it can call it (build_graph.py initial_tool_ids). That
 retrieve → bind → call loop is the hinge the whole executor tier turns on: a
 break in it means the agent cannot do anything it was not born knowing, and the
 failure mode is not an exception — it is the model being handed an empty list
 and trying again.
 
-These run the REAL executor graph (see ``_harness/graph_run.executor_graph``).
-The vector store is a real ``InMemoryStore`` with no index, which is not a
-limitation but the point: binding by ``exact_tool_names`` must never search it,
+These run the REAL executor graph (see _harness/graph_run.executor_graph).
+The vector store is a real InMemoryStore with no index, which is not a
+limitation but the point: binding by exact_tool_names must never search it,
 so any test that starts depending on embeddings will fail here rather than
 silently become non-deterministic.
 """
@@ -63,7 +63,7 @@ class TestExactBinding:
         assert run.final_text() == "Here is what I found."
 
     async def test_exact_binding_never_searches_the_vector_store(self):
-        """``exact_tool_names`` resolves against the in-memory registry. If it
+        """exact_tool_names resolves against the in-memory registry. If it
         ever starts hitting ChromaDB, every retrieval test becomes dependent on
         Google embeddings and quietly non-deterministic — §2.6 of the plan."""
         store = RecordingStore()
@@ -98,7 +98,7 @@ class TestExactBinding:
         assert sorted(run.bound_tools()) == sorted([RETRIEVABLE, "get_weather"])
 
     async def test_a_tool_stays_bound_for_the_rest_of_the_run(self):
-        """``selected_tool_ids`` accumulates. If a later turn dropped the earlier
+        """selected_tool_ids accumulates. If a later turn dropped the earlier
         selection, a two-step task would need to re-retrieve between every call."""
         async with executor_graph(
             [
@@ -115,13 +115,13 @@ class TestExactBinding:
 
 
 class TestWhatTheModelIsActuallyHanded:
-    """``selected_tool_ids`` is what retrieval decided; this is what the provider
+    """selected_tool_ids is what retrieval decided; this is what the provider
     received as function declarations. They are different things, and only the
     second one determines whether the model can call anything.
 
-    Nothing asserted this before: the fake model returned ``self`` from
-    ``bind_tools`` and discarded the list, so deleting the whole of
-    ``build_tools_to_bind`` left every retrieval test green while the executor
+    Nothing asserted this before: the fake model returned self from
+    bind_tools and discarded the list, so deleting the whole of
+    build_tools_to_bind left every retrieval test green while the executor
     silently degraded to a chatbot with no tools at all.
     """
 
@@ -177,8 +177,8 @@ class TestWhatTheModelIsActuallyHanded:
         )
 
     async def test_a_middleware_tool_is_bound_even_though_it_is_not_an_initial_id(self):
-        """``spawn_subagent`` comes from the middleware stack, not
-        ``initial_tool_ids`` — it is the only tool that depends on that branch,
+        """spawn_subagent comes from the middleware stack, not
+        initial_tool_ids — it is the only tool that depends on that branch,
         and every tool the rest of the suite exercises is in both."""
         async with executor_graph(["hi"]) as graph:
             run = await run_graph(graph, "hello")
@@ -283,7 +283,7 @@ class TestUnknownToolNames:
         assert run.bound_tools() == []
 
     async def test_an_unknown_name_is_named_back_with_a_do_not_retry(self):
-        """An unknown name used to come back as ``Available tools: []`` — the
+        """An unknown name used to come back as Available tools: [] — the
         same answer a semantic search that found nothing gives, so the model had
         no signal the NAME was wrong and would retype it until it ran out of
         steps. Retrieval now names the rejected tool and points at the query
@@ -333,7 +333,7 @@ class TestRetrievalContract:
 
     async def test_asking_for_a_subagent_by_name_explains_how_to_reach_it(self):
         """Subagents are not bindable tools. Retrieval knows this and returns
-        guidance naming ``handoff``; if only the (empty) bind list came back the
+        guidance naming handoff; if only the (empty) bind list came back the
         model would read it as "no such thing" and give up."""
         async with executor_graph([retrieve("subagent:gmail"), "ok"]) as graph:
             run = await run_graph(graph, "check my mail")

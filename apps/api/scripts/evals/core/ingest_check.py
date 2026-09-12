@@ -11,7 +11,7 @@ noticed for days.
 So this is deliberately not a unit test of our writer. It is an independent
 reader that pulls the numbers back out of the live backend and refuses to call
 an ingest successful when they are impossible, or when they disagree with the
-journals on disk — which are the source of truth. :mod:`.invariants` does the
+journals on disk — which are the source of truth. :mod:.invariants does the
 same job for journals; this is the same idea one layer out.
 
 Run it after every seed. A check nobody runs is a check that does not exist.
@@ -155,7 +155,7 @@ def api_base(url_override: str) -> str:
     """The private REST root, derived from OPIK_URL_OVERRIDE.
 
     The scheme is checked here rather than suppressed at the call site: this URL
-    comes from the environment, and ``urlopen`` would happily accept ``file:``
+    comes from the environment, and urlopen would happily accept file:
     and turn a misconfigured variable into a local file read.
     """
     parsed = urlparse(url_override)
@@ -285,10 +285,10 @@ def journal_expectations(
 ) -> dict[str, int]:
     """How many distinct case traces each project should hold, per the journals.
 
-    Distinct ``(case, run)`` pairs, not records: a journal legitimately carries
+    Distinct (case, run) pairs, not records: a journal legitimately carries
     the same case twice when a run was resumed, and both collapse onto one trace.
 
-    A run marked ``excluded`` is left out, because the ingest never writes it —
+    A run marked excluded is left out, because the ingest never writes it —
     counting it here would report a mismatch on every correctly-skipped run.
     """
     expected: Counter[str] = Counter()

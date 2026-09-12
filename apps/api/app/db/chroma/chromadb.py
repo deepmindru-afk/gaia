@@ -22,7 +22,7 @@ class ChromaClient:
     This class provides access to:
     1. The raw AsyncClientAPI client for direct ChromaDB interactions
     2. The Langchain Chroma client for vector search integrations
-    3. Collection-specific Langchain clients via dynamically created providers
+    3. Collection-specific Langchain clients via dynamically created providers.
     """
 
     @classmethod
@@ -228,7 +228,7 @@ async def init_chromadb_client() -> AsyncClientAPI:
 def init_chromadb_constructor() -> ClientAPI:
     """
     Initialize ChromaDB constructor client for langchain.
-    This is a workaround to avoid the `coroutine` error in langchain
+    This is a workaround to avoid the coroutine error in langchain
     when using the async client directly.
 
     Returns:

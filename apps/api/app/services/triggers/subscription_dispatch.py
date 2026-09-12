@@ -1,10 +1,10 @@
 """Fan a fired Composio trigger out to the tracked todos subscribed to it.
 
-Called from ``TriggerHandler.process_event`` before the no-matching-workflow
+Called from TriggerHandler.process_event before the no-matching-workflow
 short-circuit, because an event with no workflow can still have a todo waiting on
 it — and today that event is dropped.
 
-Resolution mirrors ``GmailTriggerHandler.find_workflows`` and runs both
+Resolution mirrors GmailTriggerHandler.find_workflows and runs both
 strategies, for the same reason it does: per-resource triggers are found by the
 Composio instance id on the webhook, while account-level triggers (Gmail) have no
 instance to register and can only be found by user and trigger name. A lookup on

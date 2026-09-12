@@ -1,8 +1,8 @@
 """Embedding + reranking sidecar service (FastAPI).
 
 Loads the fastembed models ONCE for the whole deployment and exposes them over
-HTTP. It reuses the exact ``_embed_sync`` / ``_embed_query_sync`` /
-``_rerank_sync`` helpers from ``app.memory.embeddings``, so the vectors and
+HTTP. It reuses the exact _embed_sync / _embed_query_sync /
+_rerank_sync helpers from app.memory.embeddings, so the vectors and
 rerank scores are byte-for-byte identical to the in-process path — the tuned
 retrieval thresholds keep working unchanged.
 
@@ -11,7 +11,7 @@ uses the local models:
 
     uv run uvicorn app.services.embedding_sidecar.server:app --host 0.0.0.0 --port 8200
 
-The API and worker then set ``MEMORY_EMBEDDING_SIDECAR_URL`` to its address and
+The API and worker then set MEMORY_EMBEDDING_SIDECAR_URL to its address and
 call it instead of loading their own copy.
 """
 

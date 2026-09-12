@@ -35,7 +35,7 @@ FAKE_USER_UPDATE = {
 
 
 class TestGetMe:
-    """GET /api/v1/user/me"""
+    """GET /api/v1/user/me."""
 
     @patch(
         "app.api.v1.endpoints.user.get_user_onboarding_status",
@@ -85,7 +85,7 @@ class TestGetMe:
 
 
 class TestUpdateMe:
-    """PATCH /api/v1/user/me"""
+    """PATCH /api/v1/user/me."""
 
     @patch(
         "app.api.v1.endpoints.user.update_user_profile",
@@ -144,7 +144,7 @@ class TestUpdateMe:
 
 
 class TestUpdateUserName:
-    """PATCH /api/v1/user/name"""
+    """PATCH /api/v1/user/name."""
 
     @patch(
         "app.api.v1.endpoints.user.update_user_profile",
@@ -186,7 +186,7 @@ class TestUpdateUserName:
 
 
 class TestUpdateTimezone:
-    """PATCH /api/v1/user/timezone"""
+    """PATCH /api/v1/user/timezone."""
 
     @patch("app.api.v1.endpoints.user.user_repository.update", new_callable=AsyncMock)
     async def test_update_timezone_success(self, mock_update: AsyncMock, client: AsyncClient):
@@ -255,7 +255,7 @@ class TestUpdateTimezone:
 
 
 class TestGetPublicHoloCard:
-    """GET /api/v1/user/holo-card/{card_id}"""
+    """GET /api/v1/user/holo-card/{card_id}."""
 
     @patch("app.api.v1.endpoints.user.user_repository.get", new_callable=AsyncMock)
     async def test_holo_card_success(self, mock_get: AsyncMock, client: AsyncClient):
@@ -305,7 +305,7 @@ class TestGetPublicHoloCard:
 
 
 class TestUpdateHoloCardColors:
-    """PATCH /api/v1/user/holo-card/colors"""
+    """PATCH /api/v1/user/holo-card/colors."""
 
     @patch("app.api.v1.endpoints.user.user_repository.set_holo_card_colors", new_callable=AsyncMock)
     async def test_update_colors_success(self, mock_set: AsyncMock, client: AsyncClient):
@@ -359,7 +359,7 @@ class TestUpdateHoloCardColors:
 
 
 class TestLogout:
-    """POST /api/v1/user/logout"""
+    """POST /api/v1/user/logout."""
 
     @patch("app.api.v1.endpoints.user.workos")
     async def test_logout_success(self, mock_workos: MagicMock, client: AsyncClient):

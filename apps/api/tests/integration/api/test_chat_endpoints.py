@@ -91,7 +91,7 @@ class TestChatStreamEndpoint:
     def mock_rate_limiter(self):
         """Bypass the tiered rate limiter's Redis calls for all chat tests.
 
-        `tiered_limiter` is a module-level TieredRateLimiter() singleton whose
+        tiered_limiter is a module-level TieredRateLimiter() singleton whose
         .redis attribute is bound to the real redis_cache at import time.
         Patching check_and_increment directly avoids any real Redis connection.
         """

@@ -1,4 +1,4 @@
-"""Reading a day of ``llm_call`` events out of Loki, exactly once.
+"""Reading a day of llm_call events out of Loki, exactly once.
 
 Loki caps a response and offers no cursor, so a busy day is read in pages that
 must re-open AT the last nanosecond seen and skip exactly the lines already
@@ -42,8 +42,8 @@ def _parse(line: str) -> _Row | None:
 
 
 class _FakeLokiClient:
-    """A faithful-enough Loki: one ordered event stream, served ``limit`` at a
-    time from an INCLUSIVE ``start``, which is the behaviour the cursor has to
+    """A faithful-enough Loki: one ordered event stream, served limit at a
+    time from an INCLUSIVE start, which is the behaviour the cursor has to
     be right about."""
 
     def __init__(self, events: list[tuple[int, str]]) -> None:
@@ -88,10 +88,10 @@ async def test_paging_does_not_re_read_the_second_it_stopped_inside(
     """A full page whose last events share one wall-clock second must not be
     served again by the next page.
 
-    Loki's ``start`` is inclusive and its timestamps are nanoseconds. A cursor
+    Loki's start is inclusive and its timestamps are nanoseconds. A cursor
     that keeps only whole seconds restarts the next page at the TOP of the
     second the previous page ended in, so every event in that second is folded
-    twice and ``cost_actual`` comes out inflated for exactly the busiest
+    twice and cost_actual comes out inflated for exactly the busiest
     user-days (a production day clears the 5,000-event page size).
     """
     monkeypatch.setattr(_loki, "LOKI_PAGE", 3)

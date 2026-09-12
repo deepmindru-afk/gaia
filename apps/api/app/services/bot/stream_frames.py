@@ -1,9 +1,9 @@
 """Bot SSE wire frames.
 
 Every frame a bot chat stream can put on the wire, built in one place instead
-of hand-formatted at each yield site in ``endpoints/bot.py``. The bot adapters
+of hand-formatted at each yield site in endpoints/bot.py. The bot adapters
 switch on these exact shapes, so the wire bytes are the contract: see
-``tests/unit/services/bot/test_stream_frames.py``, which pins each builder
+tests/unit/services/bot/test_stream_frames.py, which pins each builder
 against the literal it replaced.
 """
 
@@ -18,11 +18,11 @@ _COMMENT_KEEPALIVE = ": keepalive\n\n"
 
 
 def sse_frame(data: Mapping[str, Any]) -> str:
-    """Serialize one payload as an SSE ``data:`` frame.
+    """Serialize one payload as an SSE data: frame.
 
-    Note: the bot protocol never names an ``event:`` — every frame is a bare
-    ``data:`` line whose JSON body carries the discriminator key (``text``,
-    ``error``, ``notice``, ...), so this takes no event argument.
+    Note: the bot protocol never names an event: — every frame is a bare
+    data: line whose JSON body carries the discriminator key (text,
+    error, notice, ...), so this takes no event argument.
     """
     return f"data: {json.dumps(data)}\n\n"
 
@@ -43,7 +43,7 @@ def keepalive_frame() -> str:
 
 
 def text_frame(text: str) -> str:
-    """Assistant text for the message in flight (web ``response`` renamed)."""
+    """Assistant text for the message in flight (web response renamed)."""
     return sse_frame({"text": text})
 
 

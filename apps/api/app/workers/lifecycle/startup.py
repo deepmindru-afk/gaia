@@ -1,6 +1,4 @@
-"""
-ARQ worker startup functionality.
-"""
+"""ARQ worker startup functionality."""
 
 import asyncio
 import os
@@ -39,7 +37,7 @@ async def startup(ctx: dict[str, Any]) -> None:
 
     ARQ runs this outside any task boundary, so it gets its own: a worker that
     fails to boot (or comes up without its metrics server) is then one
-    queryable ``worker_startup`` event instead of a discarded ``log.set``.
+    queryable worker_startup event instead of a discarded log.set.
     """
 
     async with log_context("worker_startup", component="arq_lifecycle"):

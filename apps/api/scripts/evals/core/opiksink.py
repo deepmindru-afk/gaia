@@ -1,11 +1,11 @@
 """Opik sink: per-case traces + experiment finalize by replaying the journal.
 
 Runs log one trace per case with feedback scores; at finalize the same cases are
-synced as a dataset and evaluated via ``opik.evaluation.evaluate`` with a
+synced as a dataset and evaluated via opik.evaluation.evaluate with a
 replay task (no agent re-run) so every run becomes a comparable experiment.
 
-Every write is keyed by ``CaseTrace.key`` (case + run), which is what lets
-``seed`` backfill past journals repeatedly without duplicating anything.
+Every write is keyed by CaseTrace.key (case + run), which is what lets
+seed backfill past journals repeatedly without duplicating anything.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ _MAX_PROJECTS = 200
 def load_opik_env(path: Path = ENV_OPIK) -> None:
     """Load .env.opik into the process.
 
-    ``override=False`` keeps an already-exported variable winning over the file,
+    override=False keeps an already-exported variable winning over the file,
     so pointing a run at a different Opik instance from the shell still works.
     """
     load_dotenv(path, override=False)
@@ -88,7 +88,7 @@ def _identity_time(case: CaseTrace) -> datetime:
     """The timestamp half of a derived id — stable for one (case, run).
 
     A UUIDv7's leading 48 bits are a millisecond clock, so whatever goes here is
-    part of the id. Using the case's own ``started_at`` looked natural and was
+    part of the id. Using the case's own started_at looked natural and was
     wrong: a resumed run journals the same case twice with timestamps tens of
     milliseconds apart, so the "deterministic" id differed between the two
     records and the second write inserted a duplicate instead of updating. Three
@@ -114,10 +114,10 @@ def _stable_uuid7(key: str, when: datetime) -> str:
 
 
 def _uuid4_to_uuid7(when: datetime, uuid4: uuid.UUID) -> uuid.UUID:
-    """``opik.id_helpers.uuid4_to_uuid7``, byte for byte.
+    """opik.id_helpers.uuid4_to_uuid7, byte for byte.
 
     Copied rather than imported because importing it drags the whole SDK in.
-    ``test_trace_identity`` pins it against the SDK's own function: any drift
+    test_trace_identity pins it against the SDK's own function: any drift
     would re-key every seeded trace and duplicate the projects on the next seed.
     """
     if uuid4.version != 4:
@@ -168,7 +168,7 @@ def close_clients() -> None:
 
 
 class ExperimentOptions(TypedDict):
-    """What to call the Opik experiment and how to score it (see ``finalize``)."""
+    """What to call the Opik experiment and how to score it (see finalize)."""
 
     scoring_metrics: list[object]
     experiment_name: str
@@ -185,7 +185,7 @@ def finalize(
 ) -> object:
     """Evaluate the journal's stored outputs as an Opik experiment.
 
-    ``replay(item)`` returns the stored run output for a case (never calls the
+    replay(item) returns the stored run output for a case (never calls the
     agent again); metrics see dataset-item keys merged with those outputs.
     """
     from opik.evaluation import evaluate
@@ -221,7 +221,7 @@ def finalize(
 def _dataset_for(opik_client: opik.Opik, name: str, project: str) -> opik.Dataset:
     """Fetch or create the run's dataset, without the project-scoped deadlock.
 
-    ``get_or_create_dataset`` looks the dataset up *within a project* but dataset
+    get_or_create_dataset looks the dataset up *within a project* but dataset
     names are unique per workspace. Deleting a project therefore orphans its
     dataset: the project-scoped get 404s, the create then 409s on the name that
     still exists, and every subsequent finalize fails forever. That is exactly
@@ -266,11 +266,11 @@ def delete_datasets(names: list[str]) -> list[str]:
 
 
 def log_case_trace(project: str, case: CaseTrace) -> None:
-    """Write one case execution as a trace. Buffered — call ``flush`` when done.
+    """Write one case execution as a trace. Buffered — call flush when done.
 
-    The trace carries an ``llm`` child span holding usage, model, provider and
+    The trace carries an llm child span holding usage, model, provider and
     cost. That span is not decoration: Opik derives a trace's
-    ``total_estimated_cost``, its token totals, and the ``model``/``provider``
+    total_estimated_cost, its token totals, and the model/provider
     breakdowns from spans, so metadata alone leaves the project list, the COST
     and TOKEN_USAGE metrics, and every cost widget reading zero.
     """
@@ -331,7 +331,7 @@ def log_case_trace(project: str, case: CaseTrace) -> None:
 
 
 def legacy_case_traces(project: str, expected_ids: set[str]) -> int:
-    """Case traces in ``project`` that a re-seed would duplicate rather than update.
+    """Case traces in project that a re-seed would duplicate rather than update.
 
     Upsert-by-id only protects traces that were written WITH the derived id.
     Anything written before that — every trace currently in Opik — carries a
@@ -360,12 +360,12 @@ def legacy_case_traces(project: str, expected_ids: set[str]) -> int:
 
 
 def purge_case_traces(project: str) -> int:
-    """Delete every ``case-*`` trace in a project.
+    """Delete every case-* trace in a project.
 
     Only needed to evict traces whose source journal is gone — a plain re-seed
     already refreshes everything in place, because the ids are derived from the
     case identity. To empty a project wholesale, delete the project instead
-    (``ingest``): a single trace delete costs ~3.5s on this backend.
+    (ingest): a single trace delete costs ~3.5s on this backend.
     """
     ids = [
         trace.id

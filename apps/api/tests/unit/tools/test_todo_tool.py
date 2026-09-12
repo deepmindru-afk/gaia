@@ -32,8 +32,8 @@ MODULE = "app.agents.tools.todo_tool"
 
 
 class _UTCOnlyDateTime(datetime):
-    """datetime stand-in whose ``now(None)`` (local time) reads a different DATE
-    than ``now(UTC)``.
+    """datetime stand-in whose now(None) (local time) reads a different DATE
+    than now(UTC).
 
     The todo tools' day boundaries must follow the UTC calendar; this clock turns
     a non-UTC read into a wrong window the exact-boundary assertions can see,

@@ -1,11 +1,11 @@
 """Unit tests for the subscription-plan seed script.
 
 Two behaviors decide whether a production run is safe: the script must not
-rewrite a plan whose content already matches (so `--dry-run` predicts the real
+rewrite a plan whose content already matches (so --dry-run predicts the real
 run), and a failure to clear the plan cache must surface rather than print a
 success the API contradicts.
 
-No `regression` markers here — every symbol under test is introduced by this
+No regression markers here — every symbol under test is introduced by this
 change, so these tests cannot run against the base revision at all, and an
 import error is not proof of anything. The mutation check that backs them is
 in the PR: reverting either behavior turns these red.

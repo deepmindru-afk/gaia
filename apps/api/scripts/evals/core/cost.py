@@ -53,7 +53,7 @@ class EvalCostTracker(BaseCallbackHandler):
 
     @contextmanager
     def case_scope(self, case_id: str) -> Iterator[None]:
-        """Meter everything spent inside this block against ``case_id``."""
+        """Meter everything spent inside this block against case_id."""
         token = _CURRENT_CASE.set(case_id)
         try:
             yield

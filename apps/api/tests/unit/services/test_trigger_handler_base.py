@@ -41,9 +41,9 @@ def _api_status_error(
 ) -> APIStatusError:
     """Build the exception the Composio client raises for a non-2xx delete.
 
-    `error_cls` mirrors the SDK's own status→class mapping: 410 has no dedicated
+    error_cls mirrors the SDK's own status→class mapping: 410 has no dedicated
     subclass and arrives as a bare APIStatusError. The message mirrors the SDK's
-    format (`Error code: N - <body>`) — what reaches Sentry, and all a
+    format (Error code: N - <body>) — what reaches Sentry, and all a
     substring-based check would ever see.
     """
     response = httpx.Response(
@@ -256,7 +256,7 @@ class TestQueueOneWorkflowDispatch:
 class TestTodoDispatchHandoff:
     """The tap that makes a todo-only event survive.
 
-    ``process_event`` returns early when no workflow matches, and that return is
+    process_event returns early when no workflow matches, and that return is
     what drops the reply a todo has been waiting for. The hand-off has to happen
     before it.
     """

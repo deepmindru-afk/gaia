@@ -1,4 +1,4 @@
-"""Unit tests for `app.models.playbook_models` — the inline `$ask` slot.
+"""Unit tests for app.models.playbook_models — the inline $ask slot.
 
 The slot key is the address a written value is looked up by: the runner lists
 it to the model that fills it and the evaluator substitutes by it, so a key
@@ -96,7 +96,7 @@ class TestAskSlotKeys:
 class TestPlaybookStepInput:
     def test_unknown_keys_are_dropped_instead_of_refusing_the_write(self) -> None:
         """17 of 57 production authoring attempts were thrown away whole for a
-        ``goal`` beside an otherwise correct call."""
+        goal beside an otherwise correct call."""
         step = PlaybookStepInput.model_validate(
             {"id": "agenda", "tool": "list_events", "goal": "read", "note": "daily"}
         )
@@ -142,7 +142,7 @@ class TestPlaybookHandoffStepInput:
     def test_a_child_that_nests_a_level_deeper_is_refused_by_name(
         self, child: dict[str, Any], named: str
     ) -> None:
-        """The child model drops unknown keys, and ``steps``/``handoff`` ARE
+        """The child model drops unknown keys, and steps/handoff ARE
         unknown to it. Without this rule a grandchild delegation is discarded
         silently and the stored playbook runs less than the author wrote while
         reporting success. The message has to name which key, or the author
@@ -156,7 +156,7 @@ class TestPlaybookHandoffStepInput:
         ) in str(raised.value)
 
     def test_a_stray_annotation_on_a_child_is_still_dropped(self) -> None:
-        """The refusal above is exactly two keys wide: a ``goal`` on a child is
+        """The refusal above is exactly two keys wide: a goal on a child is
         the same harmless annotation it is on a top-level step."""
         child = PlaybookHandoffStepInput.model_validate(
             {"id": "mail", "tool": "list_events", "goal": "read the agenda"}
@@ -169,7 +169,7 @@ class TestPlaybookHandoffStepInput:
 
 
 class TestArgsSpelledRight:
-    """``args`` under another name is dropped as unknown, and the step then
+    """args under another name is dropped as unknown, and the step then
     stores a call with no arguments at all while reporting a successful write."""
 
     @pytest.mark.parametrize(
@@ -199,7 +199,7 @@ class TestArgsSpelledRight:
     def test_a_stray_alias_beside_real_args_is_dropped_not_refused(
         self, model: type[PlaybookStepInput] | type[PlaybookHandoffStepInput]
     ) -> None:
-        """The refusal is about arguments going missing. With ``args`` present
+        """The refusal is about arguments going missing. With args present
         nothing is lost, so the extra key is the same harmless annotation any
         other unknown key is."""
         step = model.model_validate(

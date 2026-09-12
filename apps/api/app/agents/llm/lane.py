@@ -1,14 +1,14 @@
 """The resolved answer to "which model will this run call, and how".
 
-One immutable :class:`ModelLane` is resolved once per user turn by
-:func:`resolve_lane` and then carried verbatim — to the executor, to every
+One immutable :class:ModelLane is resolved once per user turn by
+:func:resolve_lane and then carried verbatim — to the executor, to every
 handoff subagent, across a queue hop, through a HIL resume. Everything
 downstream reads the lane instead of re-deriving a model from loose keys, so
 there is exactly one place a lane can be wrong.
 
 This replaces a pipeline of in-place mutations spread across six files in which
 every key propagated by a different rule: some parent-overrides, some
-child-wins, ``reasoning`` deliberately not inherited at all, and several dropped
+child-wins, reasoning deliberately not inherited at all, and several dropped
 entirely by the queue's serializer. That table is what made model selection
 unreadable and its bugs invisible.
 """
@@ -65,7 +65,7 @@ BINDING_FIELD_IDS: frozenset[str] = frozenset(
 class AgentRole(StrEnum):
     """Which tier is asking for a lane.
 
-    Only the reasoning budget differs by role today — see :func:`_reasoning_for`.
+    Only the reasoning budget differs by role today — see :func:_reasoning_for.
     """
 
     COMMS = "comms"
@@ -91,7 +91,7 @@ class ModelLane:
     max_input_tokens: int
 
     def to_configurable(self) -> dict[str, Any]:
-        """The JSON-safe form stored on ``configurable[LANE_CONFIG_KEY]``."""
+        """The JSON-safe form stored on configurable[LANE_CONFIG_KEY]."""
         return {
             "provider": self.provider,
             "model": self.model,
@@ -101,13 +101,13 @@ class ModelLane:
         }
 
     def binding_keys(self) -> AgentConfigurable:
-        """The top-level ``configurable`` keys LangChain's own field resolution
-        reads — ``provider`` picks the alternative, the rest are ConfigurableFields
-        (see ``client._openrouter_wire_configurables``).
+        """The top-level configurable keys LangChain's own field resolution
+        reads — provider picks the alternative, the rest are ConfigurableFields
+        (see client._openrouter_wire_configurables).
 
-        Written ONLY by ``build_agent_config`` from the lane, and read only by
+        Written ONLY by build_agent_config from the lane, and read only by
         LangChain. GAIA code reads the lane. A key is omitted rather than set to
-        ``None`` so the client's own default survives — the custom dev endpoint
+        None so the client's own default survives — the custom dev endpoint
         pins no model, and a non-reasoning model must not carry a reasoning pin.
         """
         # Literal keys, not the *_FIELD_ID constants: the return is an
@@ -125,13 +125,13 @@ class ModelLane:
         return keys
 
     def rebind(self, configurable: Mapping[str, Any]) -> dict[str, Any]:
-        """``configurable`` with THIS lane's binding keys, and the previous lane's cleared.
+        """configurable with THIS lane's binding keys, and the previous lane's cleared.
 
         A plain merge is not enough, and that is why the fallback silently did
-        nothing: LangChain merges a passed config OVER a ``with_config`` one
+        nothing: LangChain merges a passed config OVER a with_config one
         (later wins), so re-passing the run's config restored the very provider
         that had just failed. Stale keys must be REMOVED, not just overwritten —
-        the fallback drops the pin, and an un-cleared ``model_kwargs`` would carry
+        the fallback drops the pin, and an un-cleared model_kwargs would carry
         the old provider's routing onto the new one.
         """
         return {
@@ -141,10 +141,10 @@ class ModelLane:
 
     @classmethod
     def from_configurable(cls, raw: object) -> "ModelLane | None":
-        """Rebuild a lane from a configurable, or ``None`` when there isn't one.
+        """Rebuild a lane from a configurable, or None when there isn't one.
 
-        ``None`` is a real answer, not an error: a bag written before lanes
-        existed (an in-flight queue item or a stored HIL ``resume_item``) has no
+        None is a real answer, not an error: a bag written before lanes
+        existed (an in-flight queue item or a stored HIL resume_item) has no
         lane, and the caller resolves a fresh one rather than crashing on it.
         """
         if not isinstance(raw, dict) or "provider" not in raw:
@@ -158,11 +158,11 @@ class ModelLane:
         )
 
     def fallback(self) -> "ModelLane | None":
-        """The same run on the next configured provider, or ``None`` when there
+        """The same run on the next configured provider, or None when there
         is no other one.
 
         The pin AND the reasoning config are dropped: both are OpenRouter-wire
-        concepts (``client._openrouter_wire_configurables`` declares them, while
+        concepts (client._openrouter_wire_configurables declares them, while
         the Gemini lane declares only the model), so carrying either onto a
         different provider is how a fallback turns one failure into two.
         """
@@ -175,11 +175,11 @@ class ModelLane:
 
 def _reasoning_for(role: AgentRole) -> dict[str, Any]:
     """The effort a PAID lane gives each role. The free lane's is fixed in
-    :func:`_default_lane`.
+    :func:_default_lane.
 
     Comms gets its own knob so it can be raised past the executor's default
     without moving the executor's. It must never resolve BELOW the free lane's
-    effort: it sat at ``low`` against free's ``medium``, which had a paying
+    effort: it sat at low against free's medium, which had a paying
     user's front-door agent thinking less than a free user's.
     """
     if role is AgentRole.COMMS:
@@ -201,11 +201,11 @@ def _dev_lane(option: DevModelOption, role: AgentRole) -> ModelLane:
     """A lane pinned from the DEV-ONLY model menu.
 
     An entry may carry no model (the env-defined "custom" endpoint), in which
-    case the client binds ``PROVIDER_MODELS[provider]`` (``DEV_LLM_MODEL``) as
+    case the client binds PROVIDER_MODELS[provider] (DEV_LLM_MODEL) as
     its own default. The lane resolves that same value rather than leaving the
-    model ``None``: it changes nothing about which model runs, and it keeps the
+    model None: it changes nothing about which model runs, and it keeps the
     resolved name visible to accounting instead of metering the turn at
-    DEFAULT_PRICING as "unknown". ``None`` survives only when the env var itself
+    DEFAULT_PRICING as "unknown". None survives only when the env var itself
     is unset, since then the model is genuinely unknown ahead of the call.
 
     Non-reasoning models get no reasoning config at all rather than an inherited
@@ -222,10 +222,10 @@ def _dev_lane(option: DevModelOption, role: AgentRole) -> ModelLane:
 
 
 def dev_model_id(model_id: str | None, use_defaults: bool) -> str | None:
-    """The dev-menu key a request selected, or ``None``.
+    """The dev-menu key a request selected, or None.
 
-    ``use_defaults`` means the request expressed no preference, so the
-    env-configured ``DEV_DEFAULT_MODEL`` applies — that is what routes bots,
+    use_defaults means the request expressed no preference, so the
+    env-configured DEV_DEFAULT_MODEL applies — that is what routes bots,
     scripts and plain requests onto the dev model too. An explicit choice wins
     over it; an unknown id selects nothing.
     """
@@ -247,13 +247,13 @@ def dev_option(model_id: str | None) -> DevModelOption | None:
 
     What the executor needs: comms resolved the request's preference once and
     stashed the winning id, so re-running that resolution downstream would only
-    give ``DEV_DEFAULT_MODEL`` a second chance to override an explicit choice.
+    give DEV_DEFAULT_MODEL a second chance to override an explicit choice.
     """
     return DEV_MODEL_OPTIONS.get(model_id) if model_id else None
 
 
 def dev_option_for(model_id: str | None, use_defaults: bool) -> DevModelOption | None:
-    """The dev-menu entry a request selected, or ``None``."""
+    """The dev-menu entry a request selected, or None."""
     return dev_option(dev_model_id(model_id, use_defaults))
 
 
@@ -263,7 +263,7 @@ async def resolve_lane(
     dev_option: DevModelOption | None = None,
 ) -> tuple[ModelLane, PlanType | None]:
     """The single place a model is chosen. Returns the lane and the plan tier it
-    was resolved from (``None`` when there is no user to resolve one for).
+    was resolved from (None when there is no user to resolve one for).
 
     Free runs the default model; every paid tier gets the paid model, so a new
     paid plan is covered without touching this. A paid user whose monthly spend
@@ -271,7 +271,7 @@ async def resolve_lane(
     degraded to the free lane rather than blocked — a paying user is never
     hard-walled mid-month, and every other pro entitlement stays intact.
 
-    ``dev_option`` (development only) wins over all of it.
+    dev_option (development only) wins over all of it.
     """
     if dev_option is not None:
         return _dev_lane(dev_option, role), None

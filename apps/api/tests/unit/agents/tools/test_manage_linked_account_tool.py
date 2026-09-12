@@ -54,7 +54,7 @@ class TestGenerateLink:
         connect.assert_awaited_once_with("user-1", "telegram", phone=None)
 
     async def test_imessage_forwards_the_phone_number_to_the_connect_flow(self) -> None:
-        """iMessage is the one platform whose connect flow REQUIRES a phone.
+        """IMessage is the one platform whose connect flow REQUIRES a phone.
 
         Every other case here connects without one, so a tool that dropped the
         argument would look correct in all of them while iMessage linking from

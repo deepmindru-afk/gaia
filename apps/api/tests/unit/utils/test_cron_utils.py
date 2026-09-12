@@ -1,7 +1,7 @@
 """Unit tests for cron utilities.
 
-Timezone parsing now lives in ``app.utils.timezone.Timezone`` (covered by
-``test_timezone.py``); these tests cover cron validation and the cron-in-timezone
+Timezone parsing now lives in app.utils.timezone.Timezone (covered by
+test_timezone.py); these tests cover cron validation and the cron-in-timezone
 → UTC scheduling math, which is the load-bearing correctness for reminders and
 workflows.
 """

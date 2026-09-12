@@ -1,10 +1,10 @@
 """Resolve pending HIL approvals from a bot user's next chat reply.
 
-BUTTON-LESS CHANNELS ONLY. The caller (``app/services/chat/stream.py``,
-``_resolve_pending_approval_turn``) invokes this EXCLUSIVELY for messaging-platform
+BUTTON-LESS CHANNELS ONLY. The caller (app/services/chat/stream.py,
+_resolve_pending_approval_turn) invokes this EXCLUSIVELY for messaging-platform
 bots — WhatsApp, Telegram, Slack, Discord. Web/mobile/desktop render real
-Approve/Deny buttons and resolve deterministically via ``POST
-/approvals/{id}/decision``; they never run this classifier, because asking an LLM
+Approve/Deny buttons and resolve deterministically via POST
+/approvals/{id}/decision; they never run this classifier, because asking an LLM
 to guess intent when an unambiguous button already exists is needless risk. A
 typed reply is the ONLY approval surface a text-only bot has, so here — and only
 here — one fast LLM call classifies it.
@@ -19,7 +19,7 @@ Single pending approval → approve / deny / unrelated:
 An 'approve' means run the action EXACTLY as proposed — there is no arg-editing.
 A reply that accepts but changes anything ("yes but cc finance") is a deny with
 the change as feedback, so the agent re-proposes rather than silently running the
-wrong action (enforced by the prompt and by ``_no_arg_edit``).
+wrong action (enforced by the prompt and by _no_arg_edit).
 
 Several approvals pending (a wait_for_subagents batch) → per-item approve / deny /
 leave against the numbered list: "yes" approves all, "no" declines all; a
@@ -30,8 +30,8 @@ isn't force-declined on the ones they haven't reached. An item left 'leave' stay
 pending for a later reply or the timeout sweep.
 
 Context given to the classifier: the pending action(s) rendered with full
-(bounded) args plus a short window of recent turns — see ``build_action_detail``
-and the caller's ``_recent_history``. It fails safe: an LLM error leaves approvals
+(bounded) args plus a short window of recent turns — see build_action_detail
+and the caller's _recent_history. It fails safe: an LLM error leaves approvals
 pending, never approves.
 """
 
@@ -96,12 +96,12 @@ async def resolve_pending_from_message(
     message: str,
     history: list[MessageDict] | None = None,
 ) -> DecisionAction | None:
-    """Resolve the conversation's pending approval(s) from ``message``.
+    """Resolve the conversation's pending approval(s) from message.
 
-    ``history`` is a recent window of prior turns (context for the classifier).
+    history is a recent window of prior turns (context for the classifier).
     Returns the overall classified action ("approve" when anything was approved,
     "deny" when things were only declined, "unrelated" when the user moved on),
-    or ``None`` when nothing was pending or the reply addressed none of it.
+    or None when nothing was pending or the reply addressed none of it.
     """
     pending = await list_pending_for_conversation(conversation_id)
     if not pending:
@@ -143,9 +143,9 @@ async def _resolve_batch(
     message: str,
     history: list[MessageDict] | None,
 ) -> DecisionAction | None:
-    """Apply a per-item classification of ``message`` to the pending batch.
+    """Apply a per-item classification of message to the pending batch.
 
-    Decisions dispatch through ``resolve_approval`` one by one; the per-conversation
+    Decisions dispatch through resolve_approval one by one; the per-conversation
     resume slot ensures only the first actually re-dispatches the executor — the
     join round it wakes collects the rest.
     """
@@ -214,9 +214,9 @@ async def interpret_decision_message(
 ) -> DecisionResult | None:
     """Classify a chat reply against pending approvals.
 
-    ``None`` on an LLM error, so the caller leaves the approval pending — never toward
+    None on an LLM error, so the caller leaves the approval pending — never toward
     silently executing an action, and never toward abandoning a legitimate one on a
-    transient hiccup (an error is not the same signal as a genuine ``unrelated``)."""
+    transient hiccup (an error is not the same signal as a genuine unrelated)."""
     try:
         return await ainvoke_structured(
             DecisionResult,
@@ -265,7 +265,7 @@ async def _safe_resolve(
 
 
 def _history_block(history: list[MessageDict] | None) -> str:
-    """Recent turns as ``role: content`` lines, per-turn and total bounded."""
+    """Recent turns as role: content lines, per-turn and total bounded."""
     if not history:
         return ""
     lines = [

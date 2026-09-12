@@ -152,7 +152,7 @@ async def install_from_github(
 
     Raises:
         ValueError: If skill is invalid, already installed, or its effective
-            target is not in ``allowed_targets``.
+            target is not in allowed_targets.
     """
     owner, repo, url_path = _parse_github_url(repo_url)
 
@@ -393,7 +393,7 @@ async def update_skill_inline(
 ) -> Skill | None:
     """Edit an existing skill's description, instructions (body), and/or target.
 
-    Only provided fields change; the rest are preserved. The skill ``name`` is
+    Only provided fields change; the rest are preserved. The skill name is
     immutable (it keys the VFS directory), so the storage path never moves. The
     VFS SKILL.md is rewritten only when the body actually changes; description
     and target are metadata and live only in MongoDB.

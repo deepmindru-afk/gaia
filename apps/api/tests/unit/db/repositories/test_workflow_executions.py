@@ -1,8 +1,8 @@
-"""Hermetic unit tests for ``WorkflowExecutionsRepository``.
+"""Hermetic unit tests for WorkflowExecutionsRepository.
 
-The real-Mongo proof lives in ``tests/contracts/test_workflow_executions_repository.py``;
+The real-Mongo proof lives in tests/contracts/test_workflow_executions_repository.py;
 this tier pins the shape of the query the finder hands the driver. The driver is
-mocked at ``app.db.repositories.base.get_async_collection``, the single seam
+mocked at app.db.repositories.base.get_async_collection, the single seam
 every read in the base repository goes through.
 """
 
@@ -17,7 +17,7 @@ from app.db.repositories.workflow_executions import WorkflowExecutionsRepository
 
 
 def _raw(execution_id: str, started_at: str) -> dict[str, object]:
-    """A stored execution as the driver hands it back, before ``_to_model``."""
+    """A stored execution as the driver hands it back, before _to_model."""
     return {
         "execution_id": execution_id,
         "workflow_id": "wf_1",

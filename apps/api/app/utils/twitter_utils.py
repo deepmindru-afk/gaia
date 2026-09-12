@@ -1,7 +1,7 @@
 """Twitter API utility functions for custom tools.
 
 These helpers wrap Twitter API v2 calls behind Composio's proxy. The proxy
-attaches the user's OAuth token server-side; callers only supply `user_id`.
+attaches the user's OAuth token server-side; callers only supply user_id.
 """
 
 from typing import Any

@@ -137,7 +137,7 @@ class TestStreamManagerReal:
         assert tool_names == ["search", "calendar"]
 
     async def test_cleanup_removes_all_keys(self, real_redis):
-        """cleanup must delete progress and signal keys."""
+        """Cleanup must delete progress and signal keys."""
         await StreamManager.start_stream("s8", "conv-8", "user-8")
         await StreamManager.cancel_stream("s8")
 

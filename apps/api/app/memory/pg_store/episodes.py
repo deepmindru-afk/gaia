@@ -104,12 +104,12 @@ async def search_episode_entries(
     since: date_type,
     limit: int,
 ) -> list[tuple[date_type, EpisodeEntry]]:
-    """Journal entries since ``since`` matching ANY query token, newest day first.
+    """Journal entries since since matching ANY query token, newest day first.
 
     Entries are JSONB lines inside one row per day, so FTS over them would
     need a derived index; instead each row's entries are expanded with
-    ``jsonb_array_elements`` and matched with ILIKE. This is indexed-sane
-    because the (indexed) ``user_id`` + ``date >= since`` filter bounds the
+    jsonb_array_elements and matched with ILIKE. This is indexed-sane
+    because the (indexed) user_id + date >= since filter bounds the
     expansion to at most one row per day in the window (~14 rows) before any
     ILIKE runs — a JSONB GIN index would buy nothing here.
     """

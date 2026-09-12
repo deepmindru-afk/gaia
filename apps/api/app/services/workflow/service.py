@@ -90,7 +90,7 @@ async def generate_unique_workflow_slug(title: str, exclude_id: str | None = Non
 async def ensure_public_workflow_slug(workflow: WorkflowDocument) -> None:
     """Lazily backfill a slug on a legacy listed workflow that's missing one.
 
-    Mutates ``workflow.slug`` in place. No-op when the workflow is on no public
+    Mutates workflow.slug in place. No-op when the workflow is on no public
     list (neither published nor explore) or already has a slug. Persists the
     new slug via the repository; every public card carries a slug, so running
     out of retries raises rather than handing the list a slug-less row.
@@ -521,9 +521,9 @@ class WorkflowService:
         """List a user's workflows (newest first), excluding auto-generated todo workflows by default.
 
         Each workflow is enriched with its required/missing integrations using a
-        single connection-status call. Returns ``(workflows, total)`` where
-        ``total`` is the full match count ignoring ``limit``/``offset``. Pass
-        ``limit=None`` to fetch every match.
+        single connection-status call. Returns (workflows, total) where
+        total is the full match count ignoring limit/offset. Pass
+        limit=None to fetch every match.
         """
         try:
             docs = await workflow_repository.list_for_user(
@@ -1068,7 +1068,7 @@ class WorkflowService:
         reason: DeactivationReason | None = None,
         blocked_on_integrations: list[str] | None = None,
     ) -> Workflow | None:
-        """Deactivate a workflow (disable its trigger). ``reason`` marks a system
+        """Deactivate a workflow (disable its trigger). reason marks a system
         pause; a user switching the workflow off passes none. A pause on
         integrations a run found missing records them in the same write."""
         try:

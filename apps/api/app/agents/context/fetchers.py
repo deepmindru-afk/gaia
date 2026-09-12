@@ -1,6 +1,6 @@
 """The section bodies: what each piece of context actually renders to.
 
-Each takes the whole ``SectionContext`` and returns rendered text or ``""`` —
+Each takes the whole SectionContext and returns rendered text or "" —
 never raises. That is deliberate and is the one place in this codebase where
 swallowing is correct: a context section is enrichment, and failing a user's
 whole turn because a recall query timed out trades a degraded answer for no
@@ -8,7 +8,7 @@ answer. Every swallow logs the cause, so the failure is visible in the wide
 event rather than silent.
 
 A section whose text is nothing but one of these reads is registered against it
-directly in ``sections.SECTIONS``; only a section that genuinely branches keeps
+directly in sections.SECTIONS; only a section that genuinely branches keeps
 a body of its own next to the table.
 """
 
@@ -47,7 +47,7 @@ from shared.py.wide_events import log
 def _split_off_section(context: str, heading: str) -> tuple[str, str]:
     """Split a heading's section off the memory core.
 
-    Returns ``(everything before the heading, the section body)``. A heading is
+    Returns (everything before the heading, the section body). A heading is
     matched at the very start too, not only after a blank line: the core of a
     user with no stable documents OPENS with a churning section, and requiring
     the blank line would file it as stable and put per-turn bytes back in the
@@ -63,7 +63,7 @@ def _split_off_section(context: str, heading: str) -> tuple[str, str]:
 
 
 async def _core_context(user_id: str | None) -> str:
-    """The memory core as the engine renders it, or ``""``.
+    """The memory core as the engine renders it, or "".
 
     Redis-cached inside the engine and invalidated on ingestion, so the two
     sections built from it (the stable documents and the volatile agenda +
@@ -84,9 +84,9 @@ async def _core_context(user_id: str | None) -> str:
 
 
 def _split_core_context(core_context: str) -> tuple[str, str, str]:
-    """``(stable documents, agenda, recent activity)``.
+    """(stable documents, agenda, recent activity).
 
-    Split from the BACK. ``get_core_context`` emits the agenda BEFORE the
+    Split from the BACK. get_core_context emits the agenda BEFORE the
     journal, so splitting on the agenda first hands back everything to its right
     — the journal included — as "the agenda", and the journal's own split then
     finds nothing left to match.
@@ -106,7 +106,7 @@ async def build_core_memory_block(ctx: SectionContext) -> str:
     pushed the whole conversation out of the cache behind it (measured on the
     real graph: moving them behind the conversation took comms 46.0% -> 59.3%
     and the executor 64.8% -> 75.8%). The tail re-send is the known price;
-    see the placement note on ``SECTIONS`` in ``sections.py``.
+    see the placement note on SECTIONS in sections.py.
     """
     documents, _agenda, _activity = _split_core_context(await _core_context(ctx.user_id))
     return f"{CORE_MEMORY_HEADER}\n{documents}" if documents else ""
@@ -131,7 +131,7 @@ async def build_agenda_and_activity_block(ctx: SectionContext) -> str:
 async def build_memory_recall_block(ctx: SectionContext) -> str:
     """Memories relevant to this turn, dated.
 
-    Rendered through ``entry_to_note`` so the agent can reason about *when*
+    Rendered through entry_to_note so the agent can reason about *when*
     something happened — "how long ago", "which came first" — directly from the
     injected text instead of having to ask.
     """
@@ -280,7 +280,7 @@ async def build_workspace_session_banner(ctx: SectionContext) -> str:
     """State the agent's own session directory and the public artifact URL base.
 
     The agent never otherwise learns its session id, so a prompt asking it to
-    report an absolute ``/workspace/sessions/<id>/...`` path forces a guess — and
+    report an absolute /workspace/sessions/<id>/... path forces a guess — and
     a weak model fabricates one, writing the deliverable outside the session the
     artifact watcher scans, where it is silently lost.
 
@@ -329,7 +329,7 @@ def _dedupe_by_provider(items: list[dict[str, str]]) -> list[dict[str, str]]:
     """One row per provider, keeping whichever row resolved to a display name.
 
     A connected set can hold two ids for the same account — a legacy
-    ``google_calendar`` beside today's ``googlecalendar`` — and only the
+    google_calendar beside today's googlecalendar — and only the
     registered one resolves to a name. Rendering both handed the agent two
     handoff targets for one account, one of which resolves to no subagent at
     all. Ids that share no provider are untouched, so nothing is ever dropped.
@@ -364,9 +364,9 @@ async def build_connected_integrations_manifest(user_id: str, header: str) -> st
     """One line per connected integration, so the agent knows what it can reach.
 
     Capability awareness only — detailed tool schemas still come from
-    ``retrieve_tools`` at inference time. The parenthesised id doubles as the
-    ``subagent_id`` the executor passes to ``handoff``. A line collapses to
-    ``- id`` when the name IS the id, so a custom integration never renders the
+    retrieve_tools at inference time. The parenthesised id doubles as the
+    subagent_id the executor passes to handoff. A line collapses to
+    - id when the name IS the id, so a custom integration never renders the
     same value twice.
 
     A built-in whose job a connected provider is mistaken for gets its own row
@@ -403,7 +403,7 @@ MANIFEST_TOOL_SAMPLE_SIZE = 5
 async def _tool_summary(integration_id: str) -> str:
     """ ": N tools, e.g. a, b, c" for a connected integration, or "" when it has none.
 
-    Read from the registry (the same catalogue ``retrieve_tools`` searches), so
+    Read from the registry (the same catalogue retrieve_tools searches), so
     the model knows what a connection is FOR without anyone writing prose per
     integration. A listing failure keeps the bare row: the connection is real
     even when its tool list is not readable right now.

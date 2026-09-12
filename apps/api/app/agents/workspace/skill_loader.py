@@ -2,18 +2,18 @@
 
 Single source of truth for what gets materialized into the per-user
 integrations/ and skills/ trees on the JuiceFS workspace. The body the
-agent reads via `cat` is byte-identical to the SKILL.md authored in
-``apps/api/app/agents/skills/builtin/<slug>/``; the frontmatter is
+agent reads via cat is byte-identical to the SKILL.md authored in
+apps/api/app/agents/skills/builtin/<slug>/; the frontmatter is
 parsed once at load time so we know each skill's name, description,
 and target subagent.
 
 Used by:
-  - ``system_docs.integration_skills_block`` to list available skills
+  - system_docs.integration_skills_block to list available skills
     in the subagent's dynamic context.
-  - ``storage.sessions.materialize_user_integrations`` to write the
+  - storage.sessions.materialize_user_integrations to write the
     actual skill.md bodies + per-integration prompt.md into the user's
     workspace.
-  - ``scripts/materialize_user_workspace.py`` as a prod-callable CLI
+  - scripts/materialize_user_workspace.py as a prod-callable CLI
     that lays the same tree down for a given user, idempotently.
 """
 
@@ -46,16 +46,16 @@ _BUILTIN_ROOT = (
 
 
 def target_to_subagent(agent_name: str) -> str:
-    """Resolve a subagent ``agent_name`` to the canonical subagent ``id`` used as
-    the ``skills_by_subagent`` key.
+    """Resolve a subagent agent_name to the canonical subagent id used as
+    the skills_by_subagent key.
 
-    ``agent_name`` is the single handle the skill catalog is keyed on: every
-    builtin skill's frontmatter ``target`` is the owning subagent's ``agent_name``
-    (e.g. ``google_sheets_agent``), and the handoff path passes that same
-    ``agent_name`` when surfacing a subagent's skills. Resolution goes through the
-    subagent registry, the single source of truth for ``agent_name -> id``.
-    ``executor`` is the general bucket for skills not owned by a subagent and maps
-    to itself. An unknown ``agent_name`` is returned unchanged and logged so a
+    agent_name is the single handle the skill catalog is keyed on: every
+    builtin skill's frontmatter target is the owning subagent's agent_name
+    (e.g. google_sheets_agent), and the handoff path passes that same
+    agent_name when surfacing a subagent's skills. Resolution goes through the
+    subagent registry, the single source of truth for agent_name -> id.
+    executor is the general bucket for skills not owned by a subagent and maps
+    to itself. An unknown agent_name is returned unchanged and logged so a
     mis-targeted skill surfaces instead of being silently misfiled.
     """
     agent_name = agent_name.strip()
@@ -103,7 +103,7 @@ def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
 
 def _load_resources(skill_dir: Path) -> tuple[tuple[str, str], ...]:
     """Read every sibling text file in the skill dir (templates/, reference.md,
-    scripts/…) as ``(rel_path, content)`` pairs. ``SKILL.md`` is excluded — its
+    scripts/…) as (rel_path, content) pairs. SKILL.md is excluded — its
     body is captured separately. Non-UTF-8 files are skipped (the in-memory
     system-file model is text only)."""
     resources: list[tuple[str, str]] = []

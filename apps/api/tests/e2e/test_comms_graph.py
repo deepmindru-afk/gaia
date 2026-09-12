@@ -9,7 +9,7 @@ agent that could reach the executor's tools would act on the user's accounts
 without any of the delegation, approval, or streaming machinery in between.
 Nothing on this surface writes to the user's data.
 
-``test_chat_stream.py`` covers what comms puts on the wire. This covers the
+test_chat_stream.py covers what comms puts on the wire. This covers the
 graph: which tools exist, what happens to a call for one that does not, the
 end-of-turn hooks, and how a turn carries into the next.
 """
@@ -75,8 +75,8 @@ class TestCommsToolSurface:
         depends on: asking for real work hands it off and says so. Without it,
         comms answers "on it" and nothing is ever dispatched.
 
-        Its own conversation, deliberately: ``call_executor`` takes a busy lock
-        keyed on the thread (``executor:busy:{thread_id}``) with a 30-minute
+        Its own conversation, deliberately: call_executor takes a busy lock
+        keyed on the thread (executor:busy:{thread_id}) with a 30-minute
         TTL, and a lock left by any earlier dispatch queues this one instead of
         starting it — which is a different, also-valid response and would make
         the assertion order-dependent.
@@ -103,7 +103,7 @@ class TestCommsToolSurface:
         assert not run.ran(tool)
 
     async def test_comms_cannot_retrieve_its_way_to_more_tools(self):
-        """``retrieve_tools`` is disabled on comms. If it were reachable, comms
+        """retrieve_tools is disabled on comms. If it were reachable, comms
         could bind the whole registry and the boundary above would be advisory."""
         async with comms_graph(
             [
@@ -138,8 +138,8 @@ class TestCommsToolSurface:
 
 class TestMemoryTools:
     async def test_recall_reaches_the_memory_engine_and_answers_the_model(self):
-        """``ran()`` and "not None" are both satisfied by an error string — the
-        memory tools resolve the user from ``config["metadata"]``, and a config
+        """ran() and "not None" are both satisfied by an error string — the
+        memory tools resolve the user from config["metadata"], and a config
         missing it returns "Error: user_id not found in config" while still
         looking like a completed tool call. Assert the real result."""
         async with comms_graph(
@@ -180,7 +180,7 @@ class TestEndOfTurnHooks:
         end hook. If the graph stopped routing through it, chips would vanish and
         nothing said in conversation would ever be remembered.
 
-        Asserted via ``visited``, not ``nodes()``: the end hooks are
+        Asserted via visited, not nodes(): the end hooks are
         side-effecting and write no channels, so the node emits an empty update
         rather than echoing the message list back into the checkpoint."""
         async with comms_graph(["Hi there."]) as graph:
@@ -196,7 +196,7 @@ class TestEndOfTurnHooks:
 
 
 class TestSystemPromptSlots:
-    """``manage_system_prompts_node`` keeps at most one system message per slot.
+    """manage_system_prompts_node keeps at most one system message per slot.
 
     It does not *inject* prompts — the chat service builds those upstream — so
     its whole job is collapsing accumulated copies. A checkpointed thread grows
@@ -317,11 +317,11 @@ class TestTheConversationGrowsAppendOnly:
     def _tool_identity(message: BaseMessage) -> str:
         """Everything about a message's tool calls that the wire carries.
 
-        An assistant turn is identified by every call it makes — ``name``,
-        ``args`` and ``id`` — because a request whose args change while the
+        An assistant turn is identified by every call it makes — name,
+        args and id — because a request whose args change while the
         text stays identical is a different byte sequence behind an unchanged
         transcript. A tool result is identified by the call it answers, so a
-        re-correlated result is caught the same way. ``args`` is serialised
+        re-correlated result is caught the same way. args is serialised
         with sorted keys: the fingerprint has to move when the values move and
         stay put when only dict ordering does.
         """
@@ -338,7 +338,7 @@ class TestTheConversationGrowsAppendOnly:
         """The conversation portion of one recorded request.
 
         System slots are handled separately and excluded here. Identity is
-        (type, text, tool identity) — see :meth:`_tool_identity` for why the
+        (type, text, tool identity) — see :meth:_tool_identity for why the
         text alone is not enough.
         """
         return [
@@ -357,8 +357,8 @@ class TestTheConversationGrowsAppendOnly:
     ) -> list[list[_MessageFingerprint]]:
         """Every model call the graph made, in order, across several turns.
 
-        ``run.prompts`` is copied off the scripted model, which accumulates for
-        the lifetime of the graph — so turn 2's ``run`` re-reports turn 1's calls
+        run.prompts is copied off the scripted model, which accumulates for
+        the lifetime of the graph — so turn 2's run re-reports turn 1's calls
         as well. Taking it whole makes the second turn look like it rewound the
         conversation. Only the calls added since the previous turn are new.
         """
@@ -376,7 +376,7 @@ class TestTheConversationGrowsAppendOnly:
         turn 2's request must open with turn 1's history byte for byte.
 
         A single plain-reply turn makes exactly one model call and so compares
-        nothing, hence two turns against the same ``thread_id``.
+        nothing, hence two turns against the same thread_id.
         """
         async with comms_graph(["first reply", "second reply"]) as graph:
             requests = await self._requests_across_turns(
@@ -386,10 +386,10 @@ class TestTheConversationGrowsAppendOnly:
         self._assert_append_only(requests)
 
     async def test_a_turn_that_called_a_tool_still_begins_with_its_own_history(self) -> None:
-        """The case with something to break. Delegating through ``call_executor``
-        leaves an AI message carrying ``tool_calls`` in the history, and
-        ``filter_messages_node`` rebuilds that message on every later call,
-        narrowing its ``tool_calls`` to the answered ones (``filter_messages.py``).
+        """The case with something to break. Delegating through call_executor
+        leaves an AI message carrying tool_calls in the history, and
+        filter_messages_node rebuilds that message on every later call,
+        narrowing its tool_calls to the answered ones (filter_messages.py).
 
         Rebuilding is only safe while it is *stable* — the same message in, the
         same bytes out. The moment the rebuild's result depends on how much of

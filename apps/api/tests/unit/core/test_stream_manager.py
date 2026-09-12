@@ -47,7 +47,7 @@ def _progress_dict(**overrides: Any) -> dict[str, Any]:
     """Return a dict that mirrors what Redis stores for StreamProgress.
 
     Pass any field as a keyword to override its default, e.g.
-    ``_progress_dict(is_cancelled=True)``.
+    _progress_dict(is_cancelled=True).
     """
     return {
         "conversation_id": "conv-1",
@@ -758,7 +758,7 @@ class TestUpdateProgress:
         assert saved["pending_message"] == "first"
 
     async def test_a_record_predating_the_pending_field_starts_from_empty(self) -> None:
-        """A progress record written before ``pending_message`` existed is still
+        """A progress record written before pending_message existed is still
         in Redis under its TTL, so the read has to supply the empty string
         itself — the first chunk of the turn IS the whole unsettled message."""
         del self.progress["pending_message"]

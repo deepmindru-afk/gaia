@@ -1,6 +1,6 @@
 """Self-hosted SearXNG metasearch — the unlimited, free floor of the waterfall.
 
-Requires ``SEARXNG_BASE_URL`` and an instance with the JSON format enabled.
+Requires SEARXNG_BASE_URL and an instance with the JSON format enabled.
 Because it runs on our own infrastructure it has no per-query cost and is never
 budget-capped, so search can never incur a bill while it is reachable.
 """

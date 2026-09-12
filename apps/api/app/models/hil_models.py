@@ -11,11 +11,11 @@ from app.db.repositories.base import MongoDocument
 
 
 class HILApprovalStatus(StrEnum):
-    """Where one approval stands. ``StrEnum`` because these values are already written
+    """Where one approval stands. StrEnum because these values are already written
     to Mongo and streamed to the client as plain strings — the enum names them without
     changing a single stored document.
 
-    ``AUTO_APPROVED`` means *decided without asking*, and nothing more. It does not mean
+    AUTO_APPROVED means *decided without asking*, and nothing more. It does not mean
     the call ran: approvals are settled in their own graph node, and every tool — auto
     or not — is executed afterwards by the tool node.
     """
@@ -29,7 +29,7 @@ class HILApprovalStatus(StrEnum):
 
     @property
     def settled(self) -> bool:
-        """Whether the decision is final. Every status but ``PENDING`` is."""
+        """Whether the decision is final. Every status but PENDING is."""
         return self is not HILApprovalStatus.PENDING
 
 
@@ -40,7 +40,7 @@ HIL_DEFAULT_MODE: HILMode = "always_allow"
 
 
 class DeclinedCallRecord(TypedDict):
-    """What ``bridge.remember_declined_call`` stores in Redis for one declined call.
+    """What bridge.remember_declined_call stores in Redis for one declined call.
 
     Written and read by that one module, so it needs no runtime validation — the
     TypedDict is the shape contract both sides are checked against.
@@ -63,10 +63,10 @@ class HILPreferences(BaseModel):
 
 class HILToolRiskRecord(MongoDocument):
     """Cached LLM classification for one CUSTOM-integration tool (Mongo
-    ``hil_tool_risk``), for durability across restarts/processes.
+    hil_tool_risk), for durability across restarts/processes.
 
     Supported/internal tools are never stored here — they resolve straight from
-    the tool registry's ``destructive`` flag.
+    the tool registry's destructive flag.
     """
 
     tool_name: str
@@ -77,7 +77,7 @@ class HILToolRiskRecord(MongoDocument):
 
 
 class HILApprovalRecord(MongoDocument):
-    """Durable record of one approval request (Mongo ``hil_approvals``).
+    """Durable record of one approval request (Mongo hil_approvals).
 
     The decision source of truth and audit trail: who asked to run what, the
     decision, decider, and timing. The LangGraph checkpoint holds *graph* state;

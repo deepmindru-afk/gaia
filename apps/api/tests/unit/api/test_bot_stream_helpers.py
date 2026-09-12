@@ -1,9 +1,9 @@
-"""Unit tests for the bot chat-stream translation helpers in ``app.api.v1.endpoints.bot``.
+"""Unit tests for the bot chat-stream translation helpers in app.api.v1.endpoints.bot.
 
-These are pure/near-pure functions extracted from ``bot_chat_stream`` — SSE
+These are pure/near-pure functions extracted from bot_chat_stream — SSE
 framing, web-payload-to-bot-frame translation, and the background-task
 failure logger. They are exercised only indirectly by the endpoint-level
-tests in ``test_bot_endpoint.py``, so this file drives them directly with
+tests in test_bot_endpoint.py, so this file drives them directly with
 exact-value assertions on every branch.
 """
 
@@ -32,7 +32,7 @@ from app.services.bot_service import build_bot_message_request
 
 
 class TestBotStreamControlFrame:
-    """``_bot_stream_control_frame`` — peels Redis SSE framing off one raw chunk."""
+    """_bot_stream_control_frame — peels Redis SSE framing off one raw chunk."""
 
     def test_comment_chunk_passes_through_unchanged(self):
         frame, data, stop = _bot_stream_control_frame(": keepalive\n\n", "conv-1")
@@ -55,7 +55,7 @@ class TestBotStreamControlFrame:
 
     def test_id_prefix_with_no_newline_at_all_yields_nothing(self):
         """An id-tagged chunk with no trailing data line at all — the
-        partition leaves nothing that starts with `data: `."""
+        partition leaves nothing that starts with data: ."""
         frame, data, stop = _bot_stream_control_frame("id: 42", "conv-1")
         assert frame is None
         assert data is None
@@ -95,7 +95,7 @@ class TestBotStreamControlFrame:
 
 
 class TestBotStreamPayloadFrame:
-    """``_bot_stream_payload_frame`` — translates one parsed web SSE payload."""
+    """_bot_stream_payload_frame — translates one parsed web SSE payload."""
 
     async def test_keepalive_forwards_a_keepalive_frame(self):
         frame, stop = await _bot_stream_payload_frame({"keepalive": True}, "user-1")
@@ -186,7 +186,7 @@ class TestBotStreamPayloadFrame:
         ],
     )
     async def test_each_web_only_field_takes_priority_over_a_response_field(self, key: str):
-        """A payload carrying BOTH a web-only field and `response` is dropped —
+        """A payload carrying BOTH a web-only field and response is dropped —
         the web-only check runs first, same as the real message stream shape.
         Parametrized per key so a mutation to any single list entry (rather than
         the whole check) still shows up as a different result than the no-op
@@ -214,7 +214,7 @@ class TestBotStreamPayloadFrame:
 
 
 class TestBuildBotMessageRequest:
-    """``build_bot_message_request`` — loads history and appends the incoming turn."""
+    """build_bot_message_request — loads history and appends the incoming turn."""
 
     async def test_appends_the_incoming_message_after_the_loaded_history(self):
         body = BotChatRequest(message="new turn", platform="discord", platform_user_id="u1")
@@ -274,7 +274,7 @@ class TestBuildBotMessageRequest:
 
 
 class TestBotStreamFailureLogger:
-    """``_bot_stream_failure_logger`` — the ``on_done`` callback for the background stream task."""
+    """_bot_stream_failure_logger — the on_done callback for the background stream task."""
 
     async def test_logs_the_exception_when_the_task_failed(self):
         async def _boom():
@@ -321,7 +321,7 @@ class TestBotStreamFailureLogger:
 
 
 class TestPaywallNotice:
-    """``_paywall_notice`` — the free-user refusal message text."""
+    """_paywall_notice — the free-user refusal message text."""
 
     def test_without_discount_code_names_only_the_checkout_link(self):
         with patch("app.api.v1.endpoints.bot.settings.PAYWALL_DISCOUNT_CODE", None):
@@ -341,7 +341,7 @@ class TestPaywallNotice:
 
 
 class TestPaywallNoticeStream:
-    """``_notice_only_stream`` — notice + done, no text frame."""
+    """_notice_only_stream — notice + done, no text frame."""
 
     async def test_yields_exactly_a_notice_frame_then_a_done_frame(self):
         response = _notice_only_stream("subscribe please")
@@ -354,7 +354,7 @@ class TestPaywallNoticeStream:
 
 
 class TestRefusalStream:
-    """``_refusal_stream`` — the one-frame SSE refusal, and the media type it rides on."""
+    """_refusal_stream — the one-frame SSE refusal, and the media type it rides on."""
 
     async def test_yields_exactly_one_error_frame_carrying_the_code(self):
         response = _refusal_stream(BOT_STREAM_ERROR_PLAN_REQUIRED)
@@ -370,7 +370,7 @@ class TestRefusalStream:
 
 
 class TestBotStreamEntitlementGate:
-    """``_bot_stream_entitlement_gate`` — plan-required and subscription gates."""
+    """_bot_stream_entitlement_gate — plan-required and subscription gates."""
 
     async def test_plan_required_refuses_before_the_subscription_check(self):
         with (

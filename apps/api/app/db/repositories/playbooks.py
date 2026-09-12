@@ -1,13 +1,13 @@
-"""Repository for the ``playbooks`` collection — one active playbook per workflow.
+"""Repository for the playbooks collection — one active playbook per workflow.
 
-Global, keyed by the business ``playbook_id``. There is no version history: the
+Global, keyed by the business playbook_id. There is no version history: the
 agent revises a playbook by writing the whole document again, so
-``upsert_for_workflow`` overwrites the workflow's single record in place and a
+upsert_for_workflow overwrites the workflow's single record in place and a
 stale sequence can never be replayed by accident. The unique
-``(workflow_id, user_id)`` index (``app.db.mongodb.indexes``) is what makes "one
+(workflow_id, user_id) index (app.db.mongodb.indexes) is what makes "one
 per workflow" a property of the data rather than of the callers' timing.
 
-Uncached (``cache_policy = None``): a playbook is read once per run, and the
+Uncached (cache_policy = None): a playbook is read once per run, and the
 overwrite-on-revise shape is exactly what an entity cache would misrepresent.
 """
 
@@ -33,7 +33,7 @@ class PlaybooksRepository(MongoRepository[PlaybookDocument, PlaybookUpdate]):
     cache_policy = None
 
     async def get_for_workflow(self, workflow_id: str, user_id: str) -> PlaybookDocument | None:
-        """The workflow's active playbook, or ``None`` when it has never been written."""
+        """The workflow's active playbook, or None when it has never been written."""
         return await self._find_one({"workflow_id": workflow_id, "user_id": user_id})
 
     async def upsert_for_workflow(self, playbook: PlaybookDocument) -> PlaybookDocument:
@@ -41,12 +41,12 @@ class PlaybooksRepository(MongoRepository[PlaybookDocument, PlaybookUpdate]):
 
         A revision resets the run outcome (status, reason and suspect streak):
         the previous run's verdict described the sequence that was just thrown
-        away. ``playbook_id`` and ``created_at`` are only ever set on insert, so
+        away. playbook_id and created_at are only ever set on insert, so
         a rewrite keeps the id the worker may be replaying under.
 
         Two first authorings racing on the same workflow can both miss the match
-        and both insert; the unique ``(workflow_id, user_id)`` index rejects the
-        loser with ``DuplicateKeyError``, and the retry then matches the winner
+        and both insert; the unique (workflow_id, user_id) index rejects the
+        loser with DuplicateKeyError, and the retry then matches the winner
         and overwrites it — the same result as if the two had run in sequence.
         """
         body = PlaybookUpdate(
@@ -118,17 +118,17 @@ class PlaybooksRepository(MongoRepository[PlaybookDocument, PlaybookUpdate]):
         deterministic record check (empty where the previous replay had items)
         is trusted to delete.
 
-        ``reason`` is why a run failed or was not trusted; a success clears it.
-        ``suspect_streak`` counts consecutive suspect replays: it grows on
-        ``SUSPECT``, resets on ``SUCCESS`` and is left alone by ``FAILED``, so
+        reason is why a run failed or was not trusted; a success clears it.
+        suspect_streak counts consecutive suspect replays: it grows on
+        SUSPECT, resets on SUCCESS and is left alone by FAILED, so
         the worker can disable a playbook that keeps completing with results
         nobody trusts. A suspect landing on a playbook already marked suspect
         does not grow it again: two replays of one body racing to the same
         verdict are one suspect, not two.
 
-        ``playbook_id`` and ``revision`` scope the write to the body that was
+        playbook_id and revision scope the write to the body that was
         actually replayed. The id alone is not enough, since a rewrite keeps it;
-        the revision is what changes. ``None`` when the workflow has no playbook
+        the revision is what changes. None when the workflow has no playbook
         (an agentic run has nothing to record) or when the replayed body has
         since been rewritten or deleted.
         """
@@ -161,9 +161,9 @@ class PlaybooksRepository(MongoRepository[PlaybookDocument, PlaybookUpdate]):
     ) -> PlaybookDocument | None:
         """Count one completed heal run against the body it was healing.
 
-        ``revision`` scopes the count to that body: a heal run that rewrote the
+        revision scopes the count to that body: a heal run that rewrote the
         playbook bumped the revision, and its attempt must not land on the new
-        body. ``None`` when the body is no longer the workflow's.
+        body. None when the body is no longer the workflow's.
         """
         key: dict[str, object] = {
             "workflow_id": workflow_id,
@@ -177,7 +177,7 @@ class PlaybooksRepository(MongoRepository[PlaybookDocument, PlaybookUpdate]):
         )
 
     async def delete_for_workflow(self, workflow_id: str, user_id: str) -> bool:
-        """Drop the workflow's playbook. ``False`` when there was none."""
+        """Drop the workflow's playbook. False when there was none."""
         existing = await self.get_for_workflow(workflow_id, user_id)
         if existing is None:
             return False
@@ -190,7 +190,7 @@ class PlaybooksRepository(MongoRepository[PlaybookDocument, PlaybookUpdate]):
 
         Keyed on the revision as well as the id: a heal run rewrites in place
         and bumps the revision, so a discard decided against the old body must
-        not take the replacement with it. ``False`` when that body is already
+        not take the replacement with it. False when that body is already
         gone, replaced or not.
         """
         return await self._remove(
@@ -205,10 +205,10 @@ def _outcome_update(
 ) -> dict[str, dict[str, object]]:
     """The update a run outcome writes.
 
-    The fields are what :func:`transition` produces for a replay, split into the
-    part that does not depend on the stored state (``$set``) and the part that
-    does (``$inc``), which the caller has already settled by matching on the
-    stored status. ``test_playbooks_repository`` proves the two agree for every
+    The fields are what :func:transition produces for a replay, split into the
+    part that does not depend on the stored state ($set) and the part that
+    does ($inc), which the caller has already settled by matching on the
+    stored status. test_playbooks_repository proves the two agree for every
     outcome from every prior status.
     """
     fields: dict[str, object] = {

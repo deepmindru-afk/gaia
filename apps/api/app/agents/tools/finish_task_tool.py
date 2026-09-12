@@ -1,6 +1,6 @@
 """Finish task tool for subagent completion.
 
-The tool name MUST match `FINISH_TASK_NAME` in `app.constants.general` —
+The tool name MUST match FINISH_TASK_NAME in app.constants.general —
 the bigtool router and subagent runner key off that constant.
 """
 

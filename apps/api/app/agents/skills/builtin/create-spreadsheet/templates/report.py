@@ -10,7 +10,7 @@ openpyxl surface an LLM needs to build a polished workbook:
   * Charts       — openpyxl.chart BarChart + LineChart with Reference/categories
 
 CRITICAL CONTRACT — NO LIVE FORMULAS.
-The sandbox has no spreadsheet recalc engine, so a written `=SUM(...)` shows up
+The sandbox has no spreadsheet recalc engine, so a written =SUM(...) shows up
 blank when opened. Every authoritative number below is computed in *Python* and
 the resulting value is written into the cell. Where a formula is instructive we
 write it as a plain string into a clearly-labeled, separate "formula" cell so a

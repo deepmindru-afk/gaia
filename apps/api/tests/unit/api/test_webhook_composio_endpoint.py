@@ -1,9 +1,9 @@
-"""Tests for app/api/v1/endpoints/webhook_composio.py
+"""Tests for app/api/v1/endpoints/webhook_composio.py.
 
 The endpoint module is resolved at test time, never imported at module scope: on
 the base revision, importing it standalone trips a circular import
 (triggers -> workflow -> trigger_service -> triggers) that this branch removes by
-emptying the dead `app/services/workflow/__init__.py` barrel. The regression lane
+emptying the dead app/services/workflow/__init__.py barrel. The regression lane
 replays the marked test below against that revision, where a module-scope import
 would fail at collection and prove nothing.
 """
@@ -38,9 +38,9 @@ def _expired_connection_event(
     status: str = "EXPIRED",
     auth_config_id: str = "ac_test_config",
 ) -> dict:
-    """A `composio.connected_account.expired` delivery, as the SDK's
-    ``ConnectionExpiredEvent`` shapes it. It carries none of the trigger
-    identifiers ``ComposioWebhookEvent`` requires — which is why the endpoint
+    """A composio.connected_account.expired delivery, as the SDK's
+    ConnectionExpiredEvent shapes it. It carries none of the trigger
+    identifiers ComposioWebhookEvent requires — which is why the endpoint
     has to branch on the raw body before building that model."""
     return {
         "id": "msg_847cdfcd",
@@ -169,7 +169,7 @@ async def _post_event(client: AsyncClient, body: dict, webhook_id: str):
 
 
 def _ns_fields(log_mock) -> dict:
-    """Every field folded onto the ``composio_connection`` wide-event namespace."""
+    """Every field folded onto the composio_connection wide-event namespace."""
     fields: dict = {}
     for c in log_mock.set_ns.call_args_list:
         assert c.args[0] == "composio_connection", f"wrong namespace: {c.args[0]}"
@@ -293,7 +293,7 @@ class TestTheExpiryIsHandedOffCorrectly:
         self, unauthed_client: AsyncClient
     ) -> None:
         """The webhook runs with no user watching, so this event is the only record
-        — and it must never carry `state`, which holds the account's tokens."""
+        — and it must never carry state, which holds the account's tokens."""
         body = _expired_connection_event()
 
         with patch(f"{MODULE}.spawn_logged_task"), patch(f"{MODULE}.log") as mock_log:
@@ -496,7 +496,7 @@ class TestDeliveryWithoutAnId:
     async def test_a_delivery_with_no_id_header_is_processed_without_claiming_a_key(
         self, unauthed_client: AsyncClient
     ) -> None:
-        """Composio always sends `webhook-id`, but a missing one must not invent a
+        """Composio always sends webhook-id, but a missing one must not invent a
         dedupe key — one bogus key would swallow every later delivery that reused
         it as a duplicate."""
         redis = MagicMock()
@@ -519,7 +519,7 @@ class TestDeliveryWithoutAnId:
 
 class TestBackgroundTriggerProcessing:
     async def test_the_handler_gets_the_nano_id_it_actually_matches_on(self) -> None:
-        """Handlers match `trigger_config.composio_trigger_ids`, which stores the
+        """Handlers match trigger_config.composio_trigger_ids, which stores the
         NANO id from triggers.create(). Forwarding the internal UUID instead never
         matches, so the workflow silently never fires."""
         handler = MagicMock()

@@ -5,7 +5,7 @@ sent from Python. This adapter renders notification content to platform-agnostic
 CommonMark text and publishes it to the per-platform RabbitMQ queue the bot
 processes consume; the bots own all platform formatting and the actual send.
 
-Subclasses set only ``channel_type`` and ``platform``.
+Subclasses set only channel_type and platform.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class ExternalPayload(TypedDict):
 
 
 def _join_nonempty(*segments: str, sep: str = "\n") -> str:
-    """Join only the non-empty segments with ``sep`` (no leading/trailing seps)."""
+    """Join only the non-empty segments with sep (no leading/trailing seps)."""
     return sep.join(s for s in segments if s)
 
 
@@ -55,7 +55,7 @@ class ExternalPlatformAdapter(ChannelAdapter[ExternalPayload]):
 
         External adapters are auto-injected by the orchestrator regardless of
         the explicit channel list. The orchestrator's preference check and the
-        platform-link lookup in ``publish_outbound_message`` decide whether the
+        platform-link lookup in publish_outbound_message decide whether the
         message is actually delivered.
         """
         return True

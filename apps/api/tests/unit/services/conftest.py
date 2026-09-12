@@ -1,7 +1,7 @@
 """Shared fixtures and test data for the payment service test suite.
 
-``test_payment_service.py`` covers ``DodoPaymentService``;
-``test_payment_webhook_service.py`` covers ``PaymentWebhookService``. Both
+test_payment_service.py covers DodoPaymentService;
+test_payment_webhook_service.py covers PaymentWebhookService. Both
 need the same fake user/subscription documents, the same webhook-event
 payload shape, and several webhook-processing seams — declared once here so
 neither file re-declares them.
@@ -154,12 +154,12 @@ def _make_webhook_event(event_type: str, data: dict[str, Any]) -> dict[str, Any]
 
 @pytest.fixture
 def mock_webhook_subscription_repository():
-    """The repository behind ``subscription_events``, the one writer of rows.
+    """The repository behind subscription_events, the one writer of rows.
 
     By default the subscription already exists as an active row with no
-    billing dates recorded (``SAMPLE_SUBSCRIPTION``), which is what every
+    billing dates recorded (SAMPLE_SUBSCRIPTION), which is what every
     lifecycle event needs to find; a test about activation creating the row
-    sets ``get_by_dodo_id`` to return ``None``.
+    sets get_by_dodo_id to return None.
     """
     mock_repo = MagicMock()
     mock_repo.get_by_dodo_id = AsyncMock(return_value=SAMPLE_SUBSCRIPTION)
@@ -202,7 +202,7 @@ def mock_track_subscription():
 @pytest.fixture
 def mock_deactivate_workflows():
     """The reducer pauses lapsed workflows through a deferred import (see
-    ``mock_activation_workflow_reactivation``), so the seam is the source."""
+    mock_activation_workflow_reactivation), so the seam is the source."""
     with patch(
         "app.services.workflow.subscription_pause.deactivate_workflows_for_lapsed_subscription",
         new_callable=AsyncMock,
@@ -227,9 +227,9 @@ def mock_activation_workflow_reactivation():
     module because the import is deferred to break a cycle.
 
     Not autouse here: this conftest is shared by every file under
-    ``tests/unit/services/``, so autouse would silently patch an unrelated
+    tests/unit/services/, so autouse would silently patch an unrelated
     workflow-pause seam for every other service's tests. The payment webhook
-    module opts in via ``pytestmark = pytest.mark.usefixtures(...)``.
+    module opts in via pytestmark = pytest.mark.usefixtures(...).
     """
     with patch(
         "app.services.workflow.subscription_pause.reactivate_workflows_for_restored_subscription",
@@ -268,8 +268,8 @@ def mock_subscription_plan_cache_drop():
     """Keep the reducer's plan-cache drop out of Redis.
 
     Every applied subscription event drops the owner's cached tier. Not
-    autouse here for the same reason as ``mock_activation_workflow_reactivation``
-    above — opted into via ``pytestmark`` in the payment webhook test module.
+    autouse here for the same reason as mock_activation_workflow_reactivation
+    above — opted into via pytestmark in the payment webhook test module.
     """
     with patch(
         "app.services.payments.subscription_events.invalidate_plan_cache", new_callable=AsyncMock

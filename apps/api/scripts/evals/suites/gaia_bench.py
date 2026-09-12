@@ -1,19 +1,19 @@
 """GAIA-Bench suite: rank the GAIA agent on the official GAIA benchmark.
 
-Runs the real GAIA validation set (``gaia-benchmark/GAIA``, 2023 validation:
+Runs the real GAIA validation set (gaia-benchmark/GAIA, 2023 validation:
 165 rows = 53 L1 + 86 L2 + 26 L3) through the live dev executor endpoint and
 scores exact-match with a bug-for-bug port of the official leaderboard scorer
-(``huggingface.co/spaces/gaia-benchmark/leaderboard/blob/main/scorer.py``).
+(huggingface.co/spaces/gaia-benchmark/leaderboard/blob/main/scorer.py).
 
 Dataset access
 --------------
-The GAIA dataset is gated. Loading it requires ``HF_TOKEN`` (an account that
+The GAIA dataset is gated. Loading it requires HF_TOKEN (an account that
 accepted the dataset terms at https://huggingface.co/datasets/gaia-benchmark/GAIA).
 Without it the suite falls back to 3 curated GAIA-style cases so the harness
-stays testable offline; every case is tagged ``source:real`` or
-``source:curated`` so reports can tell them apart. A previously downloaded
-copy cached at ``data/gaia/metadata.parquet`` (gitignored) is reused without
-a token. Reading parquet needs ``pyarrow`` (or the ``datasets`` library,
+stays testable offline; every case is tagged source:real or
+source:curated so reports can tell them apart. A previously downloaded
+copy cached at data/gaia/metadata.parquet (gitignored) is reused without
+a token. Reading parquet needs pyarrow (or the datasets library,
 which is tried first) — see the loud message when either is missing.
 
 Attachments
@@ -21,30 +21,30 @@ Attachments
 38 of the 165 rows carry attachments (xlsx/png/pdf/mp3/...). Each is delivered
 one of three ways, and every case is tagged with which:
 
-``attachment:uploaded``
-    The file is POSTed to ``/api/v1/dev/attachments``, which runs the same
-    ``FileService.upload`` the product's ``POST /api/v1/upload`` runs — real
+attachment:uploaded
+    The file is POSTed to /api/v1/dev/attachments, which runs the same
+    FileService.upload the product's POST /api/v1/upload runs — real
     anydoc/pdf_inspector/vision extraction, real summary, real Mongo + ChromaDB
-    index. The upload and the executor run share a ``conversation_id``, so
-    ``prepare_executor_execution`` surfaces the file to the agent through the
-    shipped path and ``search_uploaded_files`` reads the extracted content.
-    Applies to every extension in ``UPLOAD_CONTENT_TYPES``.
+    index. The upload and the executor run share a conversation_id, so
+    prepare_executor_execution surfaces the file to the agent through the
+    shipped path and search_uploaded_files reads the extracted content.
+    Applies to every extension in UPLOAD_CONTENT_TYPES.
 
-``attachment:inlined``
+attachment:inlined
     A harness shim, not the product's ingestion path: the file's text is pasted
     into the task (truncated to the endpoint's 20_000-char field). Reserved for
-    the extensions the product's own uploader refuses (``INLINE_EXTS``) — these
+    the extensions the product's own uploader refuses (INLINE_EXTS) — these
     cases prove the agent can reason over the content, NOT that upload works.
 
 skipped
-    No ingestion path at all (audio, archives, ``.pdb``). The case gets
-    ``expected["skip_reason"]`` naming the limitation, and the transport returns
+    No ingestion path at all (audio, archives, .pdb). The case gets
+    expected["skip_reason"] naming the limitation, and the transport returns
     a failed CaseRun carrying it (core/runner.py has no native skip concept — it
-    records any run with ``error`` set as ``failed``). ``load_cases`` prints the
+    records any run with error set as failed). load_cases prints the
     full denominator: total, runnable, and skipped counts per reason.
 
 The dev endpoint exposes no tool-call trace and no token usage, so
-``tool_calls`` is ``[]`` and token counts are estimates recorded in ``raw``.
+tool_calls is [] and token counts are estimates recorded in raw.
 """
 
 from __future__ import annotations
@@ -328,13 +328,13 @@ def _as_str(value: object) -> str:
 
 
 def _as_int(value: object) -> int:
-    """A row's integer field, defended exactly like ``_as_str``.
+    """A row's integer field, defended exactly like _as_str.
 
-    ``int()`` on a bare ``object`` is not something mypy accepts, and at runtime
-    a row that omits the column gives ``None`` (TypeError) while parquet gives
-    ``NaN`` for a missing numeric (ValueError). Either one aborted ``load_cases``
+    int() on a bare object is not something mypy accepts, and at runtime
+    a row that omits the column gives None (TypeError) while parquet gives
+    NaN for a missing numeric (ValueError). Either one aborted load_cases
     for the whole suite over a single malformed row. 0 is outside GAIA's level
-    range (1-3), so a defaulted value is visible as ``L0`` rather than silently
+    range (1-3), so a defaulted value is visible as L0 rather than silently
     passing for a real level.
     """
     text = _as_str(value)
@@ -390,7 +390,7 @@ def _download_metadata(token: str) -> list[dict[str, object]] | None:
 def _load_dataset_rows() -> list[dict[str, object]] | None:
     """Real GAIA validation rows, or None when the dataset is unavailable.
 
-    Order: cached parquet (offline, reproducible) -> ``datasets`` library ->
+    Order: cached parquet (offline, reproducible) -> datasets library ->
     direct parquet download with HF_TOKEN. Prints loud instructions on every
     failure path; a *present but unreadable* cache raises instead of silently
     running curated cases.
@@ -436,8 +436,8 @@ class AttachmentSpec:
 class AttachmentDelivery:
     """How one row's attachment reaches the agent — or why it cannot.
 
-    Exactly one field is set: ``upload`` for the real ingestion path,
-    ``inline_text`` for the harness shim, ``skip_reason`` when neither applies.
+    Exactly one field is set: upload for the real ingestion path,
+    inline_text for the harness shim, skip_reason when neither applies.
     """
 
     upload: AttachmentSpec | None = None
@@ -656,7 +656,7 @@ def _print_load_report(cases: list[Case]) -> None:
 
 
 def _interleave_by_level(cases: list[Case]) -> list[Case]:
-    """Round-robin across levels so ``--limit N`` yields a stratified sample."""
+    """Round-robin across levels so --limit N yields a stratified sample."""
     buckets: dict[str, list[Case]] = {}
     for case in cases:
         buckets.setdefault(str(case.expected.get("category", "?")), []).append(case)

@@ -158,7 +158,7 @@ def _safe_write_actions(writer: StreamWriter, actions: list[str]) -> None:
 
 
 def _delegated_to_executor(messages: list[AnyMessage]) -> bool:
-    """True if the current turn invoked the ``call_executor`` tool.
+    """True if the current turn invoked the call_executor tool.
 
     Scoped to messages after the last human turn so a delegation from an
     earlier turn doesn't suppress follow-ups on a later, non-delegating turn.

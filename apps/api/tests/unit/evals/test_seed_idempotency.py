@@ -9,7 +9,7 @@ both silently:
 * the lookup keyed on trace metadata, so renaming a metadata field made every
   key miss and every case duplicate.
 
-Identity now comes from the journal (``CaseTrace.key``) and the trace id is
+Identity now comes from the journal (CaseTrace.key) and the trace id is
 derived from it, so a second write targets the same row. These tests pin that,
 and pin the loud failure for the one case it cannot cover — rows written before
 derived ids existed, which a seed would still duplicate.

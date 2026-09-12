@@ -1,7 +1,7 @@
 """Memory learning node — end_graph_hook for user memory ingestion.
 
 After a worth-learning comms turn ends, spawns a fire-and-forget background
-task that feeds the NEW part of the transcript through ``memory_engine.retain``
+task that feeds the NEW part of the transcript through memory_engine.retain
 (plan F2). The node returns immediately — zero added latency on the turn.
 
 Three things bound what the extractor is shown, because in production it was
@@ -105,13 +105,13 @@ def _format_messages_for_user_memory(
 ) -> list[dict[str, str]]:
     """Convert messages to a role/content transcript for the extraction LLM.
 
-    Three roles, never one: ``user`` is the person, ``gaia`` is the assistant
-    (its own words are not evidence about the user), ``tool`` is raw tool
+    Three roles, never one: user is the person, gaia is the assistant
+    (its own words are not evidence about the user), tool is raw tool
     output. Tool INPUTS are kept intact — they carry entity info like ids,
     names and emails — while tool OUTPUTS are truncated, since a large API
     response rarely holds anything reusable past its first lines.
 
-    ``context_count`` is how many leading messages are prior context rather
+    context_count is how many leading messages are prior context rather
     than new material; they are fenced off so the extractor can read them
     without re-extracting from them.
     """
@@ -161,7 +161,7 @@ async def _messages_to_ingest(
 ) -> tuple[list[AnyMessage], int]:
     """The slice of the thread to extract from, and how much of it is context.
 
-    Returns ``(messages, context_count)`` where the first ``context_count``
+    Returns (messages, context_count) where the first context_count
     entries were already ingested and are carried only so the new ones read in
     context. Falls back to the whole thread whenever the high-water mark is
     missing or names a message that is no longer in the thread — a re-ingest is
@@ -190,7 +190,7 @@ async def _messages_to_ingest(
 async def _mark_ingested(user_id: str, thread_id: str | None, messages: list[AnyMessage]) -> None:
     """Record the last message this thread has extracted from.
 
-    Written only after ``retain`` returns, so a failed ingestion is retried on
+    Written only after retain returns, so a failed ingestion is retried on
     the next turn instead of being silently skipped.
     """
     if not thread_id or not messages or not messages[-1].id or not redis_cache.client:
@@ -217,7 +217,7 @@ async def _store_user_memory_background(
     as extraction hints so the engine pulls out entity IDs, contacts, and
     preferences relevant to that integration. Memories are private per user.
 
-    Runs in its own ``wide_task`` scope: this is a fire-and-forget background
+    Runs in its own wide_task scope: this is a fire-and-forget background
     task outside any request middleware, so without an explicit task scope the
     engine's structured logging (and any failure) would never be emitted.
     """
@@ -278,7 +278,7 @@ async def memory_node(
 ) -> State:
     """End-graph hook that stores user memory from comms turns.
 
-    Spawns a background task (non-blocking) that runs ``memory_engine.retain``
+    Spawns a background task (non-blocking) that runs memory_engine.retain
     over the new part of the transcript with the integration-specific
     extraction prompt.
     """

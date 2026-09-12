@@ -1,6 +1,6 @@
 """Session file endpoints — serve a conversation's workspace artifacts.
 
-`GET .../artifacts` is also the defense-in-depth recovery path: the frontend
+GET .../artifacts is also the defense-in-depth recovery path: the frontend
 polls it on tab-focus / message-complete to reconcile anything the live
 artifact stream missed. All listing is host-side JuiceFS (zero R2 ops).
 """

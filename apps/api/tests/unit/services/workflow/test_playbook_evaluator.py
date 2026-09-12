@@ -1,10 +1,10 @@
 """Resolving a playbook step's placeholders against the run that is happening.
 
 The asymmetry is the whole point and every test here defends one half of it: a
-``$last_run`` naming a tool the previous run never called is a first replay with
-no history and must resolve to ``None``, while every other miss — a ``$last_run``
-path the tool's recorded result lacks, an unresolvable ``$steps`` / ``$trigger``
-/ ``$user`` — means the playbook is stale and must stop the run by name.
+$last_run naming a tool the previous run never called is a first replay with
+no history and must resolve to None, while every other miss — a $last_run
+path the tool's recorded result lacks, an unresolvable $steps / $trigger
+/ $user — means the playbook is stale and must stop the run by name.
 """
 
 from datetime import datetime
@@ -81,7 +81,7 @@ def _assert_actionable(error: PlaceholderError, token: str) -> None:
     """Every placeholder failure has to name the token and say what to do next.
 
     The playbook author only ever sees this triple. A run that stops with a
-    nameless message, or with no ``why``/``fix``, leaves them holding a dead
+    nameless message, or with no why/fix, leaves them holding a dead
     workflow and no way to repair it.
     """
     assert token in error.message
@@ -97,7 +97,7 @@ def test_now_and_today_render_the_workflow_zone() -> None:
 
 def test_now_renders_to_the_second_not_the_microsecond() -> None:
     """A worker's clock carries microseconds and some APIs reject the longer
-    form as not RFC 3339; a ``$now`` and any offset on it read to the second."""
+    form as not RFC 3339; a $now and any offset on it read to the second."""
     context = _context(now=NOW.replace(microsecond=624690))
     assert resolve_value("$now", context) == "2026-03-14T09:30:00+01:00"
     assert resolve_value("$now + 1h", context) == "2026-03-14T10:30:00+01:00"
@@ -256,7 +256,7 @@ def test_unresolvable_last_run_is_none_not_an_error() -> None:
 
 
 def test_a_whole_value_last_run_with_no_history_is_left_out_of_the_args() -> None:
-    """``None`` reached a tool parameter that is not Optional and failed
+    """None reached a tool parameter that is not Optional and failed
     validation at call time; leaving the key out lets the tool's default apply."""
     resolved = resolve_args(
         {"page_token": "$last_run.GMAIL_FETCH.next_page", "max_results": 10}, _context()
@@ -276,7 +276,7 @@ def test_a_null_inside_a_nested_value_is_kept_as_written() -> None:
 def test_a_last_run_path_the_tool_did_not_return_stops_the_run_by_name() -> None:
     """The previous run DID call the tool, so "not there" is not "no history":
     it is a shape the playbook expects and the tool no longer returns. Resolving
-    it to ``None`` sent the tool a null cursor and silently restarted from page
+    it to None sent the tool a null cursor and silently restarted from page
     one, repeating every side effect of the run before."""
     context = _context(last_run={"GMAIL_FETCH": {"other": 1}})
     with pytest.raises(PlaceholderError) as caught:
@@ -291,7 +291,7 @@ def test_a_last_run_path_the_tool_did_not_return_stops_the_run_by_name() -> None
 
 def test_a_last_run_result_recorded_as_text_cannot_be_addressed_into() -> None:
     """A digest that was not JSON (a truncated or plain-text result) has no
-    fields; addressing one must say so rather than resolve to ``None``."""
+    fields; addressing one must say so rather than resolve to None."""
     context = _context(last_run={"GMAIL_FETCH": "12 messages, next page tok_2"})
     with pytest.raises(PlaceholderError) as caught:
         resolve_value("$last_run.GMAIL_FETCH.next_page", context)
@@ -304,15 +304,15 @@ def test_a_last_run_result_recorded_as_text_cannot_be_addressed_into() -> None:
 
 
 def test_a_last_run_value_that_is_really_null_resolves_to_none() -> None:
-    """A recorded JSON ``null`` (the last page's empty cursor) is a resolved
+    """A recorded JSON null (the last page's empty cursor) is a resolved
     value, distinct from a path that is not there at all."""
     context = _context(last_run={"GMAIL_FETCH": {"next_page": None}})
     assert resolve_value("$last_run.GMAIL_FETCH.next_page", context) is None
 
 
 def test_an_unknown_dollar_word_is_literal_text_whole_value_and_embedded() -> None:
-    """Only the closed namespaces are placeholders. A recorded ``bash`` step
-    legitimately says ``echo $HOME``, and ``$nowhere`` is not ``$now`` + text, so
+    """Only the closed namespaces are placeholders. A recorded bash step
+    legitimately says echo $HOME, and $nowhere is not $now + text, so
     both reach the tool exactly as written rather than raising or being cut."""
     context = _context()
     assert resolve_value("$HOME", context) == "$HOME"
@@ -532,7 +532,7 @@ def test_a_slot_the_ask_call_never_wrote_stops_the_run_by_its_key() -> None:
 def test_fill_ask_slots_reaches_a_slot_nested_in_a_list_inside_a_dict() -> None:
     """Slots hide wherever an argument nests, and the key spells the whole path.
 
-    Filling only top-level arguments would leave the raw ``{"$ask": ...}`` dict
+    Filling only top-level arguments would leave the raw {"$ask": ...} dict
     inside a structured payload, and the tool would receive it as data.
     """
     args = {"message": {"blocks": [{"text": {"$ask": "Write the digest body"}}]}}
@@ -545,9 +545,9 @@ def test_fill_ask_slots_reaches_a_slot_nested_in_a_list_inside_a_dict() -> None:
 
 
 def test_a_slot_that_reached_resolution_unfilled_stops_the_run() -> None:
-    """``fill_ask_slots`` runs before ``resolve_args`` and leaves none behind, so
+    """fill_ask_slots runs before resolve_args and leaves none behind, so
     a slot met here means the step was resolved without being filled. Passing
-    the slot's dict through would send a tool ``{"$ask": ...}`` as an argument."""
+    the slot's dict through would send a tool {"$ask": ...} as an argument."""
     with pytest.raises(PlaceholderError) as caught:
         resolve_value({"$ask": "Write a subject line"}, _context())
     _assert_actionable(caught.value, "$ask")
@@ -561,8 +561,8 @@ def test_a_slot_that_reached_resolution_unfilled_stops_the_run() -> None:
 
 
 def test_dollar_ask_in_a_string_is_literal_text_not_a_placeholder() -> None:
-    """``$ask`` left the placeholder vocabulary when asks moved inline: a slot is
-    a value, not a reference into a table. Resolving ``$ask.body`` as a token
+    """$ask left the placeholder vocabulary when asks moved inline: a slot is
+    a value, not a reference into a table. Resolving $ask.body as a token
     again would either raise on a perfectly good literal or substitute text
     where the author wrote characters."""
     context = _context(asks={"mail.body": "Here is your digest."})
@@ -578,7 +578,7 @@ def test_a_step_placeholder_with_no_field_resolves_to_the_whole_result() -> None
 
 def test_nested_step_path_splits_at_the_step_id_not_the_last_dot() -> None:
     """The step id is the FIRST segment; splitting from the right would look up
-    a step called ``inbox.page`` and fail a playbook that is perfectly valid."""
+    a step called inbox.page and fail a playbook that is perfectly valid."""
     context = _context(steps={"inbox": StepResult(value={"page": {"next": "tok_7"}})})
     assert resolve_value("$steps.inbox.page.next", context) == "tok_7"
 
@@ -678,7 +678,7 @@ class TestACutRecordedValueIsNotReplayed:
 
     def test_a_cut_value_interpolated_into_a_longer_string_raises_too(self) -> None:
         """Interpolation moves the marker off the end of the string; the value is
-        still a stub, so ``endswith`` was the wrong test."""
+        still a stub, so endswith was the wrong test."""
         context = _context(last_run={"list_events": {"page": "abc" + RECORD_CUT_MARKER}})
 
         with pytest.raises(PlaceholderError) as caught:

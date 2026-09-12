@@ -16,8 +16,8 @@ def normalize_schema_refs(schema: object) -> object:
     Some MCP servers use numeric keys in $defs (like '0', '1') which can cause
     issues with reference resolution. This function normalizes such schemas.
 
-    ``schema`` is typed ``object``, not ``dict``, because some MCP servers hand
-    back a non-dict ``inputSchema`` (bool/None/etc.) — the isinstance guard
+    schema is typed object, not dict, because some MCP servers hand
+    back a non-dict inputSchema (bool/None/etc.) — the isinstance guard
     below is a real, load-bearing check, not dead code.
 
     Args:

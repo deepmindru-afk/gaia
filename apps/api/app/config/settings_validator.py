@@ -8,13 +8,13 @@ Why
 - Make missing config obvious with actionable logs.
 
 Flow
-- Define fields in `app.config.settings` (Pydantic classes).
-- Register related keys here as `SettingsGroup`s.
-- `validate_settings()` scans the instantiated settings object and logs what’s missing.
+- Define fields in app.config.settings (Pydantic classes).
+- Register related keys here as SettingsGroups.
+- validate_settings() scans the instantiated settings object and logs what’s missing.
 
 Add env vars
-1) Add fields to `CommonSettings`/`ProductionSettings`/`DevelopmentSettings`.
-2) Add a `SettingsGroup` in `_register_predefined_groups()` with matching key names.
+1) Add fields to CommonSettings/ProductionSettings/DevelopmentSettings.
+2) Add a SettingsGroup in _register_predefined_groups() with matching key names.
 """
 
 from dataclasses import dataclass
@@ -27,8 +27,8 @@ from shared.py.wide_events import log
 class SettingsGroup:
     """One group of related config keys, and what breaks without them.
 
-    ``all_required`` False means any one key in the group suffices;
-    ``alternative_group`` names a mutually exclusive group that can stand in.
+    all_required False means any one key in the group suffices;
+    alternative_group names a mutually exclusive group that can stand in.
     """
 
     name: str

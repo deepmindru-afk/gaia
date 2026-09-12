@@ -146,7 +146,7 @@ def collection_prefix() -> str:
     collection names must be unique per test: a plain fixed name collides with
     the same test on another xdist worker, and the cleanup below must only
     delete what this test made (deleting everything wipes collections other
-    workers — notably the memory suite's ``gaia_memories`` — are actively using).
+    workers — notably the memory suite's gaia_memories — are actively using).
     """
     return f"test_{uuid4().hex[:8]}_"
 
@@ -312,7 +312,7 @@ class TestChromaStoreCRUD:
         assert result_gmail[0] is None  # not in gmail namespace
 
     async def test_batch_mixed_ops(self, chroma_store):
-        """abatch should handle multiple operations in a single call."""
+        """Abatch should handle multiple operations in a single call."""
         ops = [
             PutOp(namespace=("ns",), key="a", value={"x": 1, "tool_hash": "h_a"}),
             PutOp(namespace=("ns",), key="b", value={"x": 2, "tool_hash": "h_b"}),
@@ -407,7 +407,7 @@ class TestChromaStoreSearch:
         """SearchOp limit should cap the number of returned items to exactly the limit.
 
         The original test used populated_store which only has 2 items in the
-        searched namespace, and asserted ``<= 1`` — that passes even when 0
+        searched namespace, and asserted <= 1 — that passes even when 0
         items are returned (false confidence).  This version seeds MORE items
         than the limit into a dedicated namespace, so a zero-result bug would
         cause the assertion to fail.

@@ -133,7 +133,7 @@ class TestThreadIsolation:
 
     async def test_thread_1_not_visible_from_thread_2(self, manager: CheckpointerManager) -> None:
         """
-        alist on thread_2 must not yield checkpoints belonging to thread_1.
+        Alist on thread_2 must not yield checkpoints belonging to thread_1.
 
         If isolation breaks, a user could receive another user's conversation.
         """
@@ -158,7 +158,7 @@ class TestThreadIsolation:
     async def test_multiple_checkpoints_per_thread_ordered(
         self, manager: CheckpointerManager
     ) -> None:
-        """alist must return all checkpoints for a thread, newest first."""
+        """Alist must return all checkpoints for a thread, newest first."""
         checkpointer = manager.get_checkpointer()
         thread_id = str(uuid4())
         config = _thread_config(thread_id)
@@ -192,7 +192,7 @@ class TestCheckpointStorageStaysBounded:
     the thread; the pre-model filtering was request-only, so the checkpoint
     accumulated one full stack per run (39 copies on one workflow thread) and
     the end-graph hook node re-serialized the whole accumulated list into
-    ``checkpoint_writes`` on every run — 19 GB of Postgres from one database.
+    checkpoint_writes on every run — 19 GB of Postgres from one database.
     This drives the REAL comms graph against the REAL Postgres checkpointer and
     measures actual stored bytes for the thread.
     """

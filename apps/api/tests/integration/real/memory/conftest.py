@@ -1,9 +1,9 @@
 """Fixtures for the memory engine suite — real stores, mocked LLM only.
 
 Postgres, ChromaDB and Redis are the real local docker services from
-``apps/api/.env``; fastembed embedding/reranker models are real and warmed
+apps/api/.env; fastembed embedding/reranker models are real and warmed
 once per worker. The only mocked boundary is the LLM:
-``app.memory.extraction._invoke_structured`` (see ``tests/integration/real/memory/llm.py``).
+app.memory.extraction._invoke_structured (see tests/integration/real/memory/llm.py).
 
 Because the suite's event loop is function-scoped, each test gets its own
 Postgres engine (NullPool), Chroma HTTP client and Redis client patched
@@ -57,12 +57,12 @@ def warm_embedding_models() -> None:
     """Load fastembed models once per worker so latency tests measure warm paths.
 
     Serialized across xdist workers by a file lock, for the same reason
-    ``pg_engine`` takes an advisory lock around ``create_all``: every worker
+    pg_engine takes an advisory lock around create_all: every worker
     shares one fastembed cache directory, and a concurrent first load has them
     all downloading the same HuggingFace snapshot at once. The loser observes
     the snapshot directory its sibling just created, decides the model is
-    present, and hands onnxruntime a ``model.onnx`` that has not finished
-    downloading — ``NO_SUCHFILE``, which took out 24 memory tests and then the
+    present, and hands onnxruntime a model.onnx that has not finished
+    downloading — NO_SUCHFILE, which took out 24 memory tests and then the
     live-server suite that reuses the same cache. The winner downloads; the
     rest block here and read a complete cache.
     """

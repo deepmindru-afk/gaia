@@ -1,5 +1,5 @@
 """
-TEST 10: OAuth Integration Connection Lifecycle
+TEST 10: OAuth Integration Connection Lifecycle.
 
 Integration tests for the OAuth connection lifecycle — URL generation,
 callback handling, status tracking, token management, disconnect cleanup,
@@ -111,15 +111,15 @@ def _make_mock_redis() -> AsyncMock:
 
 
 class _FakeUserIntegrationRepo:
-    """In-memory stand-in for ``user_integration_repository``.
+    """In-memory stand-in for user_integration_repository.
 
     Preserves the upsert/delete semantics the service layer relies on — one
-    record per ``(user_id, integration_id)``, ``connected_at`` stamped on the
-    connected transition and ``expired_at``/``expired_reason`` on the expired one
+    record per (user_id, integration_id), connected_at stamped on the
+    connected transition and expired_at/expired_reason on the expired one
     (cleared again on reconnect) — so the lifecycle/idempotence/isolation
     assertions hold at the repository seam. The repository's Mongo+Redis
     behaviour itself is covered by
-    ``tests/contracts/test_user_integrations_repository.py``.
+    tests/contracts/test_user_integrations_repository.py.
     """
 
     def __init__(self) -> None:
@@ -177,7 +177,7 @@ class _FakeUserIntegrationRepo:
 
 @contextmanager
 def _patched_repo(repo: _FakeUserIntegrationRepo):
-    """Install ``repo`` behind both service modules that reach the singleton."""
+    """Install repo behind both service modules that reach the singleton."""
     with (
         patch(
             "app.services.integrations.user_integration_status.user_integration_repository",
@@ -860,7 +860,7 @@ class TestReconnectionFlow:
     async def test_reconnect_after_expiry_clears_the_expiry_stamps(self) -> None:
         """A reconnected integration must not read as connected-but-broken.
 
-        Stale ``expired_at``/``expired_reason`` on a live record would make the
+        Stale expired_at/expired_reason on a live record would make the
         integration look dead to anything that reads them.
         """
         repo = _FakeUserIntegrationRepo()

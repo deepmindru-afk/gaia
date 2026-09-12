@@ -1,21 +1,21 @@
 """Curated matchable fields per trigger — what a subscription condition may test.
 
-Derived from the payload models in ``app/models/composio_schemas/``, which were
+Derived from the payload models in app/models/composio_schemas/, which were
 verified against Composio's live triggers API. The full payload models stay loose
 because external webhooks omit fields; this catalog is the narrower set we are
 willing to match on, and it is also what the agent is shown before it writes a
 condition, so it builds from known data instead of guessing.
 
-Every verified payload field is either catalogued or listed in ``excluded`` with a
+Every verified payload field is either catalogued or listed in excluded with a
 reason. Two reasons recur:
 
-- *nested free-form dict* — the provider ships a blob (``data``, ``task``) whose
+- *nested free-form dict* — the provider ships a blob (data, task) whose
   inner shape was not verified upstream. Cataloguing a key inside it would be the
   guessing this module exists to prevent.
 - *list of objects* — attendees, attachments and authors are lists of dicts, which
   the operator table has no meaning for.
 
-Dotted names (``document.id``) are supported for one level, and only where the
+Dotted names (document.id) are supported for one level, and only where the
 nested value is itself a typed model — that is the difference between a verified
 field and a guess.
 """
@@ -121,7 +121,7 @@ def _notion(payload_model: type, page_description: str) -> MatchableTrigger:
 
 
 def _google_doc(payload_model: type, document_description: str) -> MatchableTrigger:
-    """Docs triggers carry a typed ``GoogleDocsDocument``, so one level of dotting
+    """Docs triggers carry a typed GoogleDocsDocument, so one level of dotting
     stays verified rather than guessed."""
     return MatchableTrigger(
         payload_model=payload_model,
@@ -332,5 +332,5 @@ MATCHABLE_TRIGGERS: Mapping[str, MatchableTrigger] = MappingProxyType(
 
 
 def get_matchable_trigger(trigger_name: str) -> MatchableTrigger | None:
-    """The catalog entry for ``trigger_name``, or None when it is not subscribable."""
+    """The catalog entry for trigger_name, or None when it is not subscribable."""
     return MATCHABLE_TRIGGERS.get(trigger_name)

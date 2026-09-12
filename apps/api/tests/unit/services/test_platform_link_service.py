@@ -1,6 +1,6 @@
 """Unit tests for PlatformLinkService.
 
-The service now delegates persistence to ``user_repository`` (link/unlink/lookup
+The service now delegates persistence to user_repository (link/unlink/lookup
 behaviour against real Mongo is covered by the UserRepository contract tests).
 These tests mock the repository singleton and cover the service's own logic:
 conflict detection, profile assembly, the legacy dict it returns to bot consumers,

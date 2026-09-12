@@ -1,5 +1,5 @@
 """
-Integration Token Repository
+Integration Token Repository.
 
 This module provides centralized management for integration OAuth tokens (Google, Slack, Notion, etc.)
 using PostgreSQL via SQLAlchemy. It handles token storage, retrieval, refreshing, and updates for

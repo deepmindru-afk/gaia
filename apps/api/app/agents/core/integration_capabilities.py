@@ -1,6 +1,6 @@
 """Tool capabilities available to a user, for follow-up action generation.
 
-Lives in the agents layer, not in ``app/services/integrations``, because it reads
+Lives in the agents layer, not in app/services/integrations, because it reads
 the agent tool registry: a service that imports the registry inverts the
 dependency direction and closes an import cycle
 (services -> agents -> services.composio -> services.integrations).

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Give back the playbook chances that blocked runs spent.
 
-``decline_playbook`` used to count every decline against the workflow, including
+decline_playbook used to count every decline against the workflow, including
 the ones where the run never reached the work. In production roughly 80% of
 declines said the same thing: the workflow needs an integration the user has
 never connected. A workflow firing twice a day burns all three of its chances in
-under two days that way, and ``PLAYBOOK_DECLINE_LIMIT`` then stops the check
+under two days that way, and PLAYBOOK_DECLINE_LIMIT then stops the check
 being asked at all. Only an edit to the workflow resets the tally, so those
 workflows can never earn a playbook again, not even after the user connects the
 integration.
@@ -13,7 +13,7 @@ integration.
 The blocked kinds no longer count, but the tallies they already ran up are still
 on the workflows. This clears them, so the next run is asked again.
 
-Dry run by default. Nothing is written without ``--apply``.
+Dry run by default. Nothing is written without --apply.
 
 Usage::
 

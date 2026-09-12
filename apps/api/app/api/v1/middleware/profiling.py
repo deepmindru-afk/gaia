@@ -20,12 +20,12 @@ from shared.py.wide_events import log
 
 
 class SupportsProfiling(Protocol):
-    """Just the pyinstrument ``Profiler`` surface this middleware uses.
+    """Just the pyinstrument Profiler surface this middleware uses.
 
     A local protocol, rather than the imported class, because pyinstrument is
     optional at runtime — naming the concrete type here would need an import that
-    the ``except ImportError`` below exists to survive. ``stop`` returns ``object``
-    because the real one returns a ``Session`` this middleware discards.
+    the except ImportError below exists to survive. stop returns object
+    because the real one returns a Session this middleware discards.
     """
 
     def start(self) -> None: ...

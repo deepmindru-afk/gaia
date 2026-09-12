@@ -57,7 +57,7 @@ from shared.py.wide_events import log
 
 
 def _render_location(location: tuple[int | str, ...]) -> str:
-    """One pydantic error location as the author wrote it: ``steps[0].tool``."""
+    """One pydantic error location as the author wrote it: steps[0].tool."""
     rendered = ""
     for part in location:
         if isinstance(part, int):
@@ -72,11 +72,11 @@ def _explain_validation_error(error: ValidationError | LegacyValidationError) ->
 
     Without this, arguments that miss the schema come back as a framework-level
     error the model cannot read, and it retries the same shape. Reported as the
-    tool's own ``error_response`` so a bad shape and a bad playbook read
+    tool's own error_response so a bad shape and a bad playbook read
     identically: what was wrong, and that nothing was written.
 
     Both pydantic generations are accepted because that is the signature
-    langchain's hook declares; either one reports ``loc``/``msg`` the same way.
+    langchain's hook declares; either one reports loc/msg the same way.
     """
     problems = "; ".join(
         f"{_render_location(item['loc'])}: {item['msg']}" for item in error.errors()
@@ -93,7 +93,7 @@ def _answered_calls(state: Mapping[str, Any] | None) -> list[tuple[str, dict[str
     """Every tool call in the run's messages that has an answer: name, args, parsed answer.
 
     Failed calls are kept, unlike the handoff record's successful-only lines
-    (``call_record.py``): a step frozen on a call that errored is precisely one
+    (call_record.py): a step frozen on a call that errored is precisely one
     of the things the validator has to catch. A call with no answer is one still
     in flight (this very tool call, in every real run) and is left out.
     """
@@ -138,7 +138,7 @@ def _invoked_call_names(state: Mapping[str, Any] | None) -> list[str]:
     """Every tool the run has called so far, answered or still in flight.
 
     The quiet-day check reads this rather than the answered record: a model
-    can issue ``create_todo`` and the decline in one parallel batch, and the
+    can issue create_todo and the decline in one parallel batch, and the
     create has no answer yet when the decline is judged.
     """
     if state is None:
@@ -172,7 +172,7 @@ def _subagent_results(config: RunnableConfig) -> list[RecordedResult]:
 
     A handoff's children are not in the executor's own state: the subagent ran
     on its own graph, and the executor saw one message back. Its calls are
-    captured for the execution trace as they happen (``build_trace``), so the
+    captured for the execution trace as they happen (build_trace), so the
     validator reads them from there, digests and all, scoped to the subagent.
     """
     try:
@@ -227,14 +227,14 @@ def _replayed_results(config: RunnableConfig) -> list[RecordedResult]:
 def _run_results(state: Mapping[str, Any] | None) -> RunResults | None:
     """The authoring run's tool calls with what each one returned, in call order.
 
-    ``None`` when there is no run to read: the dev ``/dev/executor`` route and
+    None when there is no run to read: the dev /dev/executor route and
     the unit tests build these tools without a graph, and a playbook written
     there is validated exactly as it was before rather than refused for a run
     that was never recorded. An empty list is NOT the same answer — it means the
     run really made no calls, and a playbook freezing calls is wrong.
 
     Failed calls are kept, unlike the handoff record's successful-only lines
-    (``call_record.py``): a step frozen on a call that errored is precisely one
+    (call_record.py): a step frozen on a call that errored is precisely one
     of the things the validator has to catch.
     """
     if state is None:
@@ -419,7 +419,7 @@ async def _record_blocked_run(
 ) -> dict[str, Any]:
     """Settle a run that never reached the work.
 
-    Nothing is counted against the workflow — see :data:`BLOCKED_DECLINE_KINDS`
+    Nothing is counted against the workflow — see :data:BLOCKED_DECLINE_KINDS
     for why a strike here is the bug rather than the record. The stored playbook
     is deliberately left alone even mid-heal: a heal run that could not run at
     all has learned nothing about whether the frozen sequence still holds, and

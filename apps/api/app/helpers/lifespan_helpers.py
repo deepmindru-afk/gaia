@@ -159,9 +159,9 @@ async def close_mcp_client_pool() -> None:
 class StartupService(NamedTuple):
     """A startup coroutine plus whether its failure is fatal.
 
-    ``required=True``  → failure aborts startup (Mongo, Redis, schedulers, outbound
+    required=True  → failure aborts startup (Mongo, Redis, schedulers, outbound
     topology): the process is useless without it, so crashing is the honest signal.
-    ``required=False`` → best-effort: optional infrastructure / optimizations the app
+    required=False → best-effort: optional infrastructure / optimizations the app
     degrades gracefully without (the JuiceFS mount, the shared system subtree, cache
     warmups). A storage-backend fault hitting one of these used to take down the whole
     ARQ worker; now it logs and the process keeps running. Criticality lives on the

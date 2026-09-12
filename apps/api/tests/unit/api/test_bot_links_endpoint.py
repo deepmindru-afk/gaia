@@ -1,7 +1,7 @@
 """Unit tests for the bot platform-linking endpoints.
 
-Split out of ``test_bot_endpoint.py`` to match the route split: these cover
-``app/api/v1/endpoints/bot_links.py`` (create-link-token, redeem-link-code,
+Split out of test_bot_endpoint.py to match the route split: these cover
+app/api/v1/endpoints/bot_links.py (create-link-token, redeem-link-code,
 link-token-info). Assertions are unchanged from the original module — only the
 patch targets moved with the code.
 """
@@ -60,7 +60,7 @@ async def _create_link_token(
 ) -> tuple[CreateLinkTokenResponse | HTTPException, dict[str, object]]:
     """Run the handler inside a wide-event boundary.
 
-    Returns the response — or the ``HTTPException`` the header guard raised —
+    Returns the response — or the HTTPException the header guard raised —
     together with the wide event the call stamped, so a test can assert the
     refusal and its audit trail in one place.
     """
@@ -93,7 +93,7 @@ def _pro_plan_by_default():
 
 
 class TestCreateLinkToken:
-    """POST /api/v1/bot/create-link-token"""
+    """POST /api/v1/bot/create-link-token."""
 
     @patch("app.api.v1.endpoints.bot_links.redis_cache")
     @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
@@ -158,7 +158,7 @@ class TestCreateLinkToken:
         )
 
     async def test_the_token_is_minted_with_the_full_32_bytes_of_entropy(self):
-        """``link-token-info`` is unauthenticated and the token in its path is the
+        """link-token-info is unauthenticated and the token in its path is the
         whole credential, so the token's WIDTH is the only thing standing between
         a probe and someone's pending link — and nothing about the response shape
         changes when it shrinks."""
@@ -266,7 +266,7 @@ class TestCreateLinkToken:
         redis_client.hset.assert_not_awaited()
 
     async def test_headers_that_match_the_body_mint_the_token(self):
-        """The guard compares for INEQUALITY: flipped to `==`, the ordinary case
+        """The guard compares for INEQUALITY: flipped to ==, the ordinary case
         where a bot's own headers match its body would refuse every mint."""
         redis_client = AsyncMock()
         response, event = await _create_link_token(
@@ -329,7 +329,7 @@ def _completion(is_new_link: bool = True, delivered: bool = True) -> PlatformLin
 
 
 class TestRedeemLinkCode:
-    """POST /api/v1/bot/redeem-link-code"""
+    """POST /api/v1/bot/redeem-link-code."""
 
     @pytest.fixture(autouse=True)
     def _linked_user(self):
@@ -357,7 +357,7 @@ class TestRedeemLinkCode:
     def _first_contact(self):
         """Composing the bundle reads Mongo (connected integrations) and mints
         Redis-backed connect links. Its copy is proven in
-        ``tests/unit/services/onboarding/test_first_contact.py``; here only the
+        tests/unit/services/onboarding/test_first_contact.py; here only the
         fact that the endpoint returns whatever it composed matters."""
         with (
             patch(CONTACT_PATCH, new_callable=AsyncMock, return_value=BUBBLES) as mock_contact,
@@ -802,7 +802,7 @@ class TestRedeemLinkCode:
         }
 
     async def test_a_matching_header_is_not_treated_as_a_mismatch(self, client: AsyncClient):
-        """The guard compares for INEQUALITY: flipped to `==`, the ordinary case
+        """The guard compares for INEQUALITY: flipped to ==, the ordinary case
         where the bot's own headers match the body would 403 every redemption."""
 
         async def _matching_request(request):
@@ -948,7 +948,7 @@ class TestRedeemLinkCode:
         assert "CODE123" not in str(event)
 
     async def test_a_header_mismatch_is_audited_as_a_mismatch_not_a_bad_code(self):
-        """Two rejections share one audit message, so `reason` is the only thing
+        """Two rejections share one audit message, so reason is the only thing
         separating an expired link from an API key reaching for someone else's
         handle — the second is an attack, the first is a Tuesday."""
         body = RedeemLinkCodeRequest(platform="telegram", platform_user_id="TG42", code="CODE123")
@@ -1076,7 +1076,7 @@ class TestPersistFirstContact:
 
 
 class TestGetLinkTokenInfo:
-    """GET /api/v1/bot/link-token-info/{token}"""
+    """GET /api/v1/bot/link-token-info/{token}."""
 
     @patch("app.api.v1.endpoints.bot_links.redis_cache")
     async def test_link_token_info_success(

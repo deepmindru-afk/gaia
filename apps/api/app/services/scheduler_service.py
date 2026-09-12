@@ -1,6 +1,4 @@
-"""
-Base scheduler service for managing scheduled tasks.
-"""
+"""Base scheduler service for managing scheduled tasks."""
 
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
@@ -26,7 +24,7 @@ from shared.py.wide_events import log
 class TriggerConfigLike(Protocol):
     """The only two fields the base scheduler reads off a task's trigger_config.
 
-    Structural rather than an import of ``workflow_models.TriggerConfig``: this
+    Structural rather than an import of workflow_models.TriggerConfig: this
     scheduler serves both the reminder and the workflow domain, so it must not
     depend on either one's concrete model. Naming the fields is what stops a
     dict-shaped trigger_config from reaching here — on a dict, the timezone read
@@ -244,7 +242,7 @@ class BaseSchedulerService(ABC):
         If the worker dies before re-arming — a rolling deploy SIGKILLs it, or
         arq cancels the job and the retry finds the row already claimed — the row
         stays EXECUTING forever. Nothing can see it again: the due-scan filters
-        on ``status="scheduled"``, and the claim gate can never match it. The
+        on status="scheduled", and the claim gate can never match it. The
         reminder or workflow simply never fires, with no error and no retry.
 
         Returns the number of tasks reaped.
@@ -335,9 +333,9 @@ class BaseSchedulerService(ABC):
     def _build_job_args(self, task_id: str, _scheduled_at: datetime) -> tuple[object, ...]:
         """Positional args passed to the ARQ job. Subclasses may add context.
 
-        Heterogeneous by design — ARQ takes opaque ``*args`` and the workflow
+        Heterogeneous by design — ARQ takes opaque *args and the workflow
         scheduler appends a trigger-context dict (including the armed fire time)
-        after the id. The base itself needs only the id; ``_scheduled_at`` is part
+        after the id. The base itself needs only the id; _scheduled_at is part
         of the seam so subclasses can stamp their jobs with it.
         """
         return (task_id,)
@@ -434,11 +432,11 @@ class BaseSchedulerService(ABC):
         anything that reads the status and then writes it lets two workers both
         pass the check and run the task twice.
 
-        ``expected_occurrence`` is the fire time the job was armed for. Status
+        expected_occurrence is the fire time the job was armed for. Status
         alone is not sufficient for a recurring task: re-arming returns it to
         SCHEDULED for the NEXT occurrence, at which point a sibling pod's stale
         job would find it claimable again and run it early. Jobs enqueued before
-        the stamp existed pass ``None`` and claim on status alone.
+        the stamp existed pass None and claim on status alone.
         """
 
     @abstractmethod
@@ -453,7 +451,7 @@ class BaseSchedulerService(ABC):
 
     @abstractmethod
     async def find_stale_executing(self, cutoff: datetime) -> list[BaseScheduledTask]:
-        """Tasks left in EXECUTING since before ``cutoff`` — the reaper's candidates."""
+        """Tasks left in EXECUTING since before cutoff — the reaper's candidates."""
 
     @abstractmethod
     async def get_pending_task(self, current_time: datetime) -> list[BaseScheduledTask]:

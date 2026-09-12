@@ -4,7 +4,7 @@
 with no text, no error and no cancellation. The turn-level recovery was a fixed
 apology asking the user to retype their message — recovery in the wrong layer:
 the model call is what failed. These tests drive the real middleware against a
-scripted handler, the same seam ``MiddlewareExecutor.wrap_model_invocation``
+scripted handler, the same seam MiddlewareExecutor.wrap_model_invocation
 builds in production; the model is the only thing faked, because a real model
 cannot be made to return nothing on demand.
 """

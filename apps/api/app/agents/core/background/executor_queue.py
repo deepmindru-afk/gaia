@@ -1,14 +1,14 @@
 """Per-conversation executor queue and busy-lock mechanics.
 
 One executor runs per conversation at a time, guarded by the
-``executor:busy:{conversation_id}`` Redis lock. While the lock is held,
-``call_executor`` enqueues additional tasks onto
-``executor:queue:{conversation_id}``; when a run finishes, its finalize step
+executor:busy:{conversation_id} Redis lock. While the lock is held,
+call_executor enqueues additional tasks onto
+executor:queue:{conversation_id}; when a run finishes, its finalize step
 pops the next task here and spawns it.
 
 This module owns the Redis mechanics only — enqueue, pop/prepare, and lock
-value handling. ``pop_next_queued_run`` PREPARES the next run (lock overwrite,
-session registration, stream start, ``executor.stream_started`` WS event) and
+value handling. pop_next_queued_run PREPARES the next run (lock overwrite,
+session registration, stream start, executor.stream_started WS event) and
 returns it; the runner spawns it. That one-way dependency (runner → queue)
 keeps the import graph acyclic.
 """
@@ -54,11 +54,11 @@ QUEUED_STREAM_ID_PREFIX = "queued_"
 class ExecutorRunItem(TypedDict, total=False):
     """The serialized run context stored between an executor turn and its re-dispatch.
 
-    Written by :func:`build_run_item` into the Redis queue and into
-    ``HILApprovalRecord.resume_item``; read back by :func:`prepare_run_from_item`.
+    Written by :func:build_run_item into the Redis queue and into
+    HILApprovalRecord.resume_item; read back by :func:prepare_run_from_item.
 
-    ``total=False`` is the honest shape, not a shortcut: the HIL resume path
-    re-dispatches from ``record.resume_item or {}``, so an absent or empty item
+    total=False is the honest shape, not a shortcut: the HIL resume path
+    re-dispatches from record.resume_item or {}, so an absent or empty item
     is a real, handled input — every read below supplies a default.
     """
 
@@ -163,7 +163,7 @@ async def get_lock_holder(conversation_id: str) -> str | None:
 async def is_executor_busy(conversation_id: str) -> bool:
     """Whether ANY executor run (running or parked) holds this conversation's lock.
 
-    Redis-unavailable degrades to ``False``: the caller (HIL early-decision) must
+    Redis-unavailable degrades to False: the caller (HIL early-decision) must
     treat "cannot tell" as "no collector is alive" and fail closed — recording a
     decision nobody will act on is a false promise to the user.
     """
@@ -193,7 +193,7 @@ async def extend_lock_if_owned(
     For a run that parks on a HIL approval: its lock's TTL has been counting down
     since the run *started*, but the pause may outlive it, and a lock that lapses
     under a checkpointed interrupt lets a new run take the thread and discard it.
-    Ownership-checked like ``release_lock_if_owned`` — a stale run must never
+    Ownership-checked like release_lock_if_owned — a stale run must never
     extend a lock a newer one now holds. Returns whether the TTL was re-armed.
     """
     if not redis_cache.client:
@@ -239,7 +239,7 @@ async def reclaim_stranded_task(conversation_id: str) -> PreparedQueuedTask | No
 
 
 async def enqueue_task(queue_key: str, item: ExecutorRunItem) -> None:
-    """Push a run item (see :func:`build_run_item`) to the executor queue.
+    """Push a run item (see :func:build_run_item) to the executor queue.
 
     Takes the built item rather than its fields: the item is the one shape a
     queued run is rebuilt from, so the fields it carries belong in one place.
@@ -263,7 +263,7 @@ async def enqueue_collection_run(
     and report. The SETNX marker keeps it to one queued collection at a time —
     the join clears it when it actually runs. Returns whether a run was queued.
 
-    ``thread_id`` is forced back to the conversation id: a subagent's
+    thread_id is forced back to the conversation id: a subagent's
     configurable carries the SUBAGENT thread, and the collection turn must run
     on the executor's own thread.
     """
@@ -325,7 +325,7 @@ async def pop_next_queued_run(conversation_id: str) -> PreparedQueuedTask | None
 
     Registers the QUEUED session (with the executor pre-marked spawned — queued
     runs have no chat_service to register for them), starts stream progress
-    tracking, and broadcasts ``executor.stream_started`` so the frontend opens a
+    tracking, and broadcasts executor.stream_started so the frontend opens a
     live SSE subscription. Spawning is the caller's job.
 
     Returns None if the queue was empty or unparseable (caller releases the lock).
@@ -359,10 +359,10 @@ def build_run_item(
     workflow_execution_id: str | None = None,
 ) -> ExecutorRunItem:
     """The one serialized run-context shape: written by the queue and the HIL
-    resume store, read back by ``prepare_run_from_item``. Add fields here, not
+    resume store, read back by prepare_run_from_item. Add fields here, not
     at the write sites, or a resumed run silently drops what a queued run keeps.
 
-    ``workflow_execution_id`` defaults to the execution in flight on the caller's
+    workflow_execution_id defaults to the execution in flight on the caller's
     wide event — a run that already knows its own passes it explicitly, since a
     pause is recorded from inside the run's boundary, not the workflow task's."""
     return {
@@ -377,10 +377,10 @@ def build_run_item(
 
 
 def safe_configurable(configurable: AgentConfigurable) -> AgentConfigurable:
-    """The serializable subset of a ``configurable``, safe to persist and rebuild
+    """The serializable subset of a configurable, safe to persist and rebuild
     a run from — the GAIA-owned keys minus the run-scoped ones.
 
-    Every surviving key is an ``AgentConfigurable`` key by construction (Type
+    Every surviving key is an AgentConfigurable key by construction (Type
     Safety item 12). A declared key holding an unserializable value is dropped
     with a WARNING rather than in silence: silent dropping is how a queued run
     quietly stopped being the run the user started.

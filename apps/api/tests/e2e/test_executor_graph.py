@@ -2,14 +2,14 @@
 and how a run ends.
 
 Until now the executor was tested two ways, neither of which runs it:
-``test_graph_builder.py`` mocks ``create_agent`` and asserts the kwargs it was
-called with, and ``test_real_executor_agent.py`` compiles a graph but never
+test_graph_builder.py mocks create_agent and asserts the kwargs it was
+called with, and test_real_executor_agent.py compiles a graph but never
 executes a tool. So the tier that owns every tool in the product had no test
 that a tool call changes anything.
 
 These drive the real compiled executor graph. Only the model is faked. The
 assertions are about the graph's own contracts — which tools it will run without
-retrieval, what a tool call does to the `todos` channel, what the pre-model hook
+retrieval, what a tool call does to the todos channel, what the pre-model hook
 puts in front of the model, and how the run terminates.
 """
 
@@ -41,7 +41,7 @@ def plan(*contents: str, plan_id: str = "p1") -> dict[str, Any]:
 
 
 class TestToolsBoundFromTurnOne:
-    """``initial_tool_ids`` is what the executor can do before it retrieves
+    """initial_tool_ids is what the executor can do before it retrieves
     anything. A tool dropping out of that list is invisible until an agent
     stalls in production trying to use it."""
 
@@ -74,7 +74,7 @@ class TestToolsBoundFromTurnOne:
         Registered on purpose: an unregistered name (a Composio tool whose
         category has not been provisioned) is rejected for simply not existing,
         which proves nothing about scoping. Adding one of these to
-        ``initial_tool_ids`` turns this test red; adding an unregistered name
+        initial_tool_ids turns this test red; adding an unregistered name
         does not, because the binder skips ids the registry does not know.
         """
         async with executor_graph([call(tool, {}, call_id="c1"), "ok"]) as graph:
@@ -139,8 +139,8 @@ class TestMixedTurns:
 
 class TestTodoState:
     async def test_planning_writes_the_todos_channel(self):
-        """``plan_tasks`` is a state-mutating tool: its whole effect is the
-        `todos` channel, which drives the progress card and the pre-model hook."""
+        """plan_tasks is a state-mutating tool: its whole effect is the
+        todos channel, which drives the progress card and the pre-model hook."""
         async with executor_graph([plan("draft the email", "send it"), "Planned."]) as graph:
             run = await run_graph(graph, "email my landlord")
 
@@ -156,7 +156,7 @@ class TestTodoState:
         assert [t["status"] for t in run.todos] == ["in_progress", "pending", "pending"]
 
     async def test_each_task_gets_its_own_id(self):
-        """``update_tasks`` addresses tasks by id; duplicates would make a status
+        """update_tasks addresses tasks by id; duplicates would make a status
         update land on the wrong row."""
         async with executor_graph([plan("one", "two", "three"), "Planned."]) as graph:
             run = await run_graph(graph, "do three things")
@@ -166,9 +166,9 @@ class TestTodoState:
         assert all(ids)
 
     async def test_the_model_is_never_shown_a_raw_command_object(self):
-        """A state-mutating tool returns a ``Command``; the graph must apply it,
+        """A state-mutating tool returns a Command; the graph must apply it,
         not stringify it. If it leaks, the model reads
-        ``Command(update={'todos': [...]})`` where its plan summary should be —
+        Command(update={'todos': [...]}) where its plan summary should be —
         so the tool appears to have worked while the state change was lost."""
         async with executor_graph([plan("draft the email", "send it"), "Planned."]) as graph:
             run = await run_graph(graph, "email my landlord")
@@ -179,7 +179,7 @@ class TestTodoState:
         )
 
     async def test_a_status_update_sees_the_plan_that_was_made(self):
-        """``update_tasks`` reads the current plan out of the `todos` channel via
+        """update_tasks reads the current plan out of the todos channel via
         InjectedState. If planning never wrote the channel, every update matches
         nothing and the checklist freezes mid-run while the agent narrates
         progress.
@@ -273,8 +273,8 @@ class TestTodoContextHook:
 
 class TestTermination:
     async def test_finish_task_ends_the_run_with_its_own_result(self):
-        """``finish_task`` is how a delegated run hands its answer back: the
-        tool's ``result`` becomes the message the parent reads, not the model's
+        """finish_task is how a delegated run hands its answer back: the
+        tool's result becomes the message the parent reads, not the model's
         trailing prose."""
         async with executor_graph(
             [call("finish_task", {"result": "Booked for Tuesday."}, call_id="f1"), "unreachable"]
@@ -317,7 +317,7 @@ class TestTermination:
         assert run.nodes() == [AGENT_NODE, NUDGE_NODE, AGENT_NODE]
 
     async def test_finish_task_without_a_result_still_terminates(self):
-        """Models omit optional args. A missing ``result`` must yield a usable
+        """Models omit optional args. A missing result must yield a usable
         completion message, not an empty one the parent reports as the answer."""
         async with executor_graph([call("finish_task", {}, call_id="f1")]) as graph:
             run = await run_graph(graph, "wrap up")
@@ -353,8 +353,8 @@ class TestRecursionWrapup:
 
 
 class TestTheCompletionGuardIsPerDelegation:
-    """The executor keeps ONE thread per conversation (``executor_{thread_id}``,
-    ``subagent_runner.prepare_executor_execution``), so every delegation after
+    """The executor keeps ONE thread per conversation (executor_{thread_id},
+    subagent_runner.prepare_executor_execution), so every delegation after
     the first replays a thread that already holds the previous one's messages.
     A guard that measures the whole thread instead of the current delegation
     spends itself on delegation one and is never armed again — which is the
@@ -396,7 +396,7 @@ class TestTheCompletionGuardIsPerDelegation:
 class TestThreadContinuity:
     async def test_a_second_run_on_the_same_thread_sees_the_first(self):
         """The executor thread is derived from the conversation
-        (``executor_{thread_id}``) so consecutive delegations share context.
+        (executor_{thread_id}) so consecutive delegations share context.
         Losing that makes the executor re-ask for everything it was already told.
         """
         # Two entries per run: the answer, then the retry after the completion

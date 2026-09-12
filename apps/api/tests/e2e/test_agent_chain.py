@@ -3,27 +3,27 @@
 Every tier already has a suite of its own. What none of them can see is what
 only composition breaks, and that is the whole subject of this file:
 
-* **One stream.** ``call_executor`` returns "Task accepted" in milliseconds and
+* **One stream.** call_executor returns "Task accepted" in milliseconds and
   spawns a *detached* task. That task publishes straight to Redis on the
-  ``stream_id`` the comms turn opened (``background/redis_writer.py``), and so
+  stream_id the comms turn opened (background/redis_writer.py), and so
   does every subagent it hands off to. A single subscription must therefore see
   all three tiers. Nothing before this file subscribed.
 * **Renderable order.** The user watches one timeline. A tier's card must
   appear before its own result, and a subagent's work must sit between its
-  ``subagent_start`` and ``subagent_end``.
+  subagent_start and subagent_end.
 * **Routing survives two hops.** A subagent's tool call is emitted by the
   subagent driver, re-emitted through the executor's custom stream, then
-  published. ``subagent_id`` has to survive both.
-* **The join survives too.** ``tool_call_id`` is the only thing tying a result
+  published. subagent_id has to survive both.
+* **The join survives too.** tool_call_id is the only thing tying a result
   to its card at any tier.
 * **Persistence.** The comms turn is saved once, and the executor's cards are
   pushed onto that already-saved message afterwards — the executor is still
   running when the save happens.
 
 Everything between the comms model and Redis is production code: the real
-``run_chat_stream_background``, the real ``call_executor``, the real background
-runner, the real ``handoff``, the real subagent factory, the real tools. The
-doubles are listed on :func:`run_chain`, and each one is an external service,
+run_chat_stream_background, the real call_executor, the real background
+runner, the real handoff, the real subagent factory, the real tools. The
+doubles are listed on :func:run_chain, and each one is an external service,
 never a step in the chain.
 """
 
@@ -79,7 +79,7 @@ FOLLOW_UP_NODE = "app.agents.core.nodes.follow_up_actions_node"
 
 @pytest.fixture(autouse=True)
 def _registry(real_tool_registry: Any) -> None:
-    """Real tool categories — every ``tool_data`` frame resolves through them."""
+    """Real tool categories — every tool_data frame resolves through them."""
 
 
 @pytest.fixture(autouse=True)
@@ -87,7 +87,7 @@ async def fake_redis() -> Any:
     """Point the module singleton at an in-process Redis with real Streams.
 
     A fresh instance per test is the outer half of the isolation rule; the inner
-    half (deleting ``executor:busy:{conversation}``) is in :func:`run_chain`,
+    half (deleting executor:busy:{conversation}) is in :func:run_chain,
     because a leaked busy lock does not error — it silently queues the next
     executor onto a *different* stream id, and the test then asserts an empty
     stream and passes for the wrong reason.
@@ -104,16 +104,16 @@ async def fake_redis() -> Any:
 class StreamingScriptedModel(RecordingFakeModel):
     """A scripted model that streams, because the real one does.
 
-    The agent node calls ``ainvoke``, and LangChain streams under it whenever a
-    streaming callback handler is attached — LangGraph's ``messages`` mode
-    installs exactly such a handler, so a provider like ``ChatOpenRouter``
-    delivers ``AIMessageChunk``s even on an ``ainvoke``.
+    The agent node calls ainvoke, and LangChain streams under it whenever a
+    streaming callback handler is attached — LangGraph's messages mode
+    installs exactly such a handler, so a provider like ChatOpenRouter
+    delivers AIMessageChunks even on an ainvoke.
 
-    ``RecordingFakeModel`` implements only ``_agenerate``, so LangGraph falls
-    back to emitting one whole ``AIMessage`` instead. That matters *only* in
-    composition: ``execute_graph_streaming`` (comms) accepts both shapes, but
-    ``_process_messages_payload`` — the driver the executor and every subagent
-    run through — accepts ``AIMessageChunk`` alone. With a non-streaming double
+    RecordingFakeModel implements only _agenerate, so LangGraph falls
+    back to emitting one whole AIMessage instead. That matters *only* in
+    composition: execute_graph_streaming (comms) accepts both shapes, but
+    _process_messages_payload — the driver the executor and every subagent
+    run through — accepts AIMessageChunk alone. With a non-streaming double
     every executor and subagent answer collapses to the "Task completed"
     fallback, which would make an assertion on a subagent's returned text an
     assertion about the double rather than about GAIA.
@@ -180,7 +180,7 @@ class ChainRun:
 
 
 def _tasks_named(*names: str) -> list[asyncio.Task[object]]:
-    """Live background tasks carrying any of ``names``.
+    """Live background tasks carrying any of names.
 
     Filtering by name rather than draining the whole keep-alive set: that set
     also holds work which outlives a single turn, so awaiting all of it would
@@ -193,12 +193,12 @@ def _tasks_named(*names: str) -> list[asyncio.Task[object]]:
 async def _drain_publishes() -> None:
     """Wait out the fire-and-forget XADDs the background writer scheduled.
 
-    ``make_redis_stream_writer`` is a *sync* callable — it schedules each publish
-    through ``spawn_background_task`` and returns. A live subscriber sees those
+    make_redis_stream_writer is a *sync* callable — it schedules each publish
+    through spawn_background_task and returns. A live subscriber sees those
     frames whenever they land, but a test that reads the log after the turn must
     wait for them, or it reads a truncated stream and the assertion is about
     timing rather than behaviour. Waits on exactly the publish
-    tasks, by name — see :func:`_tasks_named`.
+    tasks, by name — see :func:_tasks_named.
     """
     while pending := _tasks_named(STREAM_PUBLISH_TASK_NAME):
         await asyncio.gather(*pending, return_exceptions=True)
@@ -214,26 +214,26 @@ async def run_chain(
 ) -> ChainRun:
     """Drive one full turn through the real orchestrator and read the stream back.
 
-    ``comms`` / ``executor`` / ``subagent`` are scripts in the
-    :func:`~tests.e2e._harness.graph_run.scripted_model` shape — one entry per
+    comms / executor / subagent are scripts in the
+    :func:~tests.e2e._harness.graph_run.scripted_model shape — one entry per
     model call at that tier.
 
     The doubles, and why each one is not part of the chain:
 
-    * ``get_tools_store`` / ``get_checkpointer_manager`` — ChromaDB and Postgres.
-      Binding by ``exact_tool_names`` never searches the store, so the retrieval
+    * get_tools_store / get_checkpointer_manager — ChromaDB and Postgres.
+      Binding by exact_tool_names never searches the store, so the retrieval
       hop stays real and embedding-free.
-    * ``save_conversation_async`` / ``append_message_tool_data`` — Mongo. Both
+    * save_conversation_async / append_message_tool_data — Mongo. Both
       are recorded, and both are assertion targets.
-    * ``deliver_result`` — the executor's *separate* answer message: a second LLM
+    * deliver_result — the executor's *separate* answer message: a second LLM
       narration, a Mongo write and a WebSocket push. It is downstream of the
       stream, not on it. Recorded so a test can still see what was delivered.
-    * ``FileService.list_conversation_files`` and the parked/background-subagent
+    * FileService.list_conversation_files and the parked/background-subagent
       lookups — Mongo reads on the executor's prep and finalize paths.
     * the memory engine and the follow-up generator — the comms graph's two
-      external end-graph edges, doubled exactly as ``graph_run.comms_graph``
+      external end-graph edges, doubled exactly as graph_run.comms_graph
       doubles them.
-    * ``fetch_webpage`` — the HTTP GET inside ``fetch_webpages``. The tool's own
+    * fetch_webpage — the HTTP GET inside fetch_webpages. The tool's own
       body still runs.
     """
     conversation_id = str(uuid4())
@@ -403,7 +403,7 @@ def executor_flowchart_script() -> list[Any]:
 
 class TestCommsToExecutor:
     async def test_the_executors_tool_call_lands_on_the_comms_stream(self) -> None:
-        """Scenario 2, end to end. Until now ``prepare_executor_execution`` was
+        """Scenario 2, end to end. Until now prepare_executor_execution was
         stubbed at the comms tier, so the delegated tool never ran and never had
         to reach the user's stream."""
         run = await run_chain(
@@ -427,7 +427,7 @@ class TestCommsToExecutor:
         survive the detached task and the Redis round trip.
 
         Asserted on the tool's actual content, not on "a result arrived": a
-        rejected tool, an unbound tool and a missing ``user_id`` all produce a
+        rejected tool, an unbound tool and a missing user_id all produce a
         perfectly joinable *error string*.
         """
         run = await run_chain(
@@ -447,16 +447,16 @@ class TestCommsToExecutor:
         assert "direction: LR" in result
 
     async def test_no_result_is_streamed_twice(self) -> None:
-        """One ``tool_output`` per call, at the executor tier as well.
+        """One tool_output per call, at the executor tier as well.
 
-        Two drivers can see the same ``ToolMessage``: the executor's own
-        (``subagent_runner``) and the comms driver (``execute_graph_streaming``),
+        Two drivers can see the same ToolMessage: the executor's own
+        (subagent_runner) and the comms driver (execute_graph_streaming),
         whose stream is still open while the detached executor task runs. Both
         emit, and the client renders the card twice.
 
         Every other assertion in this file is blind to it, which is why this one
-        exists: ``Transcript.result_for()`` returns the FIRST output matching a
-        ``tool_call_id`` and discards the rest, so a duplicate is invisible to
+        exists: Transcript.result_for() returns the FIRST output matching a
+        tool_call_id and discards the rest, so a duplicate is invisible to
         any content check. Compare the whole list, not a lookup.
 
         Which result doubles is a race — it is whichever lands while the comms
@@ -512,7 +512,7 @@ class TestCommsToExecutor:
         assert calls["create_flowchart"] < outputs["tc_flow"]
 
     async def test_comms_answers_immediately_instead_of_waiting_for_the_executor(self) -> None:
-        """``call_executor`` is fire-and-forget by design: its tool result is an
+        """call_executor is fire-and-forget by design: its tool result is an
         acknowledgement, and the comms reply streams while the work is still
         running. If it ever became blocking the user would stare at nothing."""
         run = await run_chain(
@@ -529,7 +529,7 @@ class TestCommsToExecutor:
 
     async def test_only_the_comms_tier_speaks_in_the_response_frames(self) -> None:
         """Both tiers stream through the same graph driver; only comms may emit
-        ``response`` deltas. Without that gate the executor's own prose is
+        response deltas. Without that gate the executor's own prose is
         interleaved into the assistant bubble the user is reading."""
         run = await run_chain(
             "draw me a flowchart",
@@ -676,7 +676,7 @@ class TestExecutorToSubagent:
         ] == [row_id]
 
     async def test_the_subagents_work_is_bracketed_by_its_lifecycle_frames(self) -> None:
-        """``subagent_start`` opens the row and ``subagent_end`` closes it. A
+        """subagent_start opens the row and subagent_end closes it. A
         tool card outside that window has no row to render into."""
         run = await run_chain(
             "explain the executor",
@@ -741,21 +741,21 @@ class TestExecutorToSubagent:
 
 class TestIntegrationToolThroughTheChain:
     """The executor cannot reach an integration tool itself — its tool space is
-    ``general`` and provider namespaces are filtered out of retrieval — so the
-    only route is through a subagent. ``gaia_knowledge_guide`` auto-binds
-    ``fetch_webpages`` unconditionally, which makes it the one integration tool
+    general and provider namespaces are filtered out of retrieval — so the
+    only route is through a subagent. gaia_knowledge_guide auto-binds
+    fetch_webpages unconditionally, which makes it the one integration tool
     reachable in-process: the tool's body runs for real and only its HTTP GET is
     doubled.
 
     (The Composio-hosted toolkits — gmail, github, slack, todoist — are covered
-    at their own tier by ``test_integration_toolkits.py``, which drives the real
+    at their own tier by test_integration_toolkits.py, which drives the real
     tool bodies through the real proxy/auth seams. Composing one of them here
     would mean building its subagent graph from a fabricated tool list, so the
     "integration tool" in the chain would not be the real one.)
     """
 
     async def test_the_tool_is_bound_without_a_retrieval_hop(self) -> None:
-        """``auto_bind_tools`` is a promise the subagent's first model call can
+        """auto_bind_tools is a promise the subagent's first model call can
         already use it. If the binding silently resolved to nothing, the call
         would come back as a bind rejection instead of a result."""
         run = await run_chain(
@@ -775,7 +775,7 @@ class TestIntegrationToolThroughTheChain:
         assert "The executor is GAIA's worker tier." in result
 
     async def test_the_tools_progress_events_reach_the_users_stream(self) -> None:
-        """``fetch_webpages`` narrates itself over the custom stream. Those
+        """fetch_webpages narrates itself over the custom stream. Those
         events cross the subagent driver, the executor driver and Redis before
         the user sees them — three hops that only exist in composition."""
         run = await run_chain(
@@ -793,16 +793,16 @@ class TestIntegrationToolThroughTheChain:
     async def test_the_native_card_payload_reaches_the_wire_unwrapped(self) -> None:
         """Pins current behaviour, which is a defect the chain makes visible.
 
-        ``fetch_webpages`` pushes ``{"webpage_data": ..., "fetched_urls": [...]}``
-        onto the custom stream as a native card. ``normalize_custom_event`` only
-        wraps fields listed in ``tool_fields`` — and ``webpage_data`` is not one
-        — so the payload is published verbatim, with no ``tool_data`` envelope
-        and therefore no discriminator. ``schema.ts`` has no ``webpage_data``
+        fetch_webpages pushes {"webpage_data": ..., "fetched_urls": [...]}
+        onto the custom stream as a native card. normalize_custom_event only
+        wraps fields listed in tool_fields — and webpage_data is not one
+        — so the payload is published verbatim, with no tool_data envelope
+        and therefore no discriminator. schema.ts has no webpage_data
         either, so the client absorbs it as an unknown frame and renders
         nothing: the page content the user is waiting on reaches them only
         through the tool result and the subagent's prose.
 
-        This is the same class as the ``image_data`` gap already recorded in the
+        This is the same class as the image_data gap already recorded in the
         plan (§6b, absent coverage #3) — an emitted frame key that exists on
         neither side's contract. Whether to register the field or stop emitting
         it is a product decision, so this asserts what ships rather than what

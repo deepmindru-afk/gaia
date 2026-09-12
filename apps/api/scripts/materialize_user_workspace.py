@@ -14,8 +14,8 @@ Layout written:
     /workspace/users/<uid>/skills/<slug>/skill.md          (executor target)
 
 Connected integrations are normally read from Mongo
-(``user_integrations`` collection where status == "connected"); pass
-``--connected gmail,googlecalendar`` to override for testing.
+(user_integrations collection where status == "connected"); pass
+--connected gmail,googlecalendar to override for testing.
 
 Examples:
     # Materialize using Mongo as source of truth (default)

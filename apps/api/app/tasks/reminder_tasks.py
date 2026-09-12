@@ -1,6 +1,4 @@
-"""
-Reminder task handlers for static reminders only.
-"""
+"""Reminder task handlers for static reminders only."""
 
 from typing import cast
 

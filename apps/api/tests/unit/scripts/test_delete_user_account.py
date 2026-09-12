@@ -28,7 +28,7 @@ RAW_EMAIL = "User@Example.COM "
 
 
 class FakeCollection:
-    """A chroma collection whose `.get()` records the filter it was called with."""
+    """A chroma collection whose .get() records the filter it was called with."""
 
     def __init__(self, name: str, ids: list[str]) -> None:
         self.name = name
@@ -81,7 +81,7 @@ class TestChromaInventory:
         assert memories.calls[0]["where"] == {"user_id": UID}
 
     def test_a_collection_with_no_ids_key_counts_as_empty(self) -> None:
-        """chroma omits `ids` rather than returning an empty list on some backends."""
+        """Chroma omits ids rather than returning an empty list on some backends."""
 
         class NoIds(FakeCollection):
             def get(self, **kwargs: Any) -> dict[str, Any]:
@@ -1130,7 +1130,7 @@ class TestBuildFootprint:
         self, capsys: Any
     ) -> None:
         """The footprint is read by a human before they approve a deletion —
-        `postgres: {}` reads as a bug, `postgres: none` reads as "nothing there"."""
+        postgres: {} reads as a bug, postgres: none reads as "nothing there"."""
         await _run_build_footprint(MagicMock(), {}, pg_counts={})
 
         assert "postgres: none" in capsys.readouterr().out.splitlines()

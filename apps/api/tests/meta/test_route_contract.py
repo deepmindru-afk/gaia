@@ -1,12 +1,12 @@
 """The API contract the generated TypeScript types are built from.
 
-Three invariants keep ``apps/api/openapi.json`` (and everything generated from
+Three invariants keep apps/api/openapi.json (and everything generated from
 it) trustworthy, and each of them silently rots without a test: a route that
-declares no response model documents its body as ``{}``; a body typed ``Any``
-or a bare ``dict`` generates ``unknown`` and every consumer casts; a
+declares no response model documents its body as {}; a body typed Any
+or a bare dict generates unknown and every consumer casts; a
 path-derived operation id renames a client type whenever a route moves; and a
-route-level ``responses=`` (or a non-JSON response class) that shadows the
-router's ``ERROR_RESPONSES`` documents an error with no body at all. This is
+route-level responses= (or a non-JSON response class) that shadows the
+router's ERROR_RESPONSES documents an error with no body at all. This is
 the ratchet — a new route that breaks any of them fails here, not in a
 frontend type-check three PRs later.
 """
@@ -81,7 +81,7 @@ def _is_typed_body(model: Any) -> bool:
 def _declares_its_response_class(route: APIRoute) -> bool:
     """A stream/file/redirect/HTML route names its Response class on the decorator.
 
-    Without ``response_class=`` FastAPI documents the body as an empty JSON
+    Without response_class= FastAPI documents the body as an empty JSON
     object; a JSON response class is not an answer either — that body needs a
     model.
     """
@@ -91,7 +91,7 @@ def _declares_its_response_class(route: APIRoute) -> bool:
 
 
 def test_every_route_declares_its_response_body(routes: list[RouteContext]) -> None:
-    """A route without a response model documents its body as ``{}``."""
+    """A route without a response model documents its body as {}."""
     undeclared = [
         _label(ctx)
         for ctx in routes
@@ -109,7 +109,7 @@ def test_every_route_declares_its_response_body(routes: list[RouteContext]) -> N
 
 
 def test_no_route_body_is_any_or_a_bare_dict(routes: list[RouteContext]) -> None:
-    """``Any`` and bare ``dict`` generate ``unknown``; every consumer then casts."""
+    """Any and bare dict generate unknown; every consumer then casts."""
     loose = [
         f"{_label(ctx)} -> {ctx.original_route.response_model}"
         for ctx in routes
@@ -167,8 +167,8 @@ def _declared_body_refs(route: APIRoute) -> set[str]:
 def test_every_error_response_is_the_json_envelope(
     app: FastAPI, routes: list[RouteContext]
 ) -> None:
-    """A route-level ``responses=`` entry documents its status with no body unless it
-    names the envelope, and a ``text/html`` response class re-types the envelope as HTML."""
+    """A route-level responses= entry documents its status with no body unless it
+    names the envelope, and a text/html response class re-types the envelope as HTML."""
     schema = app.openapi()
     assert _ENVELOPE_REF[len(_SCHEMA_REF_PREFIX) :] in schema["components"]["schemas"]
     shadowed = []

@@ -1,4 +1,4 @@
-"""The ``<playbook_check>`` gate and where the block is delivered.
+"""The <playbook_check> gate and where the block is delivered.
 
 It exists to ask one question once: is this run worth freezing? So it must be
 absent whenever the answer is already known (a playbook that replayed cleanly,
@@ -6,9 +6,9 @@ or one not yet tried) and present when it is not (no playbook, or one whose
 last replay failed).
 
 Where it is delivered is load-bearing too, and is pinned here: it rides in the
-executor's brief, because ``write_playbook`` is an executor tool and comms —
+executor's brief, because write_playbook is an executor tool and comms —
 which narrates the finished result — binds only call_executor/cancel_executor/
-memory and is built with ``disable_retrieve_tools=True``. Delivered at
+memory and is built with disable_retrieve_tools=True. Delivered at
 narration time it would ask the narrator for a tool it cannot reach.
 """
 
@@ -196,9 +196,9 @@ async def test_a_swallowed_lookup_failure_is_still_reported():
 def _recording_lookup(calls: list, result):
     """A repository read with the REAL two-positional signature.
 
-    ``AsyncMock`` accepts any arguments, so a call that loses ``user_id`` or
+    AsyncMock accepts any arguments, so a call that loses user_id or
     passes it in the wrong slot reads exactly like a correct one. Spelling the
-    signature out makes a dropped argument a ``TypeError`` and records the rest.
+    signature out makes a dropped argument a TypeError and records the rest.
     """
 
     async def lookup(workflow_id: str, user_id: str):
@@ -212,7 +212,7 @@ def _recording_lookup(calls: list, result):
 class TestTheLookupsAreScopedToTheOwner:
     """Both reads are owned reads: the workflow id and the user id, in that
     order. Swapping or dropping one turns the check into a cross-tenant read (or
-    a swallowed ``TypeError``, which reads as "this workflow never qualified")."""
+    a swallowed TypeError, which reads as "this workflow never qualified")."""
 
     async def test_the_playbook_is_read_for_this_workflow_and_this_user(self):
         calls: list = []
@@ -319,7 +319,7 @@ FALLBACK_NOTE = (
 class TestSameFireFallbackBrief:
     """A replay that stops partway is finished by the agent in the same fire.
 
-    ``call_executor`` then saw FAILED and injected the heal brief ("do the work
+    call_executor then saw FAILED and injected the heal brief ("do the work
     properly yourself") while the "these steps ALREADY RAN" note only reached
     comms. The executor read one without the other and repeated side effects.
     """
@@ -371,7 +371,7 @@ class TestHealBriefRendering:
 
     Every slot in it is model-facing text: the verdict, the recorded reason and
     the already-ran block. A substring check passes on a brief that renders
-    ``None`` into a slot or leaves a filler token behind, and the executor is
+    None into a slot or leaves a filler token behind, and the executor is
     the only one who would notice.
     """
 
@@ -445,7 +445,7 @@ def test_the_check_asks_whether_every_frozen_call_actually_returned_the_data():
 def test_the_narration_is_told_the_result_is_final_text_written_once():
     """Seen on a live replay: the narration wrote a draft, then "hmm, the brief
     is strict about exactly 3 bullets. Let me redo:", then the rewrite — all
-    inside the ``result`` field, which is delivered to the user verbatim. The
+    inside the result field, which is delivered to the user verbatim. The
     structured output cannot separate a draft from the answer, so the prompt
     has to forbid the draft. If this fails, that self-talk ships again."""
     rendered = PLAYBOOK_NARRATION_PROMPT.format(
@@ -530,7 +530,7 @@ def test_the_tools_own_schema_carries_the_step_shape():
     """The binding, not the prompt, is what teaches the model the shape.
 
     Regression: the playbook arrived as one opaque YAML string, so the bound
-    schema said only "argument 2 is a string" and a live run invented a `goal`
+    schema said only "argument 2 is a string" and a live run invented a goal
     field three times running. The structure has to be in the schema, and a key
     that is not in it has to be refused.
     """
@@ -561,7 +561,7 @@ def test_the_tools_own_schema_carries_the_step_shape():
 
 
 class TestBriefsCarryTheDecisionTag:
-    """The executor graph recognises a briefed run by ``PLAYBOOK_CHECK_TAG`` on
+    """The executor graph recognises a briefed run by PLAYBOOK_CHECK_TAG on
     the task turn. A brief that stops opening with it silently switches the
     finish-gate off for every run it briefs."""
 
@@ -848,7 +848,7 @@ def test_the_check_brief_names_every_decline_kind_the_tool_accepts():
 
 def test_a_write_tools_own_record_is_not_an_empty_result() -> None:
     """The prod bug: create_todo answers with the todo it just made, whose
-    ``labels`` is [] when the caller passed none. largest_list_len looks past
+    labels is [] when the caller passed none. largest_list_len looks past
     the top level, so that read as "returned no items" and marked the playbook
     suspect. Four of the eight suspects in production were this, and each cost a
     full agentic heal run.

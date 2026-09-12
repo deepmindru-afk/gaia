@@ -65,7 +65,7 @@ class _Handler:
 class TestTheDecisionComesFromTheRecord:
     """The record is the decision. The resume payload is a wake-up and nothing more.
 
-    The gate used to read ``Command(resume=...)`` and had to defend against every
+    The gate used to read Command(resume=...) and had to defend against every
     malformed shape one could arrive in; it no longer looks at it at all. What matters
     now is that a stored status maps to the right fate, including the two that do not
     map to themselves.

@@ -27,7 +27,7 @@ NODE = "app.agents.core.nodes.memory_node"
 
 
 def _fake_redis(mark: str | None) -> SimpleNamespace:
-    """A stand-in for ``redis_cache`` holding one high-water mark."""
+    """A stand-in for redis_cache holding one high-water mark."""
     client = SimpleNamespace(
         get=AsyncMock(return_value=mark),
         set=AsyncMock(return_value=True),
@@ -136,7 +136,7 @@ class TestFormatMessagesForUserMemory:
     @pytest.mark.regression
     def test_the_time_slot_message_never_reaches_the_extractor(self):
         """The re-stamped current-time HumanMessage is graph plumbing, not the
-        user speaking: rendered as `user: Current time...` it pollutes the
+        user speaking: rendered as user: Current time... it pollutes the
         transcript every turn (the extractor already gets the date in its
         volatile context)."""
         msgs = [
@@ -257,7 +257,7 @@ class TestMemoryNode:
 
     @pytest.mark.asyncio
     async def test_background_task_exception_is_swallowed(self):
-        """retain exceptions must be caught inside _store_user_memory_background."""
+        """Retain exceptions must be caught inside _store_user_memory_background."""
         # redis_cache.client is a property that ALWAYS builds a live client, so
         # without this patch the high-water-mark read dials a real Redis — and
         # on a host without one the connection error is swallowed by the same
@@ -460,7 +460,7 @@ class TestTheFencedTranscript:
 
     def test_the_fence_opens_the_transcript_and_splits_it_at_the_delta(self) -> None:
         """Pinned verbatim: both marker rows, their exact position, and the
-        `transcript` role that separates them from anything a human or a tool
+        transcript role that separates them from anything a human or a tool
         said. One row out of place and the extractor reads already-stored facts
         as new disclosures."""
         assert _format_messages_for_user_memory(self._thread(), context_count=2) == [
@@ -509,7 +509,7 @@ class TestTheFencedTranscript:
 
 @pytest.mark.unit
 class TestTheHighWaterMarkRead:
-    """`_messages_to_ingest` decides what the extraction is billed for. Every
+    """_messages_to_ingest decides what the extraction is billed for. Every
     boundary here is an off-by-one that either re-pays for the whole thread or
     drops the one message the user actually disclosed something in."""
 
@@ -574,7 +574,7 @@ class TestTheHighWaterMarkRead:
 
 @pytest.mark.unit
 class TestTheHighWaterMarkWrite:
-    """`_mark_ingested` is what stops the next turn re-extracting this one. A
+    """_mark_ingested is what stops the next turn re-extracting this one. A
     wrong key writes a mark nothing reads; a missing TTL leaks it forever."""
 
     @staticmethod
@@ -975,7 +975,7 @@ class TestWhatTheNodeSpawns:
         return spawn, MagicMock()
 
     async def test_the_task_is_named_so_it_is_identifiable_in_flight(self) -> None:
-        """`spawn_background_task` strong-refs by name and the name is what the
+        """spawn_background_task strong-refs by name and the name is what the
         spawn log line reports; an unnamed task is unattributable in a trace."""
         spawn, store = self._spawn_capture()
         state = {"messages": [HumanMessage(content="my anniversary is October 19")]}
@@ -1007,7 +1007,7 @@ class TestWhatTheNodeSpawns:
         assert background.call_args.kwargs["subagent_id"] == "slack"
 
     async def test_the_user_name_reaches_the_task(self) -> None:
-        """retain uses it to attribute first-person facts to a named person."""
+        """Retain uses it to attribute first-person facts to a named person."""
         spawn, store = self._spawn_capture()
         state = {"messages": [HumanMessage(content="my anniversary is October 19")]}
         config = {"configurable": {"user_id": "u1", "thread_id": "t1", "user_name": "Sam"}}

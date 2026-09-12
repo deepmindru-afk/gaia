@@ -132,7 +132,7 @@ class TestCaptureEvent:
 
 
 class TestCaptureEventDedupe:
-    """``dedupe_key`` is the only thing standing between a retryable worker
+    """dedupe_key is the only thing standing between a retryable worker
     task and a double-counted milestone: it becomes a stable event uuid, and
     PostHog stores the same uuid once. Nothing exercised it, so every way of
     getting that uuid wrong was invisible.
@@ -230,7 +230,7 @@ class TestCaptureContextEvent:
         assert "timestamp" in props
 
     def test_the_timestamp_is_offset_aware_utc(self, mock_posthog):
-        """`datetime.now()` without UTC yields naive local time, which
+        """datetime.now() without UTC yields naive local time, which
         isoformats without an offset — PostHog then reads it as whatever the
         runner's timezone happens to be."""
         capture_context_event("test:event")

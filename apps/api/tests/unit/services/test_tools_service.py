@@ -102,7 +102,7 @@ class TestWorkspaceScoping:
 
     async def test_no_user_means_no_mcp_tools(self):
         """Anonymous call: get_user_integration_records is never called;
-        `added` stays empty so all MCP tools are filtered out."""
+        added stays empty so all MCP tools are filtered out."""
         global_mcp = {"my_mcp": {"name": "X", "icon_url": None, "tools": [{"name": "t"}]}}
         mock_registry = AsyncMock()
         mock_registry.get_all_category_objects = MagicMock(return_value={})
@@ -382,7 +382,7 @@ class TestBuildToolsResponse:
         assert "unique_tool" in names
 
     async def test_added_but_not_connected_is_locked(self):
-        """Tools for integrations in `added` but not `connected` are marked locked=True."""
+        """Tools for integrations in added but not connected are marked locked=True."""
         global_mcp = {
             "my_mcp": {
                 "name": "My MCP",

@@ -1,10 +1,10 @@
 """The budget wall's verdict: which stop text binds, and what spend it was read at.
 
-``get_budget_stop_reason`` runs before EVERY model call, so it is both the wall
-and the only cheap read of the user's daily spend. It returns a ``BudgetCheck``
+get_budget_stop_reason runs before EVERY model call, so it is both the wall
+and the only cheap read of the user's daily spend. It returns a BudgetCheck
 triple — stop text, the spend actually read, and the resolved plan — precisely so
 the middleware can decide on the softer wrap-up nudge without a second Redis
-round trip. A ``None`` spend where a real read happened silently disables that
+round trip. A None spend where a real read happened silently disables that
 nudge; a stop text on the wrong plan shows a free-plan upsell to a paying user.
 
 Redis is real (fakeredis) and the windows are seeded through the production
@@ -51,7 +51,7 @@ async def fake_redis() -> AsyncIterator[fakeredis.aioredis.FakeRedis]:
 @pytest.fixture(autouse=True)
 def no_rollup() -> AsyncIterator[None]:
     """Seeding spend goes through the real Redis writer; its Mongo sibling is
-    covered in ``test_usage_activity_rollup.py`` and needs no database here."""
+    covered in test_usage_activity_rollup.py and needs no database here."""
     with patch("app.services.cost_budget.record_cost", AsyncMock()):
         yield
 
@@ -160,7 +160,7 @@ class TestRequestCeiling:
         """The production bug this pins: an ordinary retrieve→bind→act turn made
         ~10 model calls re-sending a ~30k prompt that is mostly cached prefix —
         316k RAW tokens, 259k of them cache reads, and the ceiling stopped the
-        turn right after `create_upgrade_link` returned, so the minted checkout
+        turn right after create_upgrade_link returned, so the minted checkout
         link never reached the user. The wall bounds fresh work, not cache
         economics: raw over 300k with billable well under must not bind."""
         for _ in range(10):
@@ -312,7 +312,7 @@ class TestWrapupThreshold:
 
 @pytest.mark.unit
 class TestResolvedPlanSurvivesABoundWall:
-    """``plan_type`` is returned so the caller can test the wrap-up threshold
+    """plan_type is returned so the caller can test the wrap-up threshold
     without a second lookup — and the caller reads it on exactly the runs that
     stopped. The daily-wall tests above assert it; the ceiling path and the
     no-root_request_id path return it too and nothing checked either, so the
@@ -336,7 +336,7 @@ class TestResolvedPlanSurvivesABoundWall:
         assert check.plan_type == PlanType.PRO
 
     async def test_a_daily_wall_bound_without_a_request_id_still_reports_the_plan(self) -> None:
-        """No ``root_request_id`` skips the token read entirely — a separate
+        """No root_request_id skips the token read entirely — a separate
         return statement from the both-reads path, with its own copy of the
         three fields."""
         await _spend(get_daily_cost_budget_usd(PlanType.FREE))

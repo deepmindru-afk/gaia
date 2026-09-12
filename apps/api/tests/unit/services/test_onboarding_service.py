@@ -271,7 +271,7 @@ class TestCompleteOnboarding:
         sample_user: UserDocument,
     ) -> None:
         """The web routes the freshly onboarded user into this conversation, so
-        an id that never reaches `onboarding.getting_started_conversation_id`
+        an id that never reaches onboarding.getting_started_conversation_id
         drops them on an empty composer instead."""
         mock_repo.complete_onboarding.return_value = sample_user
         mock_repo.set_first_conversation_id = AsyncMock(
@@ -1016,7 +1016,7 @@ class TestEnqueueGmailPersonalization:
         self, arq_pool: ArqRedis, store: dict[str, Any], sample_user_id: str
     ) -> None:
         """Users who finished the pre-relocation onboarding already have their
-        card; they carry `house` and no marker, and must not be re-run."""
+        card; they carry house and no marker, and must not be re-run."""
         store["house"] = "explorer"
 
         job_id = await enqueue_gmail_personalization(sample_user_id)
@@ -1036,7 +1036,7 @@ class TestEnqueueGmailPersonalization:
 
 
 class TestIsIntelligenceJobLive:
-    """`is_intelligence_job_live` is what the stuck-user sweep asks before
+    """is_intelligence_job_live is what the stuck-user sweep asks before
     re-enqueueing, so a wrong answer either starves a user of their
     personalization or runs two pipelines onto one WebSocket. Every case below
     is driven by real arq job state on the pool, never by mocking the function."""

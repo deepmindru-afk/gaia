@@ -1,13 +1,13 @@
 """E2E test: GAIA todo tools (plan_tasks, update_tasks) wired into a real graph.
 
 WHAT THIS TESTS (REAL GAIA CODE):
-- ``create_todo_tools`` from ``app.agents.tools.todo_tools`` — the real
+- create_todo_tools from app.agents.tools.todo_tools — the real
   plan_tasks and update_tasks tools used by the executor agent.
-- The ``todos`` channel in GAIA's ``State`` (via InjectedState) is updated
+- The todos channel in GAIA's State (via InjectedState) is updated
   correctly when plan_tasks / update_tasks execute.
-- ``filter_messages_node`` and ``manage_system_prompts_node`` run as
+- filter_messages_node and manage_system_prompts_node run as
   pre-model hooks inside the compiled GAIA graph.
-- ``create_agent`` from ``app.override.langgraph_bigtool.create_agent``
+- create_agent from app.override.langgraph_bigtool.create_agent
   compiles the graph.
 
 Mock surfaces:
@@ -16,9 +16,9 @@ Mock surfaces:
 - Checkpointer: MemorySaver (no PostgreSQL)
 - No real database or scheduler calls
 
-DELETE ``app/agents/tools/todo_tools.py`` → these tests FAIL.
-DELETE ``app/override/langgraph_bigtool/create_agent.py`` → these tests FAIL.
-DELETE ``app/agents/core/nodes/filter_messages.py`` → these tests FAIL.
+DELETE app/agents/tools/todo_tools.py → these tests FAIL.
+DELETE app/override/langgraph_bigtool/create_agent.py → these tests FAIL.
+DELETE app/agents/core/nodes/filter_messages.py → these tests FAIL.
 """
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -388,7 +388,7 @@ class TestCreateTodoFlow:
         """A batch containing an invalid entry must apply nothing at all.
 
         Partial application would make the model's retry non-idempotent: the valid
-        `content` addition would land twice once the model fixes the bad task_id and
+        content addition would land twice once the model fixes the bad task_id and
         resends the batch.
         """
         todo_tools = create_todo_tools(source="test")

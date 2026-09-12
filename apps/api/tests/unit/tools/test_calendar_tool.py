@@ -2,11 +2,11 @@
 
 The pure helpers are exercised with no mocking at all; the Composio-registered
 tool bodies are exercised for real with only the true I/O boundaries faked
-(`proxy_request_sync`, the async `calendar_service` / `user_service` functions,
+(proxy_request_sync, the async calendar_service / user_service functions,
 the LangGraph stream writer and config).
 
 Five production bugs were found while writing these tests and fixed at the root
-in `calendar_tool.py` / `calendar_models.py`; the tests that pin them down are
+in calendar_tool.py / calendar_models.py; the tests that pin them down are
 marked with a "BUG:" comment.
 """
 
@@ -83,9 +83,9 @@ def tools() -> dict[str, Any]:
 def _no_captured_server_loop() -> Iterator[None]:
     """Run the tool bodies in a loop-less sync context, like the e2e graph harness.
 
-    With no captured server loop, `_run_sync` runs the (mocked, loop-agnostic)
+    With no captured server loop, _run_sync runs the (mocked, loop-agnostic)
     services on a fresh loop. Clearing the global guards against a captured loop
-    leaking in from another test, which would make `_run_sync` dispatch onto a
+    leaking in from another test, which would make _run_sync dispatch onto a
     closed loop.
     """
     reset_captured_loop()
@@ -398,7 +398,7 @@ class TestListCalendars:
 
 
 class _FrozenDatetime(datetime):
-    """`datetime` with a pinned `now()` — everything else is the real thing."""
+    """datetime with a pinned now() — everything else is the real thing."""
 
     _instant = datetime(2026, 3, 14, 20, 30, tzinfo=UTC)
 

@@ -1,5 +1,5 @@
 """
-PostgreSQL Database Configuration
+PostgreSQL Database Configuration.
 
 This module provides SQLAlchemy setup for PostgreSQL database connection.
 """
@@ -38,12 +38,12 @@ _TIMESTAMPTZ_COLUMNS: tuple[tuple[str, str], ...] = (
 
 
 def _ensure_timestamptz_columns(connection: Connection) -> None:
-    """Promote legacy naive ``timestamp`` columns to ``timestamptz`` in place.
+    """Promote legacy naive timestamp columns to timestamptz in place.
 
-    ``create_all`` never ALTERs existing tables, so columns created before the
+    create_all never ALTERs existing tables, so columns created before the
     timezone contract was made explicit stay naive. Their stored values are UTC
-    wall-clock, so reinterpret them ``AT TIME ZONE 'UTC'`` when converting.
-    Idempotent: columns already ``timestamp with time zone`` (or absent on a
+    wall-clock, so reinterpret them AT TIME ZONE 'UTC' when converting.
+    Idempotent: columns already timestamp with time zone (or absent on a
     fresh DB, where create_all already made them correct) are skipped.
     """
     preparer = connection.dialect.identifier_preparer
@@ -86,7 +86,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 def _ensure_added_columns(connection: Connection) -> None:
     """Add columns declared on a model but missing from an existing table.
 
-    Idempotent — a fresh database already has them from ``create_all``, and a
+    Idempotent — a fresh database already has them from create_all, and a
     re-run finds them present. Existing rows take the column's DEFAULT, which
     is why every NOT NULL entry declares one.
     """
@@ -114,13 +114,13 @@ def _ensure_added_columns(connection: Connection) -> None:
 def _adapt_url_for_asyncpg(postgres_url: str) -> tuple[str, dict[str, Any]]:
     """Translate a libpq-style URL into something asyncpg accepts.
 
-    The same `POSTGRES_URL` is consumed by `psycopg` (langgraph checkpointer)
-    and by `asyncpg` (this SQLAlchemy engine). psycopg accepts `sslmode=...`
+    The same POSTGRES_URL is consumed by psycopg (langgraph checkpointer)
+    and by asyncpg (this SQLAlchemy engine). psycopg accepts sslmode=...
     natively; asyncpg does not — it rejects the kwarg with
-    `connect() got an unexpected keyword argument 'sslmode'`. We strip
-    `sslmode` from the URL and translate it into a `connect_args` ssl value
+    connect() got an unexpected keyword argument 'sslmode'. We strip
+    sslmode from the URL and translate it into a connect_args ssl value
     instead. Managed Postgres providers like Neon/Supabase hand out URLs
-    with `?sslmode=require`, so this is the common path.
+    with ?sslmode=require, so this is the common path.
     """
     parts = urlsplit(postgres_url)
     query = parse_qs(parts.query, keep_blank_values=True)

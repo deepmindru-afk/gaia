@@ -81,7 +81,7 @@ class TestUserIntegrationsRepository:
 
 class TestSetStatusStamps:
     """The expiry stamps are what every reader downstream branches on: the
-    integrations page renders "Disconnected <n> ago" from ``expired_at``, and the
+    integrations page renders "Disconnected <n> ago" from expired_at, and the
     connect prompt tells "expired" from "never connected" by the status alone.
     The service layer's tests run against a fake repo, so this is the only place
     the real document shape is proven."""
@@ -99,7 +99,7 @@ class TestSetStatusStamps:
         assert doc.expired_at is not None
 
     async def test_reconnecting_clears_the_stamps_so_it_does_not_read_as_broken(self, repo):
-        """A live record carrying a stale ``expired_at`` looks dead to anything
+        """A live record carrying a stale expired_at looks dead to anything
         that reads it."""
         await repo.create(_ui("u", "gmail", status="connected"))
         await repo.set_status("u", "gmail", status="expired", expired_reason="revoked")

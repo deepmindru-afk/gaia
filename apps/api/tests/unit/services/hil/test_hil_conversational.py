@@ -10,8 +10,8 @@ ambiguous or broken reply into an action:
   for the buttons or the timeout sweep, it does not ride along on someone else's "yes";
 * an index the model invents must not resolve whatever happens to sit at that position.
 
-The LLM is mocked at ``ainvoke_structured`` (the real boundary); everything between the
-verdict and ``resolve_approval`` is the production code under test.
+The LLM is mocked at ainvoke_structured (the real boundary); everything between the
+verdict and resolve_approval is the production code under test.
 """
 
 from typing import Any
@@ -352,7 +352,7 @@ class TestInventedIndexes:
 
 
 class TestClassifierFailure:
-    """A broken LLM must never resolve as approve — and never as a genuine ``unrelated``
+    """A broken LLM must never resolve as approve — and never as a genuine unrelated
     either. Single and batch both fail toward leaving everything pending: an error is not
     the same signal as the user moving on, so a transient hiccup must not abandon a
     legitimate pending action. The buttons or the timeout sweep still resolve it."""

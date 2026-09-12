@@ -7,7 +7,7 @@ subprotocol fallback). While connected, this pod:
   * heartbeats the socket and refreshes the device's presence key.
 
 Revocation is enforced out-of-band by a single shared per-pod listener
-(``device.revoke_listener``) that closes this socket when the device is revoked.
+(device.revoke_listener) that closes this socket when the device is revoked.
 """
 
 import asyncio

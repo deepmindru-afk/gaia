@@ -1,7 +1,7 @@
 """Global MCP tool metadata: Redis-cached roll-up over the integrations repository.
 
 The repository owns the Mongo access (typed); this service adds the aggregate cache
-(``MCP_TOOLS_CACHE_KEY``) and the dict-shaped views its callers consume. Writes bust
+(MCP_TOOLS_CACHE_KEY) and the dict-shaped views its callers consume. Writes bust
 the roll-up cache so a freshly stored tool set is reflected on the next read.
 """
 

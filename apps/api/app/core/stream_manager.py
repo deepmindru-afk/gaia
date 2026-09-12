@@ -265,10 +265,10 @@ class StreamManager:
         """Keep the resume and cancel keys alive for as long as the turn emits frames.
 
         A frame is the turn's proof of life, so every frame has to extend all
-        three of its keys. Hanging that off ``update_progress`` instead was the
+        three of its keys. Hanging that off update_progress instead was the
         bug: that is a comms-loop call, and once comms hands off to the executor
-        the turn parks in ``await_executor_done`` (30 minutes) while every later
-        frame arrives through ``publish_chunk``. Past STREAM_TTL the event log
+        the turn parks in await_executor_done (30 minutes) while every later
+        frame arrives through publish_chunk. Past STREAM_TTL the event log
         was still being refreshed while progress and the resume index had
         quietly lapsed — so a reloading client was told no turn was running (and
         marked the user's own message failed), and Stop returned "Stream not
@@ -294,10 +294,10 @@ class StreamManager:
 
     @classmethod
     async def _control_signal_frame(cls, stream_id: str, data: str) -> tuple[bool, str | None]:
-        """Map a stream entry to ``(is_terminal, frame_to_yield)``.
+        """Map a stream entry to (is_terminal, frame_to_yield).
 
         DONE ends the stream with no frame; CANCELLED and ERROR end it with a
-        final SSE frame; a normal chunk returns ``(False, None)`` so the caller
+        final SSE frame; a normal chunk returns (False, None) so the caller
         yields it and keeps reading.
         """
         if data == STREAM_DONE_SIGNAL:
@@ -330,10 +330,10 @@ class StreamManager:
         """
         Read the stream's event log and yield SSE frames, then follow live.
 
-        Replays everything after ``last_event_id`` (or from the beginning) —
-        attach timing can never lose frames. Each frame carries an SSE ``id:``
+        Replays everything after last_event_id (or from the beginning) —
+        attach timing can never lose frames. Each frame carries an SSE id:
         line (the Redis Stream entry id) so clients reconnect with
-        ``Last-Event-ID``. Handles DONE/CANCELLED/ERROR control entries and
+        Last-Event-ID. Handles DONE/CANCELLED/ERROR control entries and
         yields keepalive frames during idle periods.
 
         Args:
@@ -342,7 +342,7 @@ class StreamManager:
             last_event_id: Resume cursor (exclusive); None replays from start
 
         Yields:
-            ``id:``-tagged SSE frames from the background streaming task,
+            id:-tagged SSE frames from the background streaming task,
             interspersed with keepalive data frames during idle periods.
         """
         if not redis_cache.redis:
@@ -412,8 +412,8 @@ class StreamManager:
         """Append a message to the stream's replayable event log.
 
         Redis Streams (not pub/sub): entries persist until TTL/MAXLEN, and each
-        gets a monotonic id that doubles as the SSE ``id:`` field — so
-        subscribers can attach at any time (or reconnect with ``Last-Event-ID``)
+        gets a monotonic id that doubles as the SSE id: field — so
+        subscribers can attach at any time (or reconnect with Last-Event-ID)
         and replay everything they missed. This is what makes late-attach,
         reload-resume, and the init frame race structurally impossible to lose.
         """
@@ -524,7 +524,7 @@ class StreamManager:
     async def settle_message_progress(cls, stream_id: str, *, discarded: bool) -> None:
         """Close the message that just ended: keep its text as a bubble, or drop it.
 
-        The recovery mirror of ``_settle_message_boundary`` in the graph driver.
+        The recovery mirror of _settle_message_boundary in the graph driver.
         Without it the progress record is a blind concatenation of every token
         the turn streamed, so a turn recovered from Redis carries the planning
         preamble ("let me start by gathering context…") glued straight onto the
@@ -579,15 +579,15 @@ async def with_heartbeat(
     frames: AsyncGenerator[str, None],
     interval: float = SSE_KEEPALIVE_INTERVAL_SECONDS,
 ) -> AsyncGenerator[str, None]:
-    """Forward ``frames``, injecting a keepalive whenever nothing has been
-    yielded for ``interval`` seconds.
+    """Forward frames, injecting a keepalive whenever nothing has been
+    yielded for interval seconds.
 
-    ``subscribe_stream`` only emits its own keepalive when the Redis event log
+    subscribe_stream only emits its own keepalive when the Redis event log
     is idle, which is not the same thing as the socket being idle: a consumer
     that FILTERS frames (the bot translator drops web-only frames like
-    ``tool_data``) leaves the connection silent for as long as the turn stays
+    tool_data) leaves the connection silent for as long as the turn stays
     busy. A reverse proxy reads that silence as a dead upstream and hangs up
-    mid-turn — nginx's stock ``proxy_read_timeout`` is 60s.
+    mid-turn — nginx's stock proxy_read_timeout is 60s.
 
     Wrapping at the point bytes leave makes that impossible regardless of what
     any stage upstream decides to swallow, so no proxy in the path needs to be

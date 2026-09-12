@@ -72,7 +72,7 @@ async def transcribe_audio(
 ) -> str:
     """Transcribe a single audio clip via OpenAI Whisper.
 
-    The OpenAI SDK expects a tuple of ``(filename, file_obj, content_type)``
+    The OpenAI SDK expects a tuple of (filename, file_obj, content_type)
     for streamed multipart upload. Returns the trimmed transcript string.
     """
     log.set(

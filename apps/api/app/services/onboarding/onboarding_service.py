@@ -41,9 +41,9 @@ from shared.py.wide_events import log
 def _serialize_user(user: UserDocument) -> dict[str, Any]:
     """The JSON-serializable user dict the onboarding endpoints return.
 
-    Stays a ``dict[str, Any]`` deliberately: ``UserDocument`` is ``extra="allow"``
+    Stays a dict[str, Any] deliberately: UserDocument is extra="allow"
     precisely so these endpoints can spread the whole stored document into their
-    response, and the frontend's ``UserInfo`` reads it that way. Narrowing this to
+    response, and the frontend's UserInfo reads it that way. Narrowing this to
     a declared model would silently strip whatever undeclared fields production
     rows carry — a change to data returned to an external consumer, which is a
     product decision, not a typing fix (Type Safety item 14).
@@ -59,7 +59,7 @@ async def complete_onboarding(
     onboarding_data: OnboardingRequest,
 ) -> dict[str, Any]:
     """Complete a user's onboarding submission. Idempotent under concurrent
-    retries via an atomic `onboarding.completed` gate in the repository.
+    retries via an atomic onboarding.completed gate in the repository.
 
     Submitting the answers IS completion: nothing is generated here, so the
     phase lands on COMPLETED and the user is routed straight into chat. The
@@ -277,7 +277,7 @@ async def reset_onboarding(
     """Fully reset a user's onboarding so they can run the flow from scratch.
     Returns counts of what was deleted.
 
-    ``keep_connections`` leaves connected integrations and memories in place and
+    keep_connections leaves connected integrations and memories in place and
     only tears down onboarding state — the local dev reset, not the product's
     Restart button."""
     log.set(auth={"user_id": user_id}, onboarding={"operation": "reset"})

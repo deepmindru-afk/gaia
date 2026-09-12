@@ -3,7 +3,7 @@
 The execution record and the playbook come from Mongo; the playbook
 lifecycle's own account of the fire (mode, reason, for_each counts, a discard)
 comes from the worker's wide events, which the worker writes as JSON lines. A
-scenario asserts on this ``Observation`` and nothing else: never on prose.
+scenario asserts on this Observation and nothing else: never on prose.
 """
 
 from __future__ import annotations

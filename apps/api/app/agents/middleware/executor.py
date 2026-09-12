@@ -51,20 +51,20 @@ ToolCallHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[An
 
 
 def _apply_state_update(current_state: dict[str, Any], update: Mapping[str, Any]) -> None:
-    """Merge a middleware hook's return into ``current_state``, in place.
+    """Merge a middleware hook's return into current_state, in place.
 
     A hook returns a LangGraph *state update* — channel writes the graph
     resolves through each channel's reducer — not replacement state. This
     executor runs the hooks inside a single bigtool node, so the reducers are
-    its job to apply; ``dict.update`` alone is a replacement and gets
-    ``messages`` wrong in both directions. A hook appending one message
-    (``LLMAccountingMiddleware``'s planned credit-gate reply) would erase the
-    conversation, and ``SummarizationMiddleware``'s history-clearing
-    ``RemoveMessage(REMOVE_ALL_MESSAGES)`` tombstone survived into the list
+    its job to apply; dict.update alone is a replacement and gets
+    messages wrong in both directions. A hook appending one message
+    (LLMAccountingMiddleware's planned credit-gate reply) would erase the
+    conversation, and SummarizationMiddleware's history-clearing
+    RemoveMessage(REMOVE_ALL_MESSAGES) tombstone survived into the list
     handed to the model, where the provider serializer rejected it and 500ed
     the run.
 
-    Every other channel in ``State`` is last-write-wins, which is what plain
+    Every other channel in State is last-write-wins, which is what plain
     assignment already does.
     """
     for key, value in update.items():
@@ -378,7 +378,7 @@ class MiddlewareExecutor:
             invoke_fn: The actual tool invocation function
 
         Returns:
-            The tool result, or a ``Command`` when a middleware replaces the
+            The tool result, or a Command when a middleware replaces the
             result with a graph update (e.g. workspace compaction).
         """
         tool_name = tool_call.get("name", "unknown")

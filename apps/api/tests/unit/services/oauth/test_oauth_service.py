@@ -363,7 +363,7 @@ class TestStoreUserInfo:
         running them here. In-process they were fast but unowned: nothing drains
         those tasks on shutdown, so a restart mid-send lost the welcome email and
         the marketing contact with no record. What the job then does is
-        ``tests/unit/workers/tasks/test_signup_email_tasks.py``'s subject."""
+        tests/unit/workers/tasks/test_signup_email_tasks.py's subject."""
         uid = str(ObjectId())
         mock_user_repo.get_by_email.return_value = None
         mock_user_repo.create.return_value = UserDocument(id=uid)

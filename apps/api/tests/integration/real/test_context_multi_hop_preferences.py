@@ -1,13 +1,13 @@
 """Real-infra proof that onboarding preferences survive the multi-hop
-``build_agent_config`` chain and reach the section a subagent actually renders.
+build_agent_config chain and reach the section a subagent actually renders.
 
-Every unit test for this plumbing (``tests/unit/helpers/test_agent_helpers.py``,
-``tests/unit/agents/test_agent_core.py`` et al.) proves one hop at a time against
-a hand-built ``base_configurable`` dict. None of them prove the chain a real run
+Every unit test for this plumbing (tests/unit/helpers/test_agent_helpers.py,
+tests/unit/agents/test_agent_core.py et al.) proves one hop at a time against
+a hand-built base_configurable dict. None of them prove the chain a real run
 actually drives: comms reads a real user document, the executor inherits from
 comms's live configurable, and a handoff subagent inherits from the executor's —
-three real calls to ``build_agent_config``, none mocked, chained the same way
-``_core_agent_logic`` / ``prepare_executor_execution`` / ``prepare_subagent_execution``
+three real calls to build_agent_config, none mocked, chained the same way
+_core_agent_logic / prepare_executor_execution / prepare_subagent_execution
 chain them in production. Real MongoDB is what proves the value actually
 originated from a user document and not from a fixture that already knows the
 right shape.

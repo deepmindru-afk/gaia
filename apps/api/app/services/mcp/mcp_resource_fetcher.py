@@ -25,7 +25,7 @@ async def fetch_mcp_ui_resource(
         user_id: The user ID for credential lookup
 
     Returns:
-        The resource's HTML plus its ``_meta.ui`` hints, or None on failure
+        The resource's HTML plus its _meta.ui hints, or None on failure
     """
     log.set(
         mcp_ui={

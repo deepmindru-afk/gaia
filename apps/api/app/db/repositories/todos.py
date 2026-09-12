@@ -3,9 +3,9 @@
 The heaviest domain in the migration: alongside plain CRUD it carries the tracked
 todo lifecycle (canvas/log bodies, scheduling, retry state), bulk operations, a
 text/filter list query, three dashboard aggregations, and system-wide finders the
-executor and maintenance sweep use across users. Array, positional, and ``$unset``
-mutations go through the base ``_apply_ops`` seam; bulk writes go through
-``_bulk_set`` / ``_bulk_delete``; every read returns a typed model.
+executor and maintenance sweep use across users. Array, positional, and $unset
+mutations go through the base _apply_ops seam; bulk writes go through
+_bulk_set / _bulk_delete; every read returns a typed model.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -70,7 +70,7 @@ def _first_count(buckets: list[_FacetCount]) -> int:
 
 
 class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
-    """The ``todos`` collection repository (user-scoped, cached)."""
+    """The todos collection repository (user-scoped, cached)."""
 
     collection_name = "todos"
     document_model = TodoDocument
@@ -82,7 +82,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
 
     async def get_by_id(self, todo_id: str) -> TodoDocument | None:
         """Fetch a todo by id with no user scoping — for the system executor,
-        which is handed only a todo id. Prefer ``get(id, user_id=...)`` everywhere
+        which is handed only a todo id. Prefer get(id, user_id=...) everywhere
         a user is in context."""
         return await self._find_one({"_id": self._id_value(todo_id)})
 
@@ -95,7 +95,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
         )
 
     async def find_by_ids(self, user_id: str, todo_ids: list[str]) -> list[TodoDocument]:
-        """The user's todos whose ids are in ``todo_ids`` (order not preserved)."""
+        """The user's todos whose ids are in todo_ids (order not preserved)."""
         if not todo_ids:
             return []
         return await self._find(
@@ -103,7 +103,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
         )
 
     async def count_in_project(self, user_id: str, project_id: str) -> int:
-        """How many of the user's todos belong to ``project_id``."""
+        """How many of the user's todos belong to project_id."""
         return await self._count({"user_id": user_id, "project_id": project_id})
 
     async def count_for_user(self, user_id: str) -> int:
@@ -115,7 +115,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     ) -> dict[str, object]:
         """Build the Mongo filter for a filtered/text list query.
 
-        ``inbox_project_id`` is resolved by the caller (it may create the Inbox);
+        inbox_project_id is resolved by the caller (it may create the Inbox);
         when provided it is the default scope for the unfiltered main list.
         """
         query: dict[str, object] = {"user_id": user_id}
@@ -301,8 +301,8 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     async def list_active_gaia_tracked_since(
         self, user_id: str, *, completed_since: datetime
     ) -> list[TodoDocument]:
-        """Tracked todos that are open OR completed since ``completed_since`` — the
-        VFS materialization set for ``/workspace/gaia-tasks/``."""
+        """Tracked todos that are open OR completed since completed_since — the
+        VFS materialization set for /workspace/gaia-tasks/."""
         return await self._find(
             {
                 "user_id": user_id,
@@ -317,8 +317,8 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     async def list_active_user_todos_since(
         self, user_id: str, *, completed_since: datetime
     ) -> list[TodoDocument]:
-        """Non-tracked todos that are open OR completed since ``completed_since`` —
-        the VFS materialization set for ``/workspace/todos/``."""
+        """Non-tracked todos that are open OR completed since completed_since —
+        the VFS materialization set for /workspace/todos/."""
         return await self._find(
             {
                 "user_id": user_id,
@@ -336,7 +336,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
 
     async def find_active_by_composio_trigger(self, composio_trigger_id: str) -> list[TodoDocument]:
         """Every user's incomplete todos with an active subscription registered against
-        ``composio_trigger_id`` — the per-resource half of trigger dispatch."""
+        composio_trigger_id — the per-resource half of trigger dispatch."""
         return await self._find(
             {
                 "completed": False,
@@ -352,7 +352,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     async def find_active_by_user_and_trigger(
         self, user_id: str, trigger_name: str
     ) -> list[TodoDocument]:
-        """One user's incomplete todos with an active subscription to ``trigger_name``
+        """One user's incomplete todos with an active subscription to trigger_name
         — the account-level half of dispatch, for triggers (Gmail) that register no
         per-subscriber Composio instance and can only be found by user."""
         return await self._find(
@@ -371,7 +371,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     async def find_paused_by_user_and_trigger(
         self, user_id: str, trigger_name: str
     ) -> list[TodoDocument]:
-        """One user's incomplete todos whose ``trigger_name`` subscription is paused —
+        """One user's incomplete todos whose trigger_name subscription is paused —
         the resync set after the integration behind it is reconnected."""
         return await self._find(
             {
@@ -389,7 +389,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     async def count_trigger_references(
         self, composio_trigger_id: str, *, excluding_todo_id: str | None = None
     ) -> int:
-        """How many todos still reference ``composio_trigger_id``. Summed with the
+        """How many todos still reference composio_trigger_id. Summed with the
         workflow count before a Composio trigger is deleted — the two consumers share
         trigger instances, so either one alone would delete the other's live trigger.
 
@@ -423,7 +423,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     # ----------------------------------------------------------------- writes
 
     async def bulk_update(self, user_id: str, todo_ids: list[str], update: TodoUpdate) -> int:
-        """Apply the same ``$set`` to many of the user's todos; returns the count
+        """Apply the same $set to many of the user's todos; returns the count
         modified. One generation bump invalidates the whole scope."""
         return await self._bulk_set([(tid, update) for tid in todo_ids], scope=user_id)
 
@@ -433,7 +433,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
         return await self._bulk_delete(todo_ids, scope=user_id)
 
     async def delete_all_for_user(self, user_id: str) -> int:
-        """Delete every todo owned by ``user_id`` (dev-data reset); returns the count."""
+        """Delete every todo owned by user_id (dev-data reset); returns the count."""
         return await self._delete_many({"user_id": user_id}, scope=user_id)
 
     async def delete_onboarding_todos(self, user_id: str) -> int:
@@ -445,7 +445,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     async def move_todos_to_project(
         self, user_id: str, from_project_id: str, to_project_id: str
     ) -> int:
-        """Reassign every todo in ``from_project_id`` to ``to_project_id`` (used
+        """Reassign every todo in from_project_id to to_project_id (used
         when a project is deleted and its todos fall back to Inbox)."""
         todos = await self._find({"user_id": user_id, "project_id": from_project_id})
         ids = [todo.id for todo in todos]
@@ -467,7 +467,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     async def add_references(
         self, todo_id: str, *, user_id: str, references: list[str]
     ) -> TodoDocument | None:
-        """Link related past tracked todos onto ``references`` ($addToSet)."""
+        """Link related past tracked todos onto references ($addToSet)."""
         return await self._apply_raw_update(
             self._scoped_filter(todo_id, user_id),
             {"$addToSet": {"references": {"$each": references}}},

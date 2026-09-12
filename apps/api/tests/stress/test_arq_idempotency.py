@@ -1,13 +1,13 @@
 """Stress: ARQ task idempotency under replay.
 
-Real code under test: ``backfill_user_memories`` in
-``app/workers/tasks/memory_backfill_tasks.py``. ARQ delivers at-least-once:
+Real code under test: backfill_user_memories in
+app/workers/tasks/memory_backfill_tasks.py. ARQ delivers at-least-once:
 a worker that dies mid-job, or a scheduled retry, re-runs the task function.
 The task must therefore be idempotent — its second run must not re-extract
 memories, re-notify the user, or re-write the marker.
 
-The observable side effects are the ``memory_backfilled`` marker on the user
-document, the ``memory_engine.retain`` calls, and the "Your memory is ready"
+The observable side effects are the memory_backfilled marker on the user
+document, the memory_engine.retain calls, and the "Your memory is ready"
 notification. The repositories and engine are fakes (stateful where the
 invariant needs state); the task logic is the real module code.
 """
@@ -31,7 +31,7 @@ MODULE = "app.workers.tasks.memory_backfill_tasks"
 
 
 class _FakeUserRepository:
-    """User repo whose ``memory_backfilled`` marker flips on mark_memory_backfilled.
+    """User repo whose memory_backfilled marker flips on mark_memory_backfilled.
 
     The marker is the idempotency guard under test: it must survive a mock
     boundary, so the fake carries real state across task invocations.

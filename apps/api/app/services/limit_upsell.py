@@ -3,7 +3,7 @@
 Called from the two exceed seams — the tiered rate limiter (covers every
 decorated endpoint and agent tool) and the daily cost-budget gate — so every
 wall a free user can hit produces one analytics event and, at most once a
-week (deduped in the senders), one email. ``origin`` picks the email: an
+week (deduped in the senders), one email. origin picks the email: an
 interactive hit (the user did something and was blocked) gets the upsell
 pitch; a background hit (a workflow run the user never initiated) gets an
 informative "your workflows are taking a break" email instead — telling a
@@ -55,8 +55,8 @@ def mark_run_origin(origin: LimitHitOrigin) -> None:
     Covers everything the task reaches afterwards — the agent, its tools, and
     any task spawned from here, since a task copies the context it is created
     in. Scoped to the task rather than a block: arq runs each job as its own
-    task (``loop.create_task(function.coroutine(...))``), so a job cannot leak
-    its origin into the next one, and marking a whole run needs no ``with``
+    task (loop.create_task(function.coroutine(...))), so a job cannot leak
+    its origin into the next one, and marking a whole run needs no with
     around its body — indentation that would otherwise drag every wrapped line
     into the diff.
 

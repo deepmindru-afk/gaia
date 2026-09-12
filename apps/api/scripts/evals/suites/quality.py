@@ -1,41 +1,41 @@
 """Quality suite — does GAIA sound human and behave well?
 
-Drives the REAL comms → executor path via ``POST /api/v1/chat-stream`` (SSE)
-against the live dev API (``EVALS_DEV_API_BASE``, default
-http://localhost:9460), authenticated through the dev bypass (``X-Dev-User``
-header, user minted via ``POST /api/v1/dev/users``). This is the same wire the
+Drives the REAL comms → executor path via POST /api/v1/chat-stream (SSE)
+against the live dev API (EVALS_DEV_API_BASE, default
+http://localhost:9460), authenticated through the dev bypass (X-Dev-User
+header, user minted via POST /api/v1/dev/users). This is the same wire the
 web frontend consumes — tool cards, follow-up suggestions, streaming text —
 so the suite observes the exact user-facing surface.
 
-Wire format (verified Aug 2026, see ``_parse_frames``):
-- each frame is an ``id:`` line + ``data: <json>`` line + blank line;
-  the stream ends with a bare ``data: [DONE]`` line;
-- ``response`` frames carry text CHUNKS — concatenate them;
-- ``tool_data`` with ``tool_name == "tool_calls_data"`` carries the real tool
-  call (nested ``data.tool_name`` + ``data.inputs``) — deduped by tool_call_id;
-- ``follow_up_actions`` frames exist only for turns that did NOT delegate to
+Wire format (verified Aug 2026, see _parse_frames):
+- each frame is an id: line + data: <json> line + blank line;
+  the stream ends with a bare data: [DONE] line;
+- response frames carry text CHUNKS — concatenate them;
+- tool_data with tool_name == "tool_calls_data" carries the real tool
+  call (nested data.tool_name + data.inputs) — deduped by tool_call_id;
+- follow_up_actions frames exist only for turns that did NOT delegate to
   the executor (delegated turns deliver suggestions out-of-band via WebSocket
   + Mongo); the suggestion gate therefore applies to non-delegated cases only;
 - no token usage is reported in any frame — tokens are estimated via
-  ``core.cost.estimate_tokens`` (noted in ``raw``);
+  core.cost.estimate_tokens (noted in raw);
 - for delegated turns the SSE text is the comms ack; the executor's final
-  answer lands in MongoDB / the WebSocket payload, so ``communicate`` strings
+  answer lands in MongoDB / the WebSocket payload, so communicate strings
   are matched against what the stream actually carries (documented per case).
 
-Multi-turn cases split ``case.prompt`` on ``"\\n---\\n"`` and send each turn
+Multi-turn cases split case.prompt on "\\n---\\n" and send each turn
 through the same conversation: turn 1 gets a fresh conversation id (from the
-``conversation_initialized`` frame), later turns reuse it and send the
-accumulated transcript as ``messages``.
+conversation_initialized frame), later turns reuse it and send the
+accumulated transcript as messages.
 
 Scoring is deterministic at runtime (no LLM): structural checks always
 (BubbleBoundary, ToolCard), the prompt-derived absolutes always
-(emoji_discipline plus ``core.prompt_gates`` — dashes, banned chatbot phrases,
+(emoji_discipline plus core.prompt_gates — dashes, banned chatbot phrases,
 internal machinery, routing markers — whose banned lists are read out of
-``COMMS_AGENT_PROMPT`` itself rather than copied here), plus gates that exist
-in ``expected`` (communicate, tool_call_correctness, suggestion, openui), plus
+COMMS_AGENT_PROMPT itself rather than copied here), plus gates that exist
+in expected (communicate, tool_call_correctness, suggestion, openui), plus
 a real suggestion check (3-4 non-empty items, each <=50 chars, from the
-``follow_up_actions`` frame).
-``overall`` is the mean of the applied scores; the RubricJudge LLM pass runs
+follow_up_actions frame).
+overall is the mean of the applied scores; the RubricJudge LLM pass runs
 at finalize time (1 call per case).
 """
 
@@ -92,8 +92,8 @@ def _truncate(text: str, limit: int) -> str:
 def turns_for(case: Case) -> list[str]:
     """The user turns this case sends, in order.
 
-    A case declares its turns either as ``setup.turns`` (a YAML list) or by
-    separating them in ``prompt`` with a line of ``---``. Named and public so
+    A case declares its turns either as setup.turns (a YAML list) or by
+    separating them in prompt with a line of ---. Named and public so
     the mapping from case data to what actually reaches the wire is testable
     without an API — a silent disagreement here runs a multi-turn case as a
     single turn and grades the agent on a conversation it never had.
@@ -107,9 +107,9 @@ def turns_for(case: Case) -> list[str]:
 def _parse_frames(frames: list[Frame]) -> TurnRecord:
     """Reduce the raw SSE frame list into a turn record.
 
-    Returns ``conversation_id``, ``text`` (concatenated response chunks),
-    ``tool_calls`` (deduped by tool_call_id), ``follow_up_actions`` (last
-    frame wins), ``error`` (first error frame), and ``raw`` — a compact,
+    Returns conversation_id, text (concatenated response chunks),
+    tool_calls (deduped by tool_call_id), follow_up_actions (last
+    frame wins), error (first error frame), and raw — a compact,
     truncated frame summary stored on the CaseRun for journaling.
     """
     conversation_id: str | None = None
@@ -394,7 +394,7 @@ class ChatStreamTransport:
         One shared account let every case inherit the previous one's todos,
         reminders and — worst — the agent's MEMORY of them, accumulating across
         every case AND every historical run. That made results order-dependent
-        (``--only`` disagreed with a full run), let a later case answer from
+        (--only disagreed with a full run), let a later case answer from
         memory instead of doing the work, and made concurrency impossible
         because two cases would write over each other. capability, gaia_bench
         and hil already mint per case; this brings the live-chat suites in line.
@@ -472,7 +472,7 @@ class ChatStreamTransport:
 def _suggestion_check(run: CaseRun) -> tuple[float, str]:
     """Real suggestion gate: last follow_up_actions frame, 3-4 short items.
 
-    Reads ``raw`` (the follow_up_actions frame summary), which the finalize
+    Reads raw (the follow_up_actions frame summary), which the finalize
     replay does not carry yet (see report).
     """
     actions: list[str] | None = None
@@ -534,11 +534,11 @@ def _emoji_discipline_check(run: CaseRun) -> tuple[float, str]:
 
 
 class OpenUIPolicyError(ValueError):
-    """A case's ``openui_policy`` cannot be resolved against the shipped prompt.
+    """A case's openui_policy cannot be resolved against the shipped prompt.
 
     Its own error type so the case-id prefix is only ever attached to failures
-    that really are the case's fault. Catching bare ``ValueError`` here meant a
-    pydantic ``ValidationError`` — which IS a ValueError — got relabelled as a
+    that really are the case's fault. Catching bare ValueError here meant a
+    pydantic ValidationError — which IS a ValueError — got relabelled as a
     broken case, so a missing env var read as "quality-openui-…: 1 validation
     error for DevelopmentSettings".
     """
@@ -575,10 +575,10 @@ OPENUI_POLICY_DIRECTIONS = tuple(OPENUI_POLICY_CONTRACTS)
 def openui_policy_criteria(direction: str) -> list[str]:
     """Judge criteria composed from the real OpenUI prompt, not paraphrased.
 
-    The rubric quotes the shipped ``OPENUI_SURFACE_POLICY`` verbatim, so an edit
+    The rubric quotes the shipped OPENUI_SURFACE_POLICY verbatim, so an edit
     to the prompt changes what these cases grade — automatically, with no YAML
-    to update. ``rule_native_card`` carries the suppressed-tool list itself
-    (``OPENUI_SURFACE_POLICY`` interpolates ``OPENUI_SUPPRESSED_TOOLS`` into the
+    to update. rule_native_card carries the suppressed-tool list itself
+    (OPENUI_SURFACE_POLICY interpolates OPENUI_SUPPRESSED_TOOLS into the
     rule), so the criterion names today's tools without this suite holding a
     second copy of the list.
     """
@@ -593,7 +593,7 @@ def openui_policy_criteria(direction: str) -> list[str]:
 def _apply_openui_policy_criteria(case_id: str, expected: TurnPayload) -> None:
     """Append policy-derived criteria to a case that opts in.
 
-    Cases declare ``openui_policy: required|forbidden|suppressed`` and get the
+    Cases declare openui_policy: required|forbidden|suppressed and get the
     shipped policy's own words appended to their rubric. Case-specific criteria
     written in YAML are kept — they say what THIS request is, the imported ones
     say what the product promises.
@@ -617,9 +617,9 @@ def _apply_openui_policy_criteria(case_id: str, expected: TurnPayload) -> None:
 
 
 def _reject_unfalsifiable_openui_gate(case: Case) -> None:
-    """``openui`` as a gate on a case declaring ``openui: false`` cannot go red.
+    """openui as a gate on a case declaring openui: false cannot go red.
 
-    ``OpenUICheck`` returns 1.0 without reading anything in that branch, so the
+    OpenUICheck returns 1.0 without reading anything in that branch, so the
     gate carries the authority of a hard check while being incapable of failing
     — worse than no gate at all. Neither the forgery sweep nor the inert check
     can see it: the gate does produce a value, it just always produces 1.0.
@@ -646,7 +646,7 @@ def _openui_gate(case: Case, run: CaseRun) -> float:
 def _recorded(
     name: str, check: Callable[[CaseRun], tuple[float, str]]
 ) -> Callable[[Case, CaseRun], float]:
-    """Adapt a ``(run) -> (value, reason)`` check to the gate signature.
+    """Adapt a (run) -> (value, reason) check to the gate signature.
 
     The reason is journaled on the run so the report can explain a red gate;
     that side effect is why these are not plain lambdas.
@@ -767,7 +767,7 @@ class QualitySuite(Suite):
 
         The two are separate on purpose. A METRIC is recorded because the case
         carries the field that gives it meaning, and it shows up in the report;
-        a GATE decides pass/fail. Routing the gates through ``score_gates``
+        a GATE decides pass/fail. Routing the gates through score_gates
         guarantees every declared one has an entry — a missing key is read back
         as 0.0 by the runner, which is how capability shipped a case that could
         never pass.

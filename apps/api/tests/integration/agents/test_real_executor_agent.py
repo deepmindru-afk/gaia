@@ -97,7 +97,7 @@ def _make_dummy_retrieve_tools_fn():
     """Return a real async function that StructuredTool.from_function can introspect.
 
     When get_retrieve_tools_function() is patched, the returned value is passed
-    as the `retrieve_tools_coroutine` arg to create_agent, which then calls
+    as the retrieve_tools_coroutine arg to create_agent, which then calls
     StructuredTool.from_function(coroutine=<value>). StructuredTool inspects the
     function signature via inspect.signature(), which raises TypeError on AsyncMock.
     A real coroutine function avoids this.
@@ -235,7 +235,7 @@ class TestSelectToolsNode:
     are present in the merged tool_dict that is passed to create_agent."""
 
     async def test_handoff_included_in_tool_dict(self):
-        """handoff tool must be registered in the compiled executor graph's tool node.
+        """Handoff tool must be registered in the compiled executor graph's tool node.
 
         This tests that build_executor_graph actually injects handoff into the
         DynamicToolNode's registry — not merely that the handoff tool object
@@ -301,7 +301,7 @@ class TestSelectToolsNode:
 
         The production flow in build_executor_graph passes initial_tool_ids to
         create_agent, which looks each ID up in tool_registry at model-call time
-        (acall_model: `[tool_registry[id] for id in (initial_tool_ids or [])]`).
+        (acall_model: [tool_registry[id] for id in (initial_tool_ids or [])]).
         If any ID is absent from the registry a KeyError is raised at runtime.
         This test verifies the registry is correctly populated for all expected
         initial tools so that lookup succeeds without patching create_agent away.

@@ -1,7 +1,7 @@
 """Account settings mutations against REAL MongoDB.
 
 Every applier behind the account tools runs its actual repository code path
-into a real Mongo database (the ``mongo_db`` fixture redirects the whole
+into a real Mongo database (the mongo_db fixture redirects the whole
 repository layer). Only external SaaS seams are substituted — ElevenLabs for
 voice validation — per the mock hierarchy: mock third-party APIs, never your
 own persistence.
@@ -118,7 +118,7 @@ class TestCustomInstructions:
 
 class TestVoiceSelection:
     async def test_selected_voice_id_persists_through_the_real_validator(self, mongo_db):
-        """Mock ONLY the ElevenLabs data source; the real ``set_user_voice``
+        """Mock ONLY the ElevenLabs data source; the real set_user_voice
         validation body runs and the real repository write lands."""
         canned_catalog = SimpleNamespace(
             voices=[SimpleNamespace(voice_id="v-real-1", name="Rachel", starred=False)],

@@ -2,13 +2,13 @@
 
 Two audiences, and they are not the same:
 
-* **The judges** — ``INTENT_JUDGE_PROMPT`` (does the user's request authorize this call?)
-  and ``TOOL_CLASSIFY_PROMPT`` (is this tool destructive at all?). Prompt wording here is
+* **The judges** — INTENT_JUDGE_PROMPT (does the user's request authorize this call?)
+  and TOOL_CLASSIFY_PROMPT (is this tool destructive at all?). Prompt wording here is
   load-bearing, and each choice below is deliberate; the reasoning lives in the comments
-  and in ``intent.py``'s module docstring.
+  and in intent.py's module docstring.
 
-* **The acting agent** — the ``*_TEMPLATE`` refusals, which become the synthetic
-  ``ToolMessage`` a blocked call gets back. These have to tell the model plainly that the
+* **The acting agent** — the *_TEMPLATE refusals, which become the synthetic
+  ToolMessage a blocked call gets back. These have to tell the model plainly that the
   action did NOT happen, and *why*, so it adapts instead of retrying blindly.
 
 Collected here so the text is reviewable on its own, without reading the control flow it

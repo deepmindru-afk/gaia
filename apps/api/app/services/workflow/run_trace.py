@@ -3,12 +3,12 @@
 A workflow reuses one conversation forever, so its LangGraph checkpoints used to
 be what carried "what happened last time" — at the cost of re-sending every
 previous run as a full transcript. The threads are reset before each run
-(:mod:`app.services.workflow.thread_reset`); these helpers are what replaces
-them: the run's own tool events become a compact :class:`RecordedCall` list, and
+(:mod:app.services.workflow.thread_reset); these helpers are what replaces
+them: the run's own tool events become a compact :class:RecordedCall list, and
 the previous run's list is rendered into the next run's executor brief.
 
 Pure by design — no I/O, so the mapping and the rendering stay unit-testable
-against plain dicts. The reads live in ``execution_service``.
+against plain dicts. The reads live in execution_service.
 """
 
 import json
@@ -69,10 +69,10 @@ _LAST_RUN_TAG_OPEN = re.compile(rf"<(?=/?\s*{AgentTag.LAST_RUN}\b)", re.IGNORECA
 def build_trace(tool_data: list[ToolDataEntry]) -> list[RecordedCall]:
     """The run's tool calls, in the order they were emitted.
 
-    Descends into ``subagent_group`` entries because
-    ``reconstruct_subagent_groups`` folds a delegated subagent's calls out of the
+    Descends into subagent_group entries because
+    reconstruct_subagent_groups folds a delegated subagent's calls out of the
     flat list and into its group — a trace read only at the top level would be
-    one ``handoff`` call and nothing else.
+    one handoff call and nothing else.
     """
     trace: list[RecordedCall] = []
     for entry in tool_data:
@@ -87,7 +87,7 @@ def build_trace(tool_data: list[ToolDataEntry]) -> list[RecordedCall]:
 
 
 def render_last_run(execution: WorkflowExecution) -> str:
-    """The previous run as the ``<last_run>`` block folded into the next run's brief."""
+    """The previous run as the <last_run> block folded into the next run's brief."""
     when = (execution.completed_at or execution.started_at).isoformat()
     lines = [f"at: {when}", f"status: {execution.status}"]
     # The playbook decision is bookkeeping about the run, not the run: shown as
@@ -109,11 +109,11 @@ def render_last_run(execution: WorkflowExecution) -> str:
 
 
 def neutralise_last_run_tags(text: str) -> str:
-    """``text`` with every ``<last_run``/``</last_run`` defused and nothing else touched.
+    """text with every <last_run/</last_run defused and nothing else touched.
 
-    Only the tag's own ``<`` becomes ``&lt;``, so a forged close can never match
+    Only the tag's own < becomes &lt;, so a forged close can never match
     the real one while every other angle bracket (HTML in a fetched page, the
-    ``->`` in a digest) reaches the model as written. Runs on the truncated
+    -> in a digest) reaches the model as written. Runs on the truncated
     body, so a cut cannot re-form a tag.
     """
     return _LAST_RUN_TAG_OPEN.sub("&lt;", text)
@@ -142,9 +142,9 @@ def _group_calls(group: object) -> list[RecordedCall]:
 def _recorded_call(
     data: object, subagent_id: object, subagent: object = None
 ) -> RecordedCall | None:
-    """One ``tool_calls_data`` payload as a recorded call, or ``None`` if it isn't one.
+    """One tool_calls_data payload as a recorded call, or None if it isn't one.
 
-    ``data`` is deliberately open on ``ToolDataEntry`` (each tool owns its shape),
+    data is deliberately open on ToolDataEntry (each tool owns its shape),
     so this is the boundary that validates it into a real model.
     """
     if not isinstance(data, dict):

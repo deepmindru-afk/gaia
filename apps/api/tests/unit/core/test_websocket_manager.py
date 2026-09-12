@@ -328,12 +328,12 @@ class TestMultiInstanceFanout:
     """The two bugs that only a real pub/sub round trip can catch.
 
     These drive the actual listener against a real (in-process) Redis rather
-    than calling ``_dispatch`` directly — the double-send only exists in the
+    than calling _dispatch directly — the double-send only exists in the
     interaction between publishing and this pod's own subscription.
 
     Unmarked despite being true regressions: the CI regression lane replays a
     marked test against base, and this module now imports
-    ``websocket_broadcast_listener``, which does not exist there — the replay
+    websocket_broadcast_listener, which does not exist there — the replay
     would error at collection rather than prove anything (tests/CLAUDE.md).
     """
 
@@ -344,7 +344,7 @@ class TestMultiInstanceFanout:
         websocket_manager.connections.clear()
 
     async def _await_delivery(self, sock: AsyncMock, expected: int) -> None:
-        """Wait until ``expected`` frames have landed, then a beat longer for extras."""
+        """Wait until expected frames have landed, then a beat longer for extras."""
         for _ in range(40):
             if sock.send_json.await_count >= expected:
                 break

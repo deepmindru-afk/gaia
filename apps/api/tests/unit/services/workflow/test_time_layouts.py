@@ -1,4 +1,4 @@
-"""``time_layouts``: a recorded argument's layout, told apart by example."""
+"""time_layouts: a recorded argument's layout, told apart by example."""
 
 from __future__ import annotations
 

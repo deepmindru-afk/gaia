@@ -66,15 +66,15 @@ def _app_with_logging() -> FastAPI:
 
 
 def test_app_code_cannot_clobber_the_service_identity(capsys):
-    """`env`/`service`/`commit` must equal this process's infra identity, always.
+    """env/service/commit must equal this process's infra identity, always.
 
     The shipped bug: env fields were merged BEFORE handler fields, so 16
     service-layer callers doing log.set(service="notes_service") overwrote the
-    infra identity — `{service="gaia-backend"} | json | service="gaia-backend"`
+    infra identity — {service="gaia-backend"} | json | service="gaia-backend"
     stopped agreeing with itself and dashboards under-counted silently.
 
     The guarantee now lives in the sink rather than in the middleware's dict
-    ordering: `_build_json_entry` stamps the identity on EVERY line (matching
+    ordering: _build_json_entry stamps the identity on EVERY line (matching
     what buildRecord does for the TypeScript bots) and re-emits a colliding app
     field as ctx_<key>. So this asserts the sink, which also covers the
     real-time lines the middleware never touched.
@@ -117,11 +117,11 @@ def test_handler_fields_reach_the_emitted_event(emitted):
 
 @pytest.mark.regression
 def test_a_second_set_of_a_namespace_merges_instead_of_replacing(emitted):
-    """`log.set(ns={...})` must accumulate, exactly like `set_ns`.
+    """log.set(ns={...}) must accumulate, exactly like set_ns.
 
-    The shipped bug: `set` did a flat `fields.update()`, so a later whole-dict
+    The shipped bug: set did a flat fields.update(), so a later whole-dict
     write REPLACED the namespace instead of merging into it. In production
-    complete_execution's `log.set(workflow={...})` — the last write on a run, and
+    complete_execution's log.set(workflow={...}) — the last write on a run, and
     the one that carries no trigger_type — erased that field from 34,247 of
     34,413 workflow fires, leaving no way to tell a scheduled fire from a webhook
     one. Every layer of a request writes the same namespace; whichever wrote last
@@ -244,12 +244,12 @@ def test_rejections_by_inner_middleware_are_logged(emitted):
 
 
 def test_raised_http_exception_lands_in_errors_with_its_cause(emitted):
-    """`raise HTTPException(500, ...) from e` must reach errors[] with the real cause.
+    """raise HTTPException(500, ...) from e must reach errors[] with the real cause.
 
     The shipped bug: Starlette's ExceptionMiddleware turns an HTTPException
     into a response INSIDE call_next, so the boundary's except path never sees
-    it. Every one of the ~428 `raise HTTPException` sites emitted an event with
-    final_level=ERROR but no `errors` key at all — the real failure (the
+    it. Every one of the ~428 raise HTTPException sites emitted an event with
+    final_level=ERROR but no errors key at all — the real failure (the
     exception the handler caught) was nowhere in the telemetry.
     """
 
@@ -289,9 +289,9 @@ def test_raised_http_exception_lands_in_errors_with_its_cause(emitted):
 def test_production_middleware_order_keeps_logging_outermost():
     """The wide-event boundaries must stay the outermost app middleware, timeout inside them.
 
-    Two boundaries, one per scope: ``WebSocketWideEventMiddleware`` (pure ASGI,
-    wraps websocket scope) must be outermost because ``LoggingMiddleware`` is a
-    ``BaseHTTPMiddleware`` that drops websocket scope; ``LoggingMiddleware``
+    Two boundaries, one per scope: WebSocketWideEventMiddleware (pure ASGI,
+    wraps websocket scope) must be outermost because LoggingMiddleware is a
+    BaseHTTPMiddleware that drops websocket scope; LoggingMiddleware
     (HTTP) sits just inside it. Both must stay outside the request timeout so a
     timed-out request still gets a canonical event.
     """
@@ -460,9 +460,9 @@ async def test_interleaved_wide_tasks_stay_isolated():
 async def test_a_nested_boundary_does_not_steal_the_outer_event():
     """An inner boundary must not consume the event the outer one owes.
 
-    The shipped bug: `_wide_event_boundary` called `log.reset()` without
-    restoring the caller's accumulator, and an `asynccontextmanager` body runs
-    in the caller's context (no task copy). So an inner `log_context` left the
+    The shipped bug: _wide_event_boundary called log.reset() without
+    restoring the caller's accumulator, and an asynccontextmanager body runs
+    in the caller's context (no task copy). So an inner log_context left the
     ContextVar pointed at its own state — the outer boundary then emitted the
     INNER's fields a second time and silently lost every field of its own,
     including anything set after the inner block. This is what makes a
@@ -490,10 +490,10 @@ async def test_a_nested_boundary_does_not_steal_the_outer_event():
 
 
 async def test_adopted_trace_id_reaches_spawned_child_work():
-    """`log.set(trace_id=...)` must move the ContextVar, not just the field.
+    """log.set(trace_id=...) must move the ContextVar, not just the field.
 
-    The shipped bug: adopting an upstream `x-trace-id` wrote the FIELD only,
-    while `get_trace_id()` (and therefore every `spawn_logged_task` child) kept
+    The shipped bug: adopting an upstream x-trace-id wrote the FIELD only,
+    while get_trace_id() (and therefore every spawn_logged_task child) kept
     returning the boundary's generated id — the parent event and its background
     work landed under two different traces and could not be joined.
     """

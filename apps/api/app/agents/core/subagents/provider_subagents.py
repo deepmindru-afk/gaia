@@ -56,7 +56,7 @@ async def register_composio_subagent_tools(subagent: Subagent, tool_registry: To
     subagent has an empty category for it until this runs, which is how a
     replay three minutes after a worker restart found no GMAIL tool at all.
 
-    ``Subagent`` does not carry composio_config; the OAuth integration does
+    Subagent does not carry composio_config; the OAuth integration does
     (composio is OAuth-only). The OAuthIntegration validator enforces
     composio_config when managed_by="composio", so landing here without one
     means a builtin Subagent declared managed_by="composio" and would silently
@@ -354,7 +354,7 @@ async def _create_custom_mcp_subagent(integration_id: str, user_id: str) -> Comp
 def _make_subagent_loader(
     subagent: Subagent,
 ) -> Callable[[], Awaitable[CompiledStateGraph]]:
-    """Bind the subagent into a zero-arg async loader for `providers.register`."""
+    """Bind the subagent into a zero-arg async loader for providers.register."""
 
     async def _loader() -> CompiledStateGraph:
         return await create_subagent(subagent)

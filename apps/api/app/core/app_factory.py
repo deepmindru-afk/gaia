@@ -102,7 +102,7 @@ def create_app() -> FastAPI:
         """Convert AppError into a structured JSON response with wide event context.
 
         Emits an explicit error log so the wide-event final_level flips to ERROR
-        and downstream LogQL filters (e.g. `errors!="[]"`, `level="ERROR"`) catch
+        and downstream LogQL filters (e.g. errors!="[]", level="ERROR") catch
         it. Without this the AppError only showed up in Sentry and was invisible
         to Loki searches that look for application errors by level.
         """
@@ -143,12 +143,12 @@ def create_app() -> FastAPI:
 
         Starlette's ExceptionMiddleware converts an HTTPException into a
         response INSIDE call_next, so LoggingMiddleware's except path never
-        sees it: every `raise HTTPException(500, ...)` emitted a wide event
-        whose `errors` key was absent entirely. The status said 500 but the
+        sees it: every raise HTTPException(500, ...) emitted a wide event
+        whose errors key was absent entirely. The status said 500 but the
         event carried no record of what failed, and the exception the handler
         had caught was nowhere in the telemetry.
 
-        Like FastAPI's default handler this preserves `exc.headers`
+        Like FastAPI's default handler this preserves exc.headers
         (WWW-Authenticate on 401, Retry-After on 429) and drops the body for
         statuses that may not carry one (204/304).
         """

@@ -19,7 +19,7 @@ _MOD = "app.services.feedback_service"
 def mock_deps():
     """The two domain seams: message-ownership lookup and the Langfuse client.
 
-    ``create_score`` is Langfuse's sync call — the service never awaits it.
+    create_score is Langfuse's sync call — the service never awaits it.
     """
     with (
         patch(
