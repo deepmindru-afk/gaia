@@ -73,7 +73,7 @@ class NotionTriggerHandler(TriggerHandler):
                 log.error(f"{LogTag.TRIGGER} Notion FETCH_DATA tool not found")
                 return []
 
-            # Determine fetch_type based on query.field_name
+            # Determine fetch_type based on field_name
             fetch_type: Literal["pages", "databases", "all"]
             if query.field_name == "database_id":
                 fetch_type = "databases"

@@ -83,7 +83,7 @@ class LinearTriggerHandler(TriggerHandler):
             data = LinearGetAllTeamsData.model_validate(result["data"])
             teams = data.get_teams()
 
-            # Filter by query.search string if provided
+            # Filter by search string if provided
             search_term = query.search.lower()
             options = []
 

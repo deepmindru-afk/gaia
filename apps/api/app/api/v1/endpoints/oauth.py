@@ -576,6 +576,6 @@ async def composio_callback(
     )
     separator = "?" if "?" not in redirect_path else "&"
     return RedirectResponse(
-        url=f"{settings.FRONTEND_URL}/{redirect_path}{separator}"
+        url=f"{settings.FRONTEND_URL}{redirect_path}{separator}"
         f"oauth_success=true&integration={outcome.integration_id}"
     )

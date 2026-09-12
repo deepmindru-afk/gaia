@@ -337,7 +337,7 @@ class SlackTriggerHandler(TriggerHandler):
                     data = SlackListAllChannelsData.model_validate(result["data"])
                     channels_data = data.get_channels()
 
-                    # Add channels from this query.page
+                    # Add channels from this page
                     for channel in channels_data:
                         channel_id = channel.id
                         channel_name = channel.name
@@ -359,7 +359,7 @@ class SlackTriggerHandler(TriggerHandler):
 
                             all_channels.append(TriggerOption(value=channel_id, label=label))
 
-                    # Check for next query.page
+                    # Check for next page
                     cursor = data.next_cursor
                     if not cursor:
                         break

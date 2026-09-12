@@ -76,9 +76,7 @@ class GoogleSheetsTriggerHandler(TriggerHandler):
                     user_id=query.user_id,
                 )
                 if not tool:
-                    log.error(
-                        f"{LogTag.TRIGGER} Google Sheets query.search spreadsheets tool not found"
-                    )
+                    log.error(f"{LogTag.TRIGGER} Google Sheets search spreadsheets tool not found")
                     return []
 
                 # Invoke tool with typed input

@@ -107,7 +107,7 @@ class GitHubTriggerHandler(TriggerHandler):
         raw_data = result["data"]
         repos = GitHubListRepositoriesData.from_response_data(raw_data)
 
-        # Filter by query.search query if provided
+        # Filter by search query if provided
         if search_query:
             search_lower = search_query.lower()
             repos = [r for r in repos if r.full_name and search_lower in r.full_name.lower()]
