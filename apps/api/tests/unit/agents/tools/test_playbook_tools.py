@@ -1224,7 +1224,7 @@ class TestWritePlaybookBoundary:
     """
 
     def test_the_schema_asks_for_three_things_and_no_ask_section(self) -> None:
-        """ask was a separate table the model had to reason about, and five
+        """Ask was a separate table the model had to reason about, and five
         of the eight asks ever written were referenced by no step. The slot now
         lives inside the argument, so there is nothing at the top level to get
         wrong; a reappearing ask property is that mistake coming back.
@@ -1493,7 +1493,7 @@ class TestWritePlaybookAgainstTheAuthoringRun:
         assert len(store.documents[(WORKFLOW_ID, USER_ID)].steps) == 2
 
     def test_the_run_state_is_injected_and_never_shown_to_the_model(self) -> None:
-        """state is filled by the graph. If it appeared in the schema the
+        """State is filled by the graph. If it appeared in the schema the
         model would be asked to write its own transcript back as an argument,
         and the checks would read whatever it invented."""
         schema = write_playbook.tool_call_schema.model_json_schema()

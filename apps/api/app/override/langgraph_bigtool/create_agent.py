@@ -134,7 +134,7 @@ class _AgentDeps:
 
 
 def _fallback_config(config: RunnableConfig, lane: "ModelLane") -> RunnableConfig:
-    """config rebound onto lane — the config the fallback attempt runs under."""
+    """Config rebound onto lane — the config the fallback attempt runs under."""
     return cast(
         RunnableConfig,
         {**config, "configurable": lane.rebind(config.get("configurable") or {})},

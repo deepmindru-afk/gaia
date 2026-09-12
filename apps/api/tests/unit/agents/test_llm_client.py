@@ -1818,7 +1818,7 @@ class TestAinvokeStructured:
         assert result.answer == "42"
 
     async def test_the_label_and_config_reach_the_invoke(self) -> None:
-        """label names the call in the COGS event and config carries the
+        """Label names the call in the COGS event and config carries the
         user the spend is attributed to; losing either drops the attribution."""
         helper = MagicMock()
         helper.model_copy = MagicMock(return_value=MagicMock())
@@ -2264,7 +2264,7 @@ class TestReportedCost:
         assert _reported_cost(_result(llm_output={"token_usage": {"cost": ["1"]}})) is None
 
     def test_a_generation_without_a_message_is_skipped_not_crashed(self) -> None:
-        """generations also holds plain Generation objects, which have
+        """Generations also holds plain Generation objects, which have
         no message at all."""
         assert _reported_cost(LLMResult(generations=[[Generation(text="x")]])) is None
 

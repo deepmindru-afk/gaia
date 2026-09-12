@@ -167,7 +167,7 @@ class TestRegistryAgreesWithReality:
         assert empty == [], f"toolkits that registered no custom tools: {empty}"
 
     def test_initialization_is_idempotent(self, registered):
-        """initialize runs on every ComposioService construction. If it
+        """Initialize runs on every ComposioService construction. If it
         re-registered, slugs would collide with themselves and the count would
         drift upward across the process lifetime."""
         tools, registry = registered

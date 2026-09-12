@@ -29,7 +29,7 @@ _BLANK_STEP_MSG = "Value error, must not be blank"
 
 
 def _blank_step_errors(exc: ValidationError) -> list[tuple[tuple[Any, ...], str]]:
-    """exc's value_error entries as (location, message) pairs, in order."""
+    """Exc's value_error entries as (location, message) pairs, in order."""
     return [(e["loc"], e["msg"]) for e in exc.errors() if e["type"] == "value_error"]
 
 

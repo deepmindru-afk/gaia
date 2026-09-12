@@ -37,7 +37,7 @@ _T = TypeVar("_T")
 
 
 def nanos(moment: datetime) -> int:
-    """moment as whole nanoseconds — Loki's own timestamp resolution.
+    """Moment as whole nanoseconds — Loki's own timestamp resolution.
 
     Integer nanoseconds end to end, deliberately. Rounding the page cursor to
     a whole second (or round-tripping it through a datetime, whose float

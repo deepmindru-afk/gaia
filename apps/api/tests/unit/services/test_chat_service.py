@@ -655,7 +655,7 @@ class TestRunChatStreamBackground:
         }
 
     async def test_source_is_carried_onto_the_terminal_event(self, test_user, existing_conv_body):
-        """source is what lets one event name span web, desktop and bots.
+        """Source is what lets one event name span web, desktop and bots.
 
         Every other test leaves it None, so the branch that attaches it never
         ran with a value — key and value were both free to drift.

@@ -13,7 +13,7 @@ RUNS_DIR = Path(__file__).resolve().parents[1] / "runs"
 
 
 def under_runs(candidate: Path) -> Path:
-    """candidate resolved, provided it lives under :data:RUNS_DIR.
+    """Candidate resolved, provided it lives under :data:RUNS_DIR.
 
     Anything outside is refused with the directory named, so a wrong path is a
     one-line fix rather than a script quietly reading somewhere it should not.

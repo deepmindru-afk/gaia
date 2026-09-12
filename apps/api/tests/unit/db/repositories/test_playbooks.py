@@ -223,7 +223,7 @@ class TestUpsertForWorkflow:
     async def test_both_attempts_are_written_in_the_global_scope(
         self, repo: PlaybooksRepository
     ) -> None:
-        """playbooks is a global collection, so both the first attempt and the
+        """Playbooks is a global collection, so both the first attempt and the
         duplicate-key retry name the global cache scope."""
         spy, calls = _raw_update_spy(None, None, DuplicateKeyError("E11000 duplicate key"), _doc())
 

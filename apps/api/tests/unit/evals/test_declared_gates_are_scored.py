@@ -140,7 +140,7 @@ class _SuiteThatForgetsAGate:
 
 
 def test_verify_reports_a_gate_the_suite_never_scores() -> None:
-    """verify's blind spot, closed.
+    """Verify's blind spot, closed.
 
     Before this, an unscored gate rejected every forgery and the case was
     reported as *proven* — the strongest verdict the tool has — while being

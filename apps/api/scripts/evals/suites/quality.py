@@ -617,7 +617,7 @@ def _apply_openui_policy_criteria(case_id: str, expected: TurnPayload) -> None:
 
 
 def _reject_unfalsifiable_openui_gate(case: Case) -> None:
-    """openui as a gate on a case declaring openui: false cannot go red.
+    """Openui as a gate on a case declaring openui: false cannot go red.
 
     OpenUICheck returns 1.0 without reading anything in that branch, so the
     gate carries the authority of a hard check while being incapable of failing

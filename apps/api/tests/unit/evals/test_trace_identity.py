@@ -61,7 +61,7 @@ def test_metadata_carries_every_key_the_check_requires(key: str) -> None:
 
 
 def test_run_id_is_not_published_under_the_old_name() -> None:
-    """run was the name that made the data look absent. It must not come back."""
+    """Run was the name that made the data look absent. It must not come back."""
     metadata = _trace().metadata
     assert metadata["run_id"] == "capability-20260808-093921-98a7ac"
     assert "run" not in metadata

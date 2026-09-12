@@ -103,7 +103,7 @@ def successful_call_lines(messages: Sequence[AnyMessage]) -> list[str]:
 
 
 def append_call_record(text: str, messages: Sequence[AnyMessage]) -> str:
-    """text with the run's call record appended, unchanged when there is
+    """Text with the run's call record appended, unchanged when there is
     nothing to record."""
     lines = successful_call_lines(messages)
     if not lines:

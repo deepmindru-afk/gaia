@@ -509,7 +509,7 @@ class TestCompletionNudgeWiring:
         assert self._nudges(result) == []
 
     def test_the_sync_graph_path_nudges_too(self):
-        """invoke runs the sync twins of the nudge node and the routing closure.
+        """Invoke runs the sync twins of the nudge node and the routing closure.
         A graph wired only for the async path leaves every synchronous caller — the
         dev direct-invocation endpoints, scripts — with the guard switched off."""
         graph = self._compile_executor(

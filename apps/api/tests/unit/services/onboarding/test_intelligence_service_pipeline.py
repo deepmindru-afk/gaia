@@ -699,7 +699,7 @@ class TestAnnouncePersonalization:
     async def test_the_announce_line_reports_which_half_landed(
         self, announce_stack: Any, seeded: str | None, outcome: str
     ) -> None:
-        """outcome is what separates a user who got their card handed over from
+        """Outcome is what separates a user who got their card handed over from
         one who got only a notification — the two are indistinguishable
         otherwise, and only this line records which happened."""
         with patch(f"{MODULE}.seed_holo_card_conversation", AsyncMock(return_value=seeded)):

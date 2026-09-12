@@ -79,14 +79,14 @@ def _primary(entries: Sequence[_PersonField]) -> _PersonField | None:
 
 
 def _display_name(name: GooglePersonName | None) -> str | None:
-    """displayName off the primary name, or "Unknown" when People omitted it."""
+    """DisplayName off the primary name, or "Unknown" when People omitted it."""
     if name is None or "display_name" not in name.model_fields_set:
         return "Unknown"
     return name.display_name
 
 
 def _entry_value(entry: GooglePersonValue | None) -> str | None:
-    """value off an email/phone entry, or "" when People omitted it."""
+    """Value off an email/phone entry, or "" when People omitted it."""
     if entry is None or "value" not in entry.model_fields_set:
         return ""
     return entry.value

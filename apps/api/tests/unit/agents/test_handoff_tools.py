@@ -1540,7 +1540,7 @@ class TestHandoffBuildsItsDispatch:
         )
 
     async def test_a_background_dispatch_is_handed_the_runs_stream_id(self) -> None:
-        """sid routes the detached result back to this conversation's bucket
+        """Sid routes the detached result back to this conversation's bucket
         and keys its integration slot — the wrong one strands the result."""
         ctx = SimpleNamespace(agent_name="gmail_agent", integration_id="gmail")
         calls: list[tuple[object, object, object]] = []

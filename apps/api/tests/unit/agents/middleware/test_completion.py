@@ -63,7 +63,7 @@ def _tool_result(text: str = "result") -> ToolMessage:
 
 
 def _worked(count: int) -> list[AnyMessage]:
-    """count completed tool round-trips."""
+    """Count completed tool round-trips."""
     messages: list[AnyMessage] = []
     for _ in range(count):
         messages.extend([AIMessage(content=""), _tool_result()])

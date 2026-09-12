@@ -736,7 +736,7 @@ class TestActivitySignal:
     """
 
     async def test_a_conversation_created_since_the_cutoff_counts(self, repo):
-        """createdAt is an ISO STRING (see the module's timestamp contract), so a
+        """CreatedAt is an ISO STRING (see the module's timestamp contract), so a
         date $gte against it matches nothing at all — silently, reading as "this
         user has no activity" and making the sweep pause a live user's workflows."""
         doc = _doc()

@@ -244,7 +244,7 @@ def test_rejections_by_inner_middleware_are_logged(emitted):
 
 
 def test_raised_http_exception_lands_in_errors_with_its_cause(emitted):
-    """raise HTTPException(500, ...) from e must reach errors[] with the real cause.
+    """Raise HTTPException(500, ...) from e must reach errors[] with the real cause.
 
     The shipped bug: Starlette's ExceptionMiddleware turns an HTTPException
     into a response INSIDE call_next, so the boundary's except path never sees

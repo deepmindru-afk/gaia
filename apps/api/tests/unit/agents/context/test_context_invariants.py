@@ -666,7 +666,7 @@ class TestTheAssemblyIsRecordedOnTheWideEvent:
         assert record["stable_chars"] > 0
 
     async def test_the_real_channel_is_recorded_when_there_is_one(self) -> None:
-        """web is the default for a turn with no channel, not a label to
+        """Web is the default for a turn with no channel, not a label to
         stamp on every turn — a Slack turn recorded as web is unfindable."""
         async with captured_wide_event() as event:
             with fake_context_sources(ContextSources()):

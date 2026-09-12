@@ -76,7 +76,7 @@ def _group(validator: SettingsValidator, name: str) -> SettingsGroup:
 
 
 def test_the_share_group_publishes_the_prose_an_operator_reads() -> None:
-    """description reaches no runtime code path — scripts/dump_config_schema.py
+    """Description reaches no runtime code path — scripts/dump_config_schema.py
     lifts it straight off this module's AST into the config schema — so this is
     the only place its content is checked at all."""
     group = _group(SettingsValidator(), SHARE_GROUP)

@@ -47,7 +47,7 @@ class TestPublishWithRetry:
     async def test_publish_outbound_asks_for_no_declare_explicitly(
         self, connected_publisher
     ) -> None:
-        """declare must be False, not merely falsy.
+        """Declare must be False, not merely falsy.
 
         Watching declare_queue cannot tell False from None: _publish_with_retry
         branches on if declare: and both values skip the declare, so the test

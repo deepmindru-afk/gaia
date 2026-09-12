@@ -171,7 +171,7 @@ def test_the_model_is_read_from_what_the_provider_reported() -> None:
 
 
 def test_a_response_with_no_model_is_unknown_rather_than_guessed() -> None:
-    """unknown prices at DEFAULT_PRICING instead of a real rate, so the
+    """Unknown prices at DEFAULT_PRICING instead of a real rate, so the
     metering seams log it loudly; silently substituting a plausible default
     would hide the miss."""
     assert extract_message_model(AIMessage(content="hi")) == UNKNOWN_MODEL_NAME

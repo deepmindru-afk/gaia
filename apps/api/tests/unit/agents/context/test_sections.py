@@ -140,7 +140,7 @@ class TestTheTableIsWellFormed:
         ]
 
     def test_a_section_excludes_the_tiers_it_was_not_registered_against(self) -> None:
-        """applies is what keeps comms — which holds no file or shell tools —
+        """Applies is what keeps comms — which holds no file or shell tools —
         from being handed the skills listing."""
         assert not section("skills").applies(AgentTier.COMMS)
         assert section("skills").applies(AgentTier.EXECUTOR)

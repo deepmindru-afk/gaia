@@ -200,7 +200,7 @@ class TestServiceIdentity:
         assert "Dhruv" not in content
 
     async def test_the_sanitized_task_is_also_what_the_run_records_as_intent(self, gmail_subagent):
-        """intent drives retrieval and logging; leaving it unsanitized would
+        """Intent drives retrieval and logging; leaving it unsanitized would
         put the GAIA name back into the subagent's semantic search."""
         ctx, _, _ = await prepare_subagent_execution(
             "gmail", "find gmail messages from user: Dhruv", _configurable()
@@ -247,7 +247,7 @@ class TestPreparedContext:
 
 class TestResolutionFailure:
     async def test_an_unresolvable_subagent_returns_an_error_instead_of_raising(self, monkeypatch):
-        """handoff must always hand the executor a string it can act on — a
+        """Handoff must always hand the executor a string it can act on — a
         raise here aborts the whole turn instead of letting the model retry."""
         monkeypatch.setattr(
             handoff_tools,

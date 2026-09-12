@@ -247,7 +247,7 @@ def test_an_outage_graded_as_a_wrong_answer_blocks_the_run() -> None:
 
 
 def test_the_same_outage_recorded_honestly_publishes() -> None:
-    """errored is the honest status — unscored, out of the denominator. It is
+    """Errored is the honest status — unscored, out of the denominator. It is
     the grading of a fault as a wrong answer that must stop a run, not the fault."""
     honest = [
         {

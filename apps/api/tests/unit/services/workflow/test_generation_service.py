@@ -73,7 +73,7 @@ class TestFailureReason:
         )
 
     def test_an_empty_message_falls_back_to_the_class_name(self):
-        """raise TimeoutError carries no message at all; "TimeoutError: "
+        """Raise TimeoutError carries no message at all; "TimeoutError: "
         with nothing after it tells the user nothing."""
         assert _failure_reason(TimeoutError()) == "TimeoutError: TimeoutError"
         assert _failure_reason(TimeoutError("   ")) == "TimeoutError: TimeoutError"
@@ -843,7 +843,7 @@ class TestRunGenerationAttempt:
         assert isinstance(error, ValueError)
 
     async def test_an_empty_draft_logs_the_attempt_number_one_based(self):
-        """attempt is a zero-based loop index; logging it raw makes the first
+        """Attempt is a zero-based loop index; logging it raw makes the first
         attempt read as attempt 0 in every incident thread."""
         metered, runnable = _llm_plumbing()
         with metered, runnable, _llm(return_value=_draft()), patch(f"{MODULE}.log") as mock_log:

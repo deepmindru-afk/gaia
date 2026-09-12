@@ -115,7 +115,7 @@ class _GraphState(TypedDict):
 
 
 def _build_graph(base_url: str, nudges: int = 0) -> Any:
-    """agent → (tools → agent)* → END, driven by a real streaming wire client.
+    """Agent → (tools → agent)* → END, driven by a real streaming wire client.
 
     nudges mirrors the real graph's nudge_continue node: a tool-free
     reply is sent back for one more pass instead of ending the run, which is the

@@ -109,7 +109,7 @@ def render_last_run(execution: WorkflowExecution) -> str:
 
 
 def neutralise_last_run_tags(text: str) -> str:
-    """text with every <last_run/</last_run defused and nothing else touched.
+    """Text with every <last_run/</last_run defused and nothing else touched.
 
     Only the tag's own < becomes &lt;, so a forged close can never match
     the real one while every other angle bracket (HTML in a fetched page, the

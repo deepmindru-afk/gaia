@@ -38,7 +38,7 @@ def _offered_trigger_names() -> set[str]:
 
 
 def _unwrap_optional(annotation: object) -> object:
-    """str | None -> str. Payload fields are optional almost everywhere."""
+    """Str | None -> str. Payload fields are optional almost everywhere."""
     if get_origin(annotation) not in (Union, UnionType):
         return annotation
     args = [a for a in get_args(annotation) if a is not type(None)]

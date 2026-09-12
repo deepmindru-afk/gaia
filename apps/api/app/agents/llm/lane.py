@@ -125,7 +125,7 @@ class ModelLane:
         return keys
 
     def rebind(self, configurable: Mapping[str, Any]) -> dict[str, Any]:
-        """configurable with THIS lane's binding keys, and the previous lane's cleared.
+        """Configurable with THIS lane's binding keys, and the previous lane's cleared.
 
         A plain merge is not enough, and that is why the fallback silently did
         nothing: LangChain merges a passed config OVER a with_config one

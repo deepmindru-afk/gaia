@@ -147,7 +147,7 @@ class Timezone:
         return datetime.now(self.tzinfo)
 
     def localize(self, instant: datetime) -> datetime:
-        """instant (any tz-aware datetime) re-expressed in this zone."""
+        """Instant (any tz-aware datetime) re-expressed in this zone."""
         return instant.astimezone(self.tzinfo)
 
     def format(self, instant: datetime, fmt: str = "%I:%M %p %Z") -> str:

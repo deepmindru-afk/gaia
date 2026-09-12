@@ -177,7 +177,7 @@ def _authored_run(case: Case) -> CaseRun | None:
 
 
 def parroted_assertions(case: Case) -> list[str]:
-    """communicate strings the user's own prompt already contains.
+    """Communicate strings the user's own prompt already contains.
 
     A presence assertion the prompt supplies can be satisfied by repeating the
     question back, so it credits the agent for nothing. This is reported rather

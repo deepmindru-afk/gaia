@@ -448,7 +448,7 @@ async def client(test_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest.fixture
 async def gated_client(test_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
-    """client with the real EntitlementMiddleware in front of the app.
+    """Client with the real EntitlementMiddleware in front of the app.
 
     The test app strips every middleware, so a route's 402 contract cannot be
     proved through client: the deny-by-default gate lives in the middleware,

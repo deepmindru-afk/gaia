@@ -1167,7 +1167,7 @@ class TestRunContext:
 
 
 async def test_a_finished_run_reports_every_step_it_completed() -> None:
-    """completed is what a fallback agent is told it must not do again.
+    """Completed is what a fallback agent is told it must not do again.
 
     An empty list on a run that really did send the mail is how a workflow sends
     twice.
