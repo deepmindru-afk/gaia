@@ -65,7 +65,9 @@ first non-merged ancestor, then links them into a Stack on GitHub.
   it on GitHub, leaving the merged stack untouched.
 - **Title generation with `--auto`:** a branch with a single commit uses that commit's subject as
   the title and its body as the PR body. A branch with multiple commits humanizes the branch name
-  (hyphens and underscores become spaces). There is no flag for a custom title or body; use
+  (hyphens and underscores become spaces). When the repository has a pull request template, the
+  template takes precedence for the body — it is used verbatim, including any raw placeholders,
+  instead of the commit body. There is no flag for a custom title or body; use
   `gh pr edit` afterwards.
 - `--open` marks new *and existing* PRs ready for review; without it new PRs are drafts.
 - Requires stacked PRs to be enabled on the repository. If not, `submit` exits **9** when
@@ -98,7 +100,9 @@ The routine command. Steps, in order:
    from its remote, or a branch no longer contains its expected parent. Merged PRs are handled
    automatically. On conflict, **all branches are restored** to their pre-rebase state and the
    command exits **3**.
-5. **Push** all active branches, atomically.
+5. **Push** all active branches with `--force-with-lease --atomic`. A push failure does not fail
+   the command: it is reported as a warning and `sync` still exits 0 and continues to refresh PR
+   state. Check the output for push warnings and rerun `gh stack push` to retry.
 6. **Refresh PR state** from GitHub.
 7. **Sync the stack object** — link open PRs into a stack, additively. Only when two or more PRs
    exist. `sync` never opens PRs; that is `submit`.

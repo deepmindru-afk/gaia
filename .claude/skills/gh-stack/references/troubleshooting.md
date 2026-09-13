@@ -84,14 +84,18 @@ There is no non-interactive reorder, rename, or removal. `add` run from the wron
 
 ```bash
 gh stack unstack                       # removes local tracking and the GitHub grouping
-# Rename or drop branches, and rewrite ancestry as needed.
+# Drop branches and rewrite ancestry as needed. Keep branch names unchanged.
 gh stack init --base main branch-1 branch-2 branch-3
 gh stack submit --auto                 # re-link on GitHub
 ```
 
 `init` adopts branches that already exist, so the rebuild reuses them rather than creating new ones.
-Existing PRs survive. Once Git ancestry is correct, `submit` updates their base branches and
-re-links the stack on GitHub.
+When branch names are unchanged, existing PRs survive: once Git ancestry is correct, `submit` finds
+each PR by its branch name, updates base branches, and re-links the stack on GitHub. Renaming a
+branch breaks this lookup — `submit` matches open PRs by the new `headRefName`, misses the existing
+PR, and creates a new one. To rename, either keep the old branch until the new PR is ready, or
+update and verify the remote PR head afterwards (`gh stack view --json`, `gh pr view`), then
+re-link.
 
 Changing metadata does **not** change Git ancestry. Reorder commits first, then rebuild the stack.
 For example, to change `main <- models <- migration <- ui` into
@@ -105,12 +109,15 @@ git rebase --onto migration main models
 git rebase --onto models "$old_migration" ui
 gh stack unstack
 gh stack init --base main migration models ui
+gh stack submit --auto                 # re-link the rebuilt order on GitHub
 ```
 
 The first rebase moves migration-only commits onto trunk, the second replays model commits above
 them, and the third replays UI-only commits above models. Preserve the old boundary SHAs before
 moving any branch. For a different reorder, identify each layer's range with
-`git log <old-parent>..<branch>`, then replay the ranges bottom to top.
+`git log <old-parent>..<branch>`, then replay the ranges bottom to top. Without the final
+`submit`, the GitHub grouping and PR bases stay in the old order while local branches use the
+new one.
 
 ## Branch belongs to several stacks (exit 6)
 
@@ -148,12 +155,17 @@ the lock; identify and stop that process before retrying.
 
 ## An interrupted modify session (exit 10)
 
-`gh stack modify` is TUI-only and should never be invoked by an agent. If a repository is left in
+Bare `gh stack modify` is TUI-only and must never be invoked by an agent. The non-interactive
+recovery flags are safe: `gh stack modify --abort` restores the pre-modify state and
+`gh stack modify --continue` resumes after a resolved conflict. If a repository is left in
 this state by someone else, restore it:
 
 ```bash
 gh stack modify --abort
 ```
 
-Related: `submit` also detects a pending modify state, and under a TTY asks before overwriting the
-stack on GitHub with local state.
+Related: `submit` also detects a pending modify state. Under a TTY it asks before deleting the
+remote stack grouping and recreating it from local state. Without a TTY (`--auto` in CI or any
+non-interactive run) it skips that confirmation and overwrites the remote grouping. Get explicit
+operator approval for the remote grouping change before running `submit` with a pending modify
+state.
