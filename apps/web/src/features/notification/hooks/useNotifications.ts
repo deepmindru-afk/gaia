@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 
 import {
@@ -14,6 +19,7 @@ import { NOTIFICATION_PAGE_SIZE } from "@/features/notification/constants";
 import { toast } from "@/lib/toast";
 import { NotificationsAPI } from "@/services/api/notifications";
 import {
+  type MarkAllReadSummary,
   type NotificationRecord,
   NotificationStatus,
   type UseNotificationsOptions,
@@ -28,7 +34,13 @@ interface UseNotificationsReturn {
   archiveNotification: (id: string) => Promise<void>;
   bulkMarkAsRead: (ids: string[]) => Promise<void>;
   bulkArchive: (ids: string[]) => Promise<void>;
+  markAllAsRead: (channelType?: string) => Promise<void>;
   unreadCount: number;
+  /** True when the shared store hit its fetch cap, so `unreadCount` may
+   * undercount — an older delivered notification could exist past the loaded
+   * page. Callers gating "is there anything to mark read" must OR this in
+   * rather than trust `unreadCount === 0` alone. */
+  hasMoreUnseen: boolean;
   addNotification: (notification: NotificationRecord) => void;
   updateNotification: (notification: NotificationRecord) => void;
 }
@@ -49,6 +61,35 @@ const CANONICAL_FILTERS: UseNotificationsOptions = {
 };
 
 const EMPTY: NotificationRecord[] = [];
+
+/**
+ * Mark every cached DELIVERED notification read, optionally only those sent on
+ * `channelType`. Shared by the mark-all mutation and the `notification.all_read`
+ * websocket push so both views of "all read" patch the cache identically.
+ */
+export function markDeliveredAsReadInCache(
+  queryClient: QueryClient,
+  channelType?: string | null,
+): void {
+  const ids = new Set<string>();
+  for (const [, page] of snapshotNotificationPages(queryClient)) {
+    for (const n of page?.notifications ?? []) {
+      if (n.status !== NotificationStatus.DELIVERED) continue;
+      if (
+        channelType &&
+        !n.channels?.some((c) => c.channel_type === channelType)
+      ) {
+        continue;
+      }
+      ids.add(n.id);
+    }
+  }
+  if (ids.size === 0) return;
+  patchNotifications(queryClient, [...ids], {
+    status: NotificationStatus.READ,
+    read_at: new Date().toISOString(),
+  });
+}
 
 export function useNotifications(
   options: UseNotificationsHookOptions = {},
@@ -79,7 +120,7 @@ export function useNotifications(
       });
       return { snapshot };
     },
-    onSuccess: () => toast.success("Notification marked as read"),
+    // No success toast: the optimistic cache write already shows it read.
     onError: (error, _id, context) => {
       if (context?.snapshot) {
         restoreNotificationPages(queryClient, context.snapshot);
@@ -111,6 +152,35 @@ export function useNotifications(
       }
       toast.error("Failed to mark notifications as read");
       console.error("Error bulk marking notifications as read:", error);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
+
+  // Server-side mark-all (every delivered notification, not just the loaded
+  // page); the cache is patched optimistically for what is loaded.
+  const markAllAsReadMutation = useMutation({
+    mutationFn: (channelType?: string) =>
+      NotificationsAPI.markAllAsRead(channelType),
+    onMutate: async (channelType?: string) => {
+      await queryClient.cancelQueries({ queryKey: notificationKeys.all });
+      const snapshot = snapshotNotificationPages(queryClient);
+      markDeliveredAsReadInCache(queryClient, channelType);
+      return { snapshot };
+    },
+    onSuccess: (response) => {
+      const summary = response.data as MarkAllReadSummary | undefined;
+      toast.success(
+        `Marked ${summary?.updated_count ?? 0} notifications as read`,
+      );
+    },
+    onError: (error, _channelType, context) => {
+      if (context?.snapshot) {
+        restoreNotificationPages(queryClient, context.snapshot);
+      }
+      toast.error("Failed to mark all notifications as read");
+      console.error("Error marking all notifications as read:", error);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: notificationKeys.all });
@@ -172,6 +242,15 @@ export function useNotifications(
     [archiveMutation],
   );
 
+  const markAllAsRead = useCallback(
+    async (channelTypeFilter?: string) => {
+      await markAllAsReadMutation
+        .mutateAsync(channelTypeFilter)
+        .catch(() => undefined);
+    },
+    [markAllAsReadMutation],
+  );
+
   const bulkArchive = useCallback(
     async (ids: string[]) => {
       const ok = await archiveMutation
@@ -222,6 +301,10 @@ export function useNotifications(
     [allNotifications],
   );
 
+  // The shared fetch is capped at NOTIFICATION_PAGE_SIZE — if it came back
+  // full, an older, still-unread notification may exist beyond what's loaded.
+  const hasMoreUnseen = allNotifications.length >= NOTIFICATION_PAGE_SIZE;
+
   return {
     notifications,
     loading: query.isPending,
@@ -235,7 +318,9 @@ export function useNotifications(
     archiveNotification,
     bulkMarkAsRead,
     bulkArchive,
+    markAllAsRead,
     unreadCount,
+    hasMoreUnseen,
     addNotification,
     updateNotification,
   };

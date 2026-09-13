@@ -8,7 +8,7 @@ import { InternetIcon, PuzzleIcon } from "@icons";
 import { useCallback, useMemo, useState } from "react";
 import RightSidebarPanel from "@/components/layout/sidebar/RightSidebarPanel";
 import { IntegrationSidebar } from "@/components/layout/sidebar/right-variants/IntegrationSidebar";
-import { getToolCategoryIcon } from "@/features/chat/utils/toolIcons";
+import { IntegrationIcon } from "@/features/integrations/components/IntegrationIcon";
 import { useIntegrations } from "@/features/integrations/hooks/useIntegrations";
 import type { Integration } from "@/features/integrations/types";
 import { useIntegrationModalActions } from "@/stores/uiStore";
@@ -73,16 +73,11 @@ export default function IntegrationsSidebar() {
           size="sm"
           startContent={
             <div className="relative">
-              {getToolCategoryIcon(
-                integration.id,
-                {
-                  size: 18,
-                  width: 18,
-                  height: 18,
-                  showBackground: false,
-                },
-                integration.iconUrl,
-              )}
+              <IntegrationIcon
+                integrationId={integration.id}
+                iconUrl={integration.iconUrl}
+                size={18}
+              />
             </div>
           }
         >

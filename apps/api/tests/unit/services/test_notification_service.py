@@ -13,7 +13,7 @@ import pytest
 from app.models.notification.notification_models import (
     ActionResult,
     BulkActions,
-    NotificationQuery,
+    NotificationListFilters,
     NotificationSourceEnum,
     NotificationStatus,
     NotificationType,
@@ -84,8 +84,7 @@ class TestNotificationService:
     async def test_get_user_notifications_passes_filters(self, service):
         svc, orchestrator = service
         orchestrator.get_user_notifications.return_value = []
-
-        query = NotificationQuery(
+        filters = NotificationListFilters(
             status=NotificationStatus.READ,
             limit=10,
             offset=5,
@@ -94,9 +93,9 @@ class TestNotificationService:
             source=NotificationSourceEnum.AI_AGENT,
         )
 
-        await svc.get_user_notifications("user-1", query)
+        await svc.get_user_notifications("user-1", filters=filters)
 
-        orchestrator.get_user_notifications.assert_awaited_once_with("user-1", query)
+        orchestrator.get_user_notifications.assert_awaited_once_with("user-1", filters=filters)
 
     async def test_get_notification_delegates(self, service):
         svc, orchestrator = service

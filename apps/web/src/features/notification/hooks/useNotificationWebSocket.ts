@@ -6,6 +6,7 @@ import {
   prependNotification,
   upsertNotification,
 } from "@/features/notification/api/notificationCache";
+import { markDeliveredAsReadInCache } from "@/features/notification/hooks/useNotifications";
 import { toast } from "@/lib/toast";
 import { isSafeInternalPath } from "@/lib/url-safety";
 import { wsManager } from "@/lib/websocket/WebSocketManager";
@@ -26,11 +27,13 @@ interface WebSocketMessage {
     | "notification.updated"
     | "notification.read"
     | "notification.reactivated"
+    | "notification.all_read"
     | "ping"
     | "error";
   notification?: NotificationRecord;
   notification_id?: string;
   updates?: NotificationUpdate;
+  channel_type?: string | null;
   message?: string;
 }
 
@@ -149,6 +152,11 @@ export function useNotificationWebSocket() {
           }
           break;
 
+        case "notification.all_read":
+          // Another tab/device marked everything read — mirror it in the cache.
+          markDeliveredAsReadInCache(queryClient, message.channel_type);
+          break;
+
         case "error":
           console.error("WebSocket error message:", message.message);
           break;
@@ -169,12 +177,14 @@ export function useNotificationWebSocket() {
 
     wsManager.on("notification.delivered", handleMessage);
     wsManager.on("notification.updated", handleMessage);
+    wsManager.on("notification.all_read", handleMessage);
     wsManager.on("error", handleMessage);
     wsManager.onError(handleError);
 
     return () => {
       wsManager.off("notification.delivered", handleMessage);
       wsManager.off("notification.updated", handleMessage);
+      wsManager.off("notification.all_read", handleMessage);
       wsManager.off("error", handleMessage);
       wsManager.offError(handleError);
     };
