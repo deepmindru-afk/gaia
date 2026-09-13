@@ -924,6 +924,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/device/self-pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Self Pair
+         * @description Pair the authenticated host as its own device in one call (no user_code).
+         *
+         *     A UX collapse of start→approve→poll for a host that already holds the user's
+         *     session (the desktop app). The JSON body is the CSRF control — it forces a
+         *     CORS preflight the allowlist rejects.
+         */
+        post: operations["device_bridge_self_pair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/device/servers": {
         parameters: {
             query?: never;
@@ -939,6 +963,29 @@ export interface paths {
          */
         post: operations["device_bridge_register_server"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/device/servers/{server_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Deregister Server
+         * @description Remove one MCP server the device no longer exposes; authed by the device JWT.
+         *
+         *     The daemon calls this right after dropping the server from its local config,
+         *     so it does not need to be told to remove it again (notify_device=False).
+         */
+        delete: operations["device_bridge_deregister_server"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2661,6 +2708,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notifications/mark-all-read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark All Read
+         * @description Mark every delivered notification for the user as read, server-side.
+         *
+         *     Operates on every matching notification, not just the ones the caller has
+         *     currently loaded — this is what lets "mark all as read" cover notifications
+         *     beyond the first page a paginated client has fetched.
+         */
+        post: operations["notification_mark_all_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/notifications/preferences/channels": {
         parameters: {
             query?: never;
@@ -4184,7 +4255,7 @@ export interface paths {
         };
         /**
          * Get Todo Canvas
-         * @description Return the canvas markdown for a tracked todo.
+         * @description Return a tracked todo's notes: canvas.md and activity.md.
          */
         get: operations["todos_get_todo_canvas"];
         put?: never;
@@ -7183,6 +7254,16 @@ export interface components {
             success: boolean;
         };
         /**
+         * DeregisterServerResponse
+         * @description Result of the daemon deregistering one of its MCP servers.
+         */
+        DeregisterServerResponse: {
+            /** Removed */
+            removed: boolean;
+            /** Server Key */
+            server_key: string;
+        };
+        /**
          * DesktopReleaseAsset
          * @description One downloadable binary attached to a desktop release.
          */
@@ -7339,6 +7420,11 @@ export interface components {
             display_name: string;
             /** Integration Id */
             integration_id: string;
+            /**
+             * Kind
+             * @default stdio
+             */
+            kind?: string;
             /** Server Key */
             server_key: string;
             /** Status */
@@ -8847,6 +8933,14 @@ export interface components {
              */
             logout_url: string | null;
         };
+        /**
+         * MarkAllReadSummary
+         * @description Outcome of marking every delivered notification for a user as read.
+         */
+        MarkAllReadSummary: {
+            /** Updated Count */
+            updated_count: number;
+        };
         /** MarkAsReadResponse */
         MarkAsReadResponse: {
             /** Count */
@@ -10123,6 +10217,14 @@ export interface components {
             /** Success */
             success: boolean;
         };
+        /** NotificationResponse[MarkAllReadSummary] */
+        NotificationResponse_MarkAllReadSummary_: {
+            data?: components["schemas"]["MarkAllReadSummary"] | null;
+            /** Message */
+            message: string;
+            /** Success */
+            success: boolean;
+        };
         /** NotificationResponse[NotificationRecord] */
         NotificationResponse_NotificationRecord_: {
             data?: components["schemas"]["NotificationRecord"] | null;
@@ -11325,6 +11427,12 @@ export interface components {
         RegisterServerRequest: {
             /** Display Name */
             display_name: string;
+            /**
+             * Kind
+             * @default stdio
+             * @enum {string}
+             */
+            kind?: "stdio" | "url" | "filesystem";
             /** Server Key */
             server_key: string;
         };
@@ -11645,6 +11753,42 @@ export interface components {
             steps: components["schemas"]["WorkflowStepOutput"][];
             /** Title */
             title: string;
+        };
+        /**
+         * SelfPairRequest
+         * @description An authenticated host pairs itself as a device in one call (no user_code).
+         *
+         *     Requiring a JSON body is load-bearing: it forces a CORS preflight the
+         *     allowlist rejects, which is the CSRF control for this cookie-authenticated
+         *     route. Do not relax it to a GET or an empty body.
+         */
+        SelfPairRequest: {
+            /** Client */
+            client: string;
+            /** Daemon Version */
+            daemon_version?: string | null;
+            /**
+             * Name
+             * @description Human label for this device
+             */
+            name: string;
+            /** Platform */
+            platform: string;
+        };
+        /**
+         * SelfPairResponse
+         * @description Result of a one-call self-pair: the device plus its refresh credential.
+         *
+         *     Mirrors the approve response but also returns ``refresh_token`` inline, since
+         *     the caller that pairs is the same host that stores the credential.
+         */
+        SelfPairResponse: {
+            /** Device Id */
+            device_id: string;
+            /** Name */
+            name: string;
+            /** Refresh Token */
+            refresh_token: string;
         };
         /**
          * SendDraftResponse
@@ -12540,9 +12684,11 @@ export interface components {
         SystemPurpose: "email_processing" | "reminder_processing" | "workflow_execution" | "getting_started" | "other";
         /**
          * TodoCanvasResponse
-         * @description A tracked todo's canvas markdown. Empty string when the todo has no canvas.
+         * @description A tracked todo's notes: canvas.md and activity.md. Empty strings when unset.
          */
         TodoCanvasResponse: {
+            /** Activity */
+            activity: string;
             /** Content */
             content: string;
         };
@@ -12694,7 +12840,7 @@ export interface components {
             updated_at?: string;
             /**
              * Vfs Path
-             * @description VFS directory for tracked todos (canvas.md + log.md)
+             * @description VFS directory for tracked todos (canvas.md, activity.md, log.md)
              */
             vfs_path?: string | null;
             /**
@@ -12814,7 +12960,7 @@ export interface components {
             user_id: string;
             /**
              * Vfs Path
-             * @description VFS directory for tracked todos (canvas.md + log.md)
+             * @description VFS directory for tracked todos (canvas.md, activity.md, log.md)
              */
             vfs_path: string | null;
             /**
@@ -14478,6 +14624,7 @@ export type DeactivationReason = components['schemas']['DeactivationReason'];
 export type DegradedHealthResponse = components['schemas']['DegradedHealthResponse'];
 export type DeleteAllConversationsResponse = components['schemas']['DeleteAllConversationsResponse'];
 export type DeleteMemoryResponse = components['schemas']['DeleteMemoryResponse'];
+export type DeregisterServerResponse = components['schemas']['DeregisterServerResponse'];
 export type DesktopReleaseAsset = components['schemas']['DesktopReleaseAsset'];
 export type DesktopReleaseResponse = components['schemas']['DesktopReleaseResponse'];
 export type DesktopToolResultRequest = components['schemas']['DesktopToolResultRequest'];
@@ -14573,6 +14720,7 @@ export type LinkPlatformRequest = components['schemas']['LinkPlatformRequest'];
 export type LinkPlatformResponse = components['schemas']['LinkPlatformResponse'];
 export type LinkTokenInfoResponse = components['schemas']['LinkTokenInfoResponse'];
 export type LogoutResponse = components['schemas']['LogoutResponse'];
+export type MarkAllReadSummary = components['schemas']['MarkAllReadSummary'];
 export type MarkAsReadResponse = components['schemas']['MarkAsReadResponse'];
 export type MarkAsUnreadResponse = components['schemas']['MarkAsUnreadResponse'];
 export type MarketplaceResponse = components['schemas']['MarketplaceResponse'];
@@ -14637,6 +14785,7 @@ export type NotificationRecord = components['schemas']['NotificationRecord'];
 export type NotificationRequest = components['schemas']['NotificationRequest'];
 export type NotificationResponse_BulkActionSummary_ = components['schemas']['NotificationResponse_BulkActionSummary_'];
 export type NotificationResponse_dict_str__Any__ = components['schemas']['NotificationResponse_dict_str__Any__'];
+export type NotificationResponse_MarkAllReadSummary_ = components['schemas']['NotificationResponse_MarkAllReadSummary_'];
 export type NotificationResponse_NotificationRecord_ = components['schemas']['NotificationResponse_NotificationRecord_'];
 export type NotificationResponse_NotificationView_ = components['schemas']['NotificationResponse_NotificationView_'];
 export type NotificationSourceEnum = components['schemas']['NotificationSourceEnum'];
@@ -14716,6 +14865,8 @@ export type SearchResultsResponse = components['schemas']['SearchResultsResponse
 export type SelectedCalendarEventData = components['schemas']['SelectedCalendarEventData'];
 export type SelectedWorkflowDataInput = components['schemas']['SelectedWorkflowDataInput'];
 export type SelectedWorkflowDataOutput = components['schemas']['SelectedWorkflowDataOutput'];
+export type SelfPairRequest = components['schemas']['SelfPairRequest'];
+export type SelfPairResponse = components['schemas']['SelfPairResponse'];
 export type SendDraftResponse = components['schemas']['SendDraftResponse'];
 export type SendEmailForm = components['schemas']['SendEmailForm'];
 export type SendEmailRequest = components['schemas']['SendEmailRequest'];
@@ -17593,6 +17744,57 @@ export interface operations {
             };
         };
     };
+    device_bridge_self_pair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelfPairRequest"];
+            };
+        };
+        responses: {
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelfPairResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     device_bridge_register_server: {
         parameters: {
             query?: never;
@@ -17633,6 +17835,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RegisterServerResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    device_bridge_deregister_server: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                server_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeregisterServerResponse"];
                 };
             };
             /** @description Unprocessable Entity */
@@ -22209,6 +22462,56 @@ export interface operations {
             };
         };
     };
+    notification_mark_all_read: {
+        parameters: {
+            query?: {
+                /** @description Only mark notifications on this channel */
+                channel_type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Client Error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Server Error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationResponse_MarkAllReadSummary_"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     notification_get_channel_preferences: {
         parameters: {
             query?: never;
@@ -25977,33 +26280,29 @@ export interface operations {
         parameters: {
             query?: {
                 completed?: boolean | null;
-                /** @description Due date after this date */
                 due_after?: string | null;
-                /** @description Due date before this date */
                 due_before?: string | null;
-                /** @description Only todos due this week */
                 due_this_week?: boolean;
-                /** @description Only todos due today */
                 due_today?: boolean;
                 has_due_date?: boolean | null;
-                /** @description Include statistics in response */
                 include_stats?: boolean;
-                labels?: string[] | null;
-                /** @description Search mode: text, semantic, or hybrid */
                 mode?: components["schemas"]["SearchMode"];
                 overdue?: boolean | null;
                 page?: number;
                 per_page?: number;
                 priority?: components["schemas"]["Priority"] | null;
                 project_id?: string | null;
-                /** @description Search query */
                 q?: string | null;
             };
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": string[] | null;
+            };
+        };
         responses: {
             /** @description Client Error */
             "4XX": {

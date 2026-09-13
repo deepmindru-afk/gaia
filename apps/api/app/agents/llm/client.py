@@ -629,7 +629,11 @@ def _is_openrouter_wire(runnable: Runnable) -> bool:
     # Walking arbitrary attributes could hang on an object that generates them.
     for _ in range(_WIRE_WALK_MAX_HOPS):
         if isinstance(node, ChatOpenRouter):
-            return True
+            # session_id is an OpenRouter-service routing hint: a ChatOpenRouter aimed
+            # at another OpenAI-compatible endpoint (e.g. the DEV_LLM_* custom lane)
+            # rejects it, so only bind when the endpoint is OpenRouter's own (base unset).
+            base = node.openrouter_api_base
+            return base is None or "openrouter.ai" in str(base)
         if isinstance(node, RunnableBinding):
             node = node.bound
         elif isinstance(node, RunnableSequence):

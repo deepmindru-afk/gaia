@@ -27,8 +27,8 @@ describe("path-typed api client", () => {
   });
 
   it("fills path parameters, trims the /api/v1 prefix the base URL carries, and forwards the query", async () => {
-    await api.get("/api/v1/todos", {
-      query: { page: 2, labels: ["a b", "c"] },
+    await api.get("/api/v1/calendar/events", {
+      query: { max_results: 2, selected_calendars: ["a b", "c"] },
     });
     await api.get("/api/v1/todos/{todo_id}", { path: { todo_id: "t/1" } });
 
@@ -36,8 +36,8 @@ describe("path-typed api client", () => {
       1,
       expect.objectContaining({
         method: "GET",
-        url: "/todos",
-        params: { page: 2, labels: ["a b", "c"] },
+        url: "/calendar/events",
+        params: { max_results: 2, selected_calendars: ["a b", "c"] },
         paramsSerializer: { indexes: null },
       }),
     );

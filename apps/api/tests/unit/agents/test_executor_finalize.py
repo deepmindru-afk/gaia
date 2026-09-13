@@ -55,9 +55,12 @@ CARD_NOTE = wrap_agent_payload(AgentTag.RETURNED_TO_FRONTEND, "todo_data (1 todo
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
+    # _abandoned too: another test abandoning "s1" on the same worker made finalize skip delivery.
     sess._sessions.clear()
+    sess._abandoned.clear()
     yield
     sess._sessions.clear()
+    sess._abandoned.clear()
 
 
 def _run(

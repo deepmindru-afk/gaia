@@ -260,7 +260,7 @@ class TestSignalMatchingSectionRenders:
     async def test_an_integration_fire_with_tracked_todos_renders_the_signal_section(
         self,
     ) -> None:
-        """Regression: str.format read the literal example "- {date}: {what happened}" as placeholders (KeyError: 'date', 54/day)."""
+        """Regression: str.format read the literal example "- {date} {what happened}" as real placeholders, causing KeyError: 'date' 54 times in one day in production."""
         selected = SelectedWorkflowData(
             id="wf_meeting",
             title="Meeting Reminder",
@@ -284,7 +284,7 @@ class TestSignalMatchingSectionRenders:
             )
 
         assert "Ship the launch post" in result
-        assert "- {date}: {what happened}" in result
+        assert "- {date} {what happened}" in result
 
 
 class TestFormatCalendarEventContext:

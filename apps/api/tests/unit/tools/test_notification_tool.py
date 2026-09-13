@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.notification.notification_models import (
     NotificationContentView,
-    NotificationQuery,
+    NotificationListFilters,
     NotificationSourceEnum,
     NotificationStatus,
     NotificationType,
@@ -92,7 +92,7 @@ class TestGetNotifications:
         # silently widens what the user is shown.
         mock_service.get_user_notifications.assert_awaited_once_with(
             FAKE_USER_ID,
-            NotificationQuery(
+            filters=NotificationListFilters(
                 status=NotificationStatus.READ,
                 notification_type=NotificationType.WARNING,
                 source=NotificationSourceEnum.AI_REMINDER,
@@ -137,6 +137,39 @@ class TestGetNotifications:
 
         assert "DB error" in result["error"]
         assert result["notifications"] == []
+
+    @patch(f"{MODULE}.get_stream_writer")
+    @patch(f"{MODULE}.notification_service")
+    @patch(f"{MODULE}.get_user_id_from_config", return_value=FAKE_USER_ID)
+    async def test_forwards_all_filters(
+        self,
+        mock_get_user: MagicMock,
+        mock_service: MagicMock,
+        mock_writer_factory: MagicMock,
+    ) -> None:
+        """Every argument reaches get_user_notifications as the matching filter field."""
+        mock_writer_factory.return_value = _writer_mock()
+        mock_service.get_user_notifications = AsyncMock(return_value=[])
+
+        from app.agents.tools.notification_tool import get_notifications
+
+        await get_notifications.coroutine(
+            config=_make_config(),
+            status=NotificationStatus.READ,
+            notification_type=NotificationType.WARNING,
+            source=NotificationSourceEnum.WORKFLOW_COMPLETED,
+            limit=7,
+            offset=3,
+        )
+
+        call = mock_service.get_user_notifications.await_args
+        assert call.args[0] == FAKE_USER_ID
+        filters = call.kwargs["filters"]
+        assert filters.status == NotificationStatus.READ
+        assert filters.notification_type == NotificationType.WARNING
+        assert filters.source == NotificationSourceEnum.WORKFLOW_COMPLETED
+        assert filters.limit == 7
+        assert filters.offset == 3
 
     @patch(f"{MODULE}.get_stream_writer")
     @patch(f"{MODULE}.notification_service")
@@ -203,7 +236,7 @@ class TestSearchNotifications:
         assert result["notifications"][0]["content"]["title"] == "Meeting reminder"
         # The search scans one page of a hundred under the caller's status filter.
         mock_service.get_user_notifications.assert_awaited_once_with(
-            FAKE_USER_ID, NotificationQuery(status=NotificationStatus.READ, limit=100)
+            FAKE_USER_ID, filters=NotificationListFilters(status=NotificationStatus.READ, limit=100)
         )
 
     @patch(f"{MODULE}.get_stream_writer")
@@ -299,6 +332,33 @@ class TestSearchNotifications:
         )
 
         assert len(result["notifications"]) == 3
+
+    @patch(f"{MODULE}.get_stream_writer")
+    @patch(f"{MODULE}.notification_service")
+    @patch(f"{MODULE}.get_user_id_from_config", return_value=FAKE_USER_ID)
+    async def test_forwards_fetch_filters(
+        self,
+        mock_get_user: MagicMock,
+        mock_service: MagicMock,
+        mock_writer_factory: MagicMock,
+    ) -> None:
+        """Fetch pulls the status the caller asked for, capped at 100 rows."""
+        mock_writer_factory.return_value = _writer_mock()
+        mock_service.get_user_notifications = AsyncMock(return_value=[])
+
+        from app.agents.tools.notification_tool import search_notifications
+
+        await search_notifications.coroutine(
+            config=_make_config(),
+            query="test",
+            status=NotificationStatus.READ,
+        )
+
+        call = mock_service.get_user_notifications.await_args
+        assert call.args[0] == FAKE_USER_ID
+        filters = call.kwargs["filters"]
+        assert filters.status == NotificationStatus.READ
+        assert filters.limit == 100
 
 
 # ---------------------------------------------------------------------------

@@ -35,9 +35,14 @@ from app.memory.engine import memory_engine
 from app.memory.mappers import entry_to_note
 from app.models.todo_models import TodoDocument
 from app.models.user_models import OnboardingNeed, OnboardingPreferences
+from app.services.device.device_service import (
+    list_device_servers,
+    list_devices as list_devices_service,
+)
 from app.services.gaia_knowledge_service import gaia_knowledge_service
 from app.services.integrations.user_integrations import get_connected_integrations_named
 from app.services.onboarding.first_question import seeded_chips
+from app.services.storage._vfs_common import folder_name
 from app.services.tools.tools_service import get_integration_tool_list
 from app.services.tracked_todo_service import tracked_todo_service
 from app.utils.artifact_utils import artifact_url_base
@@ -287,14 +292,16 @@ async def build_workspace_session_banner(ctx: SectionContext) -> str:
 
 
 def format_active_todo_banner(todo: TodoDocument) -> str:
+    folder = f"/workspace/gaia-tasks/{folder_name(todo.id, todo.title)}"
     return (
         "🎯 ACTIVE TODO (this run is bound to this todo)\n"
         f"   id: {todo.id}\n"
         f"   title: {todo.title or 'Untitled'}\n"
+        f"   files: {folder}/canvas.md, {folder}/activity.md\n"
         "\n"
-        "   Default write target for this turn: this todo's canvas.\n"
-        f'   - Use `update_tracked_todo_canvas(todo_id="{todo.id}", ...)` for any progress, '
-        "outcome, or learning from this run.\n"
+        "   Default write target for this turn: this todo's files.\n"
+        "   - Read canvas.md first. Record progress and outcomes as a dated entry at the end "
+        "of activity.md; keep Current State in canvas.md true; learnings go in canvas.md.\n"
         "   - Use `add_memory(...)` ONLY for durable cross-cutting facts unrelated to this "
         "todo (rare).\n"
         "   - To work on a different todo, you must reference it explicitly by id."
@@ -404,3 +411,35 @@ async def _tool_summary(integration_id: str) -> str:
         for tool in tools[:MANIFEST_TOOL_SAMPLE_SIZE]
     )
     return f": {len(tools)} tools, e.g. {sample}"
+
+
+async def build_connected_devices_manifest(user_id: str, header: str) -> str:
+    """One line per paired device and the servers it exposes.
+
+    Lets the agent know the user has their own machine reachable and route local-file
+    work there instead of the cloud sandbox. Capability awareness only — live online
+    status and tool schemas come from list_devices / retrieve_tools at call time.
+    """
+    try:
+        devices = await list_devices_service(user_id)
+        if not devices:
+            return ""
+        servers_by_device = await list_device_servers([d.id for d in devices])
+    except Exception as e:
+        log.warning(
+            "Error building connected-devices manifest",
+            error=str(e),
+            error_type=type(e).__name__,
+            user_id=user_id,
+        )
+        return ""
+    lines = [header]
+    for device in devices:
+        servers = servers_by_device.get(device.id, [])
+        names = ", ".join(s.display_name for s in servers)
+        exposing = f" exposing: {names}" if names else ""
+        # Include the id verbatim: it is the device_id run_on_device / the device
+        # tools take. Without it the model invents one from the name and the call
+        # fails the ownership check.
+        lines.append(f"- {device.name} ({device.platform}, id: {device.id}){exposing}")
+    return "\n".join(lines)

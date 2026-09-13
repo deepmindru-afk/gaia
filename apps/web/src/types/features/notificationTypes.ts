@@ -1,4 +1,5 @@
 import type {
+  MarkAllReadSummary,
   NotificationActionView,
   NotificationContent,
   NotificationView,
@@ -7,6 +8,7 @@ import type {
 export type {
   ApiCallConfig,
   BulkActionRequest,
+  MarkAllReadSummary,
   ModalConfig,
   NotificationContent,
   NotificationView,
@@ -228,7 +230,7 @@ export interface SendNotificationData {
 export interface NotificationResponse {
   success: boolean;
   message: string;
-  data?: ActionResultData | NotificationView; // Allow both types
+  data?: ActionResultData | NotificationView | MarkAllReadSummary;
 }
 
 // Hook options
