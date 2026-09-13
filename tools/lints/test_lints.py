@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from unittest.mock import patch
 
+import comment_slop
+import docstring_slop
 import no_service_classes
 import pytest
 import repository_boundaries
@@ -458,3 +460,161 @@ def test_new_bare_dump_in_allowlisted_function_is_flagged(tmp_path: Path) -> Non
         violations = tool_dump_boundary.check([path])
     assert len(violations) == 1
     assert "beyond the 1 grandfathered" in violations[0].detail
+
+
+# --------------------------------------------------------------------------- #
+# docstring-content
+# --------------------------------------------------------------------------- #
+
+
+def _docstring_codes(tmp_path: Path, rel: str, src: str) -> list[str]:
+    violations = docstring_slop.check([_write(tmp_path, rel, src)])
+    return sorted(v.detail.split(":")[0] for v in violations)
+
+
+def test_docstring_over_the_function_cap_is_ds1(tmp_path: Path) -> None:
+    body = "\n".join(f"    line {i}." for i in range(7))
+    src = f'def f():\n    """Summary.\n\n{body}\n    """\n'
+    assert _docstring_codes(tmp_path, "app/x.py", src) == ["DS1"]
+
+
+def test_class_and_module_caps_are_wider_than_the_function_cap(tmp_path: Path) -> None:
+    body = "\n".join(f"    line {i}." for i in range(7))
+    src = f'"""Module.\n\n{body}\n"""\n\nclass C:\n    """Summary.\n\n{body}\n    """\n'
+    assert _docstring_codes(tmp_path, "app/x.py", src) == []
+
+
+def test_backticks_and_rst_markup_are_ds2_and_ds3(tmp_path: Path) -> None:
+    src = 'def f():\n    """Read ``x`` from :param y:."""\n'
+    assert _docstring_codes(tmp_path, "app/x.py", src) == ["DS2", "DS3"]
+
+
+def test_multi_line_test_docstring_is_ds4_only_in_test_files(tmp_path: Path) -> None:
+    src = 'def test_x():\n    """Summary.\n\n    More.\n    """\n'
+    assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == ["DS4"]
+    assert _docstring_codes(tmp_path, "app/x.py", src) == []
+
+
+def test_test_module_docstring_is_capped_by_ds1_not_ds4(tmp_path: Path) -> None:
+    # The module's name is its file stem (test_x); DS4 is about test functions.
+    src = '"""Summary.\n\nThree stub seams, and why seam B must patch at each importer.\n"""\n'
+    assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == []
+
+
+def test_one_line_test_docstring_is_clean(tmp_path: Path) -> None:
+    src = 'def test_x():\n    """Regression for #859: a cancelled executor left a stale tool result."""\n'
+    assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == []
+
+
+def test_summary_restating_the_name_is_ds5(tmp_path: Path) -> None:
+    src = 'def get_user_profile(user_id):\n    """Get the user profile."""\n'
+    assert _docstring_codes(tmp_path, "app/x.py", src) == ["DS5"]
+
+
+def test_summary_saying_more_than_the_name_is_clean(tmp_path: Path) -> None:
+    src = 'def get_user_profile(user_id):\n    """Read the profile through the per-user cache; misses hit Mongo."""\n'
+    assert _docstring_codes(tmp_path, "app/x.py", src) == []
+
+
+def test_args_entry_restating_its_name_and_carrying_a_type_is_ds6_and_ds7(tmp_path: Path) -> None:
+    src = (
+        "def f(user_id, limit):\n"
+        '    """Fetch rows.\n\n'
+        "    Args:\n"
+        "        user_id: The user ID.\n"
+        "        limit (int): Rows per page; the last page may be short.\n"
+        '    """\n'
+    )
+    assert _docstring_codes(tmp_path, "app/x.py", src) == ["DS6", "DS7"]
+
+
+def test_examples_section_is_ds8(tmp_path: Path) -> None:
+    src = 'def f():\n    """Do a thing.\n\n    Examples:\n        f()\n    """\n'
+    assert _docstring_codes(tmp_path, "app/x.py", src) == ["DS8"]
+
+
+@pytest.mark.parametrize(
+    "decorator",
+    ["@tool", "@composio.tools.custom_tool(toolkit='X')", "@router.get('/x')", "@with_doc(DOC)"],
+)
+def test_runtime_docstrings_are_never_checked(tmp_path: Path, decorator: str) -> None:
+    body = "\n".join(f"    line {i} with ``markup``." for i in range(9))
+    src = f'{decorator}\ndef f():\n    """Summary.\n\n{body}\n    """\n'
+    assert _docstring_codes(tmp_path, "app/x.py", src) == []
+
+
+def test_bare_mock_patch_is_not_a_route_decorator(tmp_path: Path) -> None:
+    # `@patch(...)` is unittest.mock; only `@router.patch(...)` is a route.
+    src = '@patch("x.y")\ndef test_x(m):\n    """Summary.\n\n    More.\n    """\n'
+    assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == ["DS4"]
+
+
+def test_pydantic_model_docstring_is_never_checked(tmp_path: Path) -> None:
+    body = "\n".join(f"    line {i}." for i in range(14))
+    src = f'class M(BaseModel):\n    """Summary.\n\n{body}\n    """\n'
+    assert _docstring_codes(tmp_path, "app/x.py", src) == []
+
+
+# --------------------------------------------------------------------------- #
+# comment-content
+# --------------------------------------------------------------------------- #
+
+
+def _comment_codes(tmp_path: Path, src: str) -> list[str]:
+    violations = comment_slop.check([_write(tmp_path, "app/x.py", src)])
+    return sorted(v.detail.split(":")[0] for v in violations)
+
+
+def test_four_consecutive_comment_lines_are_cm1_once(tmp_path: Path) -> None:
+    src = "# one\n# two\n# three\n# four\n# five\nX = 1\n"
+    violations = comment_slop.check([_write(tmp_path, "app/x.py", src)])
+    assert [(v.line, v.detail[:3]) for v in violations] == [(1, "CM1")]
+
+
+def test_three_consecutive_comment_lines_are_clean(tmp_path: Path) -> None:
+    assert _comment_codes(tmp_path, "# one\n# two\n# three\nX = 1\n") == []
+
+
+def test_pragmas_and_trailing_comments_do_not_count(tmp_path: Path) -> None:
+    src = (
+        "# noqa: E501\n# type: ignore\n# fmt: off\n# pragma: no cover\nX = 1  # why\nY = 2  # why\n"
+    )
+    assert _comment_codes(tmp_path, src) == []
+
+
+def test_banner_inside_a_function_is_cm2(tmp_path: Path) -> None:
+    src = "def f():\n    # ---- Step 1 ----\n    a = 1\n    # Step 2: go\n    return a\n"
+    assert _comment_codes(tmp_path, src) == ["CM2", "CM2"]
+
+
+def test_module_and_class_level_banners_are_allowed(tmp_path: Path) -> None:
+    src = "# ---- Redis keys ----\nX = 1\n\nclass Settings:\n    # ---- Bot config ----\n    y: int = 2\n"
+    assert _comment_codes(tmp_path, src) == []
+
+
+def test_comment_restating_the_next_line_is_cm3(tmp_path: Path) -> None:
+    src = "def f(rows):\n    # sort by date\n    rows.sort(key=by_date)\n"
+    assert _comment_codes(tmp_path, src) == ["CM3"]
+
+
+def test_comment_saying_why_is_clean(tmp_path: Path) -> None:
+    src = "def f(rows):\n    # stable sort keeps same-day rows in insertion order\n    rows.sort(key=by_date)\n"
+    assert _comment_codes(tmp_path, src) == []
+
+
+def test_runner_hands_test_files_only_to_rules_that_opt_in(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(
+        tmp_path, "tests/unit/test_x.py", 'def test_x():\n    """Summary.\n\n    More.\n    """\n'
+    )
+    _write(
+        tmp_path,
+        "tests/unit/test_y.py",
+        "from app.db.mongodb.collections import todos_collection\n",
+    )
+    code = lint_runner.main([str(tmp_path)])
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "DS4" in err  # docstring-content opted in and saw the test file
+    assert "repository-boundaries" not in err  # the boundary rule still skips tests

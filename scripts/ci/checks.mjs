@@ -26,6 +26,11 @@
  *                       if either differs from what is committed. --write
  *                       regenerates without checking (what `mise api:types`
  *                       runs).
+ *   doc-comments        Fail on a JSDoc block that narrates (>6 lines) or
+ *                       restates its declaration/@param, a run of more than
+ *                       3 // lines, or a banner inside a body. The TS half of
+ *                       tools/lints/docstring_slop.py + comment_slop.py;
+ *                       implementation in lib/doc-comments.mjs.
  *   api-schema-types    Fail when a .ts/.tsx file outside the generated dir
  *                       hand-writes a type that mirrors an API model, or when
  *                       web feature code calls the untyped `apiService`
@@ -43,6 +48,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { checkDocComments } from "./lib/doc-comments.mjs";
 import { explicitFileList } from "./lib/explicit-file-list.mjs";
 import { runEvlogMapBots } from "./lib/evlog-map-bots.mjs";
 
@@ -499,6 +505,37 @@ function cmdTypesLocation(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// doc-comments
+// ---------------------------------------------------------------------------
+
+function cmdDocComments(argv) {
+  // existsSync: `git ls-files` still lists a file deleted but not yet staged.
+  const findings = sizeFiles(argv)
+    .filter((file) => existsSync(file))
+    .flatMap((file) => checkDocComments(file));
+
+  if (findings.length > 0) {
+    console.error(`\n❌ doc-comments gate FAILED — ${findings.length} finding(s):\n`);
+    for (const f of findings) {
+      console.error(`  ${f.path}:${f.line}  ${f.code}: ${f.message}`);
+      console.error(`::error file=${f.path},line=${f.line}::doc-comments: ${f.code}: ${f.message}`);
+    }
+    console.error(
+      "\nWhy: a comment that narrates, decorates or restates the code costs every" +
+        " reader time and tells them nothing the code does not.",
+    );
+    console.error(
+      "\nFix: keep the summary and the one non-obvious constraint; the why belongs" +
+        " in the PR. There is no allowlist and no ignore comment for this gate.",
+    );
+    console.error('\nRule: .claude/rules/general.md § "Self-Documenting Code".');
+    process.exit(1);
+  }
+
+  console.log("✅ No doc-comment findings.");
+}
+
+// ---------------------------------------------------------------------------
 // duplication
 //
 // Copy-paste gate that matches what SonarCloud actually measures.
@@ -865,6 +902,7 @@ function usage() {
       "                                         observability score for bot entry points",
       "  api-schema [--write]                   regenerate openapi.json + TS types, fail on drift",
       "  api-schema-types                       no hand-written twin of an API schema type, no untyped apiService call in web features",
+      "  doc-comments                           no narrating / restating JSDoc, comment runs, or in-body banners",
     ].join("\n"),
   );
 }
@@ -893,6 +931,9 @@ function main() {
       break;
     case "api-schema-types":
       cmdApiSchemaTypes(rest);
+      break;
+    case "doc-comments":
+      cmdDocComments(rest);
       break;
     default:
       console.error(`checks.mjs: unknown subcommand '${sub ?? ""}'`);
