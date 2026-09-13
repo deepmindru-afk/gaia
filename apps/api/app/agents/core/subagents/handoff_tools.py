@@ -460,9 +460,9 @@ def _resolve_display_metadata(
     if not metadata:
         return fallback_name, None, fallback_category
     return (
-        str(metadata.get("name") or fallback_name),
-        metadata.get("icon_url"),
-        str(metadata.get("integration_id") or fallback_category),
+        str(metadata.name or fallback_name),
+        metadata.icon_url,
+        str(metadata.integration_id or fallback_category),
     )
 
 

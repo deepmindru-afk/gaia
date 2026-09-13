@@ -75,13 +75,12 @@ def mock_merge_repo() -> Iterator[MagicMock]:
 
 @pytest.fixture
 def sample_user() -> AuthenticatedUser:
-    """Return a sample user dict with id, email and name for session tests."""
-    return {
-        "_id": "507f1f77bcf86cd799439011",
-        "user_id": "507f1f77bcf86cd799439011",
-        "email": "test@example.com",
-        "name": "Test User",
-    }
+    """A sample user with id, email and name for session tests."""
+    return AuthenticatedUser(
+        user_id="507f1f77bcf86cd799439011",
+        email="test@example.com",
+        name="Test User",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -276,22 +275,6 @@ class TestGetOrCreateSession:
         # The candidate id passed to claim_session is discarded on an existing
         # session, so the returned id must be the stored one.
         assert result == "conv-deleted"
-
-    async def test_normalizes_user_dict_with_underscore_id(
-        self,
-        mock_bot_repo: MagicMock,
-        mock_conversations: MagicMock,
-        mock_create_conversation: AsyncMock,
-    ) -> None:
-        """User dict with _id but no user_id should be normalized."""
-        user: AuthenticatedUser = {"_id": "507f1f77bcf86cd799439011", "email": "test@example.com"}
-        mock_bot_repo.claim_session = AsyncMock(side_effect=self._claim_insert)
-        mock_conversations.exists = AsyncMock(return_value=False)
-
-        result = await BotService.get_or_create_session("discord", "user123", None, user)
-
-        assert result is not None
-        mock_create_conversation.assert_awaited_once()
 
     async def test_conversation_description_uses_platform(
         self,

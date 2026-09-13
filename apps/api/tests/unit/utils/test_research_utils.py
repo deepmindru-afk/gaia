@@ -68,5 +68,5 @@ def test_rank_and_deduplicate_urls() -> None:
     ranked = rank_and_deduplicate_urls(results, max_urls=1)
 
     assert len(ranked) == 1
-    assert ranked[0]["url"] == "https://a.com"
-    assert ranked[0]["appearances"] == 2
+    assert ranked[0].url == "https://a.com"
+    assert ranked[0].appearances == 2

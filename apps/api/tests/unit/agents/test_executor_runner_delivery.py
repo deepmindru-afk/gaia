@@ -27,6 +27,7 @@ from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
 from app.models.chat_models import ConversationSource, MessageModel, ToolDataEntry
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
 from app.models.message_models import ReplyToMessageData
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 from shared.py.wide_events import log
 
@@ -50,7 +51,7 @@ def _run(
     run = ExecutorRun(
         stream_id=stream_id,
         conversation_id="conv-1",
-        user={"user_id": "user-1"},
+        user=AuthenticatedUser(user_id="user-1"),
         kind=kind,
         task_id=task_id,
         user_message_id=None,
@@ -145,7 +146,7 @@ class TestDeliverResultRouting:
         lands on nobody's conversation, so the delivered message is lost."""
         save, _platform, _ws = await _deliver(ConversationSource.WEB)
 
-        assert save.await_args.kwargs["user"] == {"user_id": "user-1"}
+        assert save.await_args.kwargs["user"] == AuthenticatedUser(user_id="user-1")
 
     async def test_falls_back_to_raw_executor_text_when_comms_unavailable(self) -> None:
         # comms returns "" → the raw executor text must still be delivered.
@@ -267,7 +268,7 @@ class TestWorkflowResultReachesThePlatformDelivery:
 
         deliver.assert_awaited_once()
         kwargs = deliver.await_args.kwargs
-        assert kwargs["user"] == {"user_id": "user-1"}
+        assert kwargs["user"] == AuthenticatedUser(user_id="user-1")
         assert kwargs["user_id"] == "user-1"
         assert kwargs["origin"] == ('workflow "Morning digest" (id wf-1), tracked todo (id todo-9)')
         notify.assert_awaited_once()  # the in-app badge still fires alongside
@@ -393,7 +394,7 @@ class TestDeliverResultToolDataOwnership:
 
         save, _ws = await self._deliver_with_cards(run, None)
 
-        assert save.await_args.kwargs["user"] == {"user_id": "user-1"}
+        assert save.await_args.kwargs["user"] == AuthenticatedUser(user_id="user-1")
 
     async def test_live_run_never_self_attaches_cards(self) -> None:
         """The comms stream owns a live run's cards, so its snapshot is None —
@@ -485,7 +486,7 @@ class TestRunLifecycleAnalytics:
             stream_id="stream-1",
             conversation_id="conv-1",
             # user_id=None models a run whose user dict carries no id at all.
-            user={} if user_id is None else {"user_id": user_id},
+            user=AuthenticatedUser(user_id=user_id or ""),
             kind=RunKind.LIVE,
             task_id=task_id,
             user_message_id=None,
@@ -1227,7 +1228,7 @@ class TestMergeResumedResultFailsClosed:
         run = ExecutorRun(
             stream_id="queued_s1",
             conversation_id="conv-1",
-            user={},
+            user=AuthenticatedUser(user_id=""),
             kind=RunKind.QUEUED,
             task_id="task-1",
             user_message_id=None,
@@ -1294,7 +1295,7 @@ class TestDeliveredMessageIdentity:
         run = ExecutorRun(
             stream_id="",
             conversation_id="conv-1",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             kind=RunKind.QUEUED,
             task_id="task-7",
             user_message_id="user-msg-1",
@@ -1310,7 +1311,7 @@ class TestDeliveredMessageIdentity:
         run = ExecutorRun(
             stream_id="",
             conversation_id="conv-1",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             kind=RunKind.QUEUED,
             task_id="task-7",
             user_message_id="user-msg-1",
@@ -1415,7 +1416,7 @@ class TestMergedCardsAreActuallyWritten:
         run = ExecutorRun(
             stream_id="",
             conversation_id="conv-1",
-            user={},
+            user=AuthenticatedUser(user_id=""),
             kind=RunKind.QUEUED,
             task_id="task-1",
             user_message_id=None,
@@ -1447,7 +1448,7 @@ class TestDeferredFollowUpPush:
                 result_type="final",
                 tool_data=None,
                 target=rd._DeliveryTarget(
-                    user_id=run.user["user_id"],
+                    user_id=run.user.user_id,
                     conversation_id=run.conversation_id,
                     task_id=run.task_id,
                     emit_task_id=run.is_queued,
@@ -1690,7 +1691,7 @@ def _quoting_run(user: dict | None = None) -> ExecutorRun:
     return ExecutorRun(
         stream_id="",
         conversation_id="conv-1",
-        user={"user_id": "user-1"} if user is None else user,
+        user=AuthenticatedUser(user_id="user-1") if user is None else user,
         kind=RunKind.QUEUED,
         task_id="task-7",
         user_message_id="user-msg-1",
@@ -1748,7 +1749,7 @@ class TestNarrateResultCallContract:
         assert narrated == "voiced"
         assert calls == [
             (
-                ("raw text", "final", "conv-1", {"user_id": "user-1"}),
+                ("raw text", "final", "conv-1", AuthenticatedUser(user_id="user-1")),
                 {"returned_note": "handed back by the subagent", "workflow_id": "wf-1"},
             )
         ]
@@ -1820,7 +1821,9 @@ class TestAttachReplyQuoteLookup:
     async def test_a_run_with_no_user_id_scopes_to_empty_not_none(self) -> None:
         """``user_id=None`` is an unscoped read in the repository layer; the
         empty string matches nothing, which is the safe miss."""
-        _result, get, _bot_message = await self._attach(_quoting_run(user={}))
+        _result, get, _bot_message = await self._attach(
+            _quoting_run(user=AuthenticatedUser(user_id=""))
+        )
 
         assert get.await_args.kwargs == {"user_id": ""}
 
@@ -2048,7 +2051,7 @@ class TestRunBoundaryCarriesTheOriginatingSurface:
         run = ExecutorRun(
             stream_id="stream-1",
             conversation_id="conv-1",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             kind=RunKind.LIVE,
             task_id="task-1",
             user_message_id=None,
@@ -2095,7 +2098,7 @@ class TestRunBoundaryCarriesWorkflowExecution:
         run = ExecutorRun(
             stream_id="stream-1",
             conversation_id="conv-1",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             kind=RunKind.LIVE,
             task_id="task-1",
             user_message_id=None,
@@ -2136,7 +2139,7 @@ class TestRunBoundaryCarriesWorkflowExecution:
         run = ExecutorRun(
             stream_id="stream-1",
             conversation_id="conv-1",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             kind=RunKind.LIVE,
             task_id="task-1",
             user_message_id=None,

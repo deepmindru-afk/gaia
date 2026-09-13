@@ -27,6 +27,7 @@ import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_core.runnables import RunnableConfig
+from pydantic import BaseModel, ConfigDict
 
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
@@ -218,6 +219,14 @@ def resolve_home_timezone(stored: str | None, header: str | None) -> ResolvedTim
     )
 
 
+class _ConfiguredTimezone(BaseModel):
+    """The run's home zone, read off its ``configurable``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    user_timezone: str | None = None
+
+
 def home_timezone_from_config(config: RunnableConfig) -> Timezone:
     """Home timezone from a LangGraph ``configurable`` (agent runs).
 
@@ -232,7 +241,7 @@ def home_timezone_from_config(config: RunnableConfig) -> Timezone:
         agent_configurable,
     )
 
-    raw = agent_configurable(config).get("user_timezone")
+    raw = _ConfiguredTimezone.model_validate(agent_configurable(config)).user_timezone
     if raw:
         log.set(timezone_source=TimezoneSource.AGENT_CONFIG.value, user_timezone=raw)
         return Timezone.parse(raw)

@@ -85,9 +85,9 @@ async def construct_langchain_messages(
         source=source,
     )
 
-    user_timezone = user_dict.get("timezone") if user_dict else None
+    user_timezone = user_dict.timezone if user_dict else None
     user_preferences, writing_style = onboarding_preferences(
-        user_dict.get("onboarding") if user_dict else None
+        user_dict.onboarding if user_dict else None
     )
 
     # Extract user's latest message content

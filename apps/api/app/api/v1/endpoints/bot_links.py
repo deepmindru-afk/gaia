@@ -36,8 +36,9 @@ from app.services.platform_link_code_service import (
     peek_platform_link_code,
 )
 from app.services.platform_link_completion import complete_platform_link
-from app.services.platform_link_service import PlatformLinkService, require_platform_plan
+from app.services.platform_link_service import require_platform_plan
 from app.services.user_service import get_user_by_id
+from app.utils.auth_utils import resolve_bot_user
 from app.utils.errors import create_error
 from shared.py.wide_events import log
 
@@ -176,11 +177,9 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
         # fix — every side effect hangs off ``complete_platform_link``, which is
         # not reached, so nobody is greeted, counted or re-introduced twice.
         # Handled here rather than in each adapter so every platform inherits it.
-        linked_user = await PlatformLinkService.get_user_by_platform_id(
-            body.platform, body.platform_user_id
-        )
+        linked_user = await resolve_bot_user(body.platform, body.platform_user_id)
         if linked_user is not None:
-            linked_user_id = str(linked_user["_id"])
+            linked_user_id = linked_user.user_id
             log.set(user={"id": linked_user_id})
             log.audit(
                 "platform link code already redeemed by this account",
@@ -239,7 +238,7 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
     )
     delivered = completion.first_contact_delivered
     log.set(outcome="success", is_new_link=completion.link.is_new_link, delivered=delivered)
-    await _persist_first_contact(payload.user_id, body, user, bubbles)
+    await _persist_first_contact(payload.user_id, body, bubbles)
     # A publish the queue refused is never retried, so the bubbles go back to
     # the bot that asked for the link rather than being lost.
     return RedeemLinkCodeResponse(
@@ -250,7 +249,6 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
 async def _persist_first_contact(
     user_id: str,
     body: RedeemLinkCodeRequest,
-    user: dict | None,
     bubbles: list[str],
 ) -> None:
     """Write the first contact into the platform's bot conversation.
@@ -265,7 +263,7 @@ async def _persist_first_contact(
     to retry with a code that is already spent.
     """
     try:
-        actor: AuthenticatedUser = {**(user or {}), "user_id": user_id}
+        actor = AuthenticatedUser(user_id=user_id)
         conversation_id = await BotService.get_or_create_session(
             body.platform, body.platform_user_id, None, actor, is_dm=True
         )

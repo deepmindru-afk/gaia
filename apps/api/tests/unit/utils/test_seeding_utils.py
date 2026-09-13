@@ -12,7 +12,7 @@ import pytest
 
 from app.constants.general import NEW_MESSAGE_BREAKER
 from app.constants.log_tags import LogTag
-from app.models.user_models import OnboardingPreferences
+from app.models.user_models import AuthenticatedUser, OnboardingPreferences
 from app.services.onboarding.first_conversation import (
     FirstConversation,
     compose_first_conversation,
@@ -217,7 +217,7 @@ class TestSeedHoloCardConversation:
         ):
             await seed_holo_card_conversation("user-1", "Your card is here")
 
-        assert create.await_args.args[1] == {"user_id": "user-1"}
+        assert create.await_args.args[1] == AuthenticatedUser(user_id="user-1")
 
     async def test_the_message_is_written_to_that_conversation_for_that_user(self) -> None:
         create = AsyncMock()

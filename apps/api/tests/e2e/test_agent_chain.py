@@ -33,7 +33,7 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -58,6 +58,7 @@ from app.memory.ingestion import RetainedMemory
 from app.models.chat_models import ToolDataEntry
 from app.models.memory_models import MemoryEntry
 from app.models.message_models import MessageRequestWithHistory
+from app.models.user_models import AuthenticatedUser
 from app.services.chat import stream as chat_stream
 from app.utils import background_tasks
 from tests.e2e._harness.graph_run import RecordingFakeModel, call, scripted_model
@@ -65,7 +66,7 @@ from tests.e2e._harness.transcript import UNKNOWN, Transcript
 
 pytestmark = pytest.mark.e2e
 
-USER: dict[str, Any] = {"user_id": "u-chain", "email": "chain@test.local", "name": "Test User"}
+USER = AuthenticatedUser(user_id="u-chain", email="chain@test.local", name="Test User")
 
 #: A builtin subagent — ``managed_by="internal"``, so resolving it needs no
 #: OAuth record and no Composio call, and its graph is built by the real
@@ -358,7 +359,7 @@ async def run_chain(
             await stream_manager.start_stream(
                 stream_id=stream_id,
                 conversation_id=conversation_id,
-                user_id=str(USER["user_id"]),
+                user_id=USER.user_id,
             )
             await chat_stream.run_chat_stream_background(
                 stream_id=stream_id,
@@ -367,7 +368,7 @@ async def run_chain(
                     messages=[{"role": "user", "content": prompt}],
                     conversation_id=conversation_id,
                 ),
-                user=cast(Any, USER),
+                user=USER,
                 conversation_id=conversation_id,
             )
             await _drain_publishes()

@@ -17,6 +17,7 @@ from app.constants.log_tags import LogTag
 from app.models.mail_models import (
     GmailDraftsResponse,
     GmailMessagesResponse,
+    GmailMessageSummary,
     GmailToolResult,
 )
 from app.services.mail.mail_service import (
@@ -80,10 +81,10 @@ def mock_invoke_gmail_tool():
 
 @pytest.fixture
 def mock_transform():
-    """Patch transform_gmail_message to return its input unchanged."""
+    """Patch transform_gmail_message to wrap its input unchanged."""
     with patch(
         "app.services.mail.mail_service.transform_gmail_message",
-        side_effect=lambda m: m,
+        side_effect=lambda m: GmailMessageSummary.model_validate({"id": "", **m}),
     ) as mock_fn:
         yield mock_fn
 

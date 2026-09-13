@@ -12,7 +12,7 @@ Handles:
 from datetime import UTC, datetime, timedelta
 import json
 import random
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 from arq.connections import ArqRedis
@@ -38,7 +38,7 @@ from app.services.notification_service import notification_service
 from app.services.todo_canvas_storage import read_canvas
 from app.services.tracked_todo_service import tracked_todo_service
 from app.services.triggers.subscription_service import teardown_subscriptions
-from app.services.user_service import get_user_by_id
+from app.utils.auth_utils import load_user_context
 from app.utils.cron_utils import CronError, get_next_run_time
 from app.utils.redis_utils import RedisPoolManager
 from app.utils.timezone import Timezone
@@ -65,19 +65,16 @@ async def _load_user_with_tz(user_id: str) -> tuple[AuthenticatedUser, Timezone]
     falls back to UTC if the user record or timezone is missing.
     """
     try:
-        user_data = await get_user_by_id(user_id)
-        if user_data:
-            user_data["user_id"] = user_id
-            # The legacy bridge dict is a spread of a validated UserDocument plus
-            # the user_id stamped above, which is exactly AuthenticatedUser's
-            # shape — cast, not isinstance (Type Safety item 12). Narrowing it to
-            # the fields the agent reads would drop `onboarding`, which
-            # construct_langchain_messages needs for custom instructions.
-            return cast(AuthenticatedUser, user_data), Timezone.parse(user_data.get("timezone"))
-        return {"user_id": user_id}, Timezone.utc()
+        # The full context, not just the fields the agent reads: narrowing it
+        # would drop `onboarding`, which construct_langchain_messages needs for
+        # custom instructions.
+        user_data = await load_user_context(user_id)
+        if user_data is not None:
+            return user_data, Timezone.parse(user_data.timezone)
+        return AuthenticatedUser(user_id=user_id), Timezone.utc()
     except Exception as e:
         log.warning("tracked_todo.load_user_failed", user_id=user_id, error=str(e))
-        return {"user_id": user_id}, Timezone.utc()
+        return AuthenticatedUser(user_id=user_id), Timezone.utc()
 
 
 async def execute_tracked_todo(

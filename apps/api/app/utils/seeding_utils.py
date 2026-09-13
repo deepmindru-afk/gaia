@@ -31,8 +31,7 @@ async def seed_holo_card_conversation(user_id: str, message: str) -> str | None:
             is_unread=True,
         )
 
-        user_dict: AuthenticatedUser = {"user_id": user_id}
-        await create_conversation_service(conversation, user_dict)
+        await create_conversation_service(conversation, AuthenticatedUser(user_id=user_id))
 
         message_ids = await conversation_repository.append_messages(
             conversation_id,
@@ -84,8 +83,7 @@ async def seed_first_conversation(user_id: str, composed: FirstConversation) -> 
             is_unread=True,
         )
 
-        user_dict: AuthenticatedUser = {"user_id": user_id}
-        await create_conversation_service(conversation, user_dict)
+        await create_conversation_service(conversation, AuthenticatedUser(user_id=user_id))
 
         # Three bot messages, grouped by the web like iMessage. A message's
         # cards render ABOVE its bubbles, so the buttons get a message of their

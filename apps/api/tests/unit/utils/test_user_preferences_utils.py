@@ -278,17 +278,6 @@ class TestOnboardingPreferences:
 
         assert onboarding_preferences(onboarding) == ({"profession": "doctor"}, None)
 
-    def test_raw_dict_is_read_by_key(self) -> None:
-        onboarding: dict[str, Any] = {
-            "preferences": {"profession": "doctor", "response_style": None},
-            "writing_style": {"summary": "terse"},
-        }
-
-        assert onboarding_preferences(onboarding) == (
-            {"profession": "doctor", "response_style": None},
-            {"summary": "terse"},
-        )
-
     @pytest.mark.parametrize("onboarding", [None, {}])
     def test_missing_onboarding_reads_as_a_pair_of_none(
         self, onboarding: dict[str, Any] | None

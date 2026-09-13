@@ -14,6 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.utils.research_utils import RankedUrl
+from app.utils.search.models import ResearchSearchResult, SearchResultItem
+
 MODULE = "app.agents.tools.research_tool"
 
 
@@ -122,7 +125,7 @@ class TestDeepResearch:
         _mock_uid: MagicMock,
     ) -> None:
         mock_decompose.return_value = ["sub-q1"]
-        mock_ddg.return_value = {"results": []}
+        mock_ddg.return_value = ResearchSearchResult(results=[])
         mock_rank.return_value = []
 
         from app.agents.tools.research_tool import deep_research
@@ -162,10 +165,20 @@ class TestDeepResearch:
         _patch_stream_writer: MagicMock,
     ) -> None:
         mock_decompose.return_value = ["sub-q1", "sub-q2"]
-        mock_ddg.return_value = {"results": [{"url": "https://example.com"}]}
+        mock_ddg.return_value = ResearchSearchResult(
+            results=[SearchResultItem(url="https://example.com")]
+        )
         mock_rank.return_value = [
-            {"url": "https://example.com", "snippet": "A snippet"},
-            {"url": "https://example2.com", "snippet": "Another snippet"},
+            RankedUrl(
+                url="https://example.com", title="", snippet="A snippet", score=1.0, appearances=1
+            ),
+            RankedUrl(
+                url="https://example2.com",
+                title="",
+                snippet="Another snippet",
+                score=1.0,
+                appearances=1,
+            ),
         ]
         mock_batch_crawl4ai.return_value = (
             {
@@ -235,8 +248,12 @@ class TestDeepResearch:
         _mock_uid: MagicMock,
     ) -> None:
         mock_decompose.return_value = ["sub-q1"]
-        mock_ddg.return_value = {"results": [{"url": "https://a.com"}]}
-        mock_rank.return_value = [{"url": "https://a.com", "snippet": "snip"}]
+        mock_ddg.return_value = ResearchSearchResult(
+            results=[SearchResultItem(url="https://a.com")]
+        )
+        mock_rank.return_value = [
+            RankedUrl(url="https://a.com", title="", snippet="snip", score=1.0, appearances=1)
+        ]
         mock_batch_crawl4ai.return_value = ({}, {"https://a.com": "crawl fail"})
         mock_httpx.return_value = "httpx content"
 
@@ -279,8 +296,18 @@ class TestDeepResearch:
         _mock_uid: MagicMock,
     ) -> None:
         mock_decompose.return_value = ["sub-q1"]
-        mock_ddg.return_value = {"results": [{"url": "https://a.com"}]}
-        mock_rank.return_value = [{"url": "https://a.com", "snippet": "Search snippet text"}]
+        mock_ddg.return_value = ResearchSearchResult(
+            results=[SearchResultItem(url="https://a.com")]
+        )
+        mock_rank.return_value = [
+            RankedUrl(
+                url="https://a.com",
+                title="",
+                snippet="Search snippet text",
+                score=1.0,
+                appearances=1,
+            )
+        ]
         mock_batch_crawl4ai.return_value = ({}, {"https://a.com": "fail"})
 
         from app.agents.tools.research_tool import deep_research
@@ -323,8 +350,12 @@ class TestDeepResearch:
         _mock_uid: MagicMock,
     ) -> None:
         mock_decompose.return_value = ["sub-q1"]
-        mock_ddg.return_value = {"results": [{"url": "https://a.com"}]}
-        mock_rank.return_value = [{"url": "https://a.com", "snippet": ""}]
+        mock_ddg.return_value = ResearchSearchResult(
+            results=[SearchResultItem(url="https://a.com")]
+        )
+        mock_rank.return_value = [
+            RankedUrl(url="https://a.com", title="", snippet="", score=1.0, appearances=1)
+        ]
         mock_batch_crawl4ai.return_value = ({}, {"https://a.com": "fail"})
 
         from app.agents.tools.research_tool import deep_research
@@ -386,8 +417,12 @@ class TestDeepResearch:
     ) -> None:
         """Depth 3 should pass max_urls=20 to rank_and_deduplicate_urls."""
         mock_decompose.return_value = ["q1"]
-        mock_ddg.return_value = {"results": [{"url": "https://a.com"}]}
-        mock_rank.return_value = [{"url": "https://a.com", "snippet": "s"}]
+        mock_ddg.return_value = ResearchSearchResult(
+            results=[SearchResultItem(url="https://a.com")]
+        )
+        mock_rank.return_value = [
+            RankedUrl(url="https://a.com", title="", snippet="s", score=1.0, appearances=1)
+        ]
         mock_batch_crawl4ai.return_value = ({"https://a.com": "content"}, {})
 
         from app.agents.tools.research_tool import deep_research
@@ -424,11 +459,13 @@ class TestDeepResearch:
         """When some searches raise exceptions, successful_searches count is correct."""
         mock_decompose.return_value = ["q1", "q2", "q3"]
         mock_ddg.side_effect = [
-            {"results": [{"url": "https://a.com"}]},
+            ResearchSearchResult(results=[SearchResultItem(url="https://a.com")]),
             RuntimeError("search failed"),
-            {"results": []},
+            ResearchSearchResult(results=[]),
         ]
-        mock_rank.return_value = [{"url": "https://a.com", "snippet": "s"}]
+        mock_rank.return_value = [
+            RankedUrl(url="https://a.com", title="", snippet="s", score=1.0, appearances=1)
+        ]
         mock_batch_crawl4ai.return_value = ({"https://a.com": "content"}, {})
 
         from app.agents.tools.research_tool import deep_research

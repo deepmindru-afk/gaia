@@ -1,66 +1,65 @@
-from datetime import UTC, datetime
-from typing import Any
+from langchain_core.documents import Document
+from pydantic import BaseModel, ConfigDict
 
 from app.constants.log_tags import LogTag
 from app.db.chroma.chromadb import ChromaClient
 from app.db.repositories.todos import todo_repository
-from app.models.todo_models import TodoResponse
+from app.models.todo_models import Priority, TodoDocument, TodoResponse
 from shared.py.wide_events import log
 
 
-def create_todo_content_for_embedding(todo_data: dict[str, Any]) -> str:
-    """Build a text representation of a todo for embedding generation.
+class _IndexedTodoId(BaseModel):
+    """The one key of a todo embedding's Chroma metadata that search reads back."""
 
-    Takes a dict rather than the ``TodoResponse`` its callers dump, because
-    every field is read defensively: the indexers are expected to cope with a
-    partial todo (no title, no subtasks, a string ``created_at``) and still
-    produce something embeddable. Narrowing to the model would delete that
-    tolerance, not just describe it (Type Safety items 13/14).
-    """
+    model_config = ConfigDict(extra="ignore")
+
+    todo_id: str | None = None
+
+
+def create_todo_content_for_embedding(todo: TodoDocument) -> str:
+    """Build a text representation of a todo for embedding generation."""
     parts = []
 
     # Add title (most important)
-    if todo_data.get("title"):
-        parts.append(f"Title: {todo_data['title']}")
+    if todo.title:
+        parts.append(f"Title: {todo.title}")
 
     # Add description if available
-    if todo_data.get("description"):
-        parts.append(f"Description: {todo_data['description']}")
+    if todo.description:
+        parts.append(f"Description: {todo.description}")
 
     # Add labels for context
-    if todo_data.get("labels"):
-        labels_text = ", ".join(todo_data["labels"])
+    if todo.labels:
+        labels_text = ", ".join(todo.labels)
         parts.append(f"Labels: {labels_text}")
 
     # Add priority information
-    if todo_data.get("priority") and todo_data["priority"] != "none":
-        parts.append(f"Priority: {todo_data['priority']}")
+    if todo.priority != Priority.NONE:
+        parts.append(f"Priority: {todo.priority.value}")
 
     # Add project context if available (we'll need to fetch project name)
-    if todo_data.get("project_id"):
-        parts.append(f"Project ID: {todo_data['project_id']}")
+    if todo.project_id:
+        parts.append(f"Project ID: {todo.project_id}")
 
     # Add completion status
-    status = "completed" if todo_data.get("completed", False) else "pending"
+    status = "completed" if todo.completed else "pending"
     parts.append(f"Status: {status}")
 
     # Add subtasks information
-    if todo_data.get("subtasks"):
-        subtask_titles = [
-            subtask.get("title", "") for subtask in todo_data["subtasks"] if subtask.get("title")
-        ]
+    if todo.subtasks:
+        subtask_titles = [subtask.title for subtask in todo.subtasks if subtask.title]
         if subtask_titles:
             parts.append(f"Subtasks: {', '.join(subtask_titles)}")
 
     return " | ".join(parts)
 
 
-async def store_todo_embedding(todo_id: str, todo_data: dict[str, Any], user_id: str) -> bool:
+async def store_todo_embedding(todo_id: str, todo: TodoDocument, user_id: str) -> bool:
     """Generate and store a todo's embedding in ChromaDB. Returns success."""
     log.set(operation="store_todo_embedding", todo_id=todo_id, user_id=user_id)
     try:
         # Create content for embedding
-        content = create_todo_content_for_embedding(todo_data)
+        content = create_todo_content_for_embedding(todo)
 
         # Get ChromaDB collection
         chroma_collection = await ChromaClient.get_langchain_client(
@@ -71,41 +70,25 @@ async def store_todo_embedding(todo_id: str, todo_data: dict[str, Any], user_id:
         metadata = {
             "user_id": str(user_id),
             "todo_id": str(todo_id),
-            "title": todo_data.get("title", ""),
-            "priority": todo_data.get("priority", "none"),
-            "completed": str(
-                todo_data.get("completed", False)
-            ).lower(),  # Convert to "true" or "false"
-            "created_at": (
-                todo_data.get("created_at", datetime.now(UTC)).isoformat()
-                if isinstance(todo_data.get("created_at"), datetime)
-                else str(todo_data.get("created_at", ""))
-            ),
-            "updated_at": (
-                todo_data.get("updated_at", datetime.now(UTC)).isoformat()
-                if isinstance(todo_data.get("updated_at"), datetime)
-                else str(todo_data.get("updated_at", ""))
-            ),
-            "has_due_date": str(
-                bool(todo_data.get("due_date"))
-            ).lower(),  # Convert to "true" or "false"
-            "labels_count": str(len(todo_data.get("labels", []))),
-            "subtasks_count": str(len(todo_data.get("subtasks", []))),
+            "title": todo.title,
+            "priority": todo.priority.value,
+            "completed": str(todo.completed).lower(),  # Convert to "true" or "false"
+            "created_at": todo.created_at.isoformat() if todo.created_at else "",
+            "updated_at": todo.updated_at.isoformat() if todo.updated_at else "",
+            "has_due_date": str(bool(todo.due_date)).lower(),  # Convert to "true" or "false"
+            "labels_count": str(len(todo.labels)),
+            "subtasks_count": str(len(todo.subtasks)),
         }
 
         # Add optional fields to metadata
-        if todo_data.get("project_id"):
-            metadata["project_id"] = str(todo_data["project_id"])
+        if todo.project_id:
+            metadata["project_id"] = str(todo.project_id)
 
-        if todo_data.get("labels"):
-            metadata["labels"] = ", ".join(todo_data["labels"])
+        if todo.labels:
+            metadata["labels"] = ", ".join(todo.labels)
 
-        if todo_data.get("due_date"):
-            metadata["due_date"] = (
-                todo_data["due_date"].isoformat()
-                if isinstance(todo_data["due_date"], datetime)
-                else str(todo_data["due_date"])
-            )
+        if todo.due_date:
+            metadata["due_date"] = todo.due_date.isoformat()
 
         # Store in ChromaDB (LangChain Chroma handles embedding generation automatically)
         chroma_collection.add_texts(texts=[content], metadatas=[metadata], ids=[str(todo_id)])
@@ -124,14 +107,14 @@ async def store_todo_embedding(todo_id: str, todo_data: dict[str, Any], user_id:
         return False
 
 
-async def update_todo_embedding(todo_id: str, todo_data: dict[str, Any], user_id: str) -> bool:
+async def update_todo_embedding(todo_id: str, todo: TodoDocument, user_id: str) -> bool:
     """Replace a todo's embedding in ChromaDB. Returns success."""
     try:
         # Delete existing embedding
         await delete_todo_embedding(todo_id)
 
         # Store new embedding
-        return await store_todo_embedding(todo_id, todo_data, user_id)
+        return await store_todo_embedding(todo_id, todo, user_id)
 
     except Exception as e:
         log.error(
@@ -166,6 +149,17 @@ async def delete_todo_embedding(todo_id: str) -> bool:
             error_type=type(e).__name__,
         )
         return False
+
+
+def _matched_todo_ids(results: list[tuple[Document, float]]) -> list[str]:
+    """The todo ids a similarity search matched, in rank order."""
+    todo_ids: list[str] = []
+    for doc, _score in results:
+        if hasattr(doc, "metadata"):
+            todo_id = _IndexedTodoId.model_validate(doc.metadata).todo_id
+            if todo_id is not None:
+                todo_ids.append(todo_id)
+    return todo_ids
 
 
 async def semantic_search_todos(
@@ -214,11 +208,7 @@ async def semantic_search_todos(
             query=query, k=top_k, filter=where_filter
         )
 
-        # Extract todo IDs from results
-        todo_ids = []
-        for doc, _score in results:
-            if hasattr(doc, "metadata") and "todo_id" in doc.metadata:
-                todo_ids.append(doc.metadata["todo_id"])
+        todo_ids = _matched_todo_ids(results)
 
         if not todo_ids:
             # No vector results found

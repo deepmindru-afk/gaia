@@ -184,7 +184,8 @@ class GmailHeader(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str = ""
-    value: str = ""
+    # Null on some Composio-relayed messages (see transform_gmail_message's regression test).
+    value: str | None = None
 
 
 class GmailPartBody(BaseModel):

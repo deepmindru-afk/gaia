@@ -8,7 +8,7 @@ degradation paths.
 """
 
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -105,9 +105,15 @@ def test_sends_me_teams_and_chats_requests_through_the_proxy() -> None:
 
 def test_projects_user_teams_and_chats_with_counts() -> None:
     tool = _capture_tool()
-    with patch(f"{MODULE}.proxy_request_sync", side_effect=[_ME, _TEAMS, _CHATS]):
+    with (
+        patch(f"{MODULE}.proxy_request_sync", side_effect=[_ME, _TEAMS, _CHATS]),
+        patch(f"{MODULE}.log") as log_mock,
+    ):
         result = tool(GatherContextInput(), None, AUTH_CREDS)
 
+    assert log_mock.set.call_args_list == [
+        call(tool={"integration": "microsoft_teams", "action": "gather_context"})
+    ]
     assert result == {
         "user": {"id": "u-1", "display_name": "Me User", "email": "me@example.com"},
         "teams": [

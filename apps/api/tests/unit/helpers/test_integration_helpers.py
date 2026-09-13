@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.helpers.integration_helpers import generate_integration_slug
+from app.helpers.slug_helpers import generate_integration_slug
 
 
 @pytest.mark.parametrize(

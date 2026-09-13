@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient
 import pytest
 
+from app.helpers.integration_helpers import ParsedIntegrationSlug
 from app.models.integration_models import (
     Integration,
     IntegrationWithCreator,
@@ -19,6 +20,8 @@ from app.services.analytics_service import AnalyticsEvents
 BASE = "/api/v1/integrations"
 
 _PUBLIC = "app.api.v1.endpoints.integrations.public"
+_NO_SLUG = ParsedIntegrationSlug(name_part="bad-slug", category=None, shortid=None)
+_LEGACY_SLUG = ParsedIntegrationSlug(name_part="legacy", category=None, shortid="abc123")
 
 
 def _integration(integration_id: str, name: str, **overrides: object) -> Integration:
@@ -129,7 +132,7 @@ class TestGetPublicIntegration:
         with (
             patch(f"{_PUBLIC}.OAUTH_INTEGRATIONS", [fake_native]),
             patch(f"{_PUBLIC}.integration_repository") as mock_repo,
-            patch(f"{_PUBLIC}.parse_integration_slug", return_value={}),
+            patch(f"{_PUBLIC}.parse_integration_slug", return_value=_NO_SLUG),
         ):
             mock_repo.get_public_by_slug = AsyncMock(return_value=None)
             resp = await client.get(f"{BASE}/public/internal_tool")
@@ -164,7 +167,7 @@ class TestGetPublicIntegration:
         with (
             patch(f"{_PUBLIC}.OAUTH_INTEGRATIONS", []),
             patch(f"{_PUBLIC}.integration_repository") as mock_repo,
-            patch(f"{_PUBLIC}.parse_integration_slug", return_value={"shortid": "abc123"}),
+            patch(f"{_PUBLIC}.parse_integration_slug", return_value=_LEGACY_SLUG),
         ):
             mock_repo.get_public_by_slug = AsyncMock(return_value=None)
             mock_repo.get_public_by_id_prefix = AsyncMock(return_value=integration)
@@ -179,7 +182,7 @@ class TestGetPublicIntegration:
         with (
             patch(f"{_PUBLIC}.OAUTH_INTEGRATIONS", []),
             patch(f"{_PUBLIC}.integration_repository") as mock_repo,
-            patch(f"{_PUBLIC}.parse_integration_slug", return_value={}),
+            patch(f"{_PUBLIC}.parse_integration_slug", return_value=_NO_SLUG),
         ):
             mock_repo.get_public_by_slug = AsyncMock(return_value=None)
             resp = await client.get(f"{BASE}/public/nonexistent")

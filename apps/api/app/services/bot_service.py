@@ -150,11 +150,6 @@ class BotService:
         Returns:
             Conversation ID for the session
         """
-        # Normalize user dict: support both raw MongoDB docs (_id) and
-        # pre-formatted dicts (user_id) so create_conversation_service works
-        if not user.get("user_id") and user.get("_id"):
-            user = {**user, "user_id": str(user["_id"])}
-
         if is_dm:
             await BotService._absorb_channel_keyed_dm(platform, platform_user_id, channel_id)
             channel_id = None
@@ -185,7 +180,7 @@ class BotService:
         # (re)create it with the SAME conversation_id stored on the session rather
         # than minting a new one and repointing, so the chat thread is never
         # orphaned or forked.
-        if await conversation_repository.exists(conversation_id, user_id=user.get("user_id", "")):
+        if await conversation_repository.exists(conversation_id, user_id=user.user_id):
             log.set(
                 bot={
                     "platform": platform,

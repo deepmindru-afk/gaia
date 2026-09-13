@@ -176,7 +176,7 @@ async def _run_chat_stream(
 ) -> None:
     state = _StreamState(turn_id=body.turn_id)
     is_new_conversation = body.conversation_id is None
-    user_id = user.get("user_id")
+    user_id = user.user_id
     artifact_task: asyncio.Task[None] | None = None
     description_task: asyncio.Task[str] | None = None
 
@@ -363,7 +363,7 @@ async def _resolve_pending_approval_turn(
         # buttons, so the pending approval waits for a click or the sweep.
         return False
 
-    user_id = user.get("user_id")
+    user_id = user.user_id
     message = user_message_content_from(body)
     if not user_id or not message:
         return False
@@ -804,7 +804,7 @@ async def _attach_executor_tool_data(
     try:
         matched = await conversation_repository.append_message_tool_data(
             conversation_id,
-            user_id=user.get("user_id", ""),
+            user_id=user.user_id,
             message_id=state.bot_message_id,
             entries=executor_td,
         )

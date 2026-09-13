@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Up
 from fastapi.responses import StreamingResponse
 
 from app.api.v1.dependencies.oauth_dependencies import get_current_user
+from app.api.v1.middleware.auth import get_current_user as get_request_user
 from app.config.settings import settings
 from app.constants.auth import AUDIT_ACTOR_BOT_API
 from app.constants.cache import BOT_UPGRADE_LINK_PREFIX, BOT_UPGRADE_LINK_TTL
@@ -70,6 +71,7 @@ from app.services.platform_link_service import (
     PlatformLinkService,
     platform_requires_upgrade,
 )
+from app.utils.auth_utils import resolve_bot_user
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import get_trace_id, log, log_context
 
@@ -150,16 +152,15 @@ def _capture_bot_turn_refused(user_id: str, platform: str, reason: str) -> None:
     )
 
 
-def _resolve_user_id(user: dict[str, Any]) -> str:
-    """The stable GAIA user id from a user document, or "" if it carries neither key.
-
-    Both keys must be tried: ``PlatformLinkService`` returns a transitional
-    shape (``_id``, no ``user_id``) while the auth middleware's
-    ``build_user_context()`` returns the opposite. This is the id every bot
-    capture and audit line attributes to, so a wrong answer here silently moves
-    the record onto another profile.
-    """
-    return str(user.get("user_id") or user.get("_id") or "")
+async def _resolve_bot_caller(
+    request: Request, platform: str, platform_user_id: str
+) -> AuthenticatedUser | None:
+    """The user a bot turn acts as: the middleware-resolved one, else the
+    platform account's linked user (``None`` when unlinked)."""
+    user = get_request_user(request)
+    if user is not None and getattr(request.state, "authenticated", False):
+        return user
+    return await resolve_bot_user(platform, platform_user_id)
 
 
 async def require_bot_api_key(request: Request) -> None:
@@ -523,20 +524,14 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
     log.set(operation="bot_chat_stream", platform=body.platform)
     await BotService.enforce_rate_limit(body.platform, body.platform_user_id)
 
-    # Use middleware-resolved user if available
-    user = getattr(request.state, "user", None)
-    if not user or not getattr(request.state, "authenticated", False):
-        user = await PlatformLinkService.get_user_by_platform_id(
-            body.platform, body.platform_user_id
-        )
+    user = await _resolve_bot_caller(request, body.platform, body.platform_user_id)
 
-    if not user:
+    if user is None:
         return _refusal_stream_with_notice(
             _UNLINKED_PAYWALL_NOTICE, BOT_STREAM_ERROR_NOT_AUTHENTICATED
         )
 
-    user_id = _resolve_user_id(user)
-    user["user_id"] = user_id  # Ensure user_id is always set in the dict
+    user_id = user.user_id
     log.set(user={"id": user_id}, outcome="success")
 
     if (refusal := await _bot_stream_entitlement_gate(user_id, body.platform)) is not None:
@@ -610,24 +605,12 @@ async def reset_session(request: Request, body: ResetSessionRequest) -> ResetSes
     await require_bot_api_key(request)
     log.set(operation="reset_session", platform=body.platform)
 
-    # `user` is one of two genuinely different untyped dict shapes here —
-    # middleware's `build_user_context()` output (has "user_id", no "_id") or
-    # PlatformLinkService's legacy dict (has "_id", no "user_id") — normalized
-    # below and handed to BotService, which re-normalizes it the same way for
-    # every other bot endpoint. Unifying the two shapes is a cross-file change
-    # (platform_link_service.py, bot_auth_middleware.py, bot_service.py) out
-    # of scope here; see API CLAUDE.md Type Safety §14.
-    user = getattr(request.state, "user", None)
-    if not user or not getattr(request.state, "authenticated", False):
-        user = await PlatformLinkService.get_user_by_platform_id(
-            body.platform, body.platform_user_id
-        )
+    user = await _resolve_bot_caller(request, body.platform, body.platform_user_id)
 
-    if not user:
+    if user is None:
         raise HTTPException(status_code=401, detail="User not authenticated")
 
-    user_id = _resolve_user_id(user)
-    user["user_id"] = user_id  # Ensure user_id is always set in the dict
+    user_id = user.user_id
     log.set(user={"id": user_id}, platform=body.platform)
 
     new_conversation_id = await BotService.reset_session(
@@ -662,17 +645,16 @@ async def check_auth_status(
     log.set(operation="check_auth_status", platform=platform)
     if not Platform.is_valid(platform):
         raise HTTPException(status_code=400, detail="Invalid platform")
-    user = await PlatformLinkService.get_user_by_platform_id(platform, platform_user_id)
+    user = await resolve_bot_user(platform, platform_user_id)
     # The linked id is returned, not just the boolean: it is what the bot uses as
     # its PostHog distinct_id, so bot events land on the same profile as this
     # user's web and API events instead of a parallel `<platform>:<id>` ghost.
-    user_id = _resolve_user_id(user) if user else None
     log.set(outcome="success")
     return BotAuthStatusResponse(
         authenticated=user is not None,
         platform=platform,
         platform_user_id=platform_user_id,
-        user_id=user_id or None,
+        user_id=user.user_id if user is not None and user.user_id else None,
     )
 
 
@@ -710,9 +692,9 @@ async def get_settings(
     log.set(operation="get_bot_settings", platform=platform)
     if not Platform.is_valid(platform):
         raise HTTPException(status_code=400, detail="Invalid platform")
-    user = await PlatformLinkService.get_user_by_platform_id(platform, platform_user_id)
+    user = await resolve_bot_user(platform, platform_user_id)
 
-    if not user:
+    if user is None:
         return BotSettingsResponse(
             authenticated=False,
             user_name=None,
@@ -721,8 +703,7 @@ async def get_settings(
             connected_integrations=[],
         )
 
-    user_id = _resolve_user_id(user)
-    user["user_id"] = user_id  # Ensure user_id is always set in the dict
+    user_id = user.user_id
 
     connected_integrations_list = []
     try:
@@ -743,16 +724,17 @@ async def get_settings(
     except Exception as e:
         log.error(
             f"{LogTag.API} Error fetching integrations for settings",
-            user_id=user.get("user_id"),
+            user_id=user.user_id,
             error_type=type(e).__name__,
             error=str(e),
         )
 
-    user_name = user.get("name") or user.get("username")
-    profile_image_url = user.get("profile_image_url") or user.get("avatar_url")
-    account_created_at = None
-    if user.get("created_at"):
-        account_created_at = user["created_at"].isoformat()
+    user_name = user.name
+    # ``picture`` is the profile image the user document actually carries; the
+    # keys read here before (``profile_image_url``/``avatar_url``) never
+    # existed on it, so bot settings always answered with no image.
+    profile_image_url = user.picture
+    account_created_at = user.created_at.isoformat() if user.created_at else None
 
     log.set(outcome="success")
     return BotSettingsResponse(
@@ -785,12 +767,8 @@ async def unlink_account(request: Request) -> UnlinkAccountResponse:
     if not Platform.is_valid(platform):
         raise HTTPException(status_code=400, detail="Invalid platform")
 
-    # PlatformLinkService.get_user_by_platform_id returns a transitional
-    # legacy dict (see `user_to_legacy_dict`) shared by several bot endpoints;
-    # only "_id" is read here, so it stays a dict rather than introducing a
-    # one-off model for a single field (API CLAUDE.md Type Safety §14).
-    user = await PlatformLinkService.get_user_by_platform_id(platform, platform_user_id)
-    if not user:
+    user = await resolve_bot_user(platform, platform_user_id)
+    if user is None:
         log.audit(
             "platform account unlink rejected",
             actor=AUDIT_ACTOR_BOT_API,
@@ -800,7 +778,7 @@ async def unlink_account(request: Request) -> UnlinkAccountResponse:
         )
         raise HTTPException(status_code=404, detail="Account not linked")
 
-    user_id = str(user["_id"])
+    user_id = user.user_id
     await PlatformLinkService.unlink_account(user_id, platform)
     log.audit(
         "platform account unlinked",
@@ -854,7 +832,7 @@ async def transcribe_bot_audio(
 ) -> TranscribeAudioResponse:
     """Convert audio bytes into a transcript for bot adapters."""
     await require_bot_api_key(request)
-    log.set(operation="bot_transcribe_audio", user={"id": user.get("user_id")})
+    log.set(operation="bot_transcribe_audio", user={"id": user.user_id})
 
     # Paid-only gate, imperative rather than `@require_subscription()`: the bot
     # API key is checked in the body, so a decorator would 402 a caller whose
@@ -875,7 +853,7 @@ async def transcribe_bot_audio(
     # transcribe is not a chat turn, and counting it as one would inflate the
     # bot's refused-turn rate with events that have no turn behind them.
     try:
-        await require_active_subscription(str(user["user_id"]), feature="bot_transcribe")
+        await require_active_subscription(user.user_id, feature="bot_transcribe")
     except SubscriptionRequiredException:
         log.set(outcome="subscription_required")  # pragma: no mutate
         raise
@@ -920,7 +898,7 @@ async def transcribe_bot_audio(
     # After the transcription succeeds: an event on entry would count failures
     # as successes. Length, not content — the transcript is user speech.
     capture_event(
-        str(user.get("user_id")),
+        user.user_id,
         AnalyticsEvents.BOT_AUDIO_TRANSCRIBED,
         {"audio_bytes": len(audio_bytes), "transcript_length": len(text)},
     )

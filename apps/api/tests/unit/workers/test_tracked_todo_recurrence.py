@@ -11,15 +11,23 @@ Covers the recently-refactored timezone code paths in
   and falls back to ``Timezone.utc()`` on a missing user or exception.
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
+from app.models.user_models import AuthenticatedUser
 from app.utils.timezone import Timezone
 from app.workers.tasks.tracked_todo_tasks import (
     _compute_next_run,
     _load_user_with_tz,
 )
+
+
+def _user_context(**fields: object) -> Callable[[str], AuthenticatedUser]:
+    """What ``load_user_context`` answers for whichever user id it is asked for."""
+    return lambda user_id: AuthenticatedUser(user_id=user_id, **fields)
+
 
 KOLKATA = ZoneInfo("Asia/Kolkata")
 
@@ -97,19 +105,19 @@ class TestComputeNextRun:
 class TestLoadUserWithTz:
     async def test_offset_timezone_resolved(self):
         with patch(
-            "app.workers.tasks.tracked_todo_tasks.get_user_by_id",
-            new=AsyncMock(return_value={"timezone": "+05:30"}),
+            "app.workers.tasks.tracked_todo_tasks.load_user_context",
+            new=AsyncMock(side_effect=_user_context(timezone="+05:30")),
         ):
             user_data, tz = await _load_user_with_tz("user1")
 
         assert isinstance(tz, Timezone)
         assert tz.value == "+05:30"
-        assert user_data["user_id"] == "user1"
+        assert user_data.user_id == "user1"
 
     async def test_iana_timezone_resolved(self):
         with patch(
-            "app.workers.tasks.tracked_todo_tasks.get_user_by_id",
-            new=AsyncMock(return_value={"timezone": "Asia/Kolkata"}),
+            "app.workers.tasks.tracked_todo_tasks.load_user_context",
+            new=AsyncMock(side_effect=_user_context(timezone="Asia/Kolkata")),
         ):
             _user_data, tz = await _load_user_with_tz("user1")
 
@@ -117,30 +125,30 @@ class TestLoadUserWithTz:
 
     async def test_missing_timezone_falls_back_to_utc(self):
         with patch(
-            "app.workers.tasks.tracked_todo_tasks.get_user_by_id",
+            "app.workers.tasks.tracked_todo_tasks.load_user_context",
             new=AsyncMock(return_value={"name": "no-tz-user"}),
         ):
             user_data, tz = await _load_user_with_tz("user1")
 
         assert tz.value == "UTC"
-        assert user_data["user_id"] == "user1"
+        assert user_data.user_id == "user1"
 
     async def test_missing_user_returns_utc(self):
         with patch(
-            "app.workers.tasks.tracked_todo_tasks.get_user_by_id",
+            "app.workers.tasks.tracked_todo_tasks.load_user_context",
             new=AsyncMock(return_value=None),
         ):
             user_data, tz = await _load_user_with_tz("user1")
 
-        assert user_data == {"user_id": "user1"}
+        assert user_data == AuthenticatedUser(user_id="user1")
         assert tz == Timezone.utc()
 
     async def test_exception_falls_back_to_utc(self):
         with patch(
-            "app.workers.tasks.tracked_todo_tasks.get_user_by_id",
+            "app.workers.tasks.tracked_todo_tasks.load_user_context",
             new=AsyncMock(side_effect=RuntimeError("DB down")),
         ):
             user_data, tz = await _load_user_with_tz("user1")
 
-        assert user_data == {"user_id": "user1"}
+        assert user_data == AuthenticatedUser(user_id="user1")
         assert tz == Timezone.utc()

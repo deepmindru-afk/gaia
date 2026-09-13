@@ -12,6 +12,7 @@ import pytest
 from app.agents.core.subagents.subagent_runner import SubagentOutcome
 from app.agents.llm.lane import AgentRole
 from app.helpers.agent_helpers import AgentIdentity, AgentLane, AgentTurn
+from app.models.user_models import OnboardingPreferences, OnboardingSubdocument
 from app.services.dev_agent_service import _dev_base_configurable, _reject_pause
 from app.utils.errors import AppError
 
@@ -93,15 +94,16 @@ async def test_the_dev_users_onboarding_data_reaches_the_configurable() -> None:
     full ``UserDocument`` from ``require_dev_user`` in hand, so it must thread
     ``onboarding`` into ``build_agent_config`` the same way comms does, not
     leave a direct run blind to preferences a real chat turn would carry."""
+    # ``name`` is MagicMock's own constructor argument, so it is set afterwards.
     user_doc = MagicMock(
         id="dev-user-1",
         email="dev@gaia.local",
-        name="Dev User",
-        onboarding={
-            "preferences": {"profession": "engineer"},
-            "writing_style": {"summary": "terse"},
-        },
+        onboarding=OnboardingSubdocument(
+            preferences=OnboardingPreferences(profession="engineer"),
+            writing_style={"summary": "terse"},
+        ),
     )
+    user_doc.name = "Dev User"
     with patch(f"{MODULE}.require_dev_user", AsyncMock(return_value=user_doc)):
         configurable, user_id, _ = await _dev_base_configurable("dev@gaia.local", None, "executor")
 

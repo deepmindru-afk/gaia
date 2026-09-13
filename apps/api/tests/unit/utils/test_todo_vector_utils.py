@@ -27,9 +27,10 @@ TODO_ID = "507f1f77bcf86cd799439099"
 NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
-def _make_todo_data(**overrides: Any) -> dict:
-    """Build a realistic todo dict, merging *overrides* on top of defaults."""
+def _make_todo_data(**overrides: Any) -> TodoDocument:
+    """Build a realistic ``TodoDocument``, merging *overrides* on top of defaults."""
     base: dict[str, Any] = {
+        "user_id": USER_ID,
         "title": "Buy groceries",
         "description": "Milk, eggs, bread",
         "labels": ["shopping", "personal"],
@@ -45,7 +46,7 @@ def _make_todo_data(**overrides: Any) -> dict:
         "updated_at": NOW,
     }
     base.update(overrides)
-    return base
+    return TodoDocument.model_validate(base)
 
 
 def _make_todo_response(**overrides: Any) -> TodoResponse:
@@ -129,8 +130,8 @@ class TestCreateTodoContentForEmbedding:
         result = create_todo_content_for_embedding(todo)
         assert "Subtasks: A, B" in result
 
-    def test_subtasks_with_no_title_key(self) -> None:
-        todo = _make_todo_data(subtasks=[{"completed": False}])
+    def test_subtasks_without_titles_excluded(self) -> None:
+        todo = _make_todo_data(subtasks=[{"title": "", "completed": False}])
         result = create_todo_content_for_embedding(todo)
         assert "Subtasks" not in result
 
@@ -140,8 +141,8 @@ class TestCreateTodoContentForEmbedding:
         assert "Status: completed" in result
 
     def test_empty_todo_minimal_output(self) -> None:
-        """Completely empty dict should still produce a status line."""
-        result = create_todo_content_for_embedding({})
+        """A bare todo (title only) still produces the status line, and nothing else."""
+        result = create_todo_content_for_embedding(TodoDocument(user_id=USER_ID, title=""))
         assert result == "Status: pending"
 
     def test_empty_title_string_excluded(self) -> None:
@@ -208,13 +209,14 @@ class TestStoreTodoEmbedding:
         assert metadata["updated_at"] == NOW.isoformat()
         assert metadata["due_date"] == NOW.isoformat()
 
-    async def test_string_fields_kept_as_strings(self) -> None:
-        todo = _make_todo_data(created_at="2026-01-01", updated_at="2026-06-01")
+    async def test_unstamped_timestamps_are_empty_strings(self) -> None:
+        todo = _make_todo_data(created_at=None, updated_at=None)
         await store_todo_embedding(TODO_ID, todo, USER_ID)
 
         metadata = self.mock_collection.add_texts.call_args[1]["metadatas"][0]
-        assert metadata["created_at"] == "2026-01-01"
-        assert metadata["updated_at"] == "2026-06-01"
+        assert metadata["created_at"] == ""
+        assert metadata["updated_at"] == ""
+        assert metadata["priority"] == "high"
 
     async def test_boolean_int_fields_converted_to_lowercase_strings(self) -> None:
         todo = _make_todo_data(completed=True, due_date=NOW)
@@ -271,12 +273,12 @@ class TestStoreTodoEmbedding:
         assert metadata["user_id"] == USER_ID
         assert metadata["todo_id"] == TODO_ID
 
-    async def test_due_date_as_string_kept(self) -> None:
-        todo = _make_todo_data(due_date="2026-03-20")
+    async def test_due_date_stored_as_iso(self) -> None:
+        todo = _make_todo_data(due_date=datetime(2026, 3, 20, tzinfo=UTC))
         await store_todo_embedding(TODO_ID, todo, USER_ID)
 
         metadata = self.mock_collection.add_texts.call_args[1]["metadatas"][0]
-        assert metadata["due_date"] == "2026-03-20"
+        assert metadata["due_date"] == "2026-03-20T00:00:00+00:00"
 
 
 # ===========================================================================
@@ -298,10 +300,11 @@ class TestUpdateTodoEmbedding:
                 return_value=True,
             ) as mock_store,
         ):
-            result = await update_todo_embedding(TODO_ID, _make_todo_data(), USER_ID)
+            todo = _make_todo_data()
+            result = await update_todo_embedding(TODO_ID, todo, USER_ID)
             assert result is True
             mock_delete.assert_awaited_once_with(TODO_ID)
-            mock_store.assert_awaited_once_with(TODO_ID, _make_todo_data(), USER_ID)
+            mock_store.assert_awaited_once_with(TODO_ID, todo, USER_ID)
 
     async def test_returns_false_when_store_fails(self) -> None:
         with (

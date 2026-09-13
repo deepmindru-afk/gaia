@@ -17,6 +17,7 @@ from unittest.mock import patch
 from pydantic import BaseModel
 import pytest
 
+from app.models.integrations.gmail import GmailComposeArguments
 from app.utils.composio_hooks import file_upload_hooks
 from app.utils.composio_hooks.file_upload_hooks import (
     NATIVE_UPLOAD_PARAM,
@@ -45,6 +46,10 @@ def _no_held_card():
     _pending_draft_card.set(None)
     yield
     _pending_draft_card.set(None)
+
+
+def _compose(arguments: dict) -> GmailComposeArguments:
+    return GmailComposeArguments.model_validate(arguments)
 
 
 def _schema(props: dict, required: list[str] | None = None) -> SimpleNamespace:
@@ -250,24 +255,25 @@ class TestNormalizeComposeBody:
 
 class TestComposeRecipients:
     def test_forward_string_becomes_single_element_list(self):
-        assert _compose_recipients("GMAIL_FORWARD_MESSAGE", {"to_recipients": "a@b.com"}) == [
-            "a@b.com"
-        ]
+        assert _compose_recipients(
+            "GMAIL_FORWARD_MESSAGE", _compose({"to_recipients": "a@b.com"})
+        ) == ["a@b.com"]
 
     def test_forward_list_passes_through(self):
         assert _compose_recipients(
-            "GMAIL_FORWARD_MESSAGE", {"to_recipients": ["a@b.com", "c@d.com"]}
+            "GMAIL_FORWARD_MESSAGE", _compose({"to_recipients": ["a@b.com", "c@d.com"]})
         ) == ["a@b.com", "c@d.com"]
 
     def test_compose_prepends_recipient_then_extras(self):
         assert _compose_recipients(
             "GMAIL_SEND_EMAIL",
-            {"recipient_email": "r@x.com", "extra_recipients": ["e@x.com"]},
+            _compose({"recipient_email": "r@x.com", "extra_recipients": ["e@x.com"]}),
         ) == ["r@x.com", "e@x.com"]
 
     def test_non_list_extra_recipients_are_dropped(self):
         assert _compose_recipients(
-            "GMAIL_SEND_EMAIL", {"recipient_email": "r@x.com", "extra_recipients": "oops"}
+            "GMAIL_SEND_EMAIL",
+            _compose({"recipient_email": "r@x.com", "extra_recipients": "oops"}),
         ) == ["r@x.com"]
 
 
@@ -313,15 +319,15 @@ class TestStreamComposePreview:
         sent, writer = self._capture()
         display = [{"name": "f.pdf", "mimetype": "application/pdf"}]
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, display)
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), display)
         assert sent == []
-        assert _pending_draft_card.get()["subject"] == "Subj"
+        assert _pending_draft_card.get().subject == "Subj"
 
     def test_after_hook_streams_the_held_card_with_every_field(self):
         sent, writer = self._capture()
         display = [{"name": "f.pdf", "mimetype": "application/pdf"}]
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, display)
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), display)
             gmail_create_draft_after_hook(
                 "GMAIL_CREATE_EMAIL_DRAFT", "gmail", {"data": {"id": "draft-1"}}
             )
@@ -347,7 +353,7 @@ class TestStreamComposePreview:
         sent, writer = self._capture()
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
             _stream_compose_preview(
-                "GMAIL_SEND_EMAIL", {"recipient_email": "r@x.com", "subject": "s"}, []
+                "GMAIL_SEND_EMAIL", _compose({"recipient_email": "r@x.com", "subject": "s"}), []
             )
         assert list(sent[0].keys()) == ["email_sent_data"]
         assert sent[0]["email_sent_data"][0]["attachments"] == []
@@ -362,7 +368,7 @@ class TestCreateDraftAfterHook:
         sent, writer = self._capture()
         response = {"data": {"id": "d-1", "message": {"threadId": "t"}}}
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, [])
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), [])
             assert (
                 gmail_create_draft_after_hook("GMAIL_CREATE_EMAIL_DRAFT", "gmail", response)
                 is response
@@ -379,7 +385,7 @@ class TestCreateDraftAfterHook:
     def test_a_card_is_streamed_once_only(self):
         sent, writer = self._capture()
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, [])
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), [])
             gmail_create_draft_after_hook(
                 "GMAIL_CREATE_EMAIL_DRAFT", "gmail", {"data": {"id": "d-1"}}
             )
@@ -394,7 +400,7 @@ class TestCreateDraftAfterHook:
         # their compose UI for no gain.
         sent, writer = self._capture()
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, [])
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), [])
             gmail_create_draft_after_hook("GMAIL_CREATE_EMAIL_DRAFT", "gmail", {"data": {}})
         assert "draft_id" not in sent[0]["email_compose_data"][0]
 
@@ -404,7 +410,7 @@ class TestCreateDraftAfterHook:
         sent, writer = self._capture()
         display = [{"name": "f.pdf", "mimetype": "application/pdf"}]
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, display)
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), display)
             gmail_create_draft_after_hook("GMAIL_CREATE_EMAIL_DRAFT", "gmail", {"data": {}})
         assert sent == []
 
@@ -414,7 +420,7 @@ class TestCreateDraftAfterHook:
         # keep its files pays that price.
         sent, writer = self._capture()
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, [])
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), [])
             gmail_create_draft_after_hook(
                 "GMAIL_CREATE_EMAIL_DRAFT", "gmail", {"data": {"id": "d-1"}}
             )
@@ -423,13 +429,13 @@ class TestCreateDraftAfterHook:
     def test_non_dict_data_is_survived(self):
         sent, writer = self._capture()
         with patch(f"{HOOKS}.get_stream_writer", return_value=writer):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, [])
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), [])
             gmail_create_draft_after_hook("GMAIL_CREATE_EMAIL_DRAFT", "gmail", {"data": "oops"})
         assert "draft_id" not in sent[0]["email_compose_data"][0]
 
     def test_no_writer_does_not_raise(self):
         with patch(f"{HOOKS}.get_stream_writer", return_value=None):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_ARGS, [])
+            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", _compose(DRAFT_ARGS), [])
             gmail_create_draft_after_hook(
                 "GMAIL_CREATE_EMAIL_DRAFT", "gmail", {"data": {"id": "d-1"}}
             )
@@ -549,7 +555,9 @@ class TestComposePreviewDefaults:
         # as the empty value on the card rather than dropping out.
         sent: list[dict] = []
         with patch(f"{HOOKS}.get_stream_writer", return_value=sent.append):
-            _stream_compose_preview("GMAIL_CREATE_EMAIL_DRAFT", {"recipient_email": "r@x.com"}, [])
+            _stream_compose_preview(
+                "GMAIL_CREATE_EMAIL_DRAFT", _compose({"recipient_email": "r@x.com"}), []
+            )
             gmail_create_draft_after_hook("GMAIL_CREATE_EMAIL_DRAFT", "gmail", {"data": {}})
         assert sent[0]["email_compose_data"][0] == {
             "to": ["r@x.com"],
@@ -563,8 +571,8 @@ class TestComposePreviewDefaults:
         }
 
     def test_recipients_default_to_empty_recipient_and_no_extras(self):
-        assert _compose_recipients("GMAIL_SEND_EMAIL", {}) == [""]
-        assert _compose_recipients("GMAIL_FORWARD_MESSAGE", {}) == []
+        assert _compose_recipients("GMAIL_SEND_EMAIL", _compose({})) == [""]
+        assert _compose_recipients("GMAIL_FORWARD_MESSAGE", _compose({})) == []
 
     def test_empty_recipient_email_falls_back_to_to(self):
         # recipient_email present-but-empty is not remapped; the `or ...get("to")`

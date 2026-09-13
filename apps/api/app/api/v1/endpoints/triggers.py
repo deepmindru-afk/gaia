@@ -75,7 +75,7 @@ async def get_trigger_options(
     options = await handler.get_config_options(
         trigger_slug,
         field_name,
-        current_user["user_id"],
+        current_user.user_id,
         integration_id,
         parent_ids,
         page=page,

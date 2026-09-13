@@ -101,7 +101,7 @@ async def complete_user_onboarding(
     Nothing is generated here: the personalization pipeline fires when the user
     connects Gmail, not at signup."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         onboarding={
             "operation": "complete",
             "is_complete": True,
@@ -110,7 +110,7 @@ async def complete_user_onboarding(
     )
 
     try:
-        updated_user = await complete_onboarding(user["user_id"], onboarding_data)
+        updated_user = await complete_onboarding(user.user_id, onboarding_data)
         return OnboardingResponse(
             success=True, message="Onboarding completed successfully", user=updated_user
         )
@@ -119,7 +119,7 @@ async def complete_user_onboarding(
     except Exception as e:
         log.error(
             f"{LogTag.ONBOARDING} Error completing onboarding",
-            user_id=user["user_id"],
+            user_id=user.user_id,
             error_type=type(e).__name__,
             error=str(e),
             exc_info=True,
@@ -135,16 +135,16 @@ async def reset_user_onboarding(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> OnboardingResetResponse:
     """Fully reset onboarding so the user can run the flow again from scratch."""
-    log.set(user={"id": user["user_id"]}, onboarding={"operation": "reset"})
+    log.set(user={"id": user.user_id}, onboarding={"operation": "reset"})
     try:
-        counts = await reset_onboarding(user["user_id"])
+        counts = await reset_onboarding(user.user_id)
         return OnboardingResetResponse(success=True, **counts.model_dump())
     except HTTPException:
         raise
     except Exception as e:
         log.error(
             f"{LogTag.ONBOARDING} Error resetting onboarding",
-            user_id=user["user_id"],
+            user_id=user.user_id,
             error_type=type(e).__name__,
             error=str(e),
             exc_info=True,
@@ -160,17 +160,17 @@ async def get_onboarding_status(
     Get the current user's onboarding status and preferences.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         onboarding={"operation": "get_status"},
     )
     try:
-        status = await get_user_onboarding_status(user["user_id"])
+        status = await get_user_onboarding_status(user.user_id)
         log.set(onboarding={"operation": "get_status", "is_complete": status.completed})
         return status
     except Exception as e:
         log.error(
             f"{LogTag.ONBOARDING} Error getting onboarding status",
-            user_id=user["user_id"],
+            user_id=user.user_id,
             error_type=type(e).__name__,
             error=str(e),
             exc_info=True,
@@ -188,7 +188,7 @@ async def update_onboarding_phase(
     Used to track progress through onboarding stages.
     """
     try:
-        user_id = user.get("user_id")
+        user_id = user.user_id
         phase = request.phase.value
 
         log.set(
@@ -246,7 +246,7 @@ async def update_onboarding_phase(
     except Exception as e:
         log.error(
             f"{LogTag.ONBOARDING} Error updating onboarding phase",
-            user_id=user.get("user_id"),
+            user_id=user.user_id,
             error_type=type(e).__name__,
             error=str(e),
             exc_info=True,
@@ -264,13 +264,13 @@ async def update_user_preferences(
     This can be used from the settings page to update preferences after onboarding.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         onboarding={"operation": "update_personality"},
     )
 
     try:
-        updated_user = await update_onboarding_preferences(user["user_id"], preferences)
-        schedule_account_sync(user["user_id"])
+        updated_user = await update_onboarding_preferences(user.user_id, preferences)
+        schedule_account_sync(user.user_id)
         # PATCH semantics: only the fields the caller actually sent were written,
         # so `fields` is what changed — not the whole preferences object.
         capture_context_event(
@@ -293,7 +293,7 @@ async def update_user_preferences(
     except Exception as e:
         log.error(
             f"{LogTag.ONBOARDING} Error updating preferences",
-            user_id=user["user_id"],
+            user_id=user.user_id,
             error_type=type(e).__name__,
             error=str(e),
             exc_info=True,
@@ -410,7 +410,7 @@ async def get_onboarding_personalization(
     Returns default values if personalization hasn't completed yet.
     """
     try:
-        user_id = user.get("user_id")
+        user_id = user.user_id
         log.set(
             user={"id": user_id},
             onboarding={"operation": "get_personalization"},
@@ -500,7 +500,7 @@ async def save_writing_style(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> SaveWritingStyleResponse:
     """Save a user-edited writing style summary from the onboarding reveal card."""
-    user_id: str = user["user_id"]
+    user_id: str = user.user_id
     log.set(user={"id": user_id}, onboarding={"operation": "save_writing_style"})
     try:
         await save_user_edited_summary(user_id, request.edited_summary.strip())
@@ -531,7 +531,7 @@ async def regenerate_writing_style_example(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> RegenerateWritingStyleExampleResponse:
     """Generate a new example email from an edited writing style summary."""
-    user_id: str = user["user_id"]
+    user_id: str = user.user_id
     log.set(user={"id": user_id}, onboarding={"operation": "regenerate_style_example"})
     # /api/v1/onboarding is a free prefix, so this LLM route gates itself with
     # the same fail-closed check the middleware runs everywhere else.
@@ -571,7 +571,7 @@ async def confirm_social_profiles(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> SaveSocialProfilesResponse:
     """Save user-confirmed (and optionally edited) social profiles from onboarding."""
-    user_id: str = user["user_id"]
+    user_id: str = user.user_id
     log.set(user={"id": user_id}, onboarding={"operation": "confirm_social_profiles"})
     try:
         await save_confirmed_profiles(user_id, request.profiles)

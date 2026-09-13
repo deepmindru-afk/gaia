@@ -14,7 +14,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 import pytest
 
 from app.constants.email import EMAIL_ATTACHMENTS_PARAM_DESCRIPTION
@@ -164,8 +164,12 @@ class TestFindNativeUploadParam:
             is None
         )
 
-    def test_non_dict_property_does_not_match(self):
-        assert find_native_upload_param(_schema({"attachment": "not-a-schema"})) is None
+    def test_non_schema_property_is_rejected_at_the_boundary(self):
+        # A property value that is not a JSON-schema object is not a tool schema
+        # at all: it fails to parse (the registry logs and leaves the schema
+        # untouched) rather than being silently walked around.
+        with pytest.raises(ValidationError):
+            find_native_upload_param(_schema({"attachment": "not-a-schema"}))
 
     def test_unmarked_variants_do_not_match(self):
         # Every branch walked, nothing marked: the walk must not claim the param.

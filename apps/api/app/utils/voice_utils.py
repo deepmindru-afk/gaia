@@ -5,7 +5,7 @@ trimmed account/shared-library voices (``app/models/voice_models.py``) into the
 catalog-compatible ``VoiceOption`` schema used by the voice picker.
 """
 
-from typing import Any
+from pydantic import BaseModel, ConfigDict
 
 from app.constants.voices import ACCENT_TO_COUNTRY, LANGUAGE_NAMES
 from app.models.voice_models import (
@@ -16,19 +16,47 @@ from app.models.voice_models import (
 from app.schemas.voice_schemas import VoiceOption
 
 
-def _verified_language_codes(voice: dict[str, Any]) -> list[str]:
-    """Ordered, deduped ISO codes from a voice's verified_languages.
+class ElevenLabsVerifiedLanguage(BaseModel):
+    """One ``verified_languages`` entry of a raw ElevenLabs voice."""
 
-    Reads the RAW provider voice object, before it is trimmed into one of the
-    ``ElevenLabsVoice`` models — this is the untyped boundary, so a plain dict
-    is the honest parameter type here.
+    model_config = ConfigDict(extra="ignore")
+
+    language: str | None = None
+
+
+class ElevenLabsVoiceLanguages(BaseModel):
+    """The ``verified_languages`` slice of a RAW ElevenLabs voice object.
+
+    The only part of the untrimmed provider voice ``_verified_language_codes``
+    reads; ``voice_service`` validates the raw voice into it at the boundary.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    verified_languages: list[ElevenLabsVerifiedLanguage] | None = None
+
+
+class ElevenLabsVoiceLabels(BaseModel):
+    """The documented keys of an account voice's free-form ``labels`` bag."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    accent: str | None = None
+    gender: str | None = None
+    descriptive: str | None = None
+    use_case: str | None = None
+    language: str | None = None
+
+
+def _verified_language_codes(voice: ElevenLabsVoiceLanguages) -> list[str]:
+    """Ordered, deduped ISO codes from a voice's verified_languages.
 
     ElevenLabs repeats a language once per supporting model — collapse to one
     entry per language, preserving first-seen order.
     """
     seen: list[str] = []
-    for entry in voice.get("verified_languages") or []:
-        code = str(entry.get("language") or "").lower()
+    for entry in voice.verified_languages or []:
+        code = (entry.language or "").lower()
         if code and code not in seen:
             seen.append(code)
     return seen
@@ -97,14 +125,14 @@ def _build_voice_option(
 
 def _map_account_voice(voice: ElevenLabsAccountVoice) -> VoiceOption:
     """Shape a non-catalog account voice (metadata in ``labels``) into an option."""
-    labels = voice.labels
+    labels = ElevenLabsVoiceLabels.model_validate(voice.labels)
     return _build_voice_option(
         voice,
-        accent=str(labels.get("accent") or ""),
-        gender=str(labels.get("gender") or ""),
-        descriptive=str(labels.get("descriptive") or ""),
-        use_case=str(labels.get("use_case") or ""),
-        language_code=str(labels.get("language") or ""),
+        accent=labels.accent or "",
+        gender=labels.gender or "",
+        descriptive=labels.descriptive or "",
+        use_case=labels.use_case or "",
+        language_code=labels.language or "",
         source="account",
         fallback_description="Account voice",
     )

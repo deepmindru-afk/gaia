@@ -11,7 +11,7 @@ the request is rejected with a 429 status code.
 
 Usage:
     @tiered_rate_limit("generate_image")
-    async def generate_image(user: dict = Depends(get_current_user)):
+    async def generate_image(user: AuthenticatedUser = Depends(get_current_user)):
         # This endpoint will be limited by daily (50/1000) and monthly (1000/25000)
         # limits based on user's plan
         pass

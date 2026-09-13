@@ -19,6 +19,7 @@ from app.models.support_models import (
     SupportRequestSubmissionResponse,
     SupportRequestType,
 )
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 
 SUPPORT_ENDPOINT = "app.api.v1.endpoints.support"
@@ -184,7 +185,11 @@ class TestSubmitSupportRequest:
 
     async def test_attachments_endpoint_requires_user_id_and_email(self, test_app: FastAPI) -> None:
         """Missing user_id OR email each yield 401 with the exact detail string."""
-        for current_user in ({}, {"user_id": "u1"}, {"email": "a@b.c"}):
+        for current_user in (
+            AuthenticatedUser(user_id=""),
+            AuthenticatedUser(user_id="u1"),
+            AuthenticatedUser(user_id="", email="a@b.c"),
+        ):
             original = test_app.dependency_overrides.get(get_current_user)
             test_app.dependency_overrides[get_current_user] = lambda cu=current_user: cu
             try:
@@ -238,7 +243,7 @@ class TestSubmitSupportRequestLogPins:
         app = FastAPI()
         app.include_router(router, prefix="/api/v1")
 
-        app.dependency_overrides[_get_current_user_dep] = lambda: {"user_id": "u1"}
+        app.dependency_overrides[_get_current_user_dep] = lambda: AuthenticatedUser(user_id="u1")
         try:
             with patch(f"{SUPPORT_ENDPOINT}.log"):
                 with TestClient(app, raise_server_exceptions=False) as c:

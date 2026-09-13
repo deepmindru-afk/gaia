@@ -390,7 +390,7 @@ async def _fetch_and_process_batches(
 
             # Process content (platform emails automatically excluded)
             t0_parse = time.monotonic()
-            processed_batch, failed = process_email_content(batch_emails)
+            processed_batch, failed = process_email_content(result.messages)
             parse_elapsed = time.monotonic() - t0_parse
             total_parsed += len(processed_batch)
             total_failed += failed

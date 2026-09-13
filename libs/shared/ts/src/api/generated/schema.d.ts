@@ -8215,6 +8215,8 @@ export interface components {
             end?: components["schemas"]["GoogleCalendarEventDateTime"] | null;
             /** Eventtype */
             eventType?: string | null;
+            /** Htmllink */
+            htmlLink?: string | null;
             /** Id */
             id?: string | null;
             /** Recurrence */

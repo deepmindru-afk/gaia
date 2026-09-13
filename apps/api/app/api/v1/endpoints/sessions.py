@@ -126,7 +126,7 @@ async def _resolve_file(
 async def list_session_artifacts(
     conv_id: str, user: Annotated[AuthenticatedUser, Depends(get_current_user)]
 ) -> list[ArtifactInfo]:
-    user_id = user["user_id"]
+    user_id = user.user_id
     log.set(user={"id": user_id}, session={"conv": conv_id, "op": "list_artifacts"})
     await _assert_owns(user_id, conv_id)
     try:
@@ -155,7 +155,7 @@ async def list_session_artifacts(
 async def get_artifact_file(
     conv_id: str, path: str, user: Annotated[AuthenticatedUser, Depends(get_current_user)]
 ) -> FileResponse:
-    user_id = user["user_id"]
+    user_id = user.user_id
     log.set(user={"id": user_id}, session={"conv": conv_id, "op": "get_artifact"})
     await _assert_owns(user_id, conv_id)
     host_path = await _resolve_file(user_id, conv_id, "artifacts", path)
@@ -167,7 +167,7 @@ async def get_artifact_file(
 async def list_uploads(
     conv_id: str, user: Annotated[AuthenticatedUser, Depends(get_current_user)]
 ) -> list[ArtifactInfo]:
-    user_id = user["user_id"]
+    user_id = user.user_id
     log.set(user={"id": user_id}, session={"conv": conv_id, "op": "list_uploads"})
     await _assert_owns(user_id, conv_id)
     try:
@@ -196,7 +196,7 @@ async def list_uploads(
 async def get_upload_file(
     conv_id: str, path: str, user: Annotated[AuthenticatedUser, Depends(get_current_user)]
 ) -> FileResponse:
-    user_id = user["user_id"]
+    user_id = user.user_id
     log.set(user={"id": user_id}, session={"conv": conv_id, "op": "get_upload"})
     await _assert_owns(user_id, conv_id)
     host_path = await _resolve_file(user_id, conv_id, "uploaded", path)
@@ -220,7 +220,7 @@ async def pin_artifact(
     payload: PinRequest,
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> PinResponse:
-    user_id = user["user_id"]
+    user_id = user.user_id
     log.set(user={"id": user_id}, session={"conv": conv_id, "op": "pin"})
     await _assert_owns(user_id, conv_id)
     try:

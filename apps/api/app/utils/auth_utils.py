@@ -1,20 +1,15 @@
-from collections.abc import Mapping
-from typing import Any, cast
-
-from starlette.datastructures import Headers
+from starlette.requests import HTTPConnection
 from workos import AsyncWorkOSClient
 
 from app.config.settings import settings
 from app.constants.auth import DEV_USER_HEADER
 from app.constants.log_tags import LogTag
 from app.db.repositories.users import user_repository
-from app.models.user_models import AuthenticatedUser, UserDocument, user_to_legacy_dict
+from app.models.user_models import AuthenticatedUser, UserDocument
 from shared.py.wide_events import log
 
 
-async def resolve_dev_bypass_user(
-    headers: Headers, cookies: Mapping[str, str] | None = None
-) -> tuple[str, UserDocument | None]:
+async def resolve_dev_bypass_user(connection: HTTPConnection) -> tuple[str, UserDocument | None]:
     """Resolve the dev-bypass target to its Mongo user.
 
     The single definition of bypass semantics for BOTH the HTTP middleware and
@@ -29,12 +24,12 @@ async def resolve_dev_bypass_user(
        which cannot set a custom header.
     3. ``DEV_AUTH_BYPASS_EMAIL`` — the configured default.
 
-    ``headers``/``cookies`` are any Mapping-like with ``.get`` (Starlette
-    ``Headers``/cookie dicts, for both HTTP and WS).
+    ``connection`` is the ``Request`` or ``WebSocket`` — both are Starlette
+    ``HTTPConnection``s carrying the headers and cookies.
     """
     target_email: str = (
-        headers.get(DEV_USER_HEADER)
-        or (cookies or {}).get("dev_bypass_user")
+        connection.headers.get(DEV_USER_HEADER)
+        or connection.cookies.get("dev_bypass_user")
         or settings.DEV_AUTH_BYPASS_EMAIL
         or ""
     )
@@ -42,37 +37,98 @@ async def resolve_dev_bypass_user(
 
 
 def build_user_context(
-    user_data: dict[str, Any], *, auth_provider: str, **extra: bool
+    user_doc: UserDocument,
+    *,
+    auth_provider: str | None,
+    impersonated: bool = False,
+    bot_authenticated: bool = False,
+    dev_bypass: bool = False,
 ) -> AuthenticatedUser:
-    """Build the canonical ``request.state.user`` dict from a Mongo user doc.
+    """Build the canonical ``request.state.user`` from a validated user document.
 
-    Every auth path (WorkOS session, agent token, bots) MUST construct the user
-    context through this one function. The full doc is spread so downstream
-    consumers — chiefly the agent's dynamic context, which reads ``timezone`` and
-    ``onboarding`` (custom instructions, preferences, writing style) — always see
-    the same fields. Hand-picking a subset is what caused voice mode and the bots
-    to silently drop the user's system instructions; defining the shape here once
-    means a new auth path physically can't reintroduce that drift.
+    Every auth path (WorkOS session, agent token, bots, dev bypass) and every
+    background path acting on a user's behalf MUST construct the user context
+    through this one function. The whole document is carried so downstream
+    consumers — chiefly the agent's dynamic context, which reads ``timezone``
+    and ``onboarding`` (custom instructions, preferences, writing style) —
+    always see the same fields. Hand-picking a subset is what caused voice mode
+    and the bots to silently drop the user's system instructions; defining the
+    shape here once means a new auth path physically can't reintroduce that
+    drift.
 
-    ``_id`` is replaced by a string ``user_id``. ``extra`` carries path-specific
-    flags (e.g. ``impersonated=True``, ``bot_authenticated=True``).
+    ``user_id`` is the document's string id; ``auth_provider`` names the path
+    (``None`` for a system-assembled context) and the flags mark it.
     """
-    context = {
-        "auth_provider": auth_provider,
-        **user_data,
-        "user_id": str(user_data.get("_id")),
-        **extra,
-    }
-    context.pop("_id", None)
-    # Correct by construction: assembled right above from an already-validated
-    # UserDocument plus the auth-path flags. cast(), not isinstance() (item 12) —
-    # the spread of `user_data` is what mypy can't follow, not the shape itself.
-    return cast(AuthenticatedUser, context)
+    return AuthenticatedUser(
+        user_id=user_doc.id,
+        auth_provider=auth_provider,
+        impersonated=impersonated,
+        bot_authenticated=bot_authenticated,
+        dev_bypass=dev_bypass,
+        email=user_doc.email,
+        name=user_doc.name,
+        picture=user_doc.picture,
+        timezone=user_doc.timezone,
+        created_at=user_doc.created_at,
+        updated_at=user_doc.updated_at,
+        last_active_at=user_doc.last_active_at,
+        onboarding=user_doc.onboarding,
+        provider_metadata=user_doc.provider_metadata,
+        hil_preferences=user_doc.hil_preferences,
+        notification_channel_prefs=user_doc.notification_channel_prefs,
+        platform_links=user_doc.platform_links,
+        platform_links_connected_at=user_doc.platform_links_connected_at,
+        chat_channel_priority=user_doc.chat_channel_priority,
+        starred_voice_ids=user_doc.starred_voice_ids,
+        selected_voice_id=user_doc.selected_voice_id,
+        first_name=user_doc.first_name,
+        email_memory_processed=user_doc.email_memory_processed,
+        email_memory_processed_at=user_doc.email_memory_processed_at,
+        email_memory_count=user_doc.email_memory_count,
+        integration_scan_states=user_doc.integration_scan_states,
+        is_active=user_doc.is_active,
+        memory_backfilled=user_doc.memory_backfilled,
+        last_inactive_email_sent=user_doc.last_inactive_email_sent,
+        inactive_email_count=user_doc.inactive_email_count,
+        last_limit_email_sent=user_doc.last_limit_email_sent,
+        highest_activity_tier=user_doc.highest_activity_tier,
+        highest_activity_tier_at=user_doc.highest_activity_tier_at,
+        nurture=user_doc.nurture,
+        first_steps=user_doc.first_steps,
+        welcome_email_sent_at=user_doc.welcome_email_sent_at,
+        marketing_contact_added_at=user_doc.marketing_contact_added_at,
+    )
+
+
+async def resolve_bot_user(platform: str, platform_user_id: str) -> AuthenticatedUser | None:
+    """The user context for a bot-platform account, or ``None`` when unlinked.
+
+    The one way a bot path (middleware or a ``/bot/*`` endpoint resolving an
+    unauthenticated caller) turns a platform account into the same
+    ``AuthenticatedUser`` every other auth path yields.
+    """
+    user_doc = await user_repository.get_by_platform_id(platform, platform_user_id)
+    if user_doc is None:
+        return None
+    return build_user_context(user_doc, auth_provider=f"bot:{platform}", bot_authenticated=True)
+
+
+async def load_user_context(user_id: str) -> AuthenticatedUser | None:
+    """The user context a background path builds to act on ``user_id``'s behalf.
+
+    No auth path produced it (``auth_provider`` is ``None``); it carries the
+    same document fields so the agent sees the user's timezone and onboarding
+    exactly as it would on an interactive turn. ``None`` when no such user.
+    """
+    user_doc = await user_repository.get(user_id)
+    if user_doc is None:
+        return None
+    return build_user_context(user_doc, auth_provider=None)
 
 
 async def authenticate_workos_session(
     session_token: str, workos_client: AsyncWorkOSClient | None = None
-) -> tuple[AuthenticatedUser, str | None]:
+) -> tuple[AuthenticatedUser | None, str | None]:
     """
     Authenticate a WorkOS session and refresh if needed.
     This is a shared utility function used by both HTTP middleware and WebSocket connections.
@@ -82,10 +138,10 @@ async def authenticate_workos_session(
         workos_client: Optional WorkOS client instance to use
 
     Returns:
-        tuple: (user_info, new_session_token) - user_info will be empty dict if auth fails
+        tuple: (user_info, new_session_token) - user_info is None if auth fails
 
     Note:
-        This function does not raise exceptions - it returns empty dict on failure
+        This function does not raise exceptions - it returns None on failure
         along with None for the session token.
     """
     # Initialize WorkOS client if not provided
@@ -122,21 +178,15 @@ async def authenticate_workos_session(
                         f"{LogTag.AGENT} Authentication failed even after refresh with reason",
                         reason=refresh_result.reason,
                     )
-                    return {}, None
+                    return None, None
 
-                # Get user information via dictionary access for flexibility
-                if hasattr(refresh_result, "__dict__"):
-                    refresh_dict = refresh_result.__dict__
-                    workos_user = refresh_dict.get("user")
-                    new_session = refresh_dict.get("sealed_session")
-                    if not workos_user:
-                        log.error(
-                            f"{LogTag.AGENT} Refresh successful but no user data in refresh result"
-                        )
-                        return {}, new_session
-                else:
-                    log.error(f"{LogTag.AGENT} Refresh result doesn't have expected structure")
-                    return {}, None
+                workos_user = refresh_result.user
+                new_session = refresh_result.sealed_session
+                if not workos_user:
+                    log.error(
+                        f"{LogTag.AGENT} Refresh successful but no user data in refresh result"
+                    )
+                    return None, new_session
 
             except Exception as e:
                 log.error(
@@ -144,12 +194,12 @@ async def authenticate_workos_session(
                     error=str(e),
                     error_type=type(e).__name__,
                 )
-                return {}, None
+                return None, None
 
         # Make sure we have a valid user before continuing
         if not workos_user:
             log.error(f"{LogTag.AGENT} Invalid user data from WorkOS")
-            return {}, new_session
+            return None, new_session
 
         # Retrieve user from database
         try:
@@ -163,10 +213,10 @@ async def authenticate_workos_session(
                     f"{LogTag.AGENT} User authenticated but not found in database",
                     user_email=user_email,
                 )
-                return {}, new_session
+                return None, new_session
 
             # Prepare user info for return
-            user_info = build_user_context(user_to_legacy_dict(user_doc), auth_provider="workos")
+            user_info = build_user_context(user_doc, auth_provider="workos")
             return user_info, new_session
 
         except Exception as e:
@@ -175,7 +225,7 @@ async def authenticate_workos_session(
                 error=str(e),
                 error_type=type(e).__name__,
             )
-            return {}, new_session
+            return None, new_session
 
     except Exception as e:
         log.error(
@@ -183,4 +233,4 @@ async def authenticate_workos_session(
             error=str(e),
             error_type=type(e).__name__,
         )
-        return {}, None
+        return None, None

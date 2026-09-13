@@ -204,7 +204,7 @@ class TodoService:
 
         # Index for search
         try:
-            await store_todo_embedding(created.id, created.model_dump(), user_id)
+            await store_todo_embedding(created.id, created, user_id)
         except Exception as e:
             log.warning("todo.index_failed", error=str(e))
 
@@ -330,7 +330,7 @@ class TodoService:
             raise ValueError(f"Todo {todo_id} not found")
 
         try:
-            await update_todo_embedding(todo_id, updated.model_dump(), user_id)
+            await update_todo_embedding(todo_id, updated, user_id)
         except Exception as e:
             log.warning("todo.index_update_failed", todo_id=todo_id, error=str(e))
 
@@ -418,7 +418,7 @@ class TodoService:
             try:
                 updated_todos = await todo_repository.find_by_ids(user_id, request.todo_ids)
                 await asyncio.gather(
-                    *(update_todo_embedding(t.id, t.model_dump(), user_id) for t in updated_todos),
+                    *(update_todo_embedding(t.id, t, user_id) for t in updated_todos),
                     return_exceptions=True,
                 )
             except Exception as e:

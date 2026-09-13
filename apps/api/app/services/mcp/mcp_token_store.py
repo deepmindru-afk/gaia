@@ -26,7 +26,7 @@ from app.db.postgresql import get_db_session
 from app.db.redis import get_and_delete_cache, get_cache, set_cache
 from app.models.db_oauth import MCPAuthType, MCPCredential, MCPCredentialStatus
 from app.models.mcp_config import DCRClientRegistration, OAuthDiscovery
-from app.utils.mcp_oauth_utils import introspect_token as do_introspect
+from app.utils.mcp_oauth_utils import TokenIntrospectionResponse, introspect_token as do_introspect
 from shared.py.wide_events import log
 
 
@@ -481,13 +481,11 @@ class MCPTokenStore:
         integration_id: str,
         client_id: str | None = None,
         client_secret: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> TokenIntrospectionResponse | None:
         """
         Introspect token at authorization server per RFC 7662.
 
         Returns introspection response with 'active' field, or None if failed.
-        The body stays a raw mapping: past ``active``, RFC 7662 lets the
-        authorization server return any claims it likes.
         """
         discovery = await self.get_oauth_discovery(integration_id)
         if not discovery:

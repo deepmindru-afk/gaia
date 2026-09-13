@@ -87,8 +87,7 @@ class TestBuildGoogleOAuthUrl:
         mock_settings.GOOGLE_CLIENT_ID = "cid"
         mock_settings.GOOGLE_CALLBACK_URL = "http://localhost/callback"
 
-        mock_token = MagicMock()
-        mock_token.get.return_value = "existing_scope_1 existing_scope_2"
+        mock_token = {"access_token": "at", "scope": "existing_scope_1 existing_scope_2"}
         mock_token_repo.get_token = AsyncMock(return_value=mock_token)
 
         url = await build_google_oauth_url(
@@ -110,8 +109,7 @@ class TestBuildGoogleOAuthUrl:
         mock_settings.GOOGLE_CLIENT_ID = "cid"
         mock_settings.GOOGLE_CALLBACK_URL = "http://localhost/callback"
 
-        mock_token = MagicMock()
-        mock_token.get.return_value = "openid email"
+        mock_token = {"access_token": "at", "scope": "openid email"}
         mock_token_repo.get_token = AsyncMock(return_value=mock_token)
 
         url = await build_google_oauth_url(
@@ -174,8 +172,7 @@ class TestBuildGoogleOAuthUrl:
         mock_settings.GOOGLE_CLIENT_ID = "cid"
         mock_settings.GOOGLE_CALLBACK_URL = "http://localhost/callback"
 
-        mock_token = MagicMock()
-        mock_token.get.return_value = None  # scope is None
+        mock_token = {"access_token": "at", "scope": None}
         mock_token_repo.get_token = AsyncMock(return_value=mock_token)
 
         url = await build_google_oauth_url(

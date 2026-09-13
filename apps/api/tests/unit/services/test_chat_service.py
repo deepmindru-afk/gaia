@@ -22,6 +22,7 @@ import pytest
 
 from app.models.chat_models import ConversationModel
 from app.models.message_models import MessageRequestWithHistory
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 from app.services.chat.chunks import (
     extract_response_text as _extract_response_text,
@@ -73,8 +74,8 @@ def _patch_stream_manager(sm: MagicMock) -> Iterator[MagicMock]:
 
 
 @pytest.fixture
-def test_user() -> dict:
-    return {"user_id": "user_abc", "email": "tester@example.com"}
+def test_user() -> AuthenticatedUser:
+    return AuthenticatedUser(user_id="user_abc", email="tester@example.com")
 
 
 @pytest.fixture

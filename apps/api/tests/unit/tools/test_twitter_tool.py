@@ -11,6 +11,7 @@ LangGraph stream writer.
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from pydantic import ValidationError
 import pytest
 
 from app.agents.tools.integrations.twitter_tool import register_twitter_custom_tools
@@ -29,6 +30,12 @@ MODULE = "app.agents.tools.integrations.twitter_tool"
 UTILS_PROXY = "app.utils.twitter_utils.proxy_request_sync"
 AUTH: dict[str, Any] = {"user_id": "user-42"}
 EXECUTE_REQUEST = MagicMock()
+_ME_ID = {"data": {"id": "me", "name": "Me", "username": "me"}}
+
+
+def _created(tweet_id: str) -> dict[str, Any]:
+    """``POST /2/tweets`` answer: X always echoes ``id`` and ``text``."""
+    return {"data": {"id": tweet_id, "text": "posted"}}
 
 
 def _tools() -> dict[str, Any]:
@@ -79,7 +86,12 @@ _ME = {
         "username": "ada",
         "name": "Ada Lovelace",
         "description": "d" * 300,
-        "public_metrics": {"followers_count": 10, "following_count": 3, "tweet_count": 7},
+        "public_metrics": {
+            "followers_count": 10,
+            "following_count": 3,
+            "tweet_count": 7,
+            "listed_count": 0,
+        },
     }
 }
 
@@ -151,16 +163,26 @@ class TestGatherContext:
         assert out["user"]["id"] == "tw-me"
         assert out["recent_tweets"] == []
 
-    def test_no_profile_id_skips_tweets_request(self, tools) -> None:
+    def test_empty_profile_body_fails_loudly(self, tools) -> None:
+        """``/users/me`` without ``data`` is a provider fault, not an empty snapshot."""
         with patch(f"{MODULE}.proxy_request_sync", return_value={}) as proxy:
-            out = tools["CUSTOM_GATHER_CONTEXT"](GatherContextInput(), EXECUTE_REQUEST, AUTH)
+            with pytest.raises(ValidationError):
+                tools["CUSTOM_GATHER_CONTEXT"](GatherContextInput(), EXECUTE_REQUEST, AUTH)
 
         assert proxy.call_count == 1
+
+    def test_profile_without_metrics_reports_zero_counts(self, tools) -> None:
+        with patch(
+            f"{MODULE}.proxy_request_sync",
+            side_effect=[{"data": {"id": "tw-me", "username": "ada", "name": "Ada"}}, {}],
+        ):
+            out = tools["CUSTOM_GATHER_CONTEXT"](GatherContextInput(), EXECUTE_REQUEST, AUTH)
+
         assert out == {
             "user": {
-                "id": None,
-                "username": None,
-                "name": None,
+                "id": "tw-me",
+                "username": "ada",
+                "name": "Ada",
                 "description": "",
                 "followers": 0,
                 "following": 0,
@@ -191,11 +213,10 @@ class TestGatherContext:
 class TestCreateThread:
     def test_chains_replies_and_resolves_username_for_url(self, tools, writer) -> None:
         with (
+            patch(UTILS_PROXY, side_effect=[_created("tw1"), _created("tw2")]) as utils_proxy,
             patch(
-                UTILS_PROXY, side_effect=[{"data": {"id": "tw1"}}, {"data": {"id": "tw2"}}]
-            ) as utils_proxy,
-            patch(
-                f"{MODULE}.proxy_request_sync", return_value={"data": {"username": "ada"}}
+                f"{MODULE}.proxy_request_sync",
+                return_value={"data": {"id": "tw-me", "username": "ada", "name": "Ada"}},
             ) as tool_proxy,
         ):
             out = tools["CUSTOM_CREATE_THREAD"](
@@ -246,7 +267,7 @@ class TestCreateThread:
 
     def test_username_lookup_failure_falls_back_to_i(self, tools, writer) -> None:
         with (
-            patch(UTILS_PROXY, side_effect=[{"data": {"id": "tw1"}}, {"data": {"id": "tw2"}}]),
+            patch(UTILS_PROXY, side_effect=[_created("tw1"), _created("tw2")]),
             patch(f"{MODULE}.proxy_request_sync", side_effect=RuntimeError("down")),
         ):
             out = tools["CUSTOM_CREATE_THREAD"](
@@ -257,7 +278,7 @@ class TestCreateThread:
 
     def test_empty_username_lookup_falls_back_to_i(self, tools, writer) -> None:
         with (
-            patch(UTILS_PROXY, side_effect=[{"data": {"id": "tw1"}}, {"data": {"id": "tw2"}}]),
+            patch(UTILS_PROXY, side_effect=[_created("tw1"), _created("tw2")]),
             patch(f"{MODULE}.proxy_request_sync", return_value=None),
         ):
             out = tools["CUSTOM_CREATE_THREAD"](
@@ -268,7 +289,7 @@ class TestCreateThread:
 
     def test_failed_tweet_raises_with_partial_ids(self, tools, writer) -> None:
         with (
-            patch(UTILS_PROXY, side_effect=[{"data": {"id": "tw1"}}, RuntimeError("boom")]),
+            patch(UTILS_PROXY, side_effect=[_created("tw1"), RuntimeError("boom")]),
             patch(f"{MODULE}.proxy_request_sync") as tool_proxy,
         ):
             with pytest.raises(
@@ -281,11 +302,13 @@ class TestCreateThread:
 
     def test_tweet_without_id_raises_with_partial_ids(self, tools, writer) -> None:
         with (
-            patch(UTILS_PROXY, side_effect=[{"data": {"id": "tw1"}}, {"data": {}}]),
+            patch(UTILS_PROXY, side_effect=[_created("tw1"), {"data": {}}]),
             patch(f"{MODULE}.proxy_request_sync"),
         ):
             with pytest.raises(
-                RuntimeError, match=r"No ID returned for tweet 2. Partial tweet IDs: \['tw1'\]"
+                RuntimeError,
+                match=r"Failed at tweet 2: 2 validation errors for TwitterCreateTweetResponse"
+                r"(.|\n)*Partial tweet IDs: \['tw1'\]",
             ):
                 tools["CUSTOM_CREATE_THREAD"](
                     CreateThreadInput(tweets=["a", "b"]), EXECUTE_REQUEST, AUTH
@@ -310,7 +333,7 @@ class TestBatchFollow:
         with patch(
             UTILS_PROXY,
             side_effect=[
-                {"data": {"id": "me"}},
+                _ME_ID,
                 {"data": {"id": "u2", "username": "ada", "name": "Ada"}},
                 {"data": {"following": True}},
                 {"data": {"following": True}},
@@ -366,7 +389,7 @@ class TestBatchFollow:
     def test_unknown_username_is_reported_not_fatal(self, tools, writer) -> None:
         with patch(
             UTILS_PROXY,
-            side_effect=[{"data": {"id": "me"}}, {}, {"data": {"following": True}}],
+            side_effect=[_ME_ID, {}, {"data": {"following": True}}],
         ):
             out = tools["CUSTOM_BATCH_FOLLOW"](
                 BatchFollowInput(user_ids=["u1"], usernames=["ghost"]), EXECUTE_REQUEST, AUTH
@@ -382,14 +405,14 @@ class TestBatchFollow:
         }
 
     def test_all_failures_raise(self, tools, writer) -> None:
-        with patch(UTILS_PROXY, side_effect=[{"data": {"id": "me"}}, RuntimeError("nope")]):
+        with patch(UTILS_PROXY, side_effect=[_ME_ID, RuntimeError("nope")]):
             with pytest.raises(RuntimeError, match="Failed to follow all users"):
                 tools["CUSTOM_BATCH_FOLLOW"](
                     BatchFollowInput(user_ids=["u1"]), EXECUTE_REQUEST, AUTH
                 )
 
     def test_no_targets_raises(self, tools, writer) -> None:
-        with patch(UTILS_PROXY, return_value={"data": {"id": "me"}}):
+        with patch(UTILS_PROXY, return_value=_ME_ID):
             with pytest.raises(ValueError, match="Either usernames or user_ids"):
                 tools["CUSTOM_BATCH_FOLLOW"](BatchFollowInput(), EXECUTE_REQUEST, AUTH)
 
@@ -403,7 +426,7 @@ class TestBatchFollow:
     def test_progress_is_streamed_every_five_users(self, tools, writer) -> None:
         with patch(
             UTILS_PROXY,
-            side_effect=[{"data": {"id": "me"}}] + [{"data": {"following": True}}] * 6,
+            side_effect=[_ME_ID] + [{"data": {"following": True}}] * 6,
         ):
             tools["CUSTOM_BATCH_FOLLOW"](
                 BatchFollowInput(user_ids=[f"u{i}" for i in range(6)]), EXECUTE_REQUEST, AUTH
@@ -420,8 +443,8 @@ class TestBatchUnfollow:
         with patch(
             UTILS_PROXY,
             side_effect=[
-                {"data": {"id": "me"}},
-                {"data": {"id": "u2", "username": "ada"}},
+                _ME_ID,
+                {"data": {"id": "u2", "username": "ada", "name": "Ada"}},
                 {"data": {"following": False}},
                 {"data": {"following": False}},
             ],
@@ -457,7 +480,7 @@ class TestBatchUnfollow:
     def test_partial_failure_is_reported(self, tools, writer) -> None:
         with patch(
             UTILS_PROXY,
-            side_effect=[{"data": {"id": "me"}}, RuntimeError("nope"), {"data": {}}],
+            side_effect=[_ME_ID, RuntimeError("nope"), {"data": {}}],
         ):
             out = tools["CUSTOM_BATCH_UNFOLLOW"](
                 BatchUnfollowInput(user_ids=["u1", "u2"]), EXECUTE_REQUEST, AUTH
@@ -473,19 +496,19 @@ class TestBatchUnfollow:
         }
 
     def test_all_failures_raise(self, tools, writer) -> None:
-        with patch(UTILS_PROXY, side_effect=[{"data": {"id": "me"}}, {}]):
+        with patch(UTILS_PROXY, side_effect=[_ME_ID, {}]):
             with pytest.raises(RuntimeError, match="Failed to unfollow all users"):
                 tools["CUSTOM_BATCH_UNFOLLOW"](
                     BatchUnfollowInput(usernames=["ghost"]), EXECUTE_REQUEST, AUTH
                 )
 
     def test_no_targets_raises(self, tools, writer) -> None:
-        with patch(UTILS_PROXY, return_value={"data": {"id": "me"}}):
+        with patch(UTILS_PROXY, return_value=_ME_ID):
             with pytest.raises(ValueError, match="Either usernames or user_ids"):
                 tools["CUSTOM_BATCH_UNFOLLOW"](BatchUnfollowInput(), EXECUTE_REQUEST, AUTH)
 
     def test_progress_is_streamed_every_five_users(self, tools, writer) -> None:
-        with patch(UTILS_PROXY, side_effect=[{"data": {"id": "me"}}] + [{}] * 5):
+        with patch(UTILS_PROXY, side_effect=[_ME_ID] + [{}] * 5):
             tools["CUSTOM_BATCH_UNFOLLOW"](
                 BatchUnfollowInput(user_ids=[f"u{i}" for i in range(5)]), EXECUTE_REQUEST, AUTH
             )
@@ -510,12 +533,17 @@ _SEARCH = {
                 "name": "Ada",
                 "description": "b" * 200,
                 "verified": True,
-                "public_metrics": {"followers_count": 99},
+                "public_metrics": {
+                    "followers_count": 99,
+                    "following_count": 5,
+                    "tweet_count": 40,
+                    "listed_count": 1,
+                    "like_count": 7,
+                },
             },
-            {"id": "u1", "username": "dup"},
-            {"id": "u2", "username": "bob"},
-            {"username": "no-id"},
-            {"id": "u3", "username": "carol"},
+            {"id": "u1", "username": "dup", "name": "Dup"},
+            {"id": "u2", "username": "bob", "name": "Bob"},
+            {"id": "u3", "username": "carol", "name": "Carol"},
         ]
     },
 }
@@ -564,7 +592,7 @@ class TestSearchUsers:
                 {
                     "id": "u2",
                     "username": "bob",
-                    "name": None,
+                    "name": "Bob",
                     "description": "",
                     "followers": 0,
                     "verified": False,
@@ -581,7 +609,13 @@ class TestSearchUsers:
             "description": "b" * 200,
             "profile_image_url": None,
             "verified": True,
-            "public_metrics": {"followers_count": 99},
+            "public_metrics": {
+                "followers_count": 99,
+                "following_count": 5,
+                "tweet_count": 40,
+                "listed_count": 1,
+                "like_count": 7,
+            },
             "created_at": None,
             "location": None,
         }

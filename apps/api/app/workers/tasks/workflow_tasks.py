@@ -121,6 +121,7 @@ from app.services.workflow.run_trace import build_trace
 from app.services.workflow.scheduler import WorkflowScheduler, workflow_scheduler
 from app.services.workflow.service import WorkflowService
 from app.services.workflow.thread_reset import reset_workflow_threads
+from app.utils.auth_utils import load_user_context
 from app.utils.errors import create_error
 from app.utils.occurrence import parse_occurrence_stamp
 from app.utils.timezone import Timezone, format_local_time
@@ -778,7 +779,7 @@ async def _run_workflow(
     # ``enforce_daily_cost_budget`` above, which is where "it ran twice" belongs.
     await enforce_tiered_limit(workflow.user_id, "trigger_workflow_executions")
 
-    user: AuthenticatedUser = {"user_id": workflow.user_id}
+    user = AuthenticatedUser(user_id=workflow.user_id)
 
     # A playbook is an optimisation over the agentic path, never a precondition
     # for it. If this read fails the user's workflow must still run, so the
@@ -1605,17 +1606,13 @@ async def _resolve_workflow_user(workflow: Workflow, user_id: str) -> Authentica
     There is no request header here (ARQ worker), so prefer the real profile
     zone; fall back to the workflow's own schedule zone before UTC so a missing
     or poisoned profile doesn't silently run hours off. Both run paths read the
-    zone off ``user_data["timezone"]`` — the agent through ``build_agent_config``,
+    zone off ``user_data.timezone`` — the agent through ``build_agent_config``,
     the replay through ``$now`` / ``$today``.
     """
     try:
-        # The legacy bridge dict is a spread of a validated UserDocument plus
-        # the user_id stamped below — AuthenticatedUser's shape by construction
-        # (Type Safety item 12).
-        user_data = cast(AuthenticatedUser, await get_user_by_id(user_id) or {})
-        user_data["user_id"] = user_id
+        user_data = await load_user_context(user_id) or AuthenticatedUser(user_id=user_id)
 
-        profile_tz = (user_data.get("timezone") or "").strip()
+        profile_tz = (user_data.timezone or "").strip()
         # trigger_config always declares timezone, so read it directly. Unset or
         # blank becomes None rather than a spelled-out UTC fallback: Timezone.parse
         # already answers UTC for None, and a literal here would be a branch no
@@ -1633,7 +1630,7 @@ async def _resolve_workflow_user(workflow: Workflow, user_id: str) -> Authentica
                 user_id=user_id,
             )
         log.set(workflow_agent_timezone=resolved_tz.value)
-        user_data["timezone"] = resolved_tz.value
+        user_data = user_data.with_timezone(resolved_tz.value)
     except Exception as e:
         log.warning(
             f"{LogTag.WORKER} Could not resolve workflow timezone",
@@ -1642,7 +1639,7 @@ async def _resolve_workflow_user(workflow: Workflow, user_id: str) -> Authentica
             error_type=type(e).__name__,
             error=str(e),
         )
-        user_data = {"user_id": user_id}
+        user_data = AuthenticatedUser(user_id=user_id)
     return user_data
 
 
@@ -1675,7 +1672,7 @@ async def execute_workflow_as_playbook(
     :class:`WorkflowFireOverlapped` before any step runs; nothing waits and
     nothing is queued.
     """
-    user_id = user["user_id"]
+    user_id = user.user_id
     user_data = await _resolve_workflow_user(workflow, user_id)
     conversation_id = await get_or_create_workflow_conversation(
         workflow_id=workflow.id,
@@ -1705,9 +1702,9 @@ async def execute_workflow_as_playbook(
         result = await run_playbook(
             playbook,
             user=PlaybookUser(
-                email=user_data.get("email") or "",
-                name=user_data.get("name") or "",
-                timezone=user_data.get("timezone") or Timezone.utc().value,
+                email=user_data.email or "",
+                name=user_data.name or "",
+                timezone=user_data.timezone or Timezone.utc().value,
             ),
             conversation_id=conversation_id,
             trigger=context,
@@ -1746,7 +1743,7 @@ async def execute_workflow_as_chat(
         call_agent_silent,
     )
 
-    user_id = user["user_id"]
+    user_id = user.user_id
 
     try:
         log.info(
@@ -1850,7 +1847,7 @@ async def execute_workflow_as_chat(
             "workflow_chat_execution_failed",
             workflow_id=workflow.id,
             workflow_title=getattr(workflow, "title", None),
-            user_id=user.get("user_id") if isinstance(user, dict) else None,
+            user_id=user.user_id,
             error_type=type(e).__name__,
             error=str(e)[:_ERROR_EXCERPT_CHARS],
             outcome="agent_error",

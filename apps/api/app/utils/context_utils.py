@@ -2,12 +2,27 @@
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
+
+
+class _ToolExecutionResponse(BaseModel):
+    """Composio's ``ToolExecutionResponse`` envelope, parsed once.
+
+    ``data`` is the provider's own payload and is left unvalidated: Composio
+    declares it a dict, but some endpoints hand back the provider's bare list
+    (see ``TrelloCardList``), so each caller validates it into its own model.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    successful: bool
+    error: str | None = None
+    data: object = None
+
 
 # ── Performance tuning ───────────────────────────────────────────────────────
 
@@ -25,11 +40,11 @@ _CONTEXT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ctx-fe
 
 def execute_tool(
     tool_name: str,
-    params: dict[str, Any],
+    params: dict[str, object],
     user_id: str,
     output_model: type[BaseModel] | None = None,
-) -> dict[str, Any]:
-    """Execute a Composio tool directly (bypasses hook pipeline) and return its data dict.
+) -> object:
+    """Execute a Composio tool directly (bypasses hook pipeline) and return its data payload.
 
     Args:
         tool_name: Composio tool name, e.g. "GMAIL_FETCH_MESSAGES".
@@ -38,7 +53,8 @@ def execute_tool(
         output_model: Optional Pydantic model to validate the response data.
 
     Returns:
-        The ``data`` payload from the tool response.
+        The ``data`` payload from the tool response — the provider's own shape,
+        which the caller validates into its model.
 
     Raises:
         Exception: If the tool execution fails.
@@ -50,17 +66,19 @@ def execute_tool(
 
     log.set(tool_name=tool_name, user_id=user_id)
     composio_service = get_composio_service()
-    result = composio_service.composio.tools.execute(
-        slug=tool_name,
-        arguments=params,
-        user_id=user_id,
-        dangerously_skip_version_check=True,
+    result = _ToolExecutionResponse.model_validate(
+        composio_service.composio.tools.execute(
+            slug=tool_name,
+            arguments=params,
+            user_id=user_id,
+            dangerously_skip_version_check=True,
+        )
     )
 
-    if not result["successful"]:
-        raise Exception(result.get("error") or f"{tool_name} failed")
+    if not result.successful:
+        raise Exception(result.error or f"{tool_name} failed")
 
-    data = result["data"]
+    data = result.data
 
     if output_model:
         try:
@@ -87,15 +105,14 @@ def fetch_all_providers(
     providers: list[str],
     provider_tools: dict[str, str],
     user_id: str,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Fetch all providers in parallel by calling each CUSTOM_GATHER_CONTEXT tool.
 
-    Values stay ``dict[str, Any]``: each is a provider's raw
-    ``CUSTOM_GATHER_CONTEXT`` payload, whose shape is the provider's own and
-    differs per integration (Type Safety item 8).
+    Values are each provider's raw ``CUSTOM_GATHER_CONTEXT`` payload, forwarded
+    verbatim: the shape is the provider's own and differs per integration.
     """
 
-    def fetch_one(provider: str) -> tuple[str, dict[str, Any] | None]:
+    def fetch_one(provider: str) -> tuple[str, object | None]:
         tool_slug = provider_tools[provider]
         try:
             data = execute_tool(tool_slug, {}, user_id)
@@ -110,7 +127,7 @@ def fetch_all_providers(
             )
             return provider, None
 
-    results: dict[str, Any] = {}
+    results: dict[str, object] = {}
     # Use the module-level dedicated pool instead of creating a new one per call.
     # This prevents unbounded thread creation under concurrent agent sessions
     # and isolates context-fetching threads from the default asyncio pool.

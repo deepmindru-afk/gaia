@@ -135,7 +135,7 @@ async def chat_stream_endpoint(
     """Stream a chat turn. Continues in the background if the client disconnects."""
     stream_id = str(uuid4())
     conversation_id = body.conversation_id or str(uuid4())
-    user_id = user.get("user_id")
+    user_id = user.user_id
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -147,7 +147,7 @@ async def chat_stream_endpoint(
     await enforce_daily_cost_budget(user_id, feature_key="chat_messages")
     # Seed the agent's home zone (DB-resolved, browser-header-healed) so its
     # "now" and schedule defaults run in the user's real zone, not stored UTC.
-    user = {**user, "timezone": home_timezone}
+    user = user.with_timezone(home_timezone)
     log.set(
         user={"id": user_id},
         chat=_build_chat_context(body, conversation_id, stream_id),
@@ -271,7 +271,7 @@ async def subscribe_executor_stream(
     The stream_id is delivered via the `executor.stream_started` WebSocket event.
     Verifies stream ownership before allowing subscription.
     """
-    user_id = user.get("user_id")
+    user_id = user.user_id
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

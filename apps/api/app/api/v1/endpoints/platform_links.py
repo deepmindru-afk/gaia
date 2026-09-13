@@ -1,5 +1,3 @@
-from collections.abc import Mapping
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.v1.dependencies.oauth_dependencies import get_current_user
@@ -40,8 +38,8 @@ from shared.py.wide_events import log
 router = APIRouter()
 
 
-def _require_user_id(current_user: Mapping[str, object]) -> str:
-    user_id = current_user.get("user_id")
+def _require_user_id(current_user: AuthenticatedUser) -> str:
+    user_id = current_user.user_id
     if not isinstance(user_id, str):
         raise create_error(
             message="user_id must be a string",

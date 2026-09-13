@@ -118,7 +118,7 @@ async def get_notifications(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> PaginatedNotificationsResponse:
     """Get user's notifications with pagination"""
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
 
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
@@ -166,7 +166,7 @@ async def get_channel_preferences(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> ChannelPreferences:
     """Get user's notification channel preferences."""
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
 
@@ -197,7 +197,7 @@ async def update_channel_preferences(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> ChannelPreferences:
     """Update user's notification channel preferences."""
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
 
@@ -255,7 +255,7 @@ async def execute_action(
     ``data`` stays a free-form dict: it is whatever the matched ``ActionHandler``
     produced (``ActionResult.data``), which is open by design.
     """
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
 
@@ -305,7 +305,7 @@ async def mark_as_read(
     ``GET /notifications/{id}`` returns — the two endpoints have always returned
     different shapes under the same key.
     """
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
 
@@ -347,7 +347,7 @@ async def bulk_actions(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> NotificationResponse[BulkActionSummary]:
     """Perform bulk actions on multiple notifications"""
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
 
@@ -400,7 +400,7 @@ async def register_device_token(
     """
     Register a device token for push notifications
     """
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
 
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
@@ -462,7 +462,7 @@ async def unregister_device_token(
     """
     Unregister a device token
     """
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
 
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
@@ -498,7 +498,7 @@ async def get_notification(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> NotificationResponse[NotificationView]:
     """Get a specific notification."""
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
 

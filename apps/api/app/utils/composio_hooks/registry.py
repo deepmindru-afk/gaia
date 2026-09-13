@@ -12,8 +12,10 @@ from collections.abc import Callable
 from typing import Union, cast
 
 from composio.types import Tool, ToolExecuteParams, ToolExecutionResponse
+from pydantic import ValidationError
 
 from app.constants.log_tags import LogTag
+from app.models.integrations.composio_hooks import ComposioToolCall, RunnableConfigTransport
 from shared.py.wide_events import log
 
 # After-hooks trim/reshape the raw Composio envelope before it reaches the LLM. Most
@@ -170,23 +172,24 @@ def _resolve_call_identity(tool: str, toolkit: str, params: ToolExecuteParams) -
     a tool argument, and must not travel on to Composio. ``entity_id`` is set
     alongside ``user_id`` for Composio's legacy connected-account auth.
     """
-    # Typed as object (not the declared arguments shape): real params arrive as
-    # plain dicts that may omit keys or carry non-dict values, and each guard
-    # below must stay reachable.
-    arguments: object = params.get("arguments")
-    if not isinstance(arguments, dict):
+    # Real params arrive as plain dicts that may omit keys or carry non-dict
+    # values; a call that does not parse simply carries no identity to resolve.
+    try:
+        call = ComposioToolCall.model_validate(params)
+    except ValidationError:
         return
-    config = arguments.pop("__runnable_config__", None)
+    config = call.arguments.pop("__runnable_config__", None)
+    params["arguments"] = call.arguments
     if not isinstance(config, dict):
         return
-    metadata = config.get("metadata")
-    if not isinstance(metadata, dict):
+    try:
+        transport = RunnableConfigTransport.model_validate(config)
+    except ValidationError:
         return
-    user_id = metadata.get("user_id")
-    if not user_id or not isinstance(user_id, str):
+    user_id = transport.metadata.user_id if transport.metadata else None
+    if not user_id:
         return
-    current = params.get("user_id")
-    if current and current != user_id:
+    if call.user_id and call.user_id != user_id:
         log.warning(
             f"{LogTag.COMPOSIO} Hook user_id overwritten from RunnableConfig",
             tool=tool,

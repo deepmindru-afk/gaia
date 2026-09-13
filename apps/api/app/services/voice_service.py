@@ -32,6 +32,7 @@ from app.models.voice_models import ElevenLabsAccountVoice, ElevenLabsSharedVoic
 from app.schemas.voice_schemas import VoiceListResponse, VoiceOption
 from app.utils.errors import AppError
 from app.utils.voice_utils import (
+    ElevenLabsVoiceLanguages,
     _language_names,
     _map_account_voice,
     _map_shared_voice,
@@ -67,7 +68,7 @@ async def _fetch_elevenlabs_voices() -> list[ElevenLabsAccountVoice]:
             name=voice.get("name") or "",
             preview_url=voice.get("preview_url"),
             labels=voice.get("labels") or {},
-            language_codes=_verified_language_codes(voice),
+            language_codes=_verified_language_codes(ElevenLabsVoiceLanguages.model_validate(voice)),
         )
         for voice in raw_voices
         if isinstance(voice.get("voice_id"), str)
@@ -125,7 +126,7 @@ async def _fetch_shared_voices() -> list[ElevenLabsSharedVoice]:
             language=voice.get("language") or "",
             descriptive=voice.get("descriptive") or "",
             use_case=voice.get("use_case") or "",
-            language_codes=_verified_language_codes(voice),
+            language_codes=_verified_language_codes(ElevenLabsVoiceLanguages.model_validate(voice)),
         )
         for voice in raw_voices
         if isinstance(voice.get("voice_id"), str) and voice.get("public_owner_id")

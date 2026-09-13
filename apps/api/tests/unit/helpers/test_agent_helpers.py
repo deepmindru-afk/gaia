@@ -19,6 +19,7 @@ from app.helpers.agent_helpers import (
     _collect_silent_tool_entries,
     _hold_silent_chunk,
     _record_interruption_quietly,
+    _SilentAccumulators,
     _stamp_langfuse,
     build_agent_config,
     build_initial_state,
@@ -30,6 +31,8 @@ from app.models.integration_models import Integration
 from app.models.mcp_config import SubAgentConfig
 from app.models.payment_models import PlanType
 from app.models.subagent_models import Subagent
+from app.utils.agent_utils import IntegrationDisplayMetadata
+from app.utils.stream_publishers import ExtractedToolData
 
 
 def _integration(integration_id: str, name: str, icon_url: str | None = None) -> Integration:
@@ -74,6 +77,8 @@ def _make_subagent(
 # ---------------------------------------------------------------------------
 
 USER_ID = "507f1f77bcf86cd799439011"
+_TODO_A = {"id": "t1", "content": "draft", "status": "in_progress"}
+_TODO_B = {"id": "t1", "content": "draft", "status": "completed"}
 CONV_ID = "conv-001"
 
 FAKE_USER = {
@@ -95,28 +100,28 @@ class TestGetHandoffMetadata:
     async def test_cache_hit_returns_cached(self, mock_lookup, mock_get_cache):
         """Cache check happens AFTER the registry lookup; lookup must miss
         first so the code path falls through to the Redis cache."""
-        mock_get_cache.return_value = {"integration_id": "github", "icon_url": None}
+        mock_get_cache.return_value = IntegrationDisplayMetadata(integration_id="github")
 
         result = await get_handoff_metadata("github")
-        assert result["integration_id"] == "github"
+        assert result.integration_id == "github"
 
     @patch("app.helpers.agent_helpers.get_cache", new_callable=AsyncMock)
     @patch("app.helpers.agent_helpers.get_subagent_by_id", return_value=None)
     async def test_cache_hit_empty_returns_empty(self, mock_lookup, mock_get_cache):
-        """Cached empty dict means negative cache hit."""
-        mock_get_cache.return_value = {}
+        """Cached empty metadata means negative cache hit."""
+        mock_get_cache.return_value = IntegrationDisplayMetadata()
 
         result = await get_handoff_metadata("nonexistent")
-        assert result == {}
+        assert result == IntegrationDisplayMetadata()
 
     @patch("app.helpers.agent_helpers.get_subagent_by_id")
     async def test_platform_integration_match_by_id(self, mock_lookup):
         mock_lookup.return_value = _make_subagent("github", "gh", "GitHub")
 
         result = await get_handoff_metadata("github")
-        assert result["integration_id"] == "github"
-        assert result["integration_name"] == "GitHub"
-        assert result["icon_url"] is None
+        assert result.integration_id == "github"
+        assert result.integration_name == "GitHub"
+        assert result.icon_url is None
 
     @patch("app.helpers.agent_helpers.get_subagent_by_id")
     async def test_platform_integration_match_by_short_name(self, mock_lookup):
@@ -125,7 +130,7 @@ class TestGetHandoffMetadata:
         mock_lookup.return_value = _make_subagent("github", "gh", "GitHub")
 
         result = await get_handoff_metadata("gh")
-        assert result["integration_name"] == "GitHub"
+        assert result.integration_name == "GitHub"
 
     @patch("app.helpers.agent_helpers.set_cache", new_callable=AsyncMock)
     @patch("app.helpers.agent_helpers.get_cache", new_callable=AsyncMock)
@@ -140,7 +145,7 @@ class TestGetHandoffMetadata:
         )
 
         result = await get_handoff_metadata("custom_mymcp")
-        assert result["integration_name"] == "MyMCP"
+        assert result.integration_name == "MyMCP"
         mock_set_cache.assert_called_once()
 
     @patch("app.helpers.agent_helpers.set_cache", new_callable=AsyncMock)
@@ -154,7 +159,7 @@ class TestGetHandoffMetadata:
         mock_repo.find_by_id_prefix_or_name = AsyncMock(side_effect=Exception("DB failure"))
 
         result = await get_handoff_metadata("broken")
-        assert result == {}
+        assert result == IntegrationDisplayMetadata()
 
     @patch("app.helpers.agent_helpers.set_cache", new_callable=AsyncMock)
     @patch("app.helpers.agent_helpers.get_cache", new_callable=AsyncMock)
@@ -171,7 +176,7 @@ class TestGetHandoffMetadata:
         )
 
         result = await get_handoff_metadata("subagent:custom_abc")
-        assert result["integration_name"] == "Custom"
+        assert result.integration_name == "Custom"
         # parse_subagent_id strips "subagent:" → registry sees "custom_abc"
         mock_lookup.assert_called_once_with("custom_abc")
 
@@ -894,15 +899,15 @@ class TestExecuteGraphSilent:
 
     @patch("app.helpers.agent_helpers.process_custom_event_for_tools")
     async def test_custom_events_merged(self, mock_process):
-        """tool_data entries ACCUMULATE across events while every other key is
-        merged by name — a second event's tool_data must not replace the first
-        event's entries."""
+        """tool_data entries ACCUMULATE across events — a second event's tool_data
+        must not replace the first event's entries, and nothing but the entries
+        rides the returned bag."""
         mock_process.side_effect = [
-            {"tool_data": [{"tool_name": "first_tool"}]},
-            {
-                "tool_data": [{"tool_name": "custom_tool"}],
-                "follow_up_actions": ["action1"],
-            },
+            ExtractedToolData(tool_data=[{"tool_name": "first_tool", "data": None}]),
+            ExtractedToolData(
+                tool_data=[{"tool_name": "custom_tool", "data": None}],
+                other_data={"follow_up_actions": ["action1"]},
+            ),
         ]
 
         events = [
@@ -918,16 +923,17 @@ class TestExecuteGraphSilent:
             {},
             {"configurable": {"user_id": USER_ID}},
         )
-        assert [e["tool_name"] for e in tool_data["tool_data"]] == [
-            "first_tool",
-            "custom_tool",
-        ]
-        assert tool_data["follow_up_actions"] == ["action1"]
+        assert tool_data == {
+            "tool_data": [
+                {"tool_name": "first_tool", "data": None},
+                {"tool_name": "custom_tool", "data": None},
+            ]
+        }
 
     async def test_todo_progress_accumulated(self):
         events = [
-            ((), "custom", {"todo_progress": {"source": "executor", "count": 3}}),
-            ((), "custom", {"todo_progress": {"source": "executor", "count": 5}}),
+            ((), "custom", {"todo_progress": {"source": "executor", "todos": [_TODO_A]}}),
+            ((), "custom", {"todo_progress": {"source": "executor", "todos": [_TODO_B]}}),
         ]
 
         graph = AsyncMock()
@@ -935,7 +941,7 @@ class TestExecuteGraphSilent:
 
         with patch(
             "app.helpers.agent_helpers.process_custom_event_for_tools",
-            return_value=None,
+            return_value=ExtractedToolData(),
         ):
             _, tool_data = await execute_graph_silent(
                 graph,
@@ -947,19 +953,19 @@ class TestExecuteGraphSilent:
         todo_entries = [e for e in tool_data["tool_data"] if e["tool_name"] == "todo_progress"]
         assert len(todo_entries) == 1
         # Last snapshot wins
-        assert todo_entries[0]["data"]["executor"]["count"] == 5
+        assert todo_entries[0]["data"] == {"executor": {"source": "executor", "todos": [_TODO_B]}}
 
     @patch("app.helpers.agent_helpers.format_tool_call_entry", new_callable=AsyncMock)
     @patch("app.helpers.agent_helpers.get_handoff_metadata", new_callable=AsyncMock)
     async def test_updates_handoff_tool_calls(self, mock_handoff, mock_format):
         """handoff tool calls on the agent node resolve + forward handoff metadata."""
-        mock_handoff.return_value = {
-            "icon_url": "https://icon.png",
-            "integration_id": "github",
-        }
+        mock_handoff.return_value = IntegrationDisplayMetadata(
+            icon_url="https://icon.png",
+            integration_id="github",
+        )
         mock_format.return_value = {"tool_name": "handoff", "data": {}}
 
-        msg = MagicMock()
+        msg = AIMessage.model_construct(content="", tool_calls=None)
         msg.tool_calls = [{"id": "tc1", "name": "handoff", "args": {"subagent_id": "github"}}]
 
         events = [
@@ -986,7 +992,7 @@ class TestExecuteGraphSilent:
         format_tool_call_entry can resolve MCP metadata) and appended."""
         mock_format.return_value = {"tool_name": "custom_tool", "data": {}}
 
-        msg = MagicMock()
+        msg = AIMessage.model_construct(content="", tool_calls=None)
         msg.tool_calls = [{"id": "tc2", "name": "custom_tool", "args": {}}]
 
         events = [
@@ -1009,7 +1015,7 @@ class TestExecuteGraphSilent:
     async def test_updates_ignores_non_agent_nodes(self):
         """Tool calls from non-'agent' nodes (e.g. pre-model hooks replaying old
         history) must not be collected."""
-        msg = MagicMock()
+        msg = AIMessage.model_construct(content="", tool_calls=None)
         msg.tool_calls = [{"id": "tc_hook", "name": "some_tool", "args": {}}]
 
         events = [
@@ -1035,7 +1041,7 @@ class TestExecuteGraphSilent:
 
     async def test_updates_skips_plan_tasks(self):
         """plan_tasks and update_tasks tool calls are filtered before formatting."""
-        msg = MagicMock()
+        msg = AIMessage.model_construct(content="", tool_calls=None)
         msg.tool_calls = [
             {"id": "tc_plan", "name": "plan_tasks", "args": {}},
             {"id": "tc_update", "name": "update_tasks", "args": {}},
@@ -1064,7 +1070,7 @@ class TestExecuteGraphSilent:
 
     async def test_updates_deduplicates_tool_calls(self):
         """Same tool call ID across multiple agent updates is emitted once."""
-        msg = MagicMock()
+        msg = AIMessage.model_construct(content="", tool_calls=None)
         msg.tool_calls = [{"id": "tc_dup", "name": "some_tool", "args": {}}]
 
         events = [
@@ -1311,7 +1317,7 @@ class TestStampLangfuse:
             metadata,
             "trace-abc",
             ["tag-one"],
-            {"user_id": USER_ID},
+            USER_ID,
             CONV_ID,
         )
 
@@ -1334,7 +1340,7 @@ class TestStampLangfuse:
         configurable = {}
         metadata = {}
 
-        _stamp_langfuse(configurable, metadata, None, None, {"user_id": USER_ID}, CONV_ID)
+        _stamp_langfuse(configurable, metadata, None, None, USER_ID, CONV_ID)
 
         assert configurable == {}
         assert metadata == {}
@@ -1345,7 +1351,7 @@ class TestStampLangfuse:
         configurable = {}
         metadata = {}
 
-        _stamp_langfuse(configurable, metadata, None, ["tag-one"], {"user_id": USER_ID}, CONV_ID)
+        _stamp_langfuse(configurable, metadata, None, ["tag-one"], USER_ID, CONV_ID)
 
         assert configurable == {"langfuse_tags": ["tag-one"]}
         assert metadata == {}
@@ -1356,7 +1362,7 @@ class TestStampLangfuse:
         configurable = {}
         metadata = {}
 
-        _stamp_langfuse(configurable, metadata, "trace-abc", None, {}, CONV_ID)
+        _stamp_langfuse(configurable, metadata, "trace-abc", None, None, CONV_ID)
 
         assert metadata == {
             "langfuse_trace_id": "trace-abc",
@@ -1409,7 +1415,7 @@ class TestBuildAgentConfigCallbackWiring:
 
         assert mock_build_callbacks.call_args.args == (
             CONV_ID,
-            FAKE_USER,
+            USER_ID,
             "comms_agent",
             usage_cb,
         )
@@ -1651,7 +1657,7 @@ class TestCollectSilentToolEntries:
         """An id-less call and an already-emitted one are both skipped, and the
         scan continues: a break here loses every later call in the same message."""
         mock_format.return_value = {"tool_name": "custom_tool"}
-        msg = MagicMock()
+        msg = AIMessage.model_construct(content="", tool_calls=None)
         msg.tool_calls = [
             {"id": "", "name": "nameless", "args": {}},
             {"id": "tc_seen", "name": "already_sent", "args": {}},
@@ -1670,7 +1676,7 @@ class TestCollectSilentToolEntries:
         """Todo tools already stream todo_progress, so their cards are noise —
         but the calls that follow them in the same message are not."""
         mock_format.return_value = {"tool_name": "custom_tool"}
-        msg = MagicMock()
+        msg = AIMessage.model_construct(content="", tool_calls=None)
         msg.tool_calls = [
             {"id": "tc_plan", "name": "plan_tasks", "args": {}},
             {"id": "tc_real", "name": "custom_tool", "args": {}},
@@ -1691,9 +1697,9 @@ class TestCollectSilentToolEntries:
         """A half-assembled handoff carries no args, or empty ones. Both mean
         "no subagent named yet", and neither may reach the registry."""
         mock_format.return_value = {"tool_name": "handoff"}
-        no_args = MagicMock()
+        no_args = AIMessage.model_construct(content="", tool_calls=None)
         no_args.tool_calls = [{"id": "tc_a", "name": "handoff"}]
-        empty_args = MagicMock()
+        empty_args = AIMessage.model_construct(content="", tool_calls=None)
         empty_args.tool_calls = [{"id": "tc_b", "name": "handoff", "args": {}}]
         entries: list = []
 
@@ -1710,14 +1716,14 @@ class TestCollectSilentToolEntries:
         """Each display field is forwarded under its own name. A crossed or
         dropped one type-checks fine (all three are ``str | None``) and shows up
         only as a subagent card with the wrong icon or no integration."""
-        mock_handoff.return_value = {
-            "icon_url": "https://icon.png",
-            "integration_id": "github",
-            "integration_name": "GitHub",
-        }
+        mock_handoff.return_value = IntegrationDisplayMetadata(
+            icon_url="https://icon.png",
+            integration_id="github",
+            integration_name="GitHub",
+        )
         mock_format.return_value = {"tool_name": "handoff"}
         tool_call = {"id": "tc_h", "name": "handoff", "args": {"subagent_id": "github"}}
-        msg = MagicMock()
+        msg = AIMessage.model_construct(content="", tool_calls=None)
         msg.tool_calls = [tool_call]
 
         await _collect_silent_tool_entries([msg], set(), [], USER_ID)
@@ -1738,43 +1744,60 @@ class TestCollectSilentToolEntries:
 
 
 class TestAccumulateSilentCustomEvent:
-    @patch("app.helpers.agent_helpers.process_custom_event_for_tools", return_value=None)
+    @patch(
+        "app.helpers.agent_helpers.process_custom_event_for_tools",
+        return_value=ExtractedToolData(),
+    )
     def test_a_todo_snapshot_is_filed_under_its_own_source(self, _mock_process):
         """The accumulator is keyed by source so the planner's and the executor's
         snapshots do not overwrite each other."""
-        accumulated: dict = {}
+        acc = _SilentAccumulators()
 
         _accumulate_silent_custom_event(
-            {"todo_progress": {"source": "planner", "count": 1}},
-            {},
-            accumulated,
-            {"tool_data": []},
+            {"todo_progress": {"source": "planner", "todos": [_TODO_A]}}, acc
         )
 
-        assert accumulated == {"planner": {"source": "planner", "count": 1}}
+        assert acc.todo_progress == {"planner": {"source": "planner", "todos": [_TODO_A]}}
 
-    @patch("app.helpers.agent_helpers.process_custom_event_for_tools", return_value=None)
+    @patch(
+        "app.helpers.agent_helpers.process_custom_event_for_tools",
+        return_value=ExtractedToolData(),
+    )
     def test_a_sourceless_todo_snapshot_is_filed_under_the_executor(self, _mock_process):
         """The executor is the emitter that predates the source field, so an
-        unlabelled snapshot is its."""
-        accumulated: dict = {}
+        unlabelled snapshot is its — and is stored as sent, still without one."""
+        acc = _SilentAccumulators()
 
-        _accumulate_silent_custom_event(
-            {"todo_progress": {"count": 1}}, {}, accumulated, {"tool_data": []}
-        )
+        _accumulate_silent_custom_event({"todo_progress": {"todos": [_TODO_A]}}, acc)
 
-        assert accumulated == {"executor": {"count": 1}}
+        assert acc.todo_progress == {"executor": {"todos": [_TODO_A]}}
 
     @patch("app.helpers.agent_helpers.process_custom_event_for_tools")
     def test_the_event_payload_itself_is_handed_to_the_tool_parser(self, mock_process):
-        mock_process.return_value = {"tool_data": [{"tool_name": "t"}], "follow_up_actions": ["a"]}
+        mock_process.return_value = ExtractedToolData(
+            tool_data=[{"tool_name": "t", "data": None}],
+            other_data={"follow_up_actions": ["a"]},
+        )
         payload = {"some": "custom event"}
-        tool_data: dict = {"tool_data": []}
+        acc = _SilentAccumulators(entries=[{"tool_name": "earlier", "data": None}])
 
-        _accumulate_silent_custom_event(payload, {}, {}, tool_data)
+        _accumulate_silent_custom_event(payload, acc)
 
         assert mock_process.call_args.args == (payload,)
-        assert tool_data == {"tool_data": [{"tool_name": "t"}], "follow_up_actions": ["a"]}
+        assert acc.entries == [
+            {"tool_name": "earlier", "data": None},
+            {"tool_name": "t", "data": None},
+        ]
+
+    @patch("app.helpers.agent_helpers.process_custom_event_for_tools")
+    def test_a_non_mapping_event_is_only_checked_for_retraction(self, mock_process):
+        acc = _SilentAccumulators()
+
+        _accumulate_silent_custom_event("a bare progress string", acc)
+
+        mock_process.assert_not_called()
+        assert acc.entries == []
+        assert acc.todo_progress == {}
 
 
 # ---------------------------------------------------------------------------

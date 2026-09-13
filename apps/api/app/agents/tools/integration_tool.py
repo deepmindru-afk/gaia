@@ -20,7 +20,8 @@ from app.constants.log_tags import LogTag
 from app.db.repositories.integrations import integration_repository
 from app.db.repositories.user_integrations import user_integration_repository
 from app.decorators import with_doc
-from app.helpers.integration_helpers import build_search_patterns, generate_integration_slug
+from app.helpers.integration_helpers import build_search_patterns
+from app.helpers.slug_helpers import generate_integration_slug
 from app.models.agent_models import agent_configurable
 from app.models.integration_models import (
     IntegrationInfo,

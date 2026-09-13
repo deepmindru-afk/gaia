@@ -74,7 +74,9 @@ class TestAttachExecutorToolData:
 
         with patch.object(chat_stream, "conversation_repository") as repo:
             repo.append_message_tool_data = AsyncMock()
-            await _attach_executor_tool_data("s1", body, {"user_id": "u1"}, "conv-1", state)
+            await _attach_executor_tool_data(
+                "s1", body, AuthenticatedUser(user_id="u1"), "conv-1", state
+            )
 
         repo.append_message_tool_data.assert_awaited_once()
         kwargs = repo.append_message_tool_data.await_args.kwargs
@@ -93,7 +95,7 @@ class TestAttachExecutorToolData:
         with patch.object(chat_stream, "conversation_repository") as repo:
             repo.append_message_tool_data = AsyncMock()
             await _attach_executor_tool_data(
-                "s1", body, {"user_id": "u1"}, "conv-1", _state(cancelled=False)
+                "s1", body, AuthenticatedUser(user_id="u1"), "conv-1", _state(cancelled=False)
             )
 
         repo.append_message_tool_data.assert_not_awaited()
@@ -107,7 +109,7 @@ class TestAttachExecutorToolData:
             repo.append_message_tool_data = AsyncMock(side_effect=RuntimeError("mongo down"))
             # best-effort: must not raise into the stream orchestrator
             await _attach_executor_tool_data(
-                "s1", body, {"user_id": "u1"}, "conv-1", _state(cancelled=True)
+                "s1", body, AuthenticatedUser(user_id="u1"), "conv-1", _state(cancelled=True)
             )
 
     async def test_a_write_that_matched_no_message_is_reported(self) -> None:
@@ -129,7 +131,7 @@ class TestAttachExecutorToolData:
         ):
             repo.append_message_tool_data = AsyncMock(return_value=False)
             await _attach_executor_tool_data(
-                "s1", body, {"user_id": "u1"}, "conv-1", _state(cancelled=False)
+                "s1", body, AuthenticatedUser(user_id="u1"), "conv-1", _state(cancelled=False)
             )
 
         assert log.error.called, "a silently dropped tool_data write was never reported"
@@ -147,7 +149,7 @@ class TestAttachExecutorToolData:
         ):
             repo.append_message_tool_data = AsyncMock(return_value=True)
             await _attach_executor_tool_data(
-                "s1", body, {"user_id": "u1"}, "conv-1", _state(cancelled=False)
+                "s1", body, AuthenticatedUser(user_id="u1"), "conv-1", _state(cancelled=False)
             )
 
         assert not log.error.called
@@ -163,7 +165,9 @@ class TestFinalizeStreamBackstop:
         ):
             repo.append_message_tool_data = AsyncMock()
             sm.cleanup = AsyncMock()
-            await _finalize_stream("s1", MagicMock(), {"user_id": "u1"}, "conv-1", state, None)
+            await _finalize_stream(
+                "s1", MagicMock(), AuthenticatedUser(user_id="u1"), "conv-1", state, None
+            )
         return persist, repo
 
     async def test_unsaved_turn_gets_fallback_save_and_attach(self) -> None:
@@ -211,7 +215,7 @@ class TestResolvePendingApprovalTurnDegradesOnFailure:
         ):
             result = await _resolve_pending_approval_turn(
                 self._bot_reply_body(),
-                {"user_id": "u1"},
+                AuthenticatedUser(user_id="u1"),
                 "conv-1",
                 "stream-1",
                 _StreamState(),
@@ -235,7 +239,7 @@ class TestResolvePendingApprovalTurnDegradesOnFailure:
             sm.publish_chunk = AsyncMock()
             await _resolve_pending_approval_turn(
                 self._bot_reply_body(),
-                {"user_id": "u1"},
+                AuthenticatedUser(user_id="u1"),
                 "conv-1",
                 "stream-1",
                 _StreamState(),
@@ -281,7 +285,7 @@ class TestConsumeAgentStreamCallsTheAgent:
             return _no_chunks()
 
         body = MessageRequestWithHistory(message="hi", messages=[], conversation_id="conv-1")
-        user: AuthenticatedUser = {"user_id": "u1"}
+        user = AuthenticatedUser(user_id="u1")
         state = _StreamState(turn_id="turn-1")
         usage_callback = UsageMetadataCallbackHandler()
         turn = _TurnContext(
@@ -346,7 +350,7 @@ class TestConsumeAgentStreamAccumulatesAcrossChunks:
         ):
             await _consume_agent_stream(
                 MessageRequestWithHistory(message="hi", messages=[], conversation_id="conv-1"),
-                {"user_id": "u1"},
+                AuthenticatedUser(user_id="u1"),
                 turn,
                 None,
                 state,
@@ -427,7 +431,7 @@ class TestRunChatStreamTurnDerivations:
             sm.publish_chunk = AsyncMock()
             sm.complete_stream = AsyncMock()
             await chat_stream._run_chat_stream(
-                "stream-1", body, {"user_id": "u1"}, "conv-1", "whatsapp"
+                "stream-1", body, AuthenticatedUser(user_id="u1"), "conv-1", "whatsapp"
             )
 
         return seen

@@ -85,8 +85,8 @@ async def get_todo_labels(
     limit: int = 10,
 ) -> list[TodoLabelCount]:
     """Get most-used labels for the current user's todos."""
-    log.set(user={"id": user["user_id"]}, todo={"operation": "list_labels"})
-    labels = await todo_repository.top_labels(user_id=user["user_id"], limit=limit)
+    log.set(user={"id": user.user_id}, todo={"operation": "list_labels"})
+    labels = await todo_repository.top_labels(user_id=user.user_id, limit=limit)
     log.set_ns("todo", result_count=len(labels))
     return labels
 
@@ -151,7 +151,7 @@ async def list_todos(
         filters_applied.append("date_range")
 
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={
             "operation": "list",
             "search_mode": mode.value,
@@ -190,7 +190,7 @@ async def list_todos(
     )
 
     try:
-        result = await TodoService.list_todos(user["user_id"], params)
+        result = await TodoService.list_todos(user.user_id, params)
         # set_ns: log.set(todo={...}) would clobber the search context set above
         log.set_ns("todo", result_count=len(result.data))
         return result
@@ -210,7 +210,7 @@ async def create_todo(
 ) -> TodoResponse:
     """Create a new todo. If no project is specified, it will be added to Inbox."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={
             "operation": "create",
             "priority": todo.priority.value,
@@ -219,7 +219,7 @@ async def create_todo(
         },
     )
     try:
-        return await TodoService.create_todo(todo, user["user_id"])
+        return await TodoService.create_todo(todo, user.user_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
@@ -254,11 +254,11 @@ async def bulk_update_todos(
     ```
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "bulk_update", "bulk_count": len(request.todo_ids)},
     )
     try:
-        result = await TodoService.bulk_update_todos(request, user["user_id"])
+        result = await TodoService.bulk_update_todos(request, user.user_id)
         capture_context_event(AnalyticsEvents.TODO_UPDATED, {"bulk_count": len(request.todo_ids)})
         return result
     except Exception as e:
@@ -275,7 +275,7 @@ async def bulk_move_todos(
 ) -> BulkOperationResponse:
     """Move multiple todos to a different project."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={
             "operation": "bulk_move",
             "bulk_count": len(request.todo_ids),
@@ -283,7 +283,7 @@ async def bulk_move_todos(
         },
     )
     try:
-        return await TodoService.bulk_move_todos(request, user["user_id"])
+        return await TodoService.bulk_move_todos(request, user.user_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
@@ -300,11 +300,11 @@ async def bulk_delete_todos(
 ) -> BulkOperationResponse:
     """Delete multiple todos."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "bulk_delete", "bulk_count": len(todo_ids)},
     )
     try:
-        return await TodoService.bulk_delete_todos(todo_ids, user["user_id"])
+        return await TodoService.bulk_delete_todos(todo_ids, user.user_id)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -321,7 +321,7 @@ async def bulk_complete_todos(
 ) -> BulkOperationResponse:
     """Mark multiple todos as completed (convenience endpoint)."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "bulk_complete", "bulk_count": len(todo_ids)},
     )
     request = BulkUpdateRequest(
@@ -329,7 +329,7 @@ async def bulk_complete_todos(
         updates=TodoUpdateRequest(completed=True),
     )
     try:
-        result = await TodoService.bulk_update_todos(request, user["user_id"])
+        result = await TodoService.bulk_update_todos(request, user.user_id)
         capture_context_event(AnalyticsEvents.TODO_TOGGLED, {"bulk_count": len(todo_ids)})
         return result
     except Exception as e:
@@ -344,9 +344,9 @@ async def get_todo(
     todo_id: str, user: AuthenticatedUser = Depends(get_current_user)
 ) -> TodoResponse:
     """Get a specific todo by ID."""
-    log.set(user={"id": user["user_id"]}, todo={"operation": "get", "id": todo_id})
+    log.set(user={"id": user.user_id}, todo={"operation": "get", "id": todo_id})
     try:
-        return await TodoService.get_todo(todo_id, user["user_id"])
+        return await TodoService.get_todo(todo_id, user.user_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
@@ -361,8 +361,8 @@ async def get_todo_canvas(
     todo_id: str, user: Annotated[AuthenticatedUser, Depends(get_current_user)]
 ) -> TodoCanvasResponse:
     """Return the canvas markdown for a tracked todo."""
-    log.set(user={"id": user["user_id"]}, todo={"operation": "get_canvas", "id": todo_id})
-    content = await read_canvas(todo_id, user["user_id"])
+    log.set(user={"id": user.user_id}, todo={"operation": "get_canvas", "id": todo_id})
+    content = await read_canvas(todo_id, user.user_id)
     if content is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found")
     return TodoCanvasResponse(content=content)
@@ -375,7 +375,7 @@ async def update_todo(
 ) -> TodoResponse:
     """Update a todo."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={
             "operation": "update",
             "id": todo_id,
@@ -383,7 +383,7 @@ async def update_todo(
         },
     )
     try:
-        updated_todo = await TodoService.update_todo(todo_id, updates, user["user_id"])
+        updated_todo = await TodoService.update_todo(todo_id, updates, user.user_id)
 
         # If this is a tracked todo and scheduled_at changed, reschedule ARQ job
         if updates.scheduled_at is not None and updated_todo.vfs_path:
@@ -393,7 +393,7 @@ async def update_todo(
                 log.warning(
                     f"{LogTag.TODO} Failed to reschedule todo after update",
                     todo_id=todo_id,
-                    user_id=user["user_id"],
+                    user_id=user.user_id,
                     error_type=type(e).__name__,
                     error=str(e),
                 )
@@ -412,9 +412,9 @@ async def update_todo(
 @tiered_rate_limit("todo_operations")
 async def delete_todo(todo_id: str, user: AuthenticatedUser = Depends(get_current_user)) -> None:
     """Delete a todo."""
-    log.set(user={"id": user["user_id"]}, todo={"operation": "delete", "id": todo_id})
+    log.set(user={"id": user.user_id}, todo={"operation": "delete", "id": todo_id})
     try:
-        await TodoService.delete_todo(todo_id, user["user_id"])
+        await TodoService.delete_todo(todo_id, user.user_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
@@ -576,9 +576,9 @@ async def list_projects(
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> list[ProjectResponse]:
     """List all projects with todo counts."""
-    log.set(user={"id": user["user_id"]}, todo={"operation": "list_projects"})
+    log.set(user={"id": user.user_id}, todo={"operation": "list_projects"})
     try:
-        return await ProjectService.list_projects(user["user_id"])
+        return await ProjectService.list_projects(user.user_id)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -592,9 +592,9 @@ async def create_project(
     project: ProjectCreate, user: AuthenticatedUser = Depends(get_current_user)
 ) -> ProjectResponse:
     """Create a new project."""
-    log.set(user={"id": user["user_id"]}, todo={"operation": "create_project"})
+    log.set(user={"id": user.user_id}, todo={"operation": "create_project"})
     try:
-        return await ProjectService.create_project(project, user["user_id"])
+        return await ProjectService.create_project(project, user.user_id)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -611,11 +611,11 @@ async def update_project(
 ) -> ProjectResponse:
     """Update a project. Cannot update the default Inbox project."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "update_project", "project_id": project_id},
     )
     try:
-        return await ProjectService.update_project(project_id, updates, user["user_id"])
+        return await ProjectService.update_project(project_id, updates, user.user_id)
     except ValueError as e:
         raise HTTPException(
             status_code=(
@@ -639,11 +639,11 @@ async def delete_project(
 ) -> None:
     """Delete a project. All todos will be moved to Inbox. Cannot delete Inbox."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "delete_project", "project_id": project_id},
     )
     try:
-        await ProjectService.delete_project(project_id, user["user_id"])
+        await ProjectService.delete_project(project_id, user.user_id)
     except ValueError as e:
         raise HTTPException(
             status_code=(
@@ -672,13 +672,13 @@ async def create_subtask(
 ) -> TodoResponse:
     """Add a new subtask to a todo."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "create_subtask", "id": todo_id},
     )
     try:
         new_subtask = SubTask(id=str(uuid.uuid4()), title=subtask.title, completed=False)
         updated_todo = await todo_repository.add_subtask(
-            todo_id, user_id=user["user_id"], subtask=new_subtask
+            todo_id, user_id=user.user_id, subtask=new_subtask
         )
         if not updated_todo:
             raise HTTPException(
@@ -704,13 +704,13 @@ async def update_subtask(
 ) -> TodoResponse:
     """Update a specific subtask."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "update_subtask", "id": todo_id},
     )
     try:
         updated_todo = await todo_repository.set_subtask_fields(
             todo_id,
-            user_id=user["user_id"],
+            user_id=user.user_id,
             subtask_id=subtask_id,
             title=updates.title,
             completed=updates.completed,
@@ -741,12 +741,12 @@ async def delete_subtask(
 ) -> TodoResponse:
     """Delete a specific subtask."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "delete_subtask", "id": todo_id},
     )
     try:
         updated_todo = await todo_repository.remove_subtask(
-            todo_id, user_id=user["user_id"], subtask_id=subtask_id
+            todo_id, user_id=user.user_id, subtask_id=subtask_id
         )
         if not updated_todo:
             raise HTTPException(
@@ -774,12 +774,12 @@ async def toggle_subtask_completion(
 ) -> TodoResponse:
     """Toggle the completion status of a subtask (convenience endpoint)."""
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         todo={"operation": "toggle_subtask", "id": todo_id},
     )
     try:
         # First, read the current completion status to toggle.
-        todo = await todo_repository.get(todo_id, user_id=user["user_id"])
+        todo = await todo_repository.get(todo_id, user_id=user.user_id)
         if not todo:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Todo {todo_id} not found"
@@ -791,7 +791,7 @@ async def toggle_subtask_completion(
 
         updated_todo = await todo_repository.set_subtask_fields(
             todo_id,
-            user_id=user["user_id"],
+            user_id=user.user_id,
             subtask_id=subtask_id,
             completed=not subtask.completed,
         )

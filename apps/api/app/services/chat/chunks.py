@@ -28,6 +28,7 @@ from app.core.stream_manager import stream_manager
 from app.models.chat_models import ToolDataEntry, tool_fields
 from app.models.stream_events import TodoProgressFrame
 from app.utils.stream_publishers import (
+    ExtractedToolData,
     accumulate_todo_progress,
     publish_other_data,
     publish_tool_data,
@@ -93,9 +94,10 @@ async def process_data_chunk(
             )
         return acc.follow_up_actions, True
 
-    acc.follow_up_actions = await publish_other_data(stream_id, new_data, acc.follow_up_actions)
-    await publish_tool_data(stream_id, new_data, acc.tool_data)
-    await publish_tool_output(stream_id, new_data, acc.tool_outputs)
+    extracted = ExtractedToolData.model_validate(new_data)
+    acc.follow_up_actions = await publish_other_data(stream_id, extracted, acc.follow_up_actions)
+    await publish_tool_data(stream_id, extracted, acc.tool_data["tool_data"])
+    await publish_tool_output(stream_id, extracted, acc.tool_outputs)
 
     if chunk_json and "todo_progress" in chunk_json:
         await stream_manager.publish_chunk(

@@ -1,10 +1,12 @@
 """Unit tests for app.utils.stream_utils."""
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+from langchain_core.messages import AIMessage, HumanMessage
 import pytest
 
+from app.utils.agent_utils import IntegrationMetadata
 from app.utils.stream_utils import (
     extract_tool_entries_from_update,
     reconstruct_subagent_groups,
@@ -17,17 +19,15 @@ from app.utils.stream_utils import (
 
 def _make_ai_message(
     tool_calls: list[dict[str, Any]] | None = None,
-) -> MagicMock:
-    """Return a mock AIMessage with a .tool_calls attribute."""
-    msg = MagicMock()
-    msg.tool_calls = tool_calls or []
-    return msg
+) -> AIMessage:
+    """An AIMessage carrying these tool calls verbatim (constructed, so a
+    deliberately malformed call — no id — survives to the code under test)."""
+    return AIMessage.model_construct(content="", tool_calls=tool_calls or [])
 
 
-def _make_plain_message() -> MagicMock:
-    """Return a mock message without a tool_calls attribute (e.g. HumanMessage)."""
-    msg = MagicMock(spec=[])  # spec=[] means no attributes
-    return msg
+def _make_plain_message() -> HumanMessage:
+    """A message that carries no tool calls at all."""
+    return HumanMessage(content="hi")
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +181,9 @@ class TestExtractToolEntriesFromUpdate:
     )
     async def test_integration_metadata_forwarded(self, mock_format: AsyncMock) -> None:
         mock_format.return_value = {"tool_name": "tool_calls_data"}
-        metadata = {
-            "icon_url": "https://img.com/icon.png",
-            "integration_id": "gmail",
-            "name": "Gmail",
-        }
+        metadata = IntegrationMetadata(
+            icon_url="https://img.com/icon.png", integration_id="gmail", name="Gmail"
+        )
         tc = {"id": "tc-m", "name": "send_email", "args": {}}
         msg = _make_ai_message([tc])
 
@@ -261,7 +259,7 @@ class TestExtractToolEntriesFromUpdate:
     async def test_partial_integration_metadata(self, mock_format: AsyncMock) -> None:
         """integration_metadata with only icon_url set."""
         mock_format.return_value = {"tool_name": "tool_calls_data"}
-        metadata: dict[str, Any] = {"icon_url": "https://icon.com/x.png"}
+        metadata = IntegrationMetadata(icon_url="https://icon.com/x.png")
         tc = {"id": "tc-p", "name": "search", "args": {}}
         msg = _make_ai_message([tc])
 

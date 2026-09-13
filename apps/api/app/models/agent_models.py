@@ -8,6 +8,8 @@ from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_config
 
+from app.models.user_models import AuthenticatedUser
+
 #: One entry of an agent's middleware stack.
 #:
 #: ``AgentMiddleware``'s ``StateT`` is erased here because a stack is genuinely
@@ -29,12 +31,12 @@ class AgentUserContext(TypedDict, total=False):
     """The user fields ``build_agent_config`` reads — nothing more.
 
     Deliberately narrower than :class:`~app.models.user_models.AuthenticatedUser`,
-    which is assignable to it: only the top-level entries (chat, background
-    narration) hold a real request auth context. Every child agent — executor,
-    handoff subagents, spawn, the workflow author — reconstructs a bare identity
-    bag from its parent's ``configurable``, and typing those as
-    ``AuthenticatedUser`` would claim they carry auth-path flags and the whole
-    user document, which they do not.
+    which :func:`agent_user_context` narrows to it: only the top-level entries
+    (chat, background narration) hold a real request auth context. Every child
+    agent — executor, handoff subagents, spawn, the workflow author —
+    reconstructs a bare identity bag from its parent's ``configurable``, and
+    typing those as ``AuthenticatedUser`` would claim they carry auth-path
+    flags and the whole user document, which they do not.
 
     ``total=False`` because those child bags omit ``timezone`` (they inherit the
     resolved zone from the parent configurable instead).
@@ -44,6 +46,17 @@ class AgentUserContext(TypedDict, total=False):
     email: str | None
     name: str | None
     timezone: str | None
+
+
+def agent_user_context(user: AuthenticatedUser) -> AgentUserContext:
+    """The identity bag a top-level run hands ``build_agent_config`` — the ONE
+    place an :class:`AuthenticatedUser` is narrowed for the agent."""
+    return {
+        "user_id": user.user_id,
+        "email": user.email,
+        "name": user.name,
+        "timezone": user.timezone,
+    }
 
 
 #: The execution mode a run is in. ``background`` runs have no user waiting on

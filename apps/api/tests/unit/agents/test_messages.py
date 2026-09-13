@@ -30,6 +30,7 @@ from app.models.message_models import (
     SelectedCalendarEventData,
     SelectedWorkflowData,
 )
+from app.models.user_models import AuthenticatedUser, OnboardingSubdocument
 
 SYSTEM_MSG = SystemMessage(content="System prompt here")
 DYNAMIC_MSG = SystemMessage(
@@ -151,10 +152,13 @@ class TestConstructLangchainMessages:
     @pytest.mark.asyncio
     async def test_dynamic_message_receives_user_and_source(self) -> None:
         p = _patches()
-        user_dict = {
-            "timezone": "Asia/Kolkata",
-            "onboarding": {"preferences": {"tone": "formal"}},
-        }
+        user_dict = AuthenticatedUser(
+            user_id="uid-1",
+            timezone="Asia/Kolkata",
+            onboarding=OnboardingSubdocument.model_validate(
+                {"preferences": {"response_style": "formal"}}
+            ),
+        )
         with p["create_system"], p["build_dynamic"] as mock_dyn, p["format_files"]:
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
@@ -171,7 +175,7 @@ class TestConstructLangchainMessages:
         assert ctx.user_id == "uid-1"
         assert ctx.user_name == "Alice"
         assert ctx.user_timezone == "Asia/Kolkata"
-        assert ctx.user_preferences == {"tone": "formal"}
+        assert ctx.user_preferences == {"response_style": "formal"}
         assert ctx.query == "hi"
         assert ctx.source == "whatsapp"
 
@@ -183,13 +187,13 @@ class TestConstructLangchainMessages:
         background run believes a human is waiting — with no error anywhere.
         """
         p = _patches()
-        user_dict = {
-            "timezone": "Asia/Kolkata",
-            "onboarding": {
-                "preferences": {"tone": "formal"},
-                "writing_style": {"case": "lower"},
-            },
-        }
+        user_dict = AuthenticatedUser(
+            user_id="uid-1",
+            timezone="Asia/Kolkata",
+            onboarding=OnboardingSubdocument.model_validate(
+                {"preferences": {"response_style": "formal"}, "writing_style": {"case": "lower"}}
+            ),
+        )
         with p["create_system"], p["build_dynamic"] as mock_dyn, p["format_files"]:
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
@@ -213,7 +217,9 @@ class TestConstructLangchainMessages:
         p = _patches()
         with p["create_system"], p["build_dynamic"] as mock_dyn, p["format_files"]:
             await construct_langchain_messages(
-                messages=[{"role": "user", "content": "hi"}], user_id="uid-1", user_dict={}
+                messages=[{"role": "user", "content": "hi"}],
+                user_id="uid-1",
+                user_dict=AuthenticatedUser(user_id="uid-1"),
             )
 
         ctx = mock_dyn.call_args.args[0]
@@ -712,7 +718,7 @@ class TestTheClockIsRenderedInTheUsersTimezone:
         ):
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_dict={"timezone": "Asia/Kolkata"},
+                user_dict=AuthenticatedUser(user_id="", timezone="Asia/Kolkata"),
             )
 
         clock.assert_called_once_with(user_timezone="Asia/Kolkata")

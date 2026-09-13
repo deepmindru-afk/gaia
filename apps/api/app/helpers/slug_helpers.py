@@ -16,3 +16,31 @@ def slugify(text: str, max_length: int = 50) -> str:
         slug = parts[0] if parts else slug[:max_length]
 
     return slug
+
+
+_SLUG_STRIP_CHARS = "-"
+
+
+def generate_integration_slug(
+    name: str,
+    category: str,
+    max_length: int = 80,
+) -> str:
+    """Generate canonical slug: {name}-mcp-{category}.
+
+    No longer appends a hash suffix — the slug is human-readable and
+    stored/indexed in MongoDB for direct lookup.
+    """
+    # Named constant, not an inline literal: the strip charset is part of the
+    # slug format contract, and rstrip("XX-XX")-style mutations of an inline
+    # "-" are behaviorally identical to the original (the set still contains
+    # '-'), which makes them untestable. A named reference has no value to
+    # mutate.
+    slug = f"{slugify(name, max_length=40)}-mcp-{slugify(category, max_length=20)}"
+
+    if len(slug) > max_length:
+        truncated = slug[:max_length]
+        last_hyphen = truncated.rfind(_SLUG_STRIP_CHARS)
+        slug = truncated[:last_hyphen] if last_hyphen > 0 else truncated
+
+    return slug.rstrip(_SLUG_STRIP_CHARS)

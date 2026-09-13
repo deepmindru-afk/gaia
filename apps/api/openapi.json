@@ -6282,6 +6282,17 @@
             ],
             "title": "Eventtype"
           },
+          "htmlLink": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Htmllink"
+          },
           "id": {
             "anyOf": [
               {

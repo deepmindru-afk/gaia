@@ -207,7 +207,7 @@ async def deliver_message_to_conversation(
     """
     if not text.strip():
         return None
-    user_id = user.get("user_id", "")
+    user_id = user.user_id
     bot_message = MessageModel(type="bot", response=text, date=datetime.now(UTC).isoformat())
     bot_message.message_id = str(uuid4())
 
@@ -269,7 +269,7 @@ async def _narrate_and_deliver(
     Returns ``(narrated_text, message_id)`` of the saved bot message, or
     ``(None, None)`` if it could not be saved.
     """
-    user_id = run.user.get("user_id", "")
+    user_id = run.user.user_id
 
     notification_text = await _narrate_result(run, result_text, result_type, returned_note)
 
@@ -463,7 +463,7 @@ async def _attach_reply_quote(
     show_reply_quote = run.is_queued and not is_hil_resume and bool(run.user_message_id)
     if show_reply_quote:
         user_msg_content = await _lookup_user_message_content(
-            run.conversation_id, run.user_message_id, run.user.get("user_id", "")
+            run.conversation_id, run.user_message_id, run.user.user_id
         )
         bot_message.replyToMessage = ReplyToMessageData(
             id=run.user_message_id,
@@ -588,7 +588,7 @@ async def _merge_resumed_result(
     message could not be found or updated — the caller falls back to
     appending a fresh message rather than discarding the result.
     """
-    user_id = run.user.get("user_id", "")
+    user_id = run.user.user_id
     message_id = bot_message.message_id
     existing = await conversation_repository.get_message(
         run.conversation_id, message_id, user_id=user_id
@@ -663,7 +663,7 @@ async def _approval_outcomes_note(run: ExecutorRun) -> str:
         return ""
     try:
         message = await conversation_repository.get_message(
-            run.conversation_id, run.bot_message_id, user_id=run.user.get("user_id", "")
+            run.conversation_id, run.bot_message_id, user_id=run.user.user_id
         )
     except Exception as e:
         log.warning(f"{LogTag.AGENT} _approval_outcomes_note: message lookup failed", error=str(e))

@@ -658,7 +658,7 @@ class TestHealthCheckAgentCall:
         )
         with (
             patch(f"{MODULE}.call_agent_silent", agent),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"name": "User"})),
+            patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
         ):
             result = await _call_health_check_agent("todo-1", "user-1", "is this todo alive?")
 
@@ -688,7 +688,7 @@ class TestHealthCheckAgentCall:
 
         with (
             patch(f"{MODULE}.call_agent_silent", fake_call_agent_silent),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"name": "User"})),
+            patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
         ):
             result = await _call_health_check_agent("todo-7", "user-3", "is this todo alive?")
 
@@ -715,7 +715,7 @@ class TestHealthCheckAgentCall:
         )
         with (
             patch(f"{MODULE}.call_agent_silent", agent),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"name": "User"})),
+            patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
             patch(f"{MODULE}.log") as log,
         ):
             result = await _call_health_check_agent("todo-1", "user-1", "is this todo alive?")
@@ -734,7 +734,7 @@ class TestHealthCheckAgentCall:
         agent = AsyncMock(return_value=SilentRunResult(message="", tool_data={}))
         with (
             patch(f"{MODULE}.call_agent_silent", agent),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"name": "User"})),
+            patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
         ):
             result = await _call_health_check_agent("todo-1", "user-1", "is this todo alive?")
 
@@ -774,7 +774,7 @@ class TestCanvasBounding:
         with (
             patch(f"{MODULE}._read_canvas", AsyncMock(return_value=canvas)),
             patch(f"{MODULE}.call_agent_silent", fake_call_agent_silent),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"name": "User"})),
+            patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
         ):
             outcome = await _health_check_dormant(_doc(), _pool())
 
@@ -814,7 +814,7 @@ class TestCanvasBounding:
         with (
             patch(f"{MODULE}._read_canvas", AsyncMock(return_value=canvas)),
             patch(f"{MODULE}.call_agent_silent", fake_call_agent_silent),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"name": "User"})),
+            patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
         ):
             await _health_check_dormant(_doc(), _pool())
 

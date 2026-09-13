@@ -32,6 +32,7 @@ from app.models.payment_models import (
     PlanType,
     ProCheckout,
 )
+from app.models.user_models import AuthenticatedUser, UserDocument
 from app.services.analytics_service import AnalyticsEvents
 from shared.py.wide_events import log, log_context
 
@@ -107,7 +108,7 @@ class TestResetSession:
         new=AsyncMock(return_value=[]),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -119,7 +120,7 @@ class TestResetSession:
         mock_capture: MagicMock,
         client: AsyncClient,
     ):
-        mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         mock_bot_svc.reset_session = AsyncMock(return_value="new-convo-id")
         response = await client.post(
             f"{BOT_BASE}/reset-session",
@@ -142,7 +143,7 @@ class TestResetSession:
         )
 
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -181,36 +182,61 @@ class TestResetSession:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_user_id — the id every bot capture and audit line attributes to
+# _resolve_bot_caller — the user every bot turn acts as
 # ---------------------------------------------------------------------------
 
 
-class TestResolveUserId:
-    """One seam, four call sites. A wrong answer here silently moves an event
-    or an audit record onto a different PostHog profile."""
+class TestResolveBotCaller:
+    """One seam, every bot route that needs a user. A wrong answer here runs the
+    turn as, or attributes it to, a different account."""
 
-    def test_prefers_the_auth_middleware_shape(self):
-        from app.api.v1.endpoints.bot import _resolve_user_id
+    async def test_the_middleware_user_wins_when_the_request_is_authenticated(self):
+        from app.api.v1.endpoints.bot import _resolve_bot_caller
 
-        assert _resolve_user_id({"user_id": "uid1", "_id": "other"}) == "uid1"
+        middleware_user = AuthenticatedUser(user_id="uid_from_middleware")
+        request = MagicMock()
+        request.state = _make_request(user=middleware_user, authenticated=True)
+        with patch("app.api.v1.endpoints.bot.resolve_bot_user", new_callable=AsyncMock) as lookup:
+            assert await _resolve_bot_caller(request, "discord", "u1") is middleware_user
+        lookup.assert_not_awaited()
 
-    def test_falls_back_to_the_platform_link_shape(self):
-        """PlatformLinkService returns `_id` with no `user_id`."""
-        from app.api.v1.endpoints.bot import _resolve_user_id
+    async def test_an_unauthenticated_state_user_falls_back_to_the_platform_link(self):
+        """`request.state.user` alone is not trusted — `authenticated` must be set too."""
+        from app.api.v1.endpoints.bot import _resolve_bot_caller
 
-        assert _resolve_user_id({"_id": "507f1f77bcf86cd799439011"}) == ("507f1f77bcf86cd799439011")
+        linked = AuthenticatedUser(user_id="uid_from_lookup", auth_provider="bot:discord")
+        request = MagicMock()
+        request.state = _make_request(
+            user=AuthenticatedUser(user_id="uid_from_middleware"), authenticated=False
+        )
+        with patch(
+            "app.api.v1.endpoints.bot.resolve_bot_user",
+            new_callable=AsyncMock,
+            return_value=linked,
+        ) as lookup:
+            assert await _resolve_bot_caller(request, "discord", "u1") is linked
+        lookup.assert_awaited_once_with("discord", "u1")
 
-    def test_a_document_with_neither_key_yields_empty_not_the_string_none(self):
-        """`str(user.get("_id", None))` would return the literal "None" here —
-        a garbage distinct_id that looks valid and silently creates a profile."""
-        from app.api.v1.endpoints.bot import _resolve_user_id
+    async def test_a_state_value_that_is_not_an_authenticated_user_is_not_trusted(self):
+        from app.api.v1.endpoints.bot import _resolve_bot_caller
 
-        assert _resolve_user_id({}) == ""
+        request = MagicMock()
+        request.state = _make_request(user={"user_id": "forged"}, authenticated=True)
+        with patch(
+            "app.api.v1.endpoints.bot.resolve_bot_user", new_callable=AsyncMock, return_value=None
+        ) as lookup:
+            assert await _resolve_bot_caller(request, "telegram", "tg9") is None
+        lookup.assert_awaited_once_with("telegram", "tg9")
 
-    def test_a_falsy_id_does_not_leak_through(self):
-        from app.api.v1.endpoints.bot import _resolve_user_id
+    async def test_an_unlinked_platform_account_resolves_to_nobody(self):
+        from app.api.v1.endpoints.bot import _resolve_bot_caller
 
-        assert _resolve_user_id({"user_id": None, "_id": None}) == ""
+        request = MagicMock()
+        request.state = _make_request()
+        with patch(
+            "app.api.v1.endpoints.bot.resolve_bot_user", new_callable=AsyncMock, return_value=None
+        ):
+            assert await _resolve_bot_caller(request, "discord", "u1") is None
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +248,7 @@ class TestCheckAuthStatus:
     """GET /api/v1/bot/auth-status/{platform}/{platform_user_id}"""
 
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -232,7 +258,7 @@ class TestCheckAuthStatus:
         mock_get_user: AsyncMock,
         client: AsyncClient,
     ):
-        mock_get_user.return_value = {"user_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         response = await client.get(f"{BOT_BASE}/auth-status/discord/u1")
         assert response.status_code == 200
         data = response.json()
@@ -244,7 +270,7 @@ class TestCheckAuthStatus:
         assert data["user_id"] == "uid1"
 
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -254,15 +280,15 @@ class TestCheckAuthStatus:
         mock_get_user: AsyncMock,
         client: AsyncClient,
     ):
-        """A user document carrying only `_id` still yields an id — the same
-        fallback the chat route uses, so both attribute to one distinct_id."""
-        mock_get_user.return_value = {"_id": "507f1f77bcf86cd799439011"}
+        """The linked document's id is the answer — the same id the chat route
+        uses, so both attribute to one distinct_id."""
+        mock_get_user.return_value = UserDocument(id="507f1f77bcf86cd799439011")
         response = await client.get(f"{BOT_BASE}/auth-status/discord/u1")
         assert response.status_code == 200
         assert response.json()["user_id"] == "507f1f77bcf86cd799439011"
 
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -304,7 +330,7 @@ class TestGetSettings:
         new_callable=AsyncMock,
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -315,13 +341,9 @@ class TestGetSettings:
         mock_integrations: AsyncMock,
         client: AsyncClient,
     ):
-        mock_get_user.return_value = {
-            "user_id": "uid1",
-            "_id": "uid1",
-            "name": "Alice",
-            "profile_image_url": "https://img.example.com/a.png",
-            "created_at": None,
-        }
+        mock_get_user.return_value = UserDocument(
+            id="uid1", name="Alice", picture="https://img.example.com/a.png", created_at=None
+        )
         mock_integrations.return_value = []
         response = await client.get(f"{BOT_BASE}/settings/discord/u1")
         assert response.status_code == 200
@@ -333,7 +355,7 @@ class TestGetSettings:
         mock_integrations.assert_awaited_once_with("uid1")
 
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -370,7 +392,7 @@ class TestUnlinkAccount:
         new_callable=AsyncMock,
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -383,7 +405,7 @@ class TestUnlinkAccount:
         mock_capture: MagicMock,
         client: AsyncClient,
     ):
-        mock_get_user.return_value = {"_id": "uid1", "user_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         mock_redis.client = AsyncMock()
         response = await client.post(
             f"{BOT_BASE}/unlink",
@@ -418,7 +440,7 @@ class TestUnlinkAccount:
         assert response.status_code == 400
 
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -483,7 +505,7 @@ class TestBotChatStream:
         new=MagicMock(return_value="tok"),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -504,7 +526,7 @@ class TestBotChatStream:
     ):
         """A bot chat message is attributed to the linked user via capture_event
         (bot routes are auth-excluded, so the request context has no identity)."""
-        mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
@@ -543,7 +565,7 @@ class TestBotChatStream:
         new=MagicMock(return_value="tok"),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -563,7 +585,7 @@ class TestBotChatStream:
         client: AsyncClient,
     ):
         """A message carrying attachments reports has_files=True."""
-        mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
@@ -599,7 +621,7 @@ class TestBotChatStream:
         self, mock_auth: AsyncMock, mock_limit: AsyncMock, client: AsyncClient
     ):
         with patch(
-            "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+            "app.utils.auth_utils.user_repository.get_by_platform_id",
             new_callable=AsyncMock,
             return_value=None,
         ):
@@ -628,9 +650,9 @@ class TestBotChatStream:
     ):
         with (
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
                 new_callable=AsyncMock,
-                return_value={"_id": "u1"},
+                return_value=UserDocument(id="u1"),
             ),
             patch(PLAN_PATCH, new_callable=AsyncMock, return_value=PlanType.FREE) as mock_plan,
         ):
@@ -662,9 +684,9 @@ class TestBotChatStream:
         """
         with (
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
                 new_callable=AsyncMock,
-                return_value={"_id": "u1"},
+                return_value=UserDocument(id="u1"),
             ),
             patch(PLAN_PATCH, new_callable=AsyncMock, return_value=PlanType.FREE),
         ):
@@ -701,9 +723,9 @@ class TestBotChatStream:
     ):
         with (
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
                 new_callable=AsyncMock,
-                return_value={"_id": "u1"},
+                return_value=UserDocument(id="u1"),
             ),
             patch(PLAN_PATCH, new_callable=AsyncMock, return_value=plan),
             patch(
@@ -724,7 +746,7 @@ class TestBotChatStream:
         new=MagicMock(return_value="tok"),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -750,7 +772,7 @@ class TestBotChatStream:
         with the refusal vocabulary, the line is still there and still parses;
         it just answers the wrong question.
         """
-        mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
@@ -777,7 +799,7 @@ class TestBotChatStream:
         new=MagicMock(return_value="tok"),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -799,7 +821,7 @@ class TestBotChatStream:
         gate — it must see the platform AND the platform user id, positionally
         in that order, taken from the request body rather than swapped or
         dropped."""
-        mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
@@ -821,7 +843,7 @@ class TestBotChatStream:
         new=MagicMock(return_value="tok"),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -851,7 +873,7 @@ class TestBotChatStream:
         body = BotChatRequest(message="hi", platform="discord", platform_user_id="disc_1")
         request = MagicMock()
         request.state = _make_request(
-            user={"user_id": "uid_from_middleware", "_id": "uid_from_middleware"},
+            user=AuthenticatedUser(user_id="uid_from_middleware"),
             authenticated=True,
         )
 
@@ -863,7 +885,7 @@ class TestBotChatStream:
             "discord",
             "disc_1",
             None,
-            {"user_id": "uid_from_middleware", "_id": "uid_from_middleware"},
+            AuthenticatedUser(user_id="uid_from_middleware"),
             is_dm=False,
         )
 
@@ -874,7 +896,7 @@ class TestBotChatStream:
         new=MagicMock(return_value="tok"),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -894,7 +916,7 @@ class TestBotChatStream:
     ):
         """`request.state.user` alone is not enough — `authenticated` must also
         be true, or a stale/partial state object would be trusted."""
-        mock_get_user.return_value = {"user_id": "uid_from_lookup", "_id": "uid_from_lookup"}
+        mock_get_user.return_value = UserDocument(id="uid_from_lookup")
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
@@ -903,7 +925,7 @@ class TestBotChatStream:
         body = BotChatRequest(message="hi", platform="discord", platform_user_id="disc_1")
         request = MagicMock()
         request.state = _make_request(
-            user={"user_id": "uid_from_middleware", "_id": "uid_from_middleware"},
+            user=AuthenticatedUser(user_id="uid_from_middleware"),
             authenticated=False,
         )
 
@@ -916,7 +938,7 @@ class TestBotChatStream:
     @patch("app.api.v1.endpoints.bot.run_chat_stream_background")
     @patch("app.api.v1.endpoints.bot.create_bot_session_token")
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -943,7 +965,7 @@ class TestBotChatStream:
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-77")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
         mock_sm.start_stream = AsyncMock()
-        mock_get_user.return_value = {"user_id": "uid-1", "_id": "uid-1"}
+        mock_get_user.return_value = UserDocument(id="uid-1")
         mock_session_token.return_value = "tok-77"
 
         body = BotChatRequest(message="hello", platform="telegram", platform_user_id="tg_1")
@@ -968,7 +990,9 @@ class TestBotChatStream:
         assert run_call.kwargs["stream_id"] == stream_id
         assert run_call.kwargs["conversation_id"] == "conv-77"
         assert run_call.kwargs["source"] == "telegram"
-        assert run_call.kwargs["user"] == {"user_id": "uid-1", "_id": "uid-1"}
+        assert run_call.kwargs["user"] == AuthenticatedUser(
+            user_id="uid-1", auth_provider="bot:telegram", bot_authenticated=True
+        )
         message_request = run_call.kwargs["body"]
         assert message_request.message == "hello"
         assert message_request.conversation_id == "conv-77"
@@ -1013,8 +1037,8 @@ class TestBotChatStreamBody:
                 new=TestBotChatStreamBody._fast_heartbeat,
             ),
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
-                new=AsyncMock(return_value={"user_id": "uid1", "_id": "uid1"}),
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
+                new=AsyncMock(return_value=UserDocument(id="uid1")),
             ),
             patch("app.api.v1.endpoints.bot.BotService") as bot_svc,
             patch(
@@ -1199,7 +1223,7 @@ class TestBotChatStreamBody:
         new=MagicMock(return_value="tok"),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -1219,7 +1243,7 @@ class TestBotChatStreamBody:
         """`_build_bot_message_request`'s third argument is whose conversation
         history gets loaded — swapping it for `None` (or another user's id)
         would load the wrong user's history, or none at all, silently."""
-        mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
         mock_sm.start_stream = AsyncMock()
@@ -1248,7 +1272,7 @@ class TestBotChatStreamBody:
         new=MagicMock(return_value="tok"),
     )
     @patch(
-        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.api.v1.endpoints.bot.stream_manager")
@@ -1268,7 +1292,7 @@ class TestBotChatStreamBody:
         """`_bot_stream_failure_logger`'s two args identify WHICH stream and
         conversation a background crash belongs to — swapping either for
         `None` would make a real failure unattributable in the logs."""
-        mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
+        mock_get_user.return_value = UserDocument(id="uid1")
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
@@ -1422,7 +1446,7 @@ class TestBotTranscribe:
         # auth-excluded, so a wrong or None id silently lands the event on an
         # anonymous profile. Five mutants of exactly this argument survived
         # until it was asserted.
-        assert args[0] == fake_user["user_id"]
+        assert args[0] == fake_user.user_id
         assert args[1] == AnalyticsEvents.BOT_AUDIO_TRANSCRIBED
         assert args[2] == {
             "audio_bytes": len(audio),
@@ -1480,7 +1504,7 @@ class TestBotTranscribe:
             )
 
         assert response.status_code == 200
-        mock_gate.assert_awaited_once_with(str(fake_user["user_id"]), feature="bot_transcribe")
+        mock_gate.assert_awaited_once_with(str(fake_user.user_id), feature="bot_transcribe")
 
     @patch("app.api.v1.endpoints.bot.capture_event")
     @patch(
@@ -1569,9 +1593,9 @@ class TestBotChatStreamMetering:
                 new_callable=AsyncMock,
             ),
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
                 new_callable=AsyncMock,
-                return_value={"user_id": "u_bot_1", "email": "bot@gaia.local"},
+                return_value=UserDocument(id="u_bot_1", email="bot@gaia.local"),
             ),
             patch(
                 "app.api.v1.endpoints.bot.BotService.get_or_create_session",
@@ -1642,7 +1666,7 @@ class TestBotChatStreamMetering:
             p[0],
             p[1],
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -1733,9 +1757,9 @@ class TestBotChatStreamSubscriptionGate:
     ):
         with (
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
                 new_callable=AsyncMock,
-                return_value={"_id": "u1"},
+                return_value=UserDocument(id="u1"),
             ),
             patch(PLAN_PATCH, new_callable=AsyncMock, return_value=PlanType.FREE),
             patch(
@@ -1768,9 +1792,9 @@ class TestBotChatStreamSubscriptionGate:
     ):
         with (
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
                 new_callable=AsyncMock,
-                return_value={"_id": "u1"},
+                return_value=UserDocument(id="u1"),
             ),
             patch(PLAN_PATCH, new_callable=AsyncMock, return_value=PlanType.FREE),
             patch(
@@ -1797,9 +1821,9 @@ class TestBotChatStreamSubscriptionGate:
     ):
         with (
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
                 new_callable=AsyncMock,
-                return_value={"_id": "u1"},
+                return_value=UserDocument(id="u1"),
             ),
             patch(PLAN_PATCH, new_callable=AsyncMock, return_value=PlanType.FREE),
             patch(
@@ -2072,8 +2096,8 @@ class TestForwarderWiring:
         with (
             patch("app.api.v1.endpoints.bot.require_bot_api_key", new=AsyncMock()),
             patch(
-                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
-                new=AsyncMock(return_value={"user_id": "uid1", "_id": "uid1"}),
+                "app.utils.auth_utils.user_repository.get_by_platform_id",
+                new=AsyncMock(return_value=UserDocument(id="uid1")),
             ),
             patch("app.api.v1.endpoints.bot.BotService") as bot_svc,
             patch(

@@ -12,6 +12,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 from app.services.chat.chunks import ChunkAccumulators, process_data_chunk
+from app.utils.stream_publishers import ExtractedOtherData, ExtractedToolData
 
 MODULE = "app.services.chat.chunks"
 STREAM = "stream-77"
@@ -71,7 +72,7 @@ class TestToolDataDispatch:
         acc = _acc()
         payload = {"follow_up_actions": ["Draft the reply", "Book the slot"]}
         # extract_tool_data files non-tool keys under other_data before publishing.
-        new_data = {"other_data": payload}
+        new_data = ExtractedToolData(other_data=ExtractedOtherData(**payload))
         other = AsyncMock(return_value=["Draft the reply", "Book the slot"])
         tool_data = AsyncMock()
         tool_output = AsyncMock()
@@ -85,7 +86,7 @@ class TestToolDataDispatch:
             result = await process_data_chunk(STREAM, _chunk(payload), acc)
 
         other.assert_awaited_once_with(STREAM, new_data, ["earlier chip"])
-        tool_data.assert_awaited_once_with(STREAM, new_data, acc.tool_data)
+        tool_data.assert_awaited_once_with(STREAM, new_data, acc.tool_data["tool_data"])
         tool_output.assert_awaited_once_with(STREAM, new_data, acc.tool_outputs)
         assert result == (["Draft the reply", "Book the slot"], True)
         assert acc.follow_up_actions == ["Draft the reply", "Book the slot"]

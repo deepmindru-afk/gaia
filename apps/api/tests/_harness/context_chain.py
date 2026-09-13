@@ -51,7 +51,7 @@ from app.helpers.agent_helpers import (
 from app.helpers.message_helpers import build_current_time_message
 from app.models.agent_models import AgentConfigurable, AgentUserContext, agent_configurable
 from app.models.message_models import MessageDict
-from app.models.user_models import AuthenticatedUser
+from app.models.user_models import AuthenticatedUser, OnboardingSubdocument
 from app.override.langgraph_bigtool.hooks import HookType, execute_hooks
 from app.override.langgraph_bigtool.utils import State
 from app.services.workflow import workflow_subagent
@@ -267,15 +267,12 @@ async def _seed_comms(
     *, user: HarnessUser, query: str, configurable: AgentConfigurable
 ) -> list[AnyMessage]:
     history: list[MessageDict] = [cast(MessageDict, {"role": "user", "content": query})]
-    user_dict = cast(
-        AuthenticatedUser,
-        {
-            "timezone": user.timezone,
-            "onboarding": {
-                "preferences": user.preferences,
-                "writing_style": user.writing_style,
-            },
-        },
+    user_dict = AuthenticatedUser(
+        user_id=user.user_id,
+        timezone=user.timezone,
+        onboarding=OnboardingSubdocument.model_validate(
+            {"preferences": user.preferences, "writing_style": user.writing_style}
+        ),
     )
     return await construct_langchain_messages(
         messages=history,

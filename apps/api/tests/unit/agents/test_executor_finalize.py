@@ -46,6 +46,7 @@ from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.cache import EXECUTOR_BUSY_PREFIX
 from app.constants.log_tags import LogTag
 from app.models.chat_models import SourceCategory
+from app.models.user_models import AuthenticatedUser
 from shared.py.wide_events import log, log_context
 
 # The task text the finalize step now receives; forwarded to comms on a cancel.
@@ -70,7 +71,7 @@ def _run(
     return ExecutorRun(
         stream_id=stream_id,
         conversation_id="conv-1",
-        user={"user_id": "u1"},
+        user=AuthenticatedUser(user_id="u1"),
         kind=kind,
         task_id="task-1",
         user_message_id=None,

@@ -16,7 +16,15 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from composio.types import ToolExecuteParams
+from pydantic import ValidationError
+import pytest
 
+from app.models.integrations.reddit_hooks import (
+    RedditCommentThing,
+    RedditPost,
+    RedditPostThing,
+    RedditSearchData,
+)
 from app.utils.composio_hooks.reddit_hooks import (
     process_reddit_comment,
     process_reddit_post,
@@ -597,14 +605,16 @@ class TestGmailSchemaModifiers:
         result = gmail_fetch_message_schema_modifier("GMAIL_FETCH_EMAILS", "GMAIL", schema)
         assert result is schema
 
-    def test_schema_modifier_handles_non_dict_properties(self) -> None:
+    def test_schema_modifier_rejects_non_dict_properties(self) -> None:
+        # Not a JSON-schema object: it fails to parse (the registry logs and keeps
+        # the schema untouched) rather than being silently walked around.
         from app.utils.composio_hooks.gmail_hooks import (
             gmail_fetch_message_schema_modifier,
         )
 
         schema = _make_tool_schema(input_parameters={"properties": "not_a_dict"})
-        result = gmail_fetch_message_schema_modifier("GMAIL_FETCH_EMAILS", "GMAIL", schema)
-        assert result is schema
+        with pytest.raises(ValidationError):
+            gmail_fetch_message_schema_modifier("GMAIL_FETCH_EMAILS", "GMAIL", schema)
 
 
 # ============================================================================
@@ -1025,7 +1035,7 @@ class TestGmailAfterHooks:
                     "time": "now",
                     "snippet": "...",
                     "body": "text",
-                    "content": "text",
+                    "content": {"text": "text", "html": "<p>text</p>"},
                 }
             ],
             "messageCount": 1,
@@ -1273,12 +1283,12 @@ class TestSlackHooks:
         result = slack_search_schema_modifier("SLACK_SEARCH_ALL", "SLACK", schema)
         assert result is schema
 
-    def test_slack_search_schema_modifier_non_dict_properties(self) -> None:
+    def test_slack_search_schema_modifier_rejects_non_dict_properties(self) -> None:
         from app.utils.composio_hooks.slack_hooks import slack_search_schema_modifier
 
         schema = _make_tool_schema(input_parameters={"properties": "bad"})
-        result = slack_search_schema_modifier("SLACK_SEARCH_ALL", "SLACK", schema)
-        assert result is schema
+        with pytest.raises(ValidationError):
+            slack_search_schema_modifier("SLACK_SEARCH_ALL", "SLACK", schema)
 
 
 # ============================================================================
@@ -1706,14 +1716,14 @@ class TestRedditHelpers:
                 "stickied": False,
             }
         }
-        result = process_reddit_post(post)
+        result = process_reddit_post(RedditPostThing.model_validate(post).data)
         assert result["id"] == "abc123"
         assert result["title"] == "Test Post"
         assert result["score"] == 42
         assert result["is_self"] is True
 
     def test_process_reddit_post_empty_data(self) -> None:
-        result = process_reddit_post({})
+        result = process_reddit_post(RedditPost())
         assert result["id"] == ""
         assert result["title"] == ""
 
@@ -1735,7 +1745,7 @@ class TestRedditHelpers:
                 "edited": False,
             }
         }
-        result = process_reddit_comment(comment)
+        result = process_reddit_comment(RedditCommentThing.model_validate(comment).data)
         assert result["id"] == "cmt1"
         assert result["body"] == "Great post!"
         assert result["score"] == 15
@@ -1754,13 +1764,15 @@ class TestRedditHelpers:
                 }
             }
         }
-        result = process_reddit_search_results(response)
+        result = process_reddit_search_results(RedditSearchData.model_validate(response))
         assert result["result_count"] == 2
         assert result["after"] == "cursor123"
         assert result["posts"][0]["id"] == "p1"
 
     def test_process_reddit_search_results_empty(self) -> None:
-        result = process_reddit_search_results({"search_results": {"data": {"children": []}}})
+        result = process_reddit_search_results(
+            RedditSearchData.model_validate({"search_results": {"data": {"children": []}}})
+        )
         assert result["result_count"] == 0
         assert result["posts"] == []
 

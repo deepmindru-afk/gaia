@@ -15,6 +15,7 @@ forever (one-shot) / every 30 minutes instead of after 1h then 4h (retry).
 Recurrence/timezone resolution itself is covered by test_tracked_todo_recurrence.py.
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 import json
 import re
@@ -32,6 +33,7 @@ from app.models.notification.notification_models import (
 )
 from app.models.todo_models import TodoDocument
 from app.models.trigger_subscription_models import TriggerOrigin
+from app.models.user_models import AuthenticatedUser
 from app.models.workflow_models import TriggerType
 from app.workers.tasks.tracked_todo_tasks import (
     LOCK_DEFER_BACKOFF,
@@ -50,6 +52,12 @@ from app.workers.tasks.tracked_todo_tasks import (
     execute_tracked_todo,
     safety_net_check_orphaned_todos,
 )
+
+
+def _user_context(**fields: object) -> Callable[[str], AuthenticatedUser]:
+    """What ``load_user_context`` answers for whichever user id it is asked for."""
+    return lambda user_id: AuthenticatedUser(user_id=user_id, **fields)
+
 
 MODULE = "app.workers.tasks.tracked_todo_tasks"
 KOLKATA = ZoneInfo("Asia/Kolkata")
@@ -436,7 +444,9 @@ class TestTriggeredExecutionGating:
             patch(f"{MODULE}.todo_repository", repo),
             patch(f"{MODULE}._run_execution", run_execution),
             patch(f"{MODULE}.enforce_daily_cost_budget", budget),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"timezone": "UTC"})),
+            patch(
+                f"{MODULE}.load_user_context", AsyncMock(side_effect=_user_context(timezone="UTC"))
+            ),
         ):
             await _execute_todo_with_retry("todo-1", _pool(), origin)
         return budget, run_execution
@@ -467,7 +477,7 @@ class TestTriggeredExecutionGating:
         args = run_execution.await_args.args
         assert args[0].id == "todo-1"
         assert args[1] == "user-1"
-        assert run_execution.await_args.kwargs["user_data"]["user_id"] == "user-1"
+        assert run_execution.await_args.kwargs["user_data"].user_id == "user-1"
         assert run_execution.await_args.kwargs["origin"] is origin
 
     async def test_a_triggered_retry_keeps_its_origin(self):
@@ -483,7 +493,9 @@ class TestTriggeredExecutionGating:
             patch(f"{MODULE}._run_execution", AsyncMock(side_effect=RuntimeError("boom"))),
             patch(f"{MODULE}.enforce_daily_cost_budget", AsyncMock()),
             patch(f"{MODULE}._mark_todo_failed", AsyncMock()),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"timezone": "UTC"})),
+            patch(
+                f"{MODULE}.load_user_context", AsyncMock(side_effect=_user_context(timezone="UTC"))
+            ),
         ):
             await _execute_todo_with_retry("todo-1", pool, origin)
 
@@ -509,7 +521,9 @@ class TestExecuteTodoWithRetryEarlyExits:
         with (
             patch(f"{MODULE}.todo_repository", repo),
             patch(f"{MODULE}._run_execution", run_execution),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"timezone": "UTC"})),
+            patch(
+                f"{MODULE}.load_user_context", AsyncMock(side_effect=_user_context(timezone="UTC"))
+            ),
         ):
             result = await _execute_todo_with_retry("todo-1", pool)
         return result, repo, run_execution
@@ -567,8 +581,8 @@ class TestExecuteTodoWithRetrySuccess:
             patch(f"{MODULE}.todo_repository", repo),
             patch(f"{MODULE}._run_execution", AsyncMock()),
             patch(
-                f"{MODULE}.get_user_by_id",
-                AsyncMock(return_value={"timezone": tz}),
+                f"{MODULE}.load_user_context",
+                AsyncMock(side_effect=_user_context(timezone=tz)),
             ),
         ):
             result = await _execute_todo_with_retry("todo-1", pool)
@@ -637,7 +651,9 @@ class TestExecuteTodoWithRetryFailure:
         with (
             patch(f"{MODULE}.todo_repository", repo),
             patch(f"{MODULE}._run_execution", AsyncMock(side_effect=RuntimeError("boom"))),
-            patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"timezone": "UTC"})),
+            patch(
+                f"{MODULE}.load_user_context", AsyncMock(side_effect=_user_context(timezone="UTC"))
+            ),
             patch(f"{MODULE}._mark_todo_failed", mark_failed),
         ):
             result = await _execute_todo_with_retry("todo-1", pool)
@@ -730,7 +746,9 @@ class TestRunExecution:
         doc = _doc()
         origin = TriggerOrigin(subscription_id="sub-1", trigger_name="gmail_new_message")
         with patch(f"{MODULE}._execute_via_agent", via_agent):
-            await _run_execution(doc, "user-1", user_data={"user_id": "user-1"}, origin=origin)
+            await _run_execution(
+                doc, "user-1", user_data=AuthenticatedUser(user_id="user-1"), origin=origin
+            )
 
         via_agent.assert_awaited_once()
         # The doc, its owner, the loaded user record, and the origin all reach the
@@ -738,7 +756,7 @@ class TestRunExecution:
         # loses the trigger attribution.
         assert via_agent.await_args.args[0] is doc
         assert via_agent.await_args.args[1] == "user-1"
-        assert via_agent.await_args.kwargs["user_data"] == {"user_id": "user-1"}
+        assert via_agent.await_args.kwargs["user_data"] == AuthenticatedUser(user_id="user-1")
         assert via_agent.await_args.kwargs["origin"] is origin
 
     async def test_a_triggered_workflow_todo_stamps_the_trigger_origin_on_the_context(self):
@@ -943,7 +961,9 @@ class TestExecuteViaAgent:
         )
         p1, p2, p3, p4 = self._patches(agent=agent)
         with p1, p2, p3, p4:
-            result = await _execute_via_agent(_doc(), "user-1", user_data={"user_id": "user-1"})
+            result = await _execute_via_agent(
+                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1")
+            )
 
         assert result == "Deploy verified.\nAll green."
         start, end = self._entries()
@@ -966,7 +986,9 @@ class TestExecuteViaAgent:
         )
         p1, p2, p3, p4 = self._patches(agent=agent)
         with p1, p2, p3, p4:
-            result = await _execute_via_agent(_doc(), "user-1", user_data={"user_id": "user-1"})
+            result = await _execute_via_agent(
+                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1")
+            )
 
         assert result == ""
         start, end = self._entries()
@@ -1044,7 +1066,9 @@ class TestExecuteViaAgent:
         p1, p2, p3, p4 = self._patches(agent=agent, canvas="## Current State\nblocked")
         with p1, p2, p3, p4:
             await _execute_via_agent(
-                _doc(description="verify staging"), "user-1", user_data={"user_id": "user-1"}
+                _doc(description="verify staging"),
+                "user-1",
+                user_data=AuthenticatedUser(user_id="user-1"),
             )
 
         kwargs = agent.await_args.kwargs
@@ -1055,7 +1079,7 @@ class TestExecuteViaAgent:
             "active_todo_id": "todo-1",
             "execution_mode": "background",
         }
-        assert kwargs["user"] == {"user_id": "user-1"}
+        assert kwargs["user"] == AuthenticatedUser(user_id="user-1")
         prompt = kwargs["request"].message
         assert "Execute the following scheduled task: Check the deploy" in prompt
         assert "Details: verify staging" in prompt
@@ -1075,7 +1099,7 @@ class TestExecuteViaAgent:
         p1, p2, p3, p4 = self._patches(agent=agent)
         with p1, p2, p3, p4:
             await _execute_via_agent(
-                _doc(), "user-1", user_data={"user_id": "user-1"}, origin=origin
+                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1"), origin=origin
             )
 
         context = agent.await_args.kwargs["options"].trigger_context

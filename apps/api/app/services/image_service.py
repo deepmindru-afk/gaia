@@ -51,7 +51,7 @@ async def api_generate_image(message: str, improve_prompt: bool = True) -> Image
                 part.strip()
                 for part in [
                     message or "",
-                    improved_prompt.get("response", "") or "",
+                    improved_prompt.response or "",
                 ]
                 if part.strip()
             )

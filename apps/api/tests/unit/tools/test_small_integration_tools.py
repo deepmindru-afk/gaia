@@ -168,6 +168,68 @@ class TestGitHubGatherContext:
 
         assert result["notifications"] == []
 
+    @patch(f"{GITHUB_MODULE}.execute_tool")
+    def test_bare_list_notifications_are_kept(self, mock_exec: MagicMock) -> None:
+        """BUG: a bare-list notifications payload used to raise inside the
+        try/except and be reported as "no notifications"."""
+        mock_exec.side_effect = [
+            {"items": []},
+            {"items": []},
+            [{"id": "n1", "reason": "mention", "unread": True}],
+        ]
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result["notifications"] == [{"id": "n1", "reason": "mention", "unread": True}]
+
+    @patch(f"{GITHUB_MODULE}.execute_tool")
+    def test_items_forward_verbatim_and_calls_are_exact(self, mock_exec: MagicMock) -> None:
+        """Every GitHub field rides through untouched, ``pull_request`` decides
+        the bucket, and the three Composio calls carry the pinned arguments."""
+        issue = {"id": 1, "title": "Bug", "number": 7, "labels": [{"name": "p1"}], "assignee": None}
+        pr = {"id": 2, "title": "PR", "pull_request": {"url": "u", "merged_at": None}}
+        mock_exec.side_effect = [{"issues": [issue, pr]}, {"items": [pr]}, {"notifications": []}]
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result == {
+            "assigned_issues": [issue],
+            "assigned_prs": [pr],
+            "review_requests": [pr],
+            "notifications": [],
+        }
+        assert [c.args for c in mock_exec.call_args_list] == [
+            (
+                "GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER",
+                {"per_page": 20, "state": "open"},
+                FAKE_USER_ID,
+            ),
+            (
+                "GITHUB_SEARCH_GITHUB_ISSUES_AND_PULL_REQUESTS",
+                {"q": "is:pr is:open review-requested:@me", "per_page": 10},
+                FAKE_USER_ID,
+            ),
+            ("GITHUB_LIST_NOTIFICATIONS", {"per_page": 10, "all": False}, FAKE_USER_ID),
+        ]
+
+    @patch(f"{GITHUB_MODULE}.execute_tool")
+    def test_issues_key_wins_over_items(self, mock_exec: MagicMock) -> None:
+        mock_exec.side_effect = [
+            {"issues": [], "items": [{"id": 1, "title": "ignored"}]},
+            {"items": []},
+            {"notifications": []},
+        ]
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result["assigned_issues"] == []
+
 
 # =============================================================================
 # AIRTABLE TOOLS
@@ -258,6 +320,26 @@ class TestAirtableGatherContext:
         assert len(result["bases"]) == 3
         assert result["base_count"] == 5
 
+    @patch(f"{AIRTABLE_MODULE}.execute_tool")
+    def test_exact_output_and_calls(self, mock_exec: MagicMock) -> None:
+        mock_exec.side_effect = [
+            {"bases": [{"id": "app1", "name": "CRM", "permissionLevel": "create"}]},
+            {"tables": [{"id": "tbl1", "name": "Leads", "primaryFieldId": "fld1"}]},
+        ]
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result == {
+            "bases": [{"id": "app1", "name": "CRM", "tables": [{"id": "tbl1", "name": "Leads"}]}],
+            "base_count": 1,
+        }
+        assert [c.args for c in mock_exec.call_args_list] == [
+            ("AIRTABLE_LIST_BASES", {}, FAKE_USER_ID),
+            ("AIRTABLE_GET_BASE_SCHEMA", {"base_id": "app1"}, FAKE_USER_ID),
+        ]
+
 
 # =============================================================================
 # SLACK TOOLS
@@ -329,6 +411,27 @@ class TestSlackGatherContext:
 
         assert result["mentions"] == []
         assert len(result["messages"]) == 1
+
+    @patch(f"{SLACK_MODULE}.datetime", _UTCOnlyDateTime)
+    @patch(f"{SLACK_MODULE}.execute_tool")
+    def test_exact_output_and_queries(self, mock_exec: MagicMock) -> None:
+        """Matches ride through verbatim; the two searches carry the UTC day."""
+        hello = {"ts": "1.0", "text": "hello", "user": "U1", "channel": {"id": "C1"}}
+        world = {"ts": "2.0", "text": "world", "permalink": "p"}
+        mock_exec.side_effect = [
+            {"messages": {"matches": [hello, world], "total": 2}},
+            {"messages": {"matches": [hello]}},
+        ]
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result == {"messages": [world], "mentions": [hello], "unread_count": 2}
+        assert [c.args for c in mock_exec.call_args_list] == [
+            ("SLACK_SEARCH_MESSAGES", {"query": "on:2026-06-15", "count": 20}, FAKE_USER_ID),
+            ("SLACK_SEARCH_MESSAGES", {"query": "on:2026-06-15 @me", "count": 10}, FAKE_USER_ID),
+        ]
 
 
 # =============================================================================
@@ -420,6 +523,31 @@ class TestTodoistGatherContext:
 
         assert [t["content"] for t in result["overdue_tasks"]] == ["Due yesterday"]
 
+    @patch(f"{TODOIST_MODULE}.execute_tool")
+    def test_tasks_forward_verbatim(self, mock_exec: MagicMock) -> None:
+        """No invented keys: a task without ``due`` stays without it, an explicit
+        ``due: null`` stays null, extras ride through."""
+        overdue = {"id": "2", "content": "B", "due": {"date": "2000-01-01", "is_recurring": False}}
+        tasks = [{"id": "1", "content": "A", "priority": 4}, overdue, {"id": "3", "due": None}]
+        mock_exec.return_value = {"items": tasks}
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result == {"tasks": tasks, "overdue_tasks": [overdue]}
+        assert mock_exec.call_args.args == ("TODOIST_GET_ALL_TASKS", {}, FAKE_USER_ID)
+
+    @patch(f"{TODOIST_MODULE}.execute_tool")
+    def test_items_key_wins_even_when_not_a_list(self, mock_exec: MagicMock) -> None:
+        mock_exec.return_value = {"items": "nope", "tasks": [{"id": "1", "content": "T"}]}
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result["tasks"] == []
+
 
 # =============================================================================
 # ASANA TOOLS
@@ -495,6 +623,33 @@ class TestAsanaGatherContext:
 
         assert result["overdue_tasks"] == []
 
+    @patch(f"{ASANA_MODULE}.execute_tool")
+    def test_tasks_forward_verbatim_and_call_is_exact(self, mock_exec: MagicMock) -> None:
+        overdue = {"gid": "2", "name": "B", "due_on": "2000-01-01", "resource_type": "task"}
+        tasks = [{"gid": "1", "name": "A", "due_on": None}, overdue]
+        mock_exec.return_value = {"data": tasks}
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result == {"tasks": tasks, "overdue_tasks": [overdue]}
+        assert mock_exec.call_args.args == (
+            "ASANA_SEARCH_TASKS_IN_WORKSPACE",
+            {"assignee.any": "me", "completed": False, "limit": 10},
+            FAKE_USER_ID,
+        )
+
+    @patch(f"{ASANA_MODULE}.execute_tool")
+    def test_falls_back_to_tasks_key(self, mock_exec: MagicMock) -> None:
+        mock_exec.return_value = {"tasks": [{"gid": "1", "name": "T"}]}
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result["tasks"] == [{"gid": "1", "name": "T"}]
+
 
 # =============================================================================
 # CLICKUP TOOLS
@@ -550,6 +705,30 @@ class TestClickUpGatherContext:
         assert len(result["tasks"]) == 4
         assert len(result["overdue_tasks"]) == 1
         assert result["overdue_tasks"][0]["name"] == "Overdue"
+
+    @patch(f"{CLICKUP_MODULE}.execute_tool")
+    def test_tasks_forward_verbatim_and_call_is_exact(self, mock_exec: MagicMock) -> None:
+        """Extras and an explicit ``due_date: null`` ride through; a past-due task
+        with no status at all counts as open, so it is overdue."""
+        overdue = {"id": "2", "name": "O", "due_date": "946684800000", "status": {"type": "open"}}
+        statusless = {"id": "3", "name": "S", "due_date": "946684800000"}
+        tasks = [
+            {"id": "1", "name": "N", "due_date": None, "status": {"type": "open", "color": "#f"}},
+            overdue,
+            statusless,
+        ]
+        mock_exec.return_value = {"tasks": tasks}
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result == {"tasks": tasks, "overdue_tasks": [overdue, statusless]}
+        assert mock_exec.call_args.args == (
+            "CLICKUP_GET_FILTERED_TEAM_TASKS",
+            {"assignees": ["me"], "include_closed": False},
+            FAKE_USER_ID,
+        )
 
     @patch(f"{CLICKUP_MODULE}.execute_tool")
     def test_missing_user_id(self, mock_exec: MagicMock) -> None:
@@ -634,6 +813,28 @@ class TestGoogleTasksGatherContext:
 
         assert len(result["tasks"]) == 1
 
+    @patch(f"{GOOGLE_TASKS_MODULE}.execute_tool")
+    def test_tasks_forward_verbatim_and_call_is_exact(self, mock_exec: MagicMock) -> None:
+        overdue = {
+            "id": "2",
+            "title": "B",
+            "due": "2000-01-01T00:00:00.000Z",
+            "status": "needsAction",
+        }
+        tasks = [{"id": "1", "title": "A", "notes": "n"}, overdue]
+        mock_exec.return_value = {"items": tasks}
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result == {"tasks": tasks, "overdue_tasks": [overdue]}
+        assert mock_exec.call_args.args == (
+            "GOOGLETASKS_LIST_ALL_TASKS",
+            {"showCompleted": False, "maxResults": 20},
+            FAKE_USER_ID,
+        )
+
 
 # =============================================================================
 # TRELLO TOOLS
@@ -679,6 +880,22 @@ class TestTrelloGatherContext:
         result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
 
         assert len(result["cards"]) == 1
+
+    @patch(f"{TRELLO_MODULE}.execute_tool")
+    def test_cards_forward_verbatim_and_call_is_exact(self, mock_exec: MagicMock) -> None:
+        cards = [{"id": "c1", "name": "Card", "due": None, "idList": "l1", "labels": []}]
+        mock_exec.return_value = cards
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert result == {"cards": cards}
+        assert mock_exec.call_args.args == (
+            "TRELLO_GET_MEMBERS_CARDS_BY_ID_MEMBER",
+            {"idMember": "me"},
+            FAKE_USER_ID,
+        )
 
     @patch(f"{TRELLO_MODULE}.execute_tool")
     def test_missing_user_id(self, mock_exec: MagicMock) -> None:
@@ -1013,22 +1230,125 @@ class TestUrgencyAggregator:
         assert result["summary"]["medium_priority"] >= 1
         assert result["summary"]["low_priority"] >= 1
 
-    def test_non_dict_snapshot_skipped(self) -> None:
-        """Non-dict snapshots are skipped."""
+    def test_non_dict_snapshot_is_rejected_at_input(self) -> None:
+        """A snapshot that is not an object is a malformed call: the input schema
+        refuses it instead of silently reporting "nothing urgent"."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="snapshots.broken"):
+            self._make_input({"broken": "not a dict", "gmail": {"inbox_unread_count": 3}})
+
+    def test_branches_fire_on_key_presence_not_value(self) -> None:
+        """``unread_count: 0`` alone names Slack (and Gmail) but yields no item;
+        ``mentions: []`` with a count still yields the Slack item — and, as it
+        always has, the Gmail item too, since ``unread_count`` names both."""
+        captured = self._register()
+        fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
+
+        assert (
+            fn(self._make_input({"slack": {"unread_count": 0}}), EXECUTE_REQUEST, {})[
+                "urgent_items"
+            ]
+            == []
+        )
+        result = fn(
+            self._make_input({"slack": {"mentions": [], "unread_count": 3}}), EXECUTE_REQUEST, {}
+        )
+        assert result["urgent_items"] == [
+            {
+                "integration": "slack",
+                "type": "unread_messages",
+                "count": 3,
+                "priority": "high",
+                "description": "3 unread Slack messages",
+                "details": [],
+            },
+            {
+                "integration": "gmail",
+                "type": "unread_emails",
+                "count": 3,
+                "priority": "medium",
+                "description": "3 unread emails in inbox",
+            },
+        ]
+
+    def test_exact_items_and_details_shape(self) -> None:
+        """Count-only branches carry no ``details`` key; quoting branches carry
+        the first three labels with the old per-branch fallbacks (a missing
+        Linear title is ``None``, a missing task name falls back to ``title``,
+        an event without summary falls back to title then ``""``)."""
         captured = self._register()
         fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
 
         result = fn(
             self._make_input(
                 {
-                    "broken": "not a dict",
-                    "also_broken": 123,
+                    "gmail": {"inbox_unread_count": 21, "other": "ignored"},
+                    "slack": {"mentions": [{"text": "x" * 100}, {"text": "y"}]},
+                    "linear": {"overdue_issues": [{"title": "a"}, {"id": 2}]},
+                    "googlecalendar": {
+                        "events": [{"summary": "s"}, {"title": "t"}, {}, {"summary": "4"}]
+                    },
+                    "todoist": {"overdue_tasks": [{"name": "n"}, {"title": "t"}, {}]},
+                    "teams": {"unread_chat_count": 3},
                 }
             ),
             EXECUTE_REQUEST,
             {},
         )
-        assert result["total_urgent"] == 0
+
+        assert result == {
+            "urgent_items": [
+                {
+                    "integration": "gmail",
+                    "type": "unread_emails",
+                    "count": 21,
+                    "priority": "high",
+                    "description": "21 unread emails in inbox",
+                },
+                {
+                    "integration": "todoist",
+                    "type": "overdue_tasks",
+                    "count": 3,
+                    "priority": "high",
+                    "description": "3 overdue tasks in todoist",
+                    "details": ["n", "t", None],
+                },
+                {
+                    "integration": "slack",
+                    "type": "unread_messages",
+                    "count": 2,
+                    "priority": "high",
+                    "description": "2 Slack @mentions",
+                    "details": ["x" * 80, "y"],
+                },
+                {
+                    "integration": "linear",
+                    "type": "overdue_issues",
+                    "count": 2,
+                    "priority": "high",
+                    "description": "2 overdue Linear issues",
+                    "details": ["a", None],
+                },
+                {
+                    "integration": "googlecalendar",
+                    "type": "upcoming_events",
+                    "count": 4,
+                    "priority": "medium",
+                    "description": "4 calendar events today",
+                    "details": ["s", "t", ""],
+                },
+                {
+                    "integration": "microsoft_teams",
+                    "type": "unread_chats",
+                    "count": 3,
+                    "priority": "medium",
+                    "description": "3 unread Microsoft Teams chats",
+                },
+            ],
+            "total_urgent": 6,
+            "summary": {"high_priority": 4, "medium_priority": 2, "low_priority": 0},
+        }
 
     def test_multiple_integrations(self) -> None:
         """Multiple integrations aggregate correctly."""

@@ -2,8 +2,6 @@
 Reminder task handlers for static reminders only.
 """
 
-from typing import cast
-
 from app.agents.core.background.result_delivery import deliver_message_to_conversation
 from app.agents.core.background.workflow_platform_delivery import deliver_result_to_platforms
 from app.decorators.entitlements import is_paid
@@ -13,10 +11,9 @@ from app.models.reminder_models import (
     ReminderModel,
     StaticReminderPayload,
 )
-from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.notification_service import notification_service
-from app.services.user_service import get_user_by_id
+from app.utils.auth_utils import load_user_context
 from app.utils.notification.sources import AIProactiveNotificationSource
 from shared.py.wide_events import log
 
@@ -72,26 +69,21 @@ async def _deliver_reminder_to_platforms(reminder: ReminderModel) -> None:
 
     This is a supplementary side channel; the in-app badge is the primary
     delivery and has already succeeded by the time we get here. So every failure
-    is swallowed and logged, never propagated — in particular get_user_by_id
-    raises HTTPException on a transient user-repo error, which must not mark the
-    reminder failed (and skip the recurring re-arm) over a side channel.
+    is swallowed and logged, never propagated — in particular a transient
+    user-repo error must not mark the reminder failed (and skip the recurring
+    re-arm) over a side channel.
     """
     if not isinstance(reminder.payload, StaticReminderPayload) or not reminder.id:
         return
     try:
-        user_data = await get_user_by_id(reminder.user_id)
-        if not user_data:
+        user = await load_user_context(reminder.user_id)
+        if user is None:
             log.warning(
                 "Reminder platform delivery skipped: user not found",
                 reminder_id=reminder.id,
                 user_id=reminder.user_id,
             )
             return
-        # get_user_by_id returns the raw Mongo doc keyed by _id; downstream
-        # delivery (update_messages ownership, session keying) reads user_id, so
-        # stamp it — the same normalization the tracked-todo worker does.
-        user_data["user_id"] = reminder.user_id
-        user = cast(AuthenticatedUser, user_data)
         text = _reminder_result_text(reminder.payload)
         title = reminder.payload.title
         origin = (

@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.endpoints.dev import router as dev_router
 from app.api.v1.endpoints.health import router as health_router
+from app.api.v1.middleware.auth import get_current_user
 from app.api.v1.routes import router as api_router
 from app.config.settings import settings
 from app.constants.log_tags import LogTag
@@ -197,10 +198,9 @@ def create_app() -> FastAPI:
             # on a fresh anonymous profile, making crashes unattributable to the
             # user who hit them. request.state survives because it lives on the
             # request object, not a contextvar.
-            user = getattr(request.state, "user", None)
-            user_id = user.get("user_id") if user else None
-            if user_id:
-                posthog_client.capture_exception(exc, distinct_id=str(user_id))
+            user = get_current_user(request)
+            if user is not None and user.user_id:
+                posthog_client.capture_exception(exc, distinct_id=user.user_id)
             else:
                 posthog_client.capture_exception(exc)
 

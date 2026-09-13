@@ -15,17 +15,18 @@ import pytest
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from app.core.bot_auth_middleware import BotAuthMiddleware
+from app.models.user_models import AuthenticatedUser, UserDocument
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-FAKE_USER_DATA: dict[str, Any] = {
-    "_id": "user_abc123",
-    "email": "bot@example.com",
-    "name": "Bot User",
-    "picture": "https://example.com/pic.png",
-}
+FAKE_USER_DATA = UserDocument(
+    id="user_abc123",
+    email="bot@example.com",
+    name="Bot User",
+    picture="https://example.com/pic.png",
+)
 
 FAKE_JWT_PAYLOAD: dict[str, Any] = {
     "user_id": "user_abc123",
@@ -113,7 +114,7 @@ class TestAlreadyAuthenticated:
                 self, request: Request, call_next: RequestResponseEndpoint
             ) -> Response:
                 request.state.authenticated = True
-                request.state.user = {"user_id": "pre_auth_user"}
+                request.state.user = AuthenticatedUser(user_id="pre_auth_user")
                 return await call_next(request)
 
         # Order matters: last added runs first (outermost)
@@ -124,7 +125,7 @@ class TestAlreadyAuthenticated:
         async def endpoint(request: Request) -> dict[str, Any]:
             return {
                 "authenticated": request.state.authenticated,
-                "user_id": request.state.user.get("user_id"),
+                "user_id": request.state.user.user_id,
             }
 
         transport = ASGITransport(app=app)
@@ -139,7 +140,7 @@ class TestAlreadyAuthenticated:
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.verify_bot_session_token")
@@ -170,7 +171,7 @@ class TestAlreadyAuthenticated:
                 self, request: Request, call_next: RequestResponseEndpoint
             ) -> Response:
                 request.state.authenticated = True
-                request.state.user = {"user_id": "pre_auth_user"}
+                request.state.user = AuthenticatedUser(user_id="pre_auth_user")
                 return await call_next(request)
 
         app.add_middleware(BotAuthMiddleware)
@@ -180,7 +181,7 @@ class TestAlreadyAuthenticated:
         async def endpoint(request: Request) -> dict[str, Any]:
             return {
                 "authenticated": request.state.authenticated,
-                "user_id": request.state.user.get("user_id"),
+                "user_id": request.state.user.user_id,
             }
 
         transport = ASGITransport(app=app)
@@ -209,7 +210,7 @@ class TestJWTAuth:
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.verify_bot_session_token")
@@ -240,7 +241,7 @@ class TestJWTAuth:
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.verify_bot_session_token")
@@ -280,14 +281,14 @@ class TestJWTAuth:
         mock_get_cache: AsyncMock,
         app: FastAPI,
     ) -> None:
-        cached_user = {
-            "user_id": "user_abc123",
-            "email": "bot@example.com",
-            "name": "Bot User",
-            "picture": None,
-            "auth_provider": "bot:discord",
-            "bot_authenticated": True,
-        }
+        cached_user = AuthenticatedUser(
+            user_id="user_abc123",
+            email="bot@example.com",
+            name="Bot User",
+            picture=None,
+            auth_provider="bot:discord",
+            bot_authenticated=True,
+        )
         mock_verify.return_value = FAKE_JWT_PAYLOAD
         mock_get_cache.return_value = cached_user
 
@@ -354,7 +355,7 @@ class TestJWTAuth:
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.verify_bot_session_token")
@@ -366,14 +367,14 @@ class TestJWTAuth:
         mock_get_cache: AsyncMock,
         app: FastAPI,
     ) -> None:
-        """If JWT user_id doesn't match DB user _id, authentication fails."""
+        """If JWT user_id doesn't match the linked user's id, authentication fails."""
         mock_verify.return_value = {
             "user_id": "different_user_id",
             "platform": "discord",
             "platform_user_id": "disc_999",
         }
         mock_get_cache.return_value = None
-        mock_platform.return_value = FAKE_USER_DATA  # _id = "user_abc123"
+        mock_platform.return_value = FAKE_USER_DATA  # id = "user_abc123"
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="https://test") as client:
@@ -388,7 +389,7 @@ class TestJWTAuth:
 
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.verify_bot_session_token")
@@ -428,7 +429,7 @@ class TestAPIKeyAuth:
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.settings")
@@ -466,7 +467,7 @@ class TestAPIKeyAuth:
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.settings")
@@ -487,8 +488,12 @@ class TestAPIKeyAuth:
         mock_settings.GAIA_BOT_API_KEY = "secret-bot-key"  # pragma: allowlist secret
         mock_get_cache.return_value = None
         linked = {
-            "tg_123": {**FAKE_USER_DATA, "_id": "user_one", "email": "one@example.com"},
-            "tg_456": {**FAKE_USER_DATA, "_id": "user_two", "email": "two@example.com"},
+            "tg_123": FAKE_USER_DATA.model_copy(
+                update={"id": "user_one", "email": "one@example.com"}
+            ),
+            "tg_456": FAKE_USER_DATA.model_copy(
+                update={"id": "user_two", "email": "two@example.com"}
+            ),
         }
         mock_platform.side_effect = lambda _platform, platform_user_id: linked.get(platform_user_id)
 
@@ -514,14 +519,14 @@ class TestAPIKeyAuth:
         app: FastAPI,
     ) -> None:
         mock_settings.GAIA_BOT_API_KEY = "secret-bot-key"  # pragma: allowlist secret
-        cached_user = {
-            "user_id": "user_abc123",
-            "email": "bot@example.com",
-            "name": "Bot User",
-            "picture": None,
-            "auth_provider": "bot:slack",
-            "bot_authenticated": True,
-        }
+        cached_user = AuthenticatedUser(
+            user_id="user_abc123",
+            email="bot@example.com",
+            name="Bot User",
+            picture=None,
+            auth_provider="bot:slack",
+            bot_authenticated=True,
+        )
         mock_get_cache.return_value = cached_user
 
         transport = ASGITransport(app=app)
@@ -589,7 +594,7 @@ class TestAPIKeyAuth:
 
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.settings")
@@ -618,7 +623,7 @@ class TestAPIKeyAuth:
 
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.settings")
@@ -680,7 +685,7 @@ class TestAuthPrecedence:
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.verify_bot_session_token")
@@ -721,7 +726,7 @@ class TestAuthPrecedence:
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
     @patch(
-        "app.core.bot_auth_middleware.PlatformLinkService.get_user_by_platform_id",
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
         new_callable=AsyncMock,
     )
     @patch("app.core.bot_auth_middleware.verify_bot_session_token")

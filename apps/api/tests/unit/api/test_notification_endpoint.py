@@ -129,7 +129,7 @@ class TestGetNotifications:
         assert response.status_code == 200
         # The whole query string reaches the service as one query object.
         mock_get.assert_awaited_once_with(
-            FAKE_USER["user_id"],
+            FAKE_USER.user_id,
             NotificationQuery(
                 status=NotificationStatus.READ, channel_type="inapp", limit=7, offset=3
             ),

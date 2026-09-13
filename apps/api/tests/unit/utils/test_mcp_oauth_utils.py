@@ -788,6 +788,23 @@ class TestRevokeToken:
 # ---------------------------------------------------------------------------
 
 
+# Every RFC 7662 claim the model declares, so a dump can be compared whole.
+_INTROSPECTION_DEFAULTS = {
+    "active": None,
+    "scope": None,
+    "client_id": None,
+    "username": None,
+    "token_type": None,
+    "exp": None,
+    "iat": None,
+    "nbf": None,
+    "sub": None,
+    "aud": None,
+    "iss": None,
+    "jti": None,
+}
+
+
 class TestIntrospectToken:
     """Tests for introspect_token — RFC 7662 token introspection."""
 
@@ -809,8 +826,9 @@ class TestIntrospectToken:
             )
 
         assert result is not None
-        assert result["active"] is True
-        assert result["scope"] == "read write"
+        assert result.active is True
+        assert result.scope == "read write"
+        assert result.model_dump() == {**_INTROSPECTION_DEFAULTS, **introspection_data}
 
     async def test_non_200_returns_none(self) -> None:
         mock_response = MagicMock()

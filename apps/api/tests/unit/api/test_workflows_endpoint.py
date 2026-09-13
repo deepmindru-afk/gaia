@@ -812,7 +812,7 @@ class TestRegenerateSteps:
             f"{LogTag.WORKFLOW} Step generation failed",
             {
                 "workflow_id": "wf_abc123",
-                "user_id": fake_user["user_id"],
+                "user_id": fake_user.user_id,
                 "reason": "PaymentRequiredResponseError: This request requires more credits",
             },
         )
@@ -1204,7 +1204,7 @@ class TestGeneratePrompt:
                 integration_ids=["gmail", "slack"],
             ),
         )
-        assert mock_generate.await_args.kwargs == {"user_id": fake_user["user_id"]}
+        assert mock_generate.await_args.kwargs == {"user_id": fake_user.user_id}
 
     async def test_generate_prompt_service_error_returns_500(self, client: AsyncClient):
         with patch(

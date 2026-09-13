@@ -19,6 +19,7 @@ from app.api.v1.dependencies.oauth_dependencies import (
     get_user_timezone_from_preferences,
 )
 from app.constants.error_codes import NOT_AUTHENTICATED
+from app.models.user_models import AuthenticatedUser
 
 _BACKFILL = "app.api.v1.dependencies.oauth_dependencies._backfill_user_timezone"
 
@@ -27,7 +28,7 @@ class TestGetUserTimezoneFromPreferences:
     async def test_real_stored_zone_returned_without_backfill(self) -> None:
         with patch(_BACKFILL, new_callable=AsyncMock) as backfill:
             result = await get_user_timezone_from_preferences(
-                user={"user_id": "u1", "timezone": "America/New_York"},
+                user=AuthenticatedUser(user_id="u1", timezone="America/New_York"),
                 x_timezone="Asia/Kolkata",
             )
             await asyncio.sleep(0)  # let any fire-and-forget task run
@@ -37,7 +38,7 @@ class TestGetUserTimezoneFromPreferences:
     async def test_stored_utc_is_healed_and_backfilled_from_header(self) -> None:
         with patch(_BACKFILL, new_callable=AsyncMock) as backfill:
             result = await get_user_timezone_from_preferences(
-                user={"user_id": "u1", "timezone": "UTC"},
+                user=AuthenticatedUser(user_id="u1", timezone="UTC"),
                 x_timezone="Asia/Kolkata",
             )
             await asyncio.sleep(0)
@@ -47,7 +48,7 @@ class TestGetUserTimezoneFromPreferences:
     async def test_empty_stored_is_filled_and_backfilled(self) -> None:
         with patch(_BACKFILL, new_callable=AsyncMock) as backfill:
             result = await get_user_timezone_from_preferences(
-                user={"user_id": "u1"},
+                user=AuthenticatedUser(user_id="u1"),
                 x_timezone="Asia/Kolkata",
             )
             await asyncio.sleep(0)
@@ -57,7 +58,7 @@ class TestGetUserTimezoneFromPreferences:
     async def test_genuine_utc_is_not_healed(self) -> None:
         with patch(_BACKFILL, new_callable=AsyncMock) as backfill:
             result = await get_user_timezone_from_preferences(
-                user={"user_id": "u1", "timezone": "UTC"},
+                user=AuthenticatedUser(user_id="u1", timezone="UTC"),
                 x_timezone="UTC",
             )
             await asyncio.sleep(0)
@@ -67,7 +68,7 @@ class TestGetUserTimezoneFromPreferences:
     async def test_no_signal_falls_back_to_utc_without_backfill(self) -> None:
         with patch(_BACKFILL, new_callable=AsyncMock) as backfill:
             result = await get_user_timezone_from_preferences(
-                user={"user_id": "u1"},
+                user=AuthenticatedUser(user_id="u1"),
                 x_timezone="",
             )
             await asyncio.sleep(0)
@@ -77,7 +78,7 @@ class TestGetUserTimezoneFromPreferences:
     async def test_garbage_header_does_not_heal(self) -> None:
         with patch(_BACKFILL, new_callable=AsyncMock) as backfill:
             result = await get_user_timezone_from_preferences(
-                user={"user_id": "u1", "timezone": "UTC"},
+                user=AuthenticatedUser(user_id="u1", timezone="UTC"),
                 x_timezone="Not/A_Zone",
             )
             await asyncio.sleep(0)

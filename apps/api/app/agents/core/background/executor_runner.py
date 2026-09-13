@@ -137,7 +137,7 @@ async def run_executor_background(
         result_type = "final"
 
         # One lifecycle event per run segment; a resumed run re-enters here.
-        executor_user_id = run.user.get("user_id", "")
+        executor_user_id = run.user.user_id
         run_props = {
             "agent": "executor",
             "mode": "background",
@@ -413,10 +413,10 @@ async def _queue_collection_if_uncollected(run: ExecutorRun, task: str) -> None:
             await enqueue_collection_run(
                 run.conversation_id,
                 {
-                    "user_id": run.user.get("user_id", ""),
-                    "email": run.user.get("email", ""),
-                    "user_name": run.user.get("name", ""),
-                    "user_timezone": run.user.get("timezone"),
+                    "user_id": run.user.user_id,
+                    "email": run.user.email or "",
+                    "user_name": run.user.name or "",
+                    "user_timezone": run.user.timezone,
                 },
                 workflow_execution_id=run.workflow_execution_id,
             )

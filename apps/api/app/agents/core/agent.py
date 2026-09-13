@@ -51,6 +51,7 @@ from app.models.agent_models import (
     ExecutionMode,
     SilentRunResult,
     agent_configurable,
+    agent_user_context,
 )
 from app.models.message_models import MessageRequestWithHistory
 from app.models.user_models import AuthenticatedUser
@@ -119,7 +120,7 @@ async def _core_agent_logic(
     langfuse_trace_id = options.langfuse_trace_id
     langfuse_tags = options.langfuse_tags
 
-    user_id = user.get("user_id")
+    user_id = user.user_id
 
     # Extract active todo binding + execution mode from trigger_context (scheduled
     # runs set these; interactive turns leave them unset / "interactive").
@@ -139,7 +140,7 @@ async def _core_agent_logic(
             currently_uploaded_file_ids=request.fileIds,
             user_id=user_id,
             query=request.message,
-            user_name=user.get("name"),
+            user_name=user.name,
             user_dict=user,
             selected_tool=request.selectedTool,
             tool_category=request.toolCategory,
@@ -171,14 +172,14 @@ async def _core_agent_logic(
     # executor and every subagent it hands off to inherit it — the worker
     # tiers' context sections read it off configurable, not off a user doc
     # they never have.
-    user_preferences, writing_style = onboarding_preferences(user.get("onboarding"))
+    user_preferences, writing_style = onboarding_preferences(user.onboarding)
 
     # This is the top-level run, so build_agent_config resolves the comms lane
     # here; the executor and every subagent inherit it whole.
     config = await build_agent_config(
         identity=AgentIdentity(
             conversation_id=conversation_id,
-            user=user,
+            user=agent_user_context(user),
             agent_name="comms_agent",
         ),
         lane=AgentLane(role=AgentRole.COMMS, dev_option=dev_option),
@@ -269,7 +270,7 @@ async def call_agent(
         ids.bot_message_id,
     )
 
-    user_id = user.get("user_id")
+    user_id = user.user_id
     try:
         langfuse_trace_id = trace_id_for_message(bot_message_id) if bot_message_id else None
 
@@ -381,7 +382,7 @@ async def call_agent_silent(
     source = options.source
 
     stream_id = str(uuid4())
-    user_id = user.get("user_id")
+    user_id = user.user_id
     try:
         graph, initial_state, config = await _core_agent_logic(
             request,

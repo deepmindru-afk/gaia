@@ -1,8 +1,9 @@
-from typing import cast
+from dataclasses import dataclass
 
-from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langsmith import traceable
+from pydantic import BaseModel, ConfigDict, Field
 from uuid_extensions import uuid7str
 
 from app.agents.llm.chatbot import chatbot
@@ -18,6 +19,46 @@ from app.services.conversation_service import (
 from shared.py.wide_events import log
 
 
+class _TurnContent(BaseModel):
+    """The ``content`` of one ``MessageDict`` history turn, read once."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    content: str
+
+
+class _RunMetadata(BaseModel):
+    """The ``user_id`` a run's ``config["metadata"]`` carries (stamped by
+    ``build_agent_config``)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    user_id: str | None = None
+
+
+class _RunConfigMetadata(BaseModel):
+    """The ``metadata`` view of a LangChain ``RunnableConfig``, parsed once."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    metadata: _RunMetadata = Field(default_factory=_RunMetadata)
+
+
+class _ChatbotReply(BaseModel):
+    """The ``{"messages": [...]}`` envelope ``chatbot`` returns, parsed once."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    messages: list[BaseMessage]
+
+
+@dataclass(slots=True, frozen=True)
+class PromptResponse:
+    """What ``do_prompt_no_stream`` returns: the model's reply text."""
+
+    response: str
+
+
 async def _generate_description_from_message(
     last_message: MessageDict | None,
     selectedTool: str | None,
@@ -25,8 +66,8 @@ async def _generate_description_from_message(
 ) -> str:
     """Helper to generate conversation description from message context."""
     user_message = (
-        last_message.get("content")
-        if last_message and "content" in last_message
+        _TurnContent.model_validate(last_message).content
+        if last_message
         else "New conversation started"
     )
 
@@ -41,11 +82,7 @@ async def _generate_description_from_message(
             ),
         )
 
-        if not isinstance(response, dict) or "response" not in response:
-            log.error(f"{LogTag.CHAT} Invalid response from LLM for description generation")
-            return "New Chat"
-
-        return response.get("response", "New Chat").replace('"', "").strip()
+        return response.response.replace('"', "").strip()
     except Exception as e:
         log.error(
             f"{LogTag.CHAT} Failed to generate description",
@@ -76,7 +113,7 @@ async def create_conversation(
         generate_description: If False, uses "New Chat" as placeholder
         conversation_id: Optional pre-generated conversation ID (for background streaming)
     """
-    log.set(user_id=user.get("user_id"), selected_tool=selectedTool)
+    log.set(user_id=user.user_id, selected_tool=selectedTool)
     # Use provided ID or generate new one
     uuid_value = conversation_id or uuid7str()
 
@@ -138,7 +175,7 @@ async def generate_and_update_description(
 async def do_prompt_no_stream(
     prompt: str,
     system_prompt: str | None = None,
-) -> dict[str, str]:
+) -> PromptResponse:
     """
     Execute a single LLM prompt without streaming.
 
@@ -147,7 +184,7 @@ async def do_prompt_no_stream(
         system_prompt: Optional system message
 
     Returns:
-        dict with "response" key containing the AI's response content
+        The AI's response content.
     """
     messages: list[AnyMessage] = [SystemMessage(content=system_prompt)] if system_prompt else []
     messages.append(HumanMessage(content=prompt))
@@ -155,8 +192,8 @@ async def do_prompt_no_stream(
     response = await chatbot(messages)
 
     # BaseMessage.text handles both plain-string and list-of-blocks content uniformly.
-    ai_message = response["messages"][0]
-    return {"response": ai_message.text}
+    ai_message = _ChatbotReply.model_validate(response).messages[0]
+    return PromptResponse(response=ai_message.text)
 
 
 def get_user_id_from_config(config: RunnableConfig) -> str:
@@ -165,10 +202,9 @@ def get_user_id_from_config(config: RunnableConfig) -> str:
         log.error(f"{LogTag.CHAT} Tool called without config")
         return ""
 
-    metadata = config.get("metadata", {})
-    user_id = metadata.get("user_id", "")
+    user_id = _RunConfigMetadata.model_validate(config).metadata.user_id or ""
 
     if not user_id:
         log.error(f"{LogTag.CHAT} No user_id found in config metadata")
 
-    return cast(str, user_id)
+    return user_id

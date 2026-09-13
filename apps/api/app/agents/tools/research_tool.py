@@ -126,8 +126,11 @@ async def deep_research(
         async def _resilient_search(q: str) -> dict[str, Any]:
             # search_for_research is @Cacheable-wrapped, which types its return
             # Awaitable[Any] (app/decorators/caching.py); the wrapped function's
-            # own declared return is dict[str, Any].
-            return cast("dict[str, Any]", await search_for_research(q, count=5))
+            # own declared return is ResearchSearchResult, dumped to the dict
+            # shape rank_and_deduplicate_urls reads.
+            return cast(
+                "dict[str, Any]", (await search_for_research(q, count=5)).model_dump(mode="json")
+            )
 
         search_results = await asyncio.gather(
             *[_resilient_search(q) for q in sub_queries],
@@ -153,7 +156,7 @@ async def deep_research(
 
         # ── Phase 3: Deduplicate + rank URLs ────────────────────────────────
         ranked_urls = rank_and_deduplicate_urls(search_results, max_urls=max_sources)
-        found_urls = [u["url"] for u in ranked_urls]
+        found_urls = [u.url for u in ranked_urls]
         writer(
             {
                 "progress": f"Found {len(ranked_urls)} unique sources, fetching full content...",
@@ -176,7 +179,7 @@ async def deep_research(
 
         # ── Phase 4: Batch crawl4ai fetch + bounded fallback fetches ─────────
         writer({"progress": "Fetching sources..."})
-        urls_to_fetch = [u["url"] for u in ranked_urls]
+        urls_to_fetch = [u.url for u in ranked_urls]
         crawl4ai_contents, crawl4ai_errors = await batch_fetch_with_crawl4ai(
             urls_to_fetch,
             page_timeout_ms=CRAWL4AI_PAGE_TIMEOUT_MS,
@@ -229,7 +232,7 @@ async def deep_research(
                     }
                 return {**url_info, "content": None, "fetch_error": "; ".join(errors)}
 
-        fetch_tasks = [_bounded_fetch(u) for u in ranked_urls]
+        fetch_tasks = [_bounded_fetch(u.model_dump(mode="json")) for u in ranked_urls]
         sources: list[dict[str, Any]] = await asyncio.gather(*fetch_tasks, return_exceptions=False)
 
         valid_sources = [s for s in sources if s.get("content")]

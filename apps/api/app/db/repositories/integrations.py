@@ -12,7 +12,7 @@ import re
 
 from app.constants.cache import REPO_GLOBAL_SCOPE
 from app.db.repositories.base import MongoRepository
-from app.helpers.integration_helpers import generate_integration_slug
+from app.helpers.slug_helpers import generate_integration_slug
 from app.models.integration_models import (
     Integration,
     IntegrationToolsRecord,

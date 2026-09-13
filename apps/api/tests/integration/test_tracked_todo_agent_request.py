@@ -24,6 +24,7 @@ from app.agents.core.messages import construct_langchain_messages
 from app.models.agent_models import SilentRunResult
 from app.models.message_models import MessageRequestWithHistory
 from app.models.todo_models import TodoDocument
+from app.models.user_models import AuthenticatedUser
 from app.workers.tasks.tracked_todo_tasks import _execute_via_agent
 
 pytestmark = pytest.mark.integration
@@ -49,7 +50,7 @@ async def _captured_request() -> MessageRequestWithHistory:
         patch(f"{_MOD}.tracked_todo_service.append_canvas_timeline", new_callable=AsyncMock),
         patch(f"{_MOD}.tracked_todo_service.system_log", new_callable=AsyncMock),
     ):
-        await _execute_via_agent(_todo(), USER_ID, user_data={"user_id": USER_ID})
+        await _execute_via_agent(_todo(), USER_ID, user_data=AuthenticatedUser(user_id=USER_ID))
     return silent.await_args.kwargs["request"]
 
 
@@ -84,7 +85,7 @@ class TestTheRequestCarriesItsPrompt:
                 messages=request.messages,
                 user_id=USER_ID,
                 query=request.message,
-                user_dict={"user_id": USER_ID},
+                user_dict=AuthenticatedUser(user_id=USER_ID),
                 agent_type="executor",
                 execution_mode="background",
                 active_todo_id=TODO_ID,

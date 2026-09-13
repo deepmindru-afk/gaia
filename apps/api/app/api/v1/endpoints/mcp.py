@@ -45,7 +45,7 @@ async def test_mcp_connection(
     Probes the server and returns auth requirements.
     Can be used to retry failed connections.
     """
-    user_id = user.get("user_id")
+    user_id = user.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found")
     log.set(
@@ -157,7 +157,7 @@ async def mcp_oauth_callback(
 
     Handles both success (with code) and error responses from OAuth server.
     """
-    user_id = user.get("user_id")
+    user_id = user.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found")
     log.set(user={"id": user_id}, operation="mcp_oauth_callback")

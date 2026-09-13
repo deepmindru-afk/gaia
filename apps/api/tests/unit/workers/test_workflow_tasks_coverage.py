@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.models.user_models import UserDocument
+from app.models.user_models import AuthenticatedUser, UserDocument
 from app.services.limit_upsell import LimitHitOrigin, current_limit_origin
 from app.workers.tasks.workflow_tasks import _resolve_workflow_user, execute_workflow_by_id
 
@@ -172,8 +172,10 @@ def _timezone_workflow(schedule_tz: str | None) -> MagicMock:
     return workflow
 
 
-def _profile(timezone: str | None) -> dict[str, Any]:
-    return {"email": "ada@example.com", "name": "Ada", "timezone": timezone}
+def _profile(timezone: str | None) -> AuthenticatedUser:
+    return AuthenticatedUser(
+        user_id="user-1", email="ada@example.com", name="Ada", timezone=timezone
+    )
 
 
 @pytest.mark.unit
@@ -183,33 +185,33 @@ class TestResolveWorkflowUser:
     An ARQ worker has no request and no ``X-Timezone`` header, so this function
     is the only thing standing between a user's 8am digest and one that arrives
     at 8am UTC. Both run paths read the zone straight back off
-    ``user_data["timezone"]``: the agent through ``build_agent_config`` and the
+    ``user_data.timezone``: the agent through ``build_agent_config`` and the
     replay through ``$now`` / ``$today``.
     """
 
     async def _resolve(
-        self, profile: dict[str, Any] | Exception | None, schedule_tz: str | None
-    ) -> tuple[dict[str, Any], MagicMock]:
+        self, profile: AuthenticatedUser | Exception | None, schedule_tz: str | None
+    ) -> tuple[AuthenticatedUser, MagicMock]:
         lookup = AsyncMock(
             side_effect=profile if isinstance(profile, Exception) else None,
             return_value=None if isinstance(profile, Exception) else profile,
         )
         with (
-            patch(f"{MODULE}.get_user_by_id", lookup),
+            patch(f"{MODULE}.load_user_context", lookup),
             patch(f"{MODULE}.log") as log,
         ):
             user_data = await _resolve_workflow_user(_timezone_workflow(schedule_tz), "user-1")
         lookup.assert_awaited_once_with("user-1")
-        return dict(user_data), log
+        return user_data, log
 
     async def test_a_real_profile_zone_wins_over_the_schedule_zone(self) -> None:
         """The user's own clock is the one they meant, wherever the schedule was
         created from."""
         user_data, log = await self._resolve(_profile("Asia/Kolkata"), "America/New_York")
 
-        assert user_data["timezone"] == "Asia/Kolkata"
-        assert user_data["user_id"] == "user-1"
-        assert user_data["email"] == "ada@example.com"
+        assert user_data.timezone == "Asia/Kolkata"
+        assert user_data.user_id == "user-1"
+        assert user_data.email == "ada@example.com"
         log.set.assert_called_once_with(workflow_agent_timezone="Asia/Kolkata")
         log.warning.assert_not_called()
 
@@ -222,13 +224,13 @@ class TestResolveWorkflowUser:
         """
         for stored in ("UTC", "utc"):
             user_data, _ = await self._resolve(_profile(stored), "America/New_York")
-            assert user_data["timezone"] == "America/New_York", stored
+            assert user_data.timezone == "America/New_York", stored
 
     async def test_a_blank_profile_zone_falls_back_to_the_schedule_zone(self) -> None:
         """Whitespace in the profile is not a timezone."""
         for stored in (None, "", "   "):
             user_data, _ = await self._resolve(_profile(stored), "America/New_York")
-            assert user_data["timezone"] == "America/New_York", stored
+            assert user_data.timezone == "America/New_York", stored
 
     async def test_no_zone_anywhere_falls_back_to_utc_and_says_so(self) -> None:
         """UTC here is a real degradation, not a neutral default: the run lands
@@ -237,7 +239,7 @@ class TestResolveWorkflowUser:
         """
         user_data, log = await self._resolve(_profile(None), None)
 
-        assert user_data["timezone"] == "UTC"
+        assert user_data.timezone == "UTC"
         log.set.assert_called_once_with(workflow_agent_timezone="UTC")
         assert "UTC" in log.warning.call_args.args[0]
         assert log.warning.call_args.kwargs["workflow_id"] == "wf-1"
@@ -246,15 +248,15 @@ class TestResolveWorkflowUser:
     async def test_a_blank_schedule_zone_is_not_a_zone_either(self) -> None:
         user_data, _ = await self._resolve(_profile(None), "   ")
 
-        assert user_data["timezone"] == "UTC"
+        assert user_data.timezone == "UTC"
 
     async def test_a_missing_profile_still_produces_a_usable_user_bag(self) -> None:
         """A user row that has gone missing must not take the run down with it;
         the schedule's own zone is still the right clock."""
         user_data, _ = await self._resolve(None, "America/New_York")
 
-        assert user_data["user_id"] == "user-1"
-        assert user_data["timezone"] == "America/New_York"
+        assert user_data.user_id == "user-1"
+        assert user_data.timezone == "America/New_York"
 
     async def test_a_failing_profile_lookup_still_returns_the_user_id(self) -> None:
         """The caller runs the workflow with whatever comes back, so this has to
@@ -266,7 +268,7 @@ class TestResolveWorkflowUser:
         """
         user_data, log = await self._resolve(RuntimeError("mongo down"), "America/New_York")
 
-        assert user_data == {"user_id": "user-1"}
+        assert user_data == AuthenticatedUser(user_id="user-1")
         assert log.warning.call_args.kwargs["error_type"] == "RuntimeError"
         assert log.warning.call_args.kwargs["error"] == "mongo down"
         assert log.warning.call_args.kwargs["user_id"] == "user-1"

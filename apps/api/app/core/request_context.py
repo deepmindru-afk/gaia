@@ -15,7 +15,6 @@ downstream task, and a set inside one request's task never leaks into another's.
 """
 
 from contextvars import ContextVar
-from typing import cast
 
 from app.models.user_models import AuthenticatedUser
 
@@ -39,8 +38,8 @@ def resolve_caller(args: tuple[object, ...], kwargs: dict[str, object]) -> Authe
 
     Tries the request-scoped auth context first (the normal HTTP path, immune to
     per-endpoint parameter naming — see the module docstring). Falls back to an
-    explicit ``user`` kwarg, or the first positional dict carrying ``user_id``,
-    for direct (non-HTTP) invocation such as bots resolving their own user.
+    explicit ``user`` kwarg, or the first positional ``AuthenticatedUser``, for
+    direct (non-HTTP) invocation such as bots resolving their own user.
     Returns ``None`` when no caller can be resolved at all — a genuinely public
     route, or one a caller failed to authenticate.
     """
@@ -48,12 +47,8 @@ def resolve_caller(args: tuple[object, ...], kwargs: dict[str, object]) -> Authe
     if user:
         return user
 
-    user = cast(AuthenticatedUser | None, kwargs.get("user"))
-    if user:
-        return user
-
-    for arg in args:
-        if isinstance(arg, dict) and "user_id" in arg:
-            return cast(AuthenticatedUser, arg)
+    for candidate in (kwargs.get("user"), *args):
+        if isinstance(candidate, AuthenticatedUser):
+            return candidate
 
     return None

@@ -26,11 +26,12 @@ from app.agents.prompts.comms_prompts import (
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.general import NEW_MESSAGE_BREAKER
 from app.constants.log_tags import LogTag
+from app.models.user_models import AuthenticatedUser, OnboardingSubdocument
 from tests.helpers import captured_wide_event
 
 MODULE = "app.agents.core.background.comms_narrator"
 
-USER: dict = {"user_id": "user-1", "email": "u@gaia.local"}
+USER = AuthenticatedUser(user_id="user-1", email="u@gaia.local")
 CONVERSATION_ID = "conv-1"
 RESULT_TEXT = f"Downloaded the report.{NEW_MESSAGE_BREAKER}It has 3 pages."
 CARD_NOTE = wrap_agent_payload(AgentTag.RETURNED_TO_FRONTEND, "a card is on screen")
@@ -74,13 +75,16 @@ class TestNarrateExecutorResult:
         (preferences, writing_style) pair extracted from ``user["onboarding"]``
         actually lands on the configurable this narration run carries, not just
         that the extraction call doesn't crash."""
-        user_with_onboarding = {
-            **USER,
-            "onboarding": {
-                "preferences": {"profession": "engineer"},
-                "writing_style": {"summary": "terse"},
-            },
-        }
+        user_with_onboarding = USER.model_copy(
+            update={
+                "onboarding": OnboardingSubdocument.model_validate(
+                    {
+                        "preferences": {"profession": "engineer"},
+                        "writing_style": {"summary": "terse"},
+                    }
+                )
+            }
+        )
         with (
             _patch_graph(_fake_comms_graph()),
             patch(

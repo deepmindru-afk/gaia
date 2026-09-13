@@ -12,7 +12,6 @@ allowing bot requests to use the same endpoints as normal web auth.
 
 from collections.abc import Awaitable, Callable
 import secrets
-from typing import cast
 
 from fastapi import Request, Response
 from jose import JWTError
@@ -25,8 +24,7 @@ from app.constants.log_tags import LogTag
 from app.db.redis import get_cache, set_cache
 from app.models.user_models import AuthenticatedUser
 from app.services.bot_token_service import verify_bot_session_token
-from app.services.platform_link_service import PlatformLinkService
-from app.utils.auth_utils import build_user_context
+from app.utils.auth_utils import resolve_bot_user
 from shared.py.wide_events import log
 
 
@@ -144,21 +142,17 @@ class BotAuthMiddleware(BaseHTTPMiddleware):
     ) -> AuthenticatedUser | None:
         """Authenticate via platform ID lookup with caching."""
         cache_key = f"bot_user:{platform}:{platform_user_id}"
-        cached_user_info = await get_cache(cache_key)
+        cached_user_info = await get_cache(cache_key, model=AuthenticatedUser)
 
-        if cached_user_info and cached_user_info.get("user_id"):
-            return cast(AuthenticatedUser, cached_user_info)
+        if cached_user_info is not None and cached_user_info.user_id:
+            return cached_user_info
 
-        user_data = await PlatformLinkService.get_user_by_platform_id(platform, platform_user_id)
+        user_info = await resolve_bot_user(platform, platform_user_id)
 
-        if not user_data:
+        if user_info is None:
             return None
 
-        user_info = build_user_context(
-            user_data, auth_provider=f"bot:{platform}", bot_authenticated=True
-        )
-
-        await set_cache(cache_key, user_info, ttl=TEN_MINUTES_TTL)
+        await set_cache(cache_key, user_info, ttl=TEN_MINUTES_TTL, model=AuthenticatedUser)
         return user_info
 
     async def _authenticate_jwt(self, token: str) -> AuthenticatedUser | None:
@@ -174,26 +168,17 @@ class BotAuthMiddleware(BaseHTTPMiddleware):
                 return None
 
             cache_key = f"bot_user:{platform}:{platform_user_id}"
-            cached_user_info = await get_cache(cache_key)
+            cached_user_info = await get_cache(cache_key, model=AuthenticatedUser)
 
-            if cached_user_info and cached_user_info.get("user_id") == user_id:
-                return cast(AuthenticatedUser, cached_user_info)
+            if cached_user_info is not None and cached_user_info.user_id == user_id:
+                return cached_user_info
 
-            user_data = await PlatformLinkService.get_user_by_platform_id(
-                platform, platform_user_id
-            )
+            user_info = await resolve_bot_user(platform, platform_user_id)
 
-            if not user_data:
+            if user_info is None or user_info.user_id != user_id:
                 return None
 
-            if str(user_data.get("_id")) != user_id:
-                return None
-
-            user_info = build_user_context(
-                user_data, auth_provider=f"bot:{platform}", bot_authenticated=True
-            )
-
-            await set_cache(cache_key, user_info, ttl=TEN_MINUTES_TTL)
+            await set_cache(cache_key, user_info, ttl=TEN_MINUTES_TTL, model=AuthenticatedUser)
             return user_info
 
         except JWTError:

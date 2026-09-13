@@ -16,7 +16,6 @@ from app.models.mail_models import (
     GmailLabelsResult,
     GmailMessageResource,
     GmailMessagesResponse,
-    GmailMessageSummary,
     GmailToolResult,
 )
 from app.services.composio.attachments import upload_bytes_sync
@@ -408,7 +407,10 @@ async def fetch_thread(user_id: str, thread_id: str) -> GmailToolResult:
         if result.successful:
             # Transform messages in the thread for easier frontend processing
             if result.messages is not None:
-                messages = [transform_gmail_message(msg) for msg in result.messages]
+                messages = [
+                    transform_gmail_message(msg).model_dump(by_alias=True)
+                    for msg in result.messages
+                ]
 
                 # Sort messages by date (oldest first)
                 messages.sort(key=lambda msg: int(msg.get("internalDate", 0)))
@@ -467,10 +469,7 @@ async def search_messages(
             data = GmailFetchEmailsData.model_validate(result.data or {})
             log.set_ns("mail", result_count=len(data.messages), success=True)
             return GmailMessagesResponse(
-                messages=[
-                    GmailMessageSummary.model_validate(transform_gmail_message(msg))
-                    for msg in data.messages
-                ],
+                messages=[transform_gmail_message(msg) for msg in data.messages],
                 next_page_token=data.next_page_token,
             )
         log.set_ns("mail", success=False)
@@ -658,7 +657,9 @@ async def list_drafts(
             detailed_drafts = []
             for draft in result.drafts or []:
                 if "message" in draft:
-                    draft["message"] = transform_gmail_message(draft["message"])
+                    draft["message"] = transform_gmail_message(draft["message"]).model_dump(
+                        by_alias=True
+                    )
                 detailed_drafts.append(draft)
 
             return GmailDraftsResponse(
@@ -688,7 +689,7 @@ async def get_draft(user_id: str, draft_id: str) -> GmailToolResult:
         if result.successful:
             # Transform the message data if present
             if result.message is not None:
-                result.message = transform_gmail_message(result.message)
+                result.message = transform_gmail_message(result.message).model_dump(by_alias=True)
             return result
         log.error(f"{LogTag.MAIL} Error from GMAIL_GET_DRAFT", error=result.error)
         return GmailToolResult(error=result.error, successful=False)
@@ -829,7 +830,9 @@ async def get_email_by_id(user_id: str, message_id: str) -> GmailEmailResult:
 
         if result.successful:
             # Transform the message data for easier frontend processing
-            transformed_message = transform_gmail_message(result.as_payload())
+            transformed_message = transform_gmail_message(result.as_payload()).model_dump(
+                by_alias=True
+            )
             log.set_ns("mail", result_count=1, success=True)
             return GmailEmailResult(success=True, message=transformed_message)
         log.error(f"{LogTag.MAIL} Error from GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", error=result.error)

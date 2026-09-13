@@ -360,7 +360,7 @@ def tiered_rate_limit(
                 # Genuinely unauthenticated — a public route has nobody to bill.
                 return await func(*args, **kwargs)
 
-            user_id = user.get("user_id")
+            user_id = user.user_id
             if not user_id:
                 raise HTTPException(status_code=401, detail="User ID not found")
 

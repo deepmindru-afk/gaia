@@ -52,7 +52,7 @@ async def create_conversation_endpoint(
     Create a new conversation.
     """
     log.set(
-        user={"id": user["user_id"], "plan": user.get("plan")},
+        user={"id": user.user_id},
         conversation={"operation": "create", "is_new": True},
     )
     response = await create_conversation_service(conversation, user)
@@ -88,7 +88,7 @@ async def get_conversations_endpoint(
     Retrieve paginated conversations for the authenticated user.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "list", "page": page, "limit": limit},
     )
     response = await get_conversations(user, page=page, limit=limit)
@@ -112,7 +112,7 @@ async def batch_sync_conversations_endpoint(
     Batch sync conversations - returns only stale conversations with messages.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "batch_sync"},
     )
     return await batch_sync_conversations(request, user)
@@ -130,7 +130,7 @@ async def get_conversation_endpoint(
     verbatim, while the declared fields give the schema its shape.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "get", "id": conversation_id},
     )
     return await get_conversation(conversation_id, user)
@@ -144,7 +144,7 @@ async def update_messages_endpoint(
     Update the messages of a conversation.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "update_messages"},
     )
     return await update_messages(request, user)
@@ -160,7 +160,7 @@ async def star_conversation_endpoint(
     Star or unstar a conversation.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={
             "operation": "star",
             "id": conversation_id,
@@ -178,7 +178,7 @@ async def delete_all_conversations_endpoint(
     Delete all conversations for the authenticated user.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "delete_all"},
     )
     return await delete_all_conversations(user)
@@ -192,7 +192,7 @@ async def delete_conversation_endpoint(
     Delete a specific conversation by its ID.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "delete", "id": conversation_id},
     )
     return await delete_conversation(conversation_id, user)
@@ -209,7 +209,7 @@ async def pin_message_endpoint(
     Pin or unpin a message within a conversation.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "pin_message", "id": conversation_id},
     )
     return await pin_message(conversation_id, message_id, body.pinned, user)
@@ -223,7 +223,7 @@ async def get_starred_messages_endpoint(
     Retrieve all pinned messages across all conversations.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "get_pinned"},
     )
     return await get_starred_messages(user)
@@ -239,7 +239,7 @@ async def update_conversation_description_endpoint(
     Update the description of a specific conversation.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "update_description", "id": conversation_id},
     )
     return await update_conversation_description(conversation_id, body.description, user)
@@ -254,7 +254,7 @@ async def mark_as_read_endpoint(
     Mark a conversation as read.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "mark_read", "id": conversation_id},
     )
     return await mark_conversation_as_read(conversation_id, user)
@@ -269,7 +269,7 @@ async def mark_as_unread_endpoint(
     Mark a conversation as unread.
     """
     log.set(
-        user={"id": user["user_id"]},
+        user={"id": user.user_id},
         conversation={"operation": "mark_unread", "id": conversation_id},
     )
     return await mark_conversation_as_unread(conversation_id, user)

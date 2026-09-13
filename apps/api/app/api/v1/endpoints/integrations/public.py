@@ -13,9 +13,9 @@ from app.db.repositories.user_integrations import user_integration_repository
 from app.db.repositories.workflows import workflow_repository
 from app.helpers.integration_helpers import (
     format_public_integration_response,
-    generate_integration_slug,
     parse_integration_slug,
 )
+from app.helpers.slug_helpers import generate_integration_slug
 from app.models.workflow_models import (
     PublicWorkflowCard,
     PublicWorkflowsResponse,
@@ -96,7 +96,7 @@ async def get_public_integration(
         # Fallback: legacy hash-based lookup
         if not integration:
             slug_parts = parse_integration_slug(identifier)
-            short_id = slug_parts.get("shortid")
+            short_id = slug_parts.shortid
             if short_id:
                 integration = await integration_repository.get_public_by_id_prefix(short_id)
 
@@ -104,9 +104,9 @@ async def get_public_integration(
             raise HTTPException(status_code=404, detail="Integration not found")
 
         response_data = format_public_integration_response(integration)
-        log.set(integration_name=response_data.get("name"))
+        log.set(integration_name=response_data.name)
         log.set(outcome="success")
-        return PublicIntegrationDetailResponse(**response_data)
+        return response_data
 
     except HTTPException:
         raise

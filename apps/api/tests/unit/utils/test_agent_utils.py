@@ -9,6 +9,8 @@ import pytest
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.models.integration_models import Integration
 from app.utils.agent_utils import (
+    IntegrationDisplayMetadata,
+    ToolCallView,
     _general_tool_category,
     _lookup_custom_integration_name,
     _registry_mcp_ui_metadata,
@@ -21,6 +23,7 @@ from app.utils.agent_utils import (
     process_custom_event_for_tools,
     strip_internal_agent_tags,
 )
+from app.utils.stream_publishers import ExtractedToolData
 
 
 def _integration(integration_id: str, name: str) -> Integration:
@@ -329,7 +332,7 @@ class TestResolveMcpIconName:
         mock_registry.get_category_of_tool.return_value = None
         mock_registry.get_all_tools_for_search.return_value = []
 
-        cached = {"icon_url": "cached.png", "integration_name": "Cached"}
+        cached = IntegrationDisplayMetadata(icon_url="cached.png", integration_name="Cached")
 
         with (
             patch(
@@ -381,7 +384,7 @@ class TestSpecialToolDisplay:
                 return_value=None,
             ),
         ):
-            result = await _special_tool_display("handoff", {"name": "handoff", "id": "tc"})  # type: ignore[arg-type]  # hand-built dict stands in for a ToolCall
+            result = await _special_tool_display("handoff", ToolCallView(name="handoff", id="tc"))
 
         assert result == ("handoff", "Handing off to Subagent", False)
 
@@ -396,8 +399,7 @@ class TestSpecialToolDisplay:
             ) as mock_lookup,
         ):
             result = await _special_tool_display(
-                "handoff",  # type: ignore[arg-type]  # hand-built dict stands in for a ToolCall
-                {"name": "handoff", "args": {}, "id": "tc"},
+                "handoff", ToolCallView(name="handoff", args={}, id="tc")
             )
 
         assert result == ("handoff", "Handing off to Subagent", False)
@@ -405,7 +407,7 @@ class TestSpecialToolDisplay:
 
     @pytest.mark.asyncio
     async def test_a_non_handoff_special_tool_uses_its_table_row_verbatim(self) -> None:
-        result = await _special_tool_display("run_playbook", {"name": "run_playbook", "args": {}})  # type: ignore[arg-type]  # hand-built dict stands in for a ToolCall
+        result = await _special_tool_display("run_playbook", ToolCallView(name="run_playbook"))
 
         assert result == ("playbooks", "Run playbook", True)
 
@@ -629,10 +631,11 @@ class TestProcessCustomEventForTools:
     def test_with_payload(self) -> None:
         with patch(
             "app.utils.agent_utils.extract_tool_data",
-            return_value={"tool": "data"},
-        ):
+            return_value={"tool_data": [{"tool_name": "t", "data": 1}]},
+        ) as mock_extract:
             result = process_custom_event_for_tools({"some": "payload"})
-        assert result == {"tool": "data"}
+        assert result == ExtractedToolData(tool_data=[{"tool_name": "t", "data": 1}])
+        assert mock_extract.call_args.args == ('{"some": "payload"}',)
 
     def test_with_none_payload(self) -> None:
         with patch(
@@ -640,7 +643,7 @@ class TestProcessCustomEventForTools:
             return_value=None,
         ):
             result = process_custom_event_for_tools(None)
-        assert result == {}
+        assert result == ExtractedToolData()
 
     def test_extract_returns_none(self) -> None:
         with patch(
@@ -648,7 +651,7 @@ class TestProcessCustomEventForTools:
             return_value=None,
         ):
             result = process_custom_event_for_tools({"x": 1})
-        assert result == {}
+        assert result == ExtractedToolData()
 
     def test_exception_returns_empty(self) -> None:
         with patch(
@@ -656,7 +659,7 @@ class TestProcessCustomEventForTools:
             side_effect=RuntimeError("parse fail"),
         ):
             result = process_custom_event_for_tools({"x": 1})
-        assert result == {}
+        assert result == ExtractedToolData()
 
 
 # ---------------------------------------------------------------------------

@@ -158,15 +158,17 @@ class ExecutorRun:
         return cls(
             stream_id=identity.stream_id,
             conversation_id=identity.conversation_id,
-            user={
-                "user_id": configurable.get("user_id", ""),
-                "email": configurable.get("email", ""),
-                "name": configurable.get("user_name", ""),
+            # A bare identity rebuilt from the run's configurable (no auth path
+            # produced it — see AuthenticatedUser.auth_provider).
+            user=AuthenticatedUser(
+                user_id=configurable.get("user_id") or "",
+                email=configurable.get("email", ""),
+                name=configurable.get("user_name", ""),
                 # Carry the home timezone forward so the comms re-voicing run
                 # reads the user's zone via build_agent_config instead of
                 # silently falling back to UTC.
-                "timezone": configurable.get("user_timezone"),
-            },
+                timezone=configurable.get("user_timezone"),
+            ),
             kind=identity.kind,
             task_id=identity.task_id,
             user_message_id=identity.user_message_id,

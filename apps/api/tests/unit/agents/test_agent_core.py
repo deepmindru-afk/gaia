@@ -28,13 +28,14 @@ from app.helpers.agent_helpers import (
     AgentTurn,
     recent_user_messages,
 )
-from app.models.agent_models import SilentRunResult
+from app.models.agent_models import SilentRunResult, agent_user_context
 from app.models.message_models import (
     MessageRequestWithHistory,
     ReplyToMessageData,
     SelectedCalendarEventData,
     SelectedWorkflowData,
 )
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 
 # ---------------------------------------------------------------------------
@@ -58,14 +59,14 @@ def _make_request(**overrides) -> MessageRequestWithHistory:
     return MessageRequestWithHistory(**defaults)  # type: ignore[arg-type]  # fixture spreads an untyped defaults dict into the model
 
 
-def _make_user(**overrides) -> dict:
+def _make_user(**overrides) -> AuthenticatedUser:
     defaults = {
         "user_id": "user-123",
         "email": "test@example.com",
         "name": "Test User",
     }
     defaults.update(overrides)
-    return defaults
+    return AuthenticatedUser(**defaults)
 
 
 FAKE_HISTORY = [
@@ -673,7 +674,7 @@ class TestCallAgent:
             gen = await call_agent(
                 request=_make_request(),
                 conversation_id="conv-1",
-                user=_make_user(user_id=None),
+                user=_make_user(user_id=""),
             )
 
         chunks = [chunk async for chunk in gen]
@@ -1031,7 +1032,7 @@ class TestCallAgentSilent:
             await call_agent_silent(
                 request=_make_request(),
                 conversation_id="conv-1",
-                user=_make_user(user_id=None),
+                user=_make_user(user_id=""),
             )
 
         _no_real_analytics.assert_not_called()
@@ -1105,7 +1106,7 @@ class TestTheLaneTheRunResolves:
         assert build_config.call_args.kwargs == {
             "identity": AgentIdentity(
                 conversation_id="conv-1",
-                user=user,
+                user=agent_user_context(user),
                 agent_name="comms_agent",
             ),
             "lane": AgentLane(role=AgentRole.COMMS, dev_option=None),

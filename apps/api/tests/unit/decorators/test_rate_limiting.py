@@ -24,6 +24,7 @@ from app.api.v1.middleware.tiered_rate_limiter import (
 from app.constants.llm import FREE_DAILY_COST_BUDGET_USD
 from app.decorators import rate_limiting as rl
 from app.models.payment_models import PlanType
+from app.models.user_models import AuthenticatedUser
 from app.services.limit_upsell import LimitHitOrigin
 
 RESET_AT = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
@@ -462,7 +463,7 @@ class TestTieredRateLimitMetersUnderItsOrigin:
             # get_authenticated_user from its own module.
             patch(
                 "app.core.request_context.get_authenticated_user",
-                return_value={"user_id": "user-1"},
+                return_value=AuthenticatedUser(user_id="user-1"),
             ),
             patch(
                 "app.decorators.rate_limiting.payment_service.get_user_subscription_status",
@@ -510,7 +511,7 @@ class TestTieredRateLimitCallerResolution:
         decorated = rl.tiered_rate_limit("chat_messages")(_endpoint)
         with patch(
             "app.core.request_context.get_authenticated_user",
-            return_value={"email": "x@example.com"},
+            return_value=AuthenticatedUser(user_id="", email="x@example.com"),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await decorated()
@@ -529,9 +530,10 @@ class TestTieredRateLimitCallerResolution:
                 "app.decorators.rate_limiting.enforce_tiered_limit", new_callable=AsyncMock
             ) as mock_enforce,
         ):
-            result = await decorated(user={"user_id": "kwarg-user"})
+            kwarg_user = AuthenticatedUser(user_id="kwarg-user")
+            result = await decorated(user=kwarg_user)
 
-        assert result == {"user": {"user_id": "kwarg-user"}}
+        assert result == {"user": kwarg_user}
         mock_enforce.assert_awaited_once_with("kwarg-user", "chat_messages", origin=None)
 
     async def test_unauthenticated_bypass_forwards_positional_and_keyword_args(self) -> None:

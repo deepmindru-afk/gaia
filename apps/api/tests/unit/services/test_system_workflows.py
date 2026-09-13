@@ -15,6 +15,7 @@ import pytest
 
 from app.constants.log_tags import LogTag
 from app.models.payment_models import PlanType
+from app.models.workflow_models import TriggerConfig, TriggerType
 
 MODULE = "app.services.system_workflows.provisioner"
 
@@ -29,7 +30,7 @@ def _make_workflow_request(
     req.description = description
     req.prompt = "do something"
     req.steps = []
-    req.trigger_config = MagicMock()
+    req.trigger_config = TriggerConfig(type=TriggerType.MANUAL)
     return req
 
 
@@ -1159,7 +1160,7 @@ class TestActivationForPayingUsers:
         created.id = "wf-created"
         mock_service.create_workflow = AsyncMock(return_value=created)
         request = MagicMock()
-        request.trigger_config = MagicMock(type="manual", timezone="UTC")
+        request.trigger_config = TriggerConfig(type=TriggerType.MANUAL, timezone="UTC")
         with patch(
             f"{MODULE}.SYSTEM_WORKFLOWS_BY_INTEGRATION",
             {"gmail": [("gmail:email_intelligence", lambda: request)]},

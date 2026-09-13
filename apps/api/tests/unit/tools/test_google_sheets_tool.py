@@ -21,7 +21,6 @@ from app.agents.tools.integrations.google_sheets_tool import (
     NEW_FORMAT_RULE_INDEX,
     RECENT_SPREADSHEETS_PAGE_SIZE,
     SHEETS_TOOLKIT,
-    _user_id,
     register_google_sheets_custom_tools,
 )
 from app.models.common_models import GatherContextInput
@@ -195,23 +194,27 @@ class TestRegistration:
 
 
 # ---------------------------------------------------------------------------
-# _user_id
+# auth credentials
 # ---------------------------------------------------------------------------
 
 
 class TestUserId:
-    def test_returns_the_credential_user_id(self) -> None:
-        assert _user_id({"user_id": "abc"}) == "abc"
+    def test_requests_are_sent_as_the_credential_user(self, tools: Any, api: Any) -> None:
+        tools["CUSTOM_GATHER_CONTEXT"](GatherContextInput(), MagicMock(), {"user_id": "abc"})
+        assert api.calls[0].user_id == "abc"
 
     @pytest.mark.parametrize(
         "credentials",
         [{}, {"user_id": ""}, {"user_id": None}, {"user_id": 42}, {"userId": "abc"}],
     )
-    def test_unusable_credentials_are_rejected(self, credentials: dict[str, Any]) -> None:
+    def test_unusable_credentials_are_rejected(
+        self, tools: Any, api: Any, credentials: dict[str, Any]
+    ) -> None:
         # Falling through with a blank/None user id would send the request as
         # nobody and surface as a confusing 500 deep inside the proxy.
         with pytest.raises(ValueError, match="Missing user_id in auth_credentials"):
-            _user_id(credentials)
+            tools["CUSTOM_GATHER_CONTEXT"](GatherContextInput(), MagicMock(), credentials)
+        assert api.calls == []
 
 
 # ---------------------------------------------------------------------------

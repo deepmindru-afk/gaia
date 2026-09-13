@@ -8,9 +8,7 @@ user's OAuth token server-side; tools only need `user_id` from
 Note: Errors are raised as exceptions - Composio wraps responses automatically.
 """
 
-import contextlib
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 
 from composio import Composio
 from composio.types import ExecuteRequestFn
@@ -18,10 +16,44 @@ from langgraph.config import get_config
 
 from app.decorators import with_doc
 from app.models.common_models import GatherContextInput
+from app.models.integrations.composio import CustomToolAuthCredentials
+from app.models.integrations.linear import (
+    LinearCyclesData,
+    LinearFirstVariables,
+    LinearIssue,
+    LinearIssueBatchUpdateData,
+    LinearIssueBatchUpdateVariables,
+    LinearIssueCreateData,
+    LinearIssueCreateInput,
+    LinearIssueCreateVariables,
+    LinearIssueData,
+    LinearIssueHistory,
+    LinearIssueHistoryData,
+    LinearIssueHistoryVariables,
+    LinearIssueIdVariables,
+    LinearIssueRelationCreateData,
+    LinearIssueRelationCreateVariables,
+    LinearIssuesData,
+    LinearIssueSummary,
+    LinearIssueUpdateInput,
+    LinearLabel,
+    LinearLabelsData,
+    LinearMyIssuesVariables,
+    LinearNotificationsData,
+    LinearProjectsData,
+    LinearSearchIssuesData,
+    LinearSearchIssuesVariables,
+    LinearStatesData,
+    LinearTeamIdVariables,
+    LinearTeamsData,
+    LinearUsersData,
+    LinearViewerData,
+)
 from app.models.linear_models import (
     BulkUpdateIssuesInput,
     CreateIssueInput,
     CreateIssueRelationInput,
+    CreateIssueSubItem,
     CreateSubIssuesInput,
     GetActiveSprintInput,
     GetIssueActivityInput,
@@ -31,6 +63,7 @@ from app.models.linear_models import (
     GetWorkspaceContextInput,
     ResolveContextInput,
     SearchIssuesInput,
+    SubIssueItem,
 )
 from app.templates.docstrings.linear_tool_docs import (
     CUSTOM_BULK_UPDATE_ISSUES as CUSTOM_BULK_UPDATE_ISSUES_DOC,
@@ -52,7 +85,6 @@ from app.utils.linear_utils import (
     MUTATION_UPDATE_ISSUES,
     QUERY_ACTIVE_CYCLES,
     QUERY_ISSUE_BY_ID,
-    QUERY_ISSUE_BY_IDENTIFIER,
     QUERY_ISSUE_HISTORY,
     QUERY_LABELS,
     QUERY_LABELS_ALL,
@@ -67,11 +99,18 @@ from app.utils.linear_utils import (
     format_issue_summary,
     fuzzy_match,
     graphql_request,
-    history_label_names,
     priority_to_int,
     priority_to_str,
 )
 from app.utils.timezone import home_timezone_from_config
+
+_CLOSED_STATE_TYPES = ("completed", "canceled")
+_URGENT_PRIORITIES = (1, 2)
+_SPRINT_STATE_TYPES = ("backlog", "unstarted", "started", "completed")
+
+
+def _user_id(auth_credentials: dict[str, object]) -> str:
+    return CustomToolAuthCredentials.parse(auth_credentials).user_id
 
 
 def _user_local_today() -> date:
@@ -86,6 +125,92 @@ def _user_local_today() -> date:
         return datetime.now(UTC).date()
 
 
+def _parse_due_date(due_date: str | None) -> date | None:
+    if not due_date:
+        return None
+    try:
+        return datetime.fromisoformat(due_date).date()
+    except ValueError:
+        return None
+
+
+def _validate_identifier(identifier: str) -> None:
+    """``TEAM-123``: a team key, a dash, a number."""
+    parts = identifier.split("-")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid identifier format: {identifier}")
+    try:
+        float(parts[1])
+    except ValueError as e:
+        raise ValueError(f"Invalid issue number in: {identifier}") from e
+
+
+def _fetch_issue(issue_ref: str, user_id: str) -> LinearIssue:
+    """The full issue for a UUID or a ``TEAM-123`` identifier (``issue(id:)`` takes both)."""
+    return graphql_request(
+        QUERY_ISSUE_BY_ID, LinearIssueIdVariables(id=issue_ref), user_id, LinearIssueData
+    ).issue
+
+
+def _sub_issue_input(
+    team_id: str, parent_id: str, sub: CreateIssueSubItem | SubIssueItem
+) -> LinearIssueCreateInput:
+    input_data = LinearIssueCreateInput(team_id=team_id, title=sub.title, parent_id=parent_id)
+    if sub.description:
+        input_data.description = sub.description
+    if sub.assignee_id:
+        input_data.assignee_id = sub.assignee_id
+    if sub.priority is not None:
+        input_data.priority = sub.priority
+    return input_data
+
+
+def _create_issue(input_data: LinearIssueCreateInput, user_id: str) -> dict[str, object] | None:
+    """Create one issue; ``None`` when Linear reports ``success: false``."""
+    payload = graphql_request(
+        MUTATION_CREATE_ISSUE,
+        LinearIssueCreateVariables(input=input_data),
+        user_id,
+        LinearIssueCreateData,
+    ).issue_create
+    if not payload.success or payload.issue is None:
+        return None
+    return {
+        "id": payload.issue.id,
+        "identifier": payload.issue.identifier,
+        "title": payload.issue.title,
+    }
+
+
+def _history_entry(
+    entry: LinearIssueHistory, change_key: str, *, system_actor: str | None
+) -> dict[str, object] | None:
+    """One activity line for a history entry, or ``None`` when it changed nothing we report."""
+    actor = entry.actor.name if entry.actor else system_actor
+    line: dict[str, object] = {"timestamp": entry.created_at, "actor": actor}
+    if entry.from_state or entry.to_state:
+        line[change_key] = "state"
+        line["from"] = entry.from_state.name if entry.from_state else None
+        line["to"] = entry.to_state.name if entry.to_state else None
+    elif entry.from_assignee or entry.to_assignee:
+        line[change_key] = "assignee"
+        line["from"] = entry.from_assignee.name if entry.from_assignee else None
+        line["to"] = entry.to_assignee.name if entry.to_assignee else None
+    elif entry.from_priority is not None or entry.to_priority is not None:
+        line[change_key] = "priority"
+        line["from"] = priority_to_str(entry.from_priority or 0)
+        line["to"] = priority_to_str(entry.to_priority or 0)
+    elif entry.added_labels:
+        line[change_key] = "labels_added"
+        line["labels"] = [label.name for label in entry.added_labels]
+    elif entry.removed_labels:
+        line[change_key] = "labels_removed"
+        line["labels"] = [label.name for label in entry.removed_labels]
+    else:
+        return None
+    return line
+
+
 def register_linear_custom_tools(composio: Composio) -> list[str]:
     """Register Linear tools as Composio custom tools."""
 
@@ -94,56 +219,73 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_RESOLVE_CONTEXT(
         request: ResolveContextInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Resolve fuzzy names to Linear IDs."""
         del execute_request  # unused: framework-mandated custom-tool signature
-        result: dict[str, Any] = {}
+        user_id = _user_id(auth_credentials)
+        result: dict[str, object] = {}
 
-        viewer_data = graphql_request(QUERY_VIEWER, None, auth_credentials)
-        viewer = viewer_data.get("viewer", {})
+        viewer = graphql_request(QUERY_VIEWER, None, user_id, LinearViewerData).viewer
         result["current_user"] = {
-            "id": viewer.get("id"),
-            "name": viewer.get("name"),
-            "email": viewer.get("email"),
+            "id": viewer.id,
+            "name": viewer.name,
+            "email": viewer.email,
         }
 
         if request.team_name:
-            teams_data = graphql_request(QUERY_TEAMS, None, auth_credentials)
-            teams = teams_data.get("teams", {}).get("nodes", [])
-            result["teams"] = fuzzy_match(request.team_name, teams, "name", limit=3)
+            teams = graphql_request(QUERY_TEAMS, None, user_id, LinearTeamsData).teams.nodes
+            result["teams"] = [
+                t.model_dump(mode="json", by_alias=True)
+                for t in fuzzy_match(request.team_name, teams, limit=3)
+            ]
 
         if request.user_name:
-            users_data = graphql_request(QUERY_USERS, None, auth_credentials)
-            users = users_data.get("users", {}).get("nodes", [])
-            active_users = [u for u in users if u.get("active", True)]
-            result["users"] = fuzzy_match(request.user_name, active_users, "name", limit=3)
+            users = graphql_request(QUERY_USERS, None, user_id, LinearUsersData).users.nodes
+            active_users = [u for u in users if u.active]
+            result["users"] = [
+                u.model_dump(mode="json", by_alias=True)
+                for u in fuzzy_match(request.user_name, active_users, limit=3)
+            ]
 
         if request.label_names:
             if request.team_id:
                 labels_data = graphql_request(
-                    QUERY_LABELS, {"teamId": request.team_id}, auth_credentials
+                    QUERY_LABELS,
+                    LinearTeamIdVariables(team_id=request.team_id),
+                    user_id,
+                    LinearLabelsData,
                 )
             else:
-                labels_data = graphql_request(QUERY_LABELS_ALL, None, auth_credentials)
-            labels = labels_data.get("issueLabels", {}).get("nodes", [])
-            matched_labels = []
+                labels_data = graphql_request(QUERY_LABELS_ALL, None, user_id, LinearLabelsData)
+            labels = labels_data.issue_labels.nodes
+            matched_labels: list[LinearLabel] = []
             for label_name in request.label_names[:3]:
-                matches = fuzzy_match(label_name, labels, "name", limit=1)
-                matched_labels.extend(matches)
-            result["labels"] = matched_labels[:4]
+                matched_labels.extend(fuzzy_match(label_name, labels, limit=1))
+            result["labels"] = [
+                label.model_dump(mode="json", by_alias=True) for label in matched_labels[:4]
+            ]
 
         if request.project_name:
-            projects_data = graphql_request(QUERY_PROJECTS, None, auth_credentials)
-            projects = projects_data.get("projects", {}).get("nodes", [])
-            result["projects"] = fuzzy_match(request.project_name, projects, "name", limit=3)
+            projects = graphql_request(
+                QUERY_PROJECTS, None, user_id, LinearProjectsData
+            ).projects.nodes
+            result["projects"] = [
+                p.model_dump(mode="json", by_alias=True)
+                for p in fuzzy_match(request.project_name, projects, limit=3)
+            ]
 
         if request.state_name and request.team_id:
-            states_data = graphql_request(
-                QUERY_STATES, {"teamId": request.team_id}, auth_credentials
-            )
-            states = states_data.get("workflowStates", {}).get("nodes", [])
-            result["states"] = fuzzy_match(request.state_name, states, "name", limit=3)
+            states = graphql_request(
+                QUERY_STATES,
+                LinearTeamIdVariables(team_id=request.team_id),
+                user_id,
+                LinearStatesData,
+            ).workflow_states.nodes
+            result["states"] = [
+                s.model_dump(mode="json", by_alias=True)
+                for s in fuzzy_match(request.state_name, states, limit=3)
+            ]
 
         return {"data": result}
 
@@ -152,45 +294,31 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_GET_MY_TASKS(
         request: GetMyTasksInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Get the current user's assigned issues."""
         del execute_request  # unused: framework-mandated custom-tool signature
-        viewer_data = graphql_request(QUERY_VIEWER, None, auth_credentials)
-        viewer_id = viewer_data.get("viewer", {}).get("id")
+        user_id = _user_id(auth_credentials)
+        viewer = graphql_request(QUERY_VIEWER, None, user_id, LinearViewerData).viewer
 
-        if not viewer_id:
-            raise ValueError("Could not get current user")
-
-        issues_data = graphql_request(
+        issues = graphql_request(
             QUERY_MY_ISSUES,
-            {
-                "assigneeId": viewer_id,
-                "includeCompleted": not request.include_completed,
-                "first": min(request.limit * 2, 100),
-            },
-            auth_credentials,
-        )
-
-        issues = issues_data.get("issues", {}).get("nodes", [])
+            LinearMyIssuesVariables(
+                assignee_id=viewer.id,
+                include_completed=not request.include_completed,
+                first=min(request.limit * 2, 100),
+            ),
+            user_id,
+            LinearIssuesData,
+        ).issues.nodes
         today = _user_local_today()
         week_end = today + timedelta(days=7)
 
-        filtered = []
+        filtered: list[LinearIssueSummary] = []
         for issue in issues:
-            due_str = issue.get("dueDate")
-            due_date = None
-            if due_str:
-                with contextlib.suppress(ValueError):
-                    due_date = datetime.fromisoformat(due_str).date()
+            due_date = _parse_due_date(issue.due_date)
 
-            priority = issue.get("priority", 0)
-            state_type = issue.get("state", {}).get("type", "")
-
-            if not request.include_completed and state_type in [
-                "completed",
-                "canceled",
-            ]:
+            if not request.include_completed and issue.state.type in _CLOSED_STATE_TYPES:
                 continue
 
             if request.filter == "today":
@@ -203,15 +331,13 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
                 if due_date and due_date < today:
                     filtered.append(issue)
             elif request.filter == "high_priority":
-                if priority in [1, 2]:
+                if issue.priority in _URGENT_PRIORITIES:
                     filtered.append(issue)
             else:
                 filtered.append(issue)
 
-        def sort_key(issue: dict) -> tuple:
-            p = issue.get("priority", 99)
-            due = issue.get("dueDate") or "9999-12-31"
-            return (p, due)
+        def sort_key(issue: LinearIssueSummary) -> tuple[int, str]:
+            return (issue.priority, issue.due_date or "9999-12-31")
 
         filtered.sort(key=sort_key)
         formatted = [format_issue_summary(i) for i in filtered[: request.limit]]
@@ -227,39 +353,32 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_SEARCH_ISSUES(
         request: SearchIssuesInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Search issues using natural language queries."""
         del execute_request  # unused: framework-mandated custom-tool signature
-        issues_data = graphql_request(
+        user_id = _user_id(auth_credentials)
+        issues = graphql_request(
             QUERY_SEARCH_ISSUES,
-            {"query": request.query, "first": min(request.limit * 2, 100)},
-            auth_credentials,
-        )
+            LinearSearchIssuesVariables(query=request.query, first=min(request.limit * 2, 100)),
+            user_id,
+            LinearSearchIssuesData,
+        ).search_issues.nodes
 
-        issues = issues_data.get("searchIssues", {}).get("nodes", [])
-        filtered = []
-
+        filtered: list[LinearIssueSummary] = []
         for issue in issues:
-            if request.team_id:
-                if issue.get("team", {}).get("id") != request.team_id:
-                    continue
-            if request.state_filter:
-                state_type = issue.get("state", {}).get("type", "").lower()
-                if state_type != request.state_filter:
-                    continue
+            if request.team_id and issue.team.id != request.team_id:
+                continue
+            if request.state_filter and issue.state.type.lower() != request.state_filter:
+                continue
             if request.assignee_id:
-                if issue.get("assignee", {}).get("id") != request.assignee_id:
+                if issue.assignee is None or issue.assignee.id != request.assignee_id:
                     continue
             if request.priority_filter:
-                priority = issue.get("priority", 0)
-                expected = priority_to_int(request.priority_filter)
-                if priority != expected:
+                if issue.priority != priority_to_int(request.priority_filter):
                     continue
-            if request.created_after:
-                created = issue.get("createdAt", "")
-                if created < request.created_after:
-                    continue
+            if request.created_after and (issue.created_at or "") < request.created_after:
+                continue
             filtered.append(issue)
 
         formatted = [format_issue_summary(i) for i in filtered[: request.limit]]
@@ -275,124 +394,80 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_GET_ISSUE_FULL_CONTEXT(
         request: GetIssueFullContextInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Get complete issue details in one call."""
         del execute_request  # unused: framework-mandated custom-tool signature
+        user_id = _user_id(auth_credentials)
         if not request.issue_id and not request.issue_identifier:
             raise ValueError("Provide either issue_id or issue_identifier")
 
-        issue = None
-
         if request.issue_id:
-            data = graphql_request(QUERY_ISSUE_BY_ID, {"id": request.issue_id}, auth_credentials)
-            issue = data.get("issue")
-        elif request.issue_identifier:
-            parts = request.issue_identifier.split("-")
-            if len(parts) != 2:
-                raise ValueError(f"Invalid identifier format: {request.issue_identifier}")
-            try:
-                float(parts[1])
-            except ValueError as e:
-                raise ValueError(f"Invalid issue number in: {request.issue_identifier}") from e
+            issue = _fetch_issue(request.issue_id, user_id)
+        else:
+            _validate_identifier(request.issue_identifier or "")
+            issue = _fetch_issue(request.issue_identifier or "", user_id)
 
-            data = graphql_request(
-                QUERY_ISSUE_BY_IDENTIFIER,
-                {"identifier": request.issue_identifier},
-                auth_credentials,
-            )
-            issue = data.get("issue")
-
-        if not issue:
-            raise ValueError(f"Issue not found: {request.issue_id or request.issue_identifier}")
-
-        result = {
-            "id": issue.get("id"),
-            "identifier": issue.get("identifier"),
-            "title": issue.get("title"),
-            "description": issue.get("description"),
-            "priority": priority_to_str(issue.get("priority", 0)),
-            "state": issue.get("state", {}).get("name"),
-            "dueDate": issue.get("dueDate"),
-            "estimate": issue.get("estimate"),
-            "team": (issue.get("team") or {}).get("name"),
-            "project": (issue.get("project") or {}).get("name"),
-            "cycle": (issue.get("cycle") or {}).get("name"),
-            "assignee": (issue.get("assignee") or {}).get("name"),
-            "creator": (issue.get("creator") or {}).get("name"),
+        result: dict[str, object] = {
+            "id": issue.id,
+            "identifier": issue.identifier,
+            "title": issue.title,
+            "description": issue.description,
+            "priority": priority_to_str(issue.priority),
+            "state": issue.state.name,
+            "dueDate": issue.due_date,
+            "estimate": issue.estimate,
+            "team": issue.team.name,
+            "project": issue.project.name if issue.project else None,
+            "cycle": issue.cycle.name if issue.cycle else None,
+            "assignee": issue.assignee.name if issue.assignee else None,
+            "creator": issue.creator.name if issue.creator else None,
         }
 
-        if issue.get("parent"):
+        if issue.parent:
             result["parent"] = {
-                "identifier": issue["parent"].get("identifier"),
-                "title": issue["parent"].get("title"),
+                "identifier": issue.parent.identifier,
+                "title": issue.parent.title,
             }
 
-        children = (issue.get("children") or {}).get("nodes", [])
-        if children:
+        if issue.children.nodes:
             result["sub_issues"] = [
-                {
-                    "identifier": c.get("identifier"),
-                    "title": c.get("title"),
-                    "state": c.get("state", {}).get("name"),
-                }
-                for c in children
+                {"identifier": c.identifier, "title": c.title, "state": c.state.name}
+                for c in issue.children.nodes
             ]
 
-        relations = (issue.get("relations") or {}).get("nodes", [])
-        if relations:
+        if issue.relations.nodes:
             result["relations"] = [
                 {
-                    "type": r.get("type"),
+                    "type": r.type,
                     "issue": {
-                        "identifier": r.get("relatedIssue", {}).get("identifier"),
-                        "title": r.get("relatedIssue", {}).get("title"),
+                        "identifier": r.related_issue.identifier,
+                        "title": r.related_issue.title,
                     },
                 }
-                for r in relations
+                for r in issue.relations.nodes
             ]
 
-        comments = (issue.get("comments") or {}).get("nodes", [])
-        if comments:
+        if issue.comments.nodes:
             result["comments"] = [
                 {
-                    "author": (c.get("user") or {}).get("name"),
-                    "body": c.get("body"),
-                    "createdAt": c.get("createdAt"),
+                    "author": c.user.name if c.user else None,
+                    "body": c.body,
+                    "createdAt": c.created_at,
                 }
-                for c in comments
+                for c in issue.comments.nodes
             ]
 
-        history = (issue.get("history") or {}).get("nodes", [])
-        if history:
-            result["activity"] = []
-            for h in history:
-                entry = {
-                    "timestamp": h.get("createdAt"),
-                    "actor": (h.get("actor") or {}).get("name"),
-                }
-                if h.get("fromState") or h.get("toState"):
-                    entry["change"] = "state"
-                    entry["from"] = (h.get("fromState") or {}).get("name")
-                    entry["to"] = (h.get("toState") or {}).get("name")
-                elif h.get("fromAssignee") or h.get("toAssignee"):
-                    entry["change"] = "assignee"
-                    entry["from"] = (h.get("fromAssignee") or {}).get("name")
-                    entry["to"] = (h.get("toAssignee") or {}).get("name")
-                elif history_label_names(h.get("addedLabels")):
-                    entry["change"] = "labels_added"
-                    entry["labels"] = history_label_names(h.get("addedLabels"))
-                elif history_label_names(h.get("removedLabels")):
-                    entry["change"] = "labels_removed"
-                    entry["labels"] = history_label_names(h.get("removedLabels"))
-                else:
-                    continue
-                result["activity"].append(entry)
+        if issue.history.nodes:
+            result["activity"] = [
+                entry
+                for h in issue.history.nodes
+                if (entry := _history_entry(h, "change", system_actor=None)) is not None
+            ]
 
-        attachments = (issue.get("attachments") or {}).get("nodes", [])
-        if attachments:
+        if issue.attachments.nodes:
             result["attachments"] = [
-                {"title": a.get("title"), "url": a.get("url")} for a in attachments
+                {"title": a.title, "url": a.url} for a in issue.attachments.nodes
             ]
 
         return {"issue": result}
@@ -402,85 +477,65 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_CREATE_ISSUE(
         request: CreateIssueInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Create an issue with full field support and optional sub-issues."""
         del execute_request  # unused: framework-mandated custom-tool signature
-        # Build input data
-        input_data: dict[str, Any] = {
-            "teamId": request.team_id,
-            "title": request.title,
-        }
+        user_id = _user_id(auth_credentials)
+        input_data = LinearIssueCreateInput(team_id=request.team_id, title=request.title)
 
         if request.description:
-            input_data["description"] = request.description
+            input_data.description = request.description
         if request.assignee_id:
-            input_data["assigneeId"] = request.assignee_id
+            input_data.assignee_id = request.assignee_id
         if request.priority is not None:
-            input_data["priority"] = request.priority
+            input_data.priority = request.priority
         if request.state_id:
-            input_data["stateId"] = request.state_id
+            input_data.state_id = request.state_id
         if request.label_ids:
-            input_data["labelIds"] = request.label_ids
+            input_data.label_ids = request.label_ids
         if request.project_id:
-            input_data["projectId"] = request.project_id
+            input_data.project_id = request.project_id
         if request.cycle_id:
-            input_data["cycleId"] = request.cycle_id
+            input_data.cycle_id = request.cycle_id
         if request.due_date:
-            input_data["dueDate"] = request.due_date
+            input_data.due_date = request.due_date
         if request.estimate is not None:
-            input_data["estimate"] = request.estimate
+            input_data.estimate = request.estimate
         if request.parent_id:
-            input_data["parentId"] = request.parent_id
+            input_data.parent_id = request.parent_id
 
         # Create the main issue
-        result = graphql_request(MUTATION_CREATE_ISSUE, {"input": input_data}, auth_credentials)
-        create_result = result.get("issueCreate", {})
-        if not create_result.get("success"):
+        create_result = graphql_request(
+            MUTATION_CREATE_ISSUE,
+            LinearIssueCreateVariables(input=input_data),
+            user_id,
+            LinearIssueCreateData,
+        ).issue_create
+        if not create_result.success or create_result.issue is None:
             raise RuntimeError("Failed to create issue")
 
-        created = create_result.get("issue", {})
-        response: dict[str, Any] = {
+        created = create_result.issue
+        response: dict[str, object] = {
             "issue": {
-                "id": created.get("id"),
-                "identifier": created.get("identifier"),
-                "title": created.get("title"),
-                "url": created.get("url"),
+                "id": created.id,
+                "identifier": created.identifier,
+                "title": created.title,
+                "url": created.url,
             },
         }
 
         # Create sub-issues if provided
         if request.sub_issues:
-            parent_id = created.get("id")
-            created_subs = []
-            errors = []
+            created_subs: list[dict[str, object]] = []
+            errors: list[dict[str, object]] = []
 
             for sub in request.sub_issues:
-                sub_input: dict[str, Any] = {
-                    "teamId": request.team_id,
-                    "title": sub.title,
-                    "parentId": parent_id,
-                }
-                if sub.description:
-                    sub_input["description"] = sub.description
-                if sub.assignee_id:
-                    sub_input["assigneeId"] = sub.assignee_id
-                if sub.priority is not None:
-                    sub_input["priority"] = sub.priority
-
-                sub_result = graphql_request(
-                    MUTATION_CREATE_ISSUE, {"input": sub_input}, auth_credentials
+                sub_issue = _create_issue(
+                    _sub_issue_input(request.team_id, created.id, sub), user_id
                 )
-                sub_create = sub_result.get("issueCreate", {})
-                if sub_create.get("success"):
-                    sub_issue = sub_create.get("issue", {})
-                    created_subs.append(
-                        {
-                            "id": sub_issue.get("id"),
-                            "identifier": sub_issue.get("identifier"),
-                            "title": sub_issue.get("title"),
-                        }
-                    )
+                if sub_issue is not None:
+                    created_subs.append(sub_issue)
                 else:
                     errors.append({"title": sub.title, "error": "Failed to create"})
 
@@ -495,75 +550,38 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_CREATE_SUB_ISSUES(
         request: CreateSubIssuesInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Create multiple sub-issues under a parent issue."""
         del execute_request  # unused: framework-mandated custom-tool signature
-        parent_id = request.parent_issue_id
+        user_id = _user_id(auth_credentials)
+        parent_ref = request.parent_issue_id
 
-        if not parent_id and request.parent_identifier:
+        if not parent_ref and request.parent_identifier:
             parts = request.parent_identifier.split("-")
             if len(parts) != 2:
                 raise ValueError(f"Invalid parent identifier: {request.parent_identifier}")
-            team_key = parts[0]
             try:
-                number = float(parts[1])
+                float(parts[1])
             except ValueError as e:
                 raise ValueError(f"Invalid issue number in: {request.parent_identifier}") from e
+            parent_ref = request.parent_identifier
 
-            data = graphql_request(
-                QUERY_ISSUE_BY_IDENTIFIER,
-                {"teamKey": team_key, "number": number},
-                auth_credentials,
-            )
-            teams = data.get("teams", {}).get("nodes", [])
-            if teams and teams[0].get("issue"):
-                parent_id = teams[0]["issue"].get("id")
-
-        if not parent_id:
+        if not parent_ref:
             raise ValueError("Could not resolve parent issue")
 
-        parent_data = graphql_request(QUERY_ISSUE_BY_ID, {"id": parent_id}, auth_credentials)
-        parent_issue = parent_data.get("issue")
-        if not parent_issue:
-            raise ValueError("Parent issue not found")
+        parent_issue = _fetch_issue(parent_ref, user_id)
 
-        team_id = parent_issue.get("team", {}).get("id")
-        if not team_id:
-            raise ValueError("Could not get parent's team")
-
-        created_issues = []
-        errors = []
-
+        created_issues: list[dict[str, object]] = []
         for sub_issue in request.sub_issues:
-            input_data: dict[str, Any] = {
-                "teamId": team_id,
-                "title": sub_issue.title,
-                "parentId": parent_id,
-            }
-            if sub_issue.description:
-                input_data["description"] = sub_issue.description
-            if sub_issue.assignee_id:
-                input_data["assigneeId"] = sub_issue.assignee_id
-            if sub_issue.priority is not None:
-                input_data["priority"] = sub_issue.priority
-
-            result = graphql_request(MUTATION_CREATE_ISSUE, {"input": input_data}, auth_credentials)
-            create_result = result.get("issueCreate", {})
-            if create_result.get("success"):
-                created = create_result.get("issue", {})
-                created_issues.append(
-                    {
-                        "id": created.get("id"),
-                        "identifier": created.get("identifier"),
-                        "title": created.get("title"),
-                    }
-                )
-            else:
-                errors.append({"title": sub_issue.title, "error": "Failed to create"})
+            created = _create_issue(
+                _sub_issue_input(parent_issue.team.id, parent_issue.id, sub_issue), user_id
+            )
+            if created is not None:
+                created_issues.append(created)
 
         return {
-            "parent": request.parent_identifier or parent_id,
+            "parent": request.parent_identifier or parent_ref,
             "created_count": len(created_issues),
             "sub_issues": created_issues,
         }
@@ -573,10 +591,11 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_CREATE_ISSUE_RELATION(
         request: CreateIssueRelationInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Create a relationship between two issues."""
         del execute_request  # unused: framework-mandated custom-tool signature
+        user_id = _user_id(auth_credentials)
         type_mapping = {
             "blocks": "blocks",
             "is_blocked_by": "blocked_by",
@@ -585,24 +604,22 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
         }
         linear_type = type_mapping.get(request.relation_type, request.relation_type)
 
-        result = graphql_request(
+        create_result = graphql_request(
             MUTATION_CREATE_RELATION,
-            {
-                "issueId": request.issue_id,
-                "relatedIssueId": request.related_issue_id,
-                "type": linear_type,
-            },
-            auth_credentials,
-        )
-
-        create_result = result.get("issueRelationCreate", {})
-        if not create_result.get("success"):
+            LinearIssueRelationCreateVariables(
+                issue_id=request.issue_id,
+                related_issue_id=request.related_issue_id,
+                type=linear_type,
+            ),
+            user_id,
+            LinearIssueRelationCreateData,
+        ).issue_relation_create
+        if not create_result.success:
             raise RuntimeError("Failed to create relation")
 
-        relation = create_result.get("issueRelation", {})
         return {
             "relation": {
-                "id": relation.get("id"),
+                "id": create_result.issue_relation.id,
                 "type": request.relation_type,
                 "from_issue": request.issue_id,
                 "to_issue": request.related_issue_id,
@@ -614,10 +631,11 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_GET_ISSUE_ACTIVITY(
         request: GetIssueActivityInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Get the change history for an issue."""
         del execute_request  # unused: framework-mandated custom-tool signature
+        user_id = _user_id(auth_credentials)
         issue_id = request.issue_id
 
         if not issue_id and request.issue_identifier:
@@ -625,58 +643,25 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
             if len(parts) == 2:
                 try:
                     float(parts[1])
-                    data = graphql_request(
-                        QUERY_ISSUE_BY_IDENTIFIER,
-                        {"identifier": request.issue_identifier},
-                        auth_credentials,
-                    )
-                    issue = data.get("issue")
-                    if issue:
-                        issue_id = issue["id"]
+                    issue_id = _fetch_issue(request.issue_identifier, user_id).id
                 except ValueError:
                     pass
 
         if not issue_id:
             raise ValueError("Could not resolve issue")
 
-        data = graphql_request(
+        history = graphql_request(
             QUERY_ISSUE_HISTORY,
-            {"issueId": issue_id, "first": request.limit},
-            auth_credentials,
-        )
-        history = (data.get("issue") or {}).get("history", {}).get("nodes", [])
+            LinearIssueHistoryVariables(issue_id=issue_id, first=request.limit),
+            user_id,
+            LinearIssueHistoryData,
+        ).issue.history.nodes
 
-        activities = []
-        for h in history:
-            entry = {
-                "timestamp": h.get("createdAt"),
-                "actor": (h.get("actor") or {}).get("name") if h.get("actor") else "System",
-            }
-            if h.get("fromState") or h.get("toState"):
-                entry["change_type"] = "state"
-                entry["from"] = (h.get("fromState") or {}).get("name")
-                entry["to"] = (h.get("toState") or {}).get("name")
-            elif h.get("fromAssignee") or h.get("toAssignee"):
-                entry["change_type"] = "assignee"
-                entry["from"] = (
-                    (h.get("fromAssignee") or {}).get("name") if h.get("fromAssignee") else None
-                )
-                entry["to"] = (
-                    (h.get("toAssignee") or {}).get("name") if h.get("toAssignee") else None
-                )
-            elif h.get("fromPriority") is not None or h.get("toPriority") is not None:
-                entry["change_type"] = "priority"
-                entry["from"] = priority_to_str(h.get("fromPriority", 0))
-                entry["to"] = priority_to_str(h.get("toPriority", 0))
-            elif history_label_names(h.get("addedLabels")):
-                entry["change_type"] = "labels_added"
-                entry["labels"] = history_label_names(h.get("addedLabels"))
-            elif history_label_names(h.get("removedLabels")):
-                entry["change_type"] = "labels_removed"
-                entry["labels"] = history_label_names(h.get("removedLabels"))
-            else:
-                continue
-            activities.append(entry)
+        activities = [
+            entry
+            for h in history
+            if (entry := _history_entry(h, "change_type", system_actor="System")) is not None
+        ]
 
         return {
             "issue": request.issue_identifier or issue_id,
@@ -689,55 +674,54 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_GET_ACTIVE_SPRINT(
         request: GetActiveSprintInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Get the current/active sprint context."""
         del execute_request  # unused: framework-mandated custom-tool signature
-        data = graphql_request(QUERY_ACTIVE_CYCLES, None, auth_credentials)
-        cycles = data.get("cycles", {}).get("nodes", [])
+        user_id = _user_id(auth_credentials)
+        cycles = graphql_request(QUERY_ACTIVE_CYCLES, None, user_id, LinearCyclesData).cycles.nodes
 
         if request.team_id:
-            cycles = [c for c in cycles if c.get("team", {}).get("id") == request.team_id]
+            cycles = [c for c in cycles if c.team.id == request.team_id]
 
         limit = request.issues_per_state_limit
-        sprints = []
+        sprints: list[dict[str, object]] = []
         for cycle in cycles:
-            issues = cycle.get("issues", {}).get("nodes", [])
-            by_state: dict[str, list[dict]] = {
-                "backlog": [],
-                "unstarted": [],
-                "started": [],
-                "completed": [],
-            }
+            issues = cycle.issues.nodes
+            counts = dict.fromkeys(_SPRINT_STATE_TYPES, 0)
+            in_progress: list[dict[str, object]] = []
+            todo: list[dict[str, object]] = []
 
             for issue in issues:
-                state_type = issue.get("state", {}).get("type", "unstarted").lower()
-                if state_type in by_state:
-                    by_state[state_type].append(
-                        {
-                            "identifier": issue.get("identifier"),
-                            "title": issue.get("title"),
-                            "priority": priority_to_str(issue.get("priority", 0)),
-                            "assignee": issue.get("assignee", {}).get("name")
-                            if issue.get("assignee")
-                            else None,
-                        }
-                    )
+                state_type = (issue.state.type or "unstarted").lower()
+                if state_type not in counts:
+                    continue
+                counts[state_type] += 1
+                line: dict[str, object] = {
+                    "identifier": issue.identifier,
+                    "title": issue.title,
+                    "priority": priority_to_str(issue.priority),
+                    "assignee": issue.assignee.name if issue.assignee else None,
+                }
+                if state_type == "started":
+                    in_progress.append(line)
+                elif state_type == "unstarted":
+                    todo.append(line)
 
             sprints.append(
                 {
-                    "id": cycle.get("id"),
-                    "name": cycle.get("name"),
-                    "number": cycle.get("number"),
-                    "team": cycle.get("team", {}).get("name"),
-                    "team_key": cycle.get("team", {}).get("key"),
-                    "starts_at": cycle.get("startsAt"),
-                    "ends_at": cycle.get("endsAt"),
-                    "progress": round(cycle.get("progress", 0) * 100, 1),
+                    "id": cycle.id,
+                    "name": cycle.name,
+                    "number": cycle.number,
+                    "team": cycle.team.name,
+                    "team_key": cycle.team.key,
+                    "starts_at": cycle.starts_at,
+                    "ends_at": cycle.ends_at,
+                    "progress": round(cycle.progress * 100, 1),
                     "total_issues": len(issues),
-                    "issues_by_state": {k: len(v) for k, v in by_state.items()},
-                    "in_progress": by_state["started"][:limit],
-                    "todo": by_state["unstarted"][:limit],
+                    "issues_by_state": counts,
+                    "in_progress": in_progress[:limit],
+                    "todo": todo[:limit],
                 }
             )
 
@@ -748,44 +732,44 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_BULK_UPDATE_ISSUES(
         request: BulkUpdateIssuesInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Batch update multiple issues at once."""
         del execute_request  # unused: framework-mandated custom-tool signature
+        user_id = _user_id(auth_credentials)
         if not request.issue_ids:
             raise ValueError("No issue IDs provided")
 
-        input_data: dict[str, Any] = {}
+        input_data = LinearIssueUpdateInput()
         if request.state_id is not None:
-            input_data["stateId"] = request.state_id
+            input_data.state_id = request.state_id
         if request.priority is not None:
-            input_data["priority"] = request.priority
+            input_data.priority = request.priority
         if request.assignee_id is not None:
-            input_data["assigneeId"] = request.assignee_id if request.assignee_id else None
+            input_data.assignee_id = request.assignee_id or None
         if request.cycle_id is not None:
-            input_data["cycleId"] = request.cycle_id if request.cycle_id else None
+            input_data.cycle_id = request.cycle_id or None
         if request.project_id is not None:
-            input_data["projectId"] = request.project_id if request.project_id else None
+            input_data.project_id = request.project_id or None
         if request.labels_to_add:
-            input_data["labelIds"] = request.labels_to_add
+            input_data.label_ids = request.labels_to_add
 
-        if not input_data:
+        if not input_data.model_fields_set:
             raise ValueError("No updates specified")
 
-        result = graphql_request(
+        update_result = graphql_request(
             MUTATION_UPDATE_ISSUES,
-            {"issueIds": request.issue_ids, "input": input_data},
-            auth_credentials,
-        )
-        update_result = result.get("issueBatchUpdate", {})
-        if not update_result.get("success"):
+            LinearIssueBatchUpdateVariables(issue_ids=request.issue_ids, input=input_data),
+            user_id,
+            LinearIssueBatchUpdateData,
+        ).issue_batch_update
+        if not update_result.success:
             raise RuntimeError("Batch update failed")
 
-        updated = update_result.get("issues", [])
         return {
-            "updated_count": len(updated),
+            "updated_count": len(update_result.issues),
             "updated_issues": [
-                {"id": i.get("id"), "identifier": i.get("identifier")} for i in updated
+                {"id": i.id, "identifier": i.identifier} for i in update_result.issues
             ],
         }
 
@@ -794,20 +778,21 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_GET_NOTIFICATIONS(
         request: GetNotificationsInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Get the current user's notifications."""
         del execute_request  # unused: framework-mandated custom-tool signature
-        data = graphql_request(
+        user_id = _user_id(auth_credentials)
+        notifications = graphql_request(
             QUERY_NOTIFICATIONS,
-            {"first": request.limit},
-            auth_credentials,
-        )
-        notifications = data.get("notifications", {}).get("nodes", [])
+            LinearFirstVariables(first=request.limit),
+            user_id,
+            LinearNotificationsData,
+        ).notifications.nodes
 
-        formatted = []
+        formatted: list[dict[str, object]] = []
         for n in notifications:
-            is_read = n.get("readAt") is not None
+            is_read = n.read_at is not None
 
             # Filter by read status if not including read
             if not request.include_read and is_read:
@@ -815,17 +800,14 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
 
             formatted.append(
                 {
-                    "id": n.get("id"),
-                    "type": n.get("type"),
-                    "created_at": n.get("createdAt"),
+                    "id": n.id,
+                    "type": n.type,
+                    "created_at": n.created_at,
                     "read": is_read,
-                    "issue": {
-                        "identifier": n.get("issue", {}).get("identifier"),
-                        "title": n.get("issue", {}).get("title"),
-                    }
-                    if n.get("issue")
+                    "issue": {"identifier": n.issue.identifier, "title": n.issue.title}
+                    if n.issue
                     else None,
-                    "actor": n.get("actor", {}).get("name") if n.get("actor") else None,
+                    "actor": n.actor.name if n.actor else None,
                 }
             )
 
@@ -836,66 +818,57 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_GET_WORKSPACE_CONTEXT(
         request: GetWorkspaceContextInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Get full workspace context for session initialization."""
         del request, execute_request  # unused: framework-mandated custom-tool signature
-        viewer_data = graphql_request(QUERY_VIEWER, None, auth_credentials)
-        viewer = viewer_data.get("viewer", {})
-        assigned_count = len(viewer.get("assignedIssues", {}).get("nodes", []))
+        user_id = _user_id(auth_credentials)
+        viewer = graphql_request(QUERY_VIEWER, None, user_id, LinearViewerData).viewer
+        assigned_count = len(viewer.assigned_issues.nodes)
 
-        teams_data = graphql_request(QUERY_TEAMS, None, auth_credentials)
-        teams = teams_data.get("teams", {}).get("nodes", [])
+        teams = graphql_request(QUERY_TEAMS, None, user_id, LinearTeamsData).teams.nodes
 
-        issues_data = graphql_request(
+        my_issues = graphql_request(
             QUERY_MY_ISSUES,
-            {"assigneeId": viewer.get("id"), "includeCompleted": True, "first": 50},
-            auth_credentials,
-        )
-        my_issues = issues_data.get("issues", {}).get("nodes", [])
+            LinearMyIssuesVariables(assignee_id=viewer.id, include_completed=True, first=50),
+            user_id,
+            LinearIssuesData,
+        ).issues.nodes
 
         today = _user_local_today()
-        overdue = []
-        high_priority = []
-        sla_at_risk = []
+        overdue: list[dict[str, object]] = []
+        high_priority: list[dict[str, object]] = []
+        sla_at_risk: list[dict[str, object]] = []
 
         for issue in my_issues:
-            state_type = issue.get("state", {}).get("type", "")
-            if state_type in ["completed", "canceled"]:
+            if issue.state.type in _CLOSED_STATE_TYPES:
                 continue
 
-            due_str = issue.get("dueDate")
-            if due_str:
-                try:
-                    due_date = datetime.fromisoformat(due_str).date()
-                    if due_date < today:
-                        overdue.append(format_issue_summary(issue))
-                except ValueError:
-                    pass
+            due_date = _parse_due_date(issue.due_date)
+            if due_date and due_date < today:
+                overdue.append(format_issue_summary(issue))
 
-            if issue.get("priority") in [1, 2]:
+            if issue.priority in _URGENT_PRIORITIES:
                 high_priority.append(format_issue_summary(issue))
 
-            if issue.get("slaBreachesAt"):
+            if issue.sla_breaches_at:
                 sla_at_risk.append(format_issue_summary(issue))
 
         return {
             "user": {
-                "id": viewer.get("id"),
-                "name": viewer.get("name"),
-                "email": viewer.get("email"),
+                "id": viewer.id,
+                "name": viewer.name,
+                "email": viewer.email,
                 "assigned_issue_count": assigned_count,
             },
             "teams": [
                 {
-                    "id": t.get("id"),
-                    "name": t.get("name"),
-                    "key": t.get("key"),
-                    "active_cycle": t.get("activeCycle", {}).get("name")
-                    if t.get("activeCycle")
-                    else None,
-                    "cycle_progress": round(t.get("activeCycle", {}).get("progress", 0) * 100, 1)
-                    if t.get("activeCycle")
+                    "id": t.id,
+                    "name": t.name,
+                    "key": t.key,
+                    "active_cycle": t.active_cycle.name if t.active_cycle else None,
+                    "cycle_progress": round(t.active_cycle.progress * 100, 1)
+                    if t.active_cycle
                     else None,
                 }
                 for t in teams
@@ -911,59 +884,45 @@ def register_linear_custom_tools(composio: Composio) -> list[str]:
     def CUSTOM_GATHER_CONTEXT(
         request: GatherContextInput,
         execute_request: ExecuteRequestFn,
-        auth_credentials: dict[str, Any],
-    ) -> dict[str, Any]:
+        auth_credentials: dict[str, object],
+    ) -> dict[str, object]:
         """Get Linear workspace context snapshot: current user, teams, and urgent items.
 
         Zero required parameters. Returns full workspace state for session initialization.
         """
         del request, execute_request  # unused: framework-mandated custom-tool signature
-        viewer_data = graphql_request(QUERY_VIEWER, None, auth_credentials)
-        viewer = viewer_data.get("viewer", {})
+        user_id = _user_id(auth_credentials)
+        viewer = graphql_request(QUERY_VIEWER, None, user_id, LinearViewerData).viewer
 
-        teams_data = graphql_request(QUERY_TEAMS, None, auth_credentials)
-        teams = teams_data.get("teams", {}).get("nodes", [])
+        teams = graphql_request(QUERY_TEAMS, None, user_id, LinearTeamsData).teams.nodes
 
-        issues_data = graphql_request(
+        my_issues = graphql_request(
             QUERY_MY_ISSUES,
-            {"assigneeId": viewer.get("id"), "includeCompleted": True, "first": 50},
-            auth_credentials,
-        )
-        my_issues = issues_data.get("issues", {}).get("nodes", [])
+            LinearMyIssuesVariables(assignee_id=viewer.id, include_completed=True, first=50),
+            user_id,
+            LinearIssuesData,
+        ).issues.nodes
 
         today = _user_local_today()
-        overdue = []
-        high_priority = []
+        overdue: list[dict[str, object]] = []
+        high_priority: list[dict[str, object]] = []
 
         for issue in my_issues:
-            state_type = issue.get("state", {}).get("type", "")
-            if state_type in ["completed", "canceled"]:
+            if issue.state.type in _CLOSED_STATE_TYPES:
                 continue
-            due_str = issue.get("dueDate")
-            if due_str:
-                try:
-                    due_date = datetime.fromisoformat(due_str).date()
-                    if due_date < today:
-                        overdue.append(format_issue_summary(issue))
-                except ValueError:
-                    pass
-            if issue.get("priority") in [1, 2]:
+            due_date = _parse_due_date(issue.due_date)
+            if due_date and due_date < today:
+                overdue.append(format_issue_summary(issue))
+            if issue.priority in _URGENT_PRIORITIES:
                 high_priority.append(format_issue_summary(issue))
 
         return {
             "user": {
-                "id": viewer.get("id"),
-                "name": viewer.get("name"),
-                "email": viewer.get("email"),
+                "id": viewer.id,
+                "name": viewer.name,
+                "email": viewer.email,
             },
-            "teams": [
-                {
-                    "id": t.get("id"),
-                    "name": t.get("name"),
-                    "key": t.get("key"),
-                }
-                for t in teams
-            ],
+            "teams": [{"id": t.id, "name": t.name, "key": t.key} for t in teams],
             "urgent_items": {
                 "overdue": overdue[:5],
                 "high_priority": high_priority[:5],

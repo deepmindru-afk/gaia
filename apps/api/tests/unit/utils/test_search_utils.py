@@ -5,14 +5,14 @@ The flat ``app.utils.search_utils`` module was replaced by the
 
 These tests cover the public surface exported from ``app.utils.search``:
   - ``perform_search``        — cached entry point; returns a WebSearchResult
-  - ``search_for_research``   — cached entry point; returns {"results": [...]}
+  - ``search_for_research``   — cached entry point; returns a ResearchSearchResult
 
 Provider-level unit tests live in ``tests/unit/utils/search/``.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.utils.search import perform_search, search_for_research
+from app.utils.search import ResearchSearchResult, perform_search, search_for_research
 from app.utils.search.models import SearchResponse, SearchResultItem
 
 # ---------------------------------------------------------------------------
@@ -145,9 +145,10 @@ class TestSearchForResearch:
         fn = search_for_research.__wrapped__  # type: ignore[attr-defined]  # reaching the unwrapped original under functools.wraps
         result = await fn(query="deep", count=5)
 
-        assert "results" in result
-        assert len(result["results"]) == 1
-        assert result["results"][0]["url"] == "https://r.com"
+        assert len(result.results) == 1
+        assert result.results[0].url == "https://r.com"
+        # The dumped wire shape is exactly what the research tool reads.
+        assert result.model_dump() == {"results": [response.results[0].model_dump()]}
 
     @patch("app.utils.search.SearchEngine")
     async def test_empty_response_returns_empty_results(self, mock_engine_cls: MagicMock) -> None:
@@ -156,7 +157,8 @@ class TestSearchForResearch:
         fn = search_for_research.__wrapped__  # type: ignore[attr-defined]  # reaching the unwrapped original under functools.wraps
         result = await fn(query="nothing", count=5)
 
-        assert result == {"results": []}
+        assert result == ResearchSearchResult(results=[])
+        assert result.model_dump() == {"results": []}
 
     @patch("app.utils.search.SearchEngine")
     async def test_does_not_include_answer_or_images(self, mock_engine_cls: MagicMock) -> None:
@@ -171,7 +173,7 @@ class TestSearchForResearch:
         fn = search_for_research.__wrapped__  # type: ignore[attr-defined]  # reaching the unwrapped original under functools.wraps
         result = await fn(query="x", count=1)
 
-        assert set(result.keys()) == {"results"}
+        assert set(result.model_dump().keys()) == {"results"}
 
     @patch("app.utils.search.SearchEngine")
     async def test_default_count_is_five(self, mock_engine_cls: MagicMock) -> None:
