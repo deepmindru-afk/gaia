@@ -86,9 +86,12 @@ const useFetchUser = () => {
   const accessToken = searchParams.get("access_token");
   const refreshToken = searchParams.get("refresh_token");
 
-  // Analytics for the OAuth login — fired pre-redirect (redirect() aborts the
-  // render, so an effect here would never run). A module flag, not a ref:
-  // refs must not be written during render. Exactly-once per page load.
+  // OAuth redirect routing — isolated from store syncing so route changes
+  // don't overwrite user state with stale query data. Resolved during render
+  // (not in an effect) so the callback page never paints before redirecting;
+  // `redirect` performs the same client-side navigation router.push did.
+  // Login analytics live server-side (track_login on OAuth callback) — the
+  // client must not emit user:logged_in or it double-counts every login.
   if (
     data &&
     accessToken &&
@@ -97,9 +100,6 @@ const useFetchUser = () => {
     !hasTrackedOAuthLogin
   ) {
     hasTrackedOAuthLogin = true;
-    trackEvent(ANALYTICS_EVENTS.USER_LOGGED_IN, {
-      method: "workos_oauth",
-    });
 
     // A pending checkout takes priority; useCheckoutResume redirects to Dodo.
     const needsOnboarding = !data.onboarding?.completed;

@@ -14,13 +14,9 @@ export const ANALYTICS_EVENTS = {
   SETTINGS_DESKTOP_PREFERENCE_CHANGED: "settings:desktop_preference_changed",
   // Auth events
   USER_SESSION_RESUMED: "user:session_resumed",
-  USER_LOGGED_IN: "user:logged_in",
-  USER_LOGGED_OUT: "user:logged_out",
 
   // Onboarding events
   ONBOARDING_STARTED: "onboarding:started",
-  ONBOARDING_STEP_COMPLETED: "onboarding:step_completed",
-  ONBOARDING_COMPLETED: "onboarding:completed",
   ONBOARDING_SKIPPED: "onboarding:skipped",
 
   // Subscription events
@@ -221,35 +217,4 @@ export function trackEvent(
  */
 export function setUserProperties(properties: UserProperties): void {
   posthog.setPersonProperties(properties);
-}
-
-/**
- * Track onboarding progress.
- */
-export function trackOnboardingStep(
-  step: number,
-  stepName: string,
-  properties?: EventProperties,
-): void {
-  trackEvent(ANALYTICS_EVENTS.ONBOARDING_STEP_COMPLETED, {
-    step_number: step,
-    step_name: stepName,
-    ...properties,
-  });
-}
-
-/**
- * Track onboarding completion.
- */
-export function trackOnboardingComplete(properties: {
-  profession?: string;
-  integrationsConnected?: string[];
-  totalSteps: number;
-  timeToComplete?: number;
-}): void {
-  trackEvent(ANALYTICS_EVENTS.ONBOARDING_COMPLETED, properties);
-  setUserProperties({
-    onboarding_completed: true,
-    profession: properties.profession,
-  });
 }

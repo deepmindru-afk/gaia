@@ -2,20 +2,12 @@
 
 import { useEffect, useRef } from "react";
 
-import {
-  ANALYTICS_EVENTS,
-  trackEvent,
-  trackOnboardingComplete,
-  trackOnboardingStep,
-} from "@/lib/analytics";
+import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 
-import { FIELD_NAMES, questions } from "../constants";
 import type { OnboardingState } from "../state/types";
 
 export function useOnboardingAnalytics(state: OnboardingState): void {
   const startedRef = useRef(false);
-  const prevQuestionIndexRef = useRef<number | null>(null);
-  const completedRef = useRef(false);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -27,36 +19,8 @@ export function useOnboardingAnalytics(state: OnboardingState): void {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    const prev = prevQuestionIndexRef.current;
-    const curr = state.questionIndex;
-    prevQuestionIndexRef.current = curr;
-
-    if (prev == null) return;
-    if (curr === prev) return;
-    if (curr <= 0) return;
-
-    const answeredIndex = curr - 1;
-    if (answeredIndex < 0 || answeredIndex >= questions.length) return;
-
-    const q = questions[answeredIndex];
-    const value = state.responses[q.fieldName];
-    if (value == null) return;
-
-    // Never send `response_value` — onboarding responses are user-authored
-    // free text (name, profession, goals). Track only the question answered.
-    trackOnboardingStep(answeredIndex + 1, q.fieldName, {
-      question_id: q.id,
-    });
-  }, [state.questionIndex, state.responses]);
-
-  useEffect(() => {
-    if (completedRef.current) return;
-    if (!state.server?.first_message_conversation_id) return;
-    completedRef.current = true;
-    trackOnboardingComplete({
-      profession: state.responses[FIELD_NAMES.PROFESSION],
-      totalSteps: questions.length + 1,
-    });
-  }, [state.server?.first_message_conversation_id, state.responses]);
+  // Step and completion analytics live server-side: POST /onboarding/phase
+  // emits onboarding:step_completed and the worker emits
+  // onboarding:completed on PERSONALIZATION_COMPLETE. Emitting the same names
+  // here would double-count every step and completion.
 }
