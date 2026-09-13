@@ -1485,10 +1485,23 @@ class TestBotStreamHelpers:
             bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
             bot_svc.load_conversation_history = AsyncMock(return_value=[])
             _, request = await _prepare_bot_conversation(
-                self._body(file_ids=["f1"]), {"user_id": "uid1"}, "uid1"
+                self._body(
+                    file_ids=["f1"],
+                    file_data=[
+                        {
+                            "fileId": "f1",
+                            "url": "https://cdn.example/f1",
+                            "filename": "a.txt",
+                        }
+                    ],
+                ),
+                {"user_id": "uid1"},
+                "uid1",
             )
 
         assert request.fileIds == ["f1"]
+        assert request.fileData is not None and len(request.fileData) == 1
+        assert request.fileData[0].fileId == "f1"
 
     async def test_start_returns_token_and_forwards_every_kwarg(self) -> None:
         user = {"user_id": "uid1"}
@@ -1565,8 +1578,11 @@ class TestBotStreamHelpers:
             failed.exception.return_value = RuntimeError("boom")
             on_done(failed)
             mock_log.error.assert_called_once()
+            assert mock_log.error.call_args.args[0].endswith("Background stream task failed")
             assert mock_log.error.call_args.kwargs["error_type"] == "RuntimeError"
+            assert mock_log.error.call_args.kwargs["error"] == "boom"
             assert mock_log.error.call_args.kwargs["stream_id"] == "s1"
+            assert mock_log.error.call_args.kwargs["conversation_id"] == "conv-1"
 
     async def test_resolve_uses_middleware_user_when_authenticated(self) -> None:
         state = MagicMock()
@@ -1607,6 +1623,11 @@ class TestBotStreamHelpers:
 
     def test_data_payload_strips_resume_id_line(self) -> None:
         assert _bot_data_payload('id: 42\ndata: {"a": 1}') == '{"a": 1}'
+
+    def test_data_payload_splits_on_the_first_newline(self) -> None:
+        """Last-Event-ID resume tags one id line; a payload spanning lines must
+        not lose its head to rpartition."""
+        assert _bot_data_payload("id: 42\ndata: a\nb") == "a\nb"
 
     def test_data_payload_passes_plain_data_through(self) -> None:
         assert _bot_data_payload("data: [DONE]") == "[DONE]"
@@ -1731,3 +1752,6 @@ class TestBotStreamHelpers:
         assert kwargs["body"].message == "wired"
         assert kwargs["conversation_id"] == "conv-1"
         assert kwargs["source"] == "discord"
+        assert kwargs["stream_id"] == mock_sm.start_stream.await_args.args[0]
+        assert mock_sm.start_stream.await_args.args[2] == "uid1"
+        bot_svc.load_conversation_history.assert_awaited_once_with("conv-1", "uid1")
