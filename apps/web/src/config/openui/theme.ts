@@ -1,4 +1,9 @@
-import { createTheme } from "@openuidev/react-ui";
+// Import from the ThemeProvider subpath, not the package barrel. The barrel
+// (@openuidev/react-ui) statically pulls in recharts, react-markdown,
+// react-syntax-highlighter and react-day-picker (~1.5-2 MB), which then land on
+// EVERY route via RootProviders — including the desktop login screen. The
+// subpath re-exports createTheme + ThemeProvider with none of that weight.
+import { createTheme } from "@openuidev/react-ui/ThemeProvider";
 
 /**
  * GAIA OpenUI theme.

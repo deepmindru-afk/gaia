@@ -153,6 +153,16 @@ export default function MainLayout({ children }: { children: ReactNode }) {
                 className={cn(
                   "flex shrink-0 items-center justify-between p-2",
                   clearTrafficLights && "pl-20",
+                  // Sidebar collapsed → the top bar becomes a full-width bordered
+                  // bar (the sidebar no longer supplies the visual separation);
+                  // expanded → no border. Matches the Docker Desktop title-bar
+                  // behaviour the design references.
+                  !currentOpen && "border-b border-zinc-800",
+                  // macOS `hiddenInset` chrome: make the top bar the draggable
+                  // title bar so the window can be moved from here and
+                  // double-clicking it zooms (Apple standard). Buttons opt out
+                  // via the descendant rule in globals.css (.electron-drag).
+                  isElectron && isMac && "electron-drag",
                 )}
               >
                 <HeaderSidebarTrigger />

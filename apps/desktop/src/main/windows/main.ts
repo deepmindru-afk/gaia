@@ -170,8 +170,12 @@ export async function createMainWindow(
  * Show the main window and close the splash screen.
  *
  * Called when the renderer sends the `window-ready` IPC signal,
- * or by the fallback timeout. Maximises the window for a
- * fullscreen-like experience.
+ * or by the fallback timeout. Opens maximised (filling the work area,
+ * matching the splash skeleton). `maximize()` runs AFTER `show()` — on
+ * macOS maximising a still-hidden window is a no-op, which is why the
+ * window used to open at its unmaximised 1400×900 size. Keeping 1400×900
+ * as the created size means the green button / double-click-title-bar
+ * restores to a sensible windowed size.
  *
  * @returns The pending deep-link URL that should be processed
  *   after the window is visible, or `null`.
@@ -187,8 +191,8 @@ export function showMainWindow(): string | null {
     return null;
   }
 
-  mainWindow.maximize();
   mainWindow.show();
+  mainWindow.maximize();
   mainWindow.focus();
   console.log("[Main] Main window shown and focused");
 
