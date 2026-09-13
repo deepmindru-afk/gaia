@@ -96,6 +96,7 @@ class TestTheTableIsWellFormed:
             "user_prefs",
             "new_user_guidance",
             "integrations_manifest",
+            "connected_devices",
         ]
         # core_memory sits in the volatile TAIL, not the cached prefix. The old
         # placement assumed the memory documents only change between
@@ -127,6 +128,7 @@ class TestTheTableIsWellFormed:
             "user_prefs",
             "workspace_session",
             "integrations_manifest",
+            "connected_devices",
             "skills",
         ]
         assert [s.id for s in sections_for(AgentTier.EXECUTOR, PromptSlot.MEMORY_RECALL)] == [
