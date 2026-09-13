@@ -29,10 +29,11 @@ class TestGetTriggerOptions:
 
     async def test_page_and_search_reach_the_handler(self, client: AsyncClient) -> None:
         handler = _handler([TriggerOption(value="owner/repo", label="owner/repo")])
-        with patch(f"{TRIGGERS_ENDPOINT}.get_handler_by_name", return_value=handler):
+        with patch(f"{TRIGGERS_ENDPOINT}.get_handler_by_name", return_value=handler) as get_handler:
             resp = await client.get(f"{OPTIONS_URL}&page=3&search=repo")
 
         assert resp.status_code == 200
+        get_handler.assert_called_once_with("github_commit_event")
         assert resp.json() == {"options": [{"value": "owner/repo", "label": "owner/repo"}]}
         handler.get_config_options.assert_awaited_once_with(
             TriggerOptionsQuery(

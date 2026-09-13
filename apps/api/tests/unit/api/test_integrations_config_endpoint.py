@@ -54,8 +54,6 @@ def _resolved(
     source: str = "platform",
     requires_auth: bool = False,
     provider: str | None = None,
-    available: bool = True,
-    server_url: str | None = "https://mcp.example.com",
 ) -> MagicMock:
     mock = MagicMock()
     mock.managed_by = managed_by
@@ -64,7 +62,7 @@ def _resolved(
     mock.requires_auth = requires_auth
     if source == "platform":
         pi = MagicMock()
-        pi.available = available
+        pi.available = True
         pi.provider = provider
         mock.platform_integration = pi
     else:
@@ -72,7 +70,7 @@ def _resolved(
     if managed_by == "mcp":
         mock.mcp_config = MagicMock()
         mock.mcp_config.requires_auth = requires_auth
-        mock.mcp_config.server_url = server_url
+        mock.mcp_config.server_url = "https://mcp.example.com"
     else:
         mock.mcp_config = None
     return mock
@@ -460,7 +458,8 @@ class TestConnectIntegration:
         assert resp.json() == {"message": "Integration nonexistent not found"}
 
     async def test_connect_unavailable_platform(self, client: AsyncClient) -> None:
-        resolved = _resolved(managed_by="mcp", available=False)
+        resolved = _resolved(managed_by="mcp")
+        resolved.platform_integration.available = False
         with (
             patch(
                 f"{_MODULE}.IntegrationResolver.resolve",
