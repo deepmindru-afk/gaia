@@ -47,7 +47,7 @@ def normalize_server_url(url: str) -> str:
 
 
 def dedup_server_url_key(url: str | None) -> str | None:
-    """Normalized dedup key for a custom MCP server URL, or None when unusable.
+    """Return a normalized dedup key for a custom MCP server URL, or None when unusable.
 
     None (rather than raising) means "no dedup protection": the caller still
     persists and connects with the original URL, which fails loudly on its own

@@ -47,7 +47,7 @@ class NotificationService:
         *,
         filters: NotificationListFilters | None = None,
     ) -> list[NotificationView]:
-        """A user's notifications, flattened for API/tool consumers."""
+        """Return a user's notifications, flattened for API/tool consumers."""
         return await self.orchestrator.get_user_notifications(user_id, filters=filters)
 
     async def get_notification(self, notification_id: str, user_id: str) -> NotificationView | None:

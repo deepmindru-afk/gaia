@@ -170,10 +170,9 @@ def test_projected_bodies_are_read_only_so_a_raw_edit_cannot_silently_desync_the
 
 
 def test_the_task_folder_is_read_only_so_sed_i_cannot_replace_a_body(tmp_path: Path) -> None:
-    # `sed -i` and `write` via rename never open the 0444 file: they create a
-    # temp file and rename over it, which only needs write permission on the
-    # DIRECTORY. Seen on the dockered stack: `sed -i` on canvas.md exited 0 and
-    # left a 0644 file the hash gate would never repaint.
+    # sed -i and rename-based writes never open the 0444 file — they only need
+    # write permission on the directory. Seen on the dockered stack: sed -i on
+    # canvas.md exited 0 and left a 0644 file the hash gate would never repaint.
     materialize_gaia_tasks(tmp_path, [task(ID_A)], GUIDE)
 
     folder = tmp_path / gtv.GAIA_TASKS_DIRNAME / "ship-the-release-00000001"

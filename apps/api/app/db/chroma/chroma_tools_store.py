@@ -211,11 +211,13 @@ _BUILTIN_SUBAGENT_PREFIX = "subagent:"
 
 
 def _is_dynamic_subagent(composite_key: str, namespace: str) -> bool:
-    """True for a custom/device MCP subagent — registered in the "subagents"
-    namespace at connect time and keyed by integration_id, not a builtin
-    "subagent:<id>". The store re-seed rebuilds only builtins (all_subagents()),
-    so it must never treat these as stale, or every restart deletes them and the
-    executor loses its handoff target for connected custom/device MCP servers."""
+    """Identify a custom/device MCP subagent by its composite key and namespace.
+
+    True only for the "subagents" namespace, keyed by integration_id at connect time,
+    never a builtin "subagent:<id>". The store re-seed rebuilds only builtins
+    (all_subagents()), so treating these as stale would delete them on every restart
+    and strand the executor's handoff target for connected custom/device MCP servers.
+    """
     if namespace != _SUBAGENTS_NAMESPACE:
         return False
     # Composite keys are "<namespace>::<name>"; take the part after the first

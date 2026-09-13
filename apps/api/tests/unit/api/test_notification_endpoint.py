@@ -489,7 +489,7 @@ class TestBulkActions:
 
 
 class TestMarkAllRead:
-    """POST /api/v1/notifications/mark-all-read"""
+    """POST /api/v1/notifications/mark-all-read."""
 
     @patch("app.api.v1.endpoints.notification.log")
     @patch(

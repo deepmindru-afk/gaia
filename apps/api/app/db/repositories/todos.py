@@ -85,7 +85,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     # ------------------------------------------------------------------ reads
 
     def is_valid_id(self, todo_id: str) -> bool:
-        """Whether ``todo_id`` is a well-formed Mongo identity for this collection."""
+        """Whether todo_id is a well-formed Mongo identity for this collection."""
         return ObjectId.is_valid(todo_id)
 
     async def get_by_id(self, todo_id: str) -> TodoDocument | None:
@@ -340,8 +340,10 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
         )
 
     async def find_tracked_by_short_id(self, user_id: str, *, short_id: str) -> list[TodoDocument]:
-        """A user's tracked todos whose ObjectId ends with ``short_id`` — the
-        ``<slug>-<shortid>`` folder name under ``/workspace/gaia-tasks/``."""
+        """Find a user's tracked todos whose ObjectId ends with short_id.
+
+        short_id is the <slug>-<shortid> folder name under /workspace/gaia-tasks/.
+        """
         if re.fullmatch(r"[0-9a-f]{8}", short_id) is None:
             return []
         return await self._find(
@@ -364,11 +366,11 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
     async def list_tracked_for_legacy_migration(
         self, *, limit: int, after_id: str | None = None
     ) -> list[TodoDocument]:
-        """All tracked todos — active or completed — in ``_id`` order.
+        """All tracked todos — active or completed — in id order.
 
-        The legacy canvas → activity migration scan: completed todos can also
+        The legacy canvas to activity migration scan: completed todos can also
         carry legacy sections, and migration is idempotent, so the sweep pages
-        this to a short page with the last id as cursor. ``after_id`` is always
+        this to a short page with the last id as cursor. after_id is always
         a cursor this method previously returned, so it is a valid identity.
         """
         filt: dict[str, object] = {"labels": GAIA_TRACKED_LABEL}
@@ -572,8 +574,10 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
         update: TodoUpdate,
         expected_updated_at: datetime | None,
     ) -> TodoDocument | None:
-        """Replace note bodies, optionally only when ``updated_at`` still equals
-        ``expected_updated_at`` (compare-and-set). Returns None on mismatch."""
+        """Replace note bodies, optionally gated by expected_updated_at (compare-and-set).
+
+        Returns None on mismatch.
+        """
         extra: dict[str, object] = {"user_id": user_id}
         if expected_updated_at is not None:
             extra["updated_at"] = expected_updated_at
@@ -587,9 +591,10 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
         field: Literal["activity_content", "log_content"],
         suffix: str,
     ) -> TodoDocument | None:
-        """Append ``suffix`` to a note body in one atomic update (concurrent
-        appends cannot lose each other). Leading newlines are stripped so an
-        append onto an empty body starts clean."""
+        """Append suffix to a note body in one atomic update so concurrent appends cannot lose each other.
+
+        Leading newlines are stripped so an append onto an empty body starts clean.
+        """
         pipeline: list[dict[str, object]] = [
             {
                 "$set": {

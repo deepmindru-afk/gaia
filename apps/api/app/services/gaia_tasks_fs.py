@@ -67,7 +67,7 @@ async def fetch_active_projections(user_id: str) -> list[GaiaTaskProjection]:
 
 
 def project_gaia_task(doc: TodoDocument) -> GaiaTaskProjection:
-    """``TodoDocument`` → ``GaiaTaskProjection`` (preserve every field the agent uses)."""
+    """Project a TodoDocument into a GaiaTaskProjection, preserving every field the agent uses."""
     return {
         "id": doc.id,
         "canvas": doc.canvas_content or "",

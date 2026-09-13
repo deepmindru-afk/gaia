@@ -921,10 +921,7 @@ class TestBuildExecutionPrompt:
         assert len(prompt) < ACTIVITY_PROMPT_TAIL_CHARS + 300
 
     def test_a_truncated_activity_carries_the_full_exact_label(self):
-        """The truncation marker is *appended* to the label, not substituted for
-        it, and both halves are verbatim: a dropped "Recent activity (activity.md)"
-        or a reworded marker makes the section read as something the model can't
-        place — or hides that the log was cut at all."""
+        """The marker is appended to the label, not substituted — a dropped or reworded marker hides the cut."""
         activity = "x" * (ACTIVITY_PROMPT_TAIL_CHARS + 1)
         prompt = _build_execution_prompt(
             title="Ship it",
@@ -982,7 +979,7 @@ class TestExecuteViaAgent:
         return [c.kwargs["entry"] for c in self.timeline.call_args_list]
 
     def _written_for(self) -> tuple[set[str | None], set[str | None]]:
-        """The (todo_id, user_id) pairs every recorded marker was written for."""
+        """Return the (todo_id, user_id) pairs every recorded marker was written for."""
         return (
             {c.kwargs.get("todo_id") for c in self.timeline.call_args_list},
             {c.kwargs.get("user_id") for c in self.timeline.call_args_list},
@@ -1115,10 +1112,7 @@ class TestExecuteViaAgent:
         assert kwargs["request"].messages == [{"role": "user", "content": prompt}]
 
     async def test_it_reads_the_canvas_and_activity_for_this_todo_and_user(self):
-        """Both reads are keyed to *this* todo and *this* user, and both results
-        actually reach the prompt. A swapped or dropped arg pulls another user's
-        history (or none) into the run, and an activity read that never lands
-        silently strips the log the prompt was extended to carry."""
+        """A swapped or dropped arg would pull in another user's history, or silently drop the activity log."""
         read_canvas = AsyncMock(return_value="## Current State\nall good")
         read_activity = AsyncMock(return_value="- 2026-09-01 started")
         agent = AsyncMock(return_value=SilentRunResult(message="ok", tool_data={}))

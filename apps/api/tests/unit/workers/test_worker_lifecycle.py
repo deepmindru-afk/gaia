@@ -77,14 +77,7 @@ class TestWorkerStartup:
         assert before <= ctx["startup_time"] <= after
 
     async def test_startup_starts_the_device_up_listener(self, ctx):
-        """The worker must start the per-pod up-listener.
-
-        warm_device_servers opens MCP-over-bridge sessions from THIS process, but
-        the device socket is owned by the API pod, so the daemon's reply frames
-        are routed to this pod's up-channel. Without the listener subscribed here,
-        every device warm-connect times out waiting for mcp.opened (the tools
-        never index). Verified end to end manually; this pins the wiring.
-        """
+        """Without this listener, every device warm-connect times out waiting for mcp.opened."""
         with (
             patch(
                 "app.workers.lifecycle.startup.unified_startup",
@@ -119,8 +112,7 @@ class TestWorkerShutdown:
         mock_unified.assert_awaited_once_with("arq_worker")
 
     async def test_shutdown_stops_the_device_up_listener(self):
-        """Symmetric with startup: the up-listener started in the worker must be
-        stopped on shutdown."""
+        """Symmetric with startup: the up-listener must be stopped on shutdown."""
         ctx: dict = {"startup_time": 100.0}
         with (
             patch(

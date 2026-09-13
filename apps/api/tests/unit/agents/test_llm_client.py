@@ -2032,10 +2032,7 @@ class TestTheStickyKeyNeverReachesANonOpenRouterFallback:
 
     @pytest.mark.regression
     def test_a_chatopenrouter_at_a_non_openrouter_base_is_not_openrouter_wire(self) -> None:
-        """A ChatOpenRouter aimed at another OpenAI-compatible endpoint (the
-        DEV_LLM_* custom lane, e.g. api.openai.com) is NOT talking to OpenRouter:
-        session_id is an OpenRouter-service routing hint and OpenAI rejects it as
-        an unknown argument, killing the call. Only the default base is the wire."""
+        """OpenAI rejects the unknown session_id kwarg, so only OpenRouter's own endpoint is wire."""
         from app.agents.llm.client import _is_openrouter_wire
 
         custom_openai = ChatOpenRouter(
@@ -2047,10 +2044,7 @@ class TestTheStickyKeyNeverReachesANonOpenRouterFallback:
 
     @pytest.mark.regression
     def test_bind_session_id_skips_a_custom_openai_lane(self) -> None:
-        """The CUSTOM provider is in STICKY_ROUTING_PROVIDERS, so a sticky key IS
-        computed for it — but when that lane points at OpenAI the graph must NOT
-        bind session_id (OpenAI 400s the whole turn). The real OpenRouter lane
-        still gets it. The endpoint check, not the provider, is the guard."""
+        """The endpoint, not the provider, gates binding session_id — OpenAI 400s the whole turn if bound."""
         from app.constants.llm import LLMProviderName
         from app.override.langgraph_bigtool.create_agent import _bind_session_id
 
@@ -2677,10 +2671,12 @@ class TestWithUsageHandler:
 
 @pytest.mark.unit
 class TestIsOpenrouterWire:
-    """`_is_openrouter_wire` decides whether the sticky session_id may be bound:
-    only when the client actually talks to OpenRouter's own endpoint. Aiming a
-    ChatOpenRouter at another OpenAI-compatible base (the DEV_LLM_* lane) must
-    say no, or that endpoint rejects the unknown session_id argument."""
+    """_is_openrouter_wire decides whether the sticky session_id may be bound.
+
+    Only true when the client talks to OpenRouter's own endpoint — a ChatOpenRouter
+    aimed at another OpenAI-compatible base (the DEV_LLM_* lane) must say no, since
+    that endpoint rejects the unknown session_id argument.
+    """
 
     def test_default_base_is_openrouter(self) -> None:
         # No base set = OpenRouter's own default endpoint.

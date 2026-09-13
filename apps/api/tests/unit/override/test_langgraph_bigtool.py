@@ -101,13 +101,11 @@ def _make_llm() -> MagicMock:
 
 
 def _openrouter_wire_runnable() -> MagicMock:
-    """A tool-bound runnable ``_is_openrouter_wire`` accepts.
+    """Build a MagicMock that _is_openrouter_wire recognizes as OpenRouter-wire.
 
-    ``_bind_session_id`` binds the sticky key ONLY onto an OpenRouter-wire
-    client (a ``ChatOpenRouter`` whose base is unset — OpenRouter's own
-    endpoint). A plain MagicMock is not one, so binding is correctly skipped;
-    these tests are about the case where it must happen, so the double declares
-    itself as that client with the ``.bind`` call still observable.
+    _bind_session_id binds the sticky key only onto such a client (spec
+    ChatOpenRouter with openrouter_api_base unset); a plain MagicMock is not
+    one, so binding would otherwise be skipped and .bind never observed.
     """
     runnable = MagicMock(spec=ChatOpenRouter)
     runnable.openrouter_api_base = None
@@ -115,9 +113,11 @@ def _openrouter_wire_runnable() -> MagicMock:
 
 
 def _make_openrouter_wire_llm() -> MagicMock:
-    """Like :func:`_make_llm`, but the tool-bound runnable is OpenRouter-wire so
-    ``_bind_session_id`` actually binds the sticky key instead of (correctly)
-    skipping a non-OpenRouter endpoint."""
+    """Like _make_llm, but the tool-bound runnable is OpenRouter-wire.
+
+    So _bind_session_id actually binds the sticky key instead of (correctly)
+    skipping a non-OpenRouter endpoint.
+    """
     llm = MagicMock()
     configured = MagicMock()
     bound = MagicMock(spec=ChatOpenRouter)

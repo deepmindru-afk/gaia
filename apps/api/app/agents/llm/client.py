@@ -629,15 +629,9 @@ def _is_openrouter_wire(runnable: Runnable) -> bool:
     # Walking arbitrary attributes could hang on an object that generates them.
     for _ in range(_WIRE_WALK_MAX_HOPS):
         if isinstance(node, ChatOpenRouter):
-            # session_id is an OpenRouter-SERVICE routing hint, not a property of
-            # the client class: a ChatOpenRouter aimed at another OpenAI-compatible
-            # endpoint (the DEV_LLM_* custom lane, e.g. api.openai.com) is not
-            # talking to OpenRouter and rejects the unknown argument. Bind only
-            # when the endpoint is OpenRouter's own (base unset = its default).
-            # Direct attribute access, not getattr(..., None): isinstance above
-            # guarantees a ChatOpenRouter, whose openrouter_api_base is always a
-            # present pydantic field (default None) — a getattr default would be
-            # dead code.
+            # session_id is an OpenRouter-service routing hint: a ChatOpenRouter aimed
+            # at another OpenAI-compatible endpoint (e.g. the DEV_LLM_* custom lane)
+            # rejects it, so only bind when the endpoint is OpenRouter's own (base unset).
             base = node.openrouter_api_base
             return base is None or "openrouter.ai" in str(base)
         if isinstance(node, RunnableBinding):

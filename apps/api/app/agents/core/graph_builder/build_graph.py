@@ -128,15 +128,9 @@ async def build_executor_graph(
                 "decline_playbook",
                 "read_playbook",
                 "disable_playbook",
-                # Same rule as the playbook tools above: the device-onboarding
-                # flow names these by hand — comms delegates "connect the user's
-                # machine" / "complete pairing with code X", and the connected-
-                # devices context section tells the executor to call list_devices.
-                # They are not in the retrieval index, so a run left to
-                # retrieve_tools finds nothing and improvises (it shelled out a
-                # non-existent `gaia bridge approve` and handed off to a
-                # non-existent device-setup subagent). approve_device_pairing is
-                # always-gated, so binding it does not weaken the human approval.
+                # Same rule as playbook tools: not in the retrieval index, so
+                # retrieve_tools once improvised a nonexistent `gaia bridge approve`.
+                # approve_device_pairing stays gated regardless of binding.
                 "add_device",
                 "approve_device_pairing",
                 "list_devices",

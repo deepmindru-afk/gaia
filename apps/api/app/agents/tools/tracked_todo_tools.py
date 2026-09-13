@@ -3,7 +3,7 @@ Tracked-todo LangChain tools for the executor agent.
 
 Lifecycle and metadata only. The working notes (canvas.md / activity.md) are
 files under /workspace/gaia-tasks/ that the agent reads and edits with the
-ordinary file tools; see ``app.services.gaia_task_files``.
+ordinary file tools; see app.services.gaia_task_files.
 """
 
 from dataclasses import dataclass

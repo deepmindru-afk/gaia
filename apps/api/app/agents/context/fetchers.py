@@ -414,10 +414,12 @@ async def _tool_summary(integration_id: str) -> str:
 
 
 async def build_connected_devices_manifest(user_id: str, header: str) -> str:
-    """One line per paired device and the servers it exposes, so the agent knows
-    the user has their own machine reachable and routes local-file work there
-    instead of the cloud sandbox. Capability awareness only - live online status
-    and tool schemas come from list_devices / retrieve_tools at call time."""
+    """One line per paired device and the servers it exposes.
+
+    Lets the agent know the user has their own machine reachable and route local-file
+    work there instead of the cloud sandbox. Capability awareness only — live online
+    status and tool schemas come from list_devices / retrieve_tools at call time.
+    """
     try:
         devices = await list_devices_service(user_id)
         if not devices:

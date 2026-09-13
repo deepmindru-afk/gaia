@@ -660,8 +660,7 @@ class TestScheduleExecutionAfterCreate:
 
 class TestFormatCreateOutput:
     def test_the_summary_routes_canvas_edits_away_from_filesystem_tools(self) -> None:
-        """The model finds its notes by path: the create result names the exact
-        folder (slug + short id) and both files, so it does not have to guess."""
+        """The create result names the exact folder (slug + short id) and both files, so the model finds its notes by path."""
         now = datetime.now(UTC)
         result = TodoResponse(
             id="66f838cc8829054e5f10e407",

@@ -53,13 +53,9 @@ _CLI_TSX = CLI_DIR / "node_modules" / ".bin" / "tsx"
 _ROOT_TSX = CLI_DIR.parent.parent / "node_modules" / ".bin" / "tsx"
 TSX_BIN = _CLI_TSX if _CLI_TSX.exists() else _ROOT_TSX
 EVERYTHING_PACKAGE = "@modelcontextprotocol/server-everything"
-# Pinned: an unpinned spec makes npx re-resolve `latest` against
-# registry.npmjs.org on every run even when the package is already in its
-# cache — 15-19s on the CI box's residential uplink under load. To bump, run
-# `npx -y @modelcontextprotocol/server-everything@<new> stdio </dev/null` once
-# and set the new version here. Keep it to a version the self-hosted runner's
-# npm mirror already has: a brand-new version it has never fetched resolves to
-# ETARGET on the box even while it exists on public npm (2026.8.31 did this).
+# Pinned — unpinned re-resolves `latest` every run (15-19s on CI). Bump with
+# `npx -y @modelcontextprotocol/server-everything@<new> stdio </dev/null`, but
+# only to a version the self-hosted npm mirror already has (unmirrored -> ETARGET, per 2026.8.31).
 EVERYTHING_VERSION = "2026.8.18"
 
 
@@ -115,10 +111,9 @@ class BridgeDaemon:
         self.home = home
         self.login_process: asyncio.subprocess.Process | None = None
         self.up_process: asyncio.subprocess.Process | None = None
-        # The detached `up --serve` tunnel daemon that `gaia bridge up` spawns.
-        # It is NOT a child of this process (up double-forks and exits), so it is
-        # tracked by the pid it writes to <HOME>/.gaia/bridge/daemon.pid and
-        # reaped by pid, not by awaiting a Process handle.
+        # The detached `up --serve` tunnel daemon `gaia bridge up` spawns; not a
+        # child of this process (double-forks and exits), so it's tracked by the
+        # pid written to <HOME>/.gaia/bridge/daemon.pid, not a Process handle.
         self.daemon_pid: int | None = None
         self.login_output: list[str] = []
         self.up_output: list[str] = []
@@ -187,10 +182,9 @@ class BridgeDaemon:
             if match:
                 return match.group(1)
             assert self.login_process is not None
-            # Liveness guard: without it a child that crashed and one that is
-            # merely slow both report the collected output only after the full
-            # timeout, which is how a CI failure with an empty transcript stayed
-            # ambiguous for two days.
+            # Liveness guard: without it a crashed vs. merely-slow child both report
+            # only after the full timeout — this ambiguity stayed a CI mystery for
+            # two days with an empty transcript.
             returncode = self.login_process.returncode
             if returncode is not None:
                 await self._drain()
@@ -241,18 +235,22 @@ class BridgeDaemon:
         return True
 
     def daemon_log(self) -> str:
-        """The detached tunnel daemon's own log. `gaia bridge up` runs the tunnel
-        in a background `--serve` child whose stdout/stderr are redirected here,
-        so the daemon's `connected — exposing` / `revoked` lines land in this file
-        rather than in the parent `up` process's (already-exited) stdout."""
+        """Return the detached tunnel daemon's own log.
+
+        gaia bridge up runs the tunnel in a background --serve child whose
+        stdout/stderr are redirected here, so the daemon's connect/revoke
+        lines land in this file rather than the (already-exited) parent's stdout.
+        """
         log_file = self._daemon_dir() / "daemon.log"
         return log_file.read_text(errors="replace") if log_file.exists() else ""
 
     async def start_up(self, timeout: float = 30.0) -> None:
-        """Run `gaia bridge up`: it registers the configured servers, spawns the
-        detached tunnel daemon, prints the background notice, and EXITS 0. The
-        tunnel itself now runs in the background — the parent exiting is success,
-        not failure. Captures the daemon's pid so teardown can reap it."""
+        """Run gaia bridge up and wait for it to background itself.
+
+        It registers configured servers, spawns the detached tunnel daemon,
+        prints the background notice, and exits 0 — that exit is success, not
+        failure. Captures the daemon's pid so teardown can reap it.
+        """
         self.up_process = await self._spawn("up")
         self._pump(self.up_process.stdout, self.up_output, "up/out")
         self._pump(self.up_process.stderr, self.up_output, "up/err")
@@ -265,8 +263,10 @@ class BridgeDaemon:
         assert self.daemon_pid is not None, f"`gaia bridge up` wrote no daemon pid: {output}"
 
     async def run_bridge_command(self, *args: str, timeout: float = 30.0) -> str:
-        """Run a one-shot `gaia bridge <args>` (e.g. `rm <key>`), wait for it to
-        exit, and return its combined output. Asserts a clean exit."""
+        """Run a one-shot gaia bridge command and return its combined output.
+
+        Asserts a clean exit.
+        """
         proc = await self._spawn(*args)
         out: list[str] = []
         self._pump(proc.stdout, out, f"{args[0]}/out")
@@ -278,7 +278,7 @@ class BridgeDaemon:
         return output
 
     def read_config_keys(self) -> set[str]:
-        """The server keys the daemon currently has in its local config.json."""
+        """Return the server keys the daemon currently has in its local config.json."""
         config_file = self._daemon_dir() / "config.json"
         if not config_file.exists():
             return set()
@@ -286,9 +286,11 @@ class BridgeDaemon:
         return {s["key"] for s in servers}
 
     async def wait_daemon_exits(self, timeout: float = 10.0) -> None:
-        """After a revoke, the real background daemon must drop the tunnel and
-        exit on its own — proof revocation propagates over the wire, not just as
-        a Postgres flag. The daemon is detached, so wait on its pid, not a handle."""
+        """Wait for the real background daemon to drop the tunnel and exit on its own.
+
+        This is proof revocation propagates over the wire, not just as a
+        Postgres flag. The daemon is detached, so wait on its pid, not a handle.
+        """
         assert self.daemon_pid is not None
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
@@ -301,12 +303,9 @@ class BridgeDaemon:
             await asyncio.sleep(0.1)
 
     async def stop_all(self) -> None:
-        # Reap the detached background tunnel daemon FIRST. `gaia bridge up`
-        # spawns it detached and exits, so it is nobody's child — without this,
-        # a `--serve` node process leaks between tests (a prior run did exactly
-        # that). Read the pidfile fresh: a successful revoke leaves the pid dead
-        # but the pidfile present (only `gaia bridge down` unlinks it), and the
-        # other lifecycle tests never bring a tunnel up, so there is no pidfile.
+        # Reap the detached daemon FIRST — `gaia bridge up` spawns it detached and
+        # exits, so it's nobody's child (a leaked `--serve` process happened once).
+        # Pidfile stays after revoke (only `gaia bridge down` unlinks it); absent when no tunnel was ever brought up.
         pid = self._read_daemon_pid()
         if pid is not None and self._pid_alive(pid):
             with contextlib.suppress(ProcessLookupError):
@@ -427,11 +426,10 @@ async def wait_device_online(
 ) -> None:
     """Poll the real /device/list until the cloud reports the device online.
 
-    Presence flips on when the daemon's tunnel WebSocket connects and sends its
-    HELLO, so this is the backend-visible proof the backgrounded daemon came up —
-    the exact signal Settings > Devices shows a user. It replaces scanning the
-    old foreground `up` process's stdout for "connected — exposing" (which now
-    goes to the detached daemon.log, never the parent's stdout)."""
+    Presence flips when the daemon's tunnel WebSocket connects and sends its
+    HELLO — the backend-visible proof the backgrounded daemon came up, since
+    "connected — exposing" now goes to daemon.log, not the parent's stdout.
+    """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while True:
@@ -450,10 +448,12 @@ async def wait_device_online(
 
 class TestFullDeviceLifecycle:
     async def _warm_and_assert_tools_indexed(self, owner, device_id, daemon) -> None:
-        """Warm-connect is what registration enqueues to make the server's tools
-        discoverable without anyone hitting /mcp/test. No ARQ worker runs in this
-        harness, so the task is invoked inline — this still exercises the real
-        tunnel connect + Chroma index + DB record, just not the queue hop itself."""
+        """Warm-connect makes the server's tools discoverable without hitting /mcp/test.
+
+        No ARQ worker runs in this harness, so the task is invoked inline —
+        this still exercises the real tunnel connect + Chroma index + DB
+        record, just not the queue hop itself.
+        """
         summary = await warm_device_servers({}, device_id)
         assert summary == "warmed=1 failed=0", summary
         warmed = (await owner.get("/api/v1/device/list")).json()["devices"][0]["servers"][0]
@@ -508,12 +508,9 @@ class TestFullDeviceLifecycle:
             # it online (presence set on the tunnel's WS connect).
             await wait_device_online(owner, device_id)
             daemon.mark("device online (tunnel connected in the background)")
-            # Regression guard: tunnel.ts's connectOnce() once resolved its
-            # connection promise on the socket's `open` event instead of
-            # `close`, so run() immediately looped and opened a new socket on
-            # every tick — a real reconnect storm a live daemon process (and
-            # only a live daemon process) can actually surface. The daemon's
-            # tunnel logs now land in daemon.log, not the parent's stdout.
+            # Regression guard: connectOnce() once resolved on the socket's `open`
+            # event instead of `close`, causing a tight reconnect-loop storm that
+            # only a live daemon process surfaces. Tunnel logs land in daemon.log now.
             await asyncio.sleep(0.5)
             daemon_log = daemon.daemon_log()
             assert "reconnecting in" not in daemon_log, daemon_log
@@ -560,24 +557,20 @@ class TestFullDeviceLifecycle:
         finally:
             await owner.aclose()
             await daemon.stop_all()
-            # Always, not only on failure: pytest shows this under "Captured
-            # stdout teardown" for a failing test, and the daemon's own output
-            # is otherwise discarded — which is why the last CI timeout could
-            # not be attributed to a phase at all. The detached daemon logs to a
-            # file, not the parent's stdout, so surface both.
+            # Always, not only on failure: pytest shows this under "Captured stdout
+            # teardown", and discarding it is why a past CI timeout couldn't be
+            # attributed to any phase. The daemon logs to a file, not stdout — print both.
             print(f"\n--- bridge daemon timeline ---\n{daemon.dump()}")
             print(f"\n--- detached tunnel daemon.log ---\n{daemon.daemon_log()}")
 
 
 class TestDeviceServerRemoval:
-    """Removing a device MCP server keeps the cloud and the daemon in sync,
-    driven end to end through the real daemon + real HTTP (no internal calls)."""
+    """Remove a device MCP server end to end, through the real daemon and real HTTP (no internal calls)."""
 
     async def _pair_and_expose_everything(
         self, daemon: BridgeDaemon, owner: httpx.AsyncClient, api_url: str, entry: Path
     ) -> str:
-        """Pair the daemon, expose the real everything server, wait until the
-        cloud sees the device online. Returns the device_id."""
+        """Pair the daemon, expose the everything server, wait for it online; returns the device_id."""
         await daemon.start_login(api_url, "e2e-removal-machine")
         user_code = await daemon.wait_for_user_code()
         approve = await owner.post("/api/v1/device/pair/approve", json={"user_code": user_code})
@@ -592,8 +585,7 @@ class TestDeviceServerRemoval:
     async def test_gaia_bridge_rm_removes_the_server_from_the_cloud(
         self, tmp_path, live_api_server, clean_bridge_tables, everything_server_cached, warm_cli
     ):
-        """Device-initiated removal: `gaia bridge rm` drops the server from local
-        config AND calls DELETE /device/servers/{key}, so the cloud row goes too."""
+        """Device-initiated: gaia bridge rm clears local config and the cloud row."""
         daemon = BridgeDaemon(tmp_path / "home")
         owner = _client(live_api_server.url, "device-rm-owner")
         try:
@@ -621,9 +613,7 @@ class TestDeviceServerRemoval:
     async def test_deleting_the_integration_makes_the_daemon_forget_the_server(
         self, tmp_path, live_api_server, clean_bridge_tables, everything_server_cached, warm_cli
     ):
-        """Cloud-initiated delete: deleting the device integration deletes the
-        Postgres row AND sends a server.remove frame down the live tunnel, so the
-        daemon forgets the server and can't re-register it on reconnect."""
+        """Cloud-initiated: deleting the integration sends a server.remove frame down the live tunnel."""
         daemon = BridgeDaemon(tmp_path / "home")
         owner = _client(live_api_server.url, "device-del-owner")
         try:
@@ -694,16 +684,7 @@ class TestDaemonStartupDiagnostics:
     async def test_a_dead_login_child_is_reported_as_a_death_not_as_silence(
         self, tmp_path, warm_cli
     ):
-        """A `gaia bridge login` that exits must fail the wait immediately, naming
-        its exit code — not time out looking like a slow one.
-
-        This is the gap that cost two days of CI triage: before the liveness
-        guard, `wait_for_user_code` only ever reported the collected output, so a
-        child that died at 0.8s and a child still transpiling at 10s produced the
-        same message. Pointing the CLI at a port nothing is listening on makes
-        `startPairing`'s fetch reject, which is a real, unmocked death of the
-        real child process.
-        """
+        """Regression: a dead child once looked like a slow one until timeout (cost 2 days of CI triage)."""
         daemon = BridgeDaemon(tmp_path / "home")
         try:
             await daemon.start_login(f"http://127.0.0.1:{pick_free_port()}", "dead-child")

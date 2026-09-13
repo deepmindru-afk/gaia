@@ -826,10 +826,7 @@ class TestWorkspaceSessionBanner:
 @pytest.mark.unit
 class TestActiveTodoBanner:
     async def test_it_states_the_binding_the_write_target_and_the_escape_hatch(self) -> None:
-        """Every line here is an instruction the agent acts on: which todo the
-        run is bound to, the exact file paths that are its default write target,
-        what goes in which file, and that another todo needs an explicit id.
-        Asserting two substrings left the rest free to rot into nonsense unnoticed."""
+        """Asserting only two substrings let the rest rot into nonsense unnoticed."""
         todo = TodoDocument(
             id="66f838cc8829054e5f10e407", user_id="user1", title="Ship the refactor"
         )

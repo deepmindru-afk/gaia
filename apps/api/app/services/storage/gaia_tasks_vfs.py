@@ -146,7 +146,7 @@ def _folder_name(doc: GaiaTaskProjection) -> str:
 
 
 def render_index(docs: list[GaiaTaskProjection]) -> str:
-    """The generated ``index.md`` body: one line per task, newest-updated first."""
+    """Build the generated index.md body: one line per task, newest-updated first."""
     header = (
         "<!-- Generated index of active gaia-tasks. Sorted by "
         "last-updated, newest first. Do not edit — regenerated on every "

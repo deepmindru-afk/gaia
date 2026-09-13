@@ -50,11 +50,9 @@ async def update_user_integration_status(
         if status == "connected":
             # Reflect the new connected set in the user's workspace VFS.
             schedule_user_integrations_sync(user_id)
-            # Push the live transition so an open integrations page or chat connect
-            # card flips to "Connected" without a reload (mirrors the expiry push).
-            # Best-effort: the status is already persisted, and a client that
-            # misses the push still catches up on its next catalog read, so a
-            # broadcast failure (Redis down) must not fail the connection.
+            # Push the live transition (mirrors the expiry push) so an open page
+            # flips without a reload. Best-effort: a missed push catches up on the
+            # next catalog read, so a broadcast failure (Redis down) must not fail.
             try:
                 await websocket_manager.broadcast_to_user(
                     user_id=user_id,

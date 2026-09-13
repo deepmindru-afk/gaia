@@ -145,7 +145,7 @@ async def _read_editable_content(sbx: AsyncSandbox, abs_path: str) -> tuple[str 
 def _apply_replacement(
     content: str, old_string: str, new_string: str, replace_all: bool
 ) -> tuple[str, int] | str:
-    """``(new_content, replaced_count)`` or the user-facing error string."""
+    """Return (new_content, replaced_count), or the user-facing error string."""
     occurrences = content.count(old_string)
     if occurrences == 0:
         return "Error: old_string not found in file"
@@ -175,7 +175,7 @@ def _emit_edit(abs_path: str, size_bytes: int, replaced: int, session_id: str | 
 
 
 async def _maybe_edit_task_file(rel: str, target: EditTarget, patch: EditPatch) -> str | None:
-    """Edit the todo document when ``rel`` names a tracked-todo file.
+    """Edit the todo document when rel names a tracked-todo file.
 
     Returns the tool result when handled (including the resolve error), else
     None so the caller falls through to the sandbox path. A patch is

@@ -585,8 +585,7 @@ class TestSendUserDormantDigest:
 
 
 class TestMigrateAllLegacyCanvases:
-    """The cursor loop's own contract: it pages to a short page, sums every
-    page's migrated count, and stops on the empty page."""
+    """The cursor loop's own contract: it pages to a short page, sums every page's migrated count, and stops on the empty page."""
 
     async def test_empty_scan_returns_zero(self):
         with (
@@ -621,8 +620,7 @@ class TestMigrateAllLegacyCanvases:
         assert [c.args[0][0].id for c in migrate.await_args_list] == ["a0", "last"]
 
     async def test_short_first_page_stops_immediately(self):
-        """A first page shorter than the size is the whole scan — the loop must
-        stop without a second fetch."""
+        """A first page shorter than the size is the whole scan — the loop must stop without a second fetch."""
         finder = AsyncMock(side_effect=[[_doc(id="only", updated_at=NOW)]])
         with (
             patch(
@@ -662,8 +660,7 @@ class TestMigrateLegacyCanvases:
             assert await _migrate_legacy_canvases([_doc(id="a", updated_at=NOW)]) == 0
 
     async def test_a_failing_todo_is_logged_and_skipped(self):
-        """One todo raising must not abort the batch, and the failure is logged
-        with the todo id and the error — pins the whole log call."""
+        """One todo raising must not abort the batch, and the failure is logged with the todo id and the error."""
         from app.workers.tasks.maintenance_sweep_tasks import _migrate_legacy_canvases
 
         with (
@@ -701,8 +698,7 @@ class TestMigrateLegacyCanvases:
 
 class TestMaintenanceSweep:
     async def test_every_tracked_todo_gets_the_legacy_canvas_migration(self):
-        """The one-shot split rides the sweep over ALL tracked todos — active
-        or completed — not just the active page the tiers classify."""
+        """The one-shot split rides the sweep over ALL tracked todos — active or completed — not just the active page the tiers classify."""
         todos = [_doc(id="a", updated_at=NOW), _doc(id="b", completed=True, updated_at=NOW)]
         with _sweep(migration=todos) as (pool, mocks):
             pool.exists = AsyncMock(return_value=1)
@@ -713,9 +709,7 @@ class TestMaintenanceSweep:
         mocks["list"].assert_awaited_once_with(limit=200)
 
     async def test_legacy_migration_pages_past_the_first_page(self):
-        """The migration cursor walks every page to a short page, so a legacy
-        todo past the first 200 — including a completed one — still migrates,
-        while classification keeps the active-only list."""
+        """The migration cursor walks every page to a short page, so a legacy todo past the first 200 still migrates, while classification keeps the active-only list."""
         from app.workers.tasks.maintenance_sweep_tasks import _MIGRATION_PAGE_SIZE
 
         active = [_doc(id="active-1", updated_at=NOW)]

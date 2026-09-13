@@ -105,10 +105,9 @@ async def device_ws(websocket: WebSocket) -> None:
     # second Postgres write here.
     await mark_online(device_id)
 
-    # The down relay must hold its subscription before any worker is asked to
-    # publish at this device: Redis drops pub/sub frames with no subscriber,
-    # which surfaces as a warmup open-timeout and leaves tools undiscoverable
-    # until the next reconnect. Bounded — a socket must never fail on warmup.
+    # The down relay must hold its subscription before any worker publishes:
+    # Redis drops pub/sub frames with no subscriber, surfacing as a warmup
+    # open-timeout that leaves tools undiscoverable until reconnect (bounded above).
     subscribed = asyncio.Event()
     state = {"last_recv": time.monotonic()}
     tasks = [
@@ -199,10 +198,9 @@ async def _receive_loop(
                 await publish_up_to_pod(pod, raw)
             continue
         if frame_type == FRAME_HELLO:
-            # The daemon announces its full configured server set on connect. Its
-            # local config is the source of truth, so prune any server rows it no
-            # longer exposes. Only act on an explicit list — an older daemon that
-            # omits `servers` must not wipe everything.
+            # The daemon's local config is the source of truth: prune server rows it
+            # no longer exposes. Only act on an explicit list — an older daemon
+            # omitting `servers` must not wipe everything.
             servers = frame.get("servers")
             if isinstance(servers, list):
                 keys = [s for s in servers if isinstance(s, str)]
@@ -224,7 +222,7 @@ async def _down_relay(
 ) -> None:
     """Subscribe to this device's down channel and write frames to the socket.
 
-    Signals ``subscribed`` once the subscription holds, so the connect handler
+    Signals subscribed once the subscription holds, so the connect handler
     can enqueue warmup only after a worker's open frame has someone to land on.
     """
     if not redis_cache.redis:

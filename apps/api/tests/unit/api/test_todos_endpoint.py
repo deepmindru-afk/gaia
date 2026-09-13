@@ -202,8 +202,7 @@ class TestTodoAnalytics:
 
 
 class TestListQueryHelpers:
-    """The list endpoint's extracted helpers, tested directly so the filter
-    label set and date-range resolution are pinned exactly."""
+    """Test the list endpoint's extracted filter-label and date-range helpers directly."""
 
     def test_no_filters_applied(self):
         assert _todo_filters_applied(TodoListQuery()) == []

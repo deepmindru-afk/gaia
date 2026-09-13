@@ -41,7 +41,7 @@ class MongoDBNotificationStorage:
         *,
         filters: NotificationListFilters | None = None,
     ) -> list[NotificationRecord]:
-        """Get user's notifications with optional filtering"""
+        """Get user's notifications with optional filtering."""
         return await notification_repository.list_for_user(user_id, filters=filters)
 
     async def get_notification_count(

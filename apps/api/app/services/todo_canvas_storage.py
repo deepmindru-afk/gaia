@@ -1,8 +1,8 @@
 """MongoDB-backed canvas/activity/log storage for tracked todos.
 
-Canvas (`canvas.md`), activity (`activity.md`) and log (`log.md`) content live
-as fields on the todo document itself: ``canvas_content``, ``activity_content``
-and ``log_content``. Reading, writing, and appending go through the todos
+Canvas (canvas.md), activity (activity.md) and log (log.md) content live
+as fields on the todo document itself: canvas_content, activity_content
+and log_content. Reading, writing, and appending go through the todos
 repository — no FUSE mount or JuiceFS required, so tracked todos work in every
 dev mode.
 
@@ -32,7 +32,7 @@ def build_vfs_label(todo_id: str, *, archived: bool = False) -> str:
 
 
 def embedding_text(doc: TodoDocument) -> str:
-    """The text embedded for canvas search: canvas + activity, skipping empties."""
+    """Build the text embedded for canvas search: canvas + activity, skipping empties."""
     parts = [p for p in (doc.canvas_content, doc.activity_content) if p]
     return "\n\n".join(parts)
 

@@ -112,7 +112,7 @@ def _todo_filters_applied(query: TodoListQuery) -> list[str]:
 
 
 def _resolve_todo_date_range(query: TodoListQuery) -> tuple[datetime | None, datetime | None]:
-    """Resolve ``due_today`` / ``due_this_week`` into an explicit date range."""
+    """Resolve due_today / due_this_week into an explicit date range."""
     if query.due_today:
         today = datetime.now(UTC).date()
         return (
@@ -147,10 +147,9 @@ def _todo_search_params(
 
 @router.get("/todos", response_model=TodoListResponse)
 async def list_todos(
-    # Bound as a dependency, not Query(): FastAPI does not flatten
-    # query-models through include_router, so a Query()-bound model 422s every
-    # request expecting a JSON body. Depends() binds each field as its own
-    # flattened query param (same wire as the individual Query() params it replaces).
+    # Bound as a dependency, not Query(): FastAPI doesn't flatten query-models
+    # through include_router, so a Query()-bound model 422s every request. Depends()
+    # binds each field as its own flattened query param (same wire as Query() params).
     query: Annotated[TodoListQuery, Depends()],
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> TodoListResponse:

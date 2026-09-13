@@ -645,10 +645,9 @@ class TestUpdateUserIntegrationStatus:
     @patch("app.services.integrations.user_integration_status.schedule_user_integrations_sync")
     @patch("app.services.integrations.user_integration_status.user_integration_repository")
     async def test_connected_broadcast_failure_is_non_fatal(self, mock_repo, mock_sched, mock_ws):
-        # A live push is best-effort — the status is already persisted and the
-        # client recovers on its next catalog read, so a broadcast failure
-        # (Redis down) must not fail the connection. It must still be visible in
-        # the wide event: a silently-swallowed push is the whole risk here.
+        # Best-effort: status is already persisted, client recovers on next catalog
+        # read, so a broadcast failure (Redis down) mustn't fail the connection —
+        # but it must still show in the wide event; silent swallowing is the risk.
         mock_repo.set_status = AsyncMock(return_value=True)
         mock_ws.broadcast_to_user = AsyncMock(side_effect=RuntimeError("redis down"))
 

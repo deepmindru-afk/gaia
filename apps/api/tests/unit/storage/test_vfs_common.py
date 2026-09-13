@@ -189,9 +189,7 @@ def test_the_same_body_and_meta_hash_identically() -> None:
 
 
 def test_the_digest_is_pinned_to_the_nul_separated_scheme() -> None:
-    """The exact digest: separates bodies (and meta) with a NUL byte, not a
-    different delimiter. Any change to the separator re-materializes every
-    folder once; pinning the value is how that is caught."""
+    """The separator is a NUL byte; changing it would re-materialize every folder once."""
     assert (
         hash_body_with_meta("c", "l", meta={"title": "t"})
         == "b5420a409a6295d9c9f15861a977f692722e8bfb3299195cde23a303deb914cd"
@@ -411,9 +409,7 @@ def test_read_only_bodies_nested_several_levels_deep_are_removed(tmp_path: Path)
 
 
 def test_a_read_only_child_directory_is_made_writable_and_removed(tmp_path: Path) -> None:
-    """A 0555 child folder cannot be emptied without first chmod-ing it back to
-    writable; the pre-pass is what lets rmtree descend. Pin it with an actual
-    read-only child (the other tests only nest 0755 `mkdir` dirs)."""
+    """A 0555 child needs chmod before rmtree can descend - other tests only nest 0755 dirs."""
     sub = tmp_path / "tree" / "sub"
     sub.mkdir(parents=True)
     write_readonly_body(sub / "canvas.md", "x")

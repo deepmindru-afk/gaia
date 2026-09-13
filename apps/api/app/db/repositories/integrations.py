@@ -79,13 +79,9 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
     async def find_custom_by_server_url(
         self, server_url: str, created_by: str
     ) -> Integration | None:
-        """A user's custom integration at this server URL (normalization-insensitive).
+        """Find a user's custom integration at this server URL, normalization-insensitive.
 
-        Matches on the stored ``mcp_config.server_url_normalized`` dedup key, so
-        ``https://host/mcp/`` finds a server stored as ``https://host/mcp`` (and
-        vice versa) regardless of which creation path wrote the row. The input is
-        normalized here — callers pass the URL as they have it. An unusable URL
-        matches nothing (rather than raising out of a finder).
+        Matches on the stored server_url_normalized dedup key; an unusable URL matches nothing rather than raising.
         """
         key = dedup_server_url_key(server_url)
         if key is None:

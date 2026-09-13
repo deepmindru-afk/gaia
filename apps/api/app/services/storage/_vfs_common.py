@@ -168,7 +168,7 @@ def _force_remove(func: Callable[..., Any], path: str, _exc_info: ExcInfo) -> No
 
 
 def remove_tree(path: Path) -> None:
-    """Recursively remove ``path``; tolerate 0444 children and 0555 folders."""
+    """Recursively remove path; tolerate 0444 children and 0555 folders."""
     if path.exists() and path.is_dir():
         path.chmod(RW_DIR_MODE)
         # rglob(None) yields every directory recursively and the body only

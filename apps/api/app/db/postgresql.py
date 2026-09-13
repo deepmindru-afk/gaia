@@ -26,10 +26,9 @@ Base = declarative_base()
 # workers) race on CREATE TYPE for enum columns and fail on pg_type's unique index.
 SCHEMA_BOOTSTRAP_LOCK_ID = 743_001_993
 
-# Datetime columns that must store tz-aware instants (timestamptz). The schema
-# is bootstrapped with create_all, which only CREATEs missing tables and never
-# ALTERs existing ones, so legacy tables still hold naive timestamp columns —
-# _ensure_timestamptz_columns promotes them in place.
+# Datetime columns that must store tz-aware instants. create_all only CREATEs
+# missing tables and never ALTERs existing ones, so legacy tables still hold
+# naive timestamp columns; _ensure_timestamptz_columns promotes them in place.
 _TIMESTAMPTZ_COLUMNS: tuple[tuple[str, str], ...] = (
     ("oauth_tokens", "expires_at"),
     ("oauth_tokens", "created_at"),

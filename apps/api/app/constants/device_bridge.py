@@ -29,10 +29,9 @@ USER_CODE_ALPHABET: Final[str] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 PAIRING_TTL_SECONDS: Final[int] = 15 * 60  # user has 15 min to approve
 PAIRING_POLL_INTERVAL_SECONDS: Final[int] = 5  # RFC 8628 poll cadence hint
 
-# Upper bound on ACTIVE devices one user may hold at once. Bounds credential
-# sprawl (each device holds a long-lived refresh token) and abuse of the
-# one-call self-pair path. Enforced in the shared device-creation path, so both
-# the browser-approval and desktop self-pair flows reject creation past it.
+# Upper bound on ACTIVE devices one user may hold at once — bounds credential
+# sprawl and self-pair abuse. Enforced in the shared device-creation path, so
+# both browser-approval and desktop self-pair reject creation past it.
 MAX_ACTIVE_DEVICES_PER_USER: Final[int] = 20
 
 # --- Device refresh credential (long-lived, rotates on every token exchange) ---
@@ -76,11 +75,8 @@ DEVICE_HEARTBEAT_TIMEOUT_SECONDS: Final[float] = 75.0
 MCP_SESSION_OPEN_TIMEOUT_SECONDS: Final[float] = 30.0
 
 # --- Device server warmup coalescing ---
-# Repeat warmups for identical work inside this window collapse instead of
-# queueing: a registration storm plus the online transition otherwise each
-# enqueue an overlapping job, and their unconditional status writes race. A
-# failed warmup suppresses retry for at most this long; the next connect
-# re-drives it, so recovery is bounded by reconnects, not by this TTL.
+# Repeat warmups for identical work inside this window collapse instead of racing on status writes.
+# A failed warmup suppresses retry for at most this long; the next connect re-drives it.
 DEVICE_WARMUP_COALESCE_SECONDS: Final[int] = 60
 DEVICE_WARMUP_COALESCE_PREFIX: Final[str] = "device:warmup:"
 # How long the online WS handler waits for the down-relay subscription before
@@ -91,10 +87,8 @@ DEVICE_RELAY_READY_TIMEOUT_SECONDS: Final[float] = 5.0
 MCP_SESSION_CALL_TIMEOUT_SECONDS: Final[float] = 120.0
 
 # --- exec-over-bridge session (run_on_device) ---
-# Hard ceiling on a single device command; the daemon kills the process here.
-# Kept below the generic per-tool guard (TOOL_EXECUTION_TIMEOUT_SECONDS = 120s in
-# constants/llm.py) so the cloud collector (this + a short grace) returns its own
-# partial-output result BEFORE that guard fires with a generic timeout message.
+# Hard ceiling before the daemon kills the process. Kept below the 120s
+# TOOL_EXECUTION_TIMEOUT_SECONDS (constants/llm.py) so the collector's partial-output result returns first.
 DEVICE_EXEC_TIMEOUT_SECONDS: Final[float] = 90.0
 # Total captured output (stdout+stderr) per exec before the daemon truncates and
 # stops streaming — bounds a runaway command from flooding the tunnel.

@@ -310,7 +310,7 @@ async def _run_execution(
 
 
 def _extract_learnings(ref_canvas: str) -> str | None:
-    """The ``## Learnings`` section of a canvas (heading included), or None if absent."""
+    """Return the ## Learnings section of a canvas (heading included), or None if absent."""
     body = section_body(ref_canvas, "Learnings")
     if body is None:
         return None

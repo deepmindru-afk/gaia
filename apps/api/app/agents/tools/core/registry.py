@@ -481,10 +481,9 @@ class ToolRegistry:
             tools=integration_tool.tools,
             risk=CategoryRisk(
                 destructive_tools={"connect_integration"},
-                # add_custom_mcp_server: adds an untrusted, LLM-resolved MCP server.
-                # approve_device_pairing: surfaces the link that links a device to the
-                # account. Both always confirm with the user, in every HIL mode, so the
-                # human consciously gates the action (see hil/policy).
+                # add_custom_mcp_server: untrusted, LLM-resolved MCP server. approve_device_pairing:
+                # links a device to the account. Both always confirm with the user in every
+                # HIL mode (see hil/policy).
                 always_gate_tools={"add_custom_mcp_server", "approve_device_pairing"},
             ),
         )

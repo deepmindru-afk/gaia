@@ -340,10 +340,9 @@ const config: KnipConfig = {
         // electron-builder should pack into the asar (declaring it breaks packaging: libs/shared/ts
         // is outside apps/desktop). Same handling as apps/web and apps/mobile.
         "@gaia/shared",
-        // bridge-core (bundled from @gaia/shared source via the vite alias)
-        // imports these; externalizeDepsPlugin keeps them external so
-        // electron-builder packs them into the asar — no file in src imports
-        // them directly, so knip cannot trace them.
+        // bridge-core (bundled from @gaia/shared source via the vite alias) imports
+        // these; externalizeDepsPlugin keeps them external for electron-builder to
+        // pack into the asar — no src file imports them directly, so knip can't trace them.
         "@modelcontextprotocol/sdk",
         "ws",
         "zod",
@@ -417,11 +416,9 @@ const config: KnipConfig = {
         "!src/**/*.test.{ts,tsx}",
         "!**/__tests__/**",
       ],
-      // Peer type package for react-dom (pulled in transitively by Ink/React).
-      // The bridge-core source is inlined by the esbuild alias plugin and
-      // `packages: "external"` keeps its imports external, so the published CLI
-      // needs these in its own node_modules even though no src file imports them
-      // directly.
+      // Peer type package for react-dom (pulled in transitively by Ink/React). The
+      // bridge-core source is inlined by the esbuild alias plugin with `packages:
+      // "external"`, so the published CLI needs these in its own node_modules though nothing imports them directly.
       ignoreDependencies: [
         "@types/react-dom",
         "@modelcontextprotocol/sdk",

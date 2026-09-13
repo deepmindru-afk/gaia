@@ -260,12 +260,7 @@ class TestSignalMatchingSectionRenders:
     async def test_an_integration_fire_with_tracked_todos_renders_the_signal_section(
         self,
     ) -> None:
-        """Production: every ``calendar_event_starting_soon`` fire for a user with
-        tracked todos failed with ``KeyError: 'date'`` (54 in one day). The signal
-        matching instructions carry a literal example, ``"- {date} {what happened}"``,
-        and ``str.format`` read it as two placeholders. The example must reach the
-        agent verbatim, braces and all, and the section must render at all.
-        """
+        """Regression: str.format read the literal example "- {date} {what happened}" as real placeholders, causing KeyError: 'date' 54 times in one day in production."""
         selected = SelectedWorkflowData(
             id="wf_meeting",
             title="Meeting Reminder",

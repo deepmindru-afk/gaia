@@ -294,12 +294,7 @@ class TestComputeToolDiff:
 
     @pytest.mark.regression
     def test_custom_mcp_subagent_is_never_deleted_on_reseed(self):
-        """A custom/device MCP subagent (keyed by integration_id in the subagents
-        namespace) is registered at connect time, not by the builtin re-seed, so
-        it is legitimately absent from current_tools. The seed must not delete it
-        — before the fix it did, wiping the executor's handoff target on every
-        restart so device MCP tools became unreachable and the agent fell back to
-        run_on_device."""
+        """Regression: seed deleted device MCP subagents, wiping the executor's handoff target on restart."""
         current: dict[str, dict] = {
             "subagents::subagent:todos": {"hash": "h"},  # a builtin the seed manages
         }
@@ -316,8 +311,6 @@ class TestComputeToolDiff:
         assert "subagents::9531fa23-5120-458c-9d7c-8af9127be70e" not in deleted_keys
 
     def test_builtin_subagent_absent_from_current_is_still_deleted(self):
-        """The preservation is scoped to custom subagents — a builtin subagent
-        that all_subagents() no longer produces must still be pruned."""
         current: dict[str, dict] = {}
         existing = {
             "subagents::subagent:retired": {"hash": "h", "namespace": "subagents"},
@@ -326,9 +319,6 @@ class TestComputeToolDiff:
         assert ("subagents::subagent:retired", "subagents") in delete
 
     def test_reseed_prunes_stale_builtin_while_keeping_the_device_subagent(self):
-        """With both a stale builtin subagent and a device subagent absent from a
-        re-seed's current set, only the builtin is pruned — pins the guard against
-        deleting one but not the other (mutants on the loop's delete branch)."""
         # The device subagent is FIRST and the stale builtin SECOND on purpose:
         # skipping the device one must `continue` (keep scanning), not `break`
         # (which would leave the later stale builtin un-pruned).
@@ -346,9 +336,7 @@ class TestComputeToolDiff:
 
 
 class TestIsDynamicSubagent:
-    """A dynamic (custom/device) MCP subagent lives in the ``subagents`` namespace
-    keyed by integration_id, NOT the builtin ``subagent:<id>`` scheme; the re-seed
-    must recognise it so it is never pruned as stale."""
+    """A dynamic MCP subagent lives in the subagents namespace keyed by integration_id, not subagent:<id>."""
 
     def test_device_subagent_keyed_by_integration_id_is_dynamic(self):
         assert (

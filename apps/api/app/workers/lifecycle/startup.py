@@ -54,12 +54,9 @@ async def startup(ctx: dict[str, Any]) -> None:
         # Use unified startup function - handles provider registration, eager init, and auto-init
         await unified_startup("arq_worker")
 
-        # The warm_device_servers task opens MCP-over-bridge sessions from this
-        # process. The device socket is owned by the API pod, so the daemon's
-        # reply frames are routed back to THIS process's per-pod up-channel — the
-        # up-listener must be subscribed here too, or every device warm-connect
-        # times out waiting for mcp.opened. (The API starts its own in lifespan;
-        # the worker needs its own because it has a distinct POD_ID.)
+        # Device socket is owned by the API pod; reply frames route back to
+        # THIS process's per-pod up-channel, so the worker needs its own
+        # up-listener (distinct POD_ID) or warm-connect times out on mcp.opened.
         start_up_listener()
 
         # Reap any crawl4ai browser drivers that escape teardown (worker crawl

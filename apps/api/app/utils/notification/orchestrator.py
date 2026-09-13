@@ -351,7 +351,7 @@ class NotificationOrchestrator:
     async def mark_all_read(self, user_id: str, channel_type: str | None = None) -> int:
         """Mark every delivered notification for a user as read in one write.
 
-        Unlike ``bulk_actions``, this does not require the caller to already know
+        Unlike bulk_actions, this does not require the caller to already know
         every notification ID — it operates server-side on all matching
         notifications, including any not yet loaded into a client's paginated view.
         """

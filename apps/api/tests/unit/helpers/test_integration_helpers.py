@@ -51,8 +51,7 @@ def test_dedup_server_url_key_matches_normalize(raw, expected):
 
 @pytest.mark.parametrize("raw", [None, "", "   "])
 def test_dedup_server_url_key_blank_is_none(raw):
-    """Blank keys are None, never "": an empty key would collide across every
-    unusable URL under the per-creator unique index."""
+    """Blank keys are None, never "" — an empty key would collide under the per-creator unique index."""
     assert dedup_server_url_key(raw) is None
 
 

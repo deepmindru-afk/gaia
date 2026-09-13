@@ -156,12 +156,9 @@ def _bind_session_id(
     session id left the executor at 72.2% cache hits and comms at 26.8%; a
     byte-identical resend of comms' own request still hit 99.9% seconds later.
     """
-    # Must run AFTER bind_tools (which rebuilds the runnable and drops outer bindings), so the
-    # call pins to the conversation's provider and its prompt cache chains across turns.
-    # Gated on the provider the same way ainvoke_llm gates it: session_id is an
-    # OpenRouter routing hint, and Gemini (or a custom OpenAI-compatible endpoint)
-    # has no such routing, so sending it there is an unsupported argument that
-    # fails the call.
+    # Must run AFTER bind_tools, which rebuilds the runnable and drops outer bindings.
+    # session_id is an OpenRouter-only routing hint; sending it to Gemini or another
+    # OpenAI-compatible endpoint is an unsupported argument that fails the call.
     key = _agent_sticky_key(model_configurations, agent_name)
     if key and _is_openrouter_wire(llm_with_tools):
         return llm_with_tools.bind(session_id=key)

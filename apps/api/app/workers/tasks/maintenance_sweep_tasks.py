@@ -120,10 +120,11 @@ async def maintenance_sweep_tracked_todos(_ctx: dict[str, Any]) -> str:
 
 
 async def _migrate_all_legacy_canvases() -> int:
-    """Cursor every tracked todo — active or completed — through the one-shot
-    canvas → activity split. The tier classification keeps its own active-only
-    scan; this loop exists so no legacy canvas is skipped by the cap or the
-    active-only filter. Migration is idempotent, so re-scans are safe."""
+    """Cursor every tracked todo, active or completed, through the one-shot canvas-to-activity split.
+
+    The tier classification scans active todos only, so this loop covers completed
+    ones too; migration is idempotent, so re-scans are safe.
+    """
     migrated = 0
     after_id: str | None = None
     while True:

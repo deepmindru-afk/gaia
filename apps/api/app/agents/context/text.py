@@ -46,10 +46,9 @@ CONNECTED_DEVICES_HEADER = (
     "files, folders, apps, or computer, delegate to the executor:"
 )
 
-#: Executor: the crucial nudge. The device's files live on the user's real
-#: machine, reachable through the device's tools; the sandbox is a cloud
-#: container that CANNOT see them. This is what stops the executor from
-#: answering "what's in my downloads" by running `ls` in the sandbox.
+#: The device's files live on the user's real machine; the sandbox is a cloud
+#: container that CANNOT see them. Stops the executor answering "what's in my
+#: downloads" by running ls in the sandbox.
 EXECUTOR_CONNECTED_DEVICES_HEADER = (
     "CONNECTED DEVICES (the user's own machines). To read, change, or run anything on the "
     "user's machine, use run_on_device(device_id, command) - pass the id shown in each line "

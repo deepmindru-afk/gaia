@@ -133,10 +133,9 @@ class TrackedTodoService:
         # canvas.md a recall doc from the first write by splitting it here.
         canvas_content, moved_activity = split_legacy_canvas(canvas_content)
         now = datetime.now(UTC)
-        # Moved legacy entries predate this todo's creation, so they come first
-        # (oldest-first, like the migration). The creation marker stays last:
-        # an `edit` that appends needs a last line to anchor on, and models
-        # reach for edit before write.
+        # Moved legacy entries come first (oldest-first, like the migration); the
+        # creation marker stays last so an edit-append has a line to anchor on,
+        # and models reach for edit before write.
         activity_content = "\n\n".join(
             p for p in (moved_activity, f"- {now.isoformat()} ▶ tracked todo created") if p
         )
@@ -269,10 +268,10 @@ class TrackedTodoService:
     async def migrate_legacy_canvas(doc: TodoDocument) -> bool:
         """One-shot split of a pre-activity.md canvas. Returns True when it wrote.
 
-        Legacy canvases carried `## Activity Log` / `## Timeline` inside the
-        canvas (and append mode stranded dated entries under `## Learnings`).
-        Those move to `activity_content`; moved legacy entries come first
-        because they predate anything written to activity.md post-deploy.
+        Legacy canvases carried an Activity Log / Timeline section inside the
+        canvas (and append mode stranded dated entries under Learnings). Those
+        move to activity_content; moved legacy entries come first because they
+        predate anything written to activity.md post-deploy.
         """
         if not doc.canvas_content:
             return False

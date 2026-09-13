@@ -733,10 +733,9 @@ async def create_usage_indexes() -> None:
         raise
 
 
-# One custom server URL per creator: the atomic backstop behind the
-# application's check-then-create dedup. Extracted (not inline) so the
-# contract suite can build this exact spec on a bare collection and prove it
-# rejects logical duplicates while leaving keyless legacy rows alone.
+# Atomic backstop behind the application's check-then-create dedup. Extracted
+# (not inline) so the contract suite can build this exact spec on a bare
+# collection and prove it rejects duplicates while leaving keyless rows alone.
 CUSTOM_SERVER_URL_DEDUP_KEYS: IndexKeys = [
     ("created_by", 1),
     ("mcp_config.server_url_normalized", 1),

@@ -50,8 +50,8 @@ async def create_custom_integration(
 ) -> Integration:
     """Create a custom MCP integration.
 
-    The stored ``server_url`` keeps the exact user-provided path (some servers
-    distinguish ``/mcp`` from ``/mcp/``); dedup runs on the normalized key. Two
+    The stored server_url keeps the exact user-provided path (some servers
+    distinguish /mcp from /mcp/); dedup runs on the normalized key. Two
     concurrent creates for the same URL both pass the caller's pre-check — the
     per-creator unique index rejects the loser, which then returns the winner.
     """
