@@ -546,6 +546,16 @@ def test_bare_mock_patch_is_not_a_route_decorator(tmp_path: Path) -> None:
     assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == ["DS4"]
 
 
+def test_indirect_pydantic_subclass_docstring_is_never_checked(tmp_path: Path) -> None:
+    # CamelModel lives in another file; its subclasses are schema descriptions too.
+    base = _write(tmp_path, "app/models/base.py", "class CamelModel(BaseModel):\n    pass\n")
+    body = "\n".join(f"    line {i} with ``markup``." for i in range(14))
+    model = _write(
+        tmp_path, "app/models/x.py", f'class M(CamelModel):\n    """Summary.\n\n{body}\n    """\n'
+    )
+    assert docstring_slop.check([base, model]) == []
+
+
 def test_pydantic_model_docstring_is_never_checked(tmp_path: Path) -> None:
     body = "\n".join(f"    line {i}." for i in range(14))
     src = f'class M(BaseModel):\n    """Summary.\n\n{body}\n    """\n'

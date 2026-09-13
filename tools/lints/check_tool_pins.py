@@ -5,8 +5,8 @@ The whole point of pinning is that "passed locally" means "passes CI". This
 check fails when the versions drift apart across the surfaces in SURFACES:
 both pre-commit configs, code-quality.yml, the local lane table
 (scripts/dev/verify-lanes.json), the root package.json quality scripts, the
-api mise tasks, the ignore-staleness guard's own ruff invocation, uv.lock, and
-for biome every package.json that declares it plus every biome.json schema.
+api mise tasks and taskipy scripts, the ignore-staleness guard's own ruff
+invocation, uv.lock, and for biome pnpm-lock.yaml plus every biome.json schema.
 
 Single source of truth is the EXPECTED table below; bump it in the same commit
 that bumps any invocation, or this fails and tells you which side drifted.
@@ -42,14 +42,10 @@ CODE_QUALITY = REPO_ROOT / ".github/workflows/code-quality.yml"
 VERIFY_LANES = REPO_ROOT / "scripts/dev/verify-lanes.json"
 ROOT_PACKAGE_JSON = REPO_ROOT / "package.json"
 API_MISE = REPO_ROOT / "apps/api/mise.toml"
+API_PYPROJECT = REPO_ROOT / "apps/api/pyproject.toml"
+PNPM_LOCK = REPO_ROOT / "pnpm-lock.yaml"
 IGNORE_STALENESS = REPO_ROOT / "tools/lints/check_ignore_staleness.py"
 UV_LOCK = REPO_ROOT / "uv.lock"
-BIOME_PACKAGE_JSONS = (
-    REPO_ROOT / "package.json",
-    REPO_ROOT / "apps/web/package.json",
-    REPO_ROOT / "apps/desktop/package.json",
-    REPO_ROOT / "packages/cli/package.json",
-)
 BIOME_CONFIGS = (
     REPO_ROOT / "biome.json",
     REPO_ROOT / "apps/desktop/biome.json",
@@ -77,14 +73,13 @@ SURFACES = {
     "ruff": ("PRE_COMMIT", "ROOT_PRE_COMMIT", "CODE_QUALITY", "IGNORE_STALENESS", "UV_LOCK"),
     # The api mypy hook runs `uv run mypy`, so the lockfile IS the pin.
     "mypy": ("UV_LOCK",),
-    "bandit": ("PRE_COMMIT", "CODE_QUALITY", "VERIFY_LANES", "API_MISE"),
-    "pip-audit": ("PRE_COMMIT",),
+    "bandit": ("PRE_COMMIT", "CODE_QUALITY", "VERIFY_LANES", "API_MISE", "API_PYPROJECT"),
+    "pip-audit": ("PRE_COMMIT", "CODE_QUALITY", "VERIFY_LANES", "API_MISE", "API_PYPROJECT"),
     "interrogate": ("CODE_QUALITY", "VERIFY_LANES", "ROOT_PACKAGE_JSON"),
     "xenon": ("CODE_QUALITY", "VERIFY_LANES", "ROOT_PACKAGE_JSON"),
-    # pnpm-lock.yaml resolves whatever package.json asks for, so the exact
-    # (caret-free) version in every declaring package.json is the pin, and the
-    # $schema URL in every biome.json must name the same release.
-    "biome": ("BIOME_PACKAGE_JSONS", "BIOME_CONFIGS"),
+    # package.json keeps syncpack's caret policy; the version pnpm-lock.yaml
+    # resolved is the pin, and every biome.json $schema must name that release.
+    "biome": ("PNPM_LOCK", "BIOME_CONFIGS"),
 }
 
 
@@ -108,7 +103,7 @@ def _pin_forms(tool: str, version: str) -> list[re.Pattern[str]]:
     if tool == "ruff":
         forms.append(rf"ruff-pre-commit\n\s*rev:\s*v{v}\b")  # the pre-commit rev
     if tool == "biome":
-        forms.append(rf'"@biomejs/biome":\s*"{v}"')  # exact package.json pin
+        forms.append(rf"'@biomejs/biome@{v}':")  # pnpm-lock.yaml resolution
         forms.append(rf"biomejs\.dev/schemas/{v}/schema\.json")  # biome.json $schema
     return [re.compile(form) for form in forms]
 
@@ -140,6 +135,7 @@ def _missing(tool: str, version: str) -> list[Path]:
 
 
 def main(argv: list[str]) -> int:
+    """Report every surface whose pin drifted from EXPECTED; return the exit code."""
     del argv
     violations: list[Violation] = []
     for tool, version in sorted(EXPECTED.items()):
@@ -151,8 +147,8 @@ def main(argv: list[str]) -> int:
                     detail=f"{tool} is not pinned to {version} in {surface.name}",
                     fix=(
                         f"pin it ({tool}@{version} for uvx invocations, "
-                        f"{tool}=={version} for uv-tool-run, an exact caret-free "
-                        f"version in package.json / biome.json) — or bump EXPECTED "
+                        f"{tool}=={version} for uv-tool-run, the lockfile resolution / "
+                        f"biome.json $schema for biome) — or bump EXPECTED "
                         f"in tools/lints/check_tool_pins.py in the same commit"
                     ),
                 )
