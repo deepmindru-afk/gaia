@@ -26,6 +26,7 @@ from app.constants.log_tags import LogTag
 from app.core.lazy_loader import providers
 from app.core.lifespan import lifespan
 from app.core.middleware import configure_middleware
+from app.services import latency_metrics as _latency_metrics  # noqa: F401 -- side effects
 
 # Eager-import the FsOps metrics module so its Prometheus collectors register
 # on the default registry at app startup. Without this the storage layer is
