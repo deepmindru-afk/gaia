@@ -91,10 +91,15 @@ jobs:
       # 32592594996: build step itself is only 179s of the 545s job).
       # The Next.js compiler cache above is what actually warms next build.
 
-      # No Cloudflare secrets here — preflight moved to preview/deploy (environment-gated)
+      # NEXT_PUBLIC_* vars are inlined into the JS at build time — there is no
+      # runtime override on Workers (wrangler.jsonc has no [vars]), so the
+      # bundle that deploy-prod ships MUST be built with the prod API URL.
+      # PR previews keep the fake URL (render check only, no backend). The
+      # deploy-prod verify step fails the run if a fake-URL bundle ever
+      # reaches it, so a misconfigured build can't silently ship prod broken.
       - name: Build Cloudflare bundle
         env:
-          NEXT_PUBLIC_API_BASE_URL: "http://fake-api-for-build.example.com"
+          NEXT_PUBLIC_API_BASE_URL: ${{ github.event_name == 'pull_request' && 'http://fake-api-for-build.example.com' || 'https://api.heygaia.io/api/v1/' }}
         run: |
           echo "::group::opennext build — pnpm --filter ./apps/web cf:build"
           time pnpm --filter ./apps/web cf:build
@@ -162,6 +167,13 @@ jobs:
           test -f apps/web/.open-next/worker.js || { echo "::error::worker.js missing — build artifact not restored"; exit 1; }
           du -h apps/web/.open-next/worker.js
           du -sh apps/web/.open-next
+          # NEXT_PUBLIC_API_BASE_URL is baked into the JS at build time. A
+          # PR-preview bundle (fake URL) must never ship to production — refuse
+          # to deploy instead of shipping a silently backend-less frontend.
+          if grep -rq "fake-api-for-build" apps/web/.open-next --include='*.js'; then
+            echo "::error::Production bundle contains the fake preview API URL — NEXT_PUBLIC_API_BASE_URL was wrong at build time. Refusing to deploy."
+            exit 1
+          fi
 
       - name: Deploy to Cloudflare Workers (production)
         env:
