@@ -10,7 +10,6 @@ import {
 } from "@icons";
 import { useParams } from "next/navigation";
 import { chatApi } from "@/features/chat/api/chatApi";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { syncSingleConversation } from "@/services/syncService";
 import { useReplyToMessage } from "@/stores/replyToMessageStore";
@@ -75,16 +74,11 @@ export default function ChatBubble_Actions({
 
       if (!message_id) return;
 
-      // Pin/unpin the message
+      // Pin/unpin the message. Recorded once, server-side, by
+      // chat:message_pinned / chat:message_unpinned in
+      // apps/api/app/services/conversation_service.py — a client emitter
+      // counted attempts (including failures) as successes.
       await chatApi.togglePinMessage(convoIdParam, message_id, !pinned);
-
-      trackEvent(
-        pinned ? ANALYTICS_EVENTS.PIN_DELETED : ANALYTICS_EVENTS.PIN_CREATED,
-        {
-          message_id,
-          conversation_id: convoIdParam,
-        },
-      );
 
       toast.success(pinned ? "Message unpinned!" : "Message pinned!");
 
@@ -97,17 +91,8 @@ export default function ChatBubble_Actions({
   };
 
   const submitFeedback = (isPositive: boolean) => {
-    trackEvent(ANALYTICS_EVENTS.CHAT_MESSAGE_FEEDBACK, {
-      message_id,
-      is_positive: isPositive,
-      message_role: messageRole,
-      conversation_id: convoIdParam,
-    });
-    // Forward to Langfuse via the backend. Errors are silent — PostHog has
-    // already recorded the event so we never want to make the user feel
-    // their thumbs didn't register.
     chatApi.submitMessageFeedback(message_id, isPositive).catch(() => {
-      /* silent by design: PostHog already recorded the event locally (see above) */
+      /* silent by design */
     });
     if (isPositive) {
       toast.success("Thanks for your feedback!");

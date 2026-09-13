@@ -292,4 +292,5 @@ async def revoke(device_id: str, user_id: str = Depends(get_user_id)) -> DeviceR
     log.set(device={"operation": "revoke", "device_id": device_id}, user={"id": user_id})
     if not await revoke_device(user_id, device_id):
         raise HTTPException(status_code=404, detail="Device not found")
+    capture_event(user_id, AnalyticsEvents.DEVICE_REVOKED)
     return DeviceRevokeResponse(device_id=device_id, status="revoked")
