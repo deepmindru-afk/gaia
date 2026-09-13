@@ -9,7 +9,10 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { resolveLoaderSize } from "../src/main/windows/loader-geometry";
+import {
+  resolveLoaderSize,
+  resolveNormalBounds,
+} from "../src/main/windows/loader-geometry";
 
 function expectFits(
   workArea: { width: number; height: number },
@@ -58,5 +61,27 @@ describe("resolveLoaderSize", () => {
     const workArea = { width: 800, height: 572 };
     const size = resolveLoaderSize(workArea);
     expectFits(workArea, size);
+  });
+});
+
+describe("resolveNormalBounds", () => {
+  it("centers the 1400×900 normal frame on a large display", () => {
+    const bounds = resolveNormalBounds({
+      x: 0,
+      y: 25,
+      width: 1920,
+      height: 1040,
+    });
+    expect(bounds).toEqual({ x: 260, y: 95, width: 1400, height: 900 });
+  });
+
+  it("shrinks to the work area on a panel smaller than the normal frame", () => {
+    const bounds = resolveNormalBounds({
+      x: 0,
+      y: 0,
+      width: 1024,
+      height: 640,
+    });
+    expect(bounds).toEqual({ x: 0, y: 0, width: 1024, height: 640 });
   });
 });

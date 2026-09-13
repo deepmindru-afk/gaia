@@ -14,10 +14,11 @@
  */
 
 import { join } from "node:path";
-import { app, BrowserWindow, type Event, shell } from "electron";
+import { app, BrowserWindow, type Event, screen, shell } from "electron";
 import { getApiOrigin } from "../api-origin";
 import { getServerUrl } from "../server";
 import { loadAppRoute } from "./load-url";
+import { MAIN_NORMAL_WIDTH, resolveNormalBounds } from "./loader-geometry";
 import { classifyNavigation } from "./navigation-policy";
 import { closeSplashWindow, getLoaderBounds } from "./splash";
 
@@ -183,8 +184,10 @@ export async function createMainWindow(
  * full app. `maximize()` runs AFTER `show()` — on macOS maximising a
  * still-hidden window is a no-op. Minimums are raised to the real
  * 1024×700 only after the scale-up so they never force the small
- * boot bounds larger. Restores (green button / double-click) go to
- * 1400×900 via the normal zoom behaviour.
+ * boot bounds larger. The boot maximise happened FROM the loader frame,
+ * so the first restore would land on the loader size — a one-shot
+ * `unmaximize` handler expands it to the real normal frame instead;
+ * later restore cycles keep the user's own frame natively.
  *
  * @returns The pending deep-link URL that should be processed
  *   after the window is visible, or `null`.
@@ -213,6 +216,19 @@ export function showMainWindow(): string | null {
   mainWindow.setMinimumSize(1024, 700);
   mainWindow.maximize();
   console.log("[Main] Main window scaled to full size");
+
+  // The zoom above maximised FROM the loader frame, so the first restore
+  // would land on the loader size instead of the real normal frame. Expand
+  // once to the normal bounds on first un-maximise; later cycles keep the
+  // user's own frame natively. The width guard keeps a future programmatic
+  // resize from ever being shrunk by this handler.
+  const win = mainWindow;
+  win.once("unmaximize", () => {
+    if (win.isDestroyed()) return;
+    const [width = 0] = win.getSize();
+    if (width >= MAIN_NORMAL_WIDTH) return;
+    win.setBounds(resolveNormalBounds(screen.getPrimaryDisplay().workArea));
+  });
 
   return consumePendingDeepLink();
 }

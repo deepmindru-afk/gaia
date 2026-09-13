@@ -26,6 +26,16 @@ export interface WorkAreaSize {
   height: number;
 }
 
+/** A work area with its screen origin — what `screen.getPrimaryDisplay().workArea` yields. */
+export interface WorkArea extends WorkAreaSize {
+  x: number;
+  y: number;
+}
+
+/** Normal (restored) main-window size — the frame a restore lands on. */
+export const MAIN_NORMAL_WIDTH = 1400;
+export const MAIN_NORMAL_HEIGHT = 900;
+
 /**
  * Resolve the loader window size for a given work area.
  *
@@ -56,4 +66,28 @@ export function resolveLoaderSize(workArea: WorkAreaSize): {
     ),
   );
   return { width, height };
+}
+
+/**
+ * Resolve the normal main-window frame, centered in the work area.
+ *
+ * The boot scale-up maximises FROM the small loader bounds, so without this
+ * the first restore would land on the loader size instead of the real normal
+ * frame. Pure so it is unit-testable; the Electron wiring lives in
+ * `windows/main`.
+ */
+export function resolveNormalBounds(workArea: WorkArea): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  const width = Math.min(MAIN_NORMAL_WIDTH, workArea.width);
+  const height = Math.min(MAIN_NORMAL_HEIGHT, workArea.height);
+  return {
+    width,
+    height,
+    x: Math.round(workArea.x + Math.max(0, (workArea.width - width) / 2)),
+    y: Math.round(workArea.y + Math.max(0, (workArea.height - height) / 2)),
+  };
 }

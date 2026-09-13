@@ -315,10 +315,14 @@ async function assertServerBoots() {
       settleOutcome(result);
     };
 
+    let stdoutBuffer = "";
     child.stdout.on("data", (buf) => {
       const text = buf.toString();
       process.stdout.write(`[canary] ${text}`);
-      if (/Ready|started server/i.test(text)) settle({ ok: true });
+      // A chunk boundary can split the readiness token across two data
+      // events — keep a bounded rolling buffer so the match sees the join.
+      stdoutBuffer = (stdoutBuffer + text).slice(-1024);
+      if (/Ready|started server/i.test(stdoutBuffer)) settle({ ok: true });
     });
     child.stderr.on("data", (buf) => {
       stderr.push(buf.toString());

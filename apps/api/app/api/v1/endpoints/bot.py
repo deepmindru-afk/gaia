@@ -282,7 +282,7 @@ async def _start_bot_stream_task(
     )
     await stream_manager.start_stream(stream_id, conversation_id, user_id)
 
-    def _log_stream_failure(t: asyncio.Task) -> None:
+    def _log_stream_failure(t: asyncio.Task[Any]) -> None:
         if not t.cancelled() and (exc := t.exception()):
             log.error(
                 f"{LogTag.API} Background stream task failed",

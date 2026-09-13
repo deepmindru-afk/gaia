@@ -115,6 +115,11 @@ export const useUserSubscriptionStatus = () => {
  * showing the prompt while the query is pending).
  */
 export const useShouldPromptUpgrade = (): boolean => {
-  const { data } = useUserSubscriptionStatus();
-  return data?.is_subscribed === false;
+  const { data, isError, isLoading } = useUserSubscriptionStatus();
+  // A failed status request must not hide upgrade paths for the session:
+  // fail open so a transient error still surfaces the upgrade flow. Loading
+  // stays fail-closed so CTAs never flash before the status resolves.
+  if (isError) return true;
+  if (isLoading || !data) return false;
+  return data.is_subscribed === false;
 };
