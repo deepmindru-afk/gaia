@@ -35,7 +35,9 @@ describe("todo canvas endpoint", () => {
 describe("getTodoCanvas", () => {
   beforeEach(() => {
     request.mockReset();
-    request.mockResolvedValue({ data: { content: "# canvas" } });
+    request.mockResolvedValue({
+      data: { content: "# canvas", activity: "- ran" },
+    });
   });
 
   it("requests the unprefixed canvas path with silent toasts", async () => {
@@ -45,8 +47,9 @@ describe("getTodoCanvas", () => {
     );
   });
 
-  it("returns the canvas content", async () => {
+  it("returns both notes files", async () => {
     const res = await getTodoCanvas("todo-1");
     expect(res.content).toBe("# canvas");
+    expect(res.activity).toBe("- ran");
   });
 });

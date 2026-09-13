@@ -32,7 +32,12 @@ from langgraph.store.base import BaseStore
 from langgraph.types import RetryPolicy, Send
 from langgraph_bigtool.tools import get_default_retrieval_tool, get_store_arg
 
-from app.agents.llm.client import LLMInvokeOptions, ainvoke_llm, invoke_llm
+from app.agents.llm.client import (
+    LLMInvokeOptions,
+    _is_openrouter_wire,
+    ainvoke_llm,
+    invoke_llm,
+)
 from app.agents.llm.lane import ModelLane
 from app.agents.middleware.completion import (
     completion_nudges_spent,
@@ -151,11 +156,16 @@ def _bind_session_id(
     session id left the executor at 72.2% cache hits and comms at 26.8%; a
     byte-identical resend of comms' own request still hit 99.9% seconds later.
     """
-    # Must run AFTER bind_tools, which rebuilds the runnable and drops outer
-    # bindings — pins the conversation's provider so its prompt cache chains
-    # across turns. Gating logic lives in _agent_sticky_key.
+    # Must run AFTER bind_tools (which rebuilds the runnable and drops outer bindings), so the
+    # call pins to the conversation's provider and its prompt cache chains across turns.
+    # Gated on the provider the same way ainvoke_llm gates it: session_id is an
+    # OpenRouter routing hint, and Gemini (or a custom OpenAI-compatible endpoint)
+    # has no such routing, so sending it there is an unsupported argument that
+    # fails the call.
     key = _agent_sticky_key(model_configurations, agent_name)
-    return llm_with_tools.bind(session_id=key) if key else llm_with_tools
+    if key and _is_openrouter_wire(llm_with_tools):
+        return llm_with_tools.bind(session_id=key)
+    return llm_with_tools
 
 
 def _agent_sticky_key(

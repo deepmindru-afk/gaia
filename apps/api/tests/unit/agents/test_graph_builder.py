@@ -483,13 +483,14 @@ class TestBuildExecutorGraph:
                 "plan_tasks",
                 "update_tasks",
                 "read",
+                "write",
+                "edit",
                 "bash",
                 "deep_research",
                 "wait_for_subagents",
                 "read_manual",
                 "create_tracked_todo",
                 "update_tracked_todo",
-                "update_tracked_todo_canvas",
                 "complete_tracked_todo",
                 "search_todo_context",
                 "list_tracked_todos",
@@ -501,6 +502,10 @@ class TestBuildExecutorGraph:
                 "decline_playbook",
                 "read_playbook",
                 "disable_playbook",
+                "add_device",
+                "approve_device_pairing",
+                "list_devices",
+                "run_on_device",
             ]
 
     async def test_executor_tool_registry_includes_handoff(self):
