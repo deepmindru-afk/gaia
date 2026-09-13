@@ -5,10 +5,10 @@ Provider order (each falls through on error or empty results):
     -> SearXNG (self-hosted, unlimited last resort)
 
 Budget-capped providers stop before exceeding their free allowance, so the
-self-hosted floor means search can never incur a bill. ``perform_search`` and
-``search_for_research`` are the cached entry points the agent tools and the
-search API use — ``perform_search`` returns a typed ``WebSearchResult``,
-``search_for_research`` a ``ResearchSearchResult``.
+self-hosted floor means search can never incur a bill. perform_search and
+search_for_research are the cached entry points the agent tools and the
+search API use — perform_search returns a typed WebSearchResult,
+search_for_research a ResearchSearchResult.
 """
 
 from app.constants.cache import WEB_SEARCH_CACHE_TTL

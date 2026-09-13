@@ -8,6 +8,7 @@ from langgraph.config import get_stream_writer
 
 from app.constants.log_tags import LogTag
 from app.decorators import with_doc
+from app.models.integrations.composio_hooks import RunMetadata
 from app.models.support_models import (
     SupportRequestType,
 )
@@ -51,8 +52,7 @@ async def create_support_ticket(
         log.set(tool={"name": "create_support_ticket", "action": "create"})
         log.info(f"{LogTag.TOOL} Preparing support ticket draft")
 
-        metadata = config.get("metadata", {})
-        user_id = metadata.get("user_id")
+        user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
 
         if not user_id:
             return "User authentication required to create support ticket."

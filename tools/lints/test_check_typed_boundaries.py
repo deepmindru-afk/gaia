@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import pytest
+
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
@@ -23,7 +25,9 @@ def _rule_lines(tmp_path: Path, source: str) -> dict[str, list[int]]:
     return {rule: lines for (_, rule), lines in found.items()}
 
 
-def test_loose_annotations_are_the_any_and_bare_dict_ones(tmp_path: Path, monkeypatch) -> None:
+def test_loose_annotations_are_the_any_and_bare_dict_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
     source = (
         "from typing import Any\n"
@@ -35,7 +39,9 @@ def test_loose_annotations_are_the_any_and_bare_dict_ones(tmp_path: Path, monkey
     assert _rule_lines(tmp_path, source)[LOOSE_ANNOTATION] == [2, 3, 4, 4]
 
 
-def test_string_key_reads_are_get_and_subscript_loads(tmp_path: Path, monkeypatch) -> None:
+def test_string_key_reads_are_get_and_subscript_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
     source = (
         "from typing import Literal\n"
@@ -52,7 +58,7 @@ def test_string_key_reads_are_get_and_subscript_loads(tmp_path: Path, monkeypatc
     assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [3, 4]
 
 
-def test_boundary_modules_are_not_scanned(tmp_path: Path, monkeypatch) -> None:
+def test_boundary_modules_are_not_scanned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
     module = tmp_path / "apps" / "api" / "app" / "patches" / "vendored.py"
     module.parent.mkdir(parents=True)
@@ -60,14 +66,16 @@ def test_boundary_modules_are_not_scanned(tmp_path: Path, monkeypatch) -> None:
     assert scan([module]) == {}
 
 
-def test_a_route_decorator_is_not_a_string_key_read(tmp_path: Path, monkeypatch) -> None:
+def test_a_route_decorator_is_not_a_string_key_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
     source = "@router.get('/todos')\nasync def list_todos(payload):\n    return payload.get('id')\n"
     assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [3]
 
 
 def test_a_read_on_a_name_annotated_with_a_typeddict_is_not_a_guess(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
     source = (

@@ -22,22 +22,11 @@ async def update_user_integration_status(
     expired_reason: str | None = None,
     connected_account_id: str | None = None,
 ) -> bool:
-    """
-    Update or create user integration status (upsert).
+    """Upsert user integration status; creates the record if it doesn't exist.
 
-    Called after successful OAuth or MCP connection to set status='connected', and
-    from the expiry transition to set status='expired'.
-    Creates the record if it doesn't exist.
-
-    Args:
-        user_id: The user's ID
-        integration_id: ID of integration
-        status: New status ('created', 'connected' or 'expired')
-        expired_reason: Cause of the expiry, stamped only on the 'expired' transition
-        connected_account_id: Composio connected-account nanoid, recorded whenever known
-
-    Returns:
-        True if operation was successful (update, insert, or matched existing)
+    Called after OAuth/MCP connection or from the expiry transition.
+    expired_reason stamps only the 'expired' transition; connected_account_id
+    is the Composio connected-account nanoid, recorded whenever known.
     """
     log.set(integration={"provider": integration_id, "action": "update_status"})
 

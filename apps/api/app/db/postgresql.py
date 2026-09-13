@@ -1,5 +1,5 @@
 """
-PostgreSQL Database Configuration
+PostgreSQL Database Configuration.
 
 This module provides SQLAlchemy setup for PostgreSQL database connection.
 """
@@ -22,10 +22,8 @@ from shared.py.wide_events import log
 # Create a SQLAlchemy base class for declarative models
 Base = declarative_base()
 
-# Datetime columns that must store tz-aware instants (timestamptz). The schema
-# is bootstrapped with create_all, which only CREATEs missing tables and never
-# ALTERs existing ones, so legacy tables still hold naive timestamp columns —
-# _ensure_timestamptz_columns promotes them in place.
+# Datetime columns that must store tz-aware instants; create_all never ALTERs existing
+# tables, so legacy tables still hold naive timestamp columns that this promotes in place.
 _TIMESTAMPTZ_COLUMNS: tuple[tuple[str, str], ...] = (
     ("oauth_tokens", "expires_at"),
     ("oauth_tokens", "created_at"),
@@ -38,14 +36,7 @@ _TIMESTAMPTZ_COLUMNS: tuple[tuple[str, str], ...] = (
 
 
 def _ensure_timestamptz_columns(connection: Connection) -> None:
-    """Promote legacy naive ``timestamp`` columns to ``timestamptz`` in place.
-
-    ``create_all`` never ALTERs existing tables, so columns created before the
-    timezone contract was made explicit stay naive. Their stored values are UTC
-    wall-clock, so reinterpret them ``AT TIME ZONE 'UTC'`` when converting.
-    Idempotent: columns already ``timestamp with time zone`` (or absent on a
-    fresh DB, where create_all already made them correct) are skipped.
-    """
+    """Promote legacy naive timestamp columns (stored as UTC wall-clock) to timestamptz in place."""
     preparer = connection.dialect.identifier_preparer
     for table, column in _TIMESTAMPTZ_COLUMNS:
         data_type = connection.execute(
@@ -57,11 +48,8 @@ def _ensure_timestamptz_columns(connection: Connection) -> None:
         ).scalar()
         if data_type is None or data_type == "timestamp with time zone":
             continue
-        # DDL, not text(): identifiers can never be bind parameters in any
-        # dialect, so this is the construct built for the job. They come from
-        # the _TIMESTAMPTZ_COLUMNS whitelist rather than user input, and the
-        # dialect's preparer quotes them so a reserved word or mixed-case name
-        # stays valid.
+        # DDL, not text(): identifiers can never be bind parameters. Values come from the
+        # _TIMESTAMPTZ_COLUMNS whitelist, not user input.
         quoted_table = preparer.quote(table)
         quoted_column = preparer.quote(column)
         connection.execute(
@@ -73,11 +61,9 @@ def _ensure_timestamptz_columns(connection: Connection) -> None:
         log.info(f"{LogTag.STARTUP} Promoted column to timestamptz", table=table, column=column)
 
 
-# Columns added to a table that already exists in production. ``create_all``
-# only CREATEs missing tables, so a new column on an existing one has to be
-# added in place — the same gap ``_ensure_timestamptz_columns`` covers for
-# types. Each entry is (table, column, column definition); the definition must
-# carry a DEFAULT whenever it is NOT NULL, so existing rows stay valid.
+# Columns added to a table that already exists in production (create_all only CREATEs
+# missing tables). Each entry is (table, column, definition); a NOT NULL definition
+# must carry a DEFAULT so existing rows stay valid.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("memories", "shelf_life", "varchar(20) NOT NULL DEFAULT 'durable'"),
 )
@@ -86,7 +72,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 def _ensure_added_columns(connection: Connection) -> None:
     """Add columns declared on a model but missing from an existing table.
 
-    Idempotent — a fresh database already has them from ``create_all``, and a
+    Idempotent — a fresh database already has them from create_all, and a
     re-run finds them present. Existing rows take the column's DEFAULT, which
     is why every NOT NULL entry declares one.
     """
@@ -114,13 +100,8 @@ def _ensure_added_columns(connection: Connection) -> None:
 def _adapt_url_for_asyncpg(postgres_url: str) -> tuple[str, dict[str, Any]]:
     """Translate a libpq-style URL into something asyncpg accepts.
 
-    The same `POSTGRES_URL` is consumed by `psycopg` (langgraph checkpointer)
-    and by `asyncpg` (this SQLAlchemy engine). psycopg accepts `sslmode=...`
-    natively; asyncpg does not — it rejects the kwarg with
-    `connect() got an unexpected keyword argument 'sslmode'`. We strip
-    `sslmode` from the URL and translate it into a `connect_args` ssl value
-    instead. Managed Postgres providers like Neon/Supabase hand out URLs
-    with `?sslmode=require`, so this is the common path.
+    asyncpg rejects the sslmode= kwarg psycopg accepts natively, so strip it from the URL
+    and translate it into a connect_args ssl value instead.
     """
     parts = urlsplit(postgres_url)
     query = parse_qs(parts.query, keep_blank_values=True)
@@ -179,14 +160,10 @@ async def init_postgresql_engine() -> AsyncEngine:
 
 
 async def get_postgresql_engine() -> AsyncEngine:
-    """
-    Get the PostgreSQL engine from lazy provider.
-
-    Returns:
-        AsyncEngine: The SQLAlchemy async engine
+    """Get the PostgreSQL engine from the lazy provider.
 
     Raises:
-        RuntimeError: If PostgreSQL engine is not available
+        RuntimeError: If the engine is not available.
     """
     engine = await providers.aget("postgresql_engine")
     if engine is None:
@@ -211,10 +188,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def close_postgresql_db() -> None:
-    """
-    Close database connections.
-    Should be called during application shutdown.
-    """
+    """Close database connections during application shutdown."""
     try:
         if providers.is_initialized("postgresql_engine"):
             engine = await get_postgresql_engine()

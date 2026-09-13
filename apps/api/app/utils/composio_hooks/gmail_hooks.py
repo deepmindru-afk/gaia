@@ -94,8 +94,8 @@ _DEFAULT_CONTACTS_PAGE_SIZE = 50
 class ComposeCard:
     """The compose/sent card for one Gmail compose call, as the chat UI renders it.
 
-    ``draft_id`` is set only on a draft card that must be sent as the stored
-    draft (see ``gmail_create_draft_after_hook``); the payload omits it otherwise.
+    draft_id is set only on a draft card that must be sent as the stored
+    draft (see gmail_create_draft_after_hook); the payload omits it otherwise.
     """
 
     to: list[str]
@@ -160,7 +160,7 @@ _PersonField = TypeVar("_PersonField", GooglePersonName, GooglePersonValue)
 
 
 def _primary(entries: Sequence[_PersonField]) -> _PersonField | None:
-    """The entry People flagged as primary, else the first one, else None."""
+    """Return the entry People flagged as primary, else the first one, else None."""
     if not entries:
         return None
     return next(
@@ -170,14 +170,14 @@ def _primary(entries: Sequence[_PersonField]) -> _PersonField | None:
 
 
 def _display_name(name: GooglePersonName | None) -> str | None:
-    """``displayName`` off the primary name, or "Unknown" when People omitted it."""
+    """DisplayName off the primary name, or "Unknown" when People omitted it."""
     if name is None or "display_name" not in name.model_fields_set:
         return "Unknown"
     return name.display_name
 
 
 def _entry_value(entry: GooglePersonValue | None) -> str | None:
-    """``value`` off an email/phone entry, or "" when People omitted it."""
+    """Value off an email/phone entry, or "" when People omitted it."""
     if entry is None or "value" not in entry.model_fields_set:
         return ""
     return entry.value
@@ -187,11 +187,7 @@ def _entry_value(entry: GooglePersonValue | None) -> str | None:
 class _Contact:
     """A People API person flattened to the primary name/email/phone the UI shows.
 
-    Every fallback keys off ``model_fields_set``, not on the value being None,
-    because that is what the original ``.get(key, default)`` did: the default
-    fires only when People omitted the key, while a key sent as an explicit
-    ``null`` stays ``None``. The web client and the LLM have always received that
-    ``None``, so normalizing it here would change a live payload.
+    Fallbacks key off model_fields_set, not None: matching the original .get(key, default) semantics (default only when the key is missing, an explicit null stays None) keeps the payload the web client and LLM already receive unchanged.
     """
 
     name: str | None
@@ -219,7 +215,7 @@ class _Contact:
         }
 
     def summary(self) -> ContactSummary:
-        """The contact trimmed for the LLM: name always, email/phone only when known."""
+        """Trim the contact for the LLM: name always, email/phone only when known."""
         summary: ContactSummary = {"name": self.name}
         if self.email:
             summary["email"] = self.email
@@ -253,11 +249,11 @@ def gmail_send_email_schema_modifier(tool: str, toolkit: str, schema: Tool) -> T
 
 @register_schema_modifier(tools=list(_GMAIL_COMPOSE_TOOLS))
 def gmail_compose_hide_is_html_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """Hide the ``is_html`` parameter from the agent-facing schema.
+    """Hide the is_html parameter from the agent-facing schema.
 
     The before-hook always converts the body to HTML and sets the flag, so
     exposing it to the agent just invites bad choices (agent picks False,
-    writes Markdown, Gmail renders ``**bold**`` as literal asterisks). The
+    writes Markdown, Gmail renders **bold** as literal asterisks). The
     agent writes Markdown — everything else is our problem.
     """
     return _drop_param(schema, _IS_HTML_PARAM)
@@ -265,13 +261,9 @@ def gmail_compose_hide_is_html_schema_modifier(tool: str, toolkit: str, schema: 
 
 @register_schema_modifier(tools=["GMAIL_SEND_EMAIL", "GMAIL_CREATE_EMAIL_DRAFT"])
 def gmail_compose_require_subject_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """Make ``subject`` a required, non-empty field for email composition.
+    """Make subject a required, non-empty field for email composition.
 
-    A blank subject line reads as spam and gets buried — the agent must always
-    write a clear, specific subject. Marking it required with ``minLength`` means
-    the function-calling / args-validation layer rejects a call that omits or
-    blanks it, before the tool ever runs (before-hook exceptions are swallowed,
-    so schema-level enforcement is the only hard guarantee).
+    A blank subject reads as spam and gets buried, so require it with minLength — the function-calling / args-validation layer then rejects a call that omits or blanks it before the tool runs, which matters because before-hook exceptions are swallowed and schema enforcement is the only hard guarantee.
     """
     input_params = JsonSchemaNode.parse(schema.input_parameters)
     if input_params is None:
@@ -309,17 +301,17 @@ def gmail_fetch_message_schema_modifier(tool: str, toolkit: str, schema: Tool) -
 
 @register_schema_modifier(toolkits=["gmail"])
 def gmail_hide_user_id_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """Strip ``user_id`` from every Gmail tool's agent-facing schema.
+    """Strip user_id from every Gmail tool's agent-facing schema.
 
-    The mailbox is fixed by the connected account, so the Gmail ``userId`` must
-    always be ``"me"``. Exposing it baits the agent into passing the literal
+    The mailbox is fixed by the connected account, so the Gmail userId must
+    always be "me". Exposing it baits the agent into passing the literal
     address, which returns zero results; removing it forces Composio's default.
     """
     return _drop_param(schema, _USER_ID_PARAM)
 
 
 def _drop_param(schema: Tool, param: str) -> Tool:
-    """Remove ``param`` from a tool's agent-facing properties and its required list."""
+    """Remove param from a tool's agent-facing properties and its required list."""
     input_params = JsonSchemaNode.parse(schema.input_parameters)
     if input_params is None:
         return schema
@@ -349,7 +341,7 @@ def _normalize_compose_body(arguments: dict[str, object]) -> None:
 
 
 def _compose_recipient_ready(tool: str, arguments: dict[str, object]) -> bool:
-    """Map ``to`` -> ``recipient_email`` and confirm a SEND/DRAFT call is streamable.
+    """Map to -> recipient_email and confirm a SEND/DRAFT call is streamable.
 
     Non-compose tools (reply/forward) are always ready. Returns False (and logs) when
     a SEND/DRAFT call is missing a recipient or any content, so streaming is skipped.
@@ -382,7 +374,7 @@ def _compose_recipients(tool: str, compose: GmailComposeArguments) -> list[str]:
 def _compose_card(
     tool: str, compose: GmailComposeArguments, attachment_display: list[AttachmentDisplay]
 ) -> ComposeCard:
-    """The compose/sent card for one Gmail compose call."""
+    """Build the compose/sent card for one Gmail compose call."""
     return ComposeCard(
         to=_compose_recipients(tool, compose),
         subject=compose.subject,
@@ -400,11 +392,7 @@ def _stream_compose_preview(
 ) -> None:
     """Stream the sent card now; hold the draft card until its id exists.
 
-    A draft card's Send button sends the *draft* — attachments and all — which
-    needs the draft id Gmail only returns once the tool has run. Streaming the
-    card here would render one whose Send falls back to composing a fresh mail
-    from the card's fields, silently dropping every attachment, so the draft
-    card is handed to ``gmail_create_draft_after_hook`` instead.
+    A draft card's Send button sends the draft (attachments and all), which needs the id Gmail only returns once the tool has run; streaming it here would fall back to composing a fresh mail and silently drop every attachment, so the draft card is handed to gmail_create_draft_after_hook instead.
     """
     card = _compose_card(tool, compose, attachment_display)
     if tool == "GMAIL_CREATE_EMAIL_DRAFT":
@@ -427,12 +415,9 @@ def gmail_compose_before_hook(
     """Resolve attachments, normalise the body, and stream the compose/sent card."""
     log.set(gmail_tool=tool, toolkit=toolkit)  # pragma: no mutate -- observability
     try:
-        # Shared file-upload resolution (strict: any garbage in ``attachments``
-        # aborts). Raises HookAbortError (propagated below) if a file can't be
-        # attached, so we never send mail missing a requested attachment. The
-        # native param name comes from the swap record rather than a constant of
-        # our own: Composio names it per tool, and a tool we never swapped has no
-        # ``attachments`` of ours to resolve.
+        # Strict: raises HookAbortError if a file can't be attached, so we never
+        # send mail missing a requested attachment. The native param name comes
+        # from the swap record, not a constant: Composio names it per tool.
         native_param = swapped_upload_param(tool)
         attachment_display = (
             resolve_tool_attachments(tool, toolkit, params, native_param=native_param)
@@ -476,14 +461,9 @@ def gmail_compose_before_hook(
 def gmail_create_draft_after_hook(
     tool: str, toolkit: str, response: ToolExecutionResponse
 ) -> ToolExecutionResponse:
-    """Stream the held compose card, now that the draft it describes exists.
+    """Stream the held compose card, now that the draft it describes exists; the response passes through untouched.
 
-    A card with attachments gets the draft's id, which makes its Send button send
-    *this draft* rather than recompose it from the card's visible fields — the
-    only path that keeps the files. Without an id there is no such path, so the
-    card is dropped rather than shown with attachments it cannot deliver. A card
-    with no attachments stays editable and is sent as a fresh compose. The
-    response itself is passed through untouched.
+    A card with attachments gets the draft's id so its Send button sends this draft rather than recomposing from the card's visible fields — the only path that keeps the files. Without an id the card is dropped instead of shown with attachments it cannot deliver; a card with no attachments stays editable and is sent as a fresh compose.
     """
     card = _pending_draft_card.get()
     _pending_draft_card.set(None)
@@ -542,7 +522,6 @@ def gmail_thread_after_hook(
         if not isinstance(raw, dict) or "error" in raw:
             return raw
 
-        # Process the raw thread response
         processed_response = process_get_thread_response(raw)
         thread = GmailThreadView.model_validate(processed_response)
 
@@ -593,7 +572,6 @@ def gmail_drafts_after_hook(
         if not isinstance(raw, dict) or "error" in raw:
             return raw
 
-        # Process the raw drafts response
         return process_list_drafts_response(raw)
 
     except Exception as e:

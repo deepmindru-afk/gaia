@@ -132,7 +132,7 @@ class MCPTokenStore:
         """Check if token expires within threshold (default 5 minutes).
 
         Also returns True when token_expires_at is not set but the token
-        was issued more than ``max_age_seconds`` ago — servers can revoke
+        was issued more than max_age_seconds ago — servers can revoke
         tokens at any time, so proactively refreshing stale tokens avoids
         connection failures from expired-but-unknown-expiry tokens.
         """
@@ -268,14 +268,10 @@ class MCPTokenStore:
                 )
 
     async def create_oauth_state(self, integration_id: str, code_verifier: str) -> str:
-        """
-        Create OAuth state for CSRF protection.
+        """Create OAuth state and PKCE code_verifier for CSRF protection, stored in Redis with TTL.
 
-        Stores state and PKCE code_verifier in Redis with TTL.
-        Returns the state token to include in OAuth URL.
-
-        Note: Connection status is managed in MongoDB user_integrations.
-        PostgreSQL only stores the PKCE state for the OAuth flow.
+        PostgreSQL only stores the PKCE state for the flow; connection status
+        lives in MongoDB user_integrations.
         """
         state = secrets.token_urlsafe(32)
 
@@ -380,7 +376,7 @@ class MCPTokenStore:
 
         The whole RFC 7591 response is persisted verbatim — servers return
         arbitrary extra metadata alongside the credentials — so the write side
-        stays an open JSON object. Reads go through :class:`DCRClientRegistration`.
+        stays an open JSON object. Reads go through DCRClientRegistration.
         """
         async with get_db_session() as session:
             result = await session.execute(
@@ -407,18 +403,11 @@ class MCPTokenStore:
             log.info(f"{LogTag.MCP} Stored DCR client for", integration_id=integration_id)
 
     async def store_oauth_discovery(self, integration_id: str, discovery: OAuthDiscovery) -> None:
-        """
-        Cache OAuth discovery data in Redis.
+        """Cache OAuth discovery data in Redis for 24 hours.
 
-        NOTE: This cache is GLOBAL per integration, not per-user. The key is:
-        `mcp_oauth_discovery:{integration_id}` (no user_id component).
-
-        This is intentional because OAuth discovery data (authorization_endpoint,
-        token_endpoint, registration_endpoint, etc.) is the same for all users
-        connecting to the same MCP server. User-specific data like DCR client_id
-        is stored separately in PostgreSQL per user.
-
-        TTL: 24 hours (OAuth metadata changes infrequently)
+        Global per integration (key: mcp_oauth_discovery:{integration_id}, no
+        user_id) since discovery data is the same for all users; per-user DCR
+        client_id is stored separately in PostgreSQL.
         """
         cache_key = f"{OAUTH_DISCOVERY_PREFIX}:{integration_id}"
         await set_cache(cache_key, discovery.model_dump(mode="json"), ttl=OAUTH_DISCOVERY_TTL)
@@ -456,7 +445,7 @@ class MCPTokenStore:
 
     async def get_excluded_scopes(self, integration_id: str) -> set[str]:
         """
-        Get scopes the auth server rejected with `invalid_scope`.
+        Get scopes the auth server rejected with invalid_scope.
 
         Accumulated within a single OAuth flow (TTL-bounded) so each
         re-authorization retry drops the offending scope(s) and converges.

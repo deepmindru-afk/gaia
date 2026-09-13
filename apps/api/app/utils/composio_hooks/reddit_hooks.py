@@ -93,7 +93,7 @@ class RedditContentCreatedSummary(TypedDict):
 
 
 def process_reddit_post(post: RedditPost) -> RedditPostSummary:
-    """Extract only critical information from a Reddit post (a ``t3`` thing's ``data``)."""
+    """Extract only critical information from a Reddit post (a t3 thing's data)."""
     return {
         "id": post.id,
         "title": post.title,
@@ -117,7 +117,7 @@ def process_reddit_post(post: RedditPost) -> RedditPostSummary:
 
 
 def process_reddit_search_results(data: RedditSearchData) -> RedditSearchSummary:
-    """Process Reddit search results to minimize data: the ``t3`` posts and the page cursors."""
+    """Process Reddit search results to minimize data: the t3 posts and the page cursors."""
     listing = data.search_results.data
     processed_posts = [
         process_reddit_post(child.data) for child in listing.children if child.kind == _POST_KIND
@@ -132,7 +132,7 @@ def process_reddit_search_results(data: RedditSearchData) -> RedditSearchSummary
 
 
 def process_reddit_comment(comment: RedditComment) -> RedditCommentSummary:
-    """Extract only critical information from a Reddit comment (a ``t1`` thing's ``data``)."""
+    """Extract only critical information from a Reddit comment (a t1 thing's data)."""
     return {
         "id": comment.id,
         "author": comment.author,
@@ -159,11 +159,10 @@ def _ui_selftext(post: RedditPost) -> str:
 
 
 def _comment_listing(raw: object) -> RedditCommentListing:
-    """The comments listing off either shape ``REDDIT_RETRIEVE_POST_COMMENTS`` answers.
+    """Return the comments listing from either shape REDDIT_RETRIEVE_POST_COMMENTS answers.
 
-    Composio's envelope types ``data`` as a plain dict, but Reddit's raw listing
-    API for this endpoint returns a top-level JSON array ``[post_listing,
-    comments_listing]`` — genuinely either shape can arrive here.
+    Composio types data as a dict, but Reddit's raw listing API for this endpoint
+    returns a top-level array [post_listing, comments_listing] — either shape can arrive.
     """
     if isinstance(raw, list):
         if len(raw) > 1 and isinstance(raw[1], dict):

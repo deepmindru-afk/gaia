@@ -1,7 +1,7 @@
 """Twitter API utility functions for custom tools.
 
 These helpers wrap Twitter API v2 calls behind Composio's proxy. The proxy
-attaches the user's OAuth token server-side; callers only supply `user_id`.
+attaches the user's OAuth token server-side; callers only supply user_id.
 """
 
 from dataclasses import dataclass
@@ -32,7 +32,7 @@ TWITTER_TOOLKIT = "TWITTER"
 
 @dataclass(slots=True, frozen=True)
 class TwitterOutcome:
-    """Whether one Twitter call went through; ``error`` is the provider's answer when it did not."""
+    """Whether one Twitter call went through; error is the provider's answer when it did not."""
 
     success: bool
     error: str | None = None
@@ -40,7 +40,7 @@ class TwitterOutcome:
 
 @dataclass(slots=True, frozen=True)
 class TwitterTweetOutcome:
-    """``create_tweet``'s result: the created tweet, or the provider's error."""
+    """create_tweet's result: the created tweet, or the provider's error."""
 
     success: bool
     tweet: TwitterCreatedTweet | None = None
@@ -49,7 +49,7 @@ class TwitterTweetOutcome:
 
 @dataclass(slots=True, frozen=True)
 class TwitterSearchOutcome:
-    """``search_tweets``'s result: the search payload, or the provider's error."""
+    """search_tweets's result: the search payload, or the provider's error."""
 
     success: bool
     data: TwitterSearchResponse | None = None
@@ -64,7 +64,7 @@ def _proxy(
     body: BaseModel | None = None,
     query: dict[str, str | int] | None = None,
 ) -> object:
-    """Send one Twitter request; ``object`` because every endpoint answers its own shape."""
+    """Send one Twitter request; the result is untyped because every endpoint answers its own shape."""
     return proxy_request_sync(
         ProxyRequest(
             user_id=user_id,
@@ -125,7 +125,6 @@ def lookup_user_by_username(user_id: str, username: str) -> TwitterUser | None:
 
 
 def follow_user(user_id: str, my_user_id: str, target_user_id: str) -> TwitterOutcome:
-    """Follow a user by ID."""
     try:
         _proxy(
             user_id,
@@ -141,7 +140,6 @@ def follow_user(user_id: str, my_user_id: str, target_user_id: str) -> TwitterOu
 
 
 def unfollow_user(user_id: str, my_user_id: str, target_user_id: str) -> TwitterOutcome:
-    """Unfollow a user by ID."""
     try:
         _proxy(
             user_id,
@@ -162,7 +160,6 @@ def create_tweet(
     media_ids: list[str] | None = None,
     quote_tweet_id: str | None = None,
 ) -> TwitterTweetOutcome:
-    """Create a tweet."""
     try:
         body = TwitterCreateTweetRequest(
             text=text,

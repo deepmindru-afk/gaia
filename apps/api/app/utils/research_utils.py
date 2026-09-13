@@ -116,14 +116,11 @@ def rank_and_deduplicate_urls(
     search_results: Sequence[Mapping[str, object] | ResearchSearchResult | BaseException],
     max_urls: int,
 ) -> list[RankedUrl]:
-    """
-    Merge results from multiple searches, rank by appearance frequency + relevance score.
-    Returns deduplicated URL list sorted by combined relevance.
+    """Merge results from multiple searches, ranked by appearance frequency + relevance score.
 
-    ``search_results`` is what ``asyncio.gather(..., return_exceptions=True)``
-    over ``search_for_research`` hands back: each success is that call's
-    ``{"results": [...]}`` wire shape (parsed here, once), and a failed search
-    rides along as its exception and is skipped.
+    Returns a deduplicated URL list sorted by combined relevance. search_results is
+    what asyncio.gather(..., return_exceptions=True) over search_for_research returns;
+    a failed search rides along as its exception and is skipped.
     """
     url_map: dict[str, RankedUrl] = {}
 

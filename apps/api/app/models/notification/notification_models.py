@@ -112,7 +112,7 @@ class ActionConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_single_config(self) -> "ActionConfig":
-        """Ensure only one action config is set"""
+        """Ensure only one action config is set."""
         configs = [self.redirect, self.api_call, self.modal]
         non_none_configs = [c for c in configs if c is not None]
 
@@ -137,12 +137,12 @@ class NotificationAction(BaseModel):
     executed_at: datetime | None = None
 
     def mark_as_executed(self) -> None:
-        """Mark this action as executed"""
+        """Mark this action as executed."""
         self.executed = True
         self.executed_at = datetime.now(UTC)
 
     def is_executable(self) -> bool:
-        """Check if this action can be executed"""
+        """Check if this action can be executed."""
         if self.disabled:
             return False
         # For API calls, prevent double-execution
@@ -207,8 +207,8 @@ class ChannelDeliveryStatus(BaseModel):
 class NotificationRecord(UserScopedDocument):
     """Persisted notification with its original request and per-channel statuses.
 
-    Identity is the UUID ``id`` (not Mongo's ``_id``); the notification repository
-    sets ``identity_field = "id"``.
+    Identity is the UUID id (not Mongo's _id); the notification repository
+    sets identity_field = "id".
     """
 
     id: str
@@ -223,7 +223,7 @@ class NotificationRecord(UserScopedDocument):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def mark_action_as_executed(self, action_id: str) -> bool:
-        """Mark a specific action as executed"""
+        """Mark a specific action as executed."""
         if not self.original_request.content.actions:
             return False
         for action in self.original_request.content.actions:
@@ -234,7 +234,7 @@ class NotificationRecord(UserScopedDocument):
         return False
 
     def get_action_by_id(self, action_id: str) -> NotificationAction | None:
-        """Get a specific action by ID"""
+        """Get a specific action by ID."""
         if not self.original_request.content.actions:
             return None
         for action in self.original_request.content.actions:

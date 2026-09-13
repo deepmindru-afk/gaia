@@ -1,4 +1,4 @@
-"""Contract tests for NotificationRepository (business-key identity = UUID ``id``)."""
+"""Contract tests for NotificationRepository (business-key identity = UUID id)."""
 
 from __future__ import annotations
 

@@ -1,9 +1,9 @@
 """Unit tests for the Linear custom tools (linear_tool.py).
 
-Strategy: ``register_linear_custom_tools`` decorates inner functions with
-``@composio.tools.custom_tool()``; a capturing Composio mock records them so
+Strategy: register_linear_custom_tools decorates inner functions with
+@composio.tools.custom_tool(); a capturing Composio mock records them so
 they can be called directly. The only seam faked is the Composio proxy under
-``linear_utils.graphql_request``, so every response runs through the real
+linear_utils.graphql_request, so every response runs through the real
 GraphQL envelope parsing and the typed Linear models, fed with fixtures shaped
 like Linear's schema (every field the operation selects).
 """
@@ -75,7 +75,7 @@ def proxy() -> Iterator[MagicMock]:
 
 
 def _answers(proxy: MagicMock, *datas: dict[str, Any]) -> None:
-    """Answer successive GraphQL calls with ``{"data": ...}`` in order."""
+    """Answer successive GraphQL calls with {"data": ...} in order."""
     proxy.side_effect = [{"data": d} for d in datas]
 
 
@@ -95,7 +95,7 @@ TEAM = {"id": "t1", "key": "ENG", "name": "Eng"}
 
 
 def _summary(issue_id: str, **overrides: Any) -> dict[str, Any]:
-    """An issue as QUERY_MY_ISSUES / QUERY_SEARCH_ISSUES select it."""
+    """Build an issue as QUERY_MY_ISSUES / QUERY_SEARCH_ISSUES select it."""
     node: dict[str, Any] = {
         "id": issue_id,
         "identifier": f"ENG-{issue_id}",
@@ -113,7 +113,7 @@ def _summary(issue_id: str, **overrides: Any) -> dict[str, Any]:
 
 
 def _full_issue(**overrides: Any) -> dict[str, Any]:
-    """An issue as QUERY_ISSUE_BY_ID selects it."""
+    """Build an issue as QUERY_ISSUE_BY_ID selects it."""
     node: dict[str, Any] = {
         "id": "i1",
         "identifier": "ENG-1",
@@ -332,7 +332,7 @@ class TestLinearGetMyTasks:
         }
 
     def test_get_my_tasks_no_viewer(self, tools, proxy) -> None:
-        """``viewer`` is non-null in Linear's schema: a body without it is a provider fault."""
+        """Linear's schema makes viewer non-null: a body without it is a provider fault."""
         _answers(proxy, {})
 
         with pytest.raises(ValidationError):
@@ -530,7 +530,7 @@ class TestLinearGetIssueFullContext:
         proxy.assert_not_called()
 
     def test_get_issue_not_found(self, tools, proxy) -> None:
-        """``issue(id:)`` is non-null: Linear answers an unknown id with a GraphQL error."""
+        """issue(id:) is non-null: Linear answers an unknown id with a GraphQL error."""
         proxy.return_value = {"data": None, "errors": [{"message": "Entity not found: Issue"}]}
 
         with pytest.raises(Exception, match="GraphQL errors: Entity not found: Issue"):
@@ -901,7 +901,7 @@ class TestLinearGetIssueActivity:
         ]
 
     def test_get_activity_labels_added(self, tools, proxy) -> None:
-        """``addedLabels`` is ``[IssueLabel!]`` in Linear's schema — a plain list, not a connection."""
+        """Linear's schema types addedLabels as [IssueLabel!], a plain list, not a connection."""
         result = self._run(tools, proxy, _history(addedLabels=[{"id": "l1", "name": "Bug"}]))
 
         assert result["activities"] == [

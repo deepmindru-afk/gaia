@@ -20,8 +20,11 @@ ELLIPSIS = "…"
 
 
 def is_json_safe(value: object) -> bool:
-    """Whether ``value`` survives a JSON round trip — the honest test for
-    "can this be persisted", rather than a proxy like isinstance-on-scalars."""
+    """Whether value survives a JSON round trip.
+
+    The honest test for "can this be persisted", rather than a proxy like
+    isinstance-on-scalars.
+    """
     try:
         json.dumps(value)
     except (TypeError, ValueError):
@@ -30,23 +33,15 @@ def is_json_safe(value: object) -> bool:
 
 
 def clip_text(text: str, limit: int) -> str:
-    """Cap ``text`` at ``limit`` characters, marking the cut so a reader (or a model)
-    can tell truncation apart from the real end of the value."""
+    """Cap text at limit characters, marking the cut.
+
+    So a reader (or a model) can tell truncation apart from the real end.
+    """
     return text if len(text) <= limit else f"{text[:limit]}{ELLIPSIS}"
 
 
 def get_context_window(text: str, query: str, chars_before: int = 15, chars_after: int = 30) -> str:
-    """
-    Get text window around the search query with specified characters before and after.
-
-    Args:
-        text (str): Full text to search in
-        query (str): Search term to find
-        chars_around (int): Number of characters to include before and after match
-
-    Returns:
-        str: Context window containing the match with surrounding text
-    """
+    """Return the text window around the search query, with chars_before/chars_after of context."""
     # Find the query in text (case-insensitive)
     query_lower = query.lower()
     text_lower = text.lower()
@@ -94,8 +89,10 @@ def _message_time(m: GmailMessageTimestamps) -> str:
 
 
 def transform_gmail_message(msg: Mapping[str, object]) -> GmailMessageSummary:
-    """Transform a Gmail API or Composio message into the frontend-friendly format,
-    keeping every raw key alongside the derived ones."""
+    """Transform a Gmail API or Composio message into the frontend-friendly format.
+
+    Keeps every raw key alongside the derived ones.
+    """
     # Composio documents every header field as nullable and omits ``messageText``
     # under ``verbose=false``; the derived keys are always strings so the result
     # validates as ``GmailMessageSummary`` whatever the provider left null.
@@ -145,7 +142,7 @@ def transform_gmail_message(msg: Mapping[str, object]) -> GmailMessageSummary:
 
 
 def _header(headers: list[GmailHeader], name: str) -> str:
-    """The last header named ``name`` (a repeated header resolved the way a dict of them did)."""
+    """Return the last header named name (a repeated header resolved the way a dict of them did)."""
     return next((h.value or "" for h in reversed(headers) if h.name == name), "")
 
 

@@ -177,7 +177,6 @@ def rich_text_to_markdown(rich_text: Sequence[NotionRichText]) -> str:
             result += _inline_equation(content.equation.expression)
             continue
 
-        # Apply annotations
         plain_text = _apply_annotations(content.plain_text, content.annotations)
 
         # Add link if present
@@ -195,7 +194,7 @@ def rich_text_to_markdown(rich_text: Sequence[NotionRichText]) -> str:
 
 
 def _file_link(content: NotionBlockContent) -> str:
-    """The URL of a file-like block: ``external`` or Notion-hosted ``file``."""
+    """Return the URL of a file-like block: external or Notion-hosted file."""
     return content.external.url if content.type == "external" else content.file.url
 
 
@@ -234,7 +233,7 @@ def _render_equation(block: NotionBlock, _list_number: int | None) -> str:
 
 
 def _render_file_like(block: NotionBlock, _list_number: int | None) -> str:
-    """video, file, pdf"""
+    """Render a video, file or pdf block."""
     if not block.content:
         return ""
     title = block.type or ""
@@ -245,7 +244,7 @@ def _render_file_like(block: NotionBlock, _list_number: int | None) -> str:
 
 
 def _render_link_like(block: NotionBlock, _list_number: int | None) -> str:
-    """bookmark, embed, link_preview, link_to_page"""
+    """Render a bookmark, embed, link_preview or link_to_page block."""
     block_type = block.type or ""
     block_content = _block_content(block)
     if block_type != "link_to_page":
@@ -355,8 +354,8 @@ _BLOCK_RENDERERS: dict[str, Callable[[NotionBlock, int | None], str]] = {
 def block_to_markdown(block: NotionBlock, list_number: int | None = None) -> str:
     """Convert a single Notion block to markdown string.
 
-    ``list_number`` is the 1-based position of a ``numbered_list_item`` in its
-    run, which ``blocks_to_markdown`` tracks across siblings.
+    list_number is the 1-based position of a numbered_list_item in its run,
+    which blocks_to_markdown tracks across siblings.
     """
     if not block.type:
         return ""
@@ -370,8 +369,7 @@ def block_to_markdown(block: NotionBlock, list_number: int | None = None) -> str
 
 
 def _rendered_lines(md_content: str, block_id: str | None, nesting_level: int) -> list[str]:
-    """One rendered block's lines: its optional block-id comment, then its content,
-    both indented for ``nesting_level``."""
+    """Return a rendered block's optional block-id comment then its content, indented for nesting_level."""
     lines: list[str] = []
     # Add block ID comment if requested
     if block_id:
@@ -393,18 +391,10 @@ def blocks_to_markdown(
     nesting_level: int = 0,
     include_block_ids: bool = False,
 ) -> str:
-    """
-    Convert a list of Notion blocks to a markdown string.
+    """Convert a list of Notion blocks to a markdown string.
 
-    Args:
-        blocks: List of Notion block objects
-        nesting_level: Current nesting level for indentation
-        include_block_ids: If True, prepend block IDs as HTML comments
-                          (e.g., <!-- block:abc123 -->) so LLM can reference
-                          them for insertion positioning with `after` parameter.
-
-    Returns:
-        Markdown formatted string
+    include_block_ids prepends block IDs as HTML comments (<!-- block:abc123
+    -->) so an LLM can reference them via the after parameter.
     """
     if not blocks:
         return ""
@@ -462,7 +452,7 @@ _PREFIX_BLOCK_PROPERTIES: tuple[tuple[str, str], ...] = (
 
 
 def _parse_code_block(lines: list[str], start: int) -> tuple[NotionCodeBlock, int]:
-    """A fenced code block opening at ``lines[start]``; returns it and the next index."""
+    """Parse the fenced code block opening at lines[start]; returns it and the next index."""
     language = lines[start].strip()[3:].strip() or "plain text"
     code_lines = []
     i = start + 1
@@ -484,7 +474,7 @@ def _parse_table_row(row_line: str) -> list[str]:
 
 
 def _is_table_separator(row_line: str) -> bool:
-    """A separator row (e.g. |---|---| or |:---|:---:|)."""
+    """Return whether a row is a separator (e.g. |---|---| or |:---|:---:|)."""
     return all(
         re.match(r"^:?-+:?$", cell.strip())
         for cell in row_line.strip("|").split("|")
@@ -493,8 +483,10 @@ def _is_table_separator(row_line: str) -> bool:
 
 
 def _parse_table(lines: list[str], start: int) -> tuple[NotionTableBlock | None, int]:
-    """Consecutive table lines (header + separator + rows) from ``lines[start]``;
-    returns the table (``None`` when only separators were found) and the next index."""
+    """Parse consecutive table lines from lines[start].
+
+    Returns the table (None when only separators were found) and the next index.
+    """
     table_lines = []
     i = start
     while i < len(lines) and lines[i].strip().startswith("|"):
@@ -523,7 +515,7 @@ def _parse_table(lines: list[str], start: int) -> tuple[NotionTableBlock | None,
 
 
 def _line_block(stripped: str) -> NotionContentBlock:
-    """The block for one non-empty, non-code, non-table line."""
+    """Build the block for one non-empty, non-code, non-table line."""
     # Divider
     if stripped in ["---", "***", "___"]:
         return NotionContentBlock(block_property="paragraph", content="───")
@@ -558,25 +550,11 @@ def _line_block(stripped: str) -> NotionContentBlock:
 
 
 def markdown_to_notion_blocks(markdown: str) -> list[NotionMarkdownBlock]:
-    """
-    Convert markdown string to NOTION_ADD_MULTIPLE_PAGE_CONTENT format.
+    """Convert markdown to NOTION_ADD_MULTIPLE_PAGE_CONTENT format.
 
-    Returns content blocks in the simpler unwrapped format
-    (``NotionContentBlock``: ``{"block_property": "paragraph", "content": "text"}``),
-    with code blocks and tables in Notion's full form.
-
-    The Composio tool automatically parses markdown formatting in content.
-
-    Supported markdown:
-    - # ## ### headings
-    - Paragraphs
-    - - bullet lists
-    - 1. numbered lists
-    - - [ ] / - [x] todo items
-    - > quotes
-    - ``` code blocks (with language)
-    - --- dividers
-    - Inline: **bold**, *italic*, ~~strikethrough~~, `code`, [links](url)
+    Returns unwrapped content blocks, with code blocks and tables in Notion's
+    full form; the Composio tool parses markdown formatting in content itself.
+    Supports headings, paragraphs, lists, todos, quotes, code, dividers, tables.
     """
     blocks: list[NotionMarkdownBlock] = []
     lines = markdown.split("\n")

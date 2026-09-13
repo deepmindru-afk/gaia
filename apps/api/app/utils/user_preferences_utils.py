@@ -1,8 +1,3 @@
-"""
-User preferences utilities for formatting and processing user data.
-Provides functions to format user preferences for agent system prompts.
-"""
-
 from collections.abc import Mapping
 
 from pydantic import BaseModel, ConfigDict
@@ -14,10 +9,9 @@ from shared.py.wide_events import log
 
 
 class PreferencePromptFields(BaseModel):
-    """The ``OnboardingPreferences`` keys the system prompt reads, as they arrive
-    off a run's configurable (an ``exclude_none`` dump, JSON-checkpointed).
+    """The OnboardingPreferences keys the system prompt reads, off a run's configurable.
 
-    A lenient projection rather than ``OnboardingPreferences`` itself: that model
+    A lenient projection rather than OnboardingPreferences itself: that model
     re-judges a stored value against today's input rules on every validation,
     and a prompt must render what the user has, not refuse it.
     """
@@ -46,13 +40,10 @@ class WritingStylePromptFields(BaseModel):
 def onboarding_preferences(
     onboarding: OnboardingSubdocument | None,
 ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
-    """The ``(preferences, writing_style)`` pair off a user's onboarding data.
+    """Return the (preferences, writing_style) pair off a user's onboarding data.
 
-    Every root call site that hands a user's onboarding data to
-    ``build_agent_config`` or a comms ``SectionContext`` reads the same two keys
-    — pulled out once so that reading doesn't drift between call sites. Returns
-    mappings because both travel in the run's configurable (JSON-checkpointed);
-    the prompt formatters below parse them back at the point of use.
+    Pulled out once so reading doesn't drift between call sites. Returns
+    mappings because both travel in the JSON-checkpointed run configurable.
     """
     if not onboarding:
         return None, None

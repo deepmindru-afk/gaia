@@ -1,18 +1,18 @@
 """Wide-event boundary for WebSocket connections.
 
-``LoggingMiddleware`` is a ``BaseHTTPMiddleware`` and therefore only ever sees
-``http`` scope — Starlette passes ``websocket`` scope straight through the HTTP
+LoggingMiddleware is a BaseHTTPMiddleware and therefore only ever sees
+http scope — Starlette passes websocket scope straight through the HTTP
 middleware stack. A websocket connection therefore has no automatic canonical
-event, and every handler used to open its own ``log_context()`` boundary by
+event, and every handler used to open its own log_context() boundary by
 hand. That is the same footgun per handler: forget the wrapper and the whole
 connection is invisible in Loki, and no static check notices (the scanner
 assumed websocket was covered like HTTP).
 
-This is a pure ASGI middleware, not a ``BaseHTTPMiddleware``: it intercepts
-``scope["type"] == "websocket"`` and wraps the entire connection lifetime in a
-``log_context()`` boundary, so a handler just calls ``log.set()`` exactly like
+This is a pure ASGI middleware, not a BaseHTTPMiddleware: it intercepts
+scope["type"] == "websocket" and wraps the entire connection lifetime in a
+log_context() boundary, so a handler just calls log.set() exactly like
 an HTTP handler. On close — normal, cancelled, or raised — the boundary emits
-one canonical ``background_task`` line with ``outcome`` and ``duration_ms``.
+one canonical background_task line with outcome and duration_ms.
 """
 
 from __future__ import annotations
@@ -44,12 +44,10 @@ class WebSocketWideEventMiddleware:
 
 
 def _task_name(path: str) -> str:
-    """The boundary's unit-of-work name, derived from the connection path.
+    """Return the boundary's unit-of-work name, derived from the connection path.
 
-    One name per route so dashboards keyed on ``task`` (as they are for every
-    other boundary) keep their identity. Matched against the exact registered
-    paths so a future device subroute can never be silently mislabelled as
-    something else; an unknown websocket path still gets the generic name.
+    Matched against the exact registered paths so a future device subroute
+    is never silently mislabelled; an unknown path gets the generic name.
     """
     if path.rstrip("/") == "/api/v1/ws/device":
         return "device_ws_connection"

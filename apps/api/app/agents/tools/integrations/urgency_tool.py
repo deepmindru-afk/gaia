@@ -146,11 +146,12 @@ def _calendar_items(snapshot: IntegrationSnapshot) -> list[UrgentItem]:
     # Google Calendar: today's events
     if not snapshot.carries("events", "next_event"):
         return []
-    events = snapshot.events
-    next_event = snapshot.next_event
-    if not (events or next_event):
+    if snapshot.events:
+        event_list = snapshot.events
+    elif snapshot.next_event:
+        event_list = [snapshot.next_event]
+    else:
         return []
-    event_list = events or ([next_event] if next_event else [])
     return [
         UrgentItem(
             integration="googlecalendar",

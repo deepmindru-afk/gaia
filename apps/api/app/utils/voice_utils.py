@@ -1,8 +1,8 @@
 """Pure mappers that normalize ElevenLabs voice payloads into catalog options.
 
 Stateless helpers only — no I/O, DB, settings, or network. They shape the
-trimmed account/shared-library voices (``app/models/voice_models.py``) into the
-catalog-compatible ``VoiceOption`` schema used by the voice picker.
+trimmed account/shared-library voices (app/models/voice_models.py) into the
+catalog-compatible VoiceOption schema used by the voice picker.
 """
 
 from dataclasses import dataclass
@@ -27,11 +27,7 @@ class ElevenLabsVerifiedLanguage(BaseModel):
 
 
 class ElevenLabsVoiceLanguages(BaseModel):
-    """The ``verified_languages`` slice of a RAW ElevenLabs voice object.
-
-    The only part of the untrimmed provider voice ``_verified_language_codes``
-    reads; ``voice_service`` validates the raw voice into it at the boundary.
-    """
+    """The verified_languages slice of a RAW ElevenLabs voice object, validated at the boundary."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -39,7 +35,7 @@ class ElevenLabsVoiceLanguages(BaseModel):
 
 
 class ElevenLabsVoiceLabels(BaseModel):
-    """The documented keys of an account voice's free-form ``labels`` bag."""
+    """The documented keys of an account voice's free-form labels bag."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -53,8 +49,8 @@ class ElevenLabsVoiceLabels(BaseModel):
 def _verified_language_codes(voice: ElevenLabsVoiceLanguages) -> list[str]:
     """Ordered, deduped ISO codes from a voice's verified_languages.
 
-    ElevenLabs repeats a language once per supporting model — collapse to one
-    entry per language, preserving first-seen order.
+    ElevenLabs repeats a language once per supporting model, so this collapses
+    to one entry per language, preserving first-seen order.
     """
     seen: list[str] = []
     for entry in voice.verified_languages or []:
@@ -135,7 +131,7 @@ def _build_voice_option(
 
 
 def _map_account_voice(voice: ElevenLabsAccountVoice) -> VoiceOption:
-    """Shape a non-catalog account voice (metadata in ``labels``) into an option."""
+    """Shape a non-catalog account voice (metadata in labels) into an option."""
     labels = ElevenLabsVoiceLabels.model_validate(voice.labels)
     return _build_voice_option(
         voice,

@@ -37,7 +37,7 @@ from shared.py.wide_events import log
 
 
 class ResearchSource(RankedUrl):
-    """One ranked source with the fetched page layered on — a ``sources`` entry."""
+    """One ranked source with the fetched page layered on — a sources entry."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -46,8 +46,8 @@ class ResearchSource(RankedUrl):
 
 
 class ResearchResult(BaseModel):
-    """The ``research_data`` frame — also what gets cached and what the tool
-    returns (plus ``cached``/``instructions``, added per call site)."""
+    """The research_data frame — also what gets cached and what the tool
+    returns (plus cached/instructions, added per call site)."""
 
     model_config = ConfigDict(extra="forbid")
 

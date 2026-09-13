@@ -7,7 +7,7 @@ subprotocol fallback). While connected, this pod:
   * heartbeats the socket and refreshes the device's presence key.
 
 Revocation is enforced out-of-band by a single shared per-pod listener
-(``device.revoke_listener``) that closes this socket when the device is revoked.
+(device.revoke_listener) that closes this socket when the device is revoked.
 """
 
 import asyncio
@@ -79,11 +79,9 @@ async def device_ws(websocket: WebSocket) -> None:
         await websocket.close(code=1008)
         return
 
-    # Paid-only gate. The HTTP paywall is a middleware that never sees this
-    # socket, and the device connect JWT outlives a subscription, so a lapsed
-    # user's daemon would otherwise keep tunnelling MCP traffic indefinitely.
-    # Checked at connect, which is also where revocation is checked — the
-    # daemon reconnects, so a downgrade takes effect within one dial.
+    # Paid-only gate: the HTTP paywall middleware never sees this socket, and
+    # the device JWT outlives a subscription, so a lapsed daemon would tunnel
+    # MCP traffic indefinitely otherwise. Checked at connect, like revocation.
     if not await is_paid(user_id):
         log.set(disconnect_reason="subscription_required")
         await websocket.close(code=1008)
@@ -123,11 +121,9 @@ async def device_ws(websocket: WebSocket) -> None:
         with contextlib.suppress(Exception):
             await asyncio.gather(*tasks, return_exceptions=True)
         device_connection_manager.remove(device_id, websocket)
-        # Only clear presence if this pod no longer holds any socket for the
-        # device. Without this, an old socket's teardown would wipe the presence
-        # key a newer same-pod socket just re-claimed (the compare-and-delete in
-        # mark_offline keys only on POD_ID and can't tell them apart), flipping a
-        # live device offline until its next heartbeat.
+        # Only clear presence if this pod holds no more sockets for the device:
+        # mark_offline's compare-and-delete keys only on POD_ID, so an old
+        # socket's teardown could wipe a newer same-pod socket's re-claimed key.
         if not device_connection_manager.owns(device_id):
             await mark_offline(device_id)
         with contextlib.suppress(Exception):

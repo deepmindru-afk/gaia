@@ -1,7 +1,7 @@
 """Constants for the device bridge — the outbound tunnel from a user's machine.
 
-A paired device (the ``gaia bridge`` CLI daemon) holds one outbound WebSocket to
-``/ws/device`` and relays MCP JSON-RPC over it. These constants govern pairing,
+A paired device (the gaia bridge CLI daemon) holds one outbound WebSocket to
+/ws/device and relays MCP JSON-RPC over it. These constants govern pairing,
 device connect-token lifetime, and the Redis routing channels that let any worker
 reach the pod that owns a device's socket.
 """
@@ -26,11 +26,9 @@ PAIRING_POLL_INTERVAL_SECONDS: Final[int] = 5  # RFC 8628 poll cadence hint
 
 # --- Device refresh credential (long-lived, rotates on every token exchange) ---
 REFRESH_TOKEN_BYTES: Final[int] = 32  # 256-bit opaque refresh token
-# Lost-response grace: after a rotation, the just-consumed credential can be
-# re-exchanged for this long and gets the SAME replacement back (idempotent
-# retry), instead of tripping reuse detection. Covers a dropped token response
-# or a daemon killed before it persisted the new token. A replay after this
-# window still revokes.
+# Lost-response grace: after rotation, the just-consumed credential can be
+# re-exchanged within this window for the SAME replacement (idempotent retry)
+# instead of tripping reuse detection. A replay after this window still revokes.
 REFRESH_TOKEN_RETRY_GRACE_SECONDS: Final[int] = 60
 # Redis key holding a just-issued token so an in-grace retry can be replayed it.
 DEVICE_REFRESH_RETRY_PREFIX: Final[str] = "device:refreshretry:"
@@ -46,10 +44,8 @@ DEVICE_PRESENCE_TTL_SECONDS: Final[int] = 90
 # Downstream (any worker -> owning pod -> device socket): one channel per device.
 DEVICE_DOWN_CHANNEL_PREFIX: Final[str] = "device:down:"
 # Upstream (device socket -> owning pod -> waiting worker): ONE channel per
-# consumer pod, not per session. Up-frames carry the consumer pod id (the ``pod``
-# envelope field, echoed by the daemon from mcp.open) so the owning pod addresses
-# the reply to exactly the pod running the session — no per-session subscription,
-# no fleet-wide fan-out. A single shared per-pod listener dispatches by ``sid``.
+# consumer pod, not per session — up-frames carry the pod id so the owning pod
+# addresses the reply directly; a single shared per-pod listener dispatches by `sid`.
 DEVICE_UP_POD_CHANNEL_PREFIX: Final[str] = "device:up:pod:"
 # Revocation fan-out: publish a device_id here to force any owning pod to drop it.
 # One shared per-pod listener watches this channel (not one per connection).

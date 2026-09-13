@@ -27,7 +27,7 @@ HARD_LIMIT = 1200
 
 
 def _repo(tmp_path: Path) -> Path:
-    """A throwaway git repo — `git ls-files` is the gate's full-scan source."""
+    """Return a throwaway git repo — `git ls-files` is the gate's full-scan source."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     return tmp_path
 
@@ -127,7 +127,101 @@ def test_types_location_full_scan_reaches_the_repo(tmp_path: Path) -> None:
     assert "apps/web/src/many.ts" in process.stdout
 
 
-@pytest.mark.parametrize("sub", ["file-sizes", "components-per-file", "types-location"])
+def _add_source(repo: Path, rel: str, src: str) -> None:
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(src)
+    subprocess.run(["git", "add", rel], cwd=repo, check=True)
+
+
+def test_doc_comments_flags_a_narrating_jsdoc_and_an_in_function_banner(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    narration = "\n".join(f" * line {i}" for i in range(7))
+    _add_source(
+        repo,
+        "src/a.ts",
+        f"/**\n{narration}\n */\nexport function f() {{\n  // ---- Step 1 ----\n  return 1;\n}}\n",
+    )
+
+    process = _run(repo, "doc-comments")
+
+    assert process.returncode == 1, process.stdout + process.stderr
+    assert "src/a.ts:1  DS1" in process.stderr
+    assert "src/a.ts:11  CM2" in process.stderr
+
+
+def test_doc_comments_allows_file_headers_and_module_level_banners(tmp_path: Path) -> None:
+    # The header block scripts/ci/CLAUDE.md requires, and the section banners
+    # a registry file is made of, are the shape — not the slop.
+    repo = _repo(tmp_path)
+    header = "\n".join(f"// header line {i}" for i in range(10))
+    _add_source(
+        repo,
+        "src/registry.ts",
+        f"{header}\nexport const A = 1;\n// ---- Section two ----\nexport const B = 2;\n",
+    )
+
+    process = _run(repo, "doc-comments")
+
+    assert process.returncode == 0, process.stdout + process.stderr
+
+
+def test_doc_comments_flags_a_jsdoc_that_restates_its_declaration(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _add_source(repo, "src/b.ts", "/** The user id. */\nexport const userId = 1;\n")
+
+    process = _run(repo, "doc-comments")
+
+    assert process.returncode == 1
+    assert "src/b.ts:1  DS5" in process.stderr
+
+
+def test_doc_comments_reads_comments_not_strings_and_honours_a_shebang_header(
+    tmp_path: Path,
+) -> None:
+    # A glob in a string ("src/**/*.tsx") once parsed as a 100-line JSDoc, and
+    # a shebang line hid the header block the CI scripts are required to carry.
+    repo = _repo(tmp_path)
+    header = "\n".join(f" * header line {i}" for i in range(10))
+    _add_source(
+        repo,
+        "scripts/tool.mjs",
+        f'#!/usr/bin/env node\n/**\n{header}\n */\nimport {{ x }} from "./x.mjs";\n'
+        'const globs = ["apps/web/src/**/*.tsx", "libs/**/*.ts"];\n'
+        "const later = 1; // and a trailing comment */\n",
+    )
+
+    process = _run(repo, "doc-comments")
+
+    assert process.returncode == 0, process.stdout + process.stderr
+
+
+def test_doc_comments_skips_the_generated_agent_plugins(tmp_path: Path) -> None:
+    # `entire enable` writes these and overwrites any edit on reinstall.
+    repo = _repo(tmp_path)
+    story = "\n".join(f"  // narrative line {i}" for i in range(6))
+    body = f"export const x = 1;\nfunction f() {{\n{story}\n  return 1;\n}}\n"
+    _add_source(repo, ".opencode/plugins/entire.ts", body)
+    _add_source(repo, ".pi/extensions/entire/index.ts", body)
+
+    process = _run(repo, "doc-comments")
+
+    assert process.returncode == 0, process.stdout + process.stderr
+
+
+def test_doc_comments_changed_files_scopes_the_scan(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _add_source(repo, "src/bad.ts", "function f() {\n  // ==== Step 1 ====\n  return 1;\n}\n")
+    _add_source(repo, "src/good.ts", "export const ok = 1;\n")
+
+    process = _run(repo, "doc-comments", changed_files="src/good.ts")
+
+    assert process.returncode == 0, process.stdout + process.stderr
+
+
+@pytest.mark.parametrize(
+    "sub", ["file-sizes", "components-per-file", "types-location", "doc-comments"]
+)
 def test_an_unknown_subcommand_exits_two(tmp_path: Path, sub: str) -> None:
     # Guards the dispatch itself: a typo'd subcommand must be a hard error, not
     # a silent no-op that the lane would read as a pass.
@@ -160,7 +254,7 @@ printf '%s' "$FAKE_TYPES" > libs/shared/ts/src/api/generated/schema.d.ts
 
 
 def _repo_beside_stubs(tmp_path: Path) -> Path:
-    """The sandbox repo, apart from the stub bin dir the same tmp_path holds."""
+    """Return the sandbox repo, apart from the stub bin dir the same tmp_path holds."""
     path = tmp_path / "repo"
     path.mkdir()
     return _repo(path)

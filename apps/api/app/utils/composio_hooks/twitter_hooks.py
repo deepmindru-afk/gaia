@@ -108,19 +108,19 @@ class PostCreatedSummary(TypedDict):
 
 @dataclass(frozen=True, slots=True)
 class _AuthoredTweet:
-    """A tweet joined to its author from the page's ``includes``, when X expanded one."""
+    """A tweet joined to its author from the page's includes, when X expanded one."""
 
     tweet: TwitterHookTweet
     author: TwitterHookUser | None
 
 
 def _metrics_payload(obj: TwitterHookTweet | TwitterHookUser) -> dict[str, object]:
-    """``public_metrics`` exactly as X sent it, ``{}`` when it was not requested."""
+    """Return public_metrics exactly as X sent it, or {} when it was not requested."""
     return obj.public_metrics.model_dump(exclude_unset=True) if obj.public_metrics else {}
 
 
 def _author_identity(author: TwitterHookUser | None) -> dict[str, object]:
-    """The author fields every tweet card shows; a placeholder when X expanded no author."""
+    """Return the author fields every tweet card shows; a placeholder when X expanded no author."""
     if author is None:
         return {"username": _UNKNOWN_AUTHOR_USERNAME, "name": _UNKNOWN_AUTHOR_NAME}
     return {
@@ -133,7 +133,7 @@ def _author_identity(author: TwitterHookUser | None) -> dict[str, object]:
 
 
 def _search_tweet_card(item: _AuthoredTweet) -> dict[str, object]:
-    """A search result as the chat card renders it: author bio and metrics included."""
+    """Render a search result as the chat card shows it, author bio and metrics included."""
     author = _author_identity(item.author)
     if item.author is not None:
         author["description"] = item.author.description
@@ -159,7 +159,7 @@ def _timeline_tweet_card(item: _AuthoredTweet) -> dict[str, object]:
 
 
 def _profile_card(user: TwitterHookUser) -> dict[str, object]:
-    """A looked-up user as the profile card renders them."""
+    """Render a looked-up user as the profile card shows them."""
     return {
         "id": user.id,
         "username": user.username,
@@ -175,7 +175,7 @@ def _profile_card(user: TwitterHookUser) -> dict[str, object]:
 
 
 def _follow_card(user: TwitterHookUser) -> dict[str, object]:
-    """A follower / followed user as the list card renders them."""
+    """Render a follower / followed user as the list card shows them."""
     return {
         "id": user.id,
         "username": user.username,
@@ -213,7 +213,7 @@ def _following(user: TwitterHookUser) -> int:
 
 
 def _result_count(page: TwitterTweetPage, tweets: list[_AuthoredTweet]) -> int:
-    """``meta.result_count`` when X sent one, else the number of tweets on the page."""
+    """Return meta.result_count when X sent one, else the number of tweets on the page."""
     return page.meta.result_count if page.meta.result_count is not None else len(tweets)
 
 
@@ -247,9 +247,7 @@ def twitter_search_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Too
 
 @register_schema_modifier(tools=["TWITTER_FOLLOW_USER"])
 def twitter_follow_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """
-    Add guidance to search for user first if username is unknown.
-    """
+    """Add guidance to search for user first if username is unknown."""
     guidance = (
         "\n\n💡 USER DISCOVERY TIP: If the user doesn't provide a username:\n"
         "1. Use TWITTER_RECENT_SEARCH with the person's name to find their tweets\n"
@@ -263,9 +261,7 @@ def twitter_follow_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Too
 
 @register_schema_modifier(tools=["TWITTER_CREATION_OF_A_POST"])
 def twitter_create_post_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """
-    Add guidance for creating tweets with media and threads.
-    """
+    """Add guidance for creating tweets with media and threads."""
     guidance = (
         "\n\n📱 POSTING TIPS:\n"
         "• For media: Upload first with TWITTER_UPLOAD_MEDIA, then use media_media_ids\n"
@@ -279,9 +275,7 @@ def twitter_create_post_schema_modifier(tool: str, toolkit: str, schema: Tool) -
 
 @register_schema_modifier(tools=["TWITTER_USER_HOME_TIMELINE_BY_USER_ID"])
 def twitter_timeline_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """
-    Set sensible defaults for timeline requests.
-    """
+    """Set sensible defaults for timeline requests."""
     input_params = JsonSchemaNode.parse(schema.input_parameters)
     if input_params is None:
         return schema

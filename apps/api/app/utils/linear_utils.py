@@ -31,9 +31,9 @@ def graphql_request(
     user_id: str,
     data_model: type[DataT],
 ) -> DataT:
-    """Execute a GraphQL operation against Linear via Composio's proxy and parse its ``data``.
+    """Execute a GraphQL operation against Linear via Composio's proxy and parse its data.
 
-    Raises ``Exception`` when the response carries GraphQL ``errors``.
+    Raises Exception when the response carries GraphQL errors.
     """
     log.set(operation="graphql_request", endpoint=LINEAR_GRAPHQL_ENDPOINT)
 
@@ -75,9 +75,9 @@ def fuzzy_match(
     limit: int = 3,
     threshold: float = 0.4,
 ) -> list[NamedT]:
-    """The candidates whose ``name`` best matches ``query``, best first.
+    """Return the candidates whose name best matches query, best first.
 
-    Exact > prefix > substring > ``SequenceMatcher`` ratio at or above ``threshold``.
+    Exact > prefix > substring > SequenceMatcher ratio at or above threshold.
     """
     if not query or not candidates:
         return candidates[:limit] if candidates else []

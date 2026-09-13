@@ -1,7 +1,7 @@
-"""Unit tests for ``app.core.request_context.resolve_caller``.
+"""Unit tests for app.core.request_context.resolve_caller.
 
 The decorator-facing caller-resolution function: request-scoped context first,
-then an explicit ``user`` kwarg, then the first positional ``AuthenticatedUser``.
+then an explicit user kwarg, then the first positional AuthenticatedUser.
 Direct, exact-value tests — this used to be exercised only indirectly through
 the decorators that call it.
 """
@@ -43,7 +43,7 @@ class TestResolveCaller:
         assert result is candidate
 
     def test_skips_positional_dicts_that_merely_look_like_a_user(self):
-        """A plain dict carrying ``user_id`` is not a caller — only the model is."""
+        """A plain dict carrying user_id is not a caller — only the model is."""
         lookalike = {"user_id": "dict-user"}
         with_id = _user("has-id")
         result = resolve_caller((lookalike, with_id), {})
@@ -55,8 +55,7 @@ class TestResolveCaller:
         assert resolve_caller((), {"user": {"user_id": "dict-user"}}) is None
 
     def test_a_non_user_kwarg_does_not_short_circuit_positional_fallback(self):
-        """An explicit ``user=None`` kwarg must not stop the search — the
-        positional candidate is still tried."""
+        """An explicit user=None kwarg must not stop the search; the positional candidate is still tried."""
         candidate = _user("positional-user")
         assert resolve_caller((candidate,), {"user": None}) is candidate
 

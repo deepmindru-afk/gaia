@@ -26,10 +26,8 @@ CONNECTED_INTEGRATIONS_HEADER = (
     "Connected integrations (hand off to the matching subagent to use them):"
 )
 
-#: The executor performs the handoffs, so its header states that the list is
-#: live, names the parenthesised id as the handoff ``subagent_id``, and guards
-#: against reading always-available built-ins as "not connected" just because
-#: they are absent from the list.
+#: The executor performs the handoffs, so its header states the list is live
+#: and names the parenthesised id as the handoff ``subagent_id``.
 EXECUTOR_CONNECTED_INTEGRATIONS_HEADER = (
     "CONNECTED INTEGRATIONS (live snapshot of the user's currently connected accounts as of "
     "this turn; this is the latest connected set, so trust it over retrieve_tools for what is "
@@ -50,10 +48,9 @@ class BuiltinOverlap(NamedTuple):
     provider_ids: frozenset[str]
 
 
-#: Built-ins the manifest must spell out when one of these providers is connected.
-#: Left implicit, the built-in appears nowhere in the list and the agent reads "the
-#: user's todo list" as whichever task product it can see — which is how an executor
-#: filed eight GAIA todos as "8 tasks created (Todoist)".
+#: Built-ins the manifest must spell out when one of these providers is
+#: connected — left implicit, an executor once filed 8 GAIA todos as
+#: "8 tasks created (Todoist)".
 BUILTIN_CAPABILITY_OVERLAPS: Final[tuple[BuiltinOverlap, ...]] = (
     BuiltinOverlap(
         subagent_id="todos",

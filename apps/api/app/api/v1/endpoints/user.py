@@ -50,9 +50,8 @@ _AUTH_PATH_FLAGS = ("impersonated", "bot_authenticated", "dev_bypass")
 workos = WorkOSClient(api_key=settings.WORKOS_API_KEY, client_id=settings.WORKOS_CLIENT_ID)
 
 
-# exclude_none: the per-auth-path flags (impersonated/bot_authenticated/dev_bypass)
-# and the optional profile fields are only meaningful when set — the response has
-# always omitted them rather than sending nulls, and clients rely on that.
+# exclude_none: the per-auth-path flags and optional profile fields are only
+# meaningful when set; the response has always omitted nulls, and clients rely on that.
 # evlog-map-disable-next-line audit -- read-only profile lookup, no state change to audit
 @router.get("/me", response_model_exclude_none=True)
 async def get_me(
@@ -62,7 +61,6 @@ async def get_me(
     Returns the current authenticated user's details.
     Uses the dependency injection to fetch user data.
     """
-    # Get onboarding status
     onboarding_status = await get_user_onboarding_status(user.user_id)
 
     log.set(
@@ -134,7 +132,6 @@ async def update_me(
         picture_data = await picture.read()
         log.set(picture_size_bytes=picture.size)
 
-    # Update user profile
     updated_user = await update_user_profile(user_id=user_id, name=name, picture_data=picture_data)
 
     changed_fields = [
@@ -159,9 +156,7 @@ async def update_user_name(
     name: str = Form(...),
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> UserUpdateResponse:
-    """
-    Update the user's name. This is the consolidated endpoint for name updates.
-    """
+    """Update the user's name. This is the consolidated endpoint for name updates."""
     try:
         user_id = user.user_id
         log.set(user={"id": user_id}, operation="update_user_name")
@@ -313,9 +308,7 @@ async def update_holo_card_colors(
     overlay_opacity: int = Form(..., description="Overlay opacity (0-100)"),
     user_id: str = Depends(get_user_id),
 ) -> UpdateHoloCardColorsResponse:
-    """
-    Update holo card overlay color and opacity.
-    """
+    """Update holo card overlay color and opacity."""
     try:
         log.set(
             user={"id": user_id},
@@ -369,9 +362,7 @@ async def logout(
     response: Response,
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> LogoutResponse:
-    """
-    Logout user and return logout URL for frontend redirection.
-    """
+    """Logout user and return logout URL for frontend redirection."""
     wos_session = request.cookies.get(WOS_SESSION_COOKIE)
 
     if not wos_session:

@@ -98,10 +98,9 @@ export function UsageView({
 
 // --- Hero: the one big number + the one big bar ----------------------------
 
-// One percentage per window, driven entirely by the rolling cost budget — the
-// single wall every plan is measured against now that chat is priced by usage,
-// not message counts. Free has only a daily budget (its wall); pro adds a
-// monthly compute allowance, so only pro shows the month window.
+// One percentage per window, driven by the rolling cost budget — the single
+// wall every plan is measured against now that chat is priced by usage. Free
+// has only a daily budget; pro adds a monthly allowance, so only pro shows month.
 function heroWindow(
   summary: UsageSummary,
   win: Period,
@@ -126,10 +125,9 @@ function Hero({ summary, isPro }: { summary: UsageSummary; isPro: boolean }) {
   const projected = elapsed > 0.05 ? percent / elapsed : percent;
   const willExceed = !!resetIso && percent < 100 && projected >= 100;
   const showPace = !!resetIso && pace > 2 && pace < 98;
-  // The gauge shows what's USED, so the pace tick marks where usage "should"
-  // be at an even burn rate: the share of the window already elapsed.
-  // Recharts maps value 0→startAngle(230°), 100→-50°; radii in the 100x100
-  // viewBox match innerRadius 70% / outerRadius 100%.
+  // The gauge shows what's USED; the pace tick marks where usage "should" be
+  // at an even burn rate (elapsed share of the window). Recharts maps
+  // 0→230°/100→-50° in the 100x100 viewBox (innerRadius 70%, outerRadius 100%).
   const theta = ((230 - pace * 2.8) * Math.PI) / 180;
   const cos = Math.cos(theta);
   const sin = Math.sin(theta);
@@ -254,11 +252,9 @@ function Stats({
   // Chat is cost-priced (no daily count allowance), so this averages plain
   // message activity per day rather than a share of any count limit.
   const { dailyAvg, activeDays, elapsedDays } = useMemo(() => {
-    // Days elapsed this month (today included) is a calendar fact — it is never
-    // zero, and it is the denominator BOTH metrics are reported against. Compute
-    // it before any early return, or a user with no history yet reads
-    // "0 of 0 days this month" on their first visit. Only the derived counts
-    // may collapse to zero.
+    // Days elapsed this month (today included) is a calendar fact, never zero,
+    // and the denominator both metrics use — compute it before any early return
+    // or a fresh user reads "0 of 0 days"; only the derived counts may collapse to zero.
     const elapsedDays = new Date().getUTCDate();
     const empty = { dailyAvg: 0, activeDays: 0, elapsedDays };
     const resetIso = summary.features[primary]?.periods.month?.reset_time;
@@ -550,12 +546,9 @@ function Trend({
       if (!resetIso) return empty;
       const window = currentMonthWindow(resetIso);
       const byDom = cumulativeByDay(history, window, primary);
-      // Today's point comes from the LIVE month counter — the same number the
-      // hero gauge shows — so the two widgets can never disagree about "now"
-      // (snapshots lag up to an hour behind the live Redis counter). The
-      // cumulative series must never DECREASE: if the live counter reads lower
-      // than history (counter eviction/reset), keep the historical maximum
-      // instead of drawing an impossible cliff.
+      // Today's point comes from the LIVE month counter (matching the hero gauge)
+      // so the two never disagree about "now". The series must never DECREASE —
+      // if the counter reads lower than history (eviction/reset), keep the historical max instead of an impossible cliff.
       if (liveMonthUsed !== undefined) {
         const historicalMax = Math.max(0, ...byDom.values());
         byDom.set(

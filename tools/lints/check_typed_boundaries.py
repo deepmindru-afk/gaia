@@ -186,7 +186,7 @@ def typeddict_names(trees: list[ast.AST]) -> set[str]:
     return names - {"TypedDict"}
 
 
-def _base_name(base: ast.expr) -> str:
+def _base_name(base: ast.AST) -> str:
     if isinstance(base, ast.Name):
         return base.id
     if isinstance(base, ast.Attribute):
@@ -238,7 +238,8 @@ def _string_key_reads(tree: ast.AST, typeddicts: set[str]) -> list[int]:
     return [
         node.lineno
         for node in ast.walk(tree)
-        if id(node) not in typed_receivers
+        if isinstance(node, ast.Call | ast.Subscript)
+        and id(node) not in typed_receivers
         and ((_is_string_key_get(node) and id(node) not in decorators) or _is_string_key_load(node))
     ]
 

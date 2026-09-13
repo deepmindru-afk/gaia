@@ -40,12 +40,10 @@ from tests.helpers import captured_wide_event
 
 @pytest.fixture(autouse=True)
 def seed_lock_keys():
-    """The cross-replica seed lock is infrastructure; these unit tests exercise
-    the diff/upsert logic it guards, not Redis. Run the guarded work directly so
-    the tests stay hermetic (the lock itself is proven in the real-Redis tier).
+    """Run the seed lock's guarded work directly, so these tests stay hermetic.
 
-    Yields the list of lock keys the seeding ran under, so a test can prove the
-    work was serialized under the right namespace key.
+    Yields the list of lock keys the seeding ran under, so a test can prove
+    the work was serialized under the right namespace key.
     """
     seen: list[str] = []
 
@@ -367,11 +365,7 @@ class TestIndexToolsToStore:
         await index_tools_to_store([(tool, "bad::ns")])
 
     async def test_cache_hit_with_an_empty_store_reindexes_anyway(self):
-        """The bug this guard exists for: Redis says indexed, Chroma holds none.
-
-        Trusting the hash alone left the namespace empty forever and tool
-        discovery silently returned nothing.
-        """
+        """Redis says indexed, Chroma holds none; trusting the hash alone left the namespace empty and discovery silently returned nothing."""
         tool = SimpleNamespace(name="t", description="d")
         tools_signature = "t:d"
         expected_hash = hashlib.sha256(tools_signature.encode()).hexdigest()[:16]
@@ -487,17 +481,9 @@ class TestIndexToolsToStore:
             )
 
 
-# ---------------------------------------------------------------------------
-# index_tools_to_store — the verified cache guard
-#
-# The Redis hash only proves that SOME PAST PROCESS believed it indexed this
-# namespace. Trusting it alone made a wiped or recreated ChromaDB permanent:
-# the guard hit forever, the namespace was never re-indexed, and tool discovery
-# silently returned nothing — no error, no retry, no signal. The whole failure
-# mode is invisible, so the warning that announces it is behaviour, and these
-# assert on it via the wide event's structured `warnings[]` rather than on the
-# prose (the same seam tests/unit/middleware/test_accounting.py asserts on).
-# ---------------------------------------------------------------------------
+# index_tools_to_store — the verified cache guard. The Redis hash only proves
+# a past process believed it indexed this namespace; trusting it alone made a
+# wiped ChromaDB permanent, so these assert on the wide event's `warnings[]`.
 
 _NAMESPACE = "gmail"
 _TOOL = SimpleNamespace(name="t", description="d")
@@ -505,7 +491,7 @@ _TOOLS_HASH = hashlib.sha256(b"t:d").hexdigest()[:16]
 
 
 def _store_holding(*doc_hashes: str) -> AsyncMock:
-    """A Chroma store whose namespace holds one indexed doc per given tool hash."""
+    """Return a Chroma store whose namespace holds one indexed doc per given tool hash."""
     collection = AsyncMock()
     collection.get.return_value = {
         "ids": [f"{_NAMESPACE}::t{i}" for i in range(len(doc_hashes))],
@@ -518,7 +504,7 @@ def _store_holding(*doc_hashes: str) -> AsyncMock:
 
 @contextmanager
 def _indexing(store: AsyncMock, cached_hash: str | None) -> Iterator[SimpleNamespace]:
-    """Run index_tools_to_store against ``store`` with Redis reporting ``cached_hash``."""
+    """Run index_tools_to_store against store with Redis reporting cached_hash."""
     with (
         patch(
             "app.db.chroma.chroma_tools_store.get_cache",

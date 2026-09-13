@@ -71,8 +71,7 @@ def _make_refresh_result(
     sealed_session: str | None = None,
     reason: str | None = None,
 ) -> MagicMock:
-    """Create a fake refresh result carrying exactly the attributes the
-    production code reads (``authenticated``, ``user``, ``sealed_session``)."""
+    """Create a fake refresh result carrying exactly the attributes the production code reads."""
 
     class _RefreshResult:
         pass
@@ -514,8 +513,7 @@ class TestAuthenticateWorkosSession:
     # -- user_info merges db data with auth_provider and user_id -----------
 
     async def test_user_info_carries_the_declared_db_fields_only(self) -> None:
-        """Every declared document field reaches user_info; an undeclared
-        historical key on the row does not (the context is a closed model)."""
+        """An undeclared historical key on the row does not reach user_info (closed model)."""
         workos_user = _make_workos_user()
         auth_response = _make_auth_response(authenticated=True, user=workos_user)
         session = _make_session(auth_response)
@@ -716,7 +714,7 @@ _SAMPLE_BY_TYPE: tuple[tuple[str, object], ...] = (
 
 
 def _sample_values() -> dict[str, object]:
-    """A non-default value for every declared ``UserDocument`` field but ``id``."""
+    """Return a non-default value for every declared UserDocument field but id."""
     return {
         name: next(
             (value for type_name, value in _SAMPLE_BY_TYPE if type_name in str(field.annotation)),
@@ -728,7 +726,7 @@ def _sample_values() -> dict[str, object]:
 
 
 def _every_field_document() -> tuple[UserDocument, dict[str, object]]:
-    """A document with a distinct non-default value in every declared field."""
+    """Return a document with a distinct non-default value in every declared field."""
     values = _sample_values()
     return UserDocument(id="64abc123def4567890abcdef", **values), values
 

@@ -72,10 +72,8 @@ async def store_todo_embedding(todo_id: str, todo: TodoDocument, user_id: str) -
     """Generate and store a todo's embedding in ChromaDB. Returns success."""
     log.set(operation="store_todo_embedding", todo_id=todo_id, user_id=user_id)
     try:
-        # Create content for embedding
         content = create_todo_content_for_embedding(todo)
 
-        # Get ChromaDB collection
         chroma_collection = await ChromaClient.get_langchain_client(
             collection_name="todos", create_if_not_exists=True
         )
@@ -166,7 +164,7 @@ async def delete_todo_embedding(todo_id: str) -> bool:
 
 
 def _matched_todo_ids(results: list[tuple[Document, float]]) -> list[str]:
-    """The todo ids a similarity search matched, in rank order."""
+    """Return the todo ids a similarity search matched, in rank order."""
     todo_ids: list[str] = []
     for doc, _score in results:
         if hasattr(doc, "metadata"):
@@ -186,7 +184,7 @@ async def semantic_search_todos(
     """Semantic-search todos via ChromaDB, with optional filters.
 
     Falls back to traditional search on error when
-    ``include_traditional_search`` is set.
+    include_traditional_search is set.
     """
     log.set(
         operation="semantic_search_todos",
@@ -268,7 +266,7 @@ async def hybrid_search_todos(
 ) -> list[TodoResponse]:
     """Hybrid search combining semantic and traditional results.
 
-    ``semantic_weight`` (0.0-1.0) weights the semantic ranking.
+    semantic_weight (0.0-1.0) weights the semantic ranking.
     """
     try:
         # Get semantic results

@@ -1,22 +1,13 @@
 """Tests for Linear custom tools registered in linear_tool.py.
 
-Strategy: The tool functions are closures registered via the Composio decorator
-inside `register_linear_custom_tools`. To test them without a real Composio
-connection we:
+The tool functions are closures registered via the Composio decorator.
+Without a real Composio connection: mock @composio.tools.custom_tool to
+capture the decorated callables, patch linear_utils.graphql_request at the
+HTTP boundary, then call the captured callables directly with Pydantic
+input models and a fake auth_credentials dict.
 
-1. Capture the callables by mocking the `@composio.tools.custom_tool` decorator
-   so it records each decorated function instead of registering it with Composio.
-2. Patch `app.utils.linear_utils.proxy_request_sync` — the Composio proxy
-   boundary — so `graphql_request` and the typed Linear models run for real and
-   no network call is made. Each fixture is the GraphQL `data` of one call, in
-   call order, shaped like what Linear answers for the selection.
-3. Call the captured callables directly with Pydantic input models and a fake
-   `auth_credentials` dict, then assert on the returned dicts and on the
-   camelCase `variables` of the request bodies sent.
-
-If `linear_tool.py` is deleted or the import chain breaks every test will fail
-with an ImportError, satisfying the requirement that the tests must import and
-call the actual tool code.
+Deleting linear_tool.py or breaking its import chain fails every test with
+an ImportError, so the tests are proven to import and call the real code.
 """
 
 from typing import Any
@@ -53,11 +44,7 @@ EXECUTE_REQUEST = MagicMock()  # not used by any of the current tools
 
 
 def _capture_tools() -> dict[str, Any]:
-    """
-    Run `register_linear_custom_tools` with a fake Composio object whose
-    `tools.custom_tool` decorator simply stores the decorated functions
-    keyed by their __name__, then returns the collected dict.
-    """
+    """Run register_linear_custom_tools with a fake Composio object and return the decorated functions keyed by their __name__."""
     captured: dict[str, Any] = {}
 
     def fake_custom_tool(toolkit: str):
@@ -82,14 +69,14 @@ PROXY = "app.utils.linear_utils.proxy_request_sync"
 
 
 def _call(tool_name, request, return_values):
-    """Call a captured tool with each GraphQL `data` in `return_values` answered in order."""
+    """Call a captured tool with each GraphQL data in return_values answered in order."""
     tool_fn = _TOOLS[tool_name]
     with patch(PROXY, side_effect=[{"data": data} for data in return_values]) as proxy:
         return tool_fn(request, EXECUTE_REQUEST, AUTH), proxy
 
 
 def _variables(call):
-    """The GraphQL variables one proxy call sent."""
+    """Return the GraphQL variables one proxy call sent."""
     return call.args[0].body["variables"]
 
 
@@ -263,7 +250,7 @@ class TestGetMyTasks:
 
     @pytest.mark.composio
     def test_viewer_without_id_fails_validation(self):
-        """`viewer` is non-null in Linear's schema; a body without its id is a provider fault."""
+        """The viewer field is non-null in Linear's schema; a body without its id is a provider fault."""
         with patch(
             PROXY,
             return_value={"data": {"viewer": {}}},
@@ -567,7 +554,7 @@ class TestGetIssueFullContext:
 
     @pytest.mark.composio
     def test_issue_not_found_raises(self):
-        """An unknown id is a GraphQL error from Linear (`issue` is non-null), surfaced as-is."""
+        """An unknown id is a GraphQL error from Linear (issue is non-null), surfaced as-is."""
         with patch(
             PROXY,
             return_value={"data": None, "errors": [{"message": "Entity not found: Issue"}]},
@@ -854,7 +841,7 @@ class TestCreateSubIssues:
 
     @pytest.mark.composio
     def test_parent_without_team_fails_validation(self):
-        """`Issue.team` is non-null in Linear's schema; a parent body without it is rejected."""
+        """Issue.team is non-null in Linear's schema; a parent body without it is rejected."""
         parent = {key: value for key, value in FULL_ISSUE.items() if key != "team"}
         with patch(PROXY, return_value={"data": {"issue": parent}}):
             with pytest.raises(ValidationError, match="issue.team"):
@@ -869,7 +856,7 @@ class TestCreateSubIssues:
 
     @pytest.mark.composio
     def test_parent_identifier_is_fetched_by_issue_id(self):
-        """A `TEAM-123` parent is looked up through `issue(id:)`, which accepts identifiers."""
+        """A TEAM-123 parent is looked up through issue(id:), which accepts identifiers."""
         sub_success = {
             "issueCreate": {
                 "success": True,

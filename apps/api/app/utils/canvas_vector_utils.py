@@ -46,7 +46,7 @@ class _StoredCanvasRows(BaseModel):
 
 
 class CanvasSearchMatch(TypedDict):
-    """One canvas hit from `search_canvas_context`, rendered as a line by the tool."""
+    """One canvas hit from search_canvas_context, rendered as a line by the tool."""
 
     todo_id: str
     title: str

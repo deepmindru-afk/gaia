@@ -1,13 +1,13 @@
 """Shared VFS helpers: naming, hash gates, markers, and the write/skip decision.
 
-Every materializer under ``/workspace/`` (gaia-tasks, user-todos, memory,
+Every materializer under /workspace/ (gaia-tasks, user-todos, memory,
 skills) is built on this module, so a bug here is systemic and invisible: the
-hash gates decide whether a user's edit ever reaches disk, and ``matches_text``
+hash gates decide whether a user's edit ever reaches disk, and matches_text
 decides whether a file is rewritten. Get either wrong and you either serve a
 silently stale projection or rewrite the whole tree on every single turn.
 
 Nothing is mocked — these helpers *are* path and I/O logic, so the tests drive
-real files under ``tmp_path``. Mocking the filesystem here would delete the only
+real files under tmp_path. Mocking the filesystem here would delete the only
 part worth testing.
 """
 
@@ -380,10 +380,9 @@ def test_pruning_leaves_subdirectories_alone(tmp_path: Path) -> None:
 
 
 def test_a_folder_of_read_only_bodies_is_fully_removed(tmp_path: Path) -> None:
-    # Every folder remove_tree is aimed at is full of 0444 bodies. If removal
-    # does not go all the way through, a renamed task leaves its old folder
-    # behind forever and the workspace accumulates a duplicate copy of every
-    # task the user ever renamed.
+    # Every folder remove_tree targets is full of 0444 bodies; if removal doesn't go all the way
+    # through, a renamed task leaves its old folder behind and the workspace accumulates a
+    # duplicate copy of every task the user ever renamed.
     folder = tmp_path / "ship-it-6512ab34"
     folder.mkdir()
     write_readonly_body(folder / "canvas.md", "body")
@@ -405,11 +404,9 @@ def test_removing_a_path_that_does_not_exist_is_a_no_op(tmp_path: Path) -> None:
 
 
 def test_a_plain_file_is_left_completely_untouched_by_remove_tree(tmp_path: Path) -> None:
-    # remove_tree must not even reach shutil.rmtree for a non-directory.
-    # Without the is_dir() guard the rmtree failure is routed into the onerror
-    # hook, which chmods the path to 0644 on its way to swallowing the error —
-    # so a projected 0444 body that landed where a folder was expected silently
-    # becomes agent-writable and can be edited out of sync with Mongo.
+    # Without the is_dir() guard, rmtree's failure on a non-directory routes into the onerror
+    # hook, which chmods the path to 0644 while swallowing the error — a projected 0444 body
+    # would silently become agent-writable and could be edited out of sync with Mongo.
     stray = tmp_path / "canvas.md"
     write_readonly_body(stray, "body")
     remove_tree(stray)
@@ -747,10 +744,8 @@ def test_updated_at_wins_over_created_at() -> None:
 
 
 def test_a_datetime_and_a_string_timestamp_sort_in_true_chronological_order() -> None:
-    # index.md mixes both shapes (Mongo datetimes and already-stringified
-    # timestamps) in one sort. str(datetime) yields a space instead of "T",
-    # which sorts below every ISO string on the same date — the newest task
-    # would be listed last.
+    # index.md mixes Mongo datetimes and already-stringified timestamps in one sort; str(datetime)
+    # yields a space instead of "T", which sorts below every ISO string on the same date.
     docs: list[dict[str, Any]] = [
         {"updated_at": datetime(2026, 8, 3, 12, 0)},
         {"updated_at": "2026-08-03T11:00:00"},

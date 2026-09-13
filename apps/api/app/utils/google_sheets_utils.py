@@ -44,7 +44,7 @@ _CELL_REF_RE = re.compile(r"^([A-Z]+)?(\d+)?$")
 def _parse_cell(cell: str) -> tuple[int | None, int | None]:
     """Split one A1 cell reference into zero-based (row, column) indices.
 
-    Either coordinate is `None` for an open-ended reference: 'A' names a whole
+    Either coordinate is None for an open-ended reference: 'A' names a whole
     column (no row) and '2' names a whole row (no column).
     """
     match = _CELL_REF_RE.match(cell)
@@ -65,7 +65,7 @@ def parse_a1_range(range_str: str) -> GoogleSheetsGridRange:
 
     Bounds that the reference leaves open are omitted rather than defaulted, so
     'A:C' becomes an unbounded-row column range instead of collapsing onto row 1.
-    Raises `ValueError` on input that is not A1 notation — a malformed range must
+    Raises ValueError on input that is not A1 notation — a malformed range must
     not be silently reinterpreted as cell A1.
     """
     # A sheet qualifier is part of A1 notation ("Sheet1!A1:B2") and callers pass
@@ -109,7 +109,7 @@ def parse_a1_anchor(cell_ref: str) -> tuple[int, int]:
 def get_sheet_id_by_name(spreadsheet_id: str, sheet_name: str, user_id: str) -> int | None:
     """Get sheet ID by its name, or None when the spreadsheet has no such sheet.
 
-    Transport and auth failures propagate: callers turn `None` into "sheet not
+    Transport and auth failures propagate: callers turn None into "sheet not
     found", so swallowing them would report a missing tab for an expired token.
     """
     log.set(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name)
@@ -140,7 +140,7 @@ def get_column_index_by_header(
     """Get column index by header name (first row), or None when no header matches.
 
     Transport and auth failures propagate for the same reason as
-    `get_sheet_id_by_name`: `None` means "no such column", not "lookup failed".
+    get_sheet_id_by_name: None means "no such column", not "lookup failed".
     """
     log.set(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, column_name=column_name)
     value_range = GoogleSheetsValueRange.model_validate(

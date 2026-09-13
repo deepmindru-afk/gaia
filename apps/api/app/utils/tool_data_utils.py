@@ -1,6 +1,4 @@
-"""
-Utility functions for converting legacy tool data to unified format.
-"""
+"""Utility functions for converting legacy tool data to unified format."""
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -11,10 +9,10 @@ from app.models.chat_models import ToolDataEntry, tool_fields
 
 
 class _StoredMessageToolData(BaseModel):
-    """A stored message's unified ``tool_data``, read verbatim.
+    """A stored message's unified tool_data, read verbatim.
 
-    ``object`` on purpose: this runs in a ``mode="before"`` validator, ahead of
-    ``MessageModel`` validating the entries themselves.
+    object on purpose: this runs in a mode="before" validator, ahead of
+    MessageModel validating the entries themselves.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -23,17 +21,10 @@ class _StoredMessageToolData(BaseModel):
 
 
 def convert_legacy_tool_data(message: Mapping[str, object]) -> dict[str, object]:
-    """
-    Convert legacy individual tool fields to unified tool_data array format.
+    """Convert legacy individual tool fields to the unified tool_data array format.
 
-    This function handles backward compatibility by detecting legacy tool fields
-    and converting them into the new ToolDataEntry array structure.
-
-    Args:
-        message: Raw message dict from database that may contain legacy tool fields
-
-    Returns:
-        Dict with legacy fields converted to unified tool_data format
+    Backward compatibility for a message dict from the database that may
+    still carry legacy tool fields.
     """
     # Create a copy to avoid modifying original
     converted_message = dict(message)

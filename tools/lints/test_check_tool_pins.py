@@ -52,6 +52,11 @@ jobs:
       - name: Complexity scan
         run: |
           uvx xenon==0.9.3 --max-absolute F apps/api
+  python-bandit:
+    steps:
+      - name: Bandit security scan
+        run: |
+          uvx --no-build bandit@1.9.4 -c pyproject.toml -r apps/api/app
 """
 
 
@@ -59,6 +64,10 @@ UV_LOCK_TOML = """\
 [[package]]
 name = "mypy"
 version = "1.19.1"
+
+[[package]]
+name = "ruff"
+version = "0.14.13"
 """
 
 
@@ -165,3 +174,29 @@ def test_real_pin_with_trailing_comment_still_counts(
     )
     rc, out, err = _run(capsys)
     assert rc == 0, err
+
+
+@pytest.mark.parametrize(
+    ("text", "ok"),
+    [
+        ('{"devDependencies": {"@biomejs/biome": "2.5.7"}}', True),
+        ('{"devDependencies": {"@biomejs/biome": "^2.5.7"}}', False),  # a range is not a pin
+        ('{"$schema": "https://biomejs.dev/schemas/2.5.7/schema.json"}', True),
+        ('{"$schema": "https://biomejs.dev/schemas/2.5.6/schema.json"}', False),
+    ],
+)
+def test_biome_pin_forms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    text: str,
+    ok: bool,
+) -> None:
+    """A caret range and a stale $schema both drift; the exact forms satisfy."""
+    surface = tmp_path / "biome-surface.json"
+    surface.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(check_tool_pins, "BIOME_PACKAGE_JSONS", (surface,))
+    monkeypatch.setattr(check_tool_pins, "BIOME_CONFIGS", ())
+    rc, _out, err = _run(capsys)
+    assert (rc == 0) is ok, err
+    assert ("biome is not pinned to 2.5.7" in err) is not ok

@@ -15,19 +15,11 @@ interface IntegrationRowProps {
 }
 
 /**
- * One row in the integrations list. Mirrors the web pattern in
- * `apps/web/src/features/integrations/components/IntegrationsList.tsx`:
- *
- *  - 40px logo + name (medium 600) + truncated description.
- *  - Trailing action is exactly one of:
- *      • `Connected` flat success chip (when connected)
- *      • `Disconnected` chip + `Reconnect` button (when the grant died)
- *      • `Connect` flat primary button (when available + not connected)
- *      • nothing (unavailable / pending)
- *  - Tapping the row anywhere opens the detail sheet, which is where
- *    "Disconnect" lives. The row never offers a destructive action.
- *  - Auth-type / managed-by / category badges live in the detail header,
- *    never on the row itself.
+ * One row in the integrations list, mirroring web's IntegrationsList.tsx: 40px
+ * logo + name + truncated description; trailing action is exactly one of
+ * Connected chip, Disconnected chip + Reconnect, Connect button, or nothing.
+ * Tapping opens the detail sheet (where Disconnect lives); auth-type/managed-by/
+ * category badges live only in the detail header, never on the row.
  */
 export function IntegrationRow({
   integration,

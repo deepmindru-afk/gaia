@@ -65,11 +65,11 @@ def workdir(tmp_path: Path) -> Path:
 
 
 class TestCastTypeArgument:
-    """``typing.cast(T, x)`` returns x unchanged, so mutating T cannot matter.
+    """typing.cast(T, x) returns x unchanged, so mutating T cannot matter.
 
     The single-line form was already handled. The wrapped form — which the
     formatter produces whenever the call is long — was not, because the
-    normalisation runs per line and the type sits on the line after ``cast(``.
+    normalisation runs per line and the type sits on the line after cast(.
     """
 
     def test_a_wrapped_cast_type_argument_is_equivalent(self, workdir: Path) -> None:
@@ -228,8 +228,7 @@ class TestLookupDefaultEquivalence:
 
 
 class TestPopThroughCastWithEarlyExit:
-    """The real stream_utils shape: pop's default flows through a cast, the
-    truthiness test is `if not x: return`, and REAL reads follow the guard."""
+    """The real stream_utils shape: pop's default flows through a cast, guarded by if not x: return."""
 
     _BODY = (
         '    x = cast(T, d.pop("k", {}))\n'
@@ -270,10 +269,7 @@ class TestPopThroughCastWithEarlyExit:
 
 
 class TestContainerFunctionWithNestedDefs:
-    """A mutated CONTAINER function (tool registrars) holds nested defs; the
-    block split must not truncate its body at the first one — the header alone
-    compares equal to every mutant, and 788 real survivors on one module were
-    once stamped provably equivalent that way."""
+    """A CONTAINER function with nested defs must not have its body truncated at the first def (788 real survivors once hid this way)."""
 
     _ORIG = '    x = d.get("k")\n    def inner():\n        return 1\n    return (x, inner())'
 
@@ -291,22 +287,17 @@ class TestContainerFunctionWithNestedDefs:
 
 
 class TestResponseHeaderCase:
-    """Starlette lowercases every response header name, so re-casing one on the
-    way OUT changes nothing a client can observe — and the entitlement
-    middleware's ``Retry-After`` survived twice as "real" because of it.
+    """Response headers are case-insensitive out; request headers to a client are not.
 
-    The rule has to stay narrow in the same direction as the lookup rule it
-    sits beside: a wrong header name is still a real bug, and a dict handed to
-    an HTTP client is an outgoing request, where case IS preserved on the wire.
-
-    These write the REAL module too, not just the mutants file: the rule is an
-    AST rule, so the classifier goes back to the source to find the call the
-    mutated literal sits in, and the line numbers have to agree between the two.
+    Starlette lowercases response headers, so re-casing one is equivalent —
+    entitlement's Retry-After survived twice as "real" this way; a client-bound
+    header dict preserves case on the wire. This is an AST rule, so it also
+    rewrites the REAL module, keeping line numbers in sync between the two.
     """
 
     @staticmethod
     def _probe(workdir: Path, call: str, header: str) -> None:
-        """Body laid out so ``headers=`` is line 4 in BOTH files."""
+        """Body laid out so headers= is line 4 in BOTH files."""
         (workdir / MODULE_REL).write_text(
             f"def probe():\n    return {call}(\n        first=1,\n"
             f'        headers={{"{header}": "30"}},\n    )\n'
@@ -333,8 +324,7 @@ class TestResponseHeaderCase:
         assert result.returncode == 0
 
     def test_a_renamed_response_header_is_a_real_survivor(self, workdir: Path) -> None:
-        """Case-only, not merely different — mutmut's ``XX``-wrapped rewrite asks
-        for a header nobody is listening on, which a test can and should catch."""
+        """Case-only, not merely different — mutmut's XX-wrapped rewrite asks for a header nobody is listening on."""
         self._probe(workdir, "JSONResponse", "Retry-After")
         _write_mutants(
             workdir,
@@ -350,8 +340,7 @@ class TestResponseHeaderCase:
         assert result.returncode == 1
 
     def test_a_recased_outgoing_request_header_is_a_real_survivor(self, workdir: Path) -> None:
-        """Not a Response: a dict handed to an HTTP client is sent as written,
-        so the server really does see a different field name."""
+        """Not a Response: a dict handed to an HTTP client is sent as written, case included."""
         self._probe(workdir, "client.post", "X-Api-Key")
         _write_mutants(
             workdir,

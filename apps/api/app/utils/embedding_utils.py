@@ -23,9 +23,9 @@ class _IndexedItemMetadata(BaseModel):
 
 @dataclass(slots=True, frozen=True)
 class SimilarityMatch:
-    """One item ``search_by_similarity`` found, closest first (lower score is closer).
+    """One item search_by_similarity found, closest first (lower score is closer).
 
-    ``created_at``/``updated_at`` are ISO strings set only on the enriched notes
+    created_at/updated_at are ISO strings set only on the enriched notes
     path, for a note that has them.
     """
 
@@ -45,9 +45,9 @@ async def search_by_similarity(
     additional_filters: Mapping[str, str | int | float | bool] | None = None,
     fetch_mongo_details: bool | None = False,
 ) -> list[SimilarityMatch]:
-    """Search a ChromaDB collection for items similar to ``input_text``.
+    """Search a ChromaDB collection for items similar to input_text, scoped to user_id.
 
-    Scoped to ``user_id``; optionally enriches results with MongoDB details.
+    Optionally enriches results with MongoDB details.
     """
     log.set(
         collection_name=collection_name,

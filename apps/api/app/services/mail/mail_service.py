@@ -34,7 +34,7 @@ def get_gmail_tool(
 ) -> StructuredTool | None:
     """Get a specific Gmail tool by name via ComposioService, or None if not found.
 
-    ``use_schema_modifier=False`` asks for the tool's own schema instead of the
+    use_schema_modifier=False asks for the tool's own schema instead of the
     agent-facing one. Callers that speak Composio's native argument shape need
     it: the modifiers exist to hide that shape from the model, and LangChain
     silently drops any argument the bound schema does not declare.
@@ -70,9 +70,9 @@ async def invoke_gmail_tool(
 ) -> GmailToolResult:
     """Invoke a specific Gmail tool with the given parameters.
 
-    ``parameters`` is an open mapping on purpose: every Gmail tool accepts a
+    parameters stays a loose mapping on purpose: every Gmail tool accepts a
     different argument set, and Composio validates it against the tool's own schema.
-    ``use_schema_modifier`` is passed through to ``get_gmail_tool``.
+    use_schema_modifier is passed through to get_gmail_tool.
     """
     try:
         tool = get_gmail_tool(tool_name, user_id, use_schema_modifier=use_schema_modifier)
@@ -96,11 +96,11 @@ async def invoke_gmail_tool(
 
 
 def _process_attachments(attachments: list[UploadFile], tool_name: str) -> list[ComposioAttachment]:
-    """Upload each multipart file to Composio, returning its ``{name, mimetype, s3key}``.
+    """Upload each multipart file to Composio, returning its {name, mimetype, s3key}.
 
     Composio's compose tools take files already uploaded to their store, not raw
-    bytes; ``upload_bytes_sync`` does that upload. Runs sync (called via
-    ``asyncio.to_thread``) because the Composio upload client is synchronous.
+    bytes; upload_bytes_sync does that upload. Runs sync (called via
+    asyncio.to_thread) because the Composio upload client is synchronous.
     """
     processed: list[ComposioAttachment] = []
     for att in attachments:
@@ -206,11 +206,9 @@ async def send_email(
             to=to,
         )
 
-        # ``attachment`` is Gmail's own param name. The agent-facing schema
-        # modifier replaces it with the reference-based ``attachments`` the model
-        # can fill, and the before-hook that translates one into the other is off
-        # on this path — so under that schema LangChain drops the key and the mail
-        # goes out with no file. A call carrying files asks for the native schema.
+        # ``attachment`` is Gmail's native param; the agent schema modifier swaps it
+        # for ``attachments``, but its before-hook is off on this path, so that
+        # schema would drop the key and send with no file — use the native schema.
         result = await invoke_gmail_tool(
             user_id, tool_name, parameters, use_schema_modifier=not attachments
         )
@@ -324,8 +322,7 @@ async def trash_messages(user_id: str, message_ids: list[str]) -> list[GmailMess
     """Move Gmail messages to trash, returning one resource per message trashed.
 
     Each resource carries the id that was asked for: the tool's result is the
-    Composio ``{data, error, successful}`` envelope, which has no message id of
-    its own at the top level.
+    Composio {data, error, successful} envelope, which has no top-level message id.
     """
     log.info(f"{LogTag.MAIL} Moving messages to trash", message_ids_count=len(message_ids))
     results: list[GmailMessageResource] = []
@@ -355,7 +352,7 @@ async def trash_messages(user_id: str, message_ids: list[str]) -> list[GmailMess
 
 
 async def untrash_messages(user_id: str, message_ids: list[str]) -> list[GmailMessageResource]:
-    """Restore Gmail messages from trash, one resource per message — see ``trash_messages``."""
+    """Restore Gmail messages from trash, one resource per message — see trash_messages."""
     log.info(f"{LogTag.MAIL} Restoring messages from trash", message_ids_count=len(message_ids))
     results: list[GmailMessageResource] = []
 

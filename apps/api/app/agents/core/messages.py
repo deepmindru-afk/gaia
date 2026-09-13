@@ -62,7 +62,7 @@ class MessageAttachments:
 
 
 def _latest_user_content(messages: list[MessageDict]) -> str:
-    """The trimmed text of the last turn when the user sent it, else ``""``."""
+    """Return the trimmed text of the last turn when the user sent it, else an empty string."""
     if not messages:
         return ""
     latest: MessageDict = messages[-1]
@@ -75,20 +75,11 @@ async def construct_langchain_messages(
     scope: MessageScope | None = None,
     attachments: MessageAttachments | None = None,
 ) -> list[AnyMessage]:
-    """
-    Construct LangChain messages for agent interaction.
+    """Construct LangChain messages for agent interaction.
 
-    Builds a conversation from system prompt + optional memory + human message.
-    LangChain checkpointer handles conversation history, so we only process current input.
-
-    Args:
-        messages: Raw message history (only latest user message is used)
-        query: Search query for memory retrieval (typically latest user message)
-        scope: The user, conversation, channel and run mode the turn belongs to
-        attachments: Tool/workflow/calendar/reply/file selections and trigger context
-
-    Returns:
-        List of LangChain messages ready for agent processing
+    Builds a conversation from system prompt + optional memory + human
+    message. LangChain checkpointer handles history, so only current input
+    is processed here.
     """
     scope = scope or MessageScope()
     attachments = attachments or MessageAttachments()
@@ -98,10 +89,8 @@ async def construct_langchain_messages(
     files_data = attachments.files_data
     currently_uploaded_file_ids = attachments.currently_uploaded_file_ids
 
-    # Static per-channel main prompt — byte-identical across every user on
-    # this channel, so the provider's implicit prompt cache can match across
-    # users. Web/mobile/desktop get the OpenUI-capable variant; text-only
-    # platforms get their formatting-restrictions variant.
+    # Static per-channel main prompt, byte-identical across users on this
+    # channel so the provider's implicit prompt cache matches across users.
     system_msg = create_system_message(
         user_id=user_id,
         user_name=user_name,
@@ -131,10 +120,9 @@ async def construct_langchain_messages(
         )
     )
 
-    # Its own slot, not the dynamic one. Tagged `memory_message` it competed with
-    # the stable identity block for a single-occupant slot and — being emitted
-    # later — won, so every onboarding turn silently reached the model with no
-    # user name, timezone, preferences or integrations manifest.
+    # Its own slot, not the dynamic one: tagged `memory_message` it once
+    # competed with the stable identity block for a single-occupant slot and
+    # won, silently dropping user name/timezone/preferences from the model.
     onboarding_msg: SystemMessage | None = None
     if user_id and conversation_id:
         onboarding_prompt = await get_onboarding_system_prompt_if_applicable(
@@ -175,10 +163,9 @@ async def construct_langchain_messages(
     if attachments.reply_to_message:
         content = format_reply_context(attachments.reply_to_message, content)
 
-    # Append file context if files are uploaded. The summary is read server-side
-    # from MongoDB (authoritative) — never trusted from the inbound request — in
-    # a single batched query, then surfaced inline so comms knows each file's
-    # content without a tool round-trip.
+    # File summaries are read server-side from MongoDB (authoritative, never
+    # trusted from the request) in one batched query, surfaced inline so
+    # comms knows each file's content without a tool round-trip.
     if currently_uploaded_file_ids and files_data and user_id:
         descriptions = await FileService.get_descriptions(currently_uploaded_file_ids, user_id)
         for file in files_data:

@@ -72,13 +72,13 @@ from app.override.langgraph_bigtool.utils import State
 
 @tool
 def dummy_tool_a(query: str) -> str:
-    """A dummy tool for testing."""
+    """Return a fixed result for registry tests."""
     return "result_a"
 
 
 @tool
 def dummy_tool_b(query: str) -> str:
-    """Another dummy tool for testing."""
+    """Return a second fixed result for registry tests."""
     return "result_b"
 
 
@@ -106,8 +106,8 @@ def _make_config(**configurable: Any) -> RunnableConfig:
 class _ModelNode(Protocol):
     """The two entry points the agent node exposes, named locally.
 
-    LangGraph types ``node.runnable`` as a union that does not statically carry
-    ``func`` / ``afunc``, and ``RunnableCallable`` is not an explicitly exported
+    LangGraph types node.runnable as a union that does not statically carry
+    func / afunc, and RunnableCallable is not an explicitly exported
     symbol. Naming only what is used here keeps the tests off a private import.
     """
 
@@ -117,7 +117,7 @@ class _ModelNode(Protocol):
 
 
 def _agent_runnable(builder: StateGraph) -> _ModelNode:
-    """The agent node's runnable — what actually calls the model."""
+    """Return the agent node's runnable — what actually calls the model."""
     return cast(_ModelNode, builder.nodes["agent"].runnable)
 
 
@@ -127,9 +127,9 @@ def _make_state(
     todos: Sequence[dict[str, Any]] | None = None,
     remaining_steps: int = RECURSION_WRAPUP_THRESHOLD_STEPS + 1,
 ) -> State:
-    """A complete ``State`` — every channel the node's signature promises.
+    """Build a complete State — every channel the node's signature promises.
 
-    ``remaining_steps`` defaults just clear of the wrap-up threshold so the
+    remaining_steps defaults just clear of the wrap-up threshold so the
     recursion notice stays out of these tests; pass a lower value to exercise
     it.
     """
@@ -166,9 +166,7 @@ class TestCreateAgent:
         assert isinstance(builder, StateGraph)
 
     def test_the_runtime_context_schema_reaches_the_graph(self) -> None:
-        """Runtime context (the per-run config the tiers read) only arrives if
-        the schema is declared on the StateGraph — dropped, every node sees an
-        empty context and nothing raises to say so."""
+        """Runtime context only arrives if the schema is declared on the StateGraph; dropped, nothing raises to say so."""
         from dataclasses import dataclass
 
         @dataclass
@@ -675,8 +673,7 @@ class TestShouldContinue:
         ]
 
     def test_each_dispatched_send_carries_the_full_state_for_injection(self) -> None:
-        """ToolNode reads InjectedState from the Send payload — a None'd state
-        makes every parent-routed tool see no state at all."""
+        """ToolNode reads InjectedState from the Send payload; a None'd state makes every parent-routed tool see no state at all."""
         llm = _make_llm()
         registry = _make_tool_registry(dummy_tool_a)
 
@@ -709,9 +706,7 @@ class TestShouldContinue:
 
 class TestRejectUnboundTools:
     def test_the_node_is_registered_under_the_name_every_route_binds_to(self) -> None:
-        """Registration derives the node name from the callable while the router
-        and both edges use REJECT_UNBOUND_TOOLS_NODE — this is what holds the
-        two in step, and a rename that broke it would fail here first."""
+        """REJECT_UNBOUND_TOOLS_NODE holds the registered name and the router/edges in step; a rename that broke it fails here first."""
         builder = create_agent(
             _make_llm(),
             _make_tool_registry(),
@@ -737,8 +732,7 @@ class TestRejectUnboundTools:
         assert "not bound" in result["messages"][0].content
 
     def test_the_rejection_message_is_pinned_verbatim(self) -> None:
-        """The model reads this to recover — the tool name must appear in both
-        the prose and the retrieve_tools example, or the retry loops."""
+        """The tool name must appear in both the prose and the retrieve_tools example, or the model's retry loops."""
         result = reject_unbound_tools([{"id": "tc1", "name": "missing_tool"}], store=MagicMock())
 
         (msg,) = result["messages"]
@@ -934,11 +928,7 @@ class TestBindSessionId:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent", ["comms_agent", "executor_agent"])
     async def test_a_real_model_call_carries_the_agent_s_own_key(self, agent: str) -> None:
-        """``_bind_session_id`` being correct is worth nothing if ``create_agent``
-        does not hand it the agent's name. This drives the actual model node and
-        reads the key that reached the runnable, so dropping the argument at the
-        call site is caught rather than only the helper being right in isolation.
-        """
+        """Drives the actual model node so a dropped argument at the call site is caught, not just the helper in isolation."""
 
         llm = _make_llm()
         bound = llm.with_config.return_value.bind_tools.return_value
@@ -961,10 +951,7 @@ class TestBindSessionId:
         assert bound.bind.call_args.kwargs["session_id"] == f"conv-1-{agent}"
 
     def test_the_sync_model_path_carries_the_agent_s_key_too(self) -> None:
-        """There are two model call sites — sync and async — and they drift
-        independently. The async one above is the production path; this one
-        exists so a fix applied to only one of them is caught here rather than
-        as an unexplained cache gap on whichever lane still runs sync."""
+        """The sync and async model call sites drift independently; this catches a fix applied to only one of them."""
 
         llm = _make_llm()
         bound = llm.with_config.return_value.bind_tools.return_value
@@ -985,9 +972,7 @@ class TestBindSessionId:
         assert bound.bind.call_args.kwargs["session_id"] == "conv-1-comms_agent"
 
     def test_the_sync_model_path_binds_the_assembled_tools(self) -> None:
-        """The sync node assembles the tool list and hands it to bind_tools. If
-        that list never arrives the model is simply called with no tools — every
-        turn comes back as plain text and nothing raises."""
+        """If the tool list never reaches bind_tools, every turn comes back as plain text and nothing raises."""
         llm = _make_llm()
         registry = _make_tool_registry(dummy_tool_a, dummy_tool_b)
         builder = create_agent(
@@ -1008,11 +993,7 @@ class TestBindSessionId:
         assert [t.name for t in bound_tools] == ["dummy_tool_a", "dummy_tool_b"]
 
     def test_each_agent_class_gets_its_own_key_on_the_same_conversation(self) -> None:
-        """The fix this parameter exists for. comms, the executor and each
-        subagent run inside ONE conversation but send completely different
-        system prompts, so sharing the conversation's bare key put them all in
-        one routing chain where they evicted each other. The key has to differ
-        per agent, or the eviction comes straight back."""
+        """Sharing the conversation's bare key put comms, the executor and subagents in one routing chain where they evicted each other."""
 
         keys = []
         for agent in ("comms_agent", "executor_agent", "gmail_agent"):
@@ -1026,8 +1007,7 @@ class TestBindSessionId:
         assert len(set(keys)) == len(keys)
 
     def test_the_conversation_still_separates_two_agents_of_the_same_name(self) -> None:
-        """The agent name narrows the key, it must not replace the conversation:
-        two users' comms agents must never land in one chain."""
+        """The agent name narrows the key; it must not replace the conversation, or two users' comms agents land in one chain."""
 
         first, second = MagicMock(), MagicMock()
         _bind_session_id(
@@ -1041,8 +1021,7 @@ class TestBindSessionId:
         assert second.bind.call_args.kwargs["session_id"] == "conv-2-comms_agent"
 
     def test_gemini_is_left_alone(self) -> None:
-        """session_id is an OpenRouter routing hint. Gemini has no stickiness to
-        pin, so sending it there is an unsupported argument on every graph call."""
+        """session_id is an OpenRouter routing hint; Gemini has no stickiness to pin, so sending it is an unsupported argument."""
 
         llm = MagicMock()
         bound = _bind_session_id(llm, {"provider": LLMProviderName.GEMINI, "session_id": "conv-1"})
@@ -1094,7 +1073,7 @@ def _next_is_gemini() -> Any:
 class TestFallbackPreparation:
     """The graph's provider failover.
 
-    Falling back to ``get_default_llm()`` was inert in production: it was skipped
+    Falling back to get_default_llm() was inert in production: it was skipped
     whenever the run already selected the default model, and since every tier
     resolves to that model the graph had no fallback at all — one 402 from
     OpenRouter killed the whole turn on every execution path. The target is a
@@ -1134,8 +1113,7 @@ class TestFallbackPreparation:
         llm.bind_tools.assert_called_once_with([dummy_tool_a])
 
     def test_the_fallback_config_clears_the_failed_lanes_keys(self) -> None:
-        """A plain merge restored the just-failed provider — LangChain merges a
-        passed config over a bound one, so the stale keys must be REMOVED."""
+        """LangChain merges a passed config over a bound one, so the stale, just-failed provider's keys must be REMOVED, not merged."""
         config = {
             "configurable": {
                 **_openrouter_lane().binding_keys(),
@@ -1161,9 +1139,9 @@ class TestFallbackPreparation:
 class TestTheFallbackKeepsTheAgentsOwnChain:
     """The per-agent sticky key must survive a provider failover.
 
-    The primary binds ``{session}-{agent}`` so comms, the executor and each
-    subagent hold separate cache chains. ``ainvoke_llm`` used to recompute the
-    fallback's key from config, which yields the BARE ``{session}`` — so the
+    The primary binds {session}-{agent} so comms, the executor and each
+    subagent hold separate cache chains. ainvoke_llm used to recompute the
+    fallback's key from config, which yields the BARE {session} — so the
     moment a provider hiccuped, every agent's fallback landed back in one
     shared chain and they resumed evicting each other, which is the exact
     failure the per-agent key was measured to fix (+19.2 points on comms).
@@ -1187,8 +1165,7 @@ class TestTheFallbackKeepsTheAgentsOwnChain:
 
     @pytest.mark.asyncio
     async def test_the_model_node_hands_that_key_to_the_fallback(self) -> None:
-        """The wiring, not just the helper: whatever the primary binds is what
-        the fallback must be told to bind."""
+        """The wiring, not just the helper: whatever the primary binds must reach the fallback too."""
 
         llm = _make_llm()
         builder = create_agent(
@@ -1211,9 +1188,7 @@ class TestTheFallbackKeepsTheAgentsOwnChain:
         assert invoked.await_args.kwargs["options"].sticky_session_id == "conv-1-comms_agent"
 
     def test_the_sync_model_node_hands_that_key_over_too(self) -> None:
-        """Both model call sites, same as the bind: they drift independently,
-        and a fallback on whichever path lacks the key silently rejoins the
-        shared chain."""
+        """Both model call sites drift independently; a fallback lacking the key silently rejoins the shared chain."""
         llm = _make_llm()
         builder = create_agent(
             llm,
@@ -1243,11 +1218,7 @@ class TestTheFallbackKeepsTheAgentsOwnChain:
         )
 
     def _assert_rebound_onto_the_fallback_lane(self, options: Any) -> None:
-        """The fallback must run under the FALLBACK lane's config, carrying the
-        run's own keys. Reusing ``config`` is what made failover a no-op:
-        LangChain merges a passed config over a bound one, so the just-failed
-        provider went straight back on. Passing ``None`` instead loses the
-        user the spend belongs to."""
+        """Assert the fallback ran under its own lane's config with the run's keys — reusing the primary's config made failover a no-op."""
         rebound = options.fallback_config
         assert rebound is not None
         assert rebound["configurable"]["provider"] == LLMProviderName.GEMINI
@@ -1306,8 +1277,7 @@ class TestTheFallbackKeepsTheAgentsOwnChain:
 
     @pytest.mark.asyncio
     async def test_no_prepared_fallback_means_no_fallback_config_to_rebind(self) -> None:
-        """With nowhere to fail over to there is no second lane, and handing
-        ``ainvoke_llm`` a config for one would rebind the primary attempt."""
+        """With no second lane to fail over to, handing ainvoke_llm a fallback config would rebind the primary attempt."""
         builder = create_agent(
             _make_llm(),
             _make_tool_registry(dummy_tool_a),
@@ -1340,7 +1310,7 @@ _CREATE_AGENT_MODULE = "app.override.langgraph_bigtool.create_agent"
 
 def _hyphenated_tool() -> BaseTool:
     def fn(query: str) -> str:
-        """A tool whose registered name keeps an MCP-style hyphen."""
+        """Return a tool whose registered name keeps an MCP-style hyphen."""
         return "ok"
 
     return StructuredTool.from_function(fn, name="web-search")
@@ -1383,9 +1353,7 @@ class TestMaybeInjectWrapupDirect:
         assert result["messages"][:-1] == list(state["messages"])
 
     def test_budget_exactly_at_the_threshold_still_gets_the_notice(self) -> None:
-        """The boundary IS the feature: at the threshold the run is nearly out,
-        so the notice must fire on ``<=`` — an off-by-one silently lets runs die
-        with a GraphRecursionError the model never saw."""
+        """The notice must fire on <=; an off-by-one silently lets runs die with a GraphRecursionError the model never saw."""
         state = _make_state(
             messages=[HumanMessage("keep going")], remaining_steps=RECURSION_WRAPUP_THRESHOLD_STEPS
         )
@@ -1654,8 +1622,7 @@ class TestExecutableCallsRouting:
         assert runnable[0]["name"] == "web-search"
 
     def test_skipping_the_retrieve_call_does_not_stop_later_calls(self) -> None:
-        """The retrieve_tools call is skipped, not terminal: calls after it in
-        the same message must still reach the tools node."""
+        """The retrieve_tools call is skipped, not terminal: calls after it in the same message must still reach the tools node."""
         deps = _make_deps(retrieve_tools=dummy_tool_b)
         ai_msg = AIMessage(
             content="",
@@ -1670,9 +1637,7 @@ class TestExecutableCallsRouting:
         assert [c["id"] for c in runnable] == ["c2"]
 
     def test_a_hyphenated_call_name_matches_an_underscore_bound_tool(self) -> None:
-        """LLMs echo MCP hyphenated names with underscores; the canonical map
-        recovers them — but only when the call's OWN hyphens are the ones
-        replaced."""
+        """LLMs echo MCP hyphenated names with underscores; the canonical map recovers them only when the call's OWN hyphens are replaced."""
         underscore_tool = _underscore_tool()
         deps = _AgentDeps(
             llm=_make_llm(),
@@ -1703,7 +1668,7 @@ class TestExecutableCallsRouting:
 
 def _underscore_tool() -> BaseTool:
     def fn(query: str) -> str:
-        """A tool whose registered name uses the canonical underscore form."""
+        """Return a tool whose registered name uses the canonical underscore form."""
         return "ok"
 
     return StructuredTool.from_function(fn, name="web_search")
@@ -1711,8 +1676,7 @@ def _underscore_tool() -> BaseTool:
 
 class TestGetBoundToolNamesChannels:
     def test_selected_ids_are_read_from_their_own_channel(self) -> None:
-        """Selections bind on top of the initial set — reading the wrong state
-        key (or none) drops every retrieved tool from the bound set."""
+        """Selections bind on top of the initial set; reading the wrong state key (or none) drops every retrieved tool from the bound set."""
         deps = _make_deps()
         state = _make_state(selected_tool_ids=["dummy_tool_b"])
 
@@ -1798,8 +1762,7 @@ class TestModelNodeWiring:
         assert execute.await_args.args[0] == [hook]
 
     async def test_bind_tools_receives_the_initial_tool_list(self) -> None:
-        """The bound tool list is what the provider sees — a None'd list binds
-        nothing and every call fails with unknown-tool errors downstream."""
+        """A None'd tool list binds nothing, so every call fails with unknown-tool errors downstream."""
         llm = _make_llm()
         builder = create_agent(
             llm,
@@ -1833,8 +1796,7 @@ class TestModelNodeWiring:
 
 class TestResolveRetrievalResultDefaults:
     def test_missing_dict_keys_resolve_to_empty_lists(self) -> None:
-        """A retrieval result may omit either channel; treating a missing key
-        as None crashes the whole turn instead of binding nothing."""
+        """A retrieval result may omit either channel; treating a missing key as None crashes the whole turn instead of binding nothing."""
         response_texts: dict[str, str] = {}
 
         bind, response = _resolve_retrieval_result({}, "call-1", response_texts)
@@ -2051,12 +2013,7 @@ class TestWireEdgesPinning:
         assert "end_graph_hooks" in path_map
 
     def test_the_finish_branch_declares_both_destinations_it_can_return(self) -> None:
-        """``_after_finish_task`` returns either the nudge or the exit node, and
-        a conditional edge can only reach a node its ``path_map`` names. Blanked
-        or dropped, LangGraph falls back to "any node in the graph" — the
-        finish-task branch stops being a declared two-way and the nudge loop it
-        guards is no longer pinned by the graph at all.
-        """
+        """Blanked or dropped, LangGraph falls back to "any node in the graph", so the nudge loop this branch guards is no longer pinned."""
         deps = replace(_make_deps(), require_finish_to_end=True)
         builder = MagicMock()
 
@@ -2071,8 +2028,7 @@ class TestWireEdgesPinning:
         assert finish_branches[0].kwargs["path_map"] == ["nudge_continue", END]
 
     def test_the_finish_branch_exits_through_the_hooks_node_when_there_is_one(self) -> None:
-        """The exit half of that path_map is the hooks node, not END, whenever
-        end-graph hooks are configured — the run's last writes happen there."""
+        """The exit half of that path_map is the hooks node, not END, when end-graph hooks are configured — the run's last writes happen there."""
         deps = replace(
             _make_deps(), require_finish_to_end=True, end_graph_hooks=[MagicMock(name="end_hook")]
         )
@@ -2100,8 +2056,7 @@ class TestWireEdgesPinning:
 
 
 class TestCreateAgentWiring:
-    """create_agent is mostly wiring: this pins that every resolved value lands
-    in deps and every factory-built node lands under its graph name."""
+    """Pin that every resolved value lands in deps and every factory-built node lands under its graph name."""
 
     def test_every_resolved_dependency_reaches_deps_and_every_node_its_name(self) -> None:
         def my_func(**kwargs: Any) -> list[str]:
@@ -2194,8 +2149,7 @@ def _dead_openrouter_lane() -> ModelLane:
 
 
 def _lane_carrying_config() -> RunnableConfig:
-    """A run whose lane HAS a next provider — the only shape in which the model
-    node has a fallback to hand down."""
+    """Build a run whose lane HAS a next provider — the only shape with a fallback to hand down."""
     return _make_config(
         **{
             LANE_FIELD_ID: _dead_openrouter_lane().to_configurable(),
@@ -2205,10 +2159,9 @@ def _lane_carrying_config() -> RunnableConfig:
     )
 
 
-#: What ``_fallback_config`` must produce for :func:`_lane_carrying_config`: the
-#: run's own keys, with EVERY key the dead OpenRouter lane owned replaced by the
-#: Gemini lane's. A leftover ``model_kwargs``/``reasoning`` is the failed
-#: provider's routing riding onto the new one.
+#: What _fallback_config must produce for _lane_carrying_config: the run's own
+#: keys, with every dead-lane key replaced by Gemini's. A leftover
+#: model_kwargs/reasoning means the failed provider's routing rode onto the new one.
 _EXPECTED_FALLBACK_CONFIG = {
     "configurable": {
         LANE_FIELD_ID: _dead_openrouter_lane().to_configurable(),
@@ -2220,13 +2173,12 @@ _EXPECTED_FALLBACK_CONFIG = {
 
 
 class TestTheFallbackTheModelNodeHandsTheClient:
-    """Both model call sites build the failover options themselves, and neither
-    one is exercised by a run whose lane has no next provider — which is every
-    other test here. What ``invoke_llm``/``ainvoke_llm`` receive is the whole
-    contract: a factory that re-binds the SAME tools on the next provider, and a
-    config with the dead lane's keys cleared. A blank, a swapped tuple slot or a
-    dropped argument leaves the turn with no failover at all, and the primary's
-    402 is still the turn's only outcome.
+    """Both model call sites build the failover options themselves.
+
+    What invoke_llm/ainvoke_llm receive is the whole contract: a factory that
+    re-binds the SAME tools on the next provider, and a config with the dead
+    lane's keys cleared. A blank, a swapped tuple slot or a dropped argument
+    leaves the turn with no failover, and the primary's 402 is the only outcome.
     """
 
     def _next_is_gemini(self) -> Any:
@@ -2280,8 +2232,7 @@ class TestTheFallbackTheModelNodeHandsTheClient:
         self._assert_failover_is_whole(invoked.await_args.kwargs, llm)
 
     def test_the_sync_node_hands_over_the_factory_and_the_rebound_config(self) -> None:
-        """The two call sites drift independently: a run that falls back on
-        whichever path lost its options has no second provider to reach."""
+        """The two call sites drift independently: a run falling back on whichever path lost its options has no second provider to reach."""
         llm = _make_llm()
         builder = self._builder(llm)
 
@@ -2302,8 +2253,7 @@ class TestTheFallbackTheModelNodeHandsTheClient:
 
     @pytest.mark.asyncio
     async def test_a_run_with_no_next_provider_hands_over_no_failover_at_all(self) -> None:
-        """The other side of the same branch: ``None``, not a half-built
-        failover that resolves back onto the provider that just failed."""
+        """The other side of the same branch: None, not a half-built failover that resolves back onto the provider that just failed."""
         llm = _make_llm()
         builder = self._builder(llm)
 

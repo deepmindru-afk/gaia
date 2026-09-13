@@ -214,11 +214,9 @@ export const useSendMessage = () => {
         isOnboardingDemo: false,
       };
 
-      // No analytics capture here. A send is recorded once, server-side, by
-      // chat:message_submitted in apps/api/app/api/v1/endpoints/chat.py: every
-      // field the client used to attach (tool, workflow, calendar event, reply,
-      // file count) arrives in that same request, so a client emitter was the
-      // same event counted twice under a second name.
+      // No analytics capture here — a send is recorded once, server-side, by
+      // chat:message_submitted (apps/api/app/api/v1/endpoints/chat.py), which
+      // already sees every field the client would attach; a client emitter was the same event counted twice.
       turnManager.send({ inputText: ctx.content, userMessage, options });
     },
     [],

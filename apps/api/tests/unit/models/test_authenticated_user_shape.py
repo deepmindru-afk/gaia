@@ -1,15 +1,14 @@
-"""``AuthenticatedUser`` must not drift from ``UserDocument``.
+"""AuthenticatedUser must not drift from UserDocument.
 
-``build_user_context()`` copies every ``UserDocument`` field into the auth
-context and layers the auth-context fields on top, and ``GET /me`` serves that
-object — so ``AuthenticatedUser`` has to stay a superset of the document's
-fields or a new document field silently vanishes from the response. It can't
-simply BE ``UserDocument``: the auth context adds fields the document doesn't
-have (``auth_provider``, the per-path flags) and is frozen and closed.
+build_user_context() copies every UserDocument field into the auth context
+and layers the auth-context fields on top, and GET /me serves that object, so
+AuthenticatedUser has to stay a superset of the document's fields. It can't
+simply BE UserDocument: the auth context adds fields the document doesn't have
+(auth_provider, the per-path flags) and is frozen and closed.
 
 That leaves the field list duplicated, so this test is the guard: add a field to
-``UserDocument`` without adding it here (and to ``build_user_context``) and CI
-fails instead of the model silently going stale.
+UserDocument without adding it here (and to build_user_context) and CI fails
+instead of the model silently going stale.
 """
 
 from datetime import UTC, datetime
@@ -51,7 +50,7 @@ _SAMPLE_BY_TYPE: tuple[tuple[str, object], ...] = (
 
 
 def _sample_values() -> dict[str, object]:
-    """A non-default value for every declared ``UserDocument`` field but ``id``."""
+    """Return a non-default value for every declared UserDocument field but id."""
     return {
         name: next(
             (value for type_name, value in _SAMPLE_BY_TYPE if type_name in str(field.annotation)),
@@ -89,8 +88,7 @@ def test_authenticated_user_declares_no_unknown_fields() -> None:
 
 
 def test_build_user_context_copies_every_document_field() -> None:
-    """A document field that ``build_user_context`` forgets to copy is the drift
-    the whole guard exists for: the field would be declared yet never set."""
+    """A field build_user_context forgets to copy is declared yet never set, the drift this guards."""
     values = _sample_values()
     doc = UserDocument(id="507f1f77bcf86cd799439011", **values)
 

@@ -59,11 +59,9 @@ def register_slack_custom_tools(composio: Composio) -> list[str]:
         return {
             "messages": [m.model_dump(mode="json", exclude_unset=True) for m in other_messages],
             "mentions": [m.model_dump(mode="json", exclude_unset=True) for m in mentions],
-            # Both lists, because they are disjoint and either one alone
-            # under-reports: a day made entirely of @-mentions would otherwise
-            # come back as "nothing waiting". Not len(messages) either — the two
-            # searches page independently (20 vs 10), so a mention can arrive
-            # that the message page never returned.
+            # Sum both lists: they're disjoint, and the two searches page
+            # independently (20 vs 10), so a mention can arrive that the
+            # message page never returned.
             "unread_count": len(other_messages) + len(mentions),
         }
 

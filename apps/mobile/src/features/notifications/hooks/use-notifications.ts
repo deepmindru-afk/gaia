@@ -249,10 +249,9 @@ export function useNotifications(): UseNotificationsReturn {
           const approvalId =
             typeof data.approval_id === "string" ? data.approval_id : null;
 
-          // Approve/Deny action button: relay the decision without opening the
-          // app. A 410 (already resolved) is swallowed by postApprovalDecision;
-          // false means the submit genuinely failed — tell the user, or they'll
-          // believe they approved an action that never ran.
+          // Approve/Deny action: relay the decision without opening the app. A 410
+          // (already resolved) is swallowed by postApprovalDecision; false means
+          // the submit genuinely failed — tell the user, or they'll think it worked.
           if (
             data.type === "hil_approval" &&
             approvalId &&

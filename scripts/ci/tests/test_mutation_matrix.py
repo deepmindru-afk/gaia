@@ -117,9 +117,7 @@ def test_test_files_for_finds_patch_string(tmp_path: Path) -> None:
 
 
 def test_tokens_without_comments_treats_trailing_and_whole_line_comments_as_inert() -> None:
-    """A trailing `# noqa` and a whole-line comment both disappear from the
-    token stream — the two shapes the suppression burn-down actually produced.
-    """
+    """Drop both a trailing `# noqa` and a whole-line comment from the token stream."""
     with_comments = mm._tokens_without_comments(
         "try:\n    pass\nexcept Exception as e:  # noqa: BLE001\n    pass\n# a whole line comment\ny = 2\n"
     )
@@ -142,7 +140,7 @@ def test_tokens_without_comments_returns_none_on_syntax_error() -> None:
 
 
 def _init_repo_with_commit(root: Path, content: str) -> str:
-    """A throwaway git repo with one file committed; returns that commit's sha."""
+    """Commit one file to a throwaway git repo and return that commit's sha."""
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)

@@ -23,10 +23,9 @@ interface Frame {
   server?: string;
   data?: string;
   error?: string;
-  // Consumer pod id from mcp.open; echoed on every up-frame so the owning pod
-  // routes replies to the pod running the session. Explicitly `| undefined`
-  // (not just optional) because call sites forward `frame.pod` verbatim,
-  // which is itself `string | undefined`.
+  // Consumer pod id from mcp.open, echoed on every up-frame so the owning pod routes replies.
+  // Explicitly `| undefined` (not just optional) because call sites forward `frame.pod`
+  // verbatim, which is itself `string | undefined`.
   pod?: string | undefined;
 }
 
@@ -85,11 +84,9 @@ export class Tunnel {
     });
     this.ws = ws;
 
-    // This promise stays pending for the whole life of the connection: it
-    // settles only when the socket CLOSES (resolve → reconnect) or fails before
-    // ever opening (reject). Resolving on `open` would make connectOnce() return
-    // immediately and run() spin up a new socket in a tight loop — the tunnel
-    // would never be held.
+    // This promise stays pending for the connection's whole life: it settles only when the
+    // socket CLOSES (resolve → reconnect) or fails before opening (reject). Resolving on `open`
+    // would return immediately and let run() spin up a new socket in a tight loop.
     await new Promise<void>((resolvePromise, rejectPromise) => {
       let opened = false;
       let settled = false;
@@ -182,10 +179,9 @@ export class Tunnel {
       return;
     }
 
-    // The cloud's /mcp/test request blocks on this spawn, so a slow or failing
-    // local server looks like a hung tunnel from the other side. Say what we
-    // are doing and how long it took, or the only evidence is the caller's
-    // timeout.
+    // The cloud's /mcp/test request blocks on this spawn, so a slow or failing local server
+    // looks like a hung tunnel from the other side — log what's happening, or the only
+    // evidence the caller gets is its own timeout.
     const startedAt = Date.now();
     console.error(`[gaia bridge] opening MCP session for '${serverKey}'…`);
     try {
@@ -200,11 +196,9 @@ export class Tunnel {
         });
       };
       session.transport.onclose = () => {
-        // closeSession() removes the session from the map before closing the
-        // transport, so a still-registered session here means the local server
-        // exited on its own. Tell the cloud so its call fails immediately
-        // instead of hanging until the read timeout; an intentional close
-        // (already removed) skips this.
+        // closeSession() removes the session from the map before closing the transport, so a
+        // still-registered session here means the local server exited on its own — tell the
+        // cloud so its call fails immediately instead of hanging until the read timeout.
         if (this.sessions.has(sid)) {
           this.send({
             t: FRAME.MCP_ERROR,

@@ -37,24 +37,23 @@ from app.utils.stream_publishers import ExtractedToolData
 
 
 def _created_conversation(conversation_id: str, description: str) -> ConversationModel:
-    """The real `create_conversation` return value — mock it with nothing looser."""
+    """Return the real create_conversation value; mock it with nothing looser."""
     return ConversationModel(conversation_id=conversation_id, description=description)
 
 
 def _usage_callback_class() -> MagicMock:
-    """Stand-in for LangChain's `UsageMetadataCallbackHandler`.
+    """Stand-in for LangChain's UsageMetadataCallbackHandler.
 
-    The real handler exposes `usage_metadata` as a dict, and the stream feeds it
-    straight into `MainResponseCompleteFrame`. A bare `MagicMock()` would hand the
+    The real handler exposes usage_metadata as a dict, and the stream feeds it
+    straight into MainResponseCompleteFrame. A bare MagicMock() would hand the
     frame a Mock instead, so the stand-in must carry the real attribute type.
     """
     return MagicMock(return_value=MagicMock(usage_metadata={}))
 
 
-# Each module does `from app.core.stream_manager import stream_manager`,
-# so the patch target is each module's binding. This helper rebinds all
-# five at once so a single mock intercepts calls from stream.py, chunks.py,
-# state.py, artifact_forwarder.py, and stream_publishers.py.
+# Each module does `from app.core.stream_manager import stream_manager`, so the patch
+# target is each module's own binding. This rebinds all five at once: stream.py,
+# chunks.py, state.py, artifact_forwarder.py, and stream_publishers.py.
 @contextlib.contextmanager
 def _patch_stream_manager(sm: MagicMock) -> Iterator[MagicMock]:
     with contextlib.ExitStack() as stack:
@@ -81,7 +80,7 @@ def test_user() -> AuthenticatedUser:
 
 @pytest.fixture
 def basic_body() -> MessageRequestWithHistory:
-    """A minimal request body with a single user message."""
+    """Build a minimal request body with a single user message."""
     return MessageRequestWithHistory(
         message="Hello GAIA",
         messages=[{"role": "user", "content": "Hello GAIA"}],
@@ -91,7 +90,7 @@ def basic_body() -> MessageRequestWithHistory:
 
 @pytest.fixture
 def existing_conv_body() -> MessageRequestWithHistory:
-    """A request body referencing an already-existing conversation."""
+    """Build a request body referencing an already-existing conversation."""
     return MessageRequestWithHistory(
         message="Follow-up",
         messages=[{"role": "user", "content": "Follow-up"}],
@@ -111,7 +110,7 @@ async def _done_only_stream() -> AsyncGenerator[str, None]:
 
 
 async def _text_then_nostream(text: str, complete: str) -> AsyncGenerator[str, None]:
-    """Yields a text chunk, then a nostream marker, then DONE."""
+    """Yield a text chunk, then a nostream marker, then DONE."""
     yield f"data: {json.dumps({'response': text})}\n\n"
     yield f"nostream: {json.dumps({'complete_message': complete})}"
     yield "data: [DONE]\n\n"
@@ -502,9 +501,9 @@ class TestRunChatStreamBackground:
     def _no_pending_approval(self) -> Iterator[None]:
         """Stub conversational HIL resolution to "nothing pending".
 
-        ``run_chat_stream_background`` now checks Mongo for a pending approval at
+        run_chat_stream_background now checks Mongo for a pending approval at
         the top of each turn. These tests exercise the normal turn and don't stub
-        Redis, so without this the real ``redis_cache`` singleton is reached and
+        Redis, so without this the real redis_cache singleton is reached and
         raises "Event loop is closed" under xdist's per-test event loops.
         """
         with patch(
@@ -515,19 +514,12 @@ class TestRunChatStreamBackground:
 
     @pytest.fixture(autouse=True)
     def _no_live_artifact_forwarder(self) -> Iterator[None]:
-        """Force ``ArtifactForwarder`` onto its "Redis unavailable" fast path.
+        """Force ArtifactForwarder onto its "Redis unavailable" fast path.
 
-        ``run_chat_stream_background`` spawns ``forward_artifact_events`` as a
-        background task for every turn with a ``user_id``. Its ``run()`` reads
-        the process-wide ``redis_cache`` singleton directly (not ``stream_manager``,
-        which the tests below already mock) — in a hermetic dev/test env
-        ``redis_cache.redis`` is ``None`` and it no-ops, but under CI's live-services
-        job (real Redis running, ``REDIS_URL`` pointing at it) it subscribes to a
-        real pub/sub channel and blocks in ``pubsub.listen()`` for the rest of the
-        turn, relying entirely on ``_finalize_stream``'s ``artifact_task.cancel()``
-        landing before test/CI timeouts to unblock it. ``tests/unit/`` must be fully
-        mocked and I/O-free (see ``tests/CLAUDE.md``), so pin the fast path here
-        instead of depending on ambient Redis connectivity/scheduling.
+        forward_artifact_events reads the process-wide redis_cache singleton directly (not
+        the mocked stream_manager); under CI's live-services job it would otherwise block in
+        pubsub.listen() until artifact_task.cancel() lands. tests/unit/ must stay fully
+        mocked and I/O-free, so pin the fast path here instead of depending on Redis.
         """
         with patch("app.services.chat.artifact_forwarder.redis_cache.redis", None):
             yield
@@ -658,11 +650,7 @@ class TestRunChatStreamBackground:
         }
 
     async def test_source_is_carried_onto_the_terminal_event(self, test_user, existing_conv_body):
-        """`source` is what lets one event name span web, desktop and bots.
-
-        Every other test leaves it None, so the branch that attaches it never
-        ran with a value — key and value were both free to drift.
-        """
+        """Every other test leaves source None, so the branch that attaches it never ran with a value."""
         sm = _make_stream_manager_mock()
         with (
             _patch_stream_manager(sm),
@@ -792,8 +780,7 @@ class TestRunChatStreamBackground:
         sm.cleanup.assert_called_once_with("stream_6")
 
     async def test_error_chunk_published_before_set_error(self, test_user, existing_conv_body):
-        """set_error() sends STREAM_ERROR_SIGNAL which breaks the subscriber.
-        The human-readable error JSON must be published first."""
+        """set_error() sends STREAM_ERROR_SIGNAL, which breaks the subscriber — publish the error JSON first."""
         sm = _make_stream_manager_mock()
         sm.get_progress = AsyncMock(return_value=None)
         publish_calls: list[str] = []
@@ -1111,8 +1098,7 @@ class TestRunChatStreamBackground:
     async def test_complete_message_recovered_from_redis_when_empty(
         self, test_user, existing_conv_body
     ):
-        """If nostream: marker never arrives (e.g. cancellation), complete_message
-        should be recovered from Redis progress data."""
+        """If the nostream: marker never arrives (e.g. cancellation), recover it from Redis progress."""
         sm = _make_stream_manager_mock()
         sm.get_progress = AsyncMock(
             return_value={"complete_message": "recovered text", "tool_data": {}}

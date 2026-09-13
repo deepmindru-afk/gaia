@@ -60,7 +60,7 @@ def build_search_matcher(query: str | None) -> Callable[[str], bool]:
 
 @dataclass(slots=True, frozen=True)
 class ParsedIntegrationSlug:
-    """The parts of an integration slug: ``{name_part}-mcp-{category}[-{shortid}]``."""
+    """The parts of an integration slug: {name_part}-mcp-{category}[-{shortid}]."""
 
     name_part: str
     category: str | None

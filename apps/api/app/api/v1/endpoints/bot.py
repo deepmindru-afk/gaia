@@ -108,13 +108,11 @@ def _refusal_stream(error_code: str) -> StreamingResponse:
 
 
 def _refusal_stream_with_notice(notice_text: str, error_code: str) -> StreamingResponse:
-    """`_refusal_stream`, preceded by a `notice` frame carrying free-form text.
+    """_refusal_stream, preceded by a notice frame carrying free-form text.
 
-    Used for the unlinked-user paywall notice: the `notice` frame delivers it
-    as a real outbound message (`deliverOutOfBand` in the shared streamer),
-    and the trailing `error` frame is untouched so the existing /auth-link
-    flow (token minting, `buildAuthLinkMessage`) still fires — no adapter
-    change needed for either half.
+    Used for the unlinked-user paywall notice: the notice frame delivers it as
+    a real outbound message, and the trailing error frame is untouched so the
+    existing /auth-link flow still fires.
     """
 
     async def frame() -> AsyncGenerator[str, None]:
@@ -125,13 +123,10 @@ def _refusal_stream_with_notice(notice_text: str, error_code: str) -> StreamingR
 
 
 def _notice_only_stream(notice_text: str) -> StreamingResponse:
-    """Answer a turn with one canned line and no agent run: `notice` + `done`.
+    """Answer a turn with one canned line and no agent run: notice + done.
 
-    No `text` frame is ever sent, so `onDone` receives an empty `fullText`
-    and delivers nothing further — the `notice` is the whole reply. Reuses
-    the same generic frames the rate-limit notice (`_bot_rate_limit_notice`)
-    already proves out for arbitrary, per-user text (a checkout link, a
-    discount code) with zero bot-adapter changes.
+    No text frame is sent, so onDone receives an empty fullText and delivers
+    nothing further — the notice is the whole reply.
     """
 
     async def frame() -> AsyncGenerator[str, None]:
@@ -160,8 +155,7 @@ def _capture_bot_turn_refused(user_id: str, platform: str, reason: str) -> None:
 async def _resolve_bot_caller(
     request: Request, platform: str, platform_user_id: str
 ) -> AuthenticatedUser | None:
-    """The user a bot turn acts as: the middleware-resolved one, else the
-    platform account's linked user (``None`` when unlinked)."""
+    """Return the middleware-resolved user, else the platform account's linked user, else None."""
     user = get_request_user(request)
     if user is not None and getattr(request.state, "authenticated", False):
         return user
@@ -175,19 +169,11 @@ async def require_bot_api_key(request: Request) -> None:
 
 
 async def _may_mint_bot_upgrade_link(user_id: str) -> bool:
-    """Whether this turn may mint a fresh Dodo session for ``user_id``.
+    """Whether this turn may mint a fresh Dodo session for user_id.
 
-    A ``SET NX EX`` window, the same gate shape as
-    ``workflow_repository.claim_limit_notice`` — one mint per user per
-    ``BOT_UPGRADE_LINK_TTL``, so a burst of blocked turns costs one session
-    instead of one per message.
-
-    Fails CLOSED, unlike that sibling, because what is at stake differs. There,
-    losing the gate costs the user a duplicate notification; here it costs a
-    trail of orphan Dodo sessions, and the newest of those buries the session
-    the user actually paid on when ``get_latest_for_user`` looks for it. A
-    degraded link is a marketing regression; a buried payment is a paying
-    customer told they have no subscription.
+    A SET NX EX window (one mint per user per BOT_UPGRADE_LINK_TTL) so a burst
+    of blocked turns costs one session, not one per message. Fails CLOSED: a
+    lost gate here would bury the session the user actually paid on.
     """
     try:
         claimed = await redis_cache.client.set(
@@ -208,28 +194,19 @@ async def _may_mint_bot_upgrade_link(user_id: str) -> bool:
 async def _bot_upgrade_url(user_id: str) -> str:
     """A one-tap Dodo checkout URL for this user, or the pricing page.
 
-    Bots are where the pricing page is worst: a WhatsApp user has to go find the
-    web app and sign in before they can pay, and most never do. A personalised
-    checkout link removes both steps and attributes the subscription correctly.
-
-    Bounded by ``_may_mint_bot_upgrade_link``: this is the ONE place a bot turn
-    reaches Dodo, and both walls that call it — the paid-only gate and the
-    rate-limit notice — repeat for every message until the user acts, so an
-    ungated mint here is one throwaway session per inbound message. Outside the
-    window the caller still gets a working URL, just the pricing page rather
-    than a personalised one. The session itself is never cached and never
-    reused: Dodo sessions are single-use, and handing back a spent one shows
-    "link expired" (see ``create_pro_checkout``).
+    Bounded by _may_mint_bot_upgrade_link: this is the ONE place a bot turn
+    reaches Dodo, since callers repeat for every message until the user acts.
+    Outside the window, falls back to the (unpersonalised) pricing page. The
+    session is never cached or reused — Dodo sessions are single-use.
     """
     if not await _may_mint_bot_upgrade_link(user_id):
         return f"{settings.FRONTEND_URL}/pricing"
     try:
         pro = await payment_service.create_pro_checkout(user_id)
     except Exception as e:
-        # A marketing link must never cost the user their reply — degrade to the
-        # pricing page, loudly.
-        # Bounded fields, not provider error text: the event stays queryable
-        # without leaking upstream payloads into telemetry.
+        # A marketing link must never cost the user their reply — degrade to
+        # the pricing page, loudly. Bounded fields, not provider error text,
+        # so the event stays queryable without leaking upstream payloads.
         log.warning(
             f"{LogTag.PAYMENT} Could not mint bot upgrade link, falling back to pricing page",
             user={"id": user_id},
@@ -244,16 +221,9 @@ async def _bot_upgrade_url(user_id: str) -> str:
 def _bot_upgrade_url_once(user_id: str) -> Callable[[], Awaitable[str]]:
     """A per-request resolver for this user's upgrade URL, minted at most once.
 
-    Called from the stream translator, which used to mint a fresh Dodo
-    checkout for every rate-limit card it saw. The resolver stays lazy on
-    purpose: resolving eagerly before the stream opens would mint a checkout
-    session on every bot turn, including the paying users who never see a
-    paywall.
-
-    Only the within-turn bound. Across turns the cap lives in
-    ``_bot_upgrade_url`` itself, so a caller that reaches it directly (the
-    paid-only gate does, having no stream to hang a resolver off) is bounded
-    too.
+    Stays lazy on purpose: resolving eagerly before the stream opens would
+    mint a checkout session on every bot turn, including paying users who
+    never see a paywall. The across-turn cap lives in _bot_upgrade_url itself.
     """
     cached: list[str] = []
 
@@ -266,7 +236,7 @@ def _bot_upgrade_url_once(user_id: str) -> Callable[[], Awaitable[str]]:
 
 
 def _bot_tool_card(chunk: BotWebStreamPayload, tool_name: str) -> BotStreamToolCard | None:
-    """The payload's ``tool_data`` card when it is a ``tool_name`` card, else ``None``."""
+    """Return the payload's tool_data card when it is a tool_name card, else None."""
     if not isinstance(chunk.tool_data, dict):
         return None
     card = BotStreamToolCard.model_validate(chunk.tool_data)
@@ -278,13 +248,9 @@ async def _bot_rate_limit_notice(
 ) -> str | None:
     """Render a web-only rate-limit card as a plain-text notice for bots.
 
-    Rate limits are streamed as a ``tool_data`` card for the web UI to render.
-    Bots drop ``tool_data``, so without this they'd silently swallow the limit.
-    Returns the user-facing notice, or ``None`` if ``chunk`` isn't such a card.
-
-    The upgrade link is emitted as CommonMark ``[label](url)``; each bot adapter
-    localises it to its platform's link syntax (WhatsApp ``label (url)``, Slack
-    ``<url|label>``, Telegram keeps ``[label](url)``).
+    Bots drop tool_data, so without this they'd silently swallow the limit.
+    Returns the notice, or None if chunk isn't such a card. The upgrade link
+    is CommonMark [label](url); each bot adapter localises the syntax.
     """
     tool_card = _bot_tool_card(chunk, "rate_limit_data")
     if tool_card is None:
@@ -305,12 +271,12 @@ async def _bot_rate_limit_notice(
 
 
 def _bot_approval_payload(chunk: BotWebStreamPayload) -> dict[str, JsonValue] | None:
-    """Extract a HIL ``approval_request`` card as a bot ``approval`` payload.
+    """Extract a HIL approval_request card as a bot approval payload.
 
-    Bots drop ``tool_data``, but the approval prompt MUST reach the user — a bot
+    Bots drop tool_data, but the approval prompt MUST reach the user — a bot
     has no buttons, so the user answers yes/no in chat and the conversational
     resolver relays it. The bot client renders this as an out-of-band message.
-    Returns the approval data, or ``None`` if ``chunk`` isn't such a card.
+    Returns the approval data, or None if chunk isn't such a card.
     """
     tool_card = _bot_tool_card(chunk, APPROVAL_REQUEST_TOOL_NAME)
     if tool_card is None:
@@ -321,14 +287,11 @@ def _bot_approval_payload(chunk: BotWebStreamPayload) -> dict[str, JsonValue] | 
 def _bot_stream_control_frame(
     chunk: str, conversation_id: str
 ) -> tuple[str | None, BotWebStreamPayload | None, bool]:
-    """Peel Redis SSE framing off one raw chunk from ``_bot_stream_from_redis``.
+    """Peel Redis SSE framing off one raw chunk from _bot_stream_from_redis.
 
-    Returns ``(frame, data, stop)`` — see the tri-state contract below.
+    Returns (frame, data, stop): a ready-to-send frame, or a parsed content
+    payload as data, or both None for a web-only line. stop ends the stream.
     """
-    # A comment/[DONE]/malformed-JSON chunk yields a ready-to-send `frame`
-    # (`data` is None); a content chunk yields the parsed payload as `data`
-    # for `_bot_stream_payload_frame` (`frame` is None); a web-only
-    # non-`data:` line yields both None. `stop` ends the stream after `frame`.
     if chunk.startswith(":"):
         return chunk, None, False
 
@@ -378,7 +341,7 @@ async def _bot_stream_payload_frame(
 ) -> tuple[str | None, bool]:
     """Translate one parsed web SSE payload into a bot frame.
 
-    Returns ``(frame, stop)`` — ``frame`` is ``None`` when nothing bots need.
+    Returns (frame, stop) — frame is None when nothing bots need.
     """
     # `frame` is None for a payload that carries nothing bots need (a
     # web-only field, an unrecognized shape). `stop` marks the terminal
@@ -387,14 +350,9 @@ async def _bot_stream_payload_frame(
         # Forward keepalives so bot clients reset inactivity timers.
         return keepalive_frame(), False
 
-    # Surface rate-limit cards (web-only UI) to bots as a dedicated notice
-    # frame the client delivers out of band, before the web-only fields are
-    # dropped below.
-    #
-    # Its own frame, not a {"text"} one: text belongs to the assistant
-    # message in flight, so a notice sent that way was dropped whenever that
-    # message was discarded (a handoff preamble, a rewritten draft) — the
-    # user hit a limit and was told nothing.
+    # Surface rate-limit cards to bots as a dedicated notice frame (not
+    # {"text"}, which is tied to the in-flight message and would be dropped
+    # if that message gets discarded) before web-only fields are dropped below.
     if (rate_limit_notice := await _bot_rate_limit_notice(data, upgrade_url)) is not None:
         return notice_frame(rate_limit_notice), False
 
@@ -447,7 +405,7 @@ async def _bot_stream_entitlement_gate(user_id: str, platform: str) -> Streaming
 def _bot_stream_failure_logger(
     stream_id: str, conversation_id: str
 ) -> Callable[[asyncio.Task[None]], None]:
-    """Build the ``on_done`` callback that logs an unhandled background stream failure."""
+    """Build the on_done callback that logs an unhandled background stream failure."""
 
     def _log_stream_failure(t: asyncio.Task[None]) -> None:
         if not t.cancelled() and (exc := t.exception()):
@@ -473,11 +431,8 @@ async def _bot_stream_from_redis(
 ) -> AsyncGenerator[str, None]:
     """Subscribe to Redis stream and translate chunks for bot clients.
 
-    The body runs while the response streams — after the request's
-    ``http_request`` event has emitted — so it needs its own boundary or
-    the delivery outcome is silently discarded. The generator body
-    inherits the request's context, so ``get_trace_id()`` still returns
-    the request's trace_id.
+    Runs after the request's http_request event has emitted, so it needs its
+    own log boundary or the delivery outcome is silently discarded.
     """
     async with log_context(
         "sse_delivery",
@@ -598,10 +553,9 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
     # of minting a fresh one per chunk.
     upgrade_url = _bot_upgrade_url_once(user_id)
 
-    # The translator above drops every web-only frame, so the socket can go
-    # quiet for minutes while the turn is busy. with_heartbeat guarantees a
-    # byte on the wire regardless, so no proxy in the path can mistake a
-    # working stream for a dead one.
+    # The translator drops every web-only frame, so the socket can go quiet
+    # for minutes; with_heartbeat guarantees a byte on the wire so no proxy
+    # mistakes a working stream for a dead one.
     return StreamingResponse(
         with_heartbeat(
             _bot_stream_from_redis(
@@ -849,10 +803,9 @@ async def unlink_account(request: Request) -> UnlinkAccountResponse:
 async def transcribe_bot_audio(
     request: Request,
     file: Annotated[UploadFile, File(...)],
-    # `tiered_rate_limit` finds the caller by reading the `user` keyword argument
-    # FastAPI injects and pulling "user_id" off it, so this stays the full auth
-    # dict rather than a `get_user_id` string — narrowing it would silently skip
-    # rate limiting for this route.
+    # `tiered_rate_limit` reads "user_id" off the `user` kwarg FastAPI injects,
+    # so this stays the full auth dict — narrowing it to a `get_user_id`
+    # string would silently skip rate limiting for this route.
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     content_length: Annotated[int | None, Header(alias="content-length")] = None,
 ) -> TranscribeAudioResponse:
@@ -860,24 +813,9 @@ async def transcribe_bot_audio(
     await require_bot_api_key(request)
     log.set(operation="bot_transcribe_audio", user={"id": user.user_id})
 
-    # Paid-only gate, imperative rather than `@require_subscription()`: the bot
-    # API key is checked in the body, so a decorator would 402 a caller whose
-    # key was never verified. An unlinked caller never reaches here —
-    # `get_current_user` 401s first — so unlinked behavior is unchanged.
-    # Ordering wart: `@tiered_rate_limit` already charged one transcription
-    # against the caller's quota by this point. Harmless for a blocked user
-    # (they cannot spend it) and not worth moving the key check to a
-    # dependency for, which would fork this route from `bot_chat_stream`.
-    #
-    # `require_active_subscription` already logs the block and fires
-    # PAYWALL_BLOCKED with this feature name; what it cannot do is stamp THIS
-    # route's wide event. Without the outcome, "are voice notes failing on the
-    # paywall or on the provider?" — the question an incident actually asks —
-    # has no answer, because a refused transcribe and a served one leave
-    # identical events. The value matches `_bot_stream_entitlement_gate` so one
-    # query covers both bot surfaces. No CHAT_MESSAGE_REFUSED here: a
-    # transcribe is not a chat turn, and counting it as one would inflate the
-    # bot's refused-turn rate with events that have no turn behind them.
+    # Imperative gate, not @require_subscription(): the bot API key is checked in the body, so a decorator would 402 an unverified caller (unlinked callers 401 earlier at get_current_user).
+    # tiered_rate_limit already charged one transcription by this point — harmless, since a blocked user can't spend it. Outcome value matches _bot_stream_entitlement_gate for one query across both bot surfaces.
+    # No CHAT_MESSAGE_REFUSED here since a transcribe isn't a chat turn.
     try:
         await require_active_subscription(user.user_id, feature="bot_transcribe")
     except SubscriptionRequiredException:
