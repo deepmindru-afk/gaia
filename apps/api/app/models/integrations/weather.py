@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class OpenWeatherCondition(BaseModel):
-    """One entry of an OpenWeatherMap ``weather`` list; also the daily summary's condition."""
+    """One entry of an OpenWeatherMap weather list; also the daily summary's condition."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -16,9 +16,9 @@ class OpenWeatherCondition(BaseModel):
 
 
 class OpenWeatherSys(BaseModel):
-    """The ``sys`` block of a current-weather response.
+    """The sys block of a current-weather response.
 
-    ``extra="allow"``: the whole current-weather response is forwarded verbatim
+    extra="allow": the whole current-weather response is forwarded verbatim
     to the frontend weather card, so undeclared keys must survive.
     """
 
@@ -33,8 +33,8 @@ class OpenWeatherSys(BaseModel):
 class OpenWeatherCurrent(BaseModel):
     """An OpenWeatherMap current-weather response.
 
-    ``extra="allow"``: forwarded verbatim to the frontend weather card (``coord``,
-    ``main``, ``wind``, ``timezone``, ...), which reads far more than GAIA does.
+    extra="allow": forwarded verbatim to the frontend weather card (coord,
+    main, wind, timezone, ...), which reads far more than GAIA does.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -44,7 +44,7 @@ class OpenWeatherCurrent(BaseModel):
 
 
 class OpenWeatherForecastMain(BaseModel):
-    """The ``main`` block of a forecast list item."""
+    """The main block of a forecast list item."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -98,7 +98,7 @@ class WeatherReport(OpenWeatherCurrent):
 
 
 class NominatimAddress(BaseModel):
-    """The ``address`` block of a Nominatim search result."""
+    """The address block of a Nominatim search result."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -108,7 +108,7 @@ class NominatimAddress(BaseModel):
 
 
 class NominatimPlace(BaseModel):
-    """One Nominatim ``/search`` result. Coordinates arrive as strings."""
+    """One Nominatim /search result. Coordinates arrive as strings."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -119,7 +119,7 @@ class NominatimPlace(BaseModel):
 
 
 class IpApiGeolocation(BaseModel):
-    """An ip-api.com ``/json`` response; every field but ``status`` is absent on failure."""
+    """An ip-api.com /json response; every field but status is absent on failure."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -133,7 +133,7 @@ class IpApiGeolocation(BaseModel):
 
 @dataclass(slots=True, frozen=True)
 class GeocodedLocation:
-    """What ``geocode_location`` resolves a place name to."""
+    """What geocode_location resolves a place name to."""
 
     lat: float
     lon: float
@@ -145,7 +145,7 @@ class GeocodedLocation:
 
 @dataclass(slots=True, frozen=True)
 class ResolvedLocation:
-    """The coordinates, place details and cache key ``get_location_data`` resolved."""
+    """The coordinates, place details and cache key get_location_data resolved."""
 
     lat: float
     lon: float

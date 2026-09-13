@@ -632,9 +632,10 @@ class TestUntrashEmails:
 
 
 class TestTrashRoutesAgainstTheComposioEnvelope:
-    """The trash tools answer with Composio's ``{data, error, successful}`` envelope,
-    which has no message id at its top level. The routes used to read ``msg["id"]``
-    off it and 500ed on every call; the mocked-service tests above never saw it."""
+    """Trash routes against the Composio envelope, which has no top-level message id.
+
+    The routes used to read msg["id"] off it and returned 500 on every call.
+    """
 
     @pytest.mark.regression
     @pytest.mark.parametrize(

@@ -1,9 +1,7 @@
-"""MCP Apps UI shapes: the ``mcp_ui`` hint attached to a tool, and the resource it names.
+"""MCP Apps UI shapes: the mcp_ui hint attached to a tool, and the resource it names.
 
-Both cross a boundary — the hint is stamped on a tool's ``metadata`` by the MCP
-adapter and rides the ``tool_calls_data`` frame to the client and to Mongo; the
-resource is what the MCP server serves for it — so both are models, parsed
-once where they enter the stream.
+Both cross a boundary (the hint rides the tool_calls_data frame to the client and
+Mongo; the MCP server serves the resource), so both are parsed once on entry.
 """
 
 from pydantic import BaseModel, ConfigDict, Field

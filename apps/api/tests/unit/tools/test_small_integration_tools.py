@@ -156,8 +156,7 @@ class TestGitHubGatherContext:
 
     @patch(f"{GITHUB_MODULE}.execute_tool")
     def test_bare_list_notifications_are_kept(self, mock_exec: MagicMock) -> None:
-        """BUG: a bare-list notifications payload used to raise inside the
-        try/except and be reported as "no notifications"."""
+        """A bare-list notifications payload is not reported as "no notifications"."""
         mock_exec.side_effect = [
             {"items": []},
             {"items": []},
@@ -172,8 +171,7 @@ class TestGitHubGatherContext:
 
     @patch(f"{GITHUB_MODULE}.execute_tool")
     def test_items_forward_verbatim_and_calls_are_exact(self, mock_exec: MagicMock) -> None:
-        """Every GitHub field rides through untouched, ``pull_request`` decides
-        the bucket, and the three Composio calls carry the pinned arguments."""
+        """GitHub fields ride through untouched and pull_request decides the bucket."""
         issue = {"id": 1, "title": "Bug", "number": 7, "labels": [{"name": "p1"}], "assignee": None}
         pr = {"id": 2, "title": "PR", "pull_request": {"url": "u", "merged_at": None}}
         mock_exec.side_effect = [{"issues": [issue, pr]}, {"items": [pr]}, {"notifications": []}]
@@ -510,8 +508,7 @@ class TestTodoistGatherContext:
 
     @patch(f"{TODOIST_MODULE}.execute_tool")
     def test_tasks_forward_verbatim(self, mock_exec: MagicMock) -> None:
-        """No invented keys: a task without ``due`` stays without it, an explicit
-        ``due: null`` stays null, extras ride through."""
+        """No invented keys: a missing due stays missing, a null due stays null."""
         overdue = {"id": "2", "content": "B", "due": {"date": "2000-01-01", "is_recurring": False}}
         tasks = [{"id": "1", "content": "A", "priority": 4}, overdue, {"id": "3", "due": None}]
         mock_exec.return_value = {"items": tasks}
@@ -692,8 +689,7 @@ class TestClickUpGatherContext:
 
     @patch(f"{CLICKUP_MODULE}.execute_tool")
     def test_tasks_forward_verbatim_and_call_is_exact(self, mock_exec: MagicMock) -> None:
-        """Extras and an explicit ``due_date: null`` ride through; a past-due task
-        with no status at all counts as open, so it is overdue."""
+        """A past-due task with no status counts as open, so it is overdue."""
         overdue = {"id": "2", "name": "O", "due_date": "946684800000", "status": {"type": "open"}}
         statusless = {"id": "3", "name": "S", "due_date": "946684800000"}
         tasks = [
@@ -1214,17 +1210,14 @@ class TestUrgencyAggregator:
         assert result["summary"]["low_priority"] >= 1
 
     def test_non_dict_snapshot_is_rejected_at_input(self) -> None:
-        """A snapshot that is not an object is a malformed call: the input schema
-        refuses it instead of silently reporting "nothing urgent"."""
+        """The input schema refuses a non-object snapshot instead of reporting nothing urgent."""
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError, match="snapshots.broken"):
             self._make_input({"broken": "not a dict", "gmail": {"inbox_unread_count": 3}})
 
     def test_branches_fire_on_key_presence_not_value(self) -> None:
-        """``unread_count: 0`` alone names Slack (and Gmail) but yields no item;
-        ``mentions: []`` with a count still yields the Slack item — and, as it
-        always has, the Gmail item too, since ``unread_count`` names both."""
+        """An unread_count key names Slack and Gmail; an empty mentions list still yields items."""
         captured = self._register()
         fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
 
@@ -1256,10 +1249,7 @@ class TestUrgencyAggregator:
         ]
 
     def test_exact_items_and_details_shape(self) -> None:
-        """Count-only branches carry no ``details`` key; quoting branches carry
-        the first three labels with the old per-branch fallbacks (a missing
-        Linear title is ``None``, a missing task name falls back to ``title``,
-        an event without summary falls back to title then ``""``)."""
+        """Count-only branches omit details; quoting branches carry the first three labels."""
         captured = self._register()
         fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
 

@@ -1,4 +1,4 @@
-"""Slack ``search.messages`` payload the context tool reads and forwards.
+"""Slack search.messages payload the context tool reads and forwards.
 
 Reference: https://docs.slack.dev/reference/methods/search.messages
 """

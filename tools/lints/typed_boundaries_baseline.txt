@@ -100,7 +100,6 @@ apps/api/app/agents/tools/support_tool.py	TB002
 apps/api/app/agents/tools/todo_tool.py	TB002
 apps/api/app/agents/tools/todo_tools.py	TB001
 apps/api/app/agents/tools/todo_tools.py	TB002
-apps/api/app/agents/tools/tracked_todo_tools.py	TB002
 apps/api/app/agents/tools/wait_for_subagents_tool.py	TB002
 apps/api/app/agents/tools/webpage_tool.py	TB001
 apps/api/app/agents/tools/workflow_shared_tools.py	TB001
@@ -291,7 +290,6 @@ apps/api/app/services/payments/payment_webhook_service.py	TB002
 apps/api/app/services/payments/subscription_events.py	TB002
 apps/api/app/services/photon/photon_client.py	TB001
 apps/api/app/services/photon/photon_client.py	TB002
-apps/api/app/services/platform_link_service.py	TB002
 apps/api/app/services/provider_metadata_service.py	TB001
 apps/api/app/services/provider_metadata_service.py	TB002
 apps/api/app/services/reminder_service.py	TB001

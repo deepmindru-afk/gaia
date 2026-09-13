@@ -1,11 +1,7 @@
-"""X API v2 shapes the Composio Twitter hooks read, on top of ``integrations.twitter``.
+"""X API v2 shapes the Composio Twitter hooks read, on top of integrations.twitter.
 
-The tool models declare what the Twitter tools read; the hooks reshape the same X
-objects for the chat UI and the LLM, and need a few more of their fields
-(expansions, pagination ``meta``, the metrics blocks verbatim) plus the argument
-bags of the tools they preview. Subclasses only add fields or defaults (list-typed
-fields are redeclared on sibling models, since narrowing them is unsound); fold
-them into ``twitter.py`` when the two readers converge.
+Subclasses only add fields or defaults; list-typed fields are redeclared on
+sibling models, since narrowing them is unsound.
 
 Reference: https://developer.x.com/en/docs/x-api/data-dictionary
 """
@@ -20,14 +16,16 @@ from app.models.integrations.twitter import (
 
 
 class TwitterHookTweetPublicMetrics(TwitterTweetPublicMetrics):
-    """``extra="allow"``: the block is streamed verbatim to the client (``twitter_search_data``)."""
+    """Public metrics that allow extras, since the block is streamed verbatim to the client."""
 
     model_config = ConfigDict(extra="allow")
 
 
 class TwitterHookUser(TwitterUser):
-    """A user as the UI cards render it: an unrequested ``verified``/``description``
-    shows as ``False``/``""``, not as a null."""
+    """A user as the UI cards render it.
+
+    An unrequested verified or description shows as False or an empty string, not null.
+    """
 
     verified: bool | None = False
     description: str | None = ""
@@ -35,7 +33,7 @@ class TwitterHookUser(TwitterUser):
 
 
 class TwitterHookTweet(TwitterTweet):
-    """A tweet with the ``author_id``/``conversation_id`` expansions the cards need."""
+    """A tweet with the author_id and conversation_id expansions the cards need."""
 
     author_id: str | None = None
     conversation_id: str | None = None

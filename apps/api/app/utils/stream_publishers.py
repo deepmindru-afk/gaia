@@ -94,7 +94,7 @@ async def publish_other_data(
 async def publish_tool_data(
     stream_id: str, new_data: ExtractedToolData, entries: list[ToolDataEntry]
 ) -> None:
-    """Append each tool-data entry to ``entries`` and stream it to the frontend."""
+    """Append each tool-data entry to entries and stream it to the frontend."""
     for tool_entry in new_data.tool_data:
         entries.append(tool_entry)
         await stream_manager.publish_chunk(

@@ -1,7 +1,7 @@
 """GitHub REST payloads the context tool reads and forwards.
 
-Reference: https://docs.github.com/en/rest/issues/issues (``pull_request`` is
-present only on pull requests, never ``null``) and
+Reference: https://docs.github.com/en/rest/issues/issues (pull_request is
+present only on pull requests, never null) and
 https://docs.github.com/en/rest/activity/notifications.
 """
 

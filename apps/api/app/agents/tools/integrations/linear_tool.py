@@ -135,7 +135,7 @@ def _parse_due_date(due_date: str | None) -> date | None:
 
 
 def _validate_identifier(identifier: str) -> None:
-    """``TEAM-123``: a team key, a dash, a number."""
+    """TEAM-123: a team key, a dash, a number."""
     parts = identifier.split("-")
     if len(parts) != 2:
         raise ValueError(f"Invalid identifier format: {identifier}")
@@ -146,7 +146,7 @@ def _validate_identifier(identifier: str) -> None:
 
 
 def _fetch_issue(issue_ref: str, user_id: str) -> LinearIssue:
-    """The full issue for a UUID or a ``TEAM-123`` identifier (``issue(id:)`` takes both)."""
+    """The full issue for a UUID or a TEAM-123 identifier (issue(id:) takes both)."""
     return graphql_request(
         QUERY_ISSUE_BY_ID, LinearIssueIdVariables(id=issue_ref), user_id, LinearIssueData
     ).issue
@@ -166,7 +166,7 @@ def _sub_issue_input(
 
 
 def _create_issue(input_data: LinearIssueCreateInput, user_id: str) -> dict[str, object] | None:
-    """Create one issue; ``None`` when Linear reports ``success: false``."""
+    """Create one issue; None when Linear reports success: false."""
     payload = graphql_request(
         MUTATION_CREATE_ISSUE,
         LinearIssueCreateVariables(input=input_data),
@@ -185,7 +185,7 @@ def _create_issue(input_data: LinearIssueCreateInput, user_id: str) -> dict[str,
 def _history_entry(
     entry: LinearIssueHistory, change_key: str, *, system_actor: str | None
 ) -> dict[str, object] | None:
-    """One activity line for a history entry, or ``None`` when it changed nothing we report."""
+    """One activity line for a history entry, or None when it changed nothing we report."""
     actor = entry.actor.name if entry.actor else system_actor
     line: dict[str, object] = {"timestamp": entry.created_at, "actor": actor}
     if entry.from_state or entry.to_state:
@@ -279,7 +279,7 @@ def _run_resolve_context(request: ResolveContextInput, user_id: str) -> dict[str
 def _matches_task_filter(
     task_filter: str | None, issue: LinearIssueSummary, today: date, week_end: date
 ) -> bool:
-    """Whether ``issue`` belongs in a ``CUSTOM_GET_MY_TASKS`` view; unknown filters keep all."""
+    """Whether issue belongs in a CUSTOM_GET_MY_TASKS view; unknown filters keep all."""
     due_date = _parse_due_date(issue.due_date)
     if task_filter == "today":
         return due_date == today

@@ -41,7 +41,7 @@ from app.workers.tasks.workflow_tasks import (
 
 
 def _user_context(**fields: object) -> Callable[[str], AuthenticatedUser]:
-    """What ``load_user_context`` answers for whichever user id it is asked for."""
+    """Answer load_user_context for whichever user id it is asked for."""
     return lambda user_id: AuthenticatedUser(user_id=user_id, **fields)
 
 

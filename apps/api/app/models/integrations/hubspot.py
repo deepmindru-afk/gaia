@@ -1,7 +1,7 @@
 """HubSpot CRM v3 payloads the HubSpot tool reads.
 
 Reference: https://developers.hubspot.com/docs/reference/api/crm/objects/contacts
-(the same object envelope serves ``/crm/v3/objects/deals``).
+(the same object envelope serves /crm/v3/objects/deals).
 """
 
 from pydantic import BaseModel, ConfigDict, Field

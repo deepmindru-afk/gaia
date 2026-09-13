@@ -1,8 +1,7 @@
 """Reddit API payloads the Composio Reddit hooks reshape for the UI and the LLM.
 
-Builds on ``RedditThing`` in ``integrations.reddit``; the ``Kinded*`` models add the ``kind`` discriminator (``t3`` post / ``t1`` comment / ``more``)
-and the listing cursors, which the tool reader never needed. Fold them into
-``reddit.py`` when the two readers converge.
+Builds on RedditThing in integrations.reddit; the Kinded models add the kind
+discriminator (t3 post, t1 comment, more) and the listing cursors.
 
 Reference: https://www.reddit.com/dev/api/
 """
@@ -66,7 +65,7 @@ class RedditComment(BaseModel):
 
 
 class RedditKindedThing(RedditThing[ThingT], Generic[ThingT]):
-    """A listing child with its ``kind``: ``t3`` post, ``t1`` comment, ``more`` stub."""
+    """A listing child with its kind: t3 post, t1 comment, more stub."""
 
     kind: str | None = None
 

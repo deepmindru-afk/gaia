@@ -114,8 +114,10 @@ def _sheets_proxy(
     body: BaseModel | None = None,
     query: QueryParams | None = None,
 ) -> object:
-    """Send one Sheets/Drive request; the parsed JSON comes back as ``object``
-    for the caller to validate into the response model it expects."""
+    """Send one Sheets/Drive request.
+
+    The parsed JSON comes back untyped for the caller to validate into its response model.
+    """
     return proxy_request_sync(
         ProxyRequest(
             user_id=user_id,
@@ -131,7 +133,7 @@ def _sheets_proxy(
 def _batch_update(
     user_id: str, spreadsheet_id: str, request: GoogleSheetsRequest
 ) -> GoogleSheetsBatchUpdateResponse:
-    """Apply one ``batchUpdate`` request and parse Google's reply."""
+    """Apply one batchUpdate request and parse Google's reply."""
     return GoogleSheetsBatchUpdateResponse.model_validate(
         _sheets_proxy(
             user_id,
@@ -150,7 +152,7 @@ def _condition(kind: str, *values: str) -> GoogleSheetsBooleanCondition:
 
 
 def _validation_condition(request: DataValidationInput) -> GoogleSheetsBooleanCondition:
-    """The Sheets condition for a validation request, or ``ValueError`` naming what is missing."""
+    """The Sheets condition for a validation request, or ValueError naming what is missing."""
     if request.validation_type == "dropdown_list":
         if not request.values:
             raise ValueError("values required for dropdown_list")

@@ -304,8 +304,10 @@ class TodoListParams(BaseModel):
         return [name for name, is_applied in applied if is_applied]
 
     def to_search_params(self) -> TodoSearchParams:
-        """The service-level search, with ``due_today``/``due_this_week`` resolved
-        into a concrete due-date range (they override ``due_after``/``due_before``)."""
+        """Build the service-level search with due_today and due_this_week resolved.
+
+        Those flags become a concrete due-date range that overrides due_after and due_before.
+        """
         due_after, due_before = self.due_after, self.due_before
         if self.due_today:
             today = datetime.now(UTC).date()

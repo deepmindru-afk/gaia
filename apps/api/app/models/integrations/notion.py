@@ -1,8 +1,8 @@
 """Notion payloads the Notion tool reads and sends.
 
-Two providers meet here: Notion's REST API (``/search``, ``/pages``) and the
+Two providers meet here: Notion's REST API (/search, /pages) and the
 Composio Notion tools the markdown round-trip is built on. The block objects
-themselves live in ``notion_blocks`` with the converter that walks them.
+themselves live in notion_blocks with the converter that walks them.
 
 References:
 - https://developers.notion.com/reference

@@ -1,8 +1,7 @@
-"""The two message shapes ``transform_gmail_message`` normalises: a Composio Gmail
-message (``GMAIL_FETCH_EMAILS`` items, ``messageId``/``messageText``) and a raw
-Gmail API ``users.messages`` resource (thread fetches, drafts, single messages).
+"""Message shapes normalised by transform_gmail_message.
 
-Ideal home: ``app/models/composio_schemas/gmail.py``, next to ``GmailMessagePart``.
+A Composio Gmail message (GMAIL_FETCH_EMAILS items) and a raw Gmail API
+users.messages resource (thread fetches, drafts, single messages).
 """
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,8 +21,10 @@ class GmailMessageTimestamps(BaseModel):
 
 
 class ComposioGmailMessage(GmailMessageTimestamps):
-    """A Composio Gmail message. Composio documents every header field as nullable
-    and omits ``messageText`` under ``verbose=false``."""
+    """A Composio Gmail message.
+
+    Every header field is nullable, and messageText is omitted under verbose=false.
+    """
 
     message_id: str | None = Field(default=None, alias="messageId")
     thread_id: str | None = Field(default=None, alias="threadId")
@@ -40,7 +41,7 @@ class ComposioGmailMessage(GmailMessageTimestamps):
 
 
 class GmailApiMessage(GmailMessageTimestamps):
-    """A Gmail API ``users.messages`` resource; ``payload`` is the MIME tree."""
+    """A Gmail API users.messages resource; payload is the MIME tree."""
 
     id: str | None = None
     thread_id: str | None = Field(default=None, alias="threadId")

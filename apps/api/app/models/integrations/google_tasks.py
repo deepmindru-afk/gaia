@@ -1,7 +1,7 @@
 """Google Tasks payloads the context tool reads and forwards.
 
 Reference: https://developers.google.com/workspace/tasks/reference/rest/v1/tasks
-(``due`` is an RFC 3339 timestamp, absent when the task has no due date).
+(due is an RFC 3339 timestamp, absent when the task has no due date).
 """
 
 from pydantic import BaseModel, ConfigDict

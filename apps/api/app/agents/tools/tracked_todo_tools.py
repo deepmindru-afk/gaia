@@ -12,6 +12,7 @@ from typing import Annotated
 from croniter import croniter as _croniter
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from pydantic import BaseModel, ConfigDict
 
 from app.constants.todos import GAIA_TRACKED_LABEL
 from app.db.repositories.todos import todo_repository
@@ -36,7 +37,7 @@ from app.services.triggers.subscription_service import (
     unregister_subscription,
 )
 from app.services.user_service import get_user_by_id
-from app.utils.canvas_vector_utils import search_canvas_context
+from app.utils.canvas_vector_utils import CanvasSearchMatch, search_canvas_context
 from app.utils.cron_utils import get_next_run_time
 from app.utils.timezone import Timezone, is_valid_timezone
 from shared.py.wide_events import log, spawn_logged_task
@@ -657,7 +658,7 @@ async def search_todo_context(
     Use to find relevant context from existing tracked todos before
     creating a new one or to recall details from past work.
     """
-    user_id = config.get("metadata", {}).get("user_id")
+    user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
         return _ERR_NO_USER_ID
 
@@ -671,14 +672,15 @@ async def search_todo_context(
     if not matches:
         return "No matching tracked todo context found."
 
-    lines = []
-    for m in matches:
-        status = " [completed]" if m.get("completed") else ""
-        lines.append(
-            f"- [{m['title']}]{status} (todo_id: {m['todo_id']}, score: {m['score']})\n"
-            f"  {m['snippet'][:200]}"
-        )
-    return "\n".join(lines)
+    return "\n".join(_format_canvas_match(match) for match in matches)
+
+
+def _format_canvas_match(match: CanvasSearchMatch) -> str:
+    status = " [completed]" if match["completed"] else ""
+    return (
+        f"- [{match['title']}]{status} (todo_id: {match['todo_id']}, score: {match['score']})\n"
+        f"  {match['snippet'][:200]}"
+    )
 
 
 @tool
@@ -718,7 +720,7 @@ async def update_tracked_todo_canvas(
     section → update a single named section (e.g. Current State). No read needed.
     replace → full rewrite. Only when restructuring the entire canvas.
     """
-    user_id = config.get("metadata", {}).get("user_id")
+    user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
         return _ERR_NO_USER_ID
 
@@ -768,7 +770,7 @@ async def complete_tracked_todo(
     Call when the todo's goal is fully achieved. Use the regular todo update for
     partial completion or status changes only.
     """
-    user_id = config.get("metadata", {}).get("user_id")
+    user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
         return _ERR_NO_USER_ID
 
@@ -835,7 +837,7 @@ async def update_tracked_todo(
         expires_at: Set or clear the expiry datetime (when the todo becomes irrelevant).
         references: IDs of related past tracked todos to link (appended to existing).
     """
-    user_id = config.get("metadata", {}).get("user_id")
+    user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
         return _ERR_NO_USER_ID
 
@@ -861,25 +863,26 @@ async def update_tracked_todo(
     if not existing:
         return f"Error: tracked todo {todo_id} not found or not a tracked todo."
 
-    effective_scheduled_at = update_fields.get("scheduled_at", existing.scheduled_at)
-    effective_recurrence = update_fields.get("recurrence", existing.recurrence)
+    update = TodoUpdate.model_validate(update_fields)
+    effective_scheduled_at = (
+        update.scheduled_at if "scheduled_at" in update.model_fields_set else existing.scheduled_at
+    )
+    effective_recurrence = (
+        update.recurrence if "recurrence" in update.model_fields_set else existing.recurrence
+    )
     if effective_recurrence and not effective_scheduled_at:
         return (
             "Error: cannot have recurrence without scheduled_at. "
             "Either clear recurrence or provide a scheduled_at value."
         )
 
-    updated = await todo_repository.update(
-        todo_id, user_id=user_id, update=TodoUpdate.model_validate(update_fields)
-    )
+    updated = await todo_repository.update(todo_id, user_id=user_id, update=update)
     if updated is None:
         return f"Error: tracked todo {todo_id} not found or not a tracked todo."
 
-    # If scheduled_at landed in update_fields with a real datetime (agent-passed or
-    # cron-derived), reschedule the ARQ job.
-    new_scheduled_at = update_fields.get("scheduled_at")
-    if isinstance(new_scheduled_at, datetime):
-        await tracked_todo_service.reschedule_execution(todo_id, new_scheduled_at)
+    # A real datetime here (agent-passed or cron-derived) means the ARQ job moves.
+    if update.scheduled_at is not None:
+        await tracked_todo_service.reschedule_execution(todo_id, update.scheduled_at)
 
     updated_keys = list(update_fields)
     if references is not None:
@@ -903,7 +906,7 @@ async def list_tracked_todos(
     priority, and age. Use this when you need a complete picture of all
     tracked work, beyond what's in the ACTIVE TRACKED TODOS context block.
     """
-    user_id = config.get("metadata", {}).get("user_id")
+    user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
         return _ERR_NO_USER_ID
 
@@ -986,7 +989,7 @@ async def subscribe_todo_to_trigger(
     rejected with the fields that do exist, so you can correct it and call again;
     nothing is ever quietly widened to make it fit.
     """
-    user_id = config.get("metadata", {}).get("user_id")
+    user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
         return _ERR_NO_USER_ID
 
@@ -1046,7 +1049,7 @@ async def unsubscribe_todo_from_trigger(
     still open. Completing a todo tears its watches down on its own, so you do not
     need to call this first.
     """
-    user_id = config.get("metadata", {}).get("user_id")
+    user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
         return _ERR_NO_USER_ID
 
@@ -1070,6 +1073,16 @@ def _parse_match(match: str) -> ConditionMatch | None:
         return None
 
 
+class _ConditionArgs(BaseModel):
+    """One condition as the model sent it; each key keeps its original type or is absent."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    field_name: str | int | float | None = None
+    operator: str | int | float | None = None
+    value: str | int | float | None = None
+
+
 def _parse_conditions(
     raw: list[dict[str, str | int | float]],
 ) -> tuple[list[SubscriptionCondition], str | None]:
@@ -1080,9 +1093,8 @@ def _parse_conditions(
     """
     parsed: list[SubscriptionCondition] = []
     for item in raw:
-        field_name = item.get("field_name")
-        operator = item.get("operator")
-        value = item.get("value")
+        args = _ConditionArgs.model_validate(item)
+        field_name, operator, value = args.field_name, args.operator, args.value
         if not isinstance(field_name, str) or not isinstance(operator, str) or value is None:
             return [], (f"each condition needs 'field_name', 'operator' and 'value'; got {item!r}")
         try:

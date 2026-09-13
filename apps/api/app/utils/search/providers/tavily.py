@@ -14,8 +14,10 @@ from app.utils.search.providers.base import SearchProvider
 
 
 class _TavilyResult(BaseModel):
-    """One Tavily result. ``url`` is documented as required, but a result
-    without one is skipped rather than failing the whole page (see ``search``)."""
+    """One Tavily result.
+
+    A result without a url is skipped rather than failing the whole page.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -27,8 +29,10 @@ class _TavilyResult(BaseModel):
 
 
 class _TavilyPayload(BaseModel):
-    """``TavilyClient.search`` response. ``images`` are plain URLs because the
-    request never asks for image descriptions."""
+    """TavilyClient.search response.
+
+    Images are plain URLs because the request never asks for image descriptions.
+    """
 
     model_config = ConfigDict(extra="ignore")
 

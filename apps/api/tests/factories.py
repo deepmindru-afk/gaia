@@ -9,10 +9,9 @@ from app.models.user_models import AuthenticatedUser
 
 
 def make_authenticated_user(**overrides: Any) -> AuthenticatedUser:
-    """The ``request.state.user`` a signed-in test caller carries.
+    """Build the request.state.user a signed-in test caller carries.
 
-    Built the way every real auth path builds one (a WorkOS session, so
-    ``auth_provider="workos"``); ``overrides`` are ``AuthenticatedUser`` fields.
+    Built as a WorkOS session; overrides are AuthenticatedUser fields.
     """
     defaults: dict[str, Any] = {
         "user_id": str(uuid4()),

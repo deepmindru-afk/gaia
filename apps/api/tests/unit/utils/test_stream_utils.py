@@ -20,13 +20,12 @@ from app.utils.stream_utils import (
 def _make_ai_message(
     tool_calls: list[dict[str, Any]] | None = None,
 ) -> AIMessage:
-    """An AIMessage carrying these tool calls verbatim (constructed, so a
-    deliberately malformed call — no id — survives to the code under test)."""
+    """Build an AIMessage carrying these tool calls verbatim, malformed ones included."""
     return AIMessage.model_construct(content="", tool_calls=tool_calls or [])
 
 
 def _make_plain_message() -> HumanMessage:
-    """A message that carries no tool calls at all."""
+    """Build a message that carries no tool calls at all."""
     return HumanMessage(content="hi")
 
 

@@ -24,8 +24,10 @@ class _BraveMetaUrl(BaseModel):
 
 
 class _BraveResult(BaseModel):
-    """One Brave web result. ``url`` is documented as required, but a result
-    without one is skipped rather than failing the whole page (see ``search``)."""
+    """One Brave web result.
+
+    A result without a url is skipped rather than failing the whole page.
+    """
 
     model_config = ConfigDict(extra="ignore")
 

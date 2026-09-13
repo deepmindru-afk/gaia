@@ -1,7 +1,7 @@
 """The raw ASGI scope/message fields the pure-ASGI middlewares read.
 
 Parsed once at the middleware boundary so the rest of each middleware reads
-attributes, not string keys off Starlette's ``MutableMapping[str, Any]``.
+attributes, not string keys off Starlette's scope mapping.
 """
 
 from pydantic import BaseModel, ConfigDict
@@ -17,7 +17,7 @@ class AsgiScope(BaseModel):
     headers: list[tuple[bytes, bytes]] = []
 
     def header(self, key: bytes) -> str | None:
-        """The value of a header (lower-case name), if present."""
+        """Return the value of a header (lower-case name), if present."""
         for name, value in self.headers:
             if name == key:
                 return value.decode("latin-1")

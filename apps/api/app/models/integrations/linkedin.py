@@ -53,7 +53,7 @@ class LinkedInPostDistribution(LinkedInRequest):
 
 
 class LinkedInPostRequest(LinkedInRequest):
-    """``POST /rest/posts`` body."""
+    """Request body for POST /rest/posts."""
 
     author: str
     commentary: str
@@ -69,7 +69,7 @@ class LinkedInCommentMessage(LinkedInRequest):
 
 
 class LinkedInCommentRequest(LinkedInRequest):
-    """``POST /rest/socialActions/{urn}/comments`` body."""
+    """Request body for POST /rest/socialActions/{urn}/comments."""
 
     actor: str
     message: LinkedInCommentMessage
@@ -77,7 +77,7 @@ class LinkedInCommentRequest(LinkedInRequest):
 
 
 class LinkedInReactionRequest(LinkedInRequest):
-    """``POST /rest/socialActions/{urn}/likes`` body."""
+    """Request body for POST /rest/socialActions/{urn}/likes."""
 
     actor: str
     reaction_type: str
@@ -161,10 +161,9 @@ class LinkedInReactionList(BaseModel):
 
 
 class LinkedInProfile(LinkedInUserInfo):
-    """``GET /v2/userinfo`` — the OpenID Connect claims the context tool reports.
+    """GET /v2/userinfo: the OpenID Connect claims the context tool reports.
 
-    Extends ``linkedin_utils``' ``LinkedInUserInfo`` (which only needs ``sub``)
-    rather than duplicating it; ``sub`` is mandatory in OIDC.
+    Extends LinkedInUserInfo from linkedin_utils; sub is mandatory in OIDC.
     """
 
     model_config = ConfigDict(extra="ignore")

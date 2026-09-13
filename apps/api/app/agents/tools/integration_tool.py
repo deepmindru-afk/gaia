@@ -125,7 +125,7 @@ def _stream_frame(suggested: SuggestedIntegration) -> dict[str, object]:
 
 
 async def _search_suggested(query: str, exclude_ids: set[str]) -> list[SuggestedIntegration]:
-    """Public integrations matching ``query``, excluding ids the user already has."""
+    """Public integrations matching query, excluding ids the user already has."""
     suggested_list: list[SuggestedIntegration] = []
     try:
         log.info(f"{LogTag.TOOL} Searching public integrations", query=query)

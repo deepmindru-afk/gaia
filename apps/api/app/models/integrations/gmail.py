@@ -1,11 +1,10 @@
 """Gmail tool payloads the Composio Gmail hooks read.
 
-Two kinds of shape live here: the ``data`` payloads of the Gmail tools whose
-results the hooks reshape (Composio documents only the ``{data, error,
-successful}`` envelope, so every inner field is declared optional with the
-default the UI shows for it), and the agent-facing argument bags of the tools
-whose calls the hooks preview or annotate. The MIME-level message models are in
-``composio_schemas.gmail``; the People API shapes in ``composio_schemas.google_people``.
+Two kinds of shape live here: the data payloads of the Gmail tools whose
+results the hooks reshape (Composio documents only the data/error/successful
+envelope, so every inner field is optional with the default the UI shows for
+it), and the argument bags of the tools whose calls the hooks preview or
+annotate. MIME-level message models live in composio_schemas.gmail.
 """
 
 from pydantic import BaseModel, ConfigDict, Field

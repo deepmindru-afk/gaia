@@ -1,7 +1,7 @@
 """ClickUp task payloads the context tool reads and forwards.
 
-Reference: https://developer.clickup.com/reference/gettasks (``due_date`` is
-``string | null`` — epoch milliseconds as a string; ``status.type`` is a string).
+Reference: https://developer.clickup.com/reference/gettasks (due_date is a
+string or null holding epoch milliseconds; status.type is a string).
 """
 
 from pydantic import BaseModel, ConfigDict, Field

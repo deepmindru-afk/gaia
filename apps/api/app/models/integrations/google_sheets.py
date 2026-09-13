@@ -1,7 +1,7 @@
 """Google Sheets API v4 payloads the Sheets tool sends and reads.
 
-Request models mirror the ``spreadsheets.batchUpdate`` request union one level
-at a time and are dumped with ``exclude_none=True`` at the send site, so an
+Request models mirror the spreadsheets.batchUpdate request union one level
+at a time and are dumped with exclude_none=True at the send site, so an
 unset optional key is omitted exactly as the hand-built dicts omitted it.
 Reference: https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/request
 """

@@ -100,7 +100,7 @@ def _run_sync(coro: Coroutine[object, object, _T], *, timeout: float | None = No
 
 
 def _extract_datetime(dt: GoogleCalendarEventDateTime) -> str:
-    """The timed ``dateTime`` of a Google start/end, else its all-day ``date``."""
+    """Return the timed dateTime of a Google start/end, else its all-day date."""
     return dt.dateTime or dt.date or ""
 
 

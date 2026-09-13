@@ -1,8 +1,8 @@
 """What Composio hands the hook system, typed.
 
-Composio's SDK describes its hook boundary with TypedDicts (``ToolExecuteParams``,
-``ToolExecutionResponse``) and a tool's input schema as a raw JSON-schema dict
-(``Tool.input_parameters``). These models are where those are parsed, once, so
+Composio's SDK describes its hook boundary with TypedDicts (ToolExecuteParams,
+ToolExecutionResponse) and a tool's input schema as a raw JSON-schema dict
+(Tool.input_parameters). These models are where those are parsed, once, so
 every hook reads attributes instead of guessing keys.
 """
 
@@ -119,16 +119,15 @@ class JsonSchemaNode(BaseModel):
 
     @classmethod
     def parse(cls, input_parameters: object) -> "JsonSchemaNode | None":
-        """The node for a tool's ``input_parameters``, or None when it is not a mapping.
+        """Parse a tool's input_parameters, or return None when it is not a mapping.
 
-        Composio types the attribute as a dict, but callers in practice (including
-        this codebase's own test doubles) hand over non-dict values, and a modifier
-        leaves those untouched.
+        Composio types the attribute as a dict, but callers can hand over non-dict
+        values, and a modifier leaves those untouched.
         """
         if not isinstance(input_parameters, dict):
             return None
         return cls.model_validate(input_parameters)
 
     def as_schema(self) -> dict[str, object]:
-        """The node as the JSON-schema dict Composio's ``Tool.input_parameters`` holds."""
+        """Return the node as the JSON-schema dict Composio's Tool.input_parameters holds."""
         return self.model_dump(exclude_unset=True)

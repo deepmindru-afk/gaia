@@ -13,8 +13,10 @@ _MAX_TEXT_CHARS = 2000
 
 
 class _ExaResult(BaseModel):
-    """One Exa result. ``url`` is documented as required, but a result without
-    one is skipped rather than failing the whole page (see ``search``)."""
+    """One Exa result.
+
+    A result without a url is skipped rather than failing the whole page.
+    """
 
     model_config = ConfigDict(extra="ignore")
 

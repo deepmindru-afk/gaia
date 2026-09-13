@@ -1,7 +1,7 @@
 """Todoist task payloads the context tool reads and forwards.
 
-Reference: https://developer.todoist.com/rest/v2/#tasks (``due`` is a Due
-object or ``null``; ``due.date`` is a string).
+Reference: https://developer.todoist.com/rest/v2/#tasks (due is a Due
+object or null; due.date is a string).
 """
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator

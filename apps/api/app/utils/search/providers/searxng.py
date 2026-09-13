@@ -16,8 +16,10 @@ _TIMEOUT = 15.0
 
 
 class _SearxngResult(BaseModel):
-    """One SearXNG result. ``url`` is always set by SearXNG, but a result
-    without one is skipped rather than failing the whole page (see ``search``)."""
+    """One SearXNG result.
+
+    A result without a url is skipped rather than failing the whole page.
+    """
 
     model_config = ConfigDict(extra="ignore")
 

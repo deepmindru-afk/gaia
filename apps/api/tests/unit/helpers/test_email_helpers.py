@@ -21,7 +21,7 @@ from app.utils.general_utils import transform_gmail_message
 
 
 def _composio(**fields: object) -> GmailMessageSummary:
-    """A Composio message as the pipeline sees it: through transform_gmail_message."""
+    """Return a Composio message as the pipeline sees it, through transform_gmail_message."""
     return transform_gmail_message({"messageId": "msg_1", "messageText": "", **fields})
 
 
@@ -300,7 +300,7 @@ class TestProcessEmailContent:
         assert processed[0].subject == NO_SUBJECT
 
     def test_message_id_is_the_summary_id(self) -> None:
-        """A Gmail-API-shaped message cites its ``id`` (the summary's id) too."""
+        """A Gmail-API-shaped message cites its id (the summary's id) too."""
         emails = [
             GmailMessageSummary(id="alt_id_1", sender="test@example.com", body="<p>Hello</p>")
         ]

@@ -1,9 +1,9 @@
 """Linear GraphQL payloads the Linear tool reads and sends.
 
 Every response model declares exactly the fields the operation in
-``linear_utils`` selects; nullability follows Linear's published schema
+linear_utils selects; nullability follows Linear's published schema
 (https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql).
-A field that only some selections ask for defaults to ``None`` and says so.
+A field that only some selections ask for defaults to None and says so.
 """
 
 from typing import Generic, TypeVar
@@ -38,7 +38,7 @@ class LinearSearchIssuesVariables(LinearVariables):
 
 
 class LinearIssueIdVariables(LinearVariables):
-    """``issue(id:)`` takes a UUID or a human identifier such as ``ENG-123``."""
+    """issue(id:) takes a UUID or a human identifier such as ENG-123."""
 
     id: str
 
@@ -53,7 +53,7 @@ class LinearFirstVariables(LinearVariables):
 
 
 class LinearIssueCreateInput(LinearVariables):
-    """``IssueCreateInput`` — optional fields are sent only when assigned."""
+    """IssueCreateInput — optional fields are sent only when assigned."""
 
     team_id: str
     title: str
@@ -80,10 +80,10 @@ class LinearIssueRelationCreateVariables(LinearVariables):
 
 
 class LinearIssueUpdateInput(LinearVariables):
-    """``IssueUpdateInput`` for a batch update.
+    """IssueUpdateInput for a batch update.
 
-    A field assigned ``None`` is sent as ``null`` (it clears the value); a
-    field never assigned is left out. Dump with ``exclude_unset``.
+    A field assigned None is sent as null (it clears the value); a
+    field never assigned is left out. Dump with exclude_unset.
     """
 
     state_id: str | None = None
@@ -111,7 +111,7 @@ class LinearGraphQLError(BaseModel):
 
 
 class LinearGraphQLEnvelope(BaseModel):
-    """``{data, errors}`` as Linear answers every operation; ``data`` is parsed per query."""
+    """{data, errors} as Linear answers every operation; data is parsed per query."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -134,13 +134,13 @@ NodeT = TypeVar("NodeT", bound=BaseModel)
 
 
 class LinearConnection(LinearNode, Generic[NodeT]):
-    """A ``{ nodes { … } }`` selection on any connection."""
+    """A { nodes { … } } selection on any connection."""
 
     nodes: list[NodeT] = Field(default_factory=list)
 
 
 class LinearPassthroughNode(LinearNode):
-    """A node ``CUSTOM_RESOLVE_CONTEXT`` returns verbatim: ``extra="allow"`` keeps every selected field."""
+    """A node CUSTOM_RESOLVE_CONTEXT returns verbatim: extra="allow" keeps every selected field."""
 
     model_config = ConfigDict(extra="allow", alias_generator=to_camel, populate_by_name=True)
 
@@ -149,7 +149,7 @@ class LinearPassthroughNode(LinearNode):
 
 
 class LinearActiveCycleSummary(LinearNode):
-    """``Team.activeCycle { id name progress }``."""
+    """Team.activeCycle { id name progress }."""
 
     id: str
     name: str | None = None
@@ -157,41 +157,41 @@ class LinearActiveCycleSummary(LinearNode):
 
 
 class LinearTeam(LinearPassthroughNode):
-    """``teams { id name key activeCycle }``; ``activeCycle`` is null between cycles."""
+    """teams { id name key activeCycle }; activeCycle is null between cycles."""
 
     key: str
     active_cycle: LinearActiveCycleSummary | None = None
 
 
 class LinearUser(LinearPassthroughNode):
-    """``users { id name email active }``."""
+    """users { id name email active }."""
 
     email: str
     active: bool
 
 
 class LinearLabel(LinearPassthroughNode):
-    """``issueLabels { id name color }``."""
+    """issueLabels { id name color }."""
 
     color: str
 
 
 class LinearProject(LinearPassthroughNode):
-    """``projects { id name state progress }``."""
+    """projects { id name state progress }."""
 
     state: str
     progress: float
 
 
 class LinearWorkflowStateNode(LinearPassthroughNode):
-    """``workflowStates { id name type position }``."""
+    """workflowStates { id name type position }."""
 
     type: str
     position: float
 
 
 class LinearIssueRef(LinearNode):
-    """``{ id identifier title }`` — a parent, a relation target, a notification's issue."""
+    """{ id identifier title } — a parent, a relation target, a notification's issue."""
 
     id: str
     identifier: str
@@ -199,7 +199,7 @@ class LinearIssueRef(LinearNode):
 
 
 class LinearUserRef(LinearNode):
-    """``{ id name }`` (``email`` only where selected)."""
+    """{ id name } (email only where selected)."""
 
     id: str
     name: str
@@ -207,13 +207,13 @@ class LinearUserRef(LinearNode):
 
 
 class LinearUserName(LinearNode):
-    """``assignee { name }``."""
+    """assignee { name }."""
 
     name: str
 
 
 class LinearStateRef(LinearNode):
-    """``{ id name type }``."""
+    """{ id name type }."""
 
     id: str
     name: str
@@ -221,21 +221,21 @@ class LinearStateRef(LinearNode):
 
 
 class LinearStateIdName(LinearNode):
-    """``fromState``/``toState { id name }`` on a history entry."""
+    """fromState/toState { id name } on a history entry."""
 
     id: str
     name: str
 
 
 class LinearStateName(LinearNode):
-    """``state { name }`` / ``state { name type }``."""
+    """state { name } / state { name type }."""
 
     name: str
     type: str | None = None
 
 
 class LinearTeamRef(LinearNode):
-    """``team { id key name }``."""
+    """team { id key name }."""
 
     id: str
     key: str
@@ -243,7 +243,7 @@ class LinearTeamRef(LinearNode):
 
 
 class LinearCycleRef(LinearNode):
-    """``cycle { id name }``; a cycle's ``name`` is optional in Linear."""
+    """cycle { id name }; a cycle's name is optional in Linear."""
 
     id: str
     name: str | None = None
@@ -264,7 +264,7 @@ class LinearIdOnly(LinearNode):
 
 
 class LinearViewer(LinearNode):
-    """``viewer { id name email assignedIssues { nodes { id } } }``."""
+    """viewer { id name email assignedIssues { nodes { id } } }."""
 
     id: str
     name: str
@@ -275,9 +275,9 @@ class LinearViewer(LinearNode):
 
 
 class LinearIssueSummary(LinearNode):
-    """An issue as ``QUERY_MY_ISSUES`` / ``QUERY_SEARCH_ISSUES`` list it.
+    """An issue as QUERY_MY_ISSUES / QUERY_SEARCH_ISSUES list it.
 
-    ``parent``/``slaBreachesAt`` are selected by the former only, ``createdAt``
+    parent/slaBreachesAt are selected by the former only, createdAt
     by the latter only.
     """
 
@@ -296,7 +296,7 @@ class LinearIssueSummary(LinearNode):
 
 
 class LinearChildIssue(LinearNode):
-    """``children { nodes { id identifier title state { name } } }``."""
+    """children { nodes { id identifier title state { name } } }."""
 
     id: str
     identifier: str
@@ -311,7 +311,7 @@ class LinearIssueRelation(LinearNode):
 
 
 class LinearComment(LinearNode):
-    """``comments { nodes { id body createdAt user { id name } } }``; ``user`` is null for bot comments."""
+    """comments { nodes { id body createdAt user { id name } } }; user is null for bot comments."""
 
     id: str
     body: str
@@ -320,9 +320,9 @@ class LinearComment(LinearNode):
 
 
 class LinearIssueHistory(LinearNode):
-    """One ``history`` entry; every ``from``/``to`` pair is null unless that aspect changed.
+    """One history entry; every from/to pair is null unless that aspect changed.
 
-    ``fromPriority``/``toPriority`` are selected by ``QUERY_ISSUE_HISTORY`` only.
+    fromPriority/toPriority are selected by QUERY_ISSUE_HISTORY only.
     """
 
     id: str
@@ -345,7 +345,7 @@ class LinearAttachment(LinearNode):
 
 
 class LinearIssue(LinearNode):
-    """The full issue ``QUERY_ISSUE_BY_ID`` selects."""
+    """The full issue QUERY_ISSUE_BY_ID selects."""
 
     id: str
     identifier: str
@@ -379,7 +379,7 @@ class LinearIssue(LinearNode):
 
 
 class LinearIssueHistoryHolder(LinearNode):
-    """``issue { history(first:) { nodes { … } } }``."""
+    """issue { history(first:) { nodes { … } } }."""
 
     history: LinearConnection[LinearIssueHistory] = Field(
         default_factory=LinearConnection[LinearIssueHistory]
@@ -387,7 +387,7 @@ class LinearIssueHistoryHolder(LinearNode):
 
 
 class LinearCycleIssue(LinearNode):
-    """``cycles { issues { nodes { id identifier title state { name type } priority assignee { name } } } }``."""
+    """cycles { issues { nodes { id identifier title state { name type } priority assignee { name } } } }."""
 
     id: str
     identifier: str
@@ -398,7 +398,7 @@ class LinearCycleIssue(LinearNode):
 
 
 class LinearCycle(LinearNode):
-    """An active cycle as ``QUERY_ACTIVE_CYCLES`` selects it."""
+    """An active cycle as QUERY_ACTIVE_CYCLES selects it."""
 
     id: str
     name: str | None = None
@@ -413,7 +413,7 @@ class LinearCycle(LinearNode):
 
 
 class LinearNotification(LinearNode):
-    """A notification; ``issue`` only on ``IssueNotification`` (the fragment), ``actor`` null for system events."""
+    """A notification; issue only on IssueNotification (the fragment), actor null for system events."""
 
     id: str
     type: str
@@ -424,7 +424,7 @@ class LinearNotification(LinearNode):
 
 
 class LinearCreatedIssue(LinearNode):
-    """``issueCreate { issue { id identifier title url } }``."""
+    """issueCreate { issue { id identifier title url } }."""
 
     id: str
     identifier: str
@@ -453,7 +453,7 @@ class LinearIssueBatchPayload(LinearNode):
 
 
 # =============================================================================
-# Response side — the ``data`` of each operation
+# Response side — the data of each operation
 # =============================================================================
 
 
@@ -490,7 +490,7 @@ class LinearSearchIssuesData(LinearNode):
 
 
 class LinearIssueData(LinearNode):
-    """``issue(id:)`` is non-null: an unknown id is a GraphQL error, not a null."""
+    """issue(id:) is non-null: an unknown id is a GraphQL error, not a null."""
 
     issue: LinearIssue
 

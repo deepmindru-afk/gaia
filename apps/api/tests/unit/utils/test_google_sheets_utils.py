@@ -28,12 +28,12 @@ MODULE = "app.utils.google_sheets_utils"
 
 
 def _rgb(hex_color: str) -> dict[str, float]:
-    """The Color JSON Google receives for ``hex_color``."""
+    """Return the Color JSON Google receives for hex_color."""
     return hex_to_rgb(hex_color).model_dump()
 
 
 def _grid(a1: str) -> dict[str, int]:
-    """The GridRange JSON Google receives for ``a1`` — open bounds omitted."""
+    """Return the GridRange JSON Google receives for a1, with open bounds omitted."""
     return parse_a1_range(a1).model_dump(exclude_none=True)
 
 

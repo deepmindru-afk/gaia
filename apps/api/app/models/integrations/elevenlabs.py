@@ -1,4 +1,4 @@
-"""ElevenLabs voices API payloads (``GET /v1/voices``, ``GET /v1/shared-voices``)."""
+"""ElevenLabs voices API payloads (GET /v1/voices, GET /v1/shared-voices)."""
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8,8 +8,8 @@ from app.utils.voice_utils import ElevenLabsVoiceLanguages
 class ElevenLabsRawVoice(ElevenLabsVoiceLanguages):
     """One untrimmed voice object, as either voices endpoint lists it.
 
-    Account voices carry their metadata in ``labels``; shared-library voices carry
-    it top-level alongside ``public_owner_id``. Every field is optional because
+    Account voices carry their metadata in labels; shared-library voices carry
+    it top-level alongside public_owner_id. Every field is optional because
     each endpoint sets only its own half, and a voice without an id is skipped.
     """
 
@@ -29,7 +29,7 @@ class ElevenLabsRawVoice(ElevenLabsVoiceLanguages):
 
 
 class ElevenLabsVoicesPage(BaseModel):
-    """A voices-endpoint response, read only for its ``voices`` list."""
+    """A voices-endpoint response, read only for its voices list."""
 
     model_config = ConfigDict(extra="ignore")
 

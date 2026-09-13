@@ -20,7 +20,7 @@ class CustomToolAuthCredentials(BaseModel):
 
     @classmethod
     def parse(cls, auth_credentials: dict[str, object]) -> "CustomToolAuthCredentials":
-        """Validate the bag; ``ValueError`` when it carries no usable ``user_id``."""
+        """Validate the bag; raise ValueError when it carries no usable user_id."""
         try:
             parsed = cls.model_validate(auth_credentials)
         except ValidationError as exc:

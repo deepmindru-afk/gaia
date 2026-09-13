@@ -75,7 +75,7 @@ def mock_merge_repo() -> Iterator[MagicMock]:
 
 @pytest.fixture
 def sample_user() -> AuthenticatedUser:
-    """A sample user with id, email and name for session tests."""
+    """Provide a sample user with id, email and name for session tests."""
     return AuthenticatedUser(
         user_id="507f1f77bcf86cd799439011",
         email="test@example.com",

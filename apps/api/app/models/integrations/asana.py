@@ -1,7 +1,7 @@
 """Asana task payloads the context tool reads and forwards.
 
 Reference: https://developers.asana.com/reference/searchtasksforworkspace
-(``gid``/``name`` strings; ``due_on`` an ISO date string or ``null``).
+(gid and name are strings; due_on is an ISO date string or null).
 """
 
 from pydantic import BaseModel, ConfigDict

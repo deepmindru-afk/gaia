@@ -147,7 +147,7 @@ async def test_brave_parses_nested_web_results() -> None:
 
 @respx.mock
 async def test_brave_favicon_and_null_fields() -> None:
-    """``meta_url.favicon`` is read; null title/description/age/meta_url map to ``""``."""
+    """The meta_url favicon is read; null title/description/age/meta_url map to empty strings."""
     payload = {
         "web": {
             "results": [
@@ -234,8 +234,7 @@ async def test_searxng_parses_json(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_searxng_null_fields_count_cap_and_null_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Null fields map to defaults, only ``count`` results are kept, and a null
-    ``results`` (SearXNG with no engines answering) is an empty response."""
+    """Null fields map to defaults, count caps results, and null results is empty."""
     monkeypatch.setattr(
         "app.utils.search.providers.searxng.settings.SEARXNG_BASE_URL",
         "https://searxng.internal/",

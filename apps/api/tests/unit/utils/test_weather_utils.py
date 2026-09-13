@@ -41,7 +41,7 @@ def _make_forecast_item(
 ) -> dict[str, Any]:
     """Build a single forecast list item matching the OpenWeatherMap schema.
 
-    ``weather`` is ``(condition, description, icon)``.
+    The weather argument is a (condition, description, icon) tuple.
     """
     condition, description, icon = weather
     return {
@@ -562,7 +562,7 @@ class TestPrepareWeatherData:
         current_weather: dict[str, Any] | None = None,
         forecast_data: OpenWeatherForecast | None = None,
     ) -> dict[str, Any]:
-        """The card payload exactly as the weather tool ships it."""
+        """Return the card payload exactly as the weather tool ships it."""
         if current_weather is None:
             current_weather = _make_current_weather()
         if forecast_data is None:

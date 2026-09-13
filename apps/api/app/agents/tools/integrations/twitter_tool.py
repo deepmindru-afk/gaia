@@ -62,7 +62,7 @@ def _user_id(auth_credentials: dict[str, object]) -> str:
 
 @dataclass(slots=True, frozen=True)
 class _FollowTarget:
-    """One account a batch follow/unfollow acts on; ``username`` when resolved from a handle."""
+    """One account a batch follow/unfollow acts on; username is set when resolved from a handle."""
 
     user_id: str
     username: str | None = None

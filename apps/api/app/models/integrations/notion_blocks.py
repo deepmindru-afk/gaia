@@ -1,19 +1,16 @@
-"""Notion block objects as ``notion_md`` walks them into Markdown.
+"""Notion block objects as notion_md walks them into Markdown.
 
 Reference: https://developers.notion.com/reference/block and
 https://developers.notion.com/reference/rich-text
 
-Reading side: a block keeps its type-specific object under a key named by ``type``
-(``{"type": "paragraph", "paragraph": {...}}``). Rather than one model per block
-type, ``NotionBlockContent`` declares the union of the fields the converter reads
-across every type it renders; the fields a given type does not carry stay at
-their defaults. ``children`` is Composio's recursive-fetch nesting, not part of
-Notion's own block object.
+Reading side: a block keeps its type-specific object under a key named by type.
+NotionBlockContent declares the union of the fields the converter reads across
+every type; fields a type does not carry stay at their defaults. children is
+Composio's recursive-fetch nesting, not part of Notion's own block object.
 
-Writing side: ``markdown_to_notion_blocks`` emits the blocks
-``NOTION_ADD_MULTIPLE_PAGE_CONTENT`` (``NotionContentBlock``, ``NotionCodeBlock``)
-and ``NOTION_APPEND_TABLE_BLOCKS`` (``NotionTableBlock``) accept; the tool dumps
-them at the call.
+Writing side: markdown_to_notion_blocks emits the blocks
+NOTION_ADD_MULTIPLE_PAGE_CONTENT (NotionContentBlock, NotionCodeBlock) and
+NOTION_APPEND_TABLE_BLOCKS (NotionTableBlock) accept.
 """
 
 from typing import Literal
@@ -34,7 +31,7 @@ class NotionAnnotations(BaseModel):
 
 
 class NotionEquation(BaseModel):
-    """An ``equation`` rich-text item's or block's expression."""
+    """An equation rich-text item's or block's expression."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -42,7 +39,7 @@ class NotionEquation(BaseModel):
 
 
 class NotionRichText(BaseModel):
-    """One item of a ``rich_text`` array: ``text``, ``mention`` or ``equation``."""
+    """One item of a rich_text array: text, mention or equation."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -54,7 +51,7 @@ class NotionRichText(BaseModel):
 
 
 class NotionFileRef(BaseModel):
-    """``external`` or ``file`` on a file-like block — either way a ``url``."""
+    """external or file on a file-like block — either way a url."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -62,7 +59,7 @@ class NotionFileRef(BaseModel):
 
 
 class NotionIcon(BaseModel):
-    """A callout's ``icon``: an ``emoji`` when ``type`` is ``emoji``."""
+    """A callout's icon: an emoji when type is emoji."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -71,12 +68,12 @@ class NotionIcon(BaseModel):
 
 
 class NotionBlockContent(BaseModel):
-    """The type-specific object of a block: every field ``notion_md`` reads, across types.
+    """The type-specific object of a block: every field notion_md reads, across types.
 
-    ``rich_text`` carries the text of text blocks (``text`` is the pre-2022 name
-    Composio still emits for some); ``caption`` the caption of file-like blocks;
-    ``type``/``external``/``file`` a file-like block's source (``type`` is
-    ``page_id``/``database_id`` on ``link_to_page``); ``cells`` a table row.
+    rich_text carries the text of text blocks (text is the pre-2022 name
+    Composio still emits for some); caption the caption of file-like blocks;
+    type/external/file a file-like block's source (type is
+    page_id/database_id on link_to_page); cells a table row.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -99,7 +96,7 @@ class NotionBlockContent(BaseModel):
 
 
 class NotionBlock(BaseModel):
-    """A block object; the type-specific content is read through ``content``."""
+    """A block object; the type-specific content is read through content."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -110,8 +107,10 @@ class NotionBlock(BaseModel):
 
     @property
     def content(self) -> NotionBlockContent | None:
-        """The object under the key named by ``type``; None when the block carries none
-        (the key is absent, not an object, or empty)."""
+        """Return the object under the key named by type.
+
+        None when that key is absent, not an object, or empty.
+        """
         raw = (self.model_extra or {}).get(self.type)
         if not isinstance(raw, dict) or not raw:
             return None
@@ -125,7 +124,7 @@ class NotionTextContent(BaseModel):
 
 
 class NotionTextRun(BaseModel):
-    """A plain ``text`` rich-text item as the write tools take it."""
+    """A plain text rich-text item as the write tools take it."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -134,9 +133,9 @@ class NotionTextRun(BaseModel):
 
 
 class NotionContentBlock(BaseModel):
-    """``NOTION_ADD_MULTIPLE_PAGE_CONTENT``'s unwrapped form: the tool parses the
-    Markdown in ``content`` itself. ``block_property`` is one of the tool's block
-    kinds (``paragraph``, ``heading_1``, ``bulleted_list_item``, ...)."""
+    """NOTION_ADD_MULTIPLE_PAGE_CONTENT's unwrapped form: the tool parses the
+    Markdown in content itself. block_property is one of the tool's block
+    kinds (paragraph, heading_1, bulleted_list_item, ...)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -167,7 +166,7 @@ class NotionTableRow(BaseModel):
 
 
 class NotionTableBlock(BaseModel):
-    """``NOTION_APPEND_TABLE_BLOCKS``'s arguments for one table."""
+    """NOTION_APPEND_TABLE_BLOCKS's arguments for one table."""
 
     model_config = ConfigDict(extra="forbid")
 

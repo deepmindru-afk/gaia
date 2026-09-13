@@ -25,7 +25,7 @@ from app.workers.tasks.tracked_todo_tasks import (
 
 
 def _user_context(**fields: object) -> Callable[[str], AuthenticatedUser]:
-    """What ``load_user_context`` answers for whichever user id it is asked for."""
+    """Build the user load_user_context returns for whichever user id it is asked for."""
     return lambda user_id: AuthenticatedUser(user_id=user_id, **fields)
 
 
