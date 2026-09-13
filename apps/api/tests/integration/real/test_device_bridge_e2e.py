@@ -642,12 +642,21 @@ class TestDeviceServerRemoval:
         return device_id
 
     async def test_gaia_bridge_rm_removes_the_server_from_the_cloud(
-        self, tmp_path, live_api_server, clean_bridge_tables, everything_server_cached, warm_cli
+        self,
+        tmp_path,
+        live_api_server,
+        clean_bridge_tables,
+        everything_server_cached,
+        warm_cli,
+        make_pro_subscription,
     ):
         """Device-initiated removal: `gaia bridge rm` drops the server from local
         config AND calls DELETE /device/servers/{key}, so the cloud row goes too."""
+        owner_id = "device-rm-owner"
+        # The tunnel is paid-only (device_ws.py): a free owner's daemon never comes online.
+        await make_pro_subscription(owner_id)
         daemon = BridgeDaemon(tmp_path / "home")
-        owner = _client(live_api_server.url, "device-rm-owner")
+        owner = _client(live_api_server.url, owner_id)
         try:
             await self._pair_and_expose_everything(
                 daemon, owner, live_api_server.url, everything_server_cached
@@ -671,13 +680,22 @@ class TestDeviceServerRemoval:
             print(f"\n--- detached tunnel daemon.log ---\n{daemon.daemon_log()}")
 
     async def test_deleting_the_integration_makes_the_daemon_forget_the_server(
-        self, tmp_path, live_api_server, clean_bridge_tables, everything_server_cached, warm_cli
+        self,
+        tmp_path,
+        live_api_server,
+        clean_bridge_tables,
+        everything_server_cached,
+        warm_cli,
+        make_pro_subscription,
     ):
         """Cloud-initiated delete: deleting the device integration deletes the
         Postgres row AND sends a server.remove frame down the live tunnel, so the
         daemon forgets the server and can't re-register it on reconnect."""
+        owner_id = "device-del-owner"
+        # The tunnel is paid-only (device_ws.py): a free owner's daemon never comes online.
+        await make_pro_subscription(owner_id)
         daemon = BridgeDaemon(tmp_path / "home")
-        owner = _client(live_api_server.url, "device-del-owner")
+        owner = _client(live_api_server.url, owner_id)
         try:
             await self._pair_and_expose_everything(
                 daemon, owner, live_api_server.url, everything_server_cached
