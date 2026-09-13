@@ -1668,6 +1668,7 @@ class TestBotStreamHelpers:
 
         async def failing() -> AsyncGenerator[str, None]:
             yield 'data: {"response": "part"}\n\n'
+            yield "this line carries no data payload\n\n"
             yield 'data: {"error": "bad"}\n\n'
             yield 'data: {"response": "never"}\n\n'
 
@@ -1675,3 +1676,58 @@ class TestBotStreamHelpers:
         assert '"text": "part"' in body
         assert '"error": "bad"' in body
         assert "never" not in body
+
+    async def test_background_turn_receives_the_resolved_user_and_request(
+        self,
+        client: AsyncClient,
+    ) -> None:
+        """What the caller hands the background turn: the resolved user (not
+        None) and the built request carrying the posted message."""
+
+        async def _empty_stream():
+            if False:  # pragma: no cover
+                yield
+
+        with (
+            patch("app.api.v1.endpoints.bot.require_bot_api_key", new=AsyncMock()),
+            patch("app.api.v1.endpoints.bot.spawn_background_task", new=MagicMock()),
+            patch(
+                "app.api.v1.endpoints.bot.run_chat_stream_background",
+                new=MagicMock(),
+            ) as mock_bg,
+            patch(
+                "app.api.v1.endpoints.bot.create_bot_session_token",
+                new=MagicMock(return_value="tok"),
+            ),
+            patch(
+                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                new=AsyncMock(return_value={"user_id": "uid1", "_id": "uid1"}),
+            ),
+            patch("app.api.v1.endpoints.bot.BotService") as bot_svc,
+            patch("app.api.v1.endpoints.bot.capture_event", new=MagicMock()),
+            patch("app.api.v1.endpoints.bot.stream_manager") as mock_sm,
+            patch("app.api.v1.endpoints.bot.enforce_tiered_limit", new=AsyncMock()),
+            patch("app.api.v1.endpoints.bot.enforce_daily_cost_budget", new=AsyncMock()),
+            patch(
+                "app.api.v1.endpoints.bot.platform_requires_upgrade",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            bot_svc.enforce_rate_limit = AsyncMock()
+            bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
+            bot_svc.load_conversation_history = AsyncMock(return_value=[])
+            mock_sm.start_stream = AsyncMock()
+            mock_sm.subscribe_stream.return_value = _empty_stream()
+
+            response = await client.post(
+                f"{BOT_BASE}/chat-stream",
+                json={"message": "wired", "platform": "discord", "platform_user_id": "u1"},
+            )
+            assert response.status_code == 200
+            await response.aread()
+
+        _, kwargs = mock_bg.call_args
+        assert kwargs["user"] == {"user_id": "uid1", "_id": "uid1"}
+        assert kwargs["body"].message == "wired"
+        assert kwargs["conversation_id"] == "conv-1"
+        assert kwargs["source"] == "discord"
