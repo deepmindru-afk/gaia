@@ -27,7 +27,7 @@ HARD_LIMIT = 1200
 
 
 def _repo(tmp_path: Path) -> Path:
-    """A throwaway git repo — `git ls-files` is the gate's full-scan source."""
+    """Return a throwaway git repo — `git ls-files` is the gate's full-scan source."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     return tmp_path
 
@@ -176,6 +176,39 @@ def test_doc_comments_flags_a_jsdoc_that_restates_its_declaration(tmp_path: Path
     assert "src/b.ts:1  DS5" in process.stderr
 
 
+def test_doc_comments_reads_comments_not_strings_and_honours_a_shebang_header(
+    tmp_path: Path,
+) -> None:
+    # A glob in a string ("src/**/*.tsx") once parsed as a 100-line JSDoc, and
+    # a shebang line hid the header block the CI scripts are required to carry.
+    repo = _repo(tmp_path)
+    header = "\n".join(f" * header line {i}" for i in range(10))
+    _add_source(
+        repo,
+        "scripts/tool.mjs",
+        f'#!/usr/bin/env node\n/**\n{header}\n */\nimport {{ x }} from "./x.mjs";\n'
+        'const globs = ["apps/web/src/**/*.tsx", "libs/**/*.ts"];\n'
+        "const later = 1; // and a trailing comment */\n",
+    )
+
+    process = _run(repo, "doc-comments")
+
+    assert process.returncode == 0, process.stdout + process.stderr
+
+
+def test_doc_comments_skips_the_generated_agent_plugins(tmp_path: Path) -> None:
+    # `entire enable` writes these and overwrites any edit on reinstall.
+    repo = _repo(tmp_path)
+    story = "\n".join(f"  // narrative line {i}" for i in range(6))
+    body = f"export const x = 1;\nfunction f() {{\n{story}\n  return 1;\n}}\n"
+    _add_source(repo, ".opencode/plugins/entire.ts", body)
+    _add_source(repo, ".pi/extensions/entire/index.ts", body)
+
+    process = _run(repo, "doc-comments")
+
+    assert process.returncode == 0, process.stdout + process.stderr
+
+
 def test_doc_comments_changed_files_scopes_the_scan(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _add_source(repo, "src/bad.ts", "function f() {\n  // ==== Step 1 ====\n  return 1;\n}\n")
@@ -221,7 +254,7 @@ printf '%s' "$FAKE_TYPES" > libs/shared/ts/src/api/generated/schema.d.ts
 
 
 def _repo_beside_stubs(tmp_path: Path) -> Path:
-    """The sandbox repo, apart from the stub bin dir the same tmp_path holds."""
+    """Return the sandbox repo, apart from the stub bin dir the same tmp_path holds."""
     path = tmp_path / "repo"
     path.mkdir()
     return _repo(path)

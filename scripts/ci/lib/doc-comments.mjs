@@ -3,16 +3,16 @@
 // `checks.mjs doc-comments`; never run directly.
 //
 //   DS1  a /** */ block longer than 6 content lines
-//   DS5  a /** */ block that only restates the declaration below it
+//   DS5  a one-line /** */ block that only restates the declaration below it
 //   DS6  an @param whose description only restates the parameter name
 //   CM1  more than 3 consecutive own-line // comments
 //   CM2  a banner (// ----, // ====) or // Step N inside a function body
 //
-// Pragmas (biome-ignore, eslint-, @ts-, prettier-) never count, and a file's
-// leading header block is exempt: scripts/ci/CLAUDE.md requires it. Module,
-// class and object-literal bodies may carry banners — a registry or a sample
-// catalogue is supposed to be sectioned — so CM2 needs real function spans,
-// which come from @babel/parser (already the TS parser behind bots-facts).
+// Comments come from @babel/parser's token stream, never a regex over the
+// source: "apps/web/src/**/*.tsx" in a string is not a JSDoc block. The file
+// header (scripts/ci/CLAUDE.md requires one) and pragmas (biome-ignore,
+// eslint-, @ts-, prettier-, NOSONAR) never count; banners outside functions
+// are allowed, since a registry or a sample catalogue is meant to be sectioned.
 import { readFileSync } from "node:fs";
 import { parse } from "@babel/parser";
 import traverse from "@babel/traverse";
@@ -20,10 +20,9 @@ import traverse from "@babel/traverse";
 const BLOCK_MAX_LINES = 6;
 const RUN_MAX = 3;
 
-const JSDOC = /\/\*\*([\s\S]*?)\*\//g;
 const PARAM = /^@param\s+(?:\{[^}]*\}\s*)?(\w+)\s*-?\s*(.*)$/;
-const BANNER = /^\/\/\s*([-=#*~_]{3,}|step\s*\d+\b)/i;
-const PRAGMA = /^\/\/\s*(biome-ignore|eslint|@ts-|prettier-|NOSONAR)/;
+const BANNER = /^\s*([-=#*~_]{3,}|step\s*\d+\b)/i;
+const PRAGMA = /^\s*(biome-ignore|eslint|@ts-|prettier-|NOSONAR)/;
 const FILLER = new Set(
   "the a an of to for and or in on is this that with from if by its it whether value values object id name current given".split(" "),
 );
@@ -38,53 +37,36 @@ const words = (text) =>
   );
 const subset = (a, b) => a.size > 0 && [...a].every((w) => b.has(w));
 
-const lineOf = (src, offset) => src.slice(0, offset).split("\n").length;
-
-/** The first code line after `line` (1-based), skipping blanks and comments. */
-function declarationBelow(lines, line) {
-  for (let i = line; i < lines.length; i++) {
-    const text = lines[i].trim();
-    if (text && !text.startsWith("//") && !text.startsWith("*") && !text.startsWith("/*")) return text;
-  }
-  return "";
+/** A leading comment is the file header unless it sits directly on the first declaration. */
+function isHeader(comment, firstStatement) {
+  if (!firstStatement) return true;
+  if (comment.end > firstStatement.start) return false;
+  return firstStatement.type === "ImportDeclaration" || firstStatement.loc.start.line > comment.loc.end.line + 1;
 }
 
-function checkBlocks(src, lines, report) {
-  let first = true;
-  for (const match of src.matchAll(JSDOC)) {
-    const line = lineOf(src, match.index);
-    const body = match[1]
-      .split("\n")
-      .map((l) => l.replace(/^\s*\*\s?/, "").trimEnd())
-      .filter((l) => l.trim());
-    // A leading block followed by a blank line is the file header; one that
-    // touches the declaration below it documents that declaration.
-    const isHeader = first && src.slice(0, match.index).trim() === "" && /^\n\s*\n/.test(src.slice(match.index + match[0].length));
-    first = false;
-    if (isHeader) continue;
-    if (body.length > BLOCK_MAX_LINES) {
-      report(line, "DS1", `JSDoc block is ${body.length} lines (max ${BLOCK_MAX_LINES}) — say what, not why`);
-    }
-    if (body.length === 1 && subset(words(body[0]), words(declarationBelow(lines, line + match[0].split("\n").length - 1)))) {
-      report(line, "DS5", "JSDoc only restates the declaration below it — delete it");
-    }
-    for (const text of body) {
-      const param = PARAM.exec(text.trim());
-      if (param && subset(words(param[2]), words(param[1]))) {
-        report(line, "DS6", `@param ${param[1]} only restates its name — drop it`);
-      }
+function checkBlock(comment, lines, report) {
+  const line = comment.loc.start.line;
+  const body = comment.value
+    .slice(1)
+    .split("\n")
+    .map((l) => l.replace(/^\s*\*\s?/, "").trim())
+    .filter(Boolean);
+  if (body.length > BLOCK_MAX_LINES) {
+    report(line, "DS1", `JSDoc block is ${body.length} lines (max ${BLOCK_MAX_LINES}) — say what, not why`);
+  }
+  const below = (lines[comment.loc.end.line] ?? "").trim();
+  if (body.length === 1 && !body[0].startsWith("@") && subset(words(body[0]), words(below))) {
+    report(line, "DS5", "JSDoc only restates the declaration below it — delete it");
+  }
+  for (const text of body) {
+    const param = PARAM.exec(text);
+    if (param && subset(words(param[2]), words(param[1]))) {
+      report(line, "DS6", `@param ${param[1]} only restates its name — drop it`);
     }
   }
 }
 
-/** `[start, end]` line spans of every function body in the file. */
-function functionSpans(src, path) {
-  const ast = parse(src, {
-    sourceType: "module",
-    plugins: ["typescript", "jsx", "decorators"],
-    errorRecovery: true,
-    sourceFilename: path,
-  });
+function functionSpans(ast) {
   const spans = [];
   traverse.default(ast, {
     Function(nodePath) {
@@ -95,36 +77,38 @@ function functionSpans(src, path) {
   return spans;
 }
 
-function checkLineComments(lines, spans, report) {
-  let run = 0;
-  let prev = -2;
-  let seenCode = false;
-  lines.forEach((raw, i) => {
-    const text = raw.trim();
-    const line = i + 1;
-    if (!text.startsWith("//")) {
-      if (text && !text.startsWith("*") && !text.startsWith("/*")) seenCode = true;
-      return;
-    }
-    if (PRAGMA.test(text)) return;
-    run = line === prev + 1 ? run + 1 : 1;
-    prev = line;
-    if (!seenCode) return; // the file header
-    if (run === RUN_MAX + 1) {
-      report(line - RUN_MAX, "CM1", `comment block longer than ${RUN_MAX} lines — keep the fact, drop the story`);
-    }
-    if (BANNER.test(text) && spans.some(([start, end]) => start < line && line < end)) {
-      report(line, "CM2", "banner or step comment inside a function — split it instead of sectioning it");
-    }
-  });
-}
-
 export function checkDocComments(path) {
   const src = readFileSync(path, "utf8");
   const lines = src.split("\n");
+  const ast = parse(src, {
+    sourceType: "module",
+    plugins: ["typescript", "jsx", "decorators"],
+    errorRecovery: true,
+    sourceFilename: path,
+  });
+  const spans = functionSpans(ast);
+  const firstStatement = ast.program.body[0];
   const findings = [];
   const report = (line, code, message) => findings.push({ path, line, code, message });
-  checkBlocks(src, lines, report);
-  checkLineComments(lines, functionSpans(src, path), report);
+
+  let run = 0;
+  let prev = -2;
+  for (const comment of ast.comments) {
+    if (isHeader(comment, firstStatement) || PRAGMA.test(comment.value)) continue;
+    if (comment.type === "CommentBlock") {
+      if (comment.value.startsWith("*")) checkBlock(comment, lines, report);
+      continue;
+    }
+    const line = comment.loc.start.line;
+    if (!lines[line - 1].trimStart().startsWith("//")) continue; // trailing comment
+    run = line === prev + 1 ? run + 1 : 1;
+    prev = line;
+    if (run === RUN_MAX + 1) {
+      report(line - RUN_MAX, "CM1", `comment block longer than ${RUN_MAX} lines — keep the fact, drop the story`);
+    }
+    if (BANNER.test(comment.value) && spans.some(([start, end]) => start < line && line < end)) {
+      report(line, "CM2", "banner or step comment inside a function — split it instead of sectioning it");
+    }
+  }
   return findings;
 }

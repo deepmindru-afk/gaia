@@ -89,7 +89,7 @@ SURFACES = {
 
 
 def _surface_files(tool: str) -> list[Path]:
-    """The surfaces a tool's pin must appear on, from the current constants."""
+    """Return the surfaces a tool's pin must appear on, from the current constants."""
     out: list[Path] = []
     for name in SURFACES[tool]:
         value = globals()[name]
@@ -114,7 +114,7 @@ def _pin_forms(tool: str, version: str) -> list[re.Pattern[str]]:
 
 
 def _executable_text(text: str) -> str:
-    """The file text with comments removed — prose cannot pin a tool.
+    """Return the file text with comments removed — prose cannot pin a tool.
 
     Full-line comments are dropped, and each remaining line is cut at its
     first ``#`` (a trailing comment). What is left is only executable/config

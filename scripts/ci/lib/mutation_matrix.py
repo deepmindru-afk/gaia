@@ -36,7 +36,7 @@ LOCAL_BASE_BRANCH = "master"
 
 
 def _base_ref() -> str:
-    """The branch this diff is scoped to: the PR's base on CI, master locally.
+    """Return the branch this diff is scoped to: the PR's base on CI, master locally.
 
     GAIA_PR_BASE before GITHUB_BASE_REF, and the order is load-bearing rather
     than defensive. For a PR in a native GitHub stack the `pull_request` payload
@@ -54,7 +54,7 @@ def _base_ref() -> str:
 
 
 def _merge_base() -> str:
-    """The merge-base commit between HEAD and the PR's base ref, or "" outside CI.
+    """Return the merge-base commit between HEAD and the PR's base ref, or "" outside CI.
 
     The single source of truth both diff-against-base computations in this
     file use (line ranges below, and comment-only detection). Resolving the
@@ -97,14 +97,11 @@ def _merge_base() -> str:
 
 
 def _tokens_without_comments(source: str) -> list[tuple[int, str]] | None:
-    """``source``'s tokens with COMMENT and NL (comment-only-line terminator)
-    stripped, or None if it fails to tokenize.
+    """Return ``source``'s tokens without COMMENT and NL, or None if it fails to tokenize.
 
-    Stripping only COMMENT would leave a stray NL where a whole-line comment
-    used to be, making a deleted comment-only line look like a structural
-    change. Stripping both makes the comparison see straight through both
-    forms: a trailing ``# noqa: X`` sliced off a code line, and a whole line
-    that was nothing but a comment to begin with.
+    NL goes too: leaving it would make a deleted comment-only line look like a
+    structural change, so both a trailing ``# noqa`` and a whole-line comment
+    compare equal.
     """
     tokens: list[tuple[int, str]] = []
     try:
@@ -118,19 +115,11 @@ def _tokens_without_comments(source: str) -> list[tuple[int, str]] | None:
 
 
 def _is_comment_only_change(module_path: str, merge_base: str) -> bool:
-    """True when ``module_path``'s diff against ``merge_base`` changes only
-    comments — i.e. it has zero possible mutants, so requiring a test file
-    for it would be meaningless.
+    """Return True when ``module_path``'s diff against ``merge_base`` changes only comments.
 
-    A pragmatic line-based diff (skip lines whose changed side starts with
-    ``#``) is not enough here: this codebase's suppressions are routinely
-    trailing comments on a code line (``except Exception as e:  # noqa:
-    BLE001``), and after the comment is deleted the changed line no longer
-    starts with ``#`` at all — a line-prefix check would misclassify that as
-    a code change. Tokenizing both sides and comparing with COMMENT/NL
-    stripped catches both the trailing-comment and whole-line-comment forms
-    correctly, because it compares what the code actually *is*, not how the
-    diff happens to be shaped.
+    Such a diff has zero mutants, so no test file is required. Compared by
+    token stream, not line prefix: deleting a trailing ``# noqa`` leaves a
+    changed line that does not start with ``#``.
     """
     try:
         old_source = subprocess.check_output(
@@ -209,7 +198,7 @@ def _collect_module_strings(refs: set[str], node: ast.AST) -> None:
 
 
 def _is_bare_module_path(candidate: str) -> bool:
-    """True for ``app.some.module`` / ``app.some.module.thing`` and nothing else.
+    """Return True for ``app.some.module`` / ``app.some.module.thing`` and nothing else.
 
     Rejects strings that embed a module name in surrounding syntax (quotes,
     parens, spaces) — those are fixture data, not references.
@@ -430,7 +419,7 @@ def main() -> int:
 
 
 def _entry(module_rel: str, testfiles: list[str], merge_base: str) -> dict[str, object]:
-    """Module matrix entry with the PR's changed line ranges for this file.
+    """Return the module matrix entry with the PR's changed line ranges for this file.
 
     The gate is diff-driven: a survivor only fails the lane when its mutation
     lands on a line the PR changed. Mutants on untouched lines are noted, not
