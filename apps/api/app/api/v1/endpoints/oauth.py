@@ -568,8 +568,14 @@ async def composio_callback(
         return _composio_failure(
             redirect_path, "failed" if outcome.reason == "config_missing" else outcome.reason
         )
+    log.audit(
+        "integration connected",
+        actor=outcome.user_id,
+        resource=outcome.integration_id,
+        provider=outcome.provider,
+    )
     separator = "?" if "?" not in redirect_path else "&"
     return RedirectResponse(
-        url=f"{settings.FRONTEND_URL}/{redirect_path}{separator}"
+        url=f"{settings.FRONTEND_URL}{redirect_path}{separator}"
         f"oauth_success=true&integration={outcome.integration_id}"
     )

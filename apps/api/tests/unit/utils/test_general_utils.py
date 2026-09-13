@@ -353,6 +353,143 @@ class TestTransformGmailMessage:
         assert result["body"] == ""
         assert result["labelIds"] == []
 
+    def test_composio_populated_fields_produce_exact_dict(self) -> None:
+        msg: dict[str, Any] = {
+            "messageId": "msg-9",
+            "messageText": "fallback text",
+            "threadId": "thread-9",
+            "from": "alice@example.com",
+            "to": "bob@example.com",
+            "cc": "carol@example.com",
+            "replyTo": "reply@example.com",
+            "subject": "Subject",
+            "date": "2024-01-15 10:00",
+            "snippet": "Snippet",
+            "body": "<p>Body</p>",
+            "labelIds": ["INBOX", "UNREAD"],
+        }
+        result = transform_gmail_message(msg)
+        assert result == {
+            **msg,
+            "id": "msg-9",
+            "threadId": "thread-9",
+            "from": "alice@example.com",
+            "to": "bob@example.com",
+            "cc": "carol@example.com",
+            "replyTo": "reply@example.com",
+            "subject": "Subject",
+            "time": "2024-01-15 10:00",
+            "snippet": "Snippet",
+            "body": "<p>Body</p>",
+            "isThread": True,
+            "is_unread": True,
+            "labelIds": ["INBOX", "UNREAD"],
+        }
+
+    def test_composio_all_null_fields_produce_exact_dict(self) -> None:
+        msg: dict[str, Any] = {
+            "messageId": None,
+            "messageText": None,
+            "threadId": None,
+            "from": None,
+            "sender": None,
+            "to": None,
+            "cc": None,
+            "replyTo": None,
+            "subject": None,
+            "snippet": None,
+            "body": None,
+            "labelIds": None,
+        }
+        result = transform_gmail_message(msg)
+        assert result == {
+            **msg,
+            "id": "",
+            "threadId": "",
+            "from": "",
+            "to": "",
+            "cc": "",
+            "replyTo": "",
+            "subject": "",
+            "time": "",
+            "snippet": "",
+            "body": "",
+            "isThread": False,
+            "is_unread": False,
+            "labelIds": [],
+        }
+
+    def test_gmail_api_populated_headers_produce_exact_dict(self) -> None:
+        msg: dict[str, Any] = {
+            "id": "gm-1",
+            "threadId": "gt-1",
+            "snippet": "Snippet",
+            "labelIds": ["INBOX"],
+            "internalDate": "abc",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "alice@example.com"},
+                    {"name": "To", "value": "bob@example.com"},
+                    {"name": "Cc", "value": "carol@example.com"},
+                    {"name": "Reply-To", "value": "reply@example.com"},
+                    {"name": "Subject", "value": "Subject"},
+                ],
+                "body": {"data": base64.urlsafe_b64encode(b"Body").decode()},
+            },
+        }
+        result = transform_gmail_message(msg)
+        assert result == {
+            **msg,
+            "id": "gm-1",
+            "threadId": "gt-1",
+            "from": "alice@example.com",
+            "to": "bob@example.com",
+            "cc": "carol@example.com",
+            "replyTo": "reply@example.com",
+            "subject": "Subject",
+            "time": "abc",
+            "snippet": "Snippet",
+            "body": "Body",
+            "isThread": True,
+            "is_unread": False,
+            "labelIds": ["INBOX"],
+        }
+
+    def test_gmail_api_null_headers_produce_exact_dict(self) -> None:
+        msg: dict[str, Any] = {
+            "id": None,
+            "threadId": None,
+            "snippet": None,
+            "labelIds": None,
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": None},
+                    {"name": "To", "value": None},
+                    {"name": "Cc", "value": None},
+                    {"name": "Reply-To", "value": None},
+                    {"name": "Subject", "value": None},
+                ],
+                "body": {"data": None},
+            },
+        }
+        result = transform_gmail_message(msg)
+        assert result == {
+            **msg,
+            "id": "",
+            "threadId": "",
+            "from": "",
+            "to": "",
+            "cc": "",
+            "replyTo": "",
+            "subject": "",
+            "time": "",
+            "snippet": "",
+            "body": "",
+            "isThread": False,
+            "is_unread": False,
+            "labelIds": [],
+        }
+
     def test_composio_date_field_takes_priority(self) -> None:
         msg: dict[str, Any] = {
             "messageId": "id1",

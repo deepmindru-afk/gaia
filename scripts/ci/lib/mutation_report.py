@@ -849,9 +849,7 @@ def _copy_api_tree(api_root: Path, destination: Path) -> None:
             shutil.copy(source, destination / name)
 
 
-def _run_tests(
-    python: str, cwd: Path, testfiles: list[str], addopts: str, pycache: Path
-) -> int:
+def _run_tests(python: str, cwd: Path, testfiles: list[str], addopts: str, pycache: Path) -> int:
     """One pytest run over the scratch tree, with its bytecode cache under ``pycache``.
 
     The mutated and the reverted source can share a size and a whole-second

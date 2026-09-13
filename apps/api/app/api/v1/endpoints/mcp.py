@@ -134,7 +134,6 @@ class _McpCallback:
     """Where one OAuth callback came from and where it sends the browser next."""
 
     integration_id: str
-    redirect_uri: str
     redirect_path: str
     frontend_url: str
 
@@ -181,7 +180,6 @@ async def mcp_oauth_callback(
 
     callback = _McpCallback(
         integration_id=integration_id,
-        redirect_uri=redirect_uri,
         redirect_path=redirect_path,
         frontend_url=frontend_url,
     )
@@ -235,6 +233,7 @@ async def mcp_oauth_callback(
         )
         return RedirectResponse(url=callback.failure(sanitized_error_code(e)))
 
+    log.audit("mcp integration connected via oauth", actor=str(user_id), resource=integration_id)
     log.set(outcome="connected")
     log.set_ns("mcp", success=True)
     log.info(
