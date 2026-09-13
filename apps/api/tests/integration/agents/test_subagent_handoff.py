@@ -43,6 +43,7 @@ from app.agents.context.slots import PromptSlot, slot_of
 from app.agents.context.tiers import AgentTier
 from app.agents.core.subagents.base_subagent import SubAgentFactory, SubAgentToolConfig
 from app.agents.core.subagents.handoff_tools import (
+    CustomMcpSubagent,
     _resolve_subagent,
     handoff,
     resume_parked_subagent,
@@ -1028,15 +1029,17 @@ class TestCustomMCPPath:
             patch(
                 "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
                 new=AsyncMock(
-                    return_value={
-                        "id": custom_integration_id,
-                        "name": "Semantic Scholar",
-                        "source": "custom",
-                        "managed_by": "mcp",
-                        "mcp_config": {"server_url": "http://localhost:9000"},
-                        "icon_url": None,
-                        "subagent_config": None,
-                    }
+                    return_value=CustomMcpSubagent.model_validate(
+                        {
+                            "id": custom_integration_id,
+                            "name": "Semantic Scholar",
+                            "source": "custom",
+                            "managed_by": "mcp",
+                            "mcp_config": {"server_url": "http://localhost:9000"},
+                            "icon_url": None,
+                            "subagent_config": None,
+                        }
+                    )
                 ),
             ),
             patch(
@@ -1089,7 +1092,7 @@ class TestCustomMCPPath:
         with (
             patch(
                 "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
-                new=AsyncMock(return_value=custom_dict),
+                new=AsyncMock(return_value=CustomMcpSubagent.model_validate(custom_dict)),
             ),
             patch(
                 "app.agents.core.subagents.handoff_tools.create_subagent_for_user",
@@ -1151,15 +1154,17 @@ class TestCustomMCPPath:
             patch(
                 "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
                 new=AsyncMock(
-                    return_value={
-                        "id": custom_id,
-                        "name": "No Auth MCP",
-                        "source": "custom",
-                        "managed_by": "mcp",
-                        "mcp_config": None,
-                        "icon_url": None,
-                        "subagent_config": None,
-                    }
+                    return_value=CustomMcpSubagent.model_validate(
+                        {
+                            "id": custom_id,
+                            "name": "No Auth MCP",
+                            "source": "custom",
+                            "managed_by": "mcp",
+                            "mcp_config": None,
+                            "icon_url": None,
+                            "subagent_config": None,
+                        }
+                    )
                 ),
             ),
             patch(
@@ -1188,15 +1193,17 @@ class TestCustomMCPPath:
             patch(
                 "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
                 new=AsyncMock(
-                    return_value={
-                        "id": custom_id,
-                        "name": "Broken MCP",
-                        "source": "custom",
-                        "managed_by": "mcp",
-                        "mcp_config": None,
-                        "icon_url": None,
-                        "subagent_config": None,
-                    }
+                    return_value=CustomMcpSubagent.model_validate(
+                        {
+                            "id": custom_id,
+                            "name": "Broken MCP",
+                            "source": "custom",
+                            "managed_by": "mcp",
+                            "mcp_config": None,
+                            "icon_url": None,
+                            "subagent_config": None,
+                        }
+                    )
                 ),
             ),
             patch(

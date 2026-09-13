@@ -923,12 +923,10 @@ class TestExecuteGraphSilent:
             {},
             {"configurable": {"user_id": USER_ID}},
         )
-        assert tool_data == {
-            "tool_data": [
-                {"tool_name": "first_tool", "data": None},
-                {"tool_name": "custom_tool", "data": None},
-            ]
-        }
+        assert tool_data == [
+            {"tool_name": "first_tool", "data": None},
+            {"tool_name": "custom_tool", "data": None},
+        ]
 
     async def test_todo_progress_accumulated(self):
         events = [
@@ -950,7 +948,7 @@ class TestExecuteGraphSilent:
             )
 
         # Should have one todo_progress entry
-        todo_entries = [e for e in tool_data["tool_data"] if e["tool_name"] == "todo_progress"]
+        todo_entries = [e for e in tool_data if e["tool_name"] == "todo_progress"]
         assert len(todo_entries) == 1
         # Last snapshot wins
         assert todo_entries[0]["data"] == {"executor": {"source": "executor", "todos": [_TODO_B]}}
@@ -984,7 +982,7 @@ class TestExecuteGraphSilent:
         mock_handoff.assert_called_once_with("github")
         # The resolved handoff metadata must be forwarded into the formatted entry.
         assert mock_format.await_args.kwargs["integration_id"] == "github"
-        assert tool_data["tool_data"] == [{"tool_name": "handoff", "data": {}}]
+        assert tool_data == [{"tool_name": "handoff", "data": {}}]
 
     @patch("app.helpers.agent_helpers.format_tool_call_entry", new_callable=AsyncMock)
     async def test_updates_regular_tool_calls_thread_user_id(self, mock_format):
@@ -1010,7 +1008,7 @@ class TestExecuteGraphSilent:
 
         mock_format.assert_awaited_once()
         assert mock_format.await_args.kwargs["user_id"] == USER_ID
-        assert tool_data["tool_data"] == [{"tool_name": "custom_tool", "data": {}}]
+        assert tool_data == [{"tool_name": "custom_tool", "data": {}}]
 
     async def test_updates_ignores_non_agent_nodes(self):
         """Tool calls from non-'agent' nodes (e.g. pre-model hooks replaying old
@@ -1037,7 +1035,7 @@ class TestExecuteGraphSilent:
             )
 
         mock_format.assert_not_awaited()
-        assert tool_data["tool_data"] == []
+        assert tool_data == []
 
     async def test_updates_skips_plan_tasks(self):
         """plan_tasks and update_tasks tool calls are filtered before formatting."""
@@ -1066,7 +1064,7 @@ class TestExecuteGraphSilent:
             )
 
         mock_format.assert_not_awaited()
-        assert len(tool_data["tool_data"]) == 0
+        assert len(tool_data) == 0
 
     async def test_updates_deduplicates_tool_calls(self):
         """Same tool call ID across multiple agent updates is emitted once."""
@@ -1093,7 +1091,7 @@ class TestExecuteGraphSilent:
             )
 
         assert mock_format.await_count == 1  # the duplicate is not formatted again
-        assert len(tool_data["tool_data"]) == 1
+        assert len(tool_data) == 1
 
     async def test_a_handoff_preamble_is_never_persisted(self):
         """Text that turns out to accompany a tool call is narration, not a
@@ -1127,7 +1125,7 @@ class TestExecuteGraphSilent:
 
         assert msg == ""
         # ...and silencing the narration did not silence the tool card.
-        assert len(tool_data["tool_data"]) == 1
+        assert len(tool_data) == 1
 
     async def test_a_tool_free_reply_survives_its_boundary(self):
         """The other half of the same rule: a message that ends without a tool

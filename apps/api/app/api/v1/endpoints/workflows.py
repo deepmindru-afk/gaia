@@ -31,6 +31,7 @@ from app.models.workflow_models import (
     TriggerConfig,
     TriggerType,
     UpdateWorkflowRequest,
+    WorkflowCreator,
     WorkflowExecutionRequest,
     WorkflowExecutionResponse,
     WorkflowListResponse,
@@ -739,7 +740,7 @@ async def get_public_workflow(request: Request, workflow_ref: str) -> WorkflowRe
                 detail="Public workflow not found",
             )
 
-        creator = format_creator(workflow)
+        creator: WorkflowCreator = format_creator(workflow)
         await ensure_public_workflow_slug(workflow)
         # The row IS-A Workflow; creator_info is excluded from serialization, so
         # handing it straight back emits the plain Workflow shape plus `creator`.
@@ -750,7 +751,7 @@ async def get_public_workflow(request: Request, workflow_ref: str) -> WorkflowRe
                 "id": workflow.id,
                 "slug": workflow.slug,
                 "creator_id": workflow.created_by,
-                "creator_name": creator.get("name") if isinstance(creator, dict) else None,
+                "creator_name": creator["name"],
                 "step_count": len(workflow.steps) if workflow.steps else 0,
             }
         )

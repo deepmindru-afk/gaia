@@ -15,6 +15,7 @@ import pytest
 
 from app.constants.log_tags import LogTag
 from app.models.payment_models import PlanType
+from app.models.user_models import UserDocument
 from app.models.workflow_models import TriggerConfig, TriggerType
 
 MODULE = "app.services.system_workflows.provisioner"
@@ -678,7 +679,7 @@ class TestResetSystemWorkflowToDefault:
         existing.activated = False
         mock_repo.get_system_workflow_for_user = AsyncMock(return_value=existing)
         mock_repo.reset_system_workflow = AsyncMock()
-        mock_get_user.return_value = {"timezone": "Asia/Kolkata"}
+        mock_get_user.return_value = UserDocument(timezone="Asia/Kolkata")
         mock_scheduler.schedule_workflow_execution = AsyncMock(return_value=True)
 
         trigger_config = self._schedule_trigger_config()
@@ -699,7 +700,7 @@ class TestResetSystemWorkflowToDefault:
         trigger_config.update_next_run.assert_called_once_with(user_timezone="Asia/Kolkata")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("profile", [{}, {"timezone": "   "}])
+    @pytest.mark.parametrize("profile", [UserDocument(), UserDocument(timezone="   ")])
     @patch(f"{MODULE}.get_user_by_id")
     @patch(f"{MODULE}.workflow_scheduler")
     @patch(f"{MODULE}.workflow_repository")
@@ -710,7 +711,7 @@ class TestResetSystemWorkflowToDefault:
         mock_repo: MagicMock,
         mock_scheduler: MagicMock,
         mock_get_user: MagicMock,
-        profile: dict[str, str],
+        profile: UserDocument,
     ) -> None:
         """A profile with a blank/missing timezone falls back to exactly UTC."""
         existing = _existing_wf(key="sched_wf", composio_trigger_ids=None, trigger_name=None)
@@ -754,7 +755,7 @@ class TestResetSystemWorkflowToDefault:
         existing.activated = True
         mock_repo.get_system_workflow_for_user = AsyncMock(return_value=existing)
         mock_repo.reset_system_workflow = AsyncMock()
-        mock_get_user.return_value = {"timezone": "UTC"}
+        mock_get_user.return_value = UserDocument(timezone="UTC")
         mock_scheduler.schedule_workflow_execution = AsyncMock(return_value=True)
 
         trigger_config = self._schedule_trigger_config()
@@ -795,7 +796,7 @@ class TestResetSystemWorkflowToDefault:
         existing.activated = True
         mock_repo.get_system_workflow_for_user = AsyncMock(return_value=existing)
         mock_repo.reset_system_workflow = AsyncMock()
-        mock_get_user.return_value = {"timezone": "UTC"}
+        mock_get_user.return_value = UserDocument(timezone="UTC")
         mock_scheduler.schedule_workflow_execution = AsyncMock(return_value=False)
 
         trigger_config = self._schedule_trigger_config()
@@ -835,7 +836,7 @@ class TestResetSystemWorkflowToDefault:
         existing.activated = False
         mock_repo.get_system_workflow_for_user = AsyncMock(return_value=existing)
         mock_repo.reset_system_workflow = AsyncMock()
-        mock_get_user.return_value = {"timezone": "UTC"}
+        mock_get_user.return_value = UserDocument(timezone="UTC")
         mock_scheduler.schedule_workflow_execution = AsyncMock(return_value=True)
 
         trigger_config = self._schedule_trigger_config()

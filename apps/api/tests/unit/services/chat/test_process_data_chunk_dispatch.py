@@ -20,7 +20,9 @@ STREAM = "stream-77"
 
 def _acc() -> ChunkAccumulators:
     return ChunkAccumulators(
-        tool_data={"tool_data": []},
+        tool_entries=[],
+        subagent_starts={},
+        subagent_ends={},
         tool_outputs={},
         todo_progress={},
         follow_up_actions=["earlier chip"],
@@ -44,7 +46,11 @@ class TestSubagentLifecycleForwarding:
         ):
             result = await process_data_chunk(STREAM, _chunk(payload), acc, forward_subagents=True)
 
-        lifecycle.assert_awaited_once_with(STREAM, payload, acc.tool_data)
+        lifecycle.assert_awaited_once()
+        stream_id, frames, accumulators = lifecycle.await_args.args
+        assert stream_id == STREAM
+        assert frames.subagent_start == payload["subagent_start"]
+        assert accumulators is acc
         assert result == (["earlier chip"], True)
         # Already published as dedicated frames: the raw chunk must not go out twice.
         publish_chunk.assert_not_awaited()
@@ -86,7 +92,7 @@ class TestToolDataDispatch:
             result = await process_data_chunk(STREAM, _chunk(payload), acc)
 
         other.assert_awaited_once_with(STREAM, new_data, ["earlier chip"])
-        tool_data.assert_awaited_once_with(STREAM, new_data, acc.tool_data["tool_data"])
+        tool_data.assert_awaited_once_with(STREAM, new_data, acc.tool_entries)
         tool_output.assert_awaited_once_with(STREAM, new_data, acc.tool_outputs)
         assert result == (["Draft the reply", "Book the slot"], True)
         assert acc.follow_up_actions == ["Draft the reply", "Book the slot"]

@@ -10,6 +10,7 @@ from app.api.v1.dependencies.google_scope_dependencies import (
 )
 from app.constants.log_tags import LogTag
 from app.decorators import tiered_rate_limit
+from app.models.composio_schemas.gmail import GmailResourceId
 from app.models.mail_models import (
     ApplyLabelRequest,
     ArchiveEmailsResponse,
@@ -343,7 +344,7 @@ async def send_email_route(
         )
         # Gmail owns the schema of the Composio envelope's ``data``; this is the boundary read.
         return SendEmailWithAttachmentsResponse(
-            message_id=(sent_message.data or {}).get("id"),
+            message_id=GmailResourceId.model_validate(sent_message.data or {}).id,
             status="Email sent successfully",
             attachments_count=len(form.attachments) if form.attachments else 0,
         )
@@ -399,7 +400,7 @@ async def send_email_json(
             outcome="success",
         )
         return SendEmailResponse(
-            message_id=(sent_message.data or {}).get("id"),
+            message_id=GmailResourceId.model_validate(sent_message.data or {}).id,
             status="Email sent successfully",
         )
     except HTTPException:
@@ -568,7 +569,7 @@ async def trash_emails(
         )
         return TrashEmailsResponse(
             success=True,
-            trashed=[msg["id"] for msg in modified_messages],
+            trashed=[msg.id for msg in modified_messages],
             count=len(modified_messages),
             status="Messages moved to trash",
         )
@@ -602,7 +603,7 @@ async def untrash_emails(
         )
         return UntrashEmailsResponse(
             success=True,
-            restored=[msg["id"] for msg in modified_messages],
+            restored=[msg.id for msg in modified_messages],
             count=len(modified_messages),
             status="Messages restored from trash",
         )
@@ -915,7 +916,7 @@ async def create_draft_route(
             cc_list=request.cc,
             bcc_list=request.bcc,
         )
-        message_id = (draft.message or {}).get("id")
+        message_id = GmailResourceId.model_validate(draft.message or {}).id
 
         log.set(
             operation="create_draft",
@@ -1028,7 +1029,7 @@ async def update_draft_route(
         )
         return DraftMutationResponse(
             draft_id=updated_draft.id,
-            message_id=(updated_draft.message or {}).get("id"),
+            message_id=GmailResourceId.model_validate(updated_draft.message or {}).id,
             status="Draft updated successfully",
         )
     except Exception as e:

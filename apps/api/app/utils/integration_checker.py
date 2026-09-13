@@ -17,21 +17,12 @@ is a caller that will eventually forget.
 """
 
 from langgraph.config import get_config, get_stream_writer
-from pydantic import BaseModel, ConfigDict
 
 from app.config.settings import settings
 from app.db.repositories.user_integrations import user_integration_repository
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import read_agent_configurable
 from app.models.chat_models import SourceCategory
 from app.services.connect_link_service import build_connect_link_url
-
-
-class _RunSource(BaseModel):
-    """The run's generalized source category, read off its ``configurable``."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    source_category: str | None = None
 
 
 def _current_source_category() -> str | None:
@@ -44,7 +35,7 @@ def _current_source_category() -> str | None:
         config = get_config()
     except RuntimeError:
         return None
-    return _RunSource.model_validate(agent_configurable(config)).source_category
+    return read_agent_configurable(config).source_category
 
 
 async def request_integration_connection(

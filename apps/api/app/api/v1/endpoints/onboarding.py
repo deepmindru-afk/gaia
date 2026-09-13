@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from app.api.v1.dependencies.oauth_dependencies import (
     get_current_user,
     get_user_timezone,
 )
+from app.constants.integrations import GMAIL_INTEGRATION_ID
 from app.constants.log_tags import LogTag
 from app.constants.todos import ONBOARDING_TODO_LIMIT
 from app.core.websocket_manager import websocket_manager
@@ -58,6 +60,7 @@ from app.services.onboarding.writing_style_service import (
     save_generated_example,
     save_user_edited_summary,
 )
+from app.utils.user_preferences_utils import WritingStylePromptFields
 from shared.py.wide_events import log
 
 router = APIRouter()
@@ -68,25 +71,33 @@ _MEMBER_SINCE_FORMAT = "%b %d, %Y"
 _PERSONALIZED_PHASES = ("personalization_complete", "getting_started", "completed")
 
 
-def _normalize_example_blocks(raw: object) -> WritingStyleExampleBlocks | None:
+class PersistedSocialProfile(BaseModel):
+    """One ``users.onboarding.social_profiles`` entry as read back from a row.
+
+    Both keys default: rows written by older pipeline versions may lack either,
+    and a missing key degrades to an empty string rather than failing the read.
+    """
+
+    platform: str = ""
+    url: str = ""
+
+
+def _normalize_example_blocks(
+    example: WritingStyleExampleBlocks | str | None,
+) -> WritingStyleExampleBlocks | None:
     """Normalize a persisted writing-style example (blocks or legacy string).
 
     Returns None when there is nothing renderable — including a stored example
     whose paragraphs are all whitespace, which the reveal card already treats
     identically to a missing example (it regenerates from the summary either way).
     """
-    if isinstance(raw, dict):
-        body = [str(p) for p in raw.get("body", []) if str(p).strip()]
+    if isinstance(example, WritingStyleExampleBlocks):
+        body = [p for p in example.body if p.strip()]
         if not body:
             return None
-        return WritingStyleExampleBlocks(
-            greeting=str(raw.get("greeting", "")),
-            body=body,
-            signoff=str(raw.get("signoff", "")),
-            name=str(raw.get("name", "")),
-        )
-    if isinstance(raw, str) and raw.strip():
-        return WritingStyleExampleBlocks(greeting="", body=[raw.strip()], signoff="", name="")
+        return example.model_copy(update={"body": body})
+    if isinstance(example, str) and example.strip():
+        return WritingStyleExampleBlocks(greeting="", body=[example.strip()], signoff="", name="")
     return None
 
 
@@ -355,27 +366,28 @@ async def _resolve_display_bio(onboarding: OnboardingSubdocument, user_id: str) 
     if bio_status != BioStatus.PENDING:
         return onboarding.user_bio
 
-    connection_status = await get_composio_service().check_connection_status(["gmail"], user_id)
-    if connection_status.get("gmail", False):
+    connection_status = await get_composio_service().check_connection_status(
+        [GMAIL_INTEGRATION_ID], user_id
+    )
+    if connection_status.get(GMAIL_INTEGRATION_ID, False):
         return _BIO_PROCESSING_MESSAGE
     return "Setting up your profile..."
 
 
 def _build_writing_style(
-    raw_writing_style: dict[str, Any] | None,
+    raw_writing_style: Mapping[str, object] | None,
 ) -> PersonalizationWritingStyle | None:
     """Only surface writing_style if it has a usable summary; otherwise return
     None so the frontend skips the reveal."""
     if not raw_writing_style:
         return None
-    resolved_summary = (
-        raw_writing_style.get("user_edited_summary") or raw_writing_style.get("summary") or ""
-    ).strip()
+    style = WritingStylePromptFields.model_validate(raw_writing_style)
+    resolved_summary = (style.user_edited_summary or style.summary or "").strip()
     if not resolved_summary:
         return None
     return PersonalizationWritingStyle(
         style_summary=resolved_summary,
-        example=_normalize_example_blocks(raw_writing_style.get("example")),
+        example=_normalize_example_blocks(style.example),
     )
 
 
@@ -457,8 +469,8 @@ async def get_onboarding_personalization(
             first_message=onboarding.first_message,
             writing_style=_build_writing_style(onboarding.writing_style),
             social_profiles=[
-                SocialProfile(platform=p.get("platform", ""), url=p.get("url", ""))
-                for p in raw_social_profiles
+                SocialProfile(platform=stored.platform, url=stored.url)
+                for stored in map(PersistedSocialProfile.model_validate, raw_social_profiles)
             ]
             if raw_social_profiles
             else None,

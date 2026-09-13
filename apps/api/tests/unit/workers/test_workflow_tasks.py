@@ -383,7 +383,7 @@ class TestExecuteWorkflowById:
             conversation_id="conv_123",
             trace=[],
         )
-        rearm.assert_awaited_once_with(scheduler, workflow, context, workflow.id)
+        rearm.assert_awaited_once_with(scheduler, workflow, "manual", workflow.id)
 
     async def test_failure_path_records_and_rearms_with_the_exact_arguments(self, ctx):
         """A failed run must still close THIS execution row and arm the SAME
@@ -422,7 +422,7 @@ class TestExecuteWorkflowById:
         record_failure.assert_awaited_once_with(
             error, workflow, workflow.id, execution_id, record=None
         )
-        rearm.assert_awaited_once_with(scheduler, workflow, context, workflow.id)
+        rearm.assert_awaited_once_with(scheduler, workflow, "manual", workflow.id)
 
     async def test_scheduled_execution_captures_workflow_executed(self, ctx, _no_real_analytics):
         workflow = _make_workflow()
@@ -943,7 +943,7 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=SilentRunResult(message="Result text", tool_data={}),
+                return_value=SilentRunResult(message="Result text", tool_data=[]),
             ) as mock_call_agent,
         ):
             conversation_id, _trace = await execute_workflow_as_chat(
@@ -986,7 +986,7 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=SilentRunResult(message="Step 1 done. Step 2 done.", tool_data={}),
+                return_value=SilentRunResult(message="Step 1 done. Step 2 done.", tool_data=[]),
             ) as mock_call_agent,
         ):
             conversation_id, _trace = await execute_workflow_as_chat(
@@ -1018,7 +1018,7 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=SilentRunResult(message="Done", tool_data={}),
+                return_value=SilentRunResult(message="Done", tool_data=[]),
             ) as mock_call_agent,
         ):
             await execute_workflow_as_chat(
@@ -1090,7 +1090,7 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=SilentRunResult(message="Fallback result", tool_data={}),
+                return_value=SilentRunResult(message="Fallback result", tool_data=[]),
             ) as mock_call_agent,
         ):
             conversation_id, _trace = await execute_workflow_as_chat(
@@ -1128,7 +1128,7 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=SilentRunResult(message="Done", tool_data={}),
+                return_value=SilentRunResult(message="Done", tool_data=[]),
             ) as mock_call_agent,
         ):
             await execute_workflow_as_chat(
@@ -1167,7 +1167,7 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=SilentRunResult(message="None user result", tool_data={}),
+                return_value=SilentRunResult(message="None user result", tool_data=[]),
             ) as mock_call_agent,
         ):
             conversation_id, _trace = await execute_workflow_as_chat(
@@ -1200,7 +1200,7 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=SilentRunResult(message="OK", tool_data={}),
+                return_value=SilentRunResult(message="OK", tool_data=[]),
             ),
         ):
             await execute_workflow_as_chat(
@@ -1237,7 +1237,7 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=SilentRunResult(message="Done", tool_data={}),
+                return_value=SilentRunResult(message="Done", tool_data=[]),
             ),
         ):
             await execute_workflow_as_chat(
@@ -1249,18 +1249,16 @@ class TestExecuteWorkflowAsChat:
     async def test_it_returns_the_runs_tool_calls_as_the_trace(self):
         """The trace is what the next run reads instead of the checkpoints."""
         workflow = self._make_workflow()
-        tool_data = {
-            "tool_data": [
-                {
-                    "tool_name": "tool_calls_data",
-                    "data": {
-                        "tool_name": "GMAIL_FETCH",
-                        "inputs": {"query": "is:unread"},
-                        "output": "12 messages",
-                    },
-                }
-            ]
-        }
+        tool_data = [
+            {
+                "tool_name": "tool_calls_data",
+                "data": {
+                    "tool_name": "GMAIL_FETCH",
+                    "inputs": {"query": "is:unread"},
+                    "output": "12 messages",
+                },
+            }
+        ]
 
         with (
             patch(
@@ -2379,7 +2377,7 @@ class TestTheChatRunsTriggerTurnIsBuiltExactly:
             patch(f"{MODULE}.log", log_seam),
             patch(
                 "app.agents.core.agent.call_agent_silent",
-                AsyncMock(return_value=SilentRunResult(message="Result text", tool_data={})),
+                AsyncMock(return_value=SilentRunResult(message="Result text", tool_data=[])),
             ) as agent,
         ):
             await execute_workflow_as_chat(
@@ -2449,7 +2447,7 @@ class TestTheChatRunsTriggerTurnIsBuiltExactly:
             patch(f"{MODULE}.reset_workflow_threads", AsyncMock()),
             patch(
                 "app.agents.core.agent.call_agent_silent",
-                AsyncMock(return_value=SilentRunResult(message="Result text", tool_data={})),
+                AsyncMock(return_value=SilentRunResult(message="Result text", tool_data=[])),
             ) as agent,
         ):
             await execute_workflow_as_chat(
@@ -2561,18 +2559,16 @@ class TestAnExecutorThatDiedIsNotASuccessfulRun:
 
 
 #: One recorded executor call, in the shape the silent run hands back.
-_FETCH_TOOL_DATA = {
-    "tool_data": [
-        {
-            "tool_name": "tool_calls_data",
-            "data": {
-                "tool_name": "GMAIL_FETCH",
-                "inputs": {"query": "is:unread"},
-                "output": "12 messages",
-            },
-        }
-    ]
-}
+_FETCH_TOOL_DATA = [
+    {
+        "tool_name": "tool_calls_data",
+        "data": {
+            "tool_name": "GMAIL_FETCH",
+            "inputs": {"query": "is:unread"},
+            "output": "12 messages",
+        },
+    }
+]
 
 
 @pytest.mark.unit

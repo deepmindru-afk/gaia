@@ -24,7 +24,7 @@ MCP_BASE = "/api/v1/mcp"
 CALLBACK_URL = f"{MCP_BASE}/oauth/callback"
 _MODULE = "app.api.v1.endpoints.mcp"
 _CALLBACK = "app.services.mcp.oauth_callback"
-USER_ID = FAKE_USER["user_id"]
+USER_ID = FAKE_USER.user_id
 REDIRECT_URI = "http://api/api/v1/mcp/oauth/callback"
 
 

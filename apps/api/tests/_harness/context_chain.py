@@ -31,7 +31,7 @@ from app.agents.context.assemble import assemble_context
 from app.agents.context.section_context import SectionContext
 from app.agents.context.slots import PromptSlot, slot_of
 from app.agents.context.tiers import AgentTier
-from app.agents.core.messages import construct_langchain_messages
+from app.agents.core.messages import MessageScope, construct_langchain_messages
 from app.agents.core.nodes.pre_model_hooks import (
     comms_pre_model_hooks,
     worker_pre_model_hooks,
@@ -276,14 +276,16 @@ async def _seed_comms(
     )
     return await construct_langchain_messages(
         messages=history,
-        user_id=user.user_id,
-        user_name=user.name,
-        user_dict=user_dict,
         query=query,
-        conversation_id="conv-1",
-        source=configurable.get("conversation_source"),
-        active_todo_id=configurable.get("active_todo_id"),
-        execution_mode=configurable.get("execution_mode") or "interactive",
+        scope=MessageScope(
+            user_id=user.user_id,
+            user_name=user.name,
+            user_dict=user_dict,
+            conversation_id="conv-1",
+            source=configurable.get("conversation_source"),
+            active_todo_id=configurable.get("active_todo_id"),
+            execution_mode=configurable.get("execution_mode") or "interactive",
+        ),
     )
 
 

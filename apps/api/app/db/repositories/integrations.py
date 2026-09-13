@@ -24,8 +24,9 @@ from app.models.integration_models import (
 from app.models.oauth_models import IntegrationContent
 
 # Community browse sort options → Mongo sort spec. "popular" is the default.
+_POPULAR_COMMUNITY_SORT: list[tuple[str, int]] = [("clone_count", -1), ("published_at", -1)]
 _COMMUNITY_SORT: dict[str, list[tuple[str, int]]] = {
-    "popular": [("clone_count", -1), ("published_at", -1)],
+    "popular": _POPULAR_COMMUNITY_SORT,
     "recent": [("published_at", -1)],
     "name": [("name", 1)],
 }
@@ -284,7 +285,7 @@ class IntegrationsRepository(MongoRepository[Integration, IntegrationUpdate]):
         self, sort: str, category: str, *, offset: int, limit: int
     ) -> list[IntegrationWithCreator]:
         """Browse published integrations by the given sort (popular/recent/name)."""
-        sort_spec = _COMMUNITY_SORT.get(sort, _COMMUNITY_SORT["popular"])
+        sort_spec = _COMMUNITY_SORT.get(sort, _POPULAR_COMMUNITY_SORT)
         return await self._aggregate(
             [
                 {"$match": self._community_browse_filter(category)},

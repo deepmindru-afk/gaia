@@ -6,10 +6,9 @@ from typing import TypedDict
 
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.types import StreamWriter
-from pydantic import BaseModel, ConfigDict
 
 from app.constants.log_tags import LogTag
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import read_agent_configurable
 from app.models.workflow_models import (
     CreateWorkflowRequest,
     TriggerConfig,
@@ -23,21 +22,6 @@ from shared.py.wide_events import log
 
 class WorkflowConfigError(Exception):
     pass
-
-
-class _RunConfigurableIds(BaseModel):
-    """The ids the workflow tools read off a run's ``AgentConfigurable``, parsed once."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    user_id: str | None = None
-    workflow_id: str | None = None
-    stream_id: str | None = None
-    thread_id: str | None = None
-
-
-def _configurable_ids(config: RunnableConfig) -> _RunConfigurableIds:
-    return _RunConfigurableIds.model_validate(agent_configurable(config))
 
 
 class WorkflowCreatedTriggerConfig(TypedDict):
@@ -169,7 +153,7 @@ async def filter_existing_integration_ids(integration_ids: list[str] | None) -> 
 
 def get_user_id(config: RunnableConfig) -> str:
     """Extract user_id from config. Raises error if missing."""
-    user_id = _configurable_ids(config).user_id
+    user_id = read_agent_configurable(config).user_id
     if not user_id:
         raise WorkflowConfigError("User authentication required")
     return user_id
@@ -177,7 +161,7 @@ def get_user_id(config: RunnableConfig) -> str:
 
 def get_workflow_id(config: RunnableConfig) -> str:
     """Extract workflow_id from config. Raises error if missing."""
-    workflow_id = _configurable_ids(config).workflow_id
+    workflow_id = read_agent_configurable(config).workflow_id
     if not workflow_id:
         raise WorkflowConfigError(
             "No workflow in this run's config: this tool only works inside a workflow run."
@@ -187,7 +171,7 @@ def get_workflow_id(config: RunnableConfig) -> str:
 
 def get_stream_id(config: RunnableConfig) -> str:
     """The run this tool call belongs to. Raises when the config carries none."""
-    stream_id = _configurable_ids(config).stream_id
+    stream_id = read_agent_configurable(config).stream_id
     if not stream_id:
         raise WorkflowConfigError(
             "No stream id in this run's config: cannot tell which run this is."
@@ -197,7 +181,7 @@ def get_stream_id(config: RunnableConfig) -> str:
 
 def get_thread_id(config: RunnableConfig) -> str | None:
     """Extract thread_id from config."""
-    return _configurable_ids(config).thread_id
+    return read_agent_configurable(config).thread_id
 
 
 def can_create_directly(draft: FinalizedOutput) -> bool:

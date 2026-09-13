@@ -220,7 +220,7 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
     # delivers it on the outbound queue, so the bot has nothing to send.
     user = await get_user_by_id(payload.user_id)
     bubbles = await build_first_contact(
-        payload.user_id, body.platform, (user or {}).get("name"), payload.preferences
+        payload.user_id, body.platform, user.name if user else None, payload.preferences
     )
     completion = await complete_platform_link(
         payload.user_id,

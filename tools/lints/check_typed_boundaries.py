@@ -67,6 +67,11 @@ BOUNDARY_MODULES: dict[str, str] = {
 PROTOCOL_MAPS = ("os.environ",)
 PROTOCOL_MAP_ATTRIBUTES = ("headers", "query_params", "path_params", "cookies")
 
+# A key read on a TypedDict is a declared shape, not a guess: mypy checks the key
+# (apps/api/CLAUDE.md, Type Safety item 6). Repo TypedDicts are discovered from
+# ``class X(TypedDict)``; these come from libraries and cannot be discovered.
+EXTERNAL_TYPEDDICTS = ("ToolCall", "RunnableConfig")
+
 _BASELINE_HEADER = """\
 # typed-boundaries grandfather baseline.
 # See tools/lints/check_typed_boundaries.py -- this is a TOUCH-TO-FIX ratchet,
@@ -155,25 +160,104 @@ def _is_string_key_load(node: ast.AST) -> bool:
     )
 
 
-def _string_key_reads(tree: ast.AST) -> list[int]:
+def _decorator_ids(tree: ast.AST) -> set[int]:
+    """``@router.get("/path")`` is a route registration, not a read."""
+    return {
+        id(decorator)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+        for decorator in node.decorator_list
+    }
+
+
+def typeddict_names(trees: list[ast.AST]) -> set[str]:
+    """Every TypedDict class name in ``trees``, subclasses included, plus the external ones."""
+    classes = [node for tree in trees for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    names = {"TypedDict", *EXTERNAL_TYPEDDICTS}
+    grew = True
+    while grew:
+        found = {
+            node.name
+            for node in classes
+            if node.name not in names and any(_base_name(base) in names for base in node.bases)
+        }
+        names |= found
+        grew = bool(found)
+    return names - {"TypedDict"}
+
+
+def _base_name(base: ast.expr) -> str:
+    if isinstance(base, ast.Name):
+        return base.id
+    if isinstance(base, ast.Attribute):
+        return base.attr
+    return ""
+
+
+def _names_typeddict(annotation: ast.expr, typeddicts: set[str]) -> bool:
+    return any(_base_name(node) in typeddicts for node in ast.walk(annotation))
+
+
+def _typeddict_bound_names(scope: ast.AST, typeddicts: set[str]) -> set[str]:
+    """Names annotated with a TypedDict inside ``scope`` (parameters and annotated assignments)."""
+    bound: set[str] = set()
+    for node in ast.walk(scope):
+        if isinstance(node, ast.arg) and node.annotation is not None:
+            if _names_typeddict(node.annotation, typeddicts):
+                bound.add(node.arg)
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and _names_typeddict(node.annotation, typeddicts)
+        ):
+            bound.add(node.target.id)
+    return bound
+
+
+def _receiver(node: ast.AST) -> ast.expr | None:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return node.func.value
+    if isinstance(node, ast.Subscript):
+        return node.value
+    return None
+
+
+def _string_key_reads(tree: ast.AST, typeddicts: set[str]) -> list[int]:
+    decorators = _decorator_ids(tree)
+    scopes = [
+        tree,
+        *(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)),
+    ]
+    typed_receivers: set[int] = set()
+    for scope in scopes:
+        bound = _typeddict_bound_names(scope, typeddicts)
+        for node in ast.walk(scope):
+            receiver = _receiver(node)
+            if isinstance(receiver, ast.Name) and receiver.id in bound:
+                typed_receivers.add(id(node))
     return [
         node.lineno
         for node in ast.walk(tree)
-        if _is_string_key_get(node) or _is_string_key_load(node)
+        if id(node) not in typed_receivers
+        and ((_is_string_key_get(node) and id(node) not in decorators) or _is_string_key_load(node))
     ]
 
 
 def scan(files: list[Path]) -> dict[tuple[str, str], list[int]]:
     """Every violating line per (file, rule), for the files given."""
     out: dict[tuple[str, str], list[int]] = {}
+    parsed = {
+        path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path)) for path in files
+    }
+    typeddicts = typeddict_names(list(parsed.values()))
     for path in files:
         relative = path.resolve().relative_to(REPO_ROOT).as_posix()
         if any(relative == entry or relative.startswith(entry) for entry in BOUNDARY_MODULES):
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parsed[path]
         for rule, lines in (
             (LOOSE_ANNOTATION, _loose_annotations(tree)),
-            (STRING_KEY_READ, _string_key_reads(tree)),
+            (STRING_KEY_READ, _string_key_reads(tree, typeddicts)),
         ):
             if lines:
                 out[(relative, rule)] = sorted(lines)

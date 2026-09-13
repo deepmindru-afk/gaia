@@ -14,7 +14,7 @@ orchestration — they patch ``create_system_message`` and ``assemble_context``
 and verify the assembled message list.
 """
 
-from typing import Any
+from typing import Any, NamedTuple
 from unittest.mock import AsyncMock, patch
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -23,7 +23,11 @@ import pytest
 from app.agents.context.assemble import AssembledContext
 from app.agents.context.slots import ONBOARDING_MARKER
 from app.agents.context.tiers import AgentTier
-from app.agents.core.messages import construct_langchain_messages
+from app.agents.core.messages import (
+    MessageAttachments,
+    MessageScope,
+    construct_langchain_messages,
+)
 from app.models.message_models import (
     FileData,
     ReplyToMessageData,
@@ -39,47 +43,53 @@ DYNAMIC_MSG = SystemMessage(
 )
 
 
-def _patches(
-    system_msg: SystemMessage = SYSTEM_MSG,
-    dynamic_msg: SystemMessage = DYNAMIC_MSG,
-    memory_recall_msg: SystemMessage | None = None,
-    workflow_msg: str = "Workflow exec",
-    calendar_msg: str = "Calendar context",
-    tool_msg: str = "Tool selection",
-    reply_msg: str = "Reply context\n\noriginal",
-    files_str: str = "",
-) -> dict[str, Any]:
+class _Returns(NamedTuple):
+    """What each patched helper returns; override only what a test asserts on."""
+
+    system_msg: SystemMessage = SYSTEM_MSG
+    dynamic_msg: SystemMessage = DYNAMIC_MSG
+    memory_recall_msg: SystemMessage | None = None
+    workflow_msg: str = "Workflow exec"
+    calendar_msg: str = "Calendar context"
+    tool_msg: str = "Tool selection"
+    reply_msg: str = "Reply context\n\noriginal"
+    files_str: str = ""
+
+
+def _patches(returns: _Returns = _Returns()) -> dict[str, Any]:
     """Bundle context-manager patches for the helpers `construct_langchain_messages` calls."""
     return {
         "create_system": patch(
             "app.agents.core.messages.create_system_message",
-            return_value=system_msg,
+            return_value=returns.system_msg,
         ),
         "build_dynamic": patch(
             "app.agents.core.messages.assemble_context",
             new_callable=AsyncMock,
-            return_value=AssembledContext(stable=dynamic_msg, volatile=memory_recall_msg),
+            return_value=AssembledContext(
+                stable=returns.dynamic_msg, volatile=returns.memory_recall_msg
+            ),
         ),
         "format_workflow": patch(
             "app.agents.core.messages.format_workflow_execution_message",
             new_callable=AsyncMock,
-            return_value=workflow_msg,
+            return_value=returns.workflow_msg,
         ),
         "format_calendar": patch(
             "app.agents.core.messages.format_calendar_event_context",
-            return_value=calendar_msg,
+            return_value=returns.calendar_msg,
         ),
         "format_tool": patch(
             "app.agents.core.messages.format_tool_selection_message",
-            return_value=tool_msg,
+            return_value=returns.tool_msg,
         ),
         "format_reply": patch(
             "app.agents.core.messages.format_reply_context",
-            return_value=reply_msg,
+            return_value=returns.reply_msg,
         ),
         "format_files": patch(
             "app.agents.core.messages.format_files_list",
-            return_value=files_str,
+            return_value=returns.files_str,
         ),
     }
 
@@ -122,7 +132,7 @@ class TestConstructLangchainMessages:
         recall = SystemMessage(
             content="Recalled memories", additional_kwargs={"memory_recall": True}
         )
-        p = _patches(memory_recall_msg=recall)
+        p = _patches(_Returns(memory_recall_msg=recall))
         with p["create_system"], p["build_dynamic"], p["format_files"]:
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "Hi there"}],
@@ -141,8 +151,7 @@ class TestConstructLangchainMessages:
         with p["create_system"] as mock_sys, p["build_dynamic"], p["format_files"]:
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "Hello"}],
-                agent_type="executor",
-                source="web",
+                scope=MessageScope(agent_type="executor", source="web"),
             )
         mock_sys.assert_called_once()
         kwargs = mock_sys.call_args.kwargs
@@ -162,12 +171,14 @@ class TestConstructLangchainMessages:
         with p["create_system"], p["build_dynamic"] as mock_dyn, p["format_files"]:
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_id="uid-1",
-                user_name="Alice",
-                user_dict=user_dict,
                 query="hi",
-                agent_type="comms",
-                source="whatsapp",
+                scope=MessageScope(
+                    user_id="uid-1",
+                    user_name="Alice",
+                    user_dict=user_dict,
+                    agent_type="comms",
+                    source="whatsapp",
+                ),
             )
 
         ctx = mock_dyn.call_args.args[0]
@@ -197,13 +208,15 @@ class TestConstructLangchainMessages:
         with p["create_system"], p["build_dynamic"] as mock_dyn, p["format_files"]:
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_id="uid-1",
-                user_name="Alice",
-                user_dict=user_dict,
                 query="hi",
-                active_todo_id="todo-7",
-                execution_mode="background",
-                source="slack",
+                scope=MessageScope(
+                    user_id="uid-1",
+                    user_name="Alice",
+                    user_dict=user_dict,
+                    active_todo_id="todo-7",
+                    execution_mode="background",
+                    source="slack",
+                ),
             )
 
         ctx = mock_dyn.call_args.args[0]
@@ -218,8 +231,7 @@ class TestConstructLangchainMessages:
         with p["create_system"], p["build_dynamic"] as mock_dyn, p["format_files"]:
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_id="uid-1",
-                user_dict=AuthenticatedUser(user_id="uid-1"),
+                scope=MessageScope(user_id="uid-1", user_dict=AuthenticatedUser(user_id="uid-1")),
             )
 
         ctx = mock_dyn.call_args.args[0]
@@ -232,7 +244,8 @@ class TestConstructLangchainMessages:
         p = _patches()
         with p["create_system"], p["build_dynamic"] as mock_dyn, p["format_files"]:
             await construct_langchain_messages(
-                messages=[{"role": "user", "content": "hi"}], user_dict=None
+                messages=[{"role": "user", "content": "hi"}],
+                scope=MessageScope(user_dict=None),
             )
 
         ctx = mock_dyn.call_args.args[0]
@@ -250,8 +263,7 @@ class TestConstructLangchainMessages:
         with p["create_system"] as mock_sys, p["build_dynamic"], p["format_files"]:
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                agent_type="comms",
-                source="telegram",
+                scope=MessageScope(agent_type="comms", source="telegram"),
             )
         assert mock_sys.call_args.kwargs["source"] == "telegram"
 
@@ -267,7 +279,7 @@ class TestContentPriority:
             description="desc",
             steps=[{"title": "s1", "category": "c1", "description": "d1"}],
         )
-        p = _patches(workflow_msg="WORKFLOW OUTPUT")
+        p = _patches(_Returns(workflow_msg="WORKFLOW OUTPUT"))
         with (
             p["create_system"],
             p["build_dynamic"],
@@ -278,8 +290,8 @@ class TestContentPriority:
         ):
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "run it"}],
-                selected_workflow=workflow,
-                user_id="uid",
+                scope=MessageScope(user_id="uid"),
+                attachments=MessageAttachments(selected_workflow=workflow),
             )
 
         mock_wf.assert_awaited_once()
@@ -295,7 +307,7 @@ class TestContentPriority:
             start={"dateTime": "2025-01-01T10:00:00Z"},
             end={"dateTime": "2025-01-01T11:00:00Z"},
         )
-        p = _patches(calendar_msg="CALENDAR OUTPUT")
+        p = _patches(_Returns(calendar_msg="CALENDAR OUTPUT"))
         with (
             p["create_system"],
             p["build_dynamic"],
@@ -305,7 +317,7 @@ class TestContentPriority:
         ):
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "what about this"}],
-                selected_calendar_event=cal_event,
+                attachments=MessageAttachments(selected_calendar_event=cal_event),
             )
 
         mock_cal.assert_called_once()
@@ -313,7 +325,7 @@ class TestContentPriority:
 
     @pytest.mark.asyncio
     async def test_tool_selection_when_no_workflow_or_calendar(self) -> None:
-        p = _patches(tool_msg="TOOL OUTPUT")
+        p = _patches(_Returns(tool_msg="TOOL OUTPUT"))
         with (
             p["create_system"],
             p["build_dynamic"],
@@ -322,7 +334,7 @@ class TestContentPriority:
         ):
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "use this tool"}],
-                selected_tool="web_search",
+                attachments=MessageAttachments(selected_tool="web_search"),
             )
 
         mock_tool.assert_called_once()
@@ -330,7 +342,7 @@ class TestContentPriority:
 
     @pytest.mark.asyncio
     async def test_tool_category_passed(self) -> None:
-        p = _patches(tool_msg="TOOL OUTPUT")
+        p = _patches(_Returns(tool_msg="TOOL OUTPUT"))
         with (
             p["create_system"],
             p["build_dynamic"],
@@ -339,8 +351,7 @@ class TestContentPriority:
         ):
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "search"}],
-                selected_tool="web_search",
-                tool_category="search",
+                attachments=MessageAttachments(selected_tool="web_search", tool_category="search"),
             )
 
         args = mock_tool.call_args[0]
@@ -391,7 +402,7 @@ class TestReplyContext:
     @pytest.mark.asyncio
     async def test_reply_context_added(self) -> None:
         reply = ReplyToMessageData(id="msg-1", content="original msg", role="user")
-        p = _patches(reply_msg="[reply context]\n\nuser content")
+        p = _patches(_Returns(reply_msg="[reply context]\n\nuser content"))
         with (
             p["create_system"],
             p["build_dynamic"],
@@ -400,7 +411,7 @@ class TestReplyContext:
         ):
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "user content"}],
-                reply_to_message=reply,
+                attachments=MessageAttachments(reply_to_message=reply),
             )
 
         mock_reply.assert_called_once_with(reply, "user content")
@@ -428,7 +439,7 @@ class TestFileContext:
         files_data = [
             FileData(fileId="f1", url="https://example.com/f1", filename="test.txt"),
         ]
-        p = _patches(files_str="Uploaded Files:\n- Name: test.txt Id: f1")
+        p = _patches(_Returns(files_str="Uploaded Files:\n- Name: test.txt Id: f1"))
         with (
             p["create_system"],
             p["build_dynamic"],
@@ -436,8 +447,9 @@ class TestFileContext:
         ):
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "check this"}],
-                files_data=files_data,
-                currently_uploaded_file_ids=["f1"],
+                attachments=MessageAttachments(
+                    files_data=files_data, currently_uploaded_file_ids=["f1"]
+                ),
             )
 
         # Comms suppresses the processing guide — that lane can't act on files.
@@ -455,7 +467,7 @@ class TestFileContext:
         ):
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hello"}],
-                currently_uploaded_file_ids=[],
+                attachments=MessageAttachments(currently_uploaded_file_ids=[]),
             )
 
         mock_files.assert_not_called()
@@ -463,7 +475,7 @@ class TestFileContext:
 
     @pytest.mark.asyncio
     async def test_files_empty_string_not_appended(self) -> None:
-        p = _patches(files_str="")
+        p = _patches(_Returns(files_str=""))
         with (
             p["create_system"],
             p["build_dynamic"],
@@ -471,7 +483,7 @@ class TestFileContext:
         ):
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hello"}],
-                currently_uploaded_file_ids=["f1"],
+                attachments=MessageAttachments(currently_uploaded_file_ids=["f1"]),
             )
 
         assert result[-2].content == "hello"
@@ -486,7 +498,7 @@ class TestFileContext:
         ):
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hello"}],
-                currently_uploaded_file_ids=None,
+                attachments=MessageAttachments(currently_uploaded_file_ids=None),
             )
 
         mock_files.assert_not_called()
@@ -511,9 +523,8 @@ class TestTriggerContext:
         ):
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "run"}],
-                selected_workflow=workflow,
-                trigger_context=trigger,
-                user_id="uid",
+                scope=MessageScope(user_id="uid"),
+                attachments=MessageAttachments(selected_workflow=workflow, trigger_context=trigger),
             )
 
         call_args = mock_wf.call_args
@@ -546,8 +557,7 @@ class TestTheOnboardingProbeSeesTheUsersActualMessage:
                     {"role": "assistant", "content": "an earlier answer"},
                     {"role": "user", "content": "  what can you do?  "},
                 ],
-                user_id="uid-1",
-                conversation_id="conv-1",
+                scope=MessageScope(user_id="uid-1", conversation_id="conv-1"),
             )
 
         probe.assert_awaited_once_with("uid-1", "conv-1", latest_user_message="what can you do?")
@@ -573,9 +583,8 @@ class TestTheOnboardingProbeSeesTheUsersActualMessage:
                     {"role": "user", "content": "hello"},
                     {"role": "assistant", "content": "hi there"},
                 ],
-                user_id="uid-1",
-                conversation_id="conv-1",
-                selected_tool="gmail",
+                scope=MessageScope(user_id="uid-1", conversation_id="conv-1"),
+                attachments=MessageAttachments(selected_tool="gmail"),
             )
 
         probe.assert_awaited_once_with("uid-1", "conv-1", latest_user_message="")
@@ -591,7 +600,9 @@ class TestTheOnboardingProbeSeesTheUsersActualMessage:
             self._probe() as probe,
         ):
             await construct_langchain_messages(
-                messages=[], user_id="uid-1", conversation_id="conv-1", selected_tool="gmail"
+                messages=[],
+                scope=MessageScope(user_id="uid-1", conversation_id="conv-1"),
+                attachments=MessageAttachments(selected_tool="gmail"),
             )
 
         probe.assert_awaited_once_with("uid-1", "conv-1", latest_user_message="")
@@ -604,7 +615,10 @@ class TestTheOnboardingProbeSeesTheUsersActualMessage:
         p = _patches()
         with p["create_system"], p["build_dynamic"], p["format_files"]:
             with pytest.raises(ValueError, match="No human message or selected tool"):
-                await construct_langchain_messages(messages=[], user_id="uid-1")
+                await construct_langchain_messages(
+                    messages=[],
+                    scope=MessageScope(user_id="uid-1"),
+                )
 
     @pytest.mark.asyncio
     async def test_a_turn_outside_a_conversation_is_never_probed(self) -> None:
@@ -613,7 +627,8 @@ class TestTheOnboardingProbeSeesTheUsersActualMessage:
         p = _patches()
         with p["create_system"], p["build_dynamic"], p["format_files"], self._probe() as probe:
             await construct_langchain_messages(
-                messages=[{"role": "user", "content": "hi"}], user_id="uid-1"
+                messages=[{"role": "user", "content": "hi"}],
+                scope=MessageScope(user_id="uid-1"),
             )
 
         probe.assert_not_awaited()
@@ -644,8 +659,7 @@ class TestAnOnboardingTurnKeepsBothItsPromptAndTheUsersIdentity:
         with p["create_system"], p["build_dynamic"], p["format_files"], self._probe():
             return await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_id="uid-1",
-                conversation_id="conv-1",
+                scope=MessageScope(user_id="uid-1", conversation_id="conv-1"),
             )
 
     @pytest.mark.asyncio
@@ -694,8 +708,7 @@ class TestAnOnboardingTurnKeepsBothItsPromptAndTheUsersIdentity:
         ):
             result = await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_id="uid-1",
-                conversation_id="conv-1",
+                scope=MessageScope(user_id="uid-1", conversation_id="conv-1"),
             )
 
         assert not [m for m in result if m.additional_kwargs.get(ONBOARDING_MARKER)]
@@ -718,7 +731,9 @@ class TestTheClockIsRenderedInTheUsersTimezone:
         ):
             await construct_langchain_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                user_dict=AuthenticatedUser(user_id="", timezone="Asia/Kolkata"),
+                scope=MessageScope(
+                    user_dict=AuthenticatedUser(user_id="", timezone="Asia/Kolkata")
+                ),
             )
 
         clock.assert_called_once_with(user_timezone="Asia/Kolkata")

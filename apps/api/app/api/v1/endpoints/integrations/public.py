@@ -3,6 +3,7 @@
 import contextlib
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import TypeAdapter
 
 from app.api.v1.dependencies.oauth_dependencies import get_user_id
 from app.config.oauth_config import OAUTH_INTEGRATIONS
@@ -16,6 +17,7 @@ from app.helpers.integration_helpers import (
     parse_integration_slug,
 )
 from app.helpers.slug_helpers import generate_integration_slug
+from app.models.integration_models import PublicIntegrationSearchHit, StoredIntegrationTool
 from app.models.workflow_models import (
     PublicWorkflowCard,
     PublicWorkflowsResponse,
@@ -42,6 +44,11 @@ from shared.py.wide_events import log
 
 router = APIRouter()
 
+# The stored-tool and search-hit services hand back plain dicts; the route
+# validates them into their models once, where they enter the handler.
+_STORED_TOOLS = TypeAdapter(list[StoredIntegrationTool])
+_SEARCH_HITS = TypeAdapter(list[PublicIntegrationSearchHit])
+
 
 @router.get("/public/{identifier}", response_model=PublicIntegrationDetailResponse)
 async def get_public_integration(
@@ -64,10 +71,9 @@ async def get_public_integration(
             elif native.managed_by in ("self", "composio"):
                 auth_type = "oauth"
 
-            stored_tools = await get_integration_tools(native.id)
+            stored_tools = _STORED_TOOLS.validate_python(await get_integration_tools(native.id))
             integration_tools = [
-                IntegrationTool(name=t["name"], description=t.get("description"))
-                for t in stored_tools
+                IntegrationTool(name=t.name, description=t.description) for t in stored_tools
             ]
 
             log.set(integration_name=native.name)
@@ -236,13 +242,15 @@ async def search_integrations(q: str) -> SearchIntegrationsResponse:
             log.set(outcome="success")
             return SearchIntegrationsResponse(integrations=[], query=q)
 
-        results = await search_public_integrations(query=q.strip(), limit=20)
+        results = _SEARCH_HITS.validate_python(
+            await search_public_integrations(query=q.strip(), limit=20)
+        )
         if not results:
             log.set(result_count=0)
             log.set(outcome="success")
             return SearchIntegrationsResponse(integrations=[], query=q)
 
-        relevance_map = {r["integration_id"]: r["relevance_score"] for r in results}
+        relevance_map = {r.integration_id: r.relevance_score for r in results}
         integration_ids = list(relevance_map.keys())
 
         integrations = await integration_repository.find_public_by_ids(integration_ids)

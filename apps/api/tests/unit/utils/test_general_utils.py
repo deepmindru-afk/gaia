@@ -368,7 +368,7 @@ class TestTransformGmailMessage:
             "body": "<p>Body</p>",
             "labelIds": ["INBOX", "UNREAD"],
         }
-        result = transform_gmail_message(msg)
+        result = transform_gmail_message(msg).model_dump(by_alias=True)
         assert result == {
             **msg,
             "id": "msg-9",
@@ -401,7 +401,7 @@ class TestTransformGmailMessage:
             "body": None,
             "labelIds": None,
         }
-        result = transform_gmail_message(msg)
+        result = transform_gmail_message(msg).model_dump(by_alias=True)
         assert result == {
             **msg,
             "id": "",
@@ -437,7 +437,7 @@ class TestTransformGmailMessage:
                 "body": {"data": base64.urlsafe_b64encode(b"Body").decode()},
             },
         }
-        result = transform_gmail_message(msg)
+        result = transform_gmail_message(msg).model_dump(by_alias=True)
         assert result == {
             **msg,
             "id": "gm-1",
@@ -472,7 +472,7 @@ class TestTransformGmailMessage:
                 "body": {"data": None},
             },
         }
-        result = transform_gmail_message(msg)
+        result = transform_gmail_message(msg).model_dump(by_alias=True)
         assert result == {
             **msg,
             "id": "",

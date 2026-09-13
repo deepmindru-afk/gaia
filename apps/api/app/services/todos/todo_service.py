@@ -34,6 +34,7 @@ from app.services.triggers.subscription_service import teardown_subscriptions
 from app.services.user_todos_fs import schedule_user_todos_sync
 from app.utils.canvas_vector_utils import delete_canvas_embedding
 from app.utils.todo_vector_utils import (
+    TodoSearchFilters,
     delete_todo_embedding,
     hybrid_search_todos as vector_hybrid_search,
     semantic_search_todos as vector_search,
@@ -491,14 +492,17 @@ class TodoService:
                 ),
             )
 
+        filters = TodoSearchFilters(
+            completed=params.completed,
+            priority=params.priority.value if params.priority else None,
+            project_id=params.project_id,
+        )
         if params.mode == SearchMode.SEMANTIC:
             results = await vector_search(
                 query=params.q,
                 user_id=user_id,
                 top_k=params.per_page * params.page,
-                completed=params.completed,
-                priority=params.priority.value if params.priority else None,
-                project_id=params.project_id,
+                filters=filters,
                 include_traditional_search=False,
             )
         else:  # HYBRID
@@ -507,9 +511,7 @@ class TodoService:
                 user_id=user_id,
                 top_k=params.per_page * params.page,
                 semantic_weight=0.7,
-                completed=params.completed,
-                priority=params.priority.value if params.priority else None,
-                project_id=params.project_id,
+                filters=filters,
             )
 
         total = len(results)

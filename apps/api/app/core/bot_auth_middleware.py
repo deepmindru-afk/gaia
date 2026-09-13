@@ -15,6 +15,7 @@ import secrets
 
 from fastapi import Request, Response
 from jose import JWTError
+from pydantic import BaseModel, ConfigDict
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -26,6 +27,19 @@ from app.models.user_models import AuthenticatedUser
 from app.services.bot_token_service import verify_bot_session_token
 from app.utils.auth_utils import resolve_bot_user
 from shared.py.wide_events import log
+
+
+class BotSessionClaims(BaseModel):
+    """The identity claims ``verify_bot_session_token`` decodes from a bot JWT.
+
+    Each is optional: a token missing any of them authenticates nobody.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    user_id: str | None = None
+    platform: str | None = None
+    platform_user_id: str | None = None
 
 
 class BotAuthMiddleware(BaseHTTPMiddleware):
@@ -158,11 +172,10 @@ class BotAuthMiddleware(BaseHTTPMiddleware):
     async def _authenticate_jwt(self, token: str) -> AuthenticatedUser | None:
         """Authenticate via JWT session token with caching."""
         try:
-            payload = verify_bot_session_token(token)
-
-            user_id = payload.get("user_id")
-            platform = payload.get("platform")
-            platform_user_id = payload.get("platform_user_id")
+            claims = BotSessionClaims.model_validate(verify_bot_session_token(token))
+            user_id = claims.user_id
+            platform = claims.platform
+            platform_user_id = claims.platform_user_id
 
             if not user_id or not platform or not platform_user_id:
                 return None

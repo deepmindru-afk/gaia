@@ -62,8 +62,8 @@ async def create_support_ticket(
         if not user:
             return "User not found. Please ensure you are logged in."
 
-        user_email = user.get("email")
-        user_name = user.get("name", "User")
+        user_email = user.email
+        user_name = user.name if user.name is not None else "User"
 
         if not user_email:
             return "User email is required to create a support ticket."

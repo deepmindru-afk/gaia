@@ -7,7 +7,10 @@ from typing import Any, Literal, TypedDict, cast
 from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_config
+from langgraph.constants import CONF
+from pydantic import BaseModel, ConfigDict
 
+from app.models.chat_models import ToolDataEntry
 from app.models.user_models import AuthenticatedUser
 
 #: One entry of an agent's middleware stack.
@@ -239,7 +242,57 @@ def agent_configurable(config: RunnableConfig | None) -> AgentConfigurable:
     sites that mutate a live bag index ``config["configurable"]`` directly and
     keep today's ``KeyError`` when it is absent.
     """
-    return cast(AgentConfigurable, (config or {}).get("configurable") or {})
+    return cast(AgentConfigurable, (config or {}).get(CONF) or {})
+
+
+class AgentConfigurableView(BaseModel):
+    """The GAIA-owned keys of a ``configurable``, parsed once for attribute reads.
+
+    :class:`AgentConfigurable` describes the live bag LangGraph owns; this is
+    how a consumer READS it, instead of guessing at string keys. Every field is
+    optional because the bag may be partial (see ``AgentConfigurable``); the two
+    workflow defaults match what ``build_agent_config`` writes for a workflow
+    run. ``model_fields_set`` still tells an absent key from one carried as
+    ``None`` where that matters (``session_id`` inheritance).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    thread_id: str | None = None
+    conversation_id: str | None = None
+    session_id: str | None = None
+    user_id: str | None = None
+    email: str | None = None
+    user_name: str | None = None
+    user_timezone: str | None = None
+    user_messages: list[str] | None = None
+    user_request: str | None = None
+    user_preferences: dict[str, object] | None = None
+    writing_style: dict[str, object] | None = None
+    root_request_id: str | None = None
+    lane: dict[str, object] | None = None
+    #: LangChain's binding key — logged, never used to pick a model (read ``lane``).
+    model: str | None = None
+    selected_tool: str | None = None
+    tool_category: str | None = None
+    subagent_id: str | None = None
+    vfs_session_id: str | None = None
+    stream_id: str | None = None
+    active_todo_id: str | None = None
+    execution_mode: ExecutionMode | None = None
+    conversation_source: str | None = None
+    source_category: str | None = None
+    plan_type: str | None = None
+    workflow_id: str | None = None
+    workflow_title: str = ""
+    workflow_notify_on_completion: bool = True
+    langfuse_trace_id: str | None = None
+    langfuse_tags: list[str] | None = None
+
+
+def read_agent_configurable(config: RunnableConfig | None) -> AgentConfigurableView:
+    """:func:`agent_configurable`, parsed into :class:`AgentConfigurableView`."""
+    return AgentConfigurableView.model_validate(agent_configurable(config))
 
 
 def runtime_configurable(request: ToolCallRequest) -> AgentConfigurable:
@@ -288,7 +341,7 @@ class SilentRunResult:
     """
 
     message: str
-    tool_data: dict[str, Any]
+    tool_data: list[ToolDataEntry]
     queued_task_id: str | None = None
     #: The executor this turn delegated to ended in an error. ``message`` is
     #: then comms' account of that error, not a result; ``executor_failure``

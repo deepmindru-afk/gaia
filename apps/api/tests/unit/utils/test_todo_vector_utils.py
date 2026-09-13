@@ -10,6 +10,7 @@ import pytest
 
 from app.models.todo_models import Priority, TodoDocument, TodoResponse
 from app.utils.todo_vector_utils import (
+    TodoSearchFilters,
     create_todo_content_for_embedding,
     delete_todo_embedding,
     hybrid_search_todos,
@@ -456,35 +457,35 @@ class TestSemanticSearchTodos:
 
     async def test_filter_completed_applied(self) -> None:
         self.mock_collection.similarity_search_with_score.return_value = []
-        await semantic_search_todos("q", USER_ID, completed=True)
+        await semantic_search_todos("q", USER_ID, filters=TodoSearchFilters(completed=True))
 
         call_kwargs = self.mock_collection.similarity_search_with_score.call_args[1]
         assert call_kwargs["filter"]["completed"] == "true"
 
     async def test_filter_completed_false_applied(self) -> None:
         self.mock_collection.similarity_search_with_score.return_value = []
-        await semantic_search_todos("q", USER_ID, completed=False)
+        await semantic_search_todos("q", USER_ID, filters=TodoSearchFilters(completed=False))
 
         call_kwargs = self.mock_collection.similarity_search_with_score.call_args[1]
         assert call_kwargs["filter"]["completed"] == "false"
 
     async def test_filter_priority_applied(self) -> None:
         self.mock_collection.similarity_search_with_score.return_value = []
-        await semantic_search_todos("q", USER_ID, priority="high")
+        await semantic_search_todos("q", USER_ID, filters=TodoSearchFilters(priority="high"))
 
         call_kwargs = self.mock_collection.similarity_search_with_score.call_args[1]
         assert call_kwargs["filter"]["priority"] == "high"
 
     async def test_filter_priority_none_excluded(self) -> None:
         self.mock_collection.similarity_search_with_score.return_value = []
-        await semantic_search_todos("q", USER_ID, priority="none")
+        await semantic_search_todos("q", USER_ID, filters=TodoSearchFilters(priority="none"))
 
         call_kwargs = self.mock_collection.similarity_search_with_score.call_args[1]
         assert "priority" not in call_kwargs["filter"]
 
     async def test_filter_project_id_applied(self) -> None:
         self.mock_collection.similarity_search_with_score.return_value = []
-        await semantic_search_todos("q", USER_ID, project_id="proj_42")
+        await semantic_search_todos("q", USER_ID, filters=TodoSearchFilters(project_id="proj_42"))
 
         call_kwargs = self.mock_collection.similarity_search_with_score.call_args[1]
         assert call_kwargs["filter"]["project_id"] == "proj_42"
@@ -699,7 +700,9 @@ class TestHybridSearchTodos:
                 return_value=[completed_todo, pending_todo],
             ),
         ):
-            results = await hybrid_search_todos("query", USER_ID, completed=True)
+            results = await hybrid_search_todos(
+                "query", USER_ID, filters=TodoSearchFilters(completed=True)
+            )
             result_ids = [r.id for r in results]
             assert "t1" in result_ids
             assert "t2" not in result_ids
@@ -720,7 +723,9 @@ class TestHybridSearchTodos:
                 return_value=[high_todo, low_todo],
             ),
         ):
-            results = await hybrid_search_todos("query", USER_ID, priority=Priority.HIGH)
+            results = await hybrid_search_todos(
+                "query", USER_ID, filters=TodoSearchFilters(priority=Priority.HIGH)
+            )
             assert all(r.priority == Priority.HIGH for r in results)
 
     async def test_project_id_filter_applied_to_traditional(self) -> None:
@@ -739,7 +744,9 @@ class TestHybridSearchTodos:
                 return_value=[t1, t2],
             ),
         ):
-            results = await hybrid_search_todos("query", USER_ID, project_id="proj_1")
+            results = await hybrid_search_todos(
+                "query", USER_ID, filters=TodoSearchFilters(project_id="proj_1")
+            )
             assert len(results) == 1
             assert results[0].id == "t1"
 

@@ -24,7 +24,7 @@ from app.api.v1.endpoints.bot import (
 from app.constants.cache import BOT_UPGRADE_LINK_TTL
 from app.core.stream_manager import with_heartbeat
 from app.db.redis import redis_cache
-from app.models.bot_models import BotChatRequest
+from app.models.bot_models import BotChatRequest, BotWebStreamPayload
 from app.models.payment_models import (
     CreateSubscriptionResponse,
     PlanDuration,
@@ -353,6 +353,46 @@ class TestGetSettings:
         # Whose integrations were fetched. Unasserted, a null user id here
         # returns another account's settings — or none — and still 200s.
         mock_integrations.assert_awaited_once_with("uid1")
+
+    @patch("app.api.v1.endpoints.bot.get_integration_details", new_callable=AsyncMock)
+    @patch(
+        "app.api.v1.endpoints.bot.get_user_integration_records",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
+        new_callable=AsyncMock,
+    )
+    @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
+    async def test_settings_lists_each_integration_record_with_its_status(
+        self,
+        mock_auth: AsyncMock,
+        mock_get_user: AsyncMock,
+        mock_integrations: AsyncMock,
+        mock_details: AsyncMock,
+        client: AsyncClient,
+    ):
+        mock_get_user.return_value = UserDocument(id="uid1", name="Alice", created_at=None)
+        # The records arrive as dumped documents, exactly as the service returns them.
+        mock_integrations.return_value = [
+            {"id": "r1", "user_id": "uid1", "integration_id": "gmail", "status": "connected"},
+            {"id": "r2", "user_id": "uid1", "integration_id": "notion", "status": "created"},
+        ]
+        details = {
+            "gmail": MagicMock(icon_url="https://icons/gmail.png"),
+            "notion": MagicMock(icon_url="https://icons/notion.png"),
+        }
+        details["gmail"].name = "Gmail"
+        details["notion"].name = "Notion"
+        mock_details.side_effect = lambda integration_id: details[integration_id]
+
+        response = await client.get(f"{BOT_BASE}/settings/discord/u1")
+
+        assert response.status_code == 200
+        assert response.json()["connected_integrations"] == [
+            {"name": "Gmail", "logo_url": "https://icons/gmail.png", "status": "connected"},
+            {"name": "Notion", "logo_url": "https://icons/notion.png", "status": "created"},
+        ]
 
     @patch(
         "app.utils.auth_utils.user_repository.get_by_platform_id",
@@ -1143,7 +1183,9 @@ class TestBotChatStreamBody:
             body = await self._collect(client, other_card())
 
         card, upgrade_url = mint.await_args.args
-        assert card == {"tool_data": {"tool_name": "memory_data", "data": {}}}
+        assert card == BotWebStreamPayload.model_validate(
+            {"tool_data": {"tool_name": "memory_data", "data": {}}}
+        )
         assert callable(upgrade_url)
         assert '"notice"' not in body
 
@@ -1855,13 +1897,15 @@ class TestBotRateLimitNotice:
     """
 
     @staticmethod
-    def _card(current_plan: str = PlanType.FREE.value) -> dict[str, object]:
-        return {
-            "tool_data": {
-                "tool_name": "rate_limit_data",
-                "data": {"feature": "chat_messages", "current_plan": current_plan},
+    def _card(current_plan: str = PlanType.FREE.value) -> BotWebStreamPayload:
+        return BotWebStreamPayload.model_validate(
+            {
+                "tool_data": {
+                    "tool_name": "rate_limit_data",
+                    "data": {"feature": "chat_messages", "current_plan": current_plan},
+                }
             }
-        }
+        )
 
     async def test_free_user_gets_a_real_checkout_link(self) -> None:
         checkout = AsyncMock(
@@ -1927,7 +1971,9 @@ class TestBotRateLimitNotice:
         checkout.assert_not_awaited()
 
     async def test_other_tool_cards_are_left_alone(self) -> None:
-        chunk = {"tool_data": {"tool_name": "memory_data", "data": {}}}
+        chunk = BotWebStreamPayload.model_validate(
+            {"tool_data": {"tool_name": "memory_data", "data": {}}}
+        )
         assert await _bot_rate_limit_notice(chunk, _bot_upgrade_url_once("user_1")) is None
 
 
@@ -2014,12 +2060,17 @@ class TestBotUpgradeLinkWindow:
             patch("app.api.v1.endpoints.bot.payment_service.create_pro_checkout", checkout),
         ):
             notice = await _bot_rate_limit_notice(
-                {
-                    "tool_data": {
-                        "tool_name": "rate_limit_data",
-                        "data": {"feature": "chat_messages", "current_plan": PlanType.FREE.value},
+                BotWebStreamPayload.model_validate(
+                    {
+                        "tool_data": {
+                            "tool_name": "rate_limit_data",
+                            "data": {
+                                "feature": "chat_messages",
+                                "current_plan": PlanType.FREE.value,
+                            },
+                        }
                     }
-                },
+                ),
                 _bot_upgrade_url_once("user_1"),
             )
 

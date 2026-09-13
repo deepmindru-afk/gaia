@@ -1,5 +1,4 @@
 import asyncio
-from datetime import UTC, datetime, timedelta
 from typing import Annotated
 import uuid
 
@@ -10,7 +9,6 @@ from app.api.v1.dependencies.oauth_dependencies import (
     get_user_id,
     get_user_timezone_from_preferences,
 )
-from app.constants.general import MAX_PAGE_NUMBER
 from app.constants.log_tags import LogTag
 from app.db.redis import delete_cache, get_cache, set_cache
 from app.db.repositories.projects import project_repository
@@ -20,20 +18,18 @@ from app.models.todo_models import (
     BulkMoveRequest,
     BulkOperationResponse,
     BulkUpdateRequest,
-    Priority,
     ProjectCreate,
     ProjectResponse,
-    SearchMode,
     SubTask,
     SubtaskCreateRequest,
     SubtaskUpdateRequest,
     TodoCanvasResponse,
     TodoCounts,
     TodoLabelCount,
+    TodoListParams,
     TodoListResponse,
     TodoModel,
     TodoResponse,
-    TodoSearchParams,
     TodoUpdateRequest,
     TodoWorkflowGenerationResponse,
     TodoWorkflowGenerationStatus,
@@ -94,32 +90,7 @@ async def get_todo_labels(
 # Main Todo CRUD Endpoints
 @router.get("/todos", response_model=TodoListResponse)
 async def list_todos(
-    # Keyword-only: FastAPI binds query parameters by NAME, so the star costs
-    # nothing at the wire and keeps the signature honest about how it is called.
-    *,
-    # Search parameters
-    q: str | None = Query(None, description="Search query"),
-    mode: SearchMode = Query(
-        SearchMode.HYBRID, description="Search mode: text, semantic, or hybrid"
-    ),
-    # Filter parameters
-    project_id: str | None = Query(None),
-    completed: bool | None = Query(None),
-    priority: Priority | None = Query(None),
-    has_due_date: bool | None = Query(None),
-    overdue: bool | None = Query(None),
-    labels: list[str] | None = Query(None),
-    # Date range filters
-    due_after: datetime | None = Query(None, description="Due date after this date"),
-    due_before: datetime | None = Query(None, description="Due date before this date"),
-    # Special date filters
-    due_today: bool = Query(False, description="Only todos due today"),
-    due_this_week: bool = Query(False, description="Only todos due this week"),
-    # Pagination
-    page: int = Query(1, ge=1, le=MAX_PAGE_NUMBER),
-    per_page: int = Query(50, ge=1, le=100),
-    # Options
-    include_stats: bool = Query(False, description="Include statistics in response"),
+    params: Annotated[TodoListParams, Query()],
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> TodoListResponse:
     """
@@ -132,65 +103,21 @@ async def list_todos(
     - Pagination with metadata
     - Optional statistics
     """
-    filters_applied = []
-    if q:
-        filters_applied.append("query")
-    if project_id:
-        filters_applied.append("project")
-    if completed is not None:
-        filters_applied.append("completed")
-    if priority:
-        filters_applied.append("priority")
-    if labels:
-        filters_applied.append("labels")
-    if due_today:
-        filters_applied.append("due_today")
-    if due_this_week:
-        filters_applied.append("due_this_week")
-    if due_after or due_before:
-        filters_applied.append("date_range")
-
     log.set(
         user={"id": user.user_id},
         todo={
             "operation": "list",
-            "search_mode": mode.value,
-            "query": q,
-            "page": page,
-            "per_page": per_page,
-            "filters_applied": filters_applied,
-            "project_id": project_id,
+            "search_mode": params.mode.value,
+            "query": params.q,
+            "page": params.page,
+            "per_page": params.per_page,
+            "filters_applied": params.filters_applied,
+            "project_id": params.project_id,
         },
     )
 
-    # Handle special date filters
-    if due_today:
-        today = datetime.now(UTC).date()
-        due_after = datetime.combine(today, datetime.min.time()).replace(tzinfo=UTC)
-        due_before = datetime.combine(today, datetime.max.time()).replace(tzinfo=UTC)
-    elif due_this_week:
-        today = datetime.now(UTC)
-        due_after = today
-        due_before = today + timedelta(days=7)
-
-    params = TodoSearchParams(
-        q=q,
-        mode=mode,
-        project_id=project_id,
-        completed=completed,
-        priority=priority,
-        has_due_date=has_due_date,
-        overdue=overdue,
-        due_date_start=due_after,
-        due_date_end=due_before,
-        labels=labels,
-        page=page,
-        per_page=per_page,
-        include_stats=include_stats,
-    )
-
     try:
-        result = await TodoService.list_todos(user.user_id, params)
+        result = await TodoService.list_todos(user.user_id, params.to_search_params())
         # set_ns: log.set(todo={...}) would clobber the search context set above
         log.set_ns("todo", result_count=len(result.data))
         return result

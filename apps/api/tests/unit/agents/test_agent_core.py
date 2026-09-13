@@ -177,7 +177,7 @@ class TestCoreAgentLogic:
         mock_construct.assert_awaited_once()
         kwargs = mock_construct.call_args.kwargs
         assert kwargs["query"] == "custom query"
-        assert kwargs["user_name"] == "Alice"
+        assert kwargs["scope"].user_name == "Alice"
 
     @pytest.mark.asyncio
     async def test_the_users_onboarding_data_reaches_build_agent_config(self):
@@ -702,7 +702,7 @@ class TestCallAgentSilent:
             patch(
                 "app.agents.core.agent.execute_graph_silent",
                 new_callable=AsyncMock,
-                return_value=("Hello!", {"tool": "data"}),
+                return_value=("Hello!", [{"tool_name": "tool", "data": "data"}]),
             ),
             patch("app.agents.core.agent.await_executor_done", new_callable=AsyncMock) as waited,
             patch("app.agents.core.agent.executor_failed", return_value=False) as failed,
@@ -715,7 +715,7 @@ class TestCallAgentSilent:
             )
 
         assert result == SilentRunResult(
-            message="Hello!", tool_data={"tool": "data"}, queued_task_id=None
+            message="Hello!", tool_data=[{"tool_name": "tool", "data": "data"}], queued_task_id=None
         )
         # The executor's outcome is read off THIS run's stream, after a wait
         # bounded to end before the worker job that awaits it would.
@@ -773,7 +773,7 @@ class TestCallAgentSilent:
             )
 
         # construct_langchain_messages should get trigger_context
-        assert mock_construct.call_args.kwargs["trigger_context"] == trigger
+        assert mock_construct.call_args.kwargs["attachments"].trigger_context == trigger
 
     @pytest.mark.asyncio
     async def test_usage_metadata_logging(self):
@@ -945,7 +945,7 @@ class TestCallAgentSilent:
             patch(
                 "app.agents.core.agent.execute_graph_silent",
                 new_callable=AsyncMock,
-                return_value=("Hello!", {"tool": "data"}),
+                return_value=("Hello!", [{"tool_name": "tool", "data": "data"}]),
             ),
         ):
             await call_agent_silent(
@@ -1323,7 +1323,7 @@ class TestTheWorkflowKeysTheRunStashes:
             "workflow_id": "wf-1",
             "workflow_title": "Daily digest",
             "workflow_notify_on_completion": False,
-            PLAYBOOK_FALLBACK_CONTEXT_KEY: {"reason": "hash_drift", "step": 3},
+            PLAYBOOK_FALLBACK_CONTEXT_KEY: "Replay stopped at step 3: hash drift.",
         }
         patches = _common_patches()
         with (
@@ -1355,7 +1355,7 @@ class TestTheWorkflowKeysTheRunStashes:
             "workflow_id": "wf-1",
             "workflow_title": "Daily digest",
             "workflow_notify_on_completion": False,
-            "playbook_fallback": {"reason": "hash_drift", "step": 3},
+            "playbook_fallback": "Replay stopped at step 3: hash drift.",
             # Read by name in write_playbook (_replayed_results): the calls a
             # stopped replay made, so a rewrite may freeze them. None here
             # because this trigger carries no replay.
@@ -1480,7 +1480,7 @@ class TestTheOptionsEachEntryPointDerives:
             patch(
                 "app.agents.core.agent.execute_graph_silent",
                 new_callable=AsyncMock,
-                return_value=("Hello!", {"tool": "data"}),
+                return_value=("Hello!", [{"tool_name": "tool", "data": "data"}]),
             ),
         ):
             await call_agent_silent(
@@ -1535,7 +1535,7 @@ class TestTheQueuedTaskIdComesFromThisRunsOwnStream:
             patch(
                 "app.agents.core.agent.execute_graph_silent",
                 new_callable=AsyncMock,
-                return_value=("Hello!", {"tool": "data"}),
+                return_value=("Hello!", [{"tool_name": "tool", "data": "data"}]),
             ),
             patch(
                 "app.agents.core.agent.queued_without_run",
@@ -1552,6 +1552,6 @@ class TestTheQueuedTaskIdComesFromThisRunsOwnStream:
         assert UUID(stream_id)
         assert result == SilentRunResult(
             message="Hello!",
-            tool_data={"tool": "data"},
+            tool_data=[{"tool_name": "tool", "data": "data"}],
             queued_task_id=f"queued-for-{stream_id}",
         )

@@ -34,6 +34,15 @@ class StoredIntegrationTool(BaseModel):
     description: str | None = None
 
 
+class PublicIntegrationSearchHit(BaseModel):
+    """One semantic-search hit over public integrations (``search_public_integrations``)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    integration_id: str
+    relevance_score: float
+
+
 class IntegrationToolsSlice(BaseModel):
     """Projected read of just an integration's stored tools."""
 

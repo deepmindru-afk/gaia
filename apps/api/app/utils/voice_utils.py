@@ -5,6 +5,8 @@ trimmed account/shared-library voices (``app/models/voice_models.py``) into the
 catalog-compatible ``VoiceOption`` schema used by the voice picker.
 """
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, ConfigDict
 
 from app.constants.voices import ACCENT_TO_COUNTRY, LANGUAGE_NAMES
@@ -92,23 +94,32 @@ def _split_display_name(raw_name: str) -> tuple[str, str]:
     return name.strip() or raw_name, blurb.strip()
 
 
+@dataclass(frozen=True, slots=True)
+class _VoiceTraits:
+    """The descriptive labels a non-catalog voice carries, wherever ElevenLabs put them."""
+
+    accent: str
+    gender: str
+    descriptive: str
+    use_case: str
+    language_code: str
+
+
 def _build_voice_option(
     voice: ElevenLabsVoice,
+    traits: _VoiceTraits,
     *,
-    accent: str,
-    gender: str,
-    descriptive: str,
-    use_case: str,
-    language_code: str,
     source: str,
     fallback_description: str,
 ) -> VoiceOption:
     """Shape a non-catalog ElevenLabs voice into a catalog-compatible option."""
     name, blurb = _split_display_name(voice.name)
-    accent_label = _normalize_accent(accent)
+    accent_label = _normalize_accent(traits.accent)
+    language_code = traits.language_code
+    gender = traits.gender
     primary = LANGUAGE_NAMES.get(language_code, language_code.upper() or "English")
-    descriptive = descriptive.replace("_", " ")
-    use_case = use_case.replace("_", " ")
+    descriptive = traits.descriptive.replace("_", " ")
+    use_case = traits.use_case.replace("_", " ")
     return VoiceOption(
         voice_id=voice.voice_id,
         name=name,
@@ -128,11 +139,13 @@ def _map_account_voice(voice: ElevenLabsAccountVoice) -> VoiceOption:
     labels = ElevenLabsVoiceLabels.model_validate(voice.labels)
     return _build_voice_option(
         voice,
-        accent=labels.accent or "",
-        gender=labels.gender or "",
-        descriptive=labels.descriptive or "",
-        use_case=labels.use_case or "",
-        language_code=labels.language or "",
+        _VoiceTraits(
+            accent=labels.accent or "",
+            gender=labels.gender or "",
+            descriptive=labels.descriptive or "",
+            use_case=labels.use_case or "",
+            language_code=labels.language or "",
+        ),
         source="account",
         fallback_description="Account voice",
     )
@@ -142,11 +155,13 @@ def _map_shared_voice(voice: ElevenLabsSharedVoice) -> VoiceOption:
     """Shape a shared-library voice (metadata at the top level) into an option."""
     return _build_voice_option(
         voice,
-        accent=voice.accent,
-        gender=voice.gender,
-        descriptive=voice.descriptive,
-        use_case=voice.use_case,
-        language_code=voice.language,
+        _VoiceTraits(
+            accent=voice.accent,
+            gender=voice.gender,
+            descriptive=voice.descriptive,
+            use_case=voice.use_case,
+            language_code=voice.language,
+        ),
         source="library",
         fallback_description="Community voice",
     )

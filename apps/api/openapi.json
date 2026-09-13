@@ -10492,7 +10492,7 @@
         "title": "NotificationResponse[NotificationView]",
         "type": "object"
       },
-      "NotificationResponse_dict_str__Any__": {
+      "NotificationResponse_dict_str__object__": {
         "properties": {
           "data": {
             "anyOf": [
@@ -10519,7 +10519,7 @@
           "success",
           "message"
         ],
-        "title": "NotificationResponse[dict[str, Any]]",
+        "title": "NotificationResponse[dict[str, object]]",
         "type": "object"
       },
       "NotificationSourceEnum": {
@@ -29025,7 +29025,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotificationResponse_dict_str__Any__"
+                  "$ref": "#/components/schemas/NotificationResponse_dict_str__object__"
                 }
               }
             },

@@ -83,147 +83,184 @@ def _event_label(event: SnapshotItem) -> str | None:
     return event.title if "title" in event.model_fields_set else ""
 
 
-def _collect_urgent_items(integration: str, snapshot: IntegrationSnapshot) -> list[UrgentItem]:
-    items: list[UrgentItem] = []
-    integration_lower = integration.lower()
-
+def _gmail_items(snapshot: IntegrationSnapshot) -> list[UrgentItem]:
     # Gmail: unread count (data is flat — inbox_unread_count at top level)
-    if snapshot.carries("inbox_unread_count", "unread_count"):
-        unread = snapshot.inbox_unread_count or snapshot.unread_count or 0
-        if unread > 0:
-            items.append(
-                UrgentItem(
-                    integration="gmail",
-                    type="unread_emails",
-                    count=unread,
-                    priority="high" if unread > 20 else "medium",
-                    description=f"{unread} unread emails in inbox",
-                )
-            )
+    if not snapshot.carries("inbox_unread_count", "unread_count"):
+        return []
+    unread = snapshot.inbox_unread_count or snapshot.unread_count or 0
+    if unread <= 0:
+        return []
+    return [
+        UrgentItem(
+            integration="gmail",
+            type="unread_emails",
+            count=unread,
+            priority="high" if unread > 20 else "medium",
+            description=f"{unread} unread emails in inbox",
+        )
+    ]
 
+
+def _slack_items(snapshot: IntegrationSnapshot) -> list[UrgentItem]:
     # Slack: unread mentions / messages
-    if snapshot.carries("mentions", "unread_count"):
-        mentions_list = snapshot.mentions
-        unread_count = snapshot.unread_count or 0
-        if mentions_list or unread_count:
-            items.append(
-                UrgentItem(
-                    integration="slack",
-                    type="unread_messages",
-                    count=len(mentions_list) if mentions_list else unread_count,
-                    priority="high",
-                    description=(
-                        f"{len(mentions_list)} Slack @mentions"
-                        if mentions_list
-                        else f"{unread_count} unread Slack messages"
-                    ),
-                    details=[(m.text or "")[:80] for m in mentions_list[:3]],
-                )
-            )
+    if not snapshot.carries("mentions", "unread_count"):
+        return []
+    mentions_list = snapshot.mentions
+    unread_count = snapshot.unread_count or 0
+    if not (mentions_list or unread_count):
+        return []
+    return [
+        UrgentItem(
+            integration="slack",
+            type="unread_messages",
+            count=len(mentions_list) if mentions_list else unread_count,
+            priority="high",
+            description=(
+                f"{len(mentions_list)} Slack @mentions"
+                if mentions_list
+                else f"{unread_count} unread Slack messages"
+            ),
+            details=[(m.text or "")[:80] for m in mentions_list[:3]],
+        )
+    ]
 
+
+def _linear_items(snapshot: IntegrationSnapshot) -> list[UrgentItem]:
     # Linear: overdue issues
-    if snapshot.carries("overdue_issues") and snapshot.overdue_issues:
-        overdue = snapshot.overdue_issues
+    if not (snapshot.carries("overdue_issues") and snapshot.overdue_issues):
+        return []
+    overdue = snapshot.overdue_issues
+    return [
+        UrgentItem(
+            integration="linear",
+            type="overdue_issues",
+            count=len(overdue),
+            priority="high",
+            description=f"{len(overdue)} overdue Linear issues",
+            details=[i.title for i in overdue[:3]],
+        )
+    ]
+
+
+def _calendar_items(snapshot: IntegrationSnapshot) -> list[UrgentItem]:
+    # Google Calendar: today's events
+    if not snapshot.carries("events", "next_event"):
+        return []
+    events = snapshot.events
+    next_event = snapshot.next_event
+    if not (events or next_event):
+        return []
+    event_list = events or ([next_event] if next_event else [])
+    return [
+        UrgentItem(
+            integration="googlecalendar",
+            type="upcoming_events",
+            count=len(event_list),
+            priority="medium",
+            description=f"{len(event_list)} calendar events today",
+            details=[_event_label(e) for e in event_list[:3]],
+        )
+    ]
+
+
+def _github_items(snapshot: IntegrationSnapshot) -> list[UrgentItem]:
+    # GitHub: notifications and review requests
+    if not snapshot.carries("notifications", "review_requests"):
+        return []
+    items: list[UrgentItem] = []
+    notif_count = len(snapshot.notifications)
+    review_count = len(snapshot.review_requests)
+    if notif_count > 0:
         items.append(
             UrgentItem(
-                integration="linear",
-                type="overdue_issues",
-                count=len(overdue),
-                priority="high",
-                description=f"{len(overdue)} overdue Linear issues",
-                details=[i.title for i in overdue[:3]],
+                integration="github",
+                type="unread_notifications",
+                count=notif_count,
+                priority="medium",
+                description=f"{notif_count} unread GitHub notifications",
             )
         )
-
-    # Google Calendar: today's events
-    if snapshot.carries("events", "next_event"):
-        events = snapshot.events
-        next_event = snapshot.next_event
-        if events or next_event:
-            event_list = events or ([next_event] if next_event else [])
-            items.append(
-                UrgentItem(
-                    integration="googlecalendar",
-                    type="upcoming_events",
-                    count=len(event_list),
-                    priority="medium",
-                    description=f"{len(event_list)} calendar events today",
-                    details=[_event_label(e) for e in event_list[:3]],
-                )
+    if review_count > 0:
+        items.append(
+            UrgentItem(
+                integration="github",
+                type="review_requests",
+                count=review_count,
+                priority="high",
+                description=f"{review_count} GitHub PRs awaiting your review",
+                details=[pr.title or "" for pr in snapshot.review_requests[:3]],
             )
+        )
+    return items
 
-    # GitHub: notifications and review requests
-    if snapshot.carries("notifications", "review_requests"):
-        notif_count = len(snapshot.notifications)
-        review_count = len(snapshot.review_requests)
-        if notif_count > 0:
-            items.append(
-                UrgentItem(
-                    integration="github",
-                    type="unread_notifications",
-                    count=notif_count,
-                    priority="medium",
-                    description=f"{notif_count} unread GitHub notifications",
-                )
-            )
-        if review_count > 0:
-            items.append(
-                UrgentItem(
-                    integration="github",
-                    type="review_requests",
-                    count=review_count,
-                    priority="high",
-                    description=f"{review_count} GitHub PRs awaiting your review",
-                    details=[pr.title or "" for pr in snapshot.review_requests[:3]],
-                )
-            )
 
+def _task_items(integration_lower: str, snapshot: IntegrationSnapshot) -> list[UrgentItem]:
     # Asana / Todoist / ClickUp: overdue tasks
     overdue_tasks = snapshot.overdue_tasks
     if not overdue_tasks:
         # Try urgent_tasks for Google Tasks
         overdue_tasks = [t for t in snapshot.urgent_tasks if t.overdue]
-    if overdue_tasks:
-        items.append(
-            UrgentItem(
-                integration=integration_lower,
-                type="overdue_tasks",
-                count=len(overdue_tasks),
-                priority="high",
-                description=f"{len(overdue_tasks)} overdue tasks in {integration_lower}",
-                details=[t.name or t.title for t in overdue_tasks[:3]],
-            )
+    if not overdue_tasks:
+        return []
+    return [
+        UrgentItem(
+            integration=integration_lower,
+            type="overdue_tasks",
+            count=len(overdue_tasks),
+            priority="high",
+            description=f"{len(overdue_tasks)} overdue tasks in {integration_lower}",
+            details=[t.name or t.title for t in overdue_tasks[:3]],
         )
+    ]
 
+
+def _teams_items(snapshot: IntegrationSnapshot) -> list[UrgentItem]:
     # Teams: unread chats
-    if snapshot.carries("unread_chat_count"):
-        unread_chats = snapshot.unread_chat_count or 0
-        if unread_chats > 0:
-            items.append(
-                UrgentItem(
-                    integration="microsoft_teams",
-                    type="unread_chats",
-                    count=unread_chats,
-                    priority="medium",
-                    description=f"{unread_chats} unread Microsoft Teams chats",
-                )
-            )
+    if not snapshot.carries("unread_chat_count"):
+        return []
+    unread_chats = snapshot.unread_chat_count or 0
+    if unread_chats <= 0:
+        return []
+    return [
+        UrgentItem(
+            integration="microsoft_teams",
+            type="unread_chats",
+            count=unread_chats,
+            priority="medium",
+            description=f"{unread_chats} unread Microsoft Teams chats",
+        )
+    ]
 
+
+def _reddit_items(snapshot: IntegrationSnapshot) -> list[UrgentItem]:
     # Reddit: unread messages
-    if snapshot.carries("unread_message_count"):
-        unread_msgs = snapshot.unread_message_count or 0
-        if unread_msgs > 0:
-            items.append(
-                UrgentItem(
-                    integration="reddit",
-                    type="unread_messages",
-                    count=unread_msgs,
-                    priority="low",
-                    description=f"{unread_msgs} unread Reddit messages",
-                )
-            )
+    if not snapshot.carries("unread_message_count"):
+        return []
+    unread_msgs = snapshot.unread_message_count or 0
+    if unread_msgs <= 0:
+        return []
+    return [
+        UrgentItem(
+            integration="reddit",
+            type="unread_messages",
+            count=unread_msgs,
+            priority="low",
+            description=f"{unread_msgs} unread Reddit messages",
+        )
+    ]
 
-    return items
+
+def _collect_urgent_items(integration: str, snapshot: IntegrationSnapshot) -> list[UrgentItem]:
+    return [
+        *_gmail_items(snapshot),
+        *_slack_items(snapshot),
+        *_linear_items(snapshot),
+        *_calendar_items(snapshot),
+        *_github_items(snapshot),
+        *_task_items(integration.lower(), snapshot),
+        *_teams_items(snapshot),
+        *_reddit_items(snapshot),
+    ]
 
 
 def register_urgency_custom_tools(composio: Composio) -> list[str]:

@@ -5,12 +5,14 @@ Stores MCP credentials encrypted in PostgreSQL instead of filesystem.
 Follows same patterns as Composio for parity.
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 import json
 import secrets
-from typing import Any, cast
+from typing import cast
 
 from cryptography.fernet import Fernet
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 
 from app.config.settings import settings
@@ -25,9 +27,11 @@ from app.constants.log_tags import LogTag
 from app.db.postgresql import get_db_session
 from app.db.redis import get_and_delete_cache, get_cache, set_cache
 from app.models.db_oauth import MCPAuthType, MCPCredential, MCPCredentialStatus
-from app.models.mcp_config import DCRClientRegistration, OAuthDiscovery
+from app.models.mcp_config import DCRClientRegistration, OAuthDiscovery, OAuthPendingState
 from app.utils.mcp_oauth_utils import TokenIntrospectionResponse, introspect_token as do_introspect
 from shared.py.wide_events import log
+
+_DCR_CLIENT_REGISTRATION: TypeAdapter[DCRClientRegistration] = TypeAdapter(DCRClientRegistration)
 
 
 class MCPTokenStore:
@@ -299,23 +303,20 @@ class MCPTokenStore:
         if not stored_data:
             return False, None
 
-        stored_state: str | None
-        code_verifier: str | None
         try:
             # Written by create_oauth_state as {"state": ..., "code_verifier": ...};
             # set_cache may hand it back already deserialized or still as JSON text.
-            data: dict[str, str] = (
-                stored_data if isinstance(stored_data, dict) else json.loads(stored_data)
+            pending = (
+                OAuthPendingState.model_validate(stored_data)
+                if isinstance(stored_data, dict)
+                else OAuthPendingState.model_validate_json(stored_data)
             )
-            stored_state = data.get("state")
-            code_verifier = data.get("code_verifier")
-        except (json.JSONDecodeError, TypeError):
+        except ValidationError:
             # Legacy format - just state string (backwards compat)
-            stored_state = stored_data
-            code_verifier = None
+            pending = OAuthPendingState(state=str(stored_data))
 
-        if stored_state and stored_state == state:
-            return True, code_verifier
+        if pending.state and pending.state == state:
+            return True, pending.code_verifier
         return False, None
 
     async def delete_credentials(self, integration_id: str) -> None:
@@ -348,8 +349,8 @@ class MCPTokenStore:
             try:
                 # Written by store_dcr_client from an RFC 7591 registration
                 # response; only the credential fields are ever read back.
-                return cast(DCRClientRegistration, json.loads(cred.client_registration))
-            except json.JSONDecodeError:
+                return _DCR_CLIENT_REGISTRATION.validate_json(cred.client_registration)
+            except ValidationError:
                 return None
         return None
 
@@ -374,12 +375,12 @@ class MCPTokenStore:
                 await session.commit()
                 log.info(f"{LogTag.MCP} Deleted DCR client for", integration_id=integration_id)
 
-    async def store_dcr_client(self, integration_id: str, dcr_data: dict[str, Any]) -> None:
+    async def store_dcr_client(self, integration_id: str, dcr_data: Mapping[str, object]) -> None:
         """Store DCR client registration from dynamic registration.
 
         The whole RFC 7591 response is persisted verbatim — servers return
         arbitrary extra metadata alongside the credentials — so the write side
-        stays a raw mapping. Reads go through :class:`DCRClientRegistration`.
+        stays an open JSON object. Reads go through :class:`DCRClientRegistration`.
         """
         async with get_db_session() as session:
             result = await session.execute(
@@ -391,7 +392,7 @@ class MCPTokenStore:
             cred = result.scalar_one_or_none()
 
             if cred:
-                cred.client_registration = json.dumps(dcr_data)
+                cred.client_registration = json.dumps(dict(dcr_data))
                 session.add(cred)
             else:
                 cred = MCPCredential(
@@ -399,7 +400,7 @@ class MCPTokenStore:
                     integration_id=integration_id,
                     auth_type=MCPAuthType.OAUTH,
                     status=MCPCredentialStatus.PENDING,
-                    client_registration=json.dumps(dcr_data),
+                    client_registration=json.dumps(dict(dcr_data)),
                 )
                 session.add(cred)
             await session.commit()

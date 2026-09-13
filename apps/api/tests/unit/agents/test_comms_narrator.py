@@ -88,7 +88,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -103,7 +103,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result("boom", "error", CONVERSATION_ID, USER)
@@ -117,7 +117,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -137,7 +137,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -283,7 +283,7 @@ class TestNarrationResolvesItsOwnCommsLane:
         with (
             _patch_graph(graph),
             patch(f"{MODULE}.build_agent_config", built),
-            patch(f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("narrated", {}))),
+            patch(f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("narrated", []))),
         ):
             await narrate_executor_result(
                 result_text=RESULT_TEXT,

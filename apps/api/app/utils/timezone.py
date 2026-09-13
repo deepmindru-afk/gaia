@@ -27,7 +27,6 @@ import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_core.runnables import RunnableConfig
-from pydantic import BaseModel, ConfigDict
 
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
@@ -133,9 +132,10 @@ class Timezone:
         """IANA name → zone; ``None`` when the tz database does not know it."""
         try:
             return cls(candidate, ZoneInfo(candidate))
-        except (ZoneInfoNotFoundError, ValueError):
-            # Unknown key or a key with a bad shape ("../x"): the caller treats
-            # None as "no usable zone" and its own log line says which input.
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            # Unknown key, a key with a bad shape ("../x"), or one the tz
+            # database cannot open (a name too long for a path): the caller
+            # treats None as "no usable zone" and its own log line says which input.
             return None
 
     @property
@@ -219,14 +219,6 @@ def resolve_home_timezone(stored: str | None, header: str | None) -> ResolvedTim
     )
 
 
-class _ConfiguredTimezone(BaseModel):
-    """The run's home zone, read off its ``configurable``."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    user_timezone: str | None = None
-
-
 def home_timezone_from_config(config: RunnableConfig) -> Timezone:
     """Home timezone from a LangGraph ``configurable`` (agent runs).
 
@@ -238,10 +230,10 @@ def home_timezone_from_config(config: RunnableConfig) -> Timezone:
     # langchain_core import tries `transformers` (~1.5 s); this util is imported
     # by user_models, i.e. by every test worker at collection time.
     from app.models.agent_models import (  # noqa: PLC0415 -- keeps transformers out of every test worker's collection
-        agent_configurable,
+        read_agent_configurable,
     )
 
-    raw = _ConfiguredTimezone.model_validate(agent_configurable(config)).user_timezone
+    raw = read_agent_configurable(config).user_timezone
     if raw:
         log.set(timezone_source=TimezoneSource.AGENT_CONFIG.value, user_timezone=raw)
         return Timezone.parse(raw)

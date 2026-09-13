@@ -25,7 +25,7 @@ from app.models.notification.notification_models import (
     NotificationType,
 )
 from app.models.todo_models import TodoDocument
-from app.models.user_models import AuthenticatedUser
+from app.models.user_models import AuthenticatedUser, UserDocument
 from app.workers.tasks.maintenance_sweep_tasks import (
     DORMANT_DAYS,
     NOTIFICATION_BACKOFF_DAYS,
@@ -496,21 +496,27 @@ class TestRegisterNotification:
 
 class TestIsUserDaytime:
     async def test_utc_noon_is_daytime(self):
-        with patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"timezone": "UTC"})):
+        with patch(
+            f"{MODULE}.get_user_by_id", AsyncMock(return_value=UserDocument(timezone="UTC"))
+        ):
             assert await _is_user_daytime("user-1", NOW, {}) is True
 
     async def test_utc_3am_is_night(self):
         night = datetime(2026, 1, 15, 3, 0, tzinfo=UTC)
-        with patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"timezone": "UTC"})):
+        with patch(
+            f"{MODULE}.get_user_by_id", AsyncMock(return_value=UserDocument(timezone="UTC"))
+        ):
             assert await _is_user_daytime("user-1", night, {}) is False
 
     async def test_local_timezone_wins(self):
         night = datetime(2026, 1, 15, 3, 0, tzinfo=UTC)
-        with patch(f"{MODULE}.get_user_by_id", AsyncMock(return_value={"timezone": "Asia/Tokyo"})):
+        with patch(
+            f"{MODULE}.get_user_by_id", AsyncMock(return_value=UserDocument(timezone="Asia/Tokyo"))
+        ):
             assert await _is_user_daytime("user-1", night, {}) is True
 
     async def test_result_is_cached_per_sweep(self):
-        lookup = AsyncMock(return_value={"timezone": "UTC"})
+        lookup = AsyncMock(return_value=UserDocument(timezone="UTC"))
         cache: dict[str, bool] = {}
         with patch(f"{MODULE}.get_user_by_id", lookup):
             first = await _is_user_daytime("user-1", NOW, cache)
@@ -652,7 +658,7 @@ class TestHealthCheckAgentCall:
         agent = AsyncMock(
             return_value=SilentRunResult(
                 message="That task is queued behind the one already running.",
-                tool_data={},
+                tool_data=[],
                 queued_task_id="task-9",
             )
         )
@@ -684,7 +690,7 @@ class TestHealthCheckAgentCall:
             captured["conversation_id"] = conversation_id
             captured["user"] = user
             captured["options"] = options
-            return SilentRunResult(message="  Still on track  ", tool_data={})
+            return SilentRunResult(message="  Still on track  ", tool_data=[])
 
         with (
             patch(f"{MODULE}.call_agent_silent", fake_call_agent_silent),
@@ -709,7 +715,7 @@ class TestHealthCheckAgentCall:
         agent = AsyncMock(
             return_value=SilentRunResult(
                 message="That task is queued behind the one already running.",
-                tool_data={},
+                tool_data=[],
                 queued_task_id="task-9",
             )
         )
@@ -731,7 +737,7 @@ class TestHealthCheckAgentCall:
         # The sweep classifies the verdict by reading its text; substituting any
         # placeholder for a missing message would make an empty answer look like
         # a real one to every caller downstream.
-        agent = AsyncMock(return_value=SilentRunResult(message="", tool_data={}))
+        agent = AsyncMock(return_value=SilentRunResult(message="", tool_data=[]))
         with (
             patch(f"{MODULE}.call_agent_silent", agent),
             patch(f"{MODULE}.load_user_context", AsyncMock(return_value=None)),
@@ -769,7 +775,7 @@ class TestCanvasBounding:
             options: AgentRunOptions | None = None,
         ) -> SilentRunResult:
             captured["request"] = request
-            return SilentRunResult(message="NEEDS_ATTENTION: still stuck", tool_data={})
+            return SilentRunResult(message="NEEDS_ATTENTION: still stuck", tool_data=[])
 
         with (
             patch(f"{MODULE}._read_canvas", AsyncMock(return_value=canvas)),
@@ -809,7 +815,7 @@ class TestCanvasBounding:
             options: AgentRunOptions | None = None,
         ) -> SilentRunResult:
             captured["request"] = request
-            return SilentRunResult(message="NEEDS_ATTENTION: still stuck", tool_data={})
+            return SilentRunResult(message="NEEDS_ATTENTION: still stuck", tool_data=[])
 
         with (
             patch(f"{MODULE}._read_canvas", AsyncMock(return_value=canvas)),

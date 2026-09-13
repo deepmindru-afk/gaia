@@ -6,7 +6,7 @@ even when the upstream call fails.
 """
 
 import asyncio
-from typing import Any, cast
+from typing import cast
 
 import httpx
 
@@ -25,14 +25,15 @@ from app.constants.voices import (
     SHARED_VOICES_PAGE_SIZE,
     VOICE_CATALOG,
     VOICE_IDS,
+    VoiceCatalogEntry,
 )
 from app.db.repositories.users import user_repository
 from app.decorators.caching import Cacheable
+from app.models.integrations.elevenlabs import ElevenLabsVoicesPage
 from app.models.voice_models import ElevenLabsAccountVoice, ElevenLabsSharedVoice
 from app.schemas.voice_schemas import VoiceListResponse, VoiceOption
 from app.utils.errors import AppError
 from app.utils.voice_utils import (
-    ElevenLabsVoiceLanguages,
     _language_names,
     _map_account_voice,
     _map_shared_voice,
@@ -58,20 +59,18 @@ async def _fetch_elevenlabs_voices() -> list[ElevenLabsAccountVoice]:
             headers={"xi-api-key": settings.ELEVENLABS_API_KEY or ""},
         )
         resp.raise_for_status()
-        payload: dict[str, Any] = resp.json()
+        page = ElevenLabsVoicesPage.model_validate(resp.json())
 
-    # The provider's own voice objects — untyped until trimmed into our shape here.
-    raw_voices: list[dict[str, Any]] = payload.get("voices", [])
     return [
         ElevenLabsAccountVoice(
-            voice_id=voice["voice_id"],
-            name=voice.get("name") or "",
-            preview_url=voice.get("preview_url"),
-            labels=voice.get("labels") or {},
-            language_codes=_verified_language_codes(ElevenLabsVoiceLanguages.model_validate(voice)),
+            voice_id=voice.voice_id,
+            name=voice.name or "",
+            preview_url=voice.preview_url,
+            labels=voice.labels or {},
+            language_codes=_verified_language_codes(voice),
         )
-        for voice in raw_voices
-        if isinstance(voice.get("voice_id"), str)
+        for voice in page.voices
+        if voice.voice_id is not None
     ]
 
 
@@ -112,24 +111,23 @@ async def _fetch_shared_voices() -> list[ElevenLabsSharedVoice]:
             headers={"xi-api-key": settings.ELEVENLABS_API_KEY or ""},
         )
         resp.raise_for_status()
-        payload: dict[str, Any] = resp.json()
+        page = ElevenLabsVoicesPage.model_validate(resp.json())
 
-    raw_voices: list[dict[str, Any]] = payload.get("voices", [])
     return [
         ElevenLabsSharedVoice(
-            voice_id=voice["voice_id"],
-            name=voice.get("name") or "",
-            preview_url=voice.get("preview_url"),
-            public_owner_id=voice["public_owner_id"],
-            gender=voice.get("gender") or "",
-            accent=voice.get("accent") or "",
-            language=voice.get("language") or "",
-            descriptive=voice.get("descriptive") or "",
-            use_case=voice.get("use_case") or "",
-            language_codes=_verified_language_codes(ElevenLabsVoiceLanguages.model_validate(voice)),
+            voice_id=voice.voice_id,
+            name=voice.name or "",
+            preview_url=voice.preview_url,
+            public_owner_id=voice.public_owner_id,
+            gender=voice.gender or "",
+            accent=voice.accent or "",
+            language=voice.language or "",
+            descriptive=voice.descriptive or "",
+            use_case=voice.use_case or "",
+            language_codes=_verified_language_codes(voice),
         )
-        for voice in raw_voices
-        if isinstance(voice.get("voice_id"), str) and voice.get("public_owner_id")
+        for voice in page.voices
+        if voice.voice_id is not None and voice.public_owner_id
     ]
 
 
@@ -190,6 +188,7 @@ async def list_voices(user_id: str) -> VoiceListResponse:
     )
     by_id = {v.voice_id: v for v in account}
     voices: list[VoiceOption] = []
+    entry: VoiceCatalogEntry
     for entry in VOICE_CATALOG:
         fetched = by_id.get(entry["voice_id"])
         if account and not fetched:

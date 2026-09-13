@@ -1,11 +1,12 @@
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 import json
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.api.v1.dependencies.oauth_dependencies import get_current_user
 from app.api.v1.middleware.auth import get_current_user as get_request_user
@@ -25,7 +26,10 @@ from app.decorators import (
 from app.models.bot_models import (
     BotAuthStatusResponse,
     BotChatRequest,
+    BotRateLimitCardData,
     BotSettingsResponse,
+    BotStreamToolCard,
+    BotWebStreamPayload,
     IntegrationInfo,
     LinkedUsersResponse,
     ResetSessionRequest,
@@ -33,6 +37,7 @@ from app.models.bot_models import (
     TranscribeAudioResponse,
     UnlinkAccountResponse,
 )
+from app.models.integration_models import UserIntegrationDocument
 from app.models.payment_models import PlanType
 from app.models.user_models import AuthenticatedUser
 from app.schemas.errors import error_responses
@@ -260,8 +265,16 @@ def _bot_upgrade_url_once(user_id: str) -> Callable[[], Awaitable[str]]:
     return resolve
 
 
+def _bot_tool_card(chunk: BotWebStreamPayload, tool_name: str) -> BotStreamToolCard | None:
+    """The payload's ``tool_data`` card when it is a ``tool_name`` card, else ``None``."""
+    if not isinstance(chunk.tool_data, dict):
+        return None
+    card = BotStreamToolCard.model_validate(chunk.tool_data)
+    return card if card.tool_name == tool_name else None
+
+
 async def _bot_rate_limit_notice(
-    chunk: dict[str, Any], upgrade_url: Callable[[], Awaitable[str]]
+    chunk: BotWebStreamPayload, upgrade_url: Callable[[], Awaitable[str]]
 ) -> str | None:
     """Render a web-only rate-limit card as a plain-text notice for bots.
 
@@ -273,21 +286,25 @@ async def _bot_rate_limit_notice(
     localises it to its platform's link syntax (WhatsApp ``label (url)``, Slack
     ``<url|label>``, Telegram keeps ``[label](url)``).
     """
-    tool_data = chunk.get("tool_data")
-    if not isinstance(tool_data, dict) or tool_data.get("tool_name") != "rate_limit_data":
+    tool_card = _bot_tool_card(chunk, "rate_limit_data")
+    if tool_card is None:
         return None
 
-    card = tool_data.get("data") or {}
-    feature = str(card.get("feature") or "this feature").replace("_", " ")
+    card = (
+        BotRateLimitCardData.model_validate(tool_card.data)
+        if isinstance(tool_card.data, dict)
+        else BotRateLimitCardData()
+    )
+    feature = str(card.feature or "this feature").replace("_", " ")
     notice = f"⏳ You've reached your {feature} limit. Please try again later."
 
     # Nudge an upgrade only for non-Pro users (Pro is the top tier).
-    if card.get("current_plan") != PlanType.PRO.value:
+    if card.current_plan != PlanType.PRO.value:
         notice += f" [Upgrade to Pro]({await upgrade_url()}) for higher limits."
     return notice
 
 
-def _bot_approval_payload(chunk: dict[str, Any]) -> dict[str, Any] | None:
+def _bot_approval_payload(chunk: BotWebStreamPayload) -> dict[str, JsonValue] | None:
     """Extract a HIL ``approval_request`` card as a bot ``approval`` payload.
 
     Bots drop ``tool_data``, but the approval prompt MUST reach the user — a bot
@@ -295,16 +312,15 @@ def _bot_approval_payload(chunk: dict[str, Any]) -> dict[str, Any] | None:
     resolver relays it. The bot client renders this as an out-of-band message.
     Returns the approval data, or ``None`` if ``chunk`` isn't such a card.
     """
-    tool_data = chunk.get("tool_data")
-    if not isinstance(tool_data, dict) or tool_data.get("tool_name") != APPROVAL_REQUEST_TOOL_NAME:
+    tool_card = _bot_tool_card(chunk, APPROVAL_REQUEST_TOOL_NAME)
+    if tool_card is None:
         return None
-    data = tool_data.get("data")
-    return data if isinstance(data, dict) else None
+    return tool_card.data if isinstance(tool_card.data, dict) else None
 
 
 def _bot_stream_control_frame(
     chunk: str, conversation_id: str
-) -> tuple[str | None, dict[str, Any] | None, bool]:
+) -> tuple[str | None, BotWebStreamPayload | None, bool]:
     """Peel Redis SSE framing off one raw chunk from ``_bot_stream_from_redis``.
 
     Returns ``(frame, data, stop)`` — see the tri-state contract below.
@@ -330,8 +346,8 @@ def _bot_stream_control_frame(
         return done_frame(conversation_id), None, True
 
     try:
-        return None, json.loads(raw), False
-    except json.JSONDecodeError as exc:
+        return None, BotWebStreamPayload.model_validate(json.loads(raw)), False
+    except (json.JSONDecodeError, ValidationError) as exc:
         log.warning(
             f"{LogTag.API} Bot stream: dropped a malformed SSE chunk",
             error_type=type(exc).__name__,
@@ -339,8 +355,26 @@ def _bot_stream_control_frame(
         return None, None, False
 
 
+# ``get_user_integration_records`` returns dumped documents; the settings route
+# validates them back into the document model where they enter the handler.
+_USER_INTEGRATION_RECORDS = TypeAdapter(list[UserIntegrationDocument])
+
+# Web stream payload keys that carry nothing a bot renders.
+_WEB_ONLY_STREAM_FIELDS = frozenset(
+    {
+        "conversation_description",
+        "user_message_id",
+        "bot_message_id",
+        "stream_id",
+        "tool_data",
+        "tool_output",
+        "follow_up_actions",
+    }
+)
+
+
 async def _bot_stream_payload_frame(
-    data: dict[str, Any], upgrade_url: Callable[[], Awaitable[str]]
+    data: BotWebStreamPayload, upgrade_url: Callable[[], Awaitable[str]]
 ) -> tuple[str | None, bool]:
     """Translate one parsed web SSE payload into a bot frame.
 
@@ -349,7 +383,7 @@ async def _bot_stream_payload_frame(
     # `frame` is None for a payload that carries nothing bots need (a
     # web-only field, an unrecognized shape). `stop` marks the terminal
     # `error` frame.
-    if data.get("keepalive"):
+    if data.keepalive:
         # Forward keepalives so bot clients reset inactivity timers.
         return keepalive_frame(), False
 
@@ -372,29 +406,19 @@ async def _bot_stream_payload_frame(
     # An assistant message just ended. Bots need this to know a bubble is
     # finished — and, when `discarded`, to take back the handoff preamble
     # they already showed.
-    if "message_boundary" in data:
-        return message_boundary_frame(data["message_boundary"]), False
+    present = data.model_fields_set
+    if "message_boundary" in present:
+        return message_boundary_frame(data.message_boundary), False
 
     # Skip web-only fields.
-    if any(
-        key in data
-        for key in [
-            "conversation_description",
-            "user_message_id",
-            "bot_message_id",
-            "stream_id",
-            "tool_data",
-            "tool_output",
-            "follow_up_actions",
-        ]
-    ):
+    if present & _WEB_ONLY_STREAM_FIELDS:
         return None, False
 
     # Translate {"response": "..."} → {"text": "..."}
-    if "response" in data:
-        return text_frame(data["response"]), False
-    if "error" in data:
-        return error_frame(data["error"]), True
+    if data.response is not None:
+        return text_frame(data.response), False
+    if data.error is not None:
+        return error_frame(data.error), True
 
     return None, False
 
@@ -422,10 +446,10 @@ async def _bot_stream_entitlement_gate(user_id: str, platform: str) -> Streaming
 
 def _bot_stream_failure_logger(
     stream_id: str, conversation_id: str
-) -> Callable[[asyncio.Task[Any]], None]:
+) -> Callable[[asyncio.Task[None]], None]:
     """Build the ``on_done`` callback that logs an unhandled background stream failure."""
 
-    def _log_stream_failure(t: asyncio.Task[Any]) -> None:
+    def _log_stream_failure(t: asyncio.Task[None]) -> None:
         if not t.cancelled() and (exc := t.exception()):
             log.error(
                 f"{LogTag.API} Background stream task failed",
@@ -707,10 +731,12 @@ async def get_settings(
 
     connected_integrations_list = []
     try:
-        integrations = await get_user_integration_records(user_id)
+        integrations = _USER_INTEGRATION_RECORDS.validate_python(
+            await get_user_integration_records(user_id)
+        )
         for integration_doc in integrations:
-            integration_id = integration_doc.get("integration_id")
-            status = integration_doc.get("status", "created")
+            integration_id = integration_doc.integration_id
+            status = integration_doc.status
             if integration_id:
                 integration_details = await get_integration_details(integration_id)
                 if integration_details:

@@ -754,10 +754,3 @@ class UserUpdate(BaseModel):
     name: str | None = None
     timezone: str | None = None
     picture: str | None = None
-
-
-def user_to_legacy_dict(user: UserDocument) -> dict[str, Any]:
-    """Raw-style user dict (string ``_id``) for consumers not yet migrated off
-    the pre-repository dict shape — auth context building, bot resolution. A
-    transitional bridge; removed once those consumers take ``UserDocument``."""
-    return {**user.model_dump(exclude={"id"}, exclude_none=True), "_id": user.id}

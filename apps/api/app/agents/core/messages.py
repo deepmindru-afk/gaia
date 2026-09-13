@@ -1,4 +1,6 @@
-from typing import Any, Literal
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal
 
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
 
@@ -28,27 +30,50 @@ from app.services.files import FileService
 from app.utils.user_preferences_utils import onboarding_preferences
 
 
-async def construct_langchain_messages(
-    messages: list[MessageDict],
-    files_data: list[FileData] | None = None,
-    currently_uploaded_file_ids: list[str] | None = None,
-    user_id: str | None = None,
-    user_name: str | None = None,
-    user_dict: AuthenticatedUser | None = None,
-    query: str | None = None,
-    selected_tool: str | None = None,
-    tool_category: str | None = None,
-    selected_workflow: SelectedWorkflowData | None = None,
-    selected_calendar_event: SelectedCalendarEventData | None = None,
-    reply_to_message: ReplyToMessageData | None = None,
+@dataclass(frozen=True)
+class MessageScope:
+    """Who a turn is for and where it runs — what the system/context blocks are built from."""
+
+    user_id: str | None = None
+    user_name: str | None = None
+    #: The full auth payload; its timezone and onboarding answers feed the context.
+    user_dict: AuthenticatedUser | None = None
+    conversation_id: str | None = None
+    source: str | None = None
+    agent_type: Literal["comms", "executor"] = "comms"
+    active_todo_id: str | None = None
+    execution_mode: Literal["interactive", "background"] = "interactive"
+
+
+@dataclass(frozen=True)
+class MessageAttachments:
+    """What a turn carries beyond the user's text; each one reframes the human message."""
+
+    selected_tool: str | None = None
+    tool_category: str | None = None
+    selected_workflow: SelectedWorkflowData | None = None
+    selected_calendar_event: SelectedCalendarEventData | None = None
+    reply_to_message: ReplyToMessageData | None = None
+    files_data: list[FileData] | None = None
+    currently_uploaded_file_ids: list[str] | None = None
     # Open by construction: schedulers spread arbitrary provider trigger data
     # through this alongside the agent's own keys, so there is no fixed shape.
-    trigger_context: dict[str, Any] | None = None,
-    agent_type: Literal["comms", "executor"] = "comms",
-    active_todo_id: str | None = None,
-    execution_mode: Literal["interactive", "background"] = "interactive",
-    conversation_id: str | None = None,
-    source: str | None = None,
+    trigger_context: Mapping[str, object] | None = None
+
+
+def _latest_user_content(messages: list[MessageDict]) -> str:
+    """The trimmed text of the last turn when the user sent it, else ``""``."""
+    if not messages:
+        return ""
+    latest: MessageDict = messages[-1]
+    return latest.get("content", "").strip() if latest.get("role") == "user" else ""
+
+
+async def construct_langchain_messages(
+    messages: list[MessageDict],
+    query: str | None = None,
+    scope: MessageScope | None = None,
+    attachments: MessageAttachments | None = None,
 ) -> list[AnyMessage]:
     """
     Construct LangChain messages for agent interaction.
@@ -58,22 +83,21 @@ async def construct_langchain_messages(
 
     Args:
         messages: Raw message history (only latest user message is used)
-        files_data: Available file objects
-        currently_uploaded_file_ids: IDs of files to include in context
-        user_id: For retrieving user preferences and memories
-        user_name: Personalization for system prompt
-        user_dict: Complete user dictionary with timezone, preferences, etc. (from auth)
         query: Search query for memory retrieval (typically latest user message)
-        selected_tool: Tool chosen via slash command (overrides normal flow)
-        selected_workflow: Workflow to execute (overrides everything else)
-        selected_calendar_event: Calendar event selected for context
-        reply_to_message: Message being replied to (adds conversation thread context)
-        trigger_context: Email/automation context for workflows
-        agent_type: Type of agent - "comms", "executor", or "main" (legacy)
+        scope: The user, conversation, channel and run mode the turn belongs to
+        attachments: Tool/workflow/calendar/reply/file selections and trigger context
 
     Returns:
         List of LangChain messages ready for agent processing
     """
+    scope = scope or MessageScope()
+    attachments = attachments or MessageAttachments()
+    user_id, user_name, user_dict = scope.user_id, scope.user_name, scope.user_dict
+    conversation_id, source = scope.conversation_id, scope.source
+    selected_tool, tool_category = attachments.selected_tool, attachments.tool_category
+    files_data = attachments.files_data
+    currently_uploaded_file_ids = attachments.currently_uploaded_file_ids
+
     # Static per-channel main prompt — byte-identical across every user on
     # this channel, so the provider's implicit prompt cache can match across
     # users. Web/mobile/desktop get the OpenUI-capable variant; text-only
@@ -81,7 +105,7 @@ async def construct_langchain_messages(
     system_msg = create_system_message(
         user_id=user_id,
         user_name=user_name,
-        agent_type=agent_type,
+        agent_type=scope.agent_type,
         source=source,
     )
 
@@ -90,12 +114,7 @@ async def construct_langchain_messages(
         user_dict.onboarding if user_dict else None
     )
 
-    # Extract user's latest message content
-    user_content = (
-        messages[-1].get("content", "").strip()
-        if messages and messages[-1].get("role") == "user"
-        else ""
-    )
+    user_content = _latest_user_content(messages)
 
     assembled = await assemble_context(
         SectionContext(
@@ -106,8 +125,8 @@ async def construct_langchain_messages(
             user_preferences=user_preferences,
             writing_style=writing_style,
             query=query,
-            active_todo_id=active_todo_id,
-            execution_mode=execution_mode,
+            active_todo_id=scope.active_todo_id,
+            execution_mode=scope.execution_mode,
             source=source,
         )
     )
@@ -139,11 +158,11 @@ async def construct_langchain_messages(
     # Priority: workflow > calendar event > tool selection > user message
     content = (
         await format_workflow_execution_message(
-            selected_workflow, user_id, trigger_context, user_content
+            attachments.selected_workflow, user_id, attachments.trigger_context, user_content
         )
-        if selected_workflow
-        else format_calendar_event_context(selected_calendar_event, user_content)
-        if selected_calendar_event
+        if attachments.selected_workflow
+        else format_calendar_event_context(attachments.selected_calendar_event, user_content)
+        if attachments.selected_calendar_event
         else format_tool_selection_message(selected_tool, user_content, tool_category)
         if selected_tool
         else user_content
@@ -153,8 +172,8 @@ async def construct_langchain_messages(
         raise ValueError("No human message or selected tool")
 
     # Add reply-to-message context if present
-    if reply_to_message:
-        content = format_reply_context(reply_to_message, content)
+    if attachments.reply_to_message:
+        content = format_reply_context(attachments.reply_to_message, content)
 
     # Append file context if files are uploaded. The summary is read server-side
     # from MongoDB (authoritative) — never trusted from the inbound request — in

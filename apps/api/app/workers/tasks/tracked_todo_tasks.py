@@ -9,10 +9,10 @@ Handles:
 - Safety-net cron for orphaned todos
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 import json
 import random
-from typing import Any
 from uuid import uuid4
 
 from arq.connections import ArqRedis
@@ -78,7 +78,7 @@ async def _load_user_with_tz(user_id: str) -> tuple[AuthenticatedUser, Timezone]
 
 
 async def execute_tracked_todo(
-    ctx: dict[str, Any],  # noqa: ARG001 -- ARQ injects ctx positionally into every registered task
+    ctx: Mapping[str, object],  # noqa: ARG001 -- ARQ injects ctx positionally into every registered task
     todo_id: str,
     origin: TriggerOrigin | None = None,
 ) -> str:
@@ -274,7 +274,7 @@ async def _execute_todo_with_retry(
         return f"retry:{todo_id} (attempt {new_retry_count})"
 
 
-def _execution_context(todo_id: str | None, origin: TriggerOrigin | None) -> dict[str, Any]:
+def _execution_context(todo_id: str | None, origin: TriggerOrigin | None) -> dict[str, object]:
     """The trigger stamp both execution paths put on a run.
 
     One builder because the workflow path and the agent path were stamping the
@@ -631,7 +631,7 @@ def _compute_next_run(
         return None
 
 
-async def safety_net_check_orphaned_todos(_ctx: dict[str, Any]) -> str:
+async def safety_net_check_orphaned_todos(_ctx: Mapping[str, object]) -> str:
     """
     Cron safety net: find scheduled tracked todos that should have run but
     were never picked up (e.g. worker was down, job was lost).

@@ -16,6 +16,7 @@ from app.constants.log_tags import LogTag
 # ---------------------------------------------------------------------------
 from app.models.mail_models import (
     GmailDraftsResponse,
+    GmailMessageResource,
     GmailMessagesResponse,
     GmailMessageSummary,
     GmailToolResult,
@@ -657,6 +658,22 @@ class TestTrashUntrash:
         assert mock_invoke_gmail_tool.call_count == 2
         tool_names = [c[0][1] for c in mock_invoke_gmail_tool.call_args_list]
         assert all(n == "GMAIL_TRASH_MESSAGE" for n in tool_names)
+
+    async def test_trash_returns_a_resource_per_trashed_message(self, mock_invoke_gmail_tool):
+        mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
+            {"successful": True, "data": {}}
+        )
+
+        result = await trash_messages(USER_ID, ["msg1", "msg2"])
+
+        assert result == [GmailMessageResource(id="msg1"), GmailMessageResource(id="msg2")]
+
+    async def test_untrash_returns_a_resource_per_restored_message(self, mock_invoke_gmail_tool):
+        mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate({"successful": True})
+
+        result = await untrash_messages(USER_ID, ["msg1"])
+
+        assert result == [GmailMessageResource(id="msg1")]
 
     async def test_trash_excludes_failed_messages_from_result(self, mock_invoke_gmail_tool):
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(

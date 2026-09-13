@@ -23,13 +23,12 @@ from app.constants.calendar import DEFAULT_CALENDAR_COLOR
 from app.constants.log_tags import LogTag
 from app.db.repositories.users import user_repository
 from app.decorators import with_doc
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import read_agent_configurable
 from app.models.calendar_models import (
     AddRecurrenceInput,
     CalendarEventDisplay,
     CalendarOptionDraft,
     CalendarSummary,
-    ConfiguredUserTimezone,
     CreatedEventSummary,
     CreateEventInput,
     DeleteEventInput,
@@ -147,7 +146,7 @@ def _get_user_timezone() -> tzinfo | None:
     """
     try:
         config = get_config()
-        if ConfiguredUserTimezone.model_validate(agent_configurable(config)).user_timezone:
+        if read_agent_configurable(config).user_timezone:
             return home_timezone_from_config(config).tzinfo
     except Exception:
         log.error(f"{LogTag.TOOL} Error getting user timezone")

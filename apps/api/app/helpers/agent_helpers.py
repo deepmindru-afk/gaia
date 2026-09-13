@@ -36,10 +36,11 @@ from app.db.redis import get_cache, set_cache
 from app.db.repositories.integrations import integration_repository
 from app.models.agent_models import (
     AgentConfigurable,
+    AgentConfigurableView,
     AgentRunnableConfig,
     AgentUserContext,
     ExecutionMode,
-    agent_configurable,
+    read_agent_configurable,
 )
 from app.models.chat_models import ConversationSource, SourceCategory, ToolDataEntry
 from app.models.mcp_app_models import McpUiMetadata, McpUiResource
@@ -82,43 +83,6 @@ class _AgentUser(BaseModel):
     email: str | None = None
     name: str | None = ""
     timezone: str | None = None
-
-
-class InheritedConfigurable(BaseModel):
-    """The keys a child run reads off its parent's ``configurable``, parsed once.
-
-    A parent bag is LangGraph's dict — checkpointed, queued and resumed as JSON
-    — so it is read through a model rather than by key. ``session_id`` is
-    inherited on *presence* (a parent that explicitly carries ``None`` hands
-    that down), which ``model_fields_set`` still tells apart from absence.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    conversation_id: str | None = None
-    session_id: str | None = None
-    user_messages: list[str] | None = None
-    user_request: str | None = None
-    user_preferences: dict[str, object] | None = None
-    writing_style: dict[str, object] | None = None
-    selected_tool: str | None = None
-    tool_category: str | None = None
-    subagent_id: str | None = None
-    vfs_session_id: str | None = None
-    active_todo_id: str | None = None
-    conversation_source: str | None = None
-    execution_mode: ExecutionMode | None = None
-    stream_id: str | None = None
-    user_timezone: str | None = None
-    root_request_id: str | None = None
-    lane: dict[str, object] | None = None
-    langfuse_trace_id: str | None = None
-    langfuse_tags: list[str] | None = None
-    plan_type: str | None = None
-    workflow_id: str | None = None
-    workflow_title: str = ""
-    workflow_notify_on_completion: bool = True
-    user_id: str | None = None
 
 
 class _HistoryTurn(BaseModel):
@@ -418,7 +382,7 @@ class _TurnScope:
 
 
 def _inherit_from_parent_configurable(
-    parent: InheritedConfigurable | None,
+    parent: AgentConfigurableView | None,
     current: _TurnScope,
 ) -> _TurnScope:
     """Merge `current` with optional inheritance from a parent agent's configurable.
@@ -699,7 +663,7 @@ async def build_agent_config(
 
     acting_user = _AgentUser.model_validate(user)
     parent = (
-        InheritedConfigurable.model_validate(base_configurable)
+        AgentConfigurableView.model_validate(base_configurable)
         if base_configurable is not None
         else None
     )
@@ -747,7 +711,7 @@ async def build_agent_config(
 
     # Explicit kwargs win over what was inherited from the parent's configurable.
     # `is not None` (not `or`) so callers can pass [] to intentionally clear tags.
-    inherited = parent if parent is not None else InheritedConfigurable()
+    inherited = parent if parent is not None else AgentConfigurableView()
     effective_trace_id = (
         tracing.langfuse_trace_id
         if tracing.langfuse_trace_id is not None
@@ -1043,7 +1007,7 @@ async def execute_graph_silent(
     graph: CompiledAgentGraph,
     initial_state: Mapping[str, object],
     config: AgentRunnableConfig,
-) -> tuple[str, dict[str, list[ToolDataEntry]]]:
+) -> tuple[str, list[ToolDataEntry]]:
     """Execute LangGraph in silent mode, accumulating the full message and tool data.
 
     Used for background processing and workflow triggers that don't need streaming.
@@ -1054,7 +1018,7 @@ async def execute_graph_silent(
     is_comms = _RunConfigView.model_validate(config).agent_name == "comms_agent"
 
     # Get user_id for metadata lookup (not for storage - caller handles that)
-    user_id = InheritedConfigurable.model_validate(agent_configurable(config)).user_id
+    user_id = read_agent_configurable(config).user_id
 
     # A list `stream_mode` plus `subgraphs=True` makes astream yield
     # (namespace, mode, payload) triples, which langgraph's own overload return
@@ -1111,7 +1075,7 @@ async def execute_graph_silent(
             }
         )
 
-    return acc.complete_message, {"tool_data": acc.entries}
+    return acc.complete_message, acc.entries
 
 
 def _json_safe_tool_result(content: MessageContent) -> object:
@@ -1481,7 +1445,7 @@ async def execute_graph_streaming(
         - "messages": AIMessageChunk text content; ToolMessage results -> tool_output.
         - "custom": application-specific tool events, forwarded as-is.
     """
-    scope = InheritedConfigurable.model_validate(agent_configurable(config))
+    scope = read_agent_configurable(config)
     stream_id = scope.stream_id
     user_id = scope.user_id
     is_comms = _RunConfigView.model_validate(config).agent_name == "comms_agent"

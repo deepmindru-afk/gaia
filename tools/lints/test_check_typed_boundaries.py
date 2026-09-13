@@ -58,3 +58,31 @@ def test_boundary_modules_are_not_scanned(tmp_path: Path, monkeypatch) -> None:
     module.parent.mkdir(parents=True)
     module.write_text("def f(x: dict) -> dict: return x['a']\n")
     assert scan([module]) == {}
+
+
+def test_a_route_decorator_is_not_a_string_key_read(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    source = "@router.get('/todos')\nasync def list_todos(payload):\n    return payload.get('id')\n"
+    assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [3]
+
+
+def test_a_read_on_a_name_annotated_with_a_typeddict_is_not_a_guess(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    source = (
+        "from typing import TypedDict\n"
+        "class Probe(TypedDict):\n"
+        "    ok: bool\n"
+        "class DeepProbe(Probe):\n"
+        "    url: str\n"
+        "def f(result: Probe, deep: DeepProbe | None, call: ToolCall, raw: dict) -> None:\n"
+        "    local: Probe = result\n"
+        "    a = result['ok']\n"
+        "    b = deep['url']\n"
+        "    c = call.get('name')\n"
+        "    d = local['ok']\n"
+        "    e = raw['ok']\n"
+        "    g = result['ok']['x'] if False else None\n"
+    )
+    assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [12, 13]

@@ -418,7 +418,7 @@ class TestRedeemLinkCode:
         """The greeting names the GAIA account the code linked and the connect
         links are minted for it, so composing off the platform profile (or off
         nobody) would greet the wrong person and hand out useless links."""
-        _linked_user.return_value = {"_id": "user1", "name": "Aryan Randeriya"}
+        _linked_user.return_value = UserDocument(id="user1", name="Aryan Randeriya")
         with (
             patch(
                 PEEK_PATCH,
@@ -443,7 +443,7 @@ class TestRedeemLinkCode:
         introduced itself. The request body and the linked user go through
         as-is: the body names the platform thread to write into and the user
         is the actor the write is scoped to."""
-        _linked_user.return_value = {"_id": "user1", "name": "Aryan Randeriya"}
+        _linked_user.return_value = UserDocument(id="user1", name="Aryan Randeriya")
         with (
             patch(
                 PEEK_PATCH,

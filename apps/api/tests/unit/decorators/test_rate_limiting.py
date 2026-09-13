@@ -801,8 +801,8 @@ class TestLimitHitException:
         capture.assert_not_called()
 
     async def test_dict_detail_drives_reset_time_and_card(self) -> None:
-        result, _, writer, _, _ = await self._hit(detail={"reset_time": RESET_AT})
-        assert result.reset_time == RESET_AT
+        result, _, writer, _, _ = await self._hit(detail={"reset_time": RESET_AT.isoformat()})
+        assert result.reset_time == RESET_AT.isoformat()
         card = writer.call_args.args[0]
         assert card["tool_data"]["data"]["reset_time"] == RESET_AT.isoformat()
 

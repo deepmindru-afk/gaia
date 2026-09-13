@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from langchain_core.documents import Document
 from pydantic import BaseModel, ConfigDict
 
@@ -6,6 +8,18 @@ from app.db.chroma.chromadb import ChromaClient
 from app.db.repositories.todos import todo_repository
 from app.models.todo_models import Priority, TodoDocument, TodoResponse
 from shared.py.wide_events import log
+
+
+@dataclass(frozen=True, slots=True)
+class TodoSearchFilters:
+    """Optional narrowing applied to a todo search."""
+
+    completed: bool | None = None
+    priority: str | None = None
+    project_id: str | None = None
+
+
+_NO_FILTERS = TodoSearchFilters()
 
 
 class _IndexedTodoId(BaseModel):
@@ -166,9 +180,7 @@ async def semantic_search_todos(
     query: str,
     user_id: str,
     top_k: int = 10,
-    completed: bool | None = None,
-    priority: str | None = None,
-    project_id: str | None = None,
+    filters: TodoSearchFilters = _NO_FILTERS,
     include_traditional_search: bool = True,
 ) -> list[TodoResponse]:
     """Semantic-search todos via ChromaDB, with optional filters.
@@ -181,9 +193,9 @@ async def semantic_search_todos(
         user_id=user_id,
         search_query=query,
         top_k=top_k,
-        filter_completed=completed,
-        filter_priority=priority,
-        filter_project_id=project_id,
+        filter_completed=filters.completed,
+        filter_priority=filters.priority,
+        filter_project_id=filters.project_id,
     )
     try:
         # Get ChromaDB collection
@@ -194,14 +206,15 @@ async def semantic_search_todos(
         # Build filters using ChromaDB operators (combine into single dict)
         where_filter = {"user_id": str(user_id)}
 
-        if completed is not None:
-            where_filter["completed"] = str(completed).lower()  # Convert to "true" or "false"
+        if filters.completed is not None:
+            # Convert to "true" or "false"
+            where_filter["completed"] = str(filters.completed).lower()
 
-        if priority and priority != "none":
-            where_filter["priority"] = priority
+        if filters.priority and filters.priority != "none":
+            where_filter["priority"] = filters.priority
 
-        if project_id:
-            where_filter["project_id"] = str(project_id)
+        if filters.project_id:
+            where_filter["project_id"] = str(filters.project_id)
 
         # Perform semantic search
         results = chroma_collection.similarity_search_with_score(
@@ -251,9 +264,7 @@ async def hybrid_search_todos(
     user_id: str,
     top_k: int = 10,
     semantic_weight: float = 0.7,
-    completed: bool | None = None,
-    priority: str | None = None,
-    project_id: str | None = None,
+    filters: TodoSearchFilters = _NO_FILTERS,
 ) -> list[TodoResponse]:
     """Hybrid search combining semantic and traditional results.
 
@@ -265,9 +276,7 @@ async def hybrid_search_todos(
             query=query,
             user_id=user_id,
             top_k=top_k,
-            completed=completed,
-            priority=priority,
-            project_id=project_id,
+            filters=filters,
             include_traditional_search=False,
         )
 
@@ -279,12 +288,16 @@ async def hybrid_search_todos(
         traditional_results = await search_todos(query, user_id)
 
         # Apply filters to traditional results
-        if completed is not None:
-            traditional_results = [t for t in traditional_results if t.completed == completed]
-        if priority:
-            traditional_results = [t for t in traditional_results if t.priority == priority]
-        if project_id:
-            traditional_results = [t for t in traditional_results if t.project_id == project_id]
+        if filters.completed is not None:
+            traditional_results = [
+                t for t in traditional_results if t.completed == filters.completed
+            ]
+        if filters.priority:
+            traditional_results = [t for t in traditional_results if t.priority == filters.priority]
+        if filters.project_id:
+            traditional_results = [
+                t for t in traditional_results if t.project_id == filters.project_id
+            ]
 
         # Combine results with scoring
         combined_scores: dict[str, float] = {}
@@ -328,7 +341,5 @@ async def hybrid_search_todos(
             query,
             user_id,
             top_k,
-            completed=completed,
-            priority=priority,
-            project_id=project_id,
+            filters=filters,
         )

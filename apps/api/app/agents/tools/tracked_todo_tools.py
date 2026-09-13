@@ -54,9 +54,9 @@ async def _get_user_tz(user_id: str) -> str:
     """
     try:
         user = await get_user_by_id(user_id)
-        if user and user.get("timezone"):
-            tz_name = user["timezone"]
-            if isinstance(tz_name, str) and is_valid_timezone(tz_name):
+        if user and user.timezone:
+            tz_name = user.timezone
+            if is_valid_timezone(tz_name):
                 return tz_name
             log.debug("tracked_todo.invalid_user_tz", user_id=user_id, tz_name=tz_name)
     except Exception as e:

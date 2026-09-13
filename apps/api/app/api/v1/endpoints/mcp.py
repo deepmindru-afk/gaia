@@ -17,6 +17,7 @@ from app.helpers.mcp_helpers import (
     get_api_base_url,
     get_frontend_url,
 )
+from app.models.mcp_config import McpProbeResult
 from app.models.user_models import AuthenticatedUser
 from app.schemas.mcp import MCPConnectionTestResponse
 from app.services.integrations.integration_resolver import IntegrationResolver
@@ -64,7 +65,7 @@ async def test_mcp_connection(
     server_url = resolved.mcp_config.server_url
 
     # Probe the server
-    probe_result = await client.probe_connection(server_url)
+    probe_result: McpProbeResult = await client.probe_connection(server_url)
     log.set(
         probe={
             "requires_auth": probe_result.get("requires_auth", False),

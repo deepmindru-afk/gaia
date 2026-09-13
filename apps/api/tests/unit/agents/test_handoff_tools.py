@@ -10,6 +10,7 @@ import pytest
 
 from app.agents.core.subagents.handoff_tools import (
     CustomMcpIndexRequest,
+    CustomMcpSubagent,
     _get_subagent_by_id,
     _handoff_rejection,
     _HandoffDispatch,
@@ -268,7 +269,7 @@ class TestGetSubagentById:
             ),
         ):
             result = await _get_subagent_by_id("abc123")
-        assert result == cached
+        assert result == CustomMcpSubagent(id="abc123", name="Custom MCP")
 
     async def test_returns_none_for_negative_cache(self):
         with (
@@ -311,8 +312,9 @@ class TestGetSubagentById:
             mock_repo.find_by_id_prefix_or_name = AsyncMock(return_value=custom)
             result = await _get_subagent_by_id("abc")
 
-        assert result["id"] == "abc"
-        assert result["name"] == "My MCP"
+        assert isinstance(result, CustomMcpSubagent)
+        assert result.id == "abc"
+        assert result.name == "My MCP"
 
     async def test_fallback_to_integration_resolver(self):
         resolved_doc = {
@@ -343,8 +345,9 @@ class TestGetSubagentById:
             mock_resolver.resolve = AsyncMock(return_value=resolved)
             result = await _get_subagent_by_id("res_id")
 
-        assert result["id"] == "res_id"
-        assert result["source"] == "user_integrations"
+        assert isinstance(result, CustomMcpSubagent)
+        assert result.id == "res_id"
+        assert result.source == "user_integrations"
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +412,7 @@ class TestResolveSubagent:
             patch(
                 "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
                 new_callable=AsyncMock,
-                return_value=custom_dict,
+                return_value=CustomMcpSubagent.model_validate(custom_dict),
             ),
             patch(
                 "app.agents.core.subagents.handoff_tools.create_subagent_for_user",
@@ -427,7 +430,7 @@ class TestResolveSubagent:
         with patch(
             "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
             new_callable=AsyncMock,
-            return_value=custom_dict,
+            return_value=CustomMcpSubagent.model_validate(custom_dict),
         ):
             graph, name, error, is_custom = await _resolve_subagent("abc", None)
         assert graph is None
@@ -438,7 +441,7 @@ class TestResolveSubagent:
         with patch(
             "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
             new_callable=AsyncMock,
-            return_value=custom_dict,
+            return_value=CustomMcpSubagent.model_validate(custom_dict),
         ):
             graph, name, error, is_custom = await _resolve_subagent("broken", "user1")
         assert graph is None
@@ -451,7 +454,7 @@ class TestResolveSubagent:
             patch(
                 "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
                 new_callable=AsyncMock,
-                return_value=custom_dict,
+                return_value=CustomMcpSubagent.model_validate(custom_dict),
             ),
             patch(
                 "app.agents.core.subagents.handoff_tools.create_subagent_for_user",
@@ -996,7 +999,7 @@ class TestCustomMcpResolution:
         with patch(
             "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
             new_callable=AsyncMock,
-            return_value=doc,
+            return_value=CustomMcpSubagent.model_validate(doc),
         ):
             yield
 

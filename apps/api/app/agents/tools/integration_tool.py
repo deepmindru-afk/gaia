@@ -9,6 +9,7 @@ from typing import Annotated, cast
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
+from pydantic import BaseModel, ConfigDict
 
 from app.config.oauth_config import OAUTH_INTEGRATIONS
 from app.constants.integrations import (
@@ -41,6 +42,142 @@ from app.utils.integration_checker import request_integration_connection
 from shared.py.wide_events import log
 
 
+class _ConfiguredUser(BaseModel):
+    """The run's ``user_id``, read off its ``AgentConfigurable``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    user_id: str | None = None
+
+
+def _configured_user_id(config: RunnableConfig) -> str | None:
+    return _ConfiguredUser.model_validate(agent_configurable(config)).user_id
+
+
+class _IntegrationLists:
+    """The connected/available split, plus every id already listed for the user."""
+
+    def __init__(self) -> None:
+        self.connected: list[IntegrationInfo] = []
+        self.available: list[IntegrationInfo] = []
+        self.listed_ids: set[str] = set()
+
+    def add(self, info: IntegrationInfo, integration_id: str, is_connected: bool) -> None:
+        self.listed_ids.add(integration_id)
+        (self.connected if is_connected else self.available).append(info)
+
+
+async def _add_platform_integrations(lists: _IntegrationLists, user_id: str) -> None:
+    """Platform integrations with their connection status."""
+    platform_ids = [i.id for i in OAUTH_INTEGRATIONS if i.available]
+    status_map = await check_multiple_integrations_status(platform_ids, user_id)
+
+    for integration in OAUTH_INTEGRATIONS:
+        if not integration.available:
+            continue
+
+        is_connected = status_map.get(integration.id, False)
+        info: IntegrationInfo = {
+            "id": integration.id,
+            "name": integration.name,
+            "description": integration.description,
+            "category": integration.category,
+            "connected": is_connected,
+        }
+        lists.add(info, integration.id, is_connected)
+
+
+async def _add_custom_integrations(lists: _IntegrationLists, user_id: str) -> set[str]:
+    """The user's custom integrations; returns the ids the user has added."""
+    user_integrations = await user_integration_repository.list_for_user(user_id)
+    user_integration_ids = {ui.integration_id for ui in user_integrations}
+
+    if user_integration_ids:
+        custom_docs = await integration_repository.find_custom_by_ids(list(user_integration_ids))
+        for doc in custom_docs:
+            integration_id = doc.integration_id
+            is_connected = await user_integration_repository.is_connected(user_id, integration_id)
+
+            custom_info: IntegrationInfo = {
+                "id": integration_id,
+                "name": doc.name,
+                "description": doc.description,
+                "category": doc.category,
+                "connected": is_connected,
+            }
+            lists.add(custom_info, integration_id, is_connected)
+
+    return user_integration_ids
+
+
+def _stream_frame(suggested: SuggestedIntegration) -> dict[str, object]:
+    """A suggested integration as the frontend's camelCase stream frame."""
+    return {
+        "id": suggested["id"],
+        "name": suggested["name"],
+        "description": suggested["description"],
+        "category": suggested["category"],
+        "iconUrl": suggested["icon_url"],
+        "authType": suggested["auth_type"],
+        "relevanceScore": suggested["relevance_score"],
+        "slug": suggested["slug"],
+    }
+
+
+async def _search_suggested(query: str, exclude_ids: set[str]) -> list[SuggestedIntegration]:
+    """Public integrations matching ``query``, excluding ids the user already has."""
+    suggested_list: list[SuggestedIntegration] = []
+    try:
+        log.info(f"{LogTag.TOOL} Searching public integrations", query=query)
+
+        # Flexible word-based search (regex construction lives in the repo)
+        words = build_search_patterns(query)
+
+        docs = await integration_repository.search_public(
+            words=words,
+            query=query,
+            exclude_ids=list(exclude_ids),
+            limit=MAX_SUGGESTED_FOR_LLM,
+        )
+
+        for doc in docs:
+            iid = doc.integration_id
+            log.info(
+                f"{LogTag.TOOL} Found public integration",
+                integration_id=iid,
+                integration_name=doc.name,
+            )
+
+            suggested_list.append(
+                {
+                    "id": iid,
+                    "name": doc.name,
+                    "description": doc.description,
+                    "category": doc.category,
+                    "icon_url": doc.icon_url,
+                    "auth_type": doc.mcp_config.auth_type if doc.mcp_config else None,
+                    "relevance_score": 1.0,  # All matches are equal with regex
+                    "slug": generate_integration_slug(
+                        name=doc.name,
+                        category=doc.category,
+                    ),
+                }
+            )
+
+        log.info(
+            f"{LogTag.TOOL} Found public integrations",
+            integration_count=len(suggested_list),
+        )
+
+    except Exception as e:
+        log.warning(
+            f"{LogTag.TOOL} Failed to search public integrations",
+            error_type=type(e).__name__,
+        )
+
+    return suggested_list
+
+
 @tool
 @with_doc(LIST_INTEGRATIONS)
 async def list_integrations(
@@ -60,150 +197,39 @@ async def list_integrations(
     """
     try:
         log.set(tool={"name": "list_integrations", "action": "list"})
-        configurable = agent_configurable(config)
-        user_id = configurable.get("user_id") if configurable else None
+        user_id = _configured_user_id(config)
         if not user_id:
             return "Error: User ID not found in configuration."
 
         writer = get_stream_writer()
 
-        # Fetch platform integrations with connection status
-        platform_ids = [i.id for i in OAUTH_INTEGRATIONS if i.available]
-        status_map = await check_multiple_integrations_status(platform_ids, user_id)
-
-        connected_list: list[IntegrationInfo] = []
-        available_list: list[IntegrationInfo] = []
-
-        for integration in OAUTH_INTEGRATIONS:
-            if not integration.available:
-                continue
-
-            is_connected = status_map.get(integration.id, False)
-            info: IntegrationInfo = {
-                "id": integration.id,
-                "name": integration.name,
-                "description": integration.description,
-                "category": integration.category,
-                "connected": is_connected,
-            }
-
-            if is_connected:
-                connected_list.append(info)
-            else:
-                available_list.append(info)
-
-        # Fetch user's custom integrations
-        user_integrations = await user_integration_repository.list_for_user(user_id)
-        user_integration_ids = {ui.integration_id for ui in user_integrations}
-
-        if user_integration_ids:
-            custom_docs = await integration_repository.find_custom_by_ids(
-                list(user_integration_ids)
-            )
-            for doc in custom_docs:
-                integration_id = doc.integration_id
-                is_connected = await user_integration_repository.is_connected(
-                    user_id, integration_id
-                )
-
-                custom_info: IntegrationInfo = {
-                    "id": integration_id,
-                    "name": doc.name,
-                    "description": doc.description,
-                    "category": doc.category,
-                    "connected": is_connected,
-                }
-
-                if is_connected:
-                    connected_list.append(custom_info)
-                else:
-                    available_list.append(custom_info)
+        lists = _IntegrationLists()
+        await _add_platform_integrations(lists, user_id)
+        user_integration_ids = await _add_custom_integrations(lists, user_id)
 
         # Search for suggested public integrations if query provided
         suggested_list: list[SuggestedIntegration] = []
 
         if search_public_query and search_public_query.strip():
-            try:
-                query = search_public_query.strip()
-                log.info(f"{LogTag.TOOL} Searching public integrations", query=query)
-
-                # Get IDs to exclude (user already has these)
-                existing_ids = {i["id"] for i in connected_list + available_list}
-                existing_ids.update(user_integration_ids)
-
-                # Flexible word-based search (regex construction lives in the repo)
-                words = build_search_patterns(query)
-
-                docs = await integration_repository.search_public(
-                    words=words,
-                    query=query,
-                    exclude_ids=list(existing_ids),
-                    limit=MAX_SUGGESTED_FOR_LLM,
-                )
-
-                for doc in docs:
-                    iid = doc.integration_id
-                    log.info(
-                        f"{LogTag.TOOL} Found public integration",
-                        integration_id=iid,
-                        integration_name=doc.name,
-                    )
-
-                    suggested_list.append(
-                        {
-                            "id": iid,
-                            "name": doc.name,
-                            "description": doc.description,
-                            "category": doc.category,
-                            "icon_url": doc.icon_url,
-                            "auth_type": doc.mcp_config.auth_type if doc.mcp_config else None,
-                            "relevance_score": 1.0,  # All matches are equal with regex
-                            "slug": generate_integration_slug(
-                                name=doc.name,
-                                category=doc.category,
-                            ),
-                        }
-                    )
-
-                log.info(
-                    f"{LogTag.TOOL} Found public integrations",
-                    integration_count=len(suggested_list),
-                )
-
-            except Exception as e:
-                log.warning(
-                    f"{LogTag.TOOL} Failed to search public integrations",
-                    error_type=type(e).__name__,
-                )
+            # Exclude IDs the user already has
+            suggested_list = await _search_suggested(
+                search_public_query.strip(), lists.listed_ids | user_integration_ids
+            )
 
         # Stream suggested integrations to frontend (camelCase)
-        suggested_for_stream = [
-            {
-                "id": s["id"],
-                "name": s["name"],
-                "description": s["description"],
-                "category": s["category"],
-                "iconUrl": s["icon_url"],
-                "authType": s["auth_type"],
-                "relevanceScore": s["relevance_score"],
-                "slug": s["slug"],
-            }
-            for s in suggested_list[:MAX_SUGGESTED_FOR_LLM]
-        ]
-
         writer(
             {
                 "integration_list_data": {
                     "hasSuggestions": len(suggested_list) > 0,
-                    "suggested": suggested_for_stream,
+                    "suggested": [_stream_frame(s) for s in suggested_list[:MAX_SUGGESTED_FOR_LLM]],
                 }
             }
         )
 
         # Return structured data for LLM (with limits)
         return {
-            "connected": connected_list[:MAX_CONNECTED_FOR_LLM],
-            "available": available_list[:MAX_AVAILABLE_FOR_LLM],
+            "connected": lists.connected[:MAX_CONNECTED_FOR_LLM],
+            "available": lists.available[:MAX_AVAILABLE_FOR_LLM],
             "suggested": suggested_list[:MAX_SUGGESTED_FOR_LLM],
         }
 
@@ -249,8 +275,7 @@ async def connect_integration(
 ) -> str:
     try:
         log.set(tool={"name": "connect_integration", "action": "connect"})
-        configurable = agent_configurable(config)
-        user_id = configurable.get("user_id") if configurable else None
+        user_id = _configured_user_id(config)
         if not user_id:
             return "Error: User ID not found in configuration."
 
@@ -321,8 +346,7 @@ async def check_integrations_status(
 ) -> str:
     try:
         log.set(tool={"name": "check_integrations_status", "action": "check"})
-        configurable = agent_configurable(config)
-        user_id = configurable.get("user_id") if configurable else None
+        user_id = _configured_user_id(config)
         if not user_id:
             return "Error: User ID not found in configuration."
 

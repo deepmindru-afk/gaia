@@ -969,18 +969,6 @@ class AddRecurrenceInput(BaseModel):
         return self
 
 
-class ConfiguredUserTimezone(BaseModel):
-    """Typed read of ``configurable["user_timezone"]`` for the calendar tools.
-
-    ``AgentConfigurable`` is a TypedDict, so its keys can only be read by string;
-    validating the bag into this view is the one place that read happens.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    user_timezone: str | None = None
-
-
 class EventToolFailure(BaseModel):
     """One event a get/delete tool could not act on, keyed like its ``EventReference``."""
 

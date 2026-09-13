@@ -36,12 +36,14 @@ def _make_forecast_item(
     hour: str,
     temp: float,
     humidity: int,
-    condition: str,
-    description: str,
-    icon: str,
+    weather: tuple[str, str, str],
     dt: int = 1700000000,
 ) -> dict[str, Any]:
-    """Build a single forecast list item matching the OpenWeatherMap schema."""
+    """Build a single forecast list item matching the OpenWeatherMap schema.
+
+    ``weather`` is ``(condition, description, icon)``.
+    """
+    condition, description, icon = weather
     return {
         "dt": dt,
         "dt_txt": f"{date} {hour}",
@@ -117,7 +119,7 @@ class TestProcessForecastData:
 
     def test_single_day_single_item(self) -> None:
         items = [
-            _make_forecast_item("2024-01-15", "12:00:00", 10.0, 60, "Clear", "clear sky", "01d"),
+            _make_forecast_item("2024-01-15", "12:00:00", 10.0, 60, ("Clear", "clear sky", "01d")),
         ]
         result = process_forecast_data(_make_forecast_data(items))
         assert len(result) == 1
@@ -134,10 +136,10 @@ class TestProcessForecastData:
 
     def test_single_day_multiple_items_aggregates(self) -> None:
         items = [
-            _make_forecast_item("2024-01-15", "06:00:00", 5.0, 80, "Clouds", "overcast", "04d"),
-            _make_forecast_item("2024-01-15", "12:00:00", 12.0, 50, "Clear", "clear sky", "01d"),
+            _make_forecast_item("2024-01-15", "06:00:00", 5.0, 80, ("Clouds", "overcast", "04d")),
+            _make_forecast_item("2024-01-15", "12:00:00", 12.0, 50, ("Clear", "clear sky", "01d")),
             _make_forecast_item(
-                "2024-01-15", "18:00:00", 8.0, 70, "Clouds", "broken clouds", "04d"
+                "2024-01-15", "18:00:00", 8.0, 70, ("Clouds", "broken clouds", "04d")
             ),
         ]
         result = process_forecast_data(_make_forecast_data(items))
@@ -151,9 +153,9 @@ class TestProcessForecastData:
 
     def test_multiple_days_sorted_by_date(self) -> None:
         items = [
-            _make_forecast_item("2024-01-17", "12:00:00", 20.0, 40, "Clear", "clear sky", "01d"),
-            _make_forecast_item("2024-01-15", "12:00:00", 10.0, 60, "Rain", "light rain", "10d"),
-            _make_forecast_item("2024-01-16", "12:00:00", 15.0, 50, "Clouds", "overcast", "04d"),
+            _make_forecast_item("2024-01-17", "12:00:00", 20.0, 40, ("Clear", "clear sky", "01d")),
+            _make_forecast_item("2024-01-15", "12:00:00", 10.0, 60, ("Rain", "light rain", "10d")),
+            _make_forecast_item("2024-01-16", "12:00:00", 15.0, 50, ("Clouds", "overcast", "04d")),
         ]
         result = process_forecast_data(_make_forecast_data(items))
         assert len(result) == 3
@@ -170,7 +172,7 @@ class TestProcessForecastData:
                 "main": {"temp": 10, "humidity": 50},
                 "weather": [{"main": "Clear", "description": "clear", "icon": "01d"}],
             },
-            _make_forecast_item("2024-01-15", "12:00:00", 12.0, 60, "Clear", "clear sky", "01d"),
+            _make_forecast_item("2024-01-15", "12:00:00", 12.0, 60, ("Clear", "clear sky", "01d")),
         ]
         result = process_forecast_data(_make_forecast_data(items))
         assert len(result) == 1
@@ -183,7 +185,7 @@ class TestProcessForecastData:
                 "main": {"temp": 10, "humidity": 50},
                 "weather": [{"main": "Clear", "description": "clear", "icon": "01d"}],
             },
-            _make_forecast_item("2024-01-15", "12:00:00", 12.0, 60, "Clear", "clear sky", "01d"),
+            _make_forecast_item("2024-01-15", "12:00:00", 12.0, 60, ("Clear", "clear sky", "01d")),
         ]
         result = process_forecast_data(_make_forecast_data(items))
         assert len(result) == 1
@@ -191,10 +193,10 @@ class TestProcessForecastData:
     def test_icon_matches_most_common_condition(self) -> None:
         """Icon should come from an item whose main condition == most_common_condition."""
         items = [
-            _make_forecast_item("2024-01-15", "06:00:00", 5.0, 80, "Rain", "light rain", "10d"),
-            _make_forecast_item("2024-01-15", "12:00:00", 12.0, 50, "Clear", "clear sky", "01d"),
-            _make_forecast_item("2024-01-15", "15:00:00", 11.0, 55, "Clear", "clear sky", "01d"),
-            _make_forecast_item("2024-01-15", "18:00:00", 8.0, 70, "Clear", "clear sky", "01n"),
+            _make_forecast_item("2024-01-15", "06:00:00", 5.0, 80, ("Rain", "light rain", "10d")),
+            _make_forecast_item("2024-01-15", "12:00:00", 12.0, 50, ("Clear", "clear sky", "01d")),
+            _make_forecast_item("2024-01-15", "15:00:00", 11.0, 55, ("Clear", "clear sky", "01d")),
+            _make_forecast_item("2024-01-15", "18:00:00", 8.0, 70, ("Clear", "clear sky", "01n")),
         ]
         result = process_forecast_data(_make_forecast_data(items))
         # Clear appears 3 times; its icon should be picked (first match = "01d")
@@ -203,10 +205,10 @@ class TestProcessForecastData:
     def test_timestamp_from_first_item_of_day(self) -> None:
         items = [
             _make_forecast_item(
-                "2024-01-15", "06:00:00", 5.0, 80, "Clouds", "overcast", "04d", dt=111
+                "2024-01-15", "06:00:00", 5.0, 80, ("Clouds", "overcast", "04d"), dt=111
             ),
             _make_forecast_item(
-                "2024-01-15", "12:00:00", 12.0, 50, "Clear", "clear sky", "01d", dt=222
+                "2024-01-15", "12:00:00", 12.0, 50, ("Clear", "clear sky", "01d"), dt=222
             ),
         ]
         result = process_forecast_data(_make_forecast_data(items))
@@ -231,9 +233,7 @@ class TestProcessForecastData:
                 f"{i:02d}:00:00",
                 t,
                 50,
-                "Clear",
-                "clear sky",
-                "01d",
+                ("Clear", "clear sky", "01d"),
             )
             for i, t in enumerate(temps)
         ]
@@ -243,8 +243,8 @@ class TestProcessForecastData:
 
     def test_humidity_rounded(self) -> None:
         items = [
-            _make_forecast_item("2024-01-15", "06:00:00", 10.0, 33, "Clear", "clear", "01d"),
-            _make_forecast_item("2024-01-15", "12:00:00", 10.0, 34, "Clear", "clear", "01d"),
+            _make_forecast_item("2024-01-15", "06:00:00", 10.0, 33, ("Clear", "clear", "01d")),
+            _make_forecast_item("2024-01-15", "12:00:00", 10.0, 34, ("Clear", "clear", "01d")),
         ]
         result = process_forecast_data(_make_forecast_data(items))
         # (33 + 34) / 2 = 33.5 → rounds to 34
@@ -648,7 +648,7 @@ class TestPrepareWeatherData:
     async def test_card_payload_is_the_provider_response_plus_forecast_and_location(self) -> None:
         current = _make_current_weather(name="London", country="GB", temp=15.0)
         forecast = _make_forecast_data(
-            [_make_forecast_item("2024-01-15", "12:00:00", 10.0, 50, "Clear", "clear", "01d")]
+            [_make_forecast_item("2024-01-15", "12:00:00", 10.0, 50, ("Clear", "clear", "01d"))]
         )
         result = await self._call(
             _resolved("London", "GB", None), current_weather=current, forecast_data=forecast
@@ -671,7 +671,7 @@ class TestPrepareWeatherData:
     async def test_forecast_data_included(self) -> None:
         forecast = _make_forecast_data(
             [
-                _make_forecast_item("2024-01-15", "12:00:00", 10.0, 50, "Clear", "clear", "01d"),
+                _make_forecast_item("2024-01-15", "12:00:00", 10.0, 50, ("Clear", "clear", "01d")),
             ]
         )
         loc = _resolved("Rome", "IT", "Lazio")

@@ -17,11 +17,12 @@ conversation. TTL of 30 minutes is a safety net — released explicitly.
 """
 
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from langsmith import traceable
+from pydantic import BaseModel, ConfigDict
 
 from app.agents.core.background.bg_results import has_bg_subagent_results
 from app.agents.core.background.comms_narrator import record_executor_cancellation
@@ -60,7 +61,7 @@ from app.constants.executor import (
 from app.constants.hil import HIL_PAUSED_LOCK_TTL_SECONDS, HIL_RESUME_CONFIG_KEY
 from app.constants.log_tags import LogTag
 from app.core.stream_manager import StreamManager
-from app.models.agent_models import AgentConfigurable
+from app.models.agent_models import AgentConfigurable, AgentConfigurableView
 from app.models.chat_models import ToolDataEntry
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.hil.approvals_store import (
@@ -117,7 +118,7 @@ async def run_executor_background(
         # config, so without this a user's web turn is metered as ``system`` —
         # and executor turns are the expensive ones, so the under-count lands
         # exactly where COGS-by-channel matters most.
-        conversation_source=configurable.get("conversation_source"),
+        conversation_source=AgentConfigurableView.model_validate(configurable).conversation_source,
         # The workflow run this executor is part of. The workflow task stamped
         # it on ITS boundary; this one is fresh, so without carrying it over
         # every model call the executor makes lands in the ledger with the
@@ -222,14 +223,28 @@ class _ExecutorResult(NamedTuple):
     paused_on: tuple[str, ...] = ()
 
 
-def _paused_approval_ids(payload: dict[str, Any]) -> tuple[str, ...]:
+class _PauseInterrupt(BaseModel):
+    """The approval ids a subagent's interrupt payload carries.
+
+    Both are ``object``: the payload is the gate's raw interrupt value, and the
+    reader below keeps its own guards (a non-list batch is ignored, a single id
+    is stringified) rather than letting validation reject a pause outright.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    approval_ids: object = None
+    approval_id: object = ""
+
+
+def _paused_approval_ids(interrupt: _PauseInterrupt) -> tuple[str, ...]:
     """Approval ids from an interrupt payload — batch shape first, then single."""
-    batch = payload.get("approval_ids")
+    batch = interrupt.approval_ids
     if isinstance(batch, list):
         ids = tuple(str(a) for a in batch if a)
         if ids:
             return ids
-    single = str(payload.get("approval_id", ""))
+    single = str(interrupt.approval_id)
     return (single,) if single else ()
 
 
@@ -266,7 +281,9 @@ async def _execute_executor(
         writer = make_redis_stream_writer(stream_id)
         outcome = await execute_subagent_stream(ctx=ctx, stream_writer=writer, resume=resume)
         if outcome.paused:
-            approval_ids = _paused_approval_ids(outcome.interrupt or {})
+            approval_ids = _paused_approval_ids(
+                _PauseInterrupt.model_validate(outcome.interrupt or {})
+            )
             if not approval_ids:
                 # Unresumable: nothing can ever re-dispatch this thread. Fail the
                 # run loudly rather than leave the conversation's lock held.

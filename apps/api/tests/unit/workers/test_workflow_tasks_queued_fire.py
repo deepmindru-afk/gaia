@@ -88,7 +88,7 @@ class _Harness:
         self.agent = AsyncMock(
             return_value=SilentRunResult(
                 message="I'm on it — I'll handle that right after the current task.",
-                tool_data={},
+                tool_data=[],
                 queued_task_id=queued_task_id,
             )
         )

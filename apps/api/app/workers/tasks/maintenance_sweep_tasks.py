@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 import random
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 from arq.connections import ArqRedis
@@ -64,7 +65,7 @@ ExpiredOutcome = Literal["archived", "notified", "muted"]
 DormantOutcome = Literal["requeued", "needs_attention"]
 
 
-async def maintenance_sweep_tracked_todos(_ctx: dict[str, Any]) -> str:
+async def maintenance_sweep_tracked_todos(_ctx: Mapping[str, object]) -> str:
     """Cron task: scan active tracked todos and apply tiered staleness handling.
 
     Tiers:
@@ -719,7 +720,7 @@ async def _is_user_daytime(user_id: str, now: datetime, cache: dict[str, bool]) 
     try:
         user = await get_user_by_id(user_id)
         if user:
-            timezone_name = user.get("timezone")
+            timezone_name = user.timezone
     except Exception as exc:
         log.warning("maintenance_sweep.user_tz_lookup_failed", user_id=user_id, error=str(exc))
 

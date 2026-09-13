@@ -11,7 +11,6 @@ unlinked.
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
 from urllib.parse import quote
 
 from app.api.v1.middleware.tiered_rate_limiter import RateLimitExceededException
@@ -30,7 +29,7 @@ from app.models.platform_models import (
     PlatformLinkEntry,
     PlatformLinkResult,
 )
-from app.models.user_models import PlatformLinkRecord, UserDocument, user_to_legacy_dict
+from app.models.user_models import PlatformLinkRecord, UserDocument
 from app.services.analytics_service import AnalyticsEvents, capture_context_event
 from app.services.oauth.oauth_state_service import create_oauth_state
 from app.services.payments.payment_service import payment_service
@@ -426,12 +425,9 @@ class PlatformLinkService:
     """Service for platform account linking operations."""
 
     @staticmethod
-    async def get_user_by_platform_id(
-        platform: str, platform_user_id: str
-    ) -> dict[str, Any] | None:
+    async def get_user_by_platform_id(platform: str, platform_user_id: str) -> UserDocument | None:
         """Find a GAIA user by their platform account ID (queries the nested .id field)."""
-        user = await user_repository.get_by_platform_id(platform, platform_user_id)
-        return user_to_legacy_dict(user) if user else None
+        return await user_repository.get_by_platform_id(platform, platform_user_id)
 
     @staticmethod
     async def list_platform_user_ids(platform: str, limit: int = 500) -> list[str]:

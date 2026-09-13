@@ -32,6 +32,11 @@ class TestResolveCaller:
         result = resolve_caller((), {"user": kwarg_user})
         assert result is kwarg_user
 
+    def test_a_user_kwarg_resolves_whatever_the_parameter_is_named(self):
+        kwarg_user = _user("current-user")
+        result = resolve_caller(("not-a-user",), {"request": object(), "current_user": kwarg_user})
+        assert result is kwarg_user
+
     def test_falls_back_to_the_first_positional_authenticated_user(self):
         candidate = _user("positional-user")
         result = resolve_caller(("not-a-user", 42, candidate), {})

@@ -31,6 +31,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from langsmith import traceable
+from pydantic import BaseModel, ConfigDict
 
 from app.agents.core.background.comms_narrator import (
     narrate_executor_result,
@@ -688,12 +689,25 @@ async def _approval_outcomes_note(run: ExecutorRun) -> str:
     )
 
 
+class _ApprovalFrameData(BaseModel):
+    """The ``data`` keys of an ``approval_request`` tool_data entry delivery reads.
+
+    ``object``: the frame is emitter-owned JSON, so the readers below keep their
+    own guards instead of letting validation reject a malformed card.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    approval_id: object = None
+    status: object = None
+
+
 def _approval_id(entry: ToolDataEntry) -> str | None:
     if entry.get("tool_name") != APPROVAL_REQUEST_TOOL_NAME:
         return None
     data = entry.get("data")
     if isinstance(data, dict):
-        approval_id = data.get("approval_id")
+        approval_id = _ApprovalFrameData.model_validate(data).approval_id
         return approval_id if isinstance(approval_id, str) else None
     return None
 
@@ -710,7 +724,10 @@ def _merge_tool_data(
 
     def _is_settled(entry: ToolDataEntry) -> bool:
         data = entry.get("data")
-        return isinstance(data, dict) and data.get("status") in _SETTLED_APPROVAL_STATUSES
+        return (
+            isinstance(data, dict)
+            and _ApprovalFrameData.model_validate(data).status in _SETTLED_APPROVAL_STATUSES
+        )
 
     merged = list(existing)
     index_by_approval = {
@@ -1020,7 +1037,7 @@ async def _broadcast_bot_message(
     )
 
 
-async def _broadcast_message(user_id: str, ws_event: dict[str, Any]) -> None:
+async def _broadcast_message(user_id: str, ws_event: dict[str, object]) -> None:
     """Best-effort WebSocket broadcast with one retry."""
     for attempt in range(2):
         try:

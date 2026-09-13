@@ -37,17 +37,17 @@ def resolve_caller(args: tuple[object, ...], kwargs: dict[str, object]) -> Authe
     """Resolve the calling user for a decorator wrapping an endpoint handler.
 
     Tries the request-scoped auth context first (the normal HTTP path, immune to
-    per-endpoint parameter naming — see the module docstring). Falls back to an
-    explicit ``user`` kwarg, or the first positional ``AuthenticatedUser``, for
-    direct (non-HTTP) invocation such as bots resolving their own user.
-    Returns ``None`` when no caller can be resolved at all — a genuinely public
-    route, or one a caller failed to authenticate.
+    per-endpoint parameter naming — see the module docstring). Falls back to the
+    first ``AuthenticatedUser`` passed as a keyword argument, whatever it is named,
+    then the first positional one, for direct (non-HTTP) invocation such as bots
+    resolving their own user. Returns ``None`` when no caller can be resolved at
+    all — a genuinely public route, or one a caller failed to authenticate.
     """
     user = get_authenticated_user()
     if user:
         return user
 
-    for candidate in (kwargs.get("user"), *args):
+    for candidate in (*kwargs.values(), *args):
         if isinstance(candidate, AuthenticatedUser):
             return candidate
 

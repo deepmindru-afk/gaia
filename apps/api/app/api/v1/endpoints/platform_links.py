@@ -5,6 +5,7 @@ from app.constants.cache import PLATFORM_LINK_TOKEN_PREFIX
 from app.constants.platform_links import PLATFORM_LINK_CODE_FEATURE_KEY
 from app.db.redis import redis_cache
 from app.decorators import enforce_rate_limit
+from app.models.bot_models import LinkTokenRecord
 from app.models.platform_models import (
     DisconnectPlatformResponse,
     GetPlatformLinksResponse,
@@ -149,8 +150,9 @@ async def link_platform(
             detail="Invalid or expired link token. Please request a new link from the bot.",
         )
 
-    token_platform = token_data.get("platform", "")
-    platform_user_id = token_data.get("platform_user_id", "")
+    record = LinkTokenRecord.model_validate(token_data)
+    token_platform = record.platform
+    platform_user_id = record.platform_user_id
 
     if not platform_user_id:
         log.audit(
@@ -175,11 +177,14 @@ async def link_platform(
             detail="Platform mismatch. This token was not generated for this platform.",
         )
 
-    profile: dict[str, str] = {}
-    if token_data.get("username"):
-        profile["username"] = token_data["username"]
-    if token_data.get("display_name"):
-        profile["display_name"] = token_data["display_name"]
+    profile = {
+        field: value
+        for field, value in (
+            ("username", record.username),
+            ("display_name", record.display_name),
+        )
+        if value
+    }
 
     completion = await complete_platform_link(
         user_id, platform, platform_user_id, profile=profile or None

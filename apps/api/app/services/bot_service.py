@@ -243,7 +243,7 @@ class BotService:
     @staticmethod
     async def load_conversation_history(
         conversation_id: str, user_id: str, limit: int = 20
-    ) -> list[dict]:
+    ) -> list[MessageDict]:
         """
         Load recent conversation history for context.
 
@@ -253,18 +253,18 @@ class BotService:
             limit: Maximum number of messages to load (default: 20)
 
         Returns:
-            List of message dicts with role and content
+            The turns as role/content messages, oldest first
         """
         conversation = await conversation_repository.get(conversation_id, user_id=user_id)
         if conversation is None or not conversation.messages:
             return []
 
-        history = []
+        history: list[MessageDict] = []
         for msg in conversation.messages[-limit:]:
             if msg.type == "user":
-                history.append({"role": "user", "content": msg.response or ""})
+                history.append(MessageDict(role="user", content=msg.response or ""))
             elif msg.type == "bot":
-                history.append({"role": "assistant", "content": msg.response or ""})
+                history.append(MessageDict(role="assistant", content=msg.response or ""))
         return history
 
 
@@ -272,11 +272,8 @@ async def build_bot_message_request(
     body: BotChatRequest, conversation_id: str, user_id: str
 ) -> MessageRequestWithHistory:
     """Load conversation history and append the incoming turn, ready for the agent."""
-    raw_history = await BotService.load_conversation_history(conversation_id, user_id)
-    raw_history.append({"role": "user", "content": body.message})
-    history: list[MessageDict] = [
-        MessageDict(role=m["role"], content=m["content"]) for m in raw_history
-    ]
+    history = await BotService.load_conversation_history(conversation_id, user_id)
+    history.append(MessageDict(role="user", content=body.message))
     return MessageRequestWithHistory(
         message=body.message,
         conversation_id=conversation_id,

@@ -45,6 +45,7 @@ from app.agents.tools.tracked_todo_tools import (
 )
 from app.constants.todos import GAIA_TRACKED_LABEL
 from app.models.todo_models import Priority, TodoDocument, TodoResponse
+from app.models.user_models import UserDocument
 from shared.py.wide_events import spawn_logged_task
 
 _FUTURE = (datetime.now(UTC) + timedelta(days=7)).replace(microsecond=0)
@@ -599,7 +600,7 @@ class TestGetUserTz:
         with patch(
             "app.agents.tools.tracked_todo_tools.get_user_by_id",
             new_callable=AsyncMock,
-            return_value={"timezone": "America/New_York"},
+            return_value=UserDocument(timezone="America/New_York"),
         ):
             tz = await _get_user_tz("u1")
         assert tz == "America/New_York"
@@ -608,7 +609,7 @@ class TestGetUserTz:
         with patch(
             "app.agents.tools.tracked_todo_tools.get_user_by_id",
             new_callable=AsyncMock,
-            return_value={"timezone": "Not/A_Real_Zone"},
+            return_value=UserDocument(timezone="Not/A_Real_Zone"),
         ):
             tz = await _get_user_tz("u1")
         assert tz == "UTC"

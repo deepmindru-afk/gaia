@@ -39,7 +39,11 @@ class TestSubscribeExecutorStreamReplay:
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": True}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": True,
+                    }
                 ),
             ),
             patch(
@@ -74,7 +78,11 @@ class TestSubscribeExecutorStreamReplay:
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": True}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": True,
+                    }
                 ),
             ),
             patch(
@@ -103,7 +111,11 @@ class TestSubscribeExecutorStreamReplay:
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": True}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": True,
+                    }
                 ),
             ),
             patch("app.api.v1.endpoints.chat.stream_manager.has_events", new=_has_events),
@@ -129,7 +141,11 @@ class TestSubscribeExecutorStreamReplay:
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": True}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": True,
+                    }
                 ),
             ),
             patch(
@@ -159,7 +175,11 @@ class TestSubscribeExecutorStreamReplay:
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": False}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": False,
+                    }
                 ),
             ),
             patch(

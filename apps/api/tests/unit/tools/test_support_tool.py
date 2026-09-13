@@ -3,6 +3,8 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.models.user_models import UserDocument
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -35,7 +37,7 @@ class TestCreateSupportTicket:
         w = _writer()
         mock_gsw.return_value = w
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
@@ -64,7 +66,7 @@ class TestCreateSupportTicket:
     async def test_happy_path_feature(self, mock_user_svc: MagicMock, mock_gsw: MagicMock) -> None:
         mock_gsw.return_value = _writer()
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
@@ -89,7 +91,7 @@ class TestCreateSupportTicket:
         w = _writer()
         mock_gsw.return_value = w
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
@@ -132,7 +134,7 @@ class TestCreateSupportTicket:
 
     @patch(f"{MODULE}.user_service")
     async def test_user_no_email(self, mock_user_svc: MagicMock) -> None:
-        mock_user_svc.get_user_by_id = AsyncMock(return_value={"name": "Test User"})
+        mock_user_svc.get_user_by_id = AsyncMock(return_value=UserDocument(name="Test User"))
 
         from app.agents.tools.support_tool import create_support_ticket
 
@@ -150,7 +152,7 @@ class TestCreateSupportTicket:
         w = _writer()
         mock_gsw.return_value = w
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
@@ -186,7 +188,9 @@ class TestCreateSupportTicket:
     async def test_user_name_defaults(self, mock_user_svc: MagicMock, mock_gsw: MagicMock) -> None:
         w = _writer()
         mock_gsw.return_value = w
-        mock_user_svc.get_user_by_id = AsyncMock(return_value={"email": "test@example.com"})
+        mock_user_svc.get_user_by_id = AsyncMock(
+            return_value=UserDocument(email="test@example.com")
+        )
 
         from app.agents.tools.support_tool import create_support_ticket
 

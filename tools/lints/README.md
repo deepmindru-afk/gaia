@@ -311,7 +311,14 @@ python3 tools/lints/check_typed_boundaries.py --count   # the debt, per rule and
 and (TB002) no `value.get("key")` / `value["key"]` read. Reads on a map keyed
 by a *protocol* rather than a shape (`os.environ`, `request.headers`,
 `query_params`, `path_params`, `cookies`) are fine; `Literal["…"]` is a type,
-not a read.
+not a read; a `.get(...)` call used as a decorator (`@router.get("/path")`) is
+a registration, not a read. A read on a name annotated with a TypedDict
+(a parameter or annotated assignment in the same function or module) is a
+declared shape that mypy key-checks — Type Safety item 6 — so it is exempt too:
+TypedDicts are discovered from `class X(TypedDict)` across the scan, and the
+library ones (`ToolCall`, `RunnableConfig`) are named in `EXTERNAL_TYPEDDICTS`.
+The check is syntactic: a TypedDict reached through an attribute chain or an
+unannotated loop variable is still flagged — bind it to an annotated local.
 
 **Why:** a string key is a guess about a shape that nothing checks: a typo
 compiles, a renamed field compiles, a key the producer never sets compiles and
