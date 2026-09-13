@@ -1,5 +1,12 @@
 appId: io.heygaia.desktop
 productName: GAIA
+# The Linux binary name would otherwise be derived from the scoped package
+# name (@gaia/desktop -> @gaiadesktop), which electron-builder 26 rejects for
+# AppImage ("executableName contains characters that cannot be safely used in
+# file paths") and killed the desktop-v0.7.0 Linux build. macOS (GAIA.app) and
+# Windows (GAIA.exe) already resolve to this via productName, so pinning it is
+# a no-op there and a fix on Linux.
+executableName: GAIA
 copyright: Copyright © 2024 The Experience Company
 # Must match the electron devDependency in package.json. In a pnpm workspace
 # electron-builder's auto-detection is unreliable (it has resolved a stale

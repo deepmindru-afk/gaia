@@ -115,9 +115,26 @@ jobs:
       # --dir = unpacked app, no installer: fast, and enough to catch asar /
       # dependency / prune regressions. macOS ad-hoc-signs via the afterSign hook
       # (CSC_IDENTITY_AUTO_DISCOVERY=false) so the seal can be verified below.
+      # Linux instead builds the REAL installers (AppImage/deb/rpm): --dir skips
+      # target-specific validation, which is exactly how the electron-builder 26
+      # executableName rejection shipped in desktop-v0.7.0 with green PR checks.
+      - name: Install Linux packaging dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
       - name: Package (electron-builder --dir)
+        if: matrix.target != 'linux'
         working-directory: apps/desktop
         run: pnpm exec electron-builder --${{ matrix.target }} --dir --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Build Linux installers (electron-builder --linux)
+        if: matrix.target == 'linux'
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --linux --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
