@@ -1752,6 +1752,11 @@ class TestBotStreamHelpers:
         assert kwargs["body"].message == "wired"
         assert kwargs["conversation_id"] == "conv-1"
         assert kwargs["source"] == "discord"
+        # The stream id is a fresh uuid: pin it by consistency across all
+        # three sinks (background task, stream registry, SSE subscription),
+        # not by value. A caller passing None would agree nowhere.
+        assert kwargs["stream_id"]
         assert kwargs["stream_id"] == mock_sm.start_stream.await_args.args[0]
-        assert mock_sm.start_stream.await_args.args[2] == "uid1"
+        assert mock_sm.subscribe_stream.call_args.args[0] == kwargs["stream_id"]
+        mock_sm.start_stream.assert_awaited_once_with(kwargs["stream_id"], "conv-1", "uid1")
         bot_svc.load_conversation_history.assert_awaited_once_with("conv-1", "uid1")
