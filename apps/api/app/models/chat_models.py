@@ -82,6 +82,8 @@ tool_fields = [
     "integration_connection_required",
     "connect_options",
     "integration_list_data",
+    "device_onboarding_required",
+    "device_approval_required",
     "reddit_data",
     "twitter_user_data",
     "twitter_search_data",

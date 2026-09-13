@@ -38,6 +38,7 @@ from app.workers.tasks import (
     sweep_idle_sandboxes,
     sweep_undelivered_signup_emails,
 )
+from app.workers.tasks.device_tasks import warm_device_servers
 from app.workers.tasks.hil_sweep_tasks import sweep_hil_approvals
 from app.workers.tasks.maintenance_sweep_tasks import maintenance_sweep_tracked_todos
 from app.workers.tasks.scheduler_recovery_tasks import rescan_pending_scheduled_tasks
@@ -96,6 +97,7 @@ _deliver_signup_emails = func(
     keep_result=0,
 )
 _sweep_undelivered_signup_emails = arq_task(sweep_undelivered_signup_emails)
+_warm_device_servers = arq_task(warm_device_servers)
 
 WorkerSettings.functions = [
     _sweep_hil_approvals,
@@ -123,6 +125,7 @@ WorkerSettings.functions = [
     _sweep_expired_memories,
     _deliver_signup_emails,
     _sweep_undelivered_signup_emails,
+    _warm_device_servers,
 ]
 
 WorkerSettings.cron_jobs = [

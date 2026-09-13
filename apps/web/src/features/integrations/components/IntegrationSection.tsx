@@ -7,7 +7,7 @@ import {
   integrationConnectionState,
 } from "@shared/utils";
 import type React from "react";
-import { getToolCategoryIcon } from "@/features/chat/utils/toolIcons";
+import { IntegrationIcon } from "@/features/integrations/components/IntegrationIcon";
 import type { Integration } from "../types";
 
 const IntegrationRow: React.FC<{
@@ -39,16 +39,12 @@ const IntegrationRow: React.FC<{
         onClick={handleClick}
       >
         <div className="shrink-0">
-          {getToolCategoryIcon(
-            integration.id,
-            {
-              size: 32,
-              width: 32,
-              height: 32,
-              showBackground: false,
-            },
-            integration.iconUrl,
-          )}
+          <IntegrationIcon
+            integrationId={integration.id}
+            iconUrl={integration.iconUrl}
+            category={integration.category}
+            size={32}
+          />
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
