@@ -48,10 +48,17 @@ const WhatsNewModal = nextDynamic(
   { ssr: false },
 );
 
-const HeaderSidebarTrigger = () => {
+interface HeaderSidebarTriggerProps {
+  className?: string;
+}
+
+const HeaderSidebarTrigger = ({ className }: HeaderSidebarTriggerProps) => {
   return (
-    <div className="">
-      <CustomSidebarTrigger />
+    <div className={className}>
+      {/* No hover background: the trigger sits in the native title bar next
+          to the traffic lights, so a hover box makes it read heavier and
+          slightly off-centre. The tooltip remains as the affordance. */}
+      <CustomSidebarTrigger className="hover:bg-transparent" />
     </div>
   );
 };
@@ -145,19 +152,24 @@ export default function MainLayout({ children }: { children: ReactNode }) {
             </SidebarLayout>
 
             <SidebarInset className="flex h-screen min-w-0 w-auto flex-col bg-primary-bg">
-              <StatusBanner />
               {/* Tapping anywhere outside the mobile sidebar dismisses it via
                   the Sheet's own modal overlay (see ui/sidebar), so the shell
                   needs no click handler of its own here. */}
               <header
                 className={cn(
-                  "flex shrink-0 items-center justify-between p-2",
+                  // Desktop title bar: 44px band centres the 36px controls at
+                  // y=22, exactly the macOS `hiddenInset` traffic-light centre
+                  // (trafficLightPosition y=16, 12px tall). Web keeps its own
+                  // padding — this title-bar treatment is desktop-only.
+                  isElectron
+                    ? "flex h-11 shrink-0 items-center justify-between px-2"
+                    : "flex shrink-0 items-center justify-between p-2",
                   clearTrafficLights && "pl-20",
-                  // Sidebar collapsed → the top bar becomes a full-width bordered
-                  // bar (the sidebar no longer supplies the visual separation);
-                  // expanded → no border. Matches the Docker Desktop title-bar
-                  // behaviour the design references.
-                  !currentOpen && "border-b border-zinc-800",
+                  // Desktop only: sidebar collapsed → the top bar becomes a
+                  // full-width bordered bar (the sidebar no longer supplies the
+                  // visual separation); expanded → no border. Matches the
+                  // Docker Desktop title-bar behaviour the design references.
+                  isElectron && !currentOpen && "border-b border-zinc-800",
                   // macOS `hiddenInset` chrome: make the top bar the draggable
                   // title bar so the window can be moved from here and
                   // double-clicking it zooms (Apple standard). Buttons opt out
@@ -165,9 +177,21 @@ export default function MainLayout({ children }: { children: ReactNode }) {
                   isElectron && isMac && "electron-drag",
                 )}
               >
-                <HeaderSidebarTrigger />
+                <HeaderSidebarTrigger
+                  // The collapsed border eats 1px of the header's content box,
+                  // which centres the 36px trigger 0.5px high (21.5 vs the
+                  // lights' 22). Nudge it back down so it sits pixel-perfect.
+                  className={
+                    isElectron && !currentOpen
+                      ? "translate-y-[0.5px]"
+                      : undefined
+                  }
+                />
                 <HeaderManager />
               </header>
+              {/* Below the title bar so a visible banner never shifts the
+                  window controls out of alignment with the traffic lights. */}
+              <StatusBanner />
               <main className="flex flex-1 flex-col overflow-hidden">
                 {/* <Suspense fallback={<SuspenseLoader />}> */}
                 {children}

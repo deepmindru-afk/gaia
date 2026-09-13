@@ -19,7 +19,7 @@ import { getApiOrigin } from "../api-origin";
 import { getServerUrl } from "../server";
 import { loadAppRoute } from "./load-url";
 import { classifyNavigation } from "./navigation-policy";
-import { closeSplashWindow } from "./splash";
+import { closeSplashWindow, getLoaderBounds } from "./splash";
 
 /**
  * Guard top-level navigation of the main window.
@@ -116,11 +116,17 @@ export function consumePendingDeepLink(): string | null {
 export async function createMainWindow(
   serverReady: () => boolean,
 ): Promise<void> {
+  // Start at the splash loader's centered bounds so the reveal is a
+  // scale-up from exactly where the loader was (see showMainWindow).
+  const { x, y, width, height } = getLoaderBounds();
+
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1024,
-    minHeight: 700,
+    x,
+    y,
+    width,
+    height,
+    minWidth: 640,
+    minHeight: 400,
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: "hiddenInset",
@@ -170,12 +176,15 @@ export async function createMainWindow(
  * Show the main window and close the splash screen.
  *
  * Called when the renderer sends the `window-ready` IPC signal,
- * or by the fallback timeout. Opens maximised (filling the work area,
- * matching the splash skeleton). `maximize()` runs AFTER `show()` — on
- * macOS maximising a still-hidden window is a no-op, which is why the
- * window used to open at its unmaximised 1400×900 size. Keeping 1400×900
- * as the created size means the green button / double-click-title-bar
- * restores to a sensible windowed size.
+ * or by the fallback timeout. The window was created at the splash
+ * loader's small centered bounds, so it shows at exactly the loader's
+ * spot (no jump), the splash closes, and then it maximises — macOS
+ * animates the zoom, which reads as the loader scaling up into the
+ * full app. `maximize()` runs AFTER `show()` — on macOS maximising a
+ * still-hidden window is a no-op. Minimums are raised to the real
+ * 1024×700 only after the scale-up so they never force the small
+ * boot bounds larger. Restores (green button / double-click) go to
+ * 1400×900 via the normal zoom behaviour.
  *
  * @returns The pending deep-link URL that should be processed
  *   after the window is visible, or `null`.
@@ -192,12 +201,18 @@ export function showMainWindow(): string | null {
   }
 
   mainWindow.show();
-  mainWindow.maximize();
   mainWindow.focus();
-  console.log("[Main] Main window shown and focused");
+  console.log("[Main] Main window shown at loader bounds");
 
   console.log("[Main] About to close splash window");
   closeSplashWindow();
+
+  // Scale up into the full app: raise the minimums first so the maximised
+  // size is legal, then zoom. macOS animates maximize() from the small
+  // centered bounds shown above.
+  mainWindow.setMinimumSize(1024, 700);
+  mainWindow.maximize();
+  console.log("[Main] Main window scaled to full size");
 
   return consumePendingDeepLink();
 }
