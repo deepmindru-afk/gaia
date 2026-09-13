@@ -345,11 +345,16 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
     # Counting refusals as submissions inflates bot volume by exactly the
     # traffic of the users who hit walls most, and makes the two surfaces
     # incomparable. A refusal is its own event, with a reason.
+    # `source` (not `platform`) is the canonical key for this concept — it is a
+    # ConversationSource value, and every other chat event (web/desktop
+    # message_submitted, and message_completed on all surfaces) already reports
+    # it under `source`. Emitting `platform` here made the same turn label its
+    # surface under two different keys across the submitted/completed pair.
     capture_event(
         user_id,
         AnalyticsEvents.CHAT_MESSAGE_SUBMITTED,
         {
-            "platform": body.platform,
+            "source": body.platform,
             "has_files": bool(body.file_ids or body.file_data),
         },
     )

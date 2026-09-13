@@ -565,7 +565,7 @@ class TestBotChatStream:
         mock_capture.assert_called_once_with(
             "uid1",
             AnalyticsEvents.CHAT_MESSAGE_SUBMITTED,
-            {"platform": "discord", "has_files": False},
+            {"source": "discord", "has_files": False},
         )
 
     # The four the body never touches are patched with `new=`, which injects no
@@ -621,7 +621,7 @@ class TestBotChatStream:
         mock_capture.assert_called_once_with(
             "uid1",
             AnalyticsEvents.CHAT_MESSAGE_SUBMITTED,
-            {"platform": "discord", "has_files": True},
+            {"source": "discord", "has_files": True},
         )
 
     @patch("app.api.v1.endpoints.bot.BotService.enforce_rate_limit", new_callable=AsyncMock)
