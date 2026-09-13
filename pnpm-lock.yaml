@@ -72,7 +72,7 @@ importers:
         specifier: ^7.29.7
         version: 7.29.7
       '@biomejs/biome':
-        specifier: ^2.5.7
+        specifier: 2.5.7
         version: 2.5.7
       '@google/design.md':
         specifier: ^0.1.1
@@ -359,7 +359,7 @@ importers:
         version: 8.0.5
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.5.7
+        specifier: 2.5.7
         version: 2.5.7
       '@electron-toolkit/preload':
         specifier: ^3.0.2
@@ -1126,7 +1126,7 @@ importers:
         version: 5.0.14(@types/react@19.2.17)(react@19.1.0)(use-sync-external-store@1.6.0(react@19.1.0))
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.5.7
+        specifier: 2.5.7
         version: 2.5.7
       '@next/bundle-analyzer':
         specifier: ^16.3.0
@@ -1308,7 +1308,7 @@ importers:
         version: 4.3.6
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.5.7
+        specifier: 2.5.7
         version: 2.5.7
       '@gaia/shared':
         specifier: workspace:*

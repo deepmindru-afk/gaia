@@ -35,7 +35,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.7",
+    "@biomejs/biome": "2.5.7",
     "@gaia/shared": "workspace:*",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
