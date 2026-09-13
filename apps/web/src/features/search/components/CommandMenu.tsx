@@ -15,7 +15,7 @@ import React, {
 } from "react";
 import { getLinkByLabel } from "@/config/appConfig";
 import { prepareNewChat } from "@/features/chat/utils/newChatNavigation";
-import { useUserSubscriptionStatus } from "@/features/pricing/hooks/usePricing";
+import { useShouldPromptUpgrade } from "@/features/pricing/hooks/usePricing";
 import { usePlatform } from "@/hooks/ui/usePlatform";
 import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 
@@ -165,7 +165,7 @@ function MenuSectionsList({
 export default function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
   const router = useRouter();
   const { modifierKeyName } = usePlatform();
-  const { data: subscriptionStatus } = useUserSubscriptionStatus();
+  const shouldPromptUpgrade = useShouldPromptUpgrade();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -323,8 +323,9 @@ export default function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
     for (const section of MENU_SECTIONS) {
       const items: CommandMenuItem[] = [];
       for (const item of section.items) {
-        // Filter out upgrade if subscribed
-        if (item.hideWhenSubscribed && subscriptionStatus?.is_subscribed) {
+        // Only surface an upgrade CTA once the API confirms the user is on the
+        // free plan — never while the subscription status is still loading.
+        if (item.hideWhenSubscribed && !shouldPromptUpgrade) {
           continue;
         }
         // Filter by search
@@ -341,7 +342,7 @@ export default function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
       }
     }
     return sections;
-  }, [search, subscriptionStatus, buildMenuItem]);
+  }, [search, shouldPromptUpgrade, buildMenuItem]);
 
   return (
     <AnimatePresence>
