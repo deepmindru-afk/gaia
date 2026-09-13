@@ -15,6 +15,7 @@ import contextlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -28,6 +29,7 @@ from app.agents.core.background.executor_capture import (
     register_executor_capture,
     teardown_executor_capture,
 )
+from app.agents.core.background.session import get_session
 from app.constants.artifacts import ARTIFACT_FORWARDER_SUBSCRIBE_TIMEOUT
 from app.constants.cache import EXECUTOR_WAIT_TIMEOUT, VOICE_EXECUTOR_RESULT_TIMEOUT_S
 from app.constants.chat import GENERIC_TURN_ERROR, RECURSION_LIMIT_MESSAGE
@@ -45,7 +47,7 @@ from app.models.stream_events import (
 from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.chat.artifact_forwarder import forward_artifact_events
-from app.services.chat.chunks import process_data_chunk
+from app.services.chat.chunks import extract_response_text, process_data_chunk
 from app.services.chat.persistence import (
     initialize_new_conversation,
     save_conversation_async,
@@ -60,6 +62,12 @@ from app.services.chat.state import (
 from app.services.chat.workspace import schedule_last_active_touch
 from app.services.files import FileService
 from app.services.hil.conversational import resolve_pending_from_message
+from app.services.latency_metrics import (
+    observe_chat_e2e_ack,
+    observe_chat_e2e_full,
+    observe_chat_ttft,
+    observe_chat_turn_total,
+)
 from app.services.platform_message_service import is_bot_platform
 from app.services.storage import flush_fs_metrics
 from app.utils.agent_utils import format_sse_data, format_sse_response
@@ -75,12 +83,17 @@ async def run_chat_stream_background(
     user: AuthenticatedUser,
     conversation_id: str,
     source: str | None = None,
+    t0_perf: float | None = None,
 ) -> None:
     """Run chat streaming in the background, publishing chunks to Redis.
 
     Independent of the HTTP request lifecycle — progress is saved to MongoDB on
     completion even if the client disconnects. Frames land in a replayable
     event log, so publish/subscribe timing needs no coordination.
+
+    ``t0_perf`` is the request-accepted ``perf_counter`` stamped by the
+    endpoint; ``None`` falls back to this task's entry (loses only the spawn
+    delay, which stays unmeasured rather than faked).
     """
     # get_trace_id() reads the spawning request's trace_id from this task's
     # copied context, so the agent-run event joins with its http_request event.
@@ -96,6 +109,7 @@ async def run_chat_stream_background(
             user=user,
             conversation_id=conversation_id,
             source=source,
+            t0_perf=t0_perf,
         )
 
 
@@ -123,15 +137,23 @@ class _StreamState:
     """
 
     __slots__ = (
+        "ack_perf",
         "bot_message_id",
         "complete_message",
+        "delegated",
+        "e2e_ack_ms",
+        "e2e_full_ms",
         "error",
         "follow_up_actions",
         "is_cancelled",
+        "queued",
         "saved",
+        "t0_perf",
         "todo_progress_accumulated",
         "tool_data",
         "tool_outputs",
+        "ttft_ms",
+        "ttft_perf",
         "turn_completed_at",
         "usage_metadata",
         "user_message_id",
@@ -161,6 +183,17 @@ class _StreamState:
         # the saved user/comms messages keep timestamps EARLIER than a delegated
         # executor's answer (saved mid-wait). The frontend sorts by createdAt.
         self.turn_completed_at: datetime | None = None
+        # perf_counter stamps for latency benchmarking (monotonic, never logged).
+        self.t0_perf: float | None = None
+        self.ttft_perf: float | None = None
+        self.ack_perf: float | None = None
+        # Computed millisecond latencies, filled at stream end for PostHog +
+        # the wide event. ttft_ms stays None when no response text streamed.
+        self.ttft_ms: float | None = None
+        self.e2e_ack_ms: float | None = None
+        self.e2e_full_ms: float | None = None
+        self.delegated: bool = False
+        self.queued: bool = False
 
 
 async def _run_chat_stream(
@@ -169,8 +202,10 @@ async def _run_chat_stream(
     user: AuthenticatedUser,
     conversation_id: str,
     source: str | None = None,
+    t0_perf: float | None = None,
 ) -> None:
     state = _StreamState(turn_id=body.turn_id)
+    state.t0_perf = t0_perf if t0_perf is not None else time.perf_counter()
     is_new_conversation = body.conversation_id is None
     user_id = user.get("user_id")
     artifact_task: asyncio.Task[None] | None = None
@@ -257,6 +292,7 @@ async def _run_chat_stream(
         # Stamp turn completion BEFORE any executor wait so the user/comms
         # messages sort ahead of a delegated executor's mid-wait answer.
         state.turn_completed_at = datetime.now(UTC)
+        state.ack_perf = time.perf_counter()
 
         # Early save: persist the comms ack immediately after the streaming loop
         # so its array position is correct even if a concurrent stream finishes
@@ -279,12 +315,30 @@ async def _run_chat_stream(
         # The turn reached a terminal state: capture the milestone. Cancelled
         # turns finish the same happy path (the driver ends the stream with a
         # `cancelled` nostream marker), so branch on the flag the loop recorded.
+        state.delegated, state.queued = _executor_delegation(stream_id)
+        _stamp_turn_latencies(state)
+        if state.t0_perf is not None:
+            state.e2e_full_ms = round((time.perf_counter() - state.t0_perf) * 1000.0, 2)
+        _observe_turn_latencies(
+            source=source,
+            voice_mode=body.voice_mode,
+            state=state,
+            cancelled=state.is_cancelled,
+        )
         if user_id:
             event_props: dict[str, Any] = {
                 "conversation_id": conversation_id,
                 "voice_mode": body.voice_mode,
                 "is_new_conversation": is_new_conversation,
+                "delegated": state.delegated,
+                "queued": state.queued,
             }
+            if state.ttft_ms is not None:
+                event_props["ttft_ms"] = state.ttft_ms
+            if state.e2e_ack_ms is not None:
+                event_props["e2e_ack_ms"] = state.e2e_ack_ms
+            if state.e2e_full_ms is not None:
+                event_props["e2e_full_ms"] = state.e2e_full_ms
             if source:
                 event_props["source"] = source
             capture_event(
@@ -295,6 +349,7 @@ async def _run_chat_stream(
                     else AnalyticsEvents.CHAT_MESSAGE_COMPLETED
                 ),
                 event_props,
+                dedupe_key=stream_id,
             )
 
     except Exception as e:  # surface to client + flag the stream
@@ -388,7 +443,12 @@ async def _resolve_pending_approval_turn(
     ack = HIL_ACK_APPROVED if action == "approve" else HIL_ACK_DENIED
     state.complete_message = ack
     state.turn_completed_at = datetime.now(UTC)
+    state.ack_perf = time.perf_counter()
     await stream_manager.publish_chunk(stream_id, format_sse_response(ack))
+    # The ack is this turn's first and only user-facing text.
+    if state.ttft_perf is None:
+        state.ttft_perf = state.ack_perf
+    _stamp_turn_latencies(state)
     await stream_manager.publish_chunk(
         stream_id,
         format_sse_data(
@@ -578,6 +638,11 @@ async def _consume_agent_stream(
                     state.error = str(payload["error"])
 
         if chunk.startswith("data: "):
+            if state.ttft_perf is None and extract_response_text(chunk):
+                # First comms response text — init, description, keepalive and
+                # tool frames carry no "response" key, so this is TTFT, not
+                # first-byte.
+                state.ttft_perf = time.perf_counter()
             try:
                 state.follow_up_actions, _ = await process_data_chunk(
                     stream_id,
@@ -612,6 +677,61 @@ def _parse_complete_message(chunk: str) -> tuple[str, bool]:
         message = strip_partial_message_break(str(nostream_json.get("complete_message", "")))
         return message, bool(nostream_json.get("cancelled", False))
     return "", False
+
+
+def _stamp_turn_latencies(state: _StreamState) -> None:
+    """Fill ``state``'s millisecond latencies from its perf_counter stamps.
+
+    Missing stamps stay missing — a turn that never streamed text has no
+    TTFT, and spans degrade to absent rather than zero-filled.
+    """
+    if state.t0_perf is None:
+        return
+    if state.ttft_perf is not None:
+        state.ttft_ms = round((state.ttft_perf - state.t0_perf) * 1000.0, 2)
+    if state.ack_perf is not None:
+        state.e2e_ack_ms = round((state.ack_perf - state.t0_perf) * 1000.0, 2)
+
+
+def _executor_delegation(stream_id: str) -> tuple[bool, bool]:
+    """Return ``(delegated, queued)`` for a turn from its executor session."""
+    session = get_session(stream_id)
+    if session is None:
+        return False, False
+    queued = session.executor_queued_task_id is not None
+    return (session.executor_spawned or queued, queued)
+
+
+def _observe_turn_latencies(
+    *, source: str | None, voice_mode: bool, state: _StreamState, cancelled: bool
+) -> None:
+    """Emit the turn's Prometheus observations. Never raises."""
+    status = "cancelled" if cancelled else "success"
+    label_source = source or "unknown"
+    if state.ttft_perf is not None and state.t0_perf is not None:
+        observe_chat_ttft(
+            state.ttft_perf - state.t0_perf,
+            source=label_source,
+            voice_mode=voice_mode,
+            status=status,
+        )
+    if state.ack_perf is not None and state.t0_perf is not None:
+        observe_chat_e2e_ack(
+            state.ack_perf - state.t0_perf,
+            source=label_source,
+            voice_mode=voice_mode,
+            delegated=state.delegated,
+            status=status,
+        )
+    if state.e2e_full_ms is not None:
+        observe_chat_e2e_full(
+            state.e2e_full_ms / 1000.0,
+            source=label_source,
+            voice_mode=voice_mode,
+            delegated=state.delegated,
+            status=status,
+        )
+    observe_chat_turn_total(source=label_source, delegated=state.delegated, status=status)
 
 
 def _log_usage_summary(state: _StreamState) -> None:
@@ -830,7 +950,20 @@ async def _finalize_stream(
 
     tool_entries = state.tool_data.get("tool_data", [])
     fs_metrics = flush_fs_metrics()
+    # Latency fields merge into the chat namespace set at turn start; absent
+    # spans stay absent so Loki can distinguish "no text streamed" from zero.
+    latency_fields: ChatContext = {
+        "delegated": state.delegated,
+        "queued": state.queued,
+    }
+    if state.ttft_ms is not None:
+        latency_fields["ttft_ms"] = state.ttft_ms
+    if state.e2e_ack_ms is not None:
+        latency_fields["e2e_ack_ms"] = state.e2e_ack_ms
+    if state.e2e_full_ms is not None:
+        latency_fields["e2e_full_ms"] = state.e2e_full_ms
     log.set(
+        chat=latency_fields,
         response_length=len(state.complete_message),
         tool_calls_count=len(tool_entries),
         tool_types=list({e["tool_name"] for e in tool_entries if "tool_name" in e}),

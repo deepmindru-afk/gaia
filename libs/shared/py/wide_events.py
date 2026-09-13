@@ -124,6 +124,14 @@ class ChatContext(TypedDict, total=False):
     has_reply: bool
     has_calendar_event: bool
     selected_workflow_id: str
+    # Turn latency benchmarks, stamped at stream end (see
+    # app/services/chat/stream.py). Absent when the span never happened
+    # (e.g. no ttft_ms when no response text streamed).
+    ttft_ms: float
+    e2e_ack_ms: float
+    e2e_full_ms: float
+    delegated: bool
+    queued: bool
 
 
 class ModelContext(TypedDict, total=False):

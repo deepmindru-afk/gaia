@@ -7,6 +7,7 @@ runs to completion and the conversation lands in MongoDB.
 
 import asyncio
 from collections.abc import AsyncGenerator
+import time
 from typing import Annotated
 from uuid import uuid4
 
@@ -176,6 +177,9 @@ async def chat_stream_endpoint(
         conversation_id=conversation_id,
         user_id=user_id,
     )
+    # Request-accepted clock for TTFT/E2E benchmarking — stamped after the
+    # rate limit and cost budget so it counts turns actually accepted.
+    t0_perf = time.perf_counter()
     # The ONE event for a chat message. It fires for every surface (web,
     # desktop, and bots via endpoints/bot.py), no ad blocker can drop it, and
     # it lands only once the request has passed the rate limit and the cost
@@ -210,6 +214,7 @@ async def chat_stream_endpoint(
             user=user,
             conversation_id=conversation_id,
             source=_resolve_source(request),
+            t0_perf=t0_perf,
         )
     )
 

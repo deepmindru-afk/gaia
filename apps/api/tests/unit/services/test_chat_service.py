@@ -648,11 +648,15 @@ class TestRunChatStreamBackground:
         call_args = mock_capture.call_args
         assert call_args.args[0] == "user_abc"
         assert call_args.args[1] == AnalyticsEvents.CHAT_MESSAGE_COMPLETED
-        assert call_args.args[2] == {
-            "conversation_id": "conv_existing_123",
-            "voice_mode": False,
-            "is_new_conversation": False,
-        }
+        props = call_args.args[2]
+        # DONE-only turn: E2E present, TTFT absent, nothing delegated.
+        assert props["conversation_id"] == "conv_existing_123"
+        assert props["voice_mode"] is False
+        assert props["is_new_conversation"] is False
+        assert props["delegated"] is False
+        assert props["queued"] is False
+        assert props["e2e_ack_ms"] <= props["e2e_full_ms"]
+        assert "ttft_ms" not in props
 
     async def test_source_is_carried_onto_the_terminal_event(self, test_user, existing_conv_body):
         """`source` is what lets one event name span web, desktop and bots.
@@ -679,12 +683,12 @@ class TestRunChatStreamBackground:
                 source="desktop",
             )
 
-        assert mock_capture.call_args.args[2] == {
-            "conversation_id": "conv_existing_123",
-            "voice_mode": False,
-            "is_new_conversation": False,
-            "source": "desktop",
-        }
+        assert mock_capture.call_args.args[2]["conversation_id"] == "conv_existing_123"
+        assert mock_capture.call_args.args[2]["voice_mode"] is False
+        assert mock_capture.call_args.args[2]["is_new_conversation"] is False
+        assert mock_capture.call_args.args[2]["source"] == "desktop"
+        assert mock_capture.call_args.args[2]["delegated"] is False
+        assert mock_capture.call_args.args[2]["queued"] is False
 
     async def test_captures_message_cancelled_when_stream_cancelled(
         self, test_user, existing_conv_body
@@ -1209,3 +1213,62 @@ class TestRunChatStreamBackground:
             )
 
         mock_desc.assert_not_called()
+
+    async def test_terminal_event_carries_latency_props(self, test_user, existing_conv_body):
+        """TTFT/E2E/delegated props land on chat:message_completed for the user."""
+        sm = _make_stream_manager_mock()
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_text_then_nostream("hello there", "hello there")),
+            ),
+            patch(
+                "app.services.chat.stream.save_conversation_async",
+                new=AsyncMock(),
+            ),
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+            patch("app.services.chat.stream.capture_event") as mock_capture,
+        ):
+            await run_chat_stream_background(
+                stream_id="stream_latency_props",
+                body=existing_conv_body,
+                user=test_user,
+                conversation_id="conv_existing_123",
+            )
+
+        mock_capture.assert_called_once()
+        assert mock_capture.call_args.args[0] == "user_abc"
+        props = mock_capture.call_args.args[2]
+        assert props["ttft_ms"] <= props["e2e_ack_ms"] <= props["e2e_full_ms"]
+        assert props["ttft_ms"] >= 0.0
+        assert props["delegated"] is False
+        assert props["queued"] is False
+
+    async def test_terminal_event_without_text_has_no_ttft(self, test_user, existing_conv_body):
+        """A turn with no response text still reports E2E, but no TTFT."""
+        sm = _make_stream_manager_mock()
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_done_only_stream()),
+            ),
+            patch(
+                "app.services.chat.stream.save_conversation_async",
+                new=AsyncMock(),
+            ),
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+            patch("app.services.chat.stream.capture_event") as mock_capture,
+        ):
+            await run_chat_stream_background(
+                stream_id="stream_latency_no_ttft",
+                body=existing_conv_body,
+                user=test_user,
+                conversation_id="conv_existing_123",
+            )
+
+        props = mock_capture.call_args.args[2]
+        assert "ttft_ms" not in props
+        assert props["e2e_ack_ms"] <= props["e2e_full_ms"]
+        assert props["delegated"] is False
