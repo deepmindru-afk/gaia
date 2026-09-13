@@ -44,9 +44,9 @@ from app.agents.skills.discovery import get_available_skills_text
 from app.agents.workspace.skill_loader import target_to_subagent
 from app.agents.workspace.system_docs import integration_skills_block
 from app.config.oauth_config import get_integration_by_id
-from app.config.settings import settings
 from app.constants.log_tags import LogTag
 from app.constants.skills import EXECUTOR_SUBAGENT_ID
+from app.services.feature_flags import is_integration_activation_enabled
 from app.services.integration_instructions_service import get_instructions
 from app.utils.user_preferences_utils import format_user_preferences_for_agent
 from shared.py.wide_events import log
@@ -99,7 +99,7 @@ async def _integrations_manifest(ctx: SectionContext) -> str:
         return ""
     if ctx.tier is not AgentTier.EXECUTOR:
         header = CONNECTED_INTEGRATIONS_HEADER
-    elif settings.ENABLE_INTEGRATION_ACTIVATION:
+    elif await is_integration_activation_enabled(ctx.user_id):
         header = EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER
     else:
         header = EXECUTOR_CONNECTED_INTEGRATIONS_HEADER

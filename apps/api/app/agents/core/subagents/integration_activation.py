@@ -30,10 +30,10 @@ from app.agents.core.subagents.subagent_helpers import build_subagent_system_pro
 from app.agents.skills.discovery import get_available_skills_text
 from app.agents.tools.core.registry import get_tool_registry
 from app.agents.workspace.system_docs import integration_skills_block
-from app.config.settings import settings
 from app.constants.log_tags import LogTag
 from app.models.agent_models import AgentConfigurable
 from app.models.subagent_models import Subagent
+from app.services.feature_flags import is_integration_activation_enabled
 from app.services.integration_instructions_service import get_instructions
 from shared.py.wide_events import log
 
@@ -155,7 +155,10 @@ async def activate_integration(
     and returns how it works, which account you are acting as, the user's standing
     preferences, and its skills. Act on it yourself; `spawn_subagent` inherits it.
     """
-    if not settings.ENABLE_INTEGRATION_ACTIVATION:
+    configurable = cast(AgentConfigurable, config.get("configurable", {}))
+    user_id = configurable.get("user_id")
+
+    if not await is_integration_activation_enabled(user_id):
         return _reply(tool_call_id, "activate_integration is disabled.")
 
     # Repository-aware resolution: covers the static OAuth/builtin registry AND
@@ -166,9 +169,6 @@ async def activate_integration(
         log.set(activation={"integration": integration_id})
         log.warning(f"{LogTag.AGENT} Activation requested for unknown integration")
         return _reply(tool_call_id, f"Unknown integration '{integration_id}'.")
-
-    configurable = cast(AgentConfigurable, config.get("configurable", {}))
-    user_id = configurable.get("user_id")
 
     # Custom MCP (a dict, not a registry Subagent) and auth-required MCP both
     # issue their tools per user, so they never enter the global registry and

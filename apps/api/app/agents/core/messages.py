@@ -24,6 +24,7 @@ from app.models.message_models import (
     SelectedWorkflowData,
 )
 from app.models.user_models import AuthenticatedUser
+from app.services.feature_flags import is_comms_openui_enabled
 from app.services.files import FileService
 from app.utils.user_preferences_utils import onboarding_preferences
 
@@ -75,14 +76,20 @@ async def construct_langchain_messages(
         List of LangChain messages ready for agent processing
     """
     # Static per-channel main prompt — byte-identical across every user on
-    # this channel, so the provider's implicit prompt cache can match across
-    # users. Web/mobile/desktop get the OpenUI-capable variant; text-only
-    # platforms get their formatting-restrictions variant.
+    # this channel and flag variant, so the provider's implicit prompt cache
+    # can match across users. Web/mobile/desktop get the OpenUI-capable
+    # variant or its markdown fallback per the user's flag value (evaluated
+    # live via PostHog); text-only platforms get their formatting-restrictions
+    # variant.
+    openui_enabled = True
+    if agent_type == "comms" and (source is None or source.strip().lower() in ("web", "mobile", "desktop")):
+        openui_enabled = await is_comms_openui_enabled(user_id)
     system_msg = create_system_message(
         user_id=user_id,
         user_name=user_name,
         agent_type=agent_type,
         source=source,
+        openui_enabled=openui_enabled,
     )
 
     user_timezone = user_dict.get("timezone") if user_dict else None

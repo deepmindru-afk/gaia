@@ -56,6 +56,7 @@ from app.models.agent_models import (
 )
 from app.models.stream_events import ReasoningPayload, ToolOutputPayload
 from app.services.chat.chunks import normalize_custom_event
+from app.services.feature_flags import is_integration_activation_enabled
 from app.services.files import FileService
 from app.utils.agent_utils import IntegrationMetadata, StreamWriterCallable
 from app.utils.multimodal import extract_text_content
@@ -850,11 +851,13 @@ async def prepare_executor_execution(
     )
     new_configurable = agent_configurable(config)
 
-    # Create system message (executor-specific)
+    # Create system message (executor-specific). The activation variant is
+    # resolved per user so the prompt matches the tools this run can reach.
     system_message = create_system_message(
         user_id=user_id,
         agent_type="executor",
         user_name=configurable.get("user_name"),
+        activation_enabled=await is_integration_activation_enabled(user_id),
     )
 
     # When comms provides a known tool_category, hint the executor to go

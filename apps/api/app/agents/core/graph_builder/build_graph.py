@@ -52,9 +52,11 @@ from app.override.langgraph_bigtool.create_agent import create_agent
 from shared.py.wide_events import log
 
 #: Tools the executor binds before its first turn, ahead of any retrieve_tools call.
-#: Under ENABLE_INTEGRATION_ACTIVATION "activate_integration" leads the set;
-#: `handoff` stays for per-user MCP integrations that cannot be activated
-#: in-context — see build_executor_graph.
+#: "activate_integration" is always bound; its entry guard enforces the
+#: per-user experiment (``is_integration_activation_enabled``), since the
+#: compiled graph is global and cannot vary tools per user. `handoff` stays
+#: for per-user MCP integrations that cannot be activated in-context — see
+#: build_executor_graph.
 EXECUTOR_INITIAL_TOOL_IDS = [
     "handoff",
     "execute",
@@ -115,29 +117,30 @@ async def build_executor_graph(
     # integrations (auth-required or custom) issue their tools per user, so they
     # never enter the global registry and can only run through their own per-user
     # graph — which is exactly what handoff builds. activate_integration routes
-    # those to handoff rather than dead-ending them.
+    # those to handoff rather than dead-ending them. activate_integration is
+    # bound unconditionally (its entry guard enforces the per-user experiment);
+    # the prompt each run gets decides whether the model reaches for it.
     activation_mode = settings.ENABLE_INTEGRATION_ACTIVATION
     tool_dict.update({"handoff": handoff_tool, WAIT_FOR_SUBAGENTS_NAME: wait_for_subagents_tool})
+    tool_dict.update({"activate_integration": activate_integration})
     # Executor-only tools to steer or cancel a specific running subagent by id.
     tool_dict.update(
         {t.name: t for t in (list_running_subagents, message_subagent, cancel_subagent)}
     )
-    if activation_mode:
-        tool_dict.update({"activate_integration": activate_integration})
-
     todo_hook = create_todo_pre_model_hook(source="executor")
 
     # Spawned subagents must not see executor-only orchestration tools —
     # including the subagent-control tools (a subagent must not steer a peer).
+    # activate_integration is executor-level: subagents reach integrations
+    # through handoff, never by activating in-context themselves.
     excluded_subagent_tools = {
         "handoff",
         WAIT_FOR_SUBAGENTS_NAME,
         "list_running_subagents",
         "message_subagent",
         "cancel_subagent",
+        "activate_integration",
     }
-    if activation_mode:
-        excluded_subagent_tools.add("activate_integration")
 
     middleware = create_executor_middleware(
         chat_llm=chat_llm,
@@ -145,6 +148,8 @@ async def build_executor_graph(
         subagent_tool_runtime_config=build_executor_child_tool_runtime_config(),
         # Under activation the executor binds an integration's tools in its own
         # turn, so a spawn it delegates to must inherit them to do the work.
+        # Still process-wide (the compiled graph is global): per-user
+        # inheritance would need per-variant graphs.
         subagent_inherit_parent_tools=activation_mode,
     )
 
@@ -165,12 +170,11 @@ async def build_executor_graph(
 
     pre_model_hooks = worker_pre_model_hooks(todo_hook, drains_inbox=True)
 
-    if activation_mode:
-        # activate_integration leads; handoff and its pair stay for the per-user
-        # MCP integrations activation cannot bind in-context (routed there).
-        initial_tools = ["activate_integration", *EXECUTOR_INITIAL_TOOL_IDS]
-    else:
-        initial_tools = list(EXECUTOR_INITIAL_TOOL_IDS)
+    # activate_integration leads; handoff and its pair stay for the per-user
+    # MCP integrations activation cannot bind in-context (routed there).
+    # Unconditional: the entry guard enforces the per-user experiment, and the
+    # per-run prompt decides whether the model reaches for it.
+    initial_tools = ["activate_integration", *EXECUTOR_INITIAL_TOOL_IDS]
 
     builder = create_agent(
         chat_llm,

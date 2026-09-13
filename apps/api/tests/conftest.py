@@ -73,6 +73,11 @@ os.environ["GAIA_SIM_MODE"] = "false"
 # wins over .env) or its activation-variant executor prompt/context moves the
 # hermetic snapshots. Flag-on paths are exercised by tests that opt in explicitly.
 os.environ["ENABLE_INTEGRATION_ACTIVATION"] = "false"
+# Same leak, opposite pin: the committed default for the OpenUI experiment is
+# ON, and the prompt-contract tests assert the OpenUI variant. A developer
+# running with ENABLE_COMMS_OPENUI=false in .env would otherwise flip the
+# suite's static prompts. Flag-off paths opt in explicitly per test.
+os.environ["ENABLE_COMMS_OPENUI"] = "true"
 os.environ.setdefault(
     "MONGO_DB",
     "mongodb://localhost:27017/gaia_test?serverSelectionTimeoutMS=100&connectTimeoutMS=100",

@@ -2,9 +2,10 @@
 
 These strings are passed verbatim to LangChain as the system prompt. They are
 free of user-specific interpolation so they are byte-identical across every
-user on a given channel. That lets the LLM provider's implicit prompt cache
-match across users — the first request of the day on web warms the cache and
-every subsequent web user hits it on turn 1.
+user on a given channel and flag variant. That lets the LLM provider's
+implicit prompt cache match across users — the first request of the day on
+web warms the cache and every subsequent web user on the same variant hits
+it on turn 1.
 
 Each channel's static prompt is the base comms prompt plus the output-format
 block that applies to that channel (OpenUI component library on renderable
@@ -15,26 +16,19 @@ in a separate dynamic-context system message placed AFTER this one.
 
 from typing import Final
 
-from app.agents.prompts.comms_prompts import (
-    COMMS_AGENT_PROMPT,
-    EXECUTOR_AGENT_PROMPT,
-    _strip_openui_section,
-)
+from app.agents.prompts.comms_prompts import COMMS_AGENT_PROMPT, EXECUTOR_AGENT_PROMPT
 from app.agents.prompts.executor_activation_prompt import build_activation_executor_prompt
-from app.agents.prompts.openui_prompts import OPENUI_INSTRUCTIONS
+from app.agents.prompts.openui_prompts import MARKDOWN_ONLY_ADDENDUM, OPENUI_ADDENDUM
 from app.agents.workspace.operational_docs import GAIA_CORE
 from app.config.settings import settings
 from app.constants.general import NEW_MESSAGE_BREAKER
 
-# Base comms prompt with the embedded OpenUI component-instructions section
-# stripped out, so the per-channel addendum below is the single source of
-# truth for output format. Pre-computed once at import so the bytes stay
-# stable per channel (cache-friendly).
-_COMMS_AGENT_PROMPT_BASE: Final[str] = _strip_openui_section(COMMS_AGENT_PROMPT)
-
-
-# Output-format addendum for renderable channels (web, mobile, desktop).
-_OPENUI_ADDENDUM: Final[str] = "\n\n" + OPENUI_INSTRUCTIONS
+# Output-format addenda for renderable channels (web, mobile, desktop). Both
+# variants are precomputed once at import: the per-user OpenUI decision only
+# picks between these two byte-stable strings, so the provider's prompt cache
+# sees two buckets per channel instead of one string per user.
+_RENDERABLE_ADDENDUM_OPENUI_ON: Final[str] = "\n\n" + OPENUI_ADDENDUM
+_RENDERABLE_ADDENDUM_OPENUI_OFF: Final[str] = "\n\n" + MARKDOWN_ONLY_ADDENDUM
 
 
 # Desktop-app capability addendum. The comms agent has no desktop tools
@@ -109,31 +103,48 @@ _SLACK_ADDENDUM: Final[str] = _text_only_addendum(
 
 # Pre-assembled static comms prompts per channel. Each is a single Python
 # string literal that lives for the process lifetime, so the bytes sent to
-# the LLM are identical for every user on that channel.
+# the LLM are identical for every user on that channel *and experiment
+# variant*. The ON variants below are the defaults; OFF variants are built by
+# ``get_comms_static_prompt(..., openui_enabled=False)``.
 COMMS_PROMPT_BY_SOURCE: Final[dict[str, str]] = {
-    "web": _COMMS_AGENT_PROMPT_BASE + _OPENUI_ADDENDUM,
-    "mobile": _COMMS_AGENT_PROMPT_BASE + _OPENUI_ADDENDUM,
-    "desktop": _COMMS_AGENT_PROMPT_BASE + _OPENUI_ADDENDUM + _DESKTOP_ADDENDUM,
-    "whatsapp": _COMMS_AGENT_PROMPT_BASE + _WHATSAPP_ADDENDUM,
-    "telegram": _COMMS_AGENT_PROMPT_BASE + _TELEGRAM_ADDENDUM,
-    "discord": _COMMS_AGENT_PROMPT_BASE + _DISCORD_ADDENDUM,
-    "slack": _COMMS_AGENT_PROMPT_BASE + _SLACK_ADDENDUM,
+    "web": COMMS_AGENT_PROMPT + _RENDERABLE_ADDENDUM_OPENUI_ON,
+    "mobile": COMMS_AGENT_PROMPT + _RENDERABLE_ADDENDUM_OPENUI_ON,
+    "desktop": COMMS_AGENT_PROMPT
+    + _RENDERABLE_ADDENDUM_OPENUI_ON
+    + _DESKTOP_ADDENDUM,
+    "whatsapp": COMMS_AGENT_PROMPT + _WHATSAPP_ADDENDUM,
+    "telegram": COMMS_AGENT_PROMPT + _TELEGRAM_ADDENDUM,
+    "discord": COMMS_AGENT_PROMPT + _DISCORD_ADDENDUM,
+    "slack": COMMS_AGENT_PROMPT + _SLACK_ADDENDUM,
 }
+
+# Renderable channels whose output format is experiment-gated. Text-only
+# channels ignore the OpenUI flag entirely.
+_RENDERABLE_SOURCES: Final[frozenset[str]] = frozenset({"web", "mobile", "desktop"})
 
 # Default (web-style) static prompt used when ``source`` is unknown/None.
 COMMS_PROMPT_DEFAULT: Final[str] = COMMS_PROMPT_BY_SOURCE["web"]
 
 
-def get_comms_static_prompt(source: str | None) -> str:
+def get_comms_static_prompt(source: str | None, openui_enabled: bool = True) -> str:
     """Return the per-channel static comms prompt.
 
     The choice of channel-specific static prompt means the provider's
     implicit prompt cache can match byte-for-byte across all users on the
-    same channel. Unknown sources fall back to the web variant.
+    same channel. ``openui_enabled`` (resolved per user by
+    ``app.services.feature_flags.is_comms_openui_enabled``) swaps the
+    output-format block on renderable channels only, so the cache sees at
+    most two variants per channel. Unknown sources fall back to web.
     """
-    if not source:
-        return COMMS_PROMPT_DEFAULT
-    return COMMS_PROMPT_BY_SOURCE.get(source.strip().lower(), COMMS_PROMPT_DEFAULT)
+    normalized = source.strip().lower() if source else "web"
+    if normalized not in COMMS_PROMPT_BY_SOURCE:
+        normalized = "web"
+    if openui_enabled or normalized not in _RENDERABLE_SOURCES:
+        return COMMS_PROMPT_BY_SOURCE[normalized]
+    base = COMMS_AGENT_PROMPT + _RENDERABLE_ADDENDUM_OPENUI_OFF
+    if normalized == "desktop":
+        return base + _DESKTOP_ADDENDUM
+    return base
 
 
 # Legacy name still imported by a few call sites. Kept as an alias for the
@@ -144,11 +155,25 @@ COMMS_PROMPT_TEMPLATE: Final[str] = COMMS_PROMPT_DEFAULT
 # The executor's static prefix carries the always-on operating core (GAIA_CORE):
 # user-independent self-knowledge + the self-management capability menu + the
 # read_manual topic routing. It is appended here (not interpolated per user) so
-# the whole executor prompt stays byte-identical across users and rides the
-# provider's prompt cache.
-_EXECUTOR_BASE_PROMPT: Final[str] = (
-    build_activation_executor_prompt()
-    if settings.ENABLE_INTEGRATION_ACTIVATION
-    else EXECUTOR_AGENT_PROMPT
-)
-EXECUTOR_PROMPT_TEMPLATE: Final[str] = _EXECUTOR_BASE_PROMPT + "\n\n" + GAIA_CORE
+# each variant stays byte-identical across users and rides the provider's
+# prompt cache. Both variants are precomputed: the per-user activation decision
+# only picks between these two byte-stable strings.
+_EXECUTOR_BASE_ACTIVATION_ON: Final[str] = build_activation_executor_prompt()
+_EXECUTOR_BASE_ACTIVATION_OFF: Final[str] = EXECUTOR_AGENT_PROMPT
+
+
+def get_executor_prompt(activation_enabled: bool | None = None) -> str:
+    """Return the static executor prompt for the activation variant.
+
+    ``None`` (the default) preserves the process-wide env default so callers
+    that do not resolve the flag keep today's behavior; per-user
+    callers pass the result of
+    ``app.services.feature_flags.is_integration_activation_enabled``.
+    """
+    if activation_enabled is None:
+        activation_enabled = settings.ENABLE_INTEGRATION_ACTIVATION
+    base = _EXECUTOR_BASE_ACTIVATION_ON if activation_enabled else _EXECUTOR_BASE_ACTIVATION_OFF
+    return base + "\n\n" + GAIA_CORE
+
+
+EXECUTOR_PROMPT_TEMPLATE: Final[str] = get_executor_prompt()

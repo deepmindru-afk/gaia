@@ -17,6 +17,7 @@ from app.agents.prompts.workflow_prompts import (
 from app.agents.templates.agent_template import (
     EXECUTOR_PROMPT_TEMPLATE,
     get_comms_static_prompt,
+    get_executor_prompt,
 )
 from app.agents.workspace.paths import safe_upload_filename
 from app.constants.agents import PLAYBOOK_FALLBACK_CONTEXT_KEY
@@ -40,23 +41,29 @@ def create_system_message(
     user_name: str | None = None,
     agent_type: Literal["comms", "executor"] = "comms",
     source: str | None = None,
+    openui_enabled: bool = True,
+    activation_enabled: bool | None = None,
 ) -> SystemMessage:
     """Return the STATIC main system prompt for the given agent.
 
-    The content is byte-identical across every user on the same channel so
-    the provider's implicit prompt cache can match across users — the first
-    web user of the day warms the cache, every subsequent web user hits it
-    on turn 1. For comms, the per-channel variants embed the output-format
-    addendum (OpenUI on web/mobile/desktop; text-only restrictions on
-    messaging platforms). The executor prompt is single-variant.
+    The content is byte-identical across every user on the same channel and
+    flag variant so the provider's implicit prompt cache can match
+    across users — the first web user of the day warms the cache, every
+    subsequent web user on the same variant hits it on turn 1. For comms,
+    the per-channel variants embed the output-format addendum (OpenUI or its
+    markdown fallback on web/mobile/desktop per ``openui_enabled``; text-only
+    restrictions on messaging platforms). The executor prompt is
+    single-variant per activation assignment (``None`` keeps the env default).
 
     All user, time, and memory context is assembled by ``app.agents.context``
     and delivered in its own messages — never in this static prefix.
     """
     del user_id, user_name  # intentionally unused — static prefix only
     if agent_type == "executor":
-        return SystemMessage(content=EXECUTOR_PROMPT_TEMPLATE)
-    return SystemMessage(content=get_comms_static_prompt(source))
+        if activation_enabled is None:
+            return SystemMessage(content=EXECUTOR_PROMPT_TEMPLATE)
+        return SystemMessage(content=get_executor_prompt(activation_enabled))
+    return SystemMessage(content=get_comms_static_prompt(source, openui_enabled=openui_enabled))
 
 
 def build_current_time_message(

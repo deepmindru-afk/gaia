@@ -433,7 +433,10 @@ class TestBuildExecutorGraph:
 
         assert "handoff" in kwargs["tools_config"].initial_tool_ids
         assert "handoff" in registry
-        assert "activate_integration" not in kwargs["tools_config"].initial_tool_ids
+        # activate_integration is bound unconditionally now; the per-user
+        # experiment is enforced by its entry guard, not by graph membership.
+        assert "activate_integration" in kwargs["tools_config"].initial_tool_ids
+        assert "activate_integration" in registry
 
     async def test_activation_flag_adds_activate_integration_and_keeps_handoff(self, monkeypatch):
         """Activation leads with activate_integration but keeps handoff bound: it
@@ -555,7 +558,10 @@ class TestBuildExecutorGraph:
             # Exact equality, not membership: a renamed id silently drops that
             # tool from the executor's initial bind set, and membership lets the
             # typo through as long as one asserted name survives.
+            # activate_integration leads unconditionally; its entry guard
+            # enforces the per-user experiment.
             assert kwargs["tools_config"].initial_tool_ids == [
+                "activate_integration",
                 "handoff",
                 "execute",
                 "get_tool_schema",

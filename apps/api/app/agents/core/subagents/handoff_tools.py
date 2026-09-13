@@ -57,7 +57,6 @@ from app.agents.core.subagents.subagent_runner import (
     resume_for_gate,
     subagent_row_id,
 )
-from app.config.settings import settings
 from app.constants.cache import SUBAGENT_CACHE_PREFIX, SUBAGENT_CACHE_TTL
 from app.constants.hil import HIL_RESUME_CONFIG_KEY
 from app.constants.log_tags import LogTag
@@ -69,6 +68,7 @@ from app.helpers.namespace_utils import derive_integration_namespace
 from app.models.agent_models import AgentConfigurable, AgentUserContext, agent_configurable
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
 from app.models.subagent_models import Subagent
+from app.services.feature_flags import is_integration_activation_enabled
 from app.services.hil.approvals_store import list_parked_subagents_for_conversation
 from app.services.integrations.integration_resolver import IntegrationResolver
 from app.services.mcp.mcp_token_store import MCPTokenStore
@@ -964,7 +964,7 @@ async def handoff(
         # them mid-run (it collects via wait_for_subagents). An explicit
         # background caller is unaffected; without a stream_id results can't be
         # routed back, so that case stays blocking.
-        if settings.ENABLE_INTEGRATION_ACTIVATION and stream_id and not background:
+        if stream_id and not background and await is_integration_activation_enabled(user_id):
             background = True
 
         rejection = await _handoff_rejection(ctx, task, background, stream_id)

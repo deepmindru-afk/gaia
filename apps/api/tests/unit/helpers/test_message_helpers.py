@@ -44,8 +44,10 @@ class TestCreateSystemMessage:
         assert web_a.content == web_b.content
         assert web_a.content != whatsapp.content
         # Output-format addenda should be inline in the static per-channel
-        # prompt — web has OpenUI, text-only has platform restrictions.
-        assert ":::openui" in web_a.content
+        # prompt — web has OpenUI, text-only has platform restrictions. Assert
+        # on the addendum marker, not the fence literal: the base prompt names
+        # :::openui in prose either way.
+        assert "---OpenUI Lang (Rich UI Components)---" in web_a.content
         assert "Platform Context" in whatsapp.content
 
     def test_executor_agent_is_static(self) -> None:

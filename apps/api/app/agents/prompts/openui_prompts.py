@@ -104,3 +104,28 @@ OPENUI_INSTRUCTIONS: str = f"""
 {OPENUI_COMPONENT_PROMPT}
 {OPENUI_QUALITY_NOTES}
 """
+
+# ---------------------------------------------------------------------------
+# Comms output-format addenda. Renderable channels (web/mobile/desktop) get one
+# of these two; the per-user choice between them lives in
+# ``app.agents.templates.agent_template.get_comms_static_prompt`` and resolves
+# via ``app.services.feature_flags`` (PostHog flag, env default). Both variants
+# are precomputed there, so the prompt cache sees two buckets per channel,
+# not one per user.
+# ---------------------------------------------------------------------------
+
+# Fallback used when OpenUI is disabled for the user. Renderable channels still
+# render markdown natively, so this keeps tables/links/lists without the ~27k-char
+# component vocabulary. It also resolves the output-format reference in the
+# comms prompt's Delivering Results section.
+MARKDOWN_ONLY_ADDENDUM: str = """
+---Output Format---
+Render structured data with plain markdown, never :::openui component fences (they are disabled):
+- Tabular or comparison data (rows x columns): a markdown table.
+- Links, or content where the link is the point: clickable markdown links ([label](url)).
+- Everything else: short bullet or numbered lists.
+Calendar and email data still stream as native cards, so never re-type those rows; write a short conversational line and let the card show them.
+"""
+
+# The output-format block for renderable channels when OpenUI is enabled.
+OPENUI_ADDENDUM: str = OPENUI_INSTRUCTIONS

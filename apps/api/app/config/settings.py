@@ -129,6 +129,11 @@ class CommonSettings(BaseAppSettings):
     # instead of routing work to a per-integration subagent graph. Delegation
     # then goes through the generic `spawn_subagent`, which inherits those tools.
     ENABLE_INTEGRATION_ACTIVATION: bool = False
+    # Experiment: include the OpenUI component reference (~27k chars) in the
+    # comms prompt on renderable channels (web/mobile/desktop). Off swaps it for
+    # a short markdown-only output note so the persona/voice rules are not
+    # crowded out by the component language. Text-only channels are unaffected.
+    ENABLE_COMMS_OPENUI: bool = True
 
     @field_validator("HOST", "FRONTEND_URL", mode="after")
     @classmethod

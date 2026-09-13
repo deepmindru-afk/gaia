@@ -150,6 +150,14 @@ class AnalyticsEvents(StrEnum):
 
     USAGE_QUERIED = "usage:queried"
 
+    # Fallback exposure for PostHog-dashboard experiments built on the flags
+    # in app/services/feature_flags.py. Emitted only for evaluations the SDK
+    # never sees (unconfigured client, evaluation error, unevaluated flag) —
+    # the complement of the SDK's own $feature_flag_called. Props: {flag,
+    # enabled, fallback_reason}. Deduplicated per user/flag/day. Lets an
+    # analysis tell "served control" apart from "PostHog was down".
+    FEATURE_FLAG_EVALUATED = "feature_flag:evaluated"
+
 
 def _get_posthog_client() -> Posthog | None:
     """Get the PostHog client from providers."""

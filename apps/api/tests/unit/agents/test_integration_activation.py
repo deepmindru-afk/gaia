@@ -166,18 +166,20 @@ class TestActivateIntegrationTool:
         return list(command.update.get("selected_tool_ids") or [])
 
     @pytest.fixture(autouse=True)
-    def _enable_flag(self, monkeypatch):
-        from app.config.settings import settings
+    def _enable_flag(self):
+        with patch(
+            f"{_MOD}.is_integration_activation_enabled", new=AsyncMock(return_value=True)
+        ):
+            yield
 
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
-
-    async def test_disabled_flag_short_circuits(self, monkeypatch) -> None:
+    async def test_disabled_flag_short_circuits(self) -> None:
         from app.agents.core.subagents.integration_activation import activate_integration
-        from app.config.settings import settings
 
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", False)
-        call, run_cfg = self._invoke({}, integration_id="gmail")
-        result = await activate_integration.ainvoke(call, run_cfg)
+        with patch(
+            f"{_MOD}.is_integration_activation_enabled", new=AsyncMock(return_value=False)
+        ):
+            call, run_cfg = self._invoke({}, integration_id="gmail")
+            result = await activate_integration.ainvoke(call, run_cfg)
         assert "disabled" in self._text(result)
 
     async def test_unknown_integration_fails_loud(self) -> None:
