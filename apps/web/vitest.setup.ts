@@ -1,8 +1,4 @@
-import { vi } from "vitest";
-
-// HeroUI's ripple loads framer-motion features lazily and sets state after a
-// file's jsdom teardown ("window is not defined"); it is chrome, not behaviour.
-vi.mock("@heroui/ripple", () => ({
-  Ripple: () => null,
-  useRipple: () => ({ ripples: [], onPress: vi.fn(), onClear: vi.fn() }),
-}));
+// HeroUI's LazyMotion users (ripple, tooltip, modal, toast, …) import this bundle
+// on first render; loaded up front, its setState can no longer land after a test
+// file's jsdom teardown ("window is not defined").
+import "@heroui/dom-animation";

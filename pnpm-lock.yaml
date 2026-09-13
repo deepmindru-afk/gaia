@@ -1140,6 +1140,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.7
         version: 2.5.7
+      '@heroui/dom-animation':
+        specifier: 2.1.10
+        version: 2.1.10(framer-motion@12.42.2(@emotion/is-prop-valid@1.4.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))
       '@next/bundle-analyzer':
         specifier: ^16.3.0
         version: 16.3.0
