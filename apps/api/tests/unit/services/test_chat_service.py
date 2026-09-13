@@ -652,6 +652,7 @@ class TestRunChatStreamBackground:
             "conversation_id": "conv_existing_123",
             "voice_mode": False,
             "is_new_conversation": False,
+            "has_error": False,
         }
 
     async def test_source_is_carried_onto_the_terminal_event(self, test_user, existing_conv_body):
@@ -684,6 +685,7 @@ class TestRunChatStreamBackground:
             "voice_mode": False,
             "is_new_conversation": False,
             "source": "desktop",
+            "has_error": False,
         }
 
     async def test_captures_message_cancelled_when_stream_cancelled(

@@ -197,6 +197,9 @@ def register_lazy_providers(context: Literal["main_app", "arq_worker"]) -> None:
         init_posthog,
         init_langfuse,
         init_agnost,
+        # Order matters below: Latitude owns the global OTel tracer provider
+        # and Laminar must attach to its own (set_global_tracer_provider=False)
+        # — keep latitude before laminar, do not alphabetize.
         init_latitude,
         init_laminar,
     )

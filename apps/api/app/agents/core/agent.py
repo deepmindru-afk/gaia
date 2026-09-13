@@ -381,7 +381,8 @@ async def call_agent_silent(
         user_id=user_id or "",
         conversation_id=conversation_id,
         user_input=request.message,
-        properties={"mode": "background", "source": source or "background"},
+        source=source,
+        mode="background",
     )
     try:
         graph, initial_state, config = await _core_agent_logic(
@@ -470,6 +471,11 @@ async def call_agent_silent(
                 {"agent": "comms", "mode": "background", "conversation_id": conversation_id},
             )
         end_turn_all(telemetry, output=str(exc), error=exc)
+        raise
+    except BaseException:
+        # CancelledError (worker shutdown mid-turn) bypasses Exception: close
+        # the scopes as cancelled so the turn doesn't vanish, then propagate.
+        end_turn_all(telemetry, output="", cancelled=True)
         raise
     finally:
         teardown_executor_capture(stream_id)

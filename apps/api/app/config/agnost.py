@@ -33,11 +33,14 @@ def init_agnost() -> bool:
 
 
 async def flush_agnost() -> None:
-    """Flush queued Agnost events on shutdown so a restart loses no turns."""
+    """Shut down the Agnost SDK on process exit so a restart loses no turns."""
     if not _initialized:
         return
     try:
-        agnost.flush()
+        # shutdown() flushes, then joins the worker and closes sessions —
+        # flush() alone drains but leaves the thread and HTTP sessions to
+        # interpreter exit (and is idempotent, as is the SDK atexit handler).
+        agnost.shutdown()
     except Exception as exc:
         log.warning(
             "agnost_flush_failed",

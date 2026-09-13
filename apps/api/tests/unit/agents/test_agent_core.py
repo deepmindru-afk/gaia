@@ -1426,6 +1426,7 @@ class TestTheOptionsEachEntryPointDerives:
                 "app.agents.core.agent._core_agent_logic",
                 new=self._recording_core(seen, _fresh_config()),
             ),
+            patch("app.agents.core.agent.trace_id_for_message", return_value="trace-bg-1"),
             patch(
                 "app.agents.core.agent.execute_graph_silent",
                 new_callable=AsyncMock,
@@ -1443,15 +1444,15 @@ class TestTheOptionsEachEntryPointDerives:
                 ),
             )
 
-        # The silent path deliberately does NOT forward the langfuse fields —
-        # it seeds no trace of its own.
+        # The silent path seeds its own trace (from the run id) and tags the
+        # background tier — otherwise worker turns stay ad-hoc and unfindable.
         assert seen == [
             AgentRunOptions(
                 usage_metadata_callback=callback,
                 trigger_context=trigger,
                 source="cron",
-                langfuse_trace_id=None,
-                langfuse_tags=None,
+                langfuse_trace_id="trace-bg-1",
+                langfuse_tags=["comms_agent", settings.ENV, "background"],
             )
         ]
 

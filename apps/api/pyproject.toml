@@ -191,6 +191,9 @@ backend = [
   "pyinstrument>=5.1.1",
   "posthog>=7.44.2",
   "agnost>=0.1.11",
+  # latitude-telemetry: app/config/latitude.py rebinds
+  # latitude_telemetry.env.EXPORTER_URL (the SDK freezes it at import). When
+  # bumping, confirm that module path still exists or boot breaks loudly.
   "latitude-telemetry>=3.7.0",
   "lmnr>=0.7.0",
   "openinference-instrumentation-langchain>=0.1.0",

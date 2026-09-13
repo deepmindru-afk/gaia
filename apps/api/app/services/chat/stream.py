@@ -218,8 +218,8 @@ async def _run_chat_stream(
             user_id=user_id or "",
             conversation_id=conversation_id,
             user_input=body.message,
+            source=source,
             properties={
-                "source": source or "background",
                 "voice_mode": body.voice_mode,
                 "is_new_conversation": is_new_conversation,
                 "selected_tool": body.selectedTool,
@@ -303,6 +303,10 @@ async def _run_chat_stream(
                 "conversation_id": conversation_id,
                 "voice_mode": body.voice_mode,
                 "is_new_conversation": is_new_conversation,
+                # A yielded error frame sets state.error without raising, so
+                # the turn still completes: mark it or PostHog reads 100%
+                # completed while every trace backend reads failed.
+                "has_error": bool(state.error),
             }
             if source:
                 event_props["source"] = source
@@ -327,6 +331,11 @@ async def _run_chat_stream(
         # stop), not the raw exception — a reload shows what the user saw.
         state.error = await _handle_stream_error(stream_id, e)
         end_turn_all(telemetry, output=state.error, error=e)
+    except BaseException:
+        # CancelledError (deploy/restart mid-turn) is not an Exception: close
+        # the scopes as cancelled so the turn doesn't vanish, then propagate.
+        end_turn_all(telemetry, output=state.complete_message, cancelled=True)
+        raise
     finally:
         await _finalize_stream(stream_id, body, user, conversation_id, state, artifact_task)
 

@@ -6,6 +6,7 @@ conversation id, and input, close with the real output, and a turn failure
 must still raise to the caller after being recorded.
 """
 
+import asyncio
 from collections.abc import Iterator
 import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -100,3 +101,23 @@ class TestSilentTelemetry:
         assert mock_agnost_end.call_args.kwargs["output"], "the failure must carry a message"
         lat_error = mock_lat_end.call_args.kwargs["error"]
         assert isinstance(lat_error, RuntimeError) and str(lat_error) == "worker exploded"
+
+    async def test_cancel_records_and_still_raises(self, test_user, body):
+        with (
+            patch("app.services.agnost_service.end_turn") as mock_agnost_end,
+            patch("app.services.latitude_service.end_turn") as mock_lat_end,
+            patch("app.services.laminar_service.end_turn") as mock_lam_end,
+            _silent_agent(error=asyncio.CancelledError("worker shutdown")),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await call_agent_silent(
+                request=body,
+                conversation_id="conv_bg_1",
+                user=test_user,
+            )
+
+        assert mock_agnost_end.call_args.kwargs["success"] is False
+        assert mock_agnost_end.call_args.kwargs["properties"]["outcome"] == "cancelled"
+        assert mock_lat_end.call_args.kwargs["error"] is None
+        assert mock_lat_end.call_args.kwargs["cancelled"] is True
+        assert mock_lam_end.call_args.kwargs["cancelled"] is True

@@ -10,11 +10,12 @@ from enum import StrEnum
 from typing import TypedDict
 
 from agnost import Interaction
-from latitude_telemetry.sdk.context import CaptureScope
 
 from app.constants.agents import COMMS_AGENT_NAME
 from app.services import agnost_service, laminar_service, latitude_service
 from app.services.laminar_service import TurnScope
+from app.services.latitude_service import TurnCapture
+from shared.py.wide_events import log
 
 
 class TurnOutcome(StrEnum):
@@ -35,8 +36,14 @@ class TurnHandles(TypedDict):
     """One vendor scope per telemetry backend; any may be None when disabled."""
 
     agnost: Interaction | None
-    latitude: CaptureScope | None
+    latitude: TurnCapture | None
     laminar: TurnScope | None
+
+
+# Logged once per process when a turn opens zero scopes, so "telemetry is
+# deliberately off" is greppable and distinct from per-backend failure
+# warnings. A rotated-but-typo'd key otherwise reads as weeks of silence.
+_disabled_logged = False
 
 
 def begin_turn_all(
@@ -44,11 +51,22 @@ def begin_turn_all(
     user_id: str,
     conversation_id: str,
     user_input: str,
+    source: str | None = None,
+    mode: str = "interactive",
+    tier: str = COMMS_AGENT_NAME,
     properties: dict[str, str | bool | None] | None = None,
 ) -> TurnHandles:
     """Open all three vendor scopes. Never raises (each service guards)."""
-    props = dict(properties or {})
-    return {
+    # source/mode/tier are owned here so every caller records them identically
+    # (streaming, silent, narrator); anything else rides in properties. A
+    # caller key colliding with a reserved one loses — uniformity is the point.
+    props = {
+        **{k: v for k, v in (properties or {}).items() if k not in ("source", "mode", "tier")},
+        "source": source or "background",
+        "mode": mode,
+        "tier": tier,
+    }
+    handles: TurnHandles = {
         "agnost": agnost_service.begin_turn(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -70,6 +88,11 @@ def begin_turn_all(
             properties=props,
         ),
     }
+    global _disabled_logged
+    if not _disabled_logged and all(v is None for v in handles.values()):
+        _disabled_logged = True
+        log.info("turn_telemetry_no_scopes", reason="keys unset or all begins failed")
+    return handles
 
 
 def end_turn_all(

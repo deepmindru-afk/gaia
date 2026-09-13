@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.services.latitude_service import begin_turn, end_turn
+from app.services.latitude_service import TurnCapture, begin_turn, end_turn
 
 
 def _settings(api_key: str | None) -> SimpleNamespace:
@@ -27,13 +27,16 @@ class TestBeginTurn:
             assert begin_turn(user_id="", conversation_id="c1") is None
             mock_capture.start.assert_not_called()
 
-    def test_passes_real_ids_and_filtered_metadata(self) -> None:
+    def test_binds_scope_and_current_span(self) -> None:
         scope = MagicMock()
+        span = MagicMock()
         with (
             patch("app.services.latitude_service.settings", _settings("key-1")),
             patch("app.services.latitude_service.capture") as mock_capture,
+            patch("app.services.latitude_service.trace") as mock_trace,
         ):
             mock_capture.start.return_value = scope
+            mock_trace.get_current_span.return_value = span
 
             result = begin_turn(
                 user_id="u1",
@@ -41,7 +44,7 @@ class TestBeginTurn:
                 properties={"source": "web", "voice_mode": None},
             )
 
-            assert result is scope
+            assert result == TurnCapture(scope=scope, span=span)
             name, options = mock_capture.start.call_args.args
             assert name == "comms_agent"
             assert options["user_id"] == "u1"
@@ -65,51 +68,58 @@ class TestEndTurn:
             end_turn(None)
             mock_capture.end.assert_not_called()
 
-    def test_success_ends_without_error(self) -> None:
-        scope = MagicMock()
+    def test_success_ends_without_error_or_tag(self) -> None:
+        scope, span = MagicMock(), MagicMock()
+        handle = TurnCapture(scope=scope, span=span)
         with patch("app.services.latitude_service.capture") as mock_capture:
-            end_turn(scope)
+            end_turn(handle)
 
+            span.set_attribute.assert_not_called()
             mock_capture.end.assert_called_once_with(scope, None)
 
-    def test_error_ends_with_error(self) -> None:
-        scope = MagicMock()
+    def test_error_ends_with_error_and_no_tag(self) -> None:
+        scope, span = MagicMock(), MagicMock()
+        handle = TurnCapture(scope=scope, span=span)
         error = RuntimeError("provider down")
         with patch("app.services.latitude_service.capture") as mock_capture:
-            end_turn(scope, error=error)
+            end_turn(handle, error=error)
 
+            span.set_attribute.assert_not_called()
             mock_capture.end.assert_called_once_with(scope, error)
 
-    def test_cancelled_ends_clean_with_attribute(self) -> None:
-        scope = MagicMock()
-        span = MagicMock()
+    def test_cancelled_tags_stored_span_and_ends_clean(self) -> None:
+        scope, span = MagicMock(), MagicMock()
         span.is_recording.return_value = True
+        other_span = MagicMock()
+        handle = TurnCapture(scope=scope, span=span)
         with (
             patch("app.services.latitude_service.capture") as mock_capture,
             patch("app.services.latitude_service.trace") as mock_trace,
         ):
-            mock_trace.get_current_span.return_value = span
+            # Even if the ambient current span has moved on, the stored span
+            # wears the marker — never the stranger.
+            mock_trace.get_current_span.return_value = other_span
 
-            end_turn(scope, cancelled=True)
+            end_turn(handle, cancelled=True)
 
             span.set_attribute.assert_called_once_with("cancelled", True)
+            other_span.set_attribute.assert_not_called()
             mock_capture.end.assert_called_once_with(scope, None)
 
     def test_error_dominates_cancelled(self) -> None:
-        scope = MagicMock()
+        scope, span = MagicMock(), MagicMock()
+        handle = TurnCapture(scope=scope, span=span)
         error = RuntimeError("provider down")
-        with (
-            patch("app.services.latitude_service.capture") as mock_capture,
-            patch("app.services.latitude_service.trace") as mock_trace,
-        ):
-            end_turn(scope, error=error, cancelled=True)
+        with patch("app.services.latitude_service.capture") as mock_capture:
+            end_turn(handle, error=error, cancelled=True)
 
-            mock_trace.get_current_span.assert_not_called()
+            span.set_attribute.assert_not_called()
             mock_capture.end.assert_called_once_with(scope, error)
 
     def test_sdk_failure_does_not_raise(self) -> None:
-        scope = MagicMock()
+        scope, span = MagicMock(), MagicMock()
+        handle = TurnCapture(scope=scope, span=span)
         with patch("app.services.latitude_service.capture") as mock_capture:
             mock_capture.end.side_effect = RuntimeError("boom")
 
-            end_turn(scope, error=RuntimeError("x"))
+            end_turn(handle, error=RuntimeError("x"))

@@ -57,6 +57,11 @@ def wrap_agent_payload(tag: AgentTag, body: str, agent: str | None = None) -> st
 # tracing, and middleware name it identically.
 COMMS_AGENT_NAME = "comms_agent"
 
+# Turn tier for the narrator leg: the comms re-voicing of an executor result
+# is its own LLM turn, recorded as tier="narrator" so per-tier spend stays
+# attributable instead of inflating the parent turn or orphaning spans.
+NARRATOR_TIER_NAME = "narrator"
+
 
 # Every internal tag, open or close, with or without attributes. Stripped
 # deterministically before delivery (see ``strip_internal_agent_tags``) as the

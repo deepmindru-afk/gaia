@@ -5,10 +5,12 @@ services faked one layer down, so the outcome mapping itself executes —
 mocking the services here is the seam, not the thing under test.
 """
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.services import turn_telemetry
 from app.services.turn_telemetry import TurnOutcome, begin_turn_all, end_turn_all
 
 
@@ -20,6 +22,14 @@ def services() -> MagicMock:
         patch("app.services.turn_telemetry.laminar_service") as mock_laminar,
     ):
         yield MagicMock(agnost=mock_agnost, latitude=mock_latitude, laminar=mock_laminar)
+
+
+@pytest.fixture
+def _reset_disabled_flag() -> Iterator[None]:
+    previous = turn_telemetry._disabled_logged
+    turn_telemetry._disabled_logged = False
+    yield
+    turn_telemetry._disabled_logged = previous
 
 
 @pytest.mark.unit
@@ -34,21 +44,63 @@ class TestOutcomeValues:
 
 @pytest.mark.unit
 class TestBeginFanOut:
-    def test_carries_real_ids_input_and_properties(self, services: MagicMock) -> None:
+    def test_carries_real_ids_input_and_uniform_properties(self, services: MagicMock) -> None:
         begin_turn_all(
             user_id="u1",
             conversation_id="c1",
             user_input="hello",
-            properties={"source": "web"},
+            source="web",
+            properties={"voice_mode": True},
         )
 
         agnost_kwargs = services.agnost.begin_turn.call_args.kwargs
         assert agnost_kwargs["user_id"] == "u1"
         assert agnost_kwargs["conversation_id"] == "c1"
         assert agnost_kwargs["user_input"] == "hello"
-        assert agnost_kwargs["properties"] == {"source": "web"}
+        assert agnost_kwargs["properties"] == {
+            "source": "web",
+            "mode": "interactive",
+            "tier": "comms_agent",
+            "voice_mode": True,
+        }
         assert services.latitude.begin_turn.call_args.kwargs["user_id"] == "u1"
         assert services.laminar.begin_turn.call_args.kwargs["user_input"] == "hello"
+
+    def test_reserved_keys_win_over_caller_properties(self, services: MagicMock) -> None:
+        begin_turn_all(
+            user_id="u1",
+            conversation_id="c1",
+            user_input="hello",
+            source="web",
+            mode="background",
+            tier="narrator",
+            properties={"source": "evil", "mode": "evil", "tier": "evil"},
+        )
+
+        props = services.agnost.begin_turn.call_args.kwargs["properties"]
+        assert props["source"] == "web"
+        assert props["mode"] == "background"
+        assert props["tier"] == "narrator"
+
+    def test_missing_source_defaults_to_background(self, services: MagicMock) -> None:
+        begin_turn_all(user_id="u1", conversation_id="c1", user_input="hello")
+
+        props = services.agnost.begin_turn.call_args.kwargs["properties"]
+        assert props["source"] == "background"
+
+    def test_all_none_scopes_logs_once(
+        self, services: MagicMock, _reset_disabled_flag: None
+    ) -> None:
+        services.agnost.begin_turn.return_value = None
+        services.latitude.begin_turn.return_value = None
+        services.laminar.begin_turn.return_value = None
+        with patch("app.services.turn_telemetry.log") as mock_log:
+            begin_turn_all(user_id="u1", conversation_id="c1", user_input="hello")
+            begin_turn_all(user_id="u1", conversation_id="c1", user_input="hello")
+
+            mock_log.info.assert_called_once_with(
+                "turn_telemetry_no_scopes", reason="keys unset or all begins failed"
+            )
 
 
 @pytest.mark.unit

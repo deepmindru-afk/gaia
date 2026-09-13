@@ -6,6 +6,7 @@ real user id, conversation id, and input, and close with the real output and
 one coherent outcome — and a telemetry failure must never break the turn.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator, Iterator
 import contextlib
 import json
@@ -15,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.models.message_models import MessageRequestWithHistory
+from app.services.analytics_service import AnalyticsEvents
 from app.services.chat.stream import run_chat_stream_background
 
 
@@ -40,6 +42,18 @@ async def _text_then_nostream(text: str, complete: str) -> AsyncGenerator[str, N
     yield f"data: {json.dumps({'response': text})}\n\n"
     yield f"nostream: {json.dumps({'complete_message': complete})}"
     yield "data: [DONE]\n\n"
+
+
+async def _error_frame_then_nostream() -> AsyncGenerator[str, None]:
+    yield f"data: {json.dumps({'error': 'graph exploded'})}\n\n"
+    yield f"nostream: {json.dumps({'complete_message': 'partial'})}"
+    yield "data: [DONE]\n\n"
+
+
+async def _cancelled_stream() -> AsyncGenerator[str, None]:
+    if False:  # pragma: no cover
+        yield ""
+    raise asyncio.CancelledError("deploy restart")
 
 
 def _make_stream_manager_mock(is_cancelled: bool = False) -> MagicMock:
@@ -244,3 +258,62 @@ class TestTurnTelemetry:
         assert mock_end_all.call_args.args[0] is None
         published = [call.args[1] for call in sm.publish_chunk.call_args_list]
         assert any('"error"' in chunk and "mongo down" in chunk for chunk in published)
+
+    async def test_hard_cancel_closes_as_cancelled_and_propagates(
+        self, test_user, existing_conv_body
+    ):
+        """CancelledError is BaseException, not Exception: the turn must still
+        close its scopes (as cancelled) instead of leaking them."""
+        sm = _make_stream_manager_mock()
+        with (
+            patch("app.services.chat.stream.end_turn_all") as mock_end_all,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await _run_turn(
+                sm, existing_conv_body, test_user, "conv_existing_123", _cancelled_stream()
+            )
+
+        mock_end_all.assert_called_once()
+        assert mock_end_all.call_args.kwargs["cancelled"] is True
+        assert "error" not in mock_end_all.call_args.kwargs
+
+    async def test_error_frame_marks_posthog_completed_with_error(
+        self, test_user, existing_conv_body
+    ):
+        """A yielded error frame completes the turn without raising, so the
+        vendors read failed — PostHog must carry has_error or it reads 100%
+        completed during a setup outage."""
+        sm = _make_stream_manager_mock()
+        with patch("app.services.chat.stream.capture_event") as mock_capture:
+            await _run_turn(
+                sm, existing_conv_body, test_user, "conv_existing_123", _error_frame_then_nostream()
+            )
+
+        completed = [
+            call
+            for call in mock_capture.call_args_list
+            if call.args[1] == AnalyticsEvents.CHAT_MESSAGE_COMPLETED
+        ]
+        assert len(completed) == 1
+        assert completed[0].args[2]["has_error"] is True
+
+    async def test_clean_turn_marks_posthog_completed_without_error(
+        self, test_user, existing_conv_body
+    ):
+        sm = _make_stream_manager_mock()
+        with patch("app.services.chat.stream.capture_event") as mock_capture:
+            await _run_turn(
+                sm,
+                existing_conv_body,
+                test_user,
+                "conv_existing_123",
+                _text_then_nostream("Follow", "Follow-up complete"),
+            )
+
+        completed = [
+            call
+            for call in mock_capture.call_args_list
+            if call.args[1] == AnalyticsEvents.CHAT_MESSAGE_COMPLETED
+        ]
+        assert len(completed) == 1
+        assert completed[0].args[2]["has_error"] is False

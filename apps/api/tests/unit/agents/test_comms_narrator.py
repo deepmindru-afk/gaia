@@ -295,3 +295,56 @@ class TestNarrationResolvesItsOwnCommsLane:
         # No thread group at all, so no base_configurable: inheriting one would
         # carry a stale lane from whatever run happened to be in flight.
         assert "thread" not in kwargs
+
+
+class TestNarratorTelemetry:
+    """The re-voicing call is a full comms LLM turn: it must open and close a
+    telemetry turn as tier=narrator, so its spend is attributable instead of
+    inflating the parent turn or orphaning spans."""
+
+    async def test_success_opens_and_closes_narrator_turn(self) -> None:
+        with (
+            _patch_graph(_fake_comms_graph()),
+            patch(f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("voiced", {}))),
+            patch(f"{MODULE}.begin_turn_all") as mock_begin,
+            patch(f"{MODULE}.end_turn_all") as mock_end,
+        ):
+            assert (
+                await narrate_executor_result(RESULT_TEXT, "result", CONVERSATION_ID, USER)
+                == "voiced"
+            )
+
+        begin_kwargs = mock_begin.call_args.kwargs
+        assert begin_kwargs["user_id"] == "user-1"
+        assert begin_kwargs["conversation_id"] == CONVERSATION_ID
+        assert begin_kwargs["user_input"] == RESULT_TEXT
+        assert begin_kwargs["mode"] == "background"
+        assert begin_kwargs["tier"] == "narrator"
+        end_kwargs = mock_end.call_args.kwargs
+        assert end_kwargs["output"] == "voiced"
+        assert end_kwargs.get("error") is None
+
+    async def test_failure_records_error_and_returns_empty(self) -> None:
+        with (
+            _patch_graph(_fake_comms_graph()),
+            patch(
+                f"{MODULE}.execute_graph_silent", AsyncMock(side_effect=RuntimeError("llm down"))
+            ),
+            patch(f"{MODULE}.begin_turn_all"),
+            patch(f"{MODULE}.end_turn_all") as mock_end,
+        ):
+            assert await narrate_executor_result(RESULT_TEXT, "result", CONVERSATION_ID, USER) == ""
+
+        assert isinstance(mock_end.call_args.kwargs["error"], RuntimeError)
+
+    async def test_unavailable_graph_opens_no_turn(self) -> None:
+        with (
+            patch(
+                f"{MODULE}.GraphManager.get_graph",
+                AsyncMock(side_effect=GraphUnavailableError("comms_agent", "no graph")),
+            ),
+            patch(f"{MODULE}.begin_turn_all") as mock_begin,
+        ):
+            assert await narrate_executor_result(RESULT_TEXT, "result", CONVERSATION_ID, USER) == ""
+
+        mock_begin.assert_not_called()
