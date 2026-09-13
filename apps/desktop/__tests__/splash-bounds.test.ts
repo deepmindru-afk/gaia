@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { resolveLoaderSize } from "../src/main/windows/splash";
+import { resolveLoaderSize } from "../src/main/windows/loader-geometry";
 
 function expectFits(
   workArea: { width: number; height: number },

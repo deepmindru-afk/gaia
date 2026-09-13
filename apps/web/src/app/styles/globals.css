@@ -1266,6 +1266,17 @@
   -webkit-app-region: drag;
 }
 .electron-drag
-  :where(button, a, input, textarea, select, label, [role="button"], [role="tab"], [role="menuitem"], [contenteditable="true"]) {
+  :where(
+    button,
+    a,
+    input,
+    textarea,
+    select,
+    label,
+    [role="button"],
+    [role="tab"],
+    [role="menuitem"],
+    [contenteditable="true"]
+  ) {
   -webkit-app-region: no-drag;
 }
