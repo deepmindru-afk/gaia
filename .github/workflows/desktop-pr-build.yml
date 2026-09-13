@@ -36,6 +36,9 @@ jobs:
   # ---------------------------------------------------------------------------
   prepare:
     name: Build + prepare payload
+    # A release-please PR edits apps/desktop/package.json's version only; there
+    # is no packaging change to verify, so skip the whole build.
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

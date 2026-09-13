@@ -71,6 +71,9 @@ permissions:
 jobs:
   build:
     name: build (cf:build)
+    # A release-please PR bumps apps/web/package.json's version only — no web
+    # source to preview. Skip the build (and every job that needs it).
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

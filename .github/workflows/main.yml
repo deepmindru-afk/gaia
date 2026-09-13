@@ -162,9 +162,31 @@ jobs:
       - uses: ./.github/actions/setup-node-pnpm
       - name: Detect affected
         id: affected
+        env:
+          # head_ref is the PR author's branch name — user-controlled, so it is
+          # passed via env and referenced quoted, never interpolated into the
+          # script text.
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           normalize() { tr -d '[]"' | tr -s ' \n' ',' | sed 's/^,//; s/,$//'; }
+
+          # Release Please PRs (branch `release-please--branches--master`) only
+          # rewrite CHANGELOGs, package versions and the release manifest — no
+          # source. `nx affected` still flags every version-bumped project, so
+          # the whole test suite (test-python, build, docker-image,
+          # regression-proof, …) would re-run to prove a changelog. Report
+          # nothing affected and let every downstream lane skip; `quality-gate`
+          # (always()) runs regardless and passes on the skips.
+          if [[ "$HEAD_REF" == release-please--* ]]; then
+            echo "python_projects=" >> "$GITHUB_OUTPUT"
+            echo "typescript_projects=" >> "$GITHUB_OUTPUT"
+            echo "has_python=false" >> "$GITHUB_OUTPUT"
+            echo "has_typescript=false" >> "$GITHUB_OUTPUT"
+            echo "release-please PR — no source changed; skipping affected detection"
+            exit 0
+          fi
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             PY=$(pnpm exec nx show projects --projects 'tag:scope:python' | normalize)
             TS=$(pnpm exec nx show projects --projects 'tag:scope:typescript' | normalize)
@@ -617,7 +639,9 @@ jobs:
   # test-typescript like the other light lanes (see trivy-scan).
   test-harness-tools:
     needs: [select-runner, detect, build, test-typescript]
-    if: ${{ !cancelled() && needs.select-runner.result == 'success' }}
+    # `tools/` is not an Nx project, so this can't gate on the affected sets —
+    # but a release-please PR changes no source at all, so skip it there.
+    if: ${{ !cancelled() && needs.select-runner.result == 'success' && !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
     timeout-minutes: 10
     permissions:
@@ -704,7 +728,9 @@ jobs:
   # being hidden by a failing build. See code-quality.yml for the same idea.
   trivy-scan:
     needs: [select-runner, detect, build, test-typescript]
-    if: ${{ !cancelled() && needs.select-runner.result == 'success' }}
+    # Advisory dependency scan; a release-please PR changes no dependency
+    # (lockfiles are untouched), so skip it there.
+    if: ${{ !cancelled() && needs.select-runner.result == 'success' && !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
     timeout-minutes: 10
     permissions:

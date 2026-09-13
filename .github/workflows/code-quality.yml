@@ -135,9 +135,30 @@ jobs:
 
       - name: Detect affected projects
         id: detect
+        env:
+          # head_ref is the PR author's branch name — user-controlled, so it is
+          # passed via env and referenced quoted, never interpolated into the
+          # script text.
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           normalize() { tr -d '[]"' | tr -s ' \n' ',' | sed 's/^,//; s/,$//'; }
+
+          # Release Please PRs (branch `release-please--branches--master`) only
+          # rewrite CHANGELOGs, package versions and the release manifest — no
+          # source. Report nothing affected so every compute lane
+          # (python-static, mypy, biome, type-check, mutation shards, …) skips
+          # instead of re-running against a version bump; `quality-gate`
+          # (always()) still runs and passes on the skips.
+          if [[ "$HEAD_REF" == release-please--* ]]; then
+            echo "python_projects=" >> "$GITHUB_OUTPUT"
+            echo "typescript_projects=" >> "$GITHUB_OUTPUT"
+            echo "has_python=false" >> "$GITHUB_OUTPUT"
+            echo "has_typescript=false" >> "$GITHUB_OUTPUT"
+            echo "has_alert_rules=false" >> "$GITHUB_OUTPUT"
+            echo "release-please PR — no source changed; skipping affected detection"
+            exit 0
+          fi
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             PY=$(pnpm exec nx show projects --projects 'tag:scope:python' | normalize)
@@ -993,7 +1014,9 @@ jobs:
   suppression-hygiene:
     name: "Suppression hygiene (every # noqa / # type: ignore / biome-ignore has a why)"
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
-    if: ${{ !cancelled() }}
+    # No language gate (check_tool_pins reads the workflow files themselves),
+    # but a release-please PR changes no source, so there is nothing to lint.
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--') }}
     # No job-level language gate on purpose: check_tool_pins reads the WORKFLOW
     # FILES themselves (code-quality.yml, main.yml), so a workflow-only PR is
     # exactly the change this lane validates — and nx-affected correctly marks
