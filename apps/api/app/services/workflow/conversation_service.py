@@ -87,7 +87,7 @@ async def add_workflow_execution_messages(
 
 
 def build_selected_workflow_data(workflow: Workflow) -> SelectedWorkflowData:
-    """The workflow card a run's trigger message carries.
+    """Build the workflow card a run's trigger message carries.
 
     One builder for both run paths: the agent turn and the playbook replay must
     attach the identical card, or the same workflow renders two different ways
@@ -139,7 +139,7 @@ async def add_playbook_run_messages(
 
 
 def _playbook_plan(steps: Sequence[PlaybookStep]) -> list[str]:
-    """The frozen steps as lines a person can read on the Run playbook card.
+    """Render the frozen steps as lines a person can read on the Run playbook card.
 
     "todos subagent -> list_todos" says who does what; the raw document shape
     (ids, args, nesting) belongs in read_playbook, not on a chat card.

@@ -27,12 +27,12 @@ ROOT: tuple[str, ...] = ()
 
 
 def agent_update(*messages: BaseMessage, namespace: tuple[str, ...] = ROOT) -> Event:
-    """An updates event from the LLM node — the only node whose tool calls stream."""
+    """Build an updates event from the LLM node — the only node whose tool calls stream."""
     return (namespace, "updates", {"agent": {"messages": list(messages)}})
 
 
 def node_update(node: str, *messages: BaseMessage, namespace: tuple[str, ...] = ROOT) -> Event:
-    """An updates event from any other node (pre-model hooks, tools)."""
+    """Build an updates event from any other node (pre-model hooks, tools)."""
     return (namespace, "updates", {node: {"messages": list(messages)}})
 
 
@@ -41,7 +41,7 @@ def message(
     namespace: tuple[str, ...] = ROOT,
     **metadata: Any,
 ) -> Event:
-    """A messages event: one model chunk or tool result, plus its metadata."""
+    """Build a messages event: one model chunk or tool result, plus its metadata."""
     return (namespace, "messages", (chunk, metadata))
 
 
@@ -68,13 +68,12 @@ def tool_message(
 
 
 def custom(payload: Any, namespace: tuple[str, ...] = ROOT) -> Event:
-    """A custom event — how subagents, reasoning and progress reach the stream."""
+    """Build a custom event — how subagents, reasoning and progress reach the stream."""
     return (namespace, "custom", payload)
 
 
 def flat(*events: Event) -> list[Event]:
-    """Strip the namespace off each event, giving the 2-tuples LangGraph yields
-    when subgraphs is not requested — the subagent driver's shape."""
+    """Strip the namespace off each event, giving the 2-tuples LangGraph yields when subgraphs is not requested."""
     return [event[1:] for event in events]
 
 

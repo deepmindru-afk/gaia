@@ -465,10 +465,7 @@ class TestComposioCallback:
         mock_config: MagicMock,
         client: AsyncClient,
     ):
-        """Composio's hosted Connect Link redirects back WITHOUT `connectedAccountId`
-        — the parameter the retired initiate() flow appended and that is documented
-        nowhere. Failing on its absence rejected connections that had succeeded, so
-        the user saw "failed" after authorising the provider."""
+        """Composio's hosted Connect Link redirects back without connectedAccountId; failing on its absence rejected connections that had succeeded."""
         mock_state.return_value = {
             "redirect_path": "/integrations",
             "user_id": "uid1",
@@ -515,8 +512,7 @@ class TestComposioCallback:
         mock_repo: MagicMock,
         client: AsyncClient,
     ):
-        """With nothing minted and nothing in the callback there is no account to
-        resolve — that must still fail rather than proceed on a None."""
+        """With nothing minted and nothing in the callback there is no account to resolve; that must still fail rather than proceed on a None."""
         mock_state.return_value = {
             "redirect_path": "/integrations",
             "user_id": "uid1",

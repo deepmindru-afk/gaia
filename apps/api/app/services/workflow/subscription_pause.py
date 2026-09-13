@@ -1,5 +1,4 @@
-"""Deactivate a user's workflows once their Dodo subscription lapses (paid-only gate),
-and resume them once it's restored.
+"""Deactivate a user's workflows once their Dodo subscription lapses, and resume them once restored.
 
 Mirrors integration_pause.py/dormancy.py: both halves go through
 WorkflowService rather than a bulk repository write, because that is the path
@@ -19,19 +18,21 @@ from shared.py.wide_events import log
 
 
 async def lapsable_workflows(user_id: str) -> list[WorkflowDocument]:
-    """The workflows a lapsed subscription pauses: every activated one the user
-    owns except public templates, which stay live for everyone who copied them."""
+    """Return the workflows a lapsed subscription pauses.
+
+    Every activated workflow the user owns except public templates, which
+    stay live for everyone who copied them.
+    """
     return [
         w for w in await workflow_repository.find_activated_for_user(user_id) if not w.is_public
     ]
 
 
 async def deactivate_workflows_for_lapsed_subscription(user_id: str) -> int:
-    """Deactivate every lapsable workflow user_id owns. Returns the count
-    deactivated. Idempotent — a user with no activated workflows is a no-op, and
-    re-running against an already-deactivated workflow finds nothing to do. One
-    workflow that fails to deactivate is logged and skipped rather than aborting
-    the rest.
+    """Deactivate every lapsable workflow user_id owns; return the count deactivated.
+
+    Idempotent. One workflow that fails to deactivate is logged and skipped
+    rather than aborting the rest.
     """
     deactivated = 0
 
@@ -61,11 +62,11 @@ async def deactivate_workflows_for_lapsed_subscription(user_id: str) -> int:
 
 async def reactivate_workflows_for_restored_subscription(user_id: str) -> int:
     """Re-activate the workflows paused for user_id when their subscription lapsed.
-    Returns the count resumed. Idempotent — a user with none paused for that reason is
-    a no-op. Only touches workflows carrying DeactivationReason.SUBSCRIPTION_LAPSED,
-    so a workflow the user switched off themselves is never silently re-enabled. One
-    workflow that fails to reactivate (e.g. a since-expired integration) is logged and
-    skipped rather than aborting the rest.
+
+    Returns the count resumed. Idempotent. Only touches workflows carrying
+    DeactivationReason.SUBSCRIPTION_LAPSED, so a workflow the user switched
+    off themselves is never silently re-enabled. One workflow that fails to
+    reactivate is logged and skipped rather than aborting the rest.
     """
     reactivated = 0
 

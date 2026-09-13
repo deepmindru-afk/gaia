@@ -26,7 +26,9 @@ async def claim_resume_dispatch(conversation_id: str) -> bool:
 
 
 async def release_resume_dispatch(conversation_id: str) -> None:
-    """Free the slot. Safe when unset; at most one executor run exists per
-    conversation (busy lock), so an unconditional delete cannot hit another run's
-    claim."""
+    """Free the slot. Safe when unset.
+
+    At most one executor run exists per conversation (busy lock), so an
+    unconditional delete cannot hit another run's claim.
+    """
     await redis_cache.client.delete(_key(conversation_id))

@@ -57,8 +57,7 @@ class TestGraphManager:
 
     @pytest.mark.asyncio
     async def test_get_graph_raises_when_provider_returns_none(self):
-        """A provider that yields None must surface as GraphUnavailableError,
-        never as a silent None return."""
+        """A provider that yields None must surface as GraphUnavailableError, never as a silent None return."""
         unique_name = f"test_sg_null_{uuid.uuid4().hex}"
 
         _register_graph(unique_name, None)

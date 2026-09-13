@@ -76,11 +76,7 @@ def _edit(monkeypatch: pytest.MonkeyPatch, edit: Callable[[str], str]) -> None:
 
 
 def test_banned_phrases_come_from_the_prompt_including_ones_that_wrap() -> None:
-    """ "No problem at all" wraps across two lines in the prompt source.
-
-    A naive extraction returns "No problem\\n  at all" and then never matches a
-    real reply — the gate would look wired up and catch nothing.
-    """
+    """The phrase "No problem at all" wraps across two lines in the prompt source, which a naive extraction would leave unmatched."""
     phrases = banned_phrases()
 
     assert "no problem at all" in phrases
@@ -133,15 +129,7 @@ def test_a_new_banned_phrase_is_gated_with_no_eval_change(
 def test_a_reworded_rule_raises_instead_of_checking_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Reword the rule into prose: the gate must refuse to run.
-
-    Returning an empty banned list here would be the worst outcome available —
-    every case passes the gate, the report is green, and nothing is checked.
-
-    Note the deliberate non-failure this pins by contrast: de-quoting ONE phrase
-    is a legitimate prompt edit (that phrase is no longer banned) and flows
-    through silently, which is the feature. Only losing the whole list is drift.
-    """
+    """Reword the rule into prose: the gate must refuse to run rather than check nothing against an empty banned list."""
 
     def dequote(text: str) -> str:
         start = text.index("- Banned literals (phrases that scream chatbot):")
@@ -248,8 +236,7 @@ def test_internal_tags_catches_a_leaked_channel_tag() -> None:
 
 
 def test_internal_tags_catches_a_leaked_closing_tag() -> None:
-    """A model that echoes only the closing tag has still leaked the plumbing —
-    the opening-tag-only check this replaces scored that reply a clean 1.0."""
+    """A model that echoes only the closing tag has still leaked the plumbing — the opening-tag-only check this replaces scored it 1.0."""
     value, why = internal_tags(
         _run(("user", "any mail?"), ("assistant", "you have 3 unread</executor_result>"))
     )

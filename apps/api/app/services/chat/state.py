@@ -36,11 +36,9 @@ def aggregate_usage_metadata(
 ) -> TokenTotals:
     """Sum input, output, and cache-read tokens across all model entries.
 
-    usage_metadata is LangChain's UsageMetadataCallbackHandler output
-    keyed by model name. It stays dict[str, Any]: the per-entry values are
-    canonically UsageMetadata, but some provider SDK versions add their own
-    keys (cached_content_token_count) that the canonical TypedDict does not
-    declare — hence the isinstance guard and the fallback below.
+    usage_metadata stays dict[str, Any]: values are canonically UsageMetadata,
+    but some provider SDKs add keys (cached_content_token_count) the
+    canonical TypedDict doesn't declare.
     """
     total_input = 0
     total_output = 0
@@ -74,10 +72,8 @@ async def recover_stream_state(
     if not progress:
         return complete_message, tool_data
 
-    # Settled bubbles, plus whatever was streaming when the run stopped — the
-    # same flush the graph driver does with its own held text. Joined as a
-    # bubble, never concatenated: two messages run together read as one
-    # sentence, which is how a planning preamble ended up glued to a reply.
+    # Settled bubbles plus whatever was streaming when the run stopped, joined
+    # as a bubble — concatenating glued a planning preamble to the reply as one sentence.
     complete_message = progress.get("complete_message", "")
     if pending := progress.get("pending_message"):
         complete_message = append_message_bubble(complete_message, pending)

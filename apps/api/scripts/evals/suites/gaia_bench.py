@@ -92,12 +92,9 @@ CONTRACT_LINE = (
     "where ... is a number or as few words as possible."
 )
 FINAL_ANSWER_RE = re.compile(r"\bfinal\s*answer\s*:\s*", re.IGNORECASE)
-# The dev direct-run endpoint wraps narration-only responses (subagent never
-# ran a tool) in an envelope built by app/agents/core/subagents/subagent_runner.py:
-#   The <agent> subagent ended without running any tool — it only produced
-#   planning text: "<message>". Re-issue the handoff with an explicit
-#   instruction to perform the action.
-# Unwrap it so the recorded text is exactly what the agent said.
+# The dev direct-run endpoint wraps narration-only responses in an envelope
+# from subagent_runner.py ("The <agent> subagent ended without running any
+# tool..."); unwrap it so the recorded text is exactly what the agent said.
 DEV_WRAPPER_RE = re.compile(
     r"^The .+ subagent ended without running any tool — it only produced "
     r'planning text: "(.*)"\. Re-issue the handoff with an explicit '
@@ -135,24 +132,17 @@ if _UNSHIPPED_TYPES:
         "or restore the allowlist entry."
     )
 
-# Extensions the product's uploader refuses — no allowlisted content type
-# (.xml/.jsonld) or a filename extension it blocks outright (.py). Their text is
-# pasted into the task instead. That is a HARNESS SHIM, not the shipped ingestion
-# path, and cases using it are tagged so no report can present them as evidence
-# that attachment upload works.
+# Extensions the product's uploader refuses (.xml/.jsonld unlisted, .py
+# blocked outright): pasted into the task as a HARNESS SHIM, not the shipped
+# ingestion path, and tagged so no report treats them as upload evidence.
 INLINE_EXTS = {".xml", ".jsonld", ".py"}
 
 REQUIRED_COLUMNS = ("task_id", "Question", "Level", "Final answer")
 
 
-# ---------------------------------------------------------------------------
-# Official GAIA scorer — bug-for-bug port. Do NOT "improve" these functions.
-# Semantics match huggingface.co/spaces/gaia-benchmark/leaderboard/scorer.py:
-# is_float via float() try; normalize_number_str strips $, %, commas and
-# returns float("inf") on failure; split_string splits on [,;]; normalize_str
-# removes all whitespace, then (optionally) all punctuation, then lowercases.
-# No article removal, no month normalization, no unicode normalization.
-# ---------------------------------------------------------------------------
+# Official GAIA scorer — bug-for-bug port of leaderboard scorer.py (do not
+# "improve" these): strips $/%/commas, splits on [,;], strips
+# whitespace/punctuation then lowercases — no article/month/unicode normalization.
 
 
 def is_float(element: str | int | float) -> bool:
@@ -328,14 +318,11 @@ def _as_str(value: object) -> str:
 
 
 def _as_int(value: object) -> int:
-    """A row's integer field, defended exactly like _as_str.
+    """Return a row's integer field, defended exactly like _as_str.
 
-    int() on a bare object is not something mypy accepts, and at runtime
-    a row that omits the column gives None (TypeError) while parquet gives
-    NaN for a missing numeric (ValueError). Either one aborted load_cases
-    for the whole suite over a single malformed row. 0 is outside GAIA's level
-    range (1-3), so a defaulted value is visible as L0 rather than silently
-    passing for a real level.
+    A missing column (None) or a missing parquet numeric (NaN) each once
+    aborted load_cases for the whole suite over one malformed row. 0 is
+    outside GAIA's level range (1-3), so a default reads as L0, not a real level.
     """
     text = _as_str(value)
     try:
@@ -919,7 +906,7 @@ class GaiaBenchSuite(Suite):
 
 
 def _skip_reason_names_the_allowlist(suffix: str) -> bool:
-    """A skipped format must say it is a product limitation, and which one."""
+    """Require a skipped format to say it is a product limitation, and which one."""
     delivery = _plan_attachment(f"2023/validation/file{suffix}", f"file{suffix}")
     reason = delivery.skip_reason or ""
     return suffix in reason and "upload allowlist" in reason

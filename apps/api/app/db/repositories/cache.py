@@ -51,11 +51,10 @@ def query_arg_hash(arguments: dict[str, object]) -> str:
 
 
 async def read_generation(policy: CachePolicy, scope: str) -> int | None:
-    """Current generation for a scope.
+    """Return the current generation for a scope.
 
-    None means Redis is unavailable — skip the query cache, never serve stale.
-    A missing key is generation 0 (Redis is up, just no writes yet), distinct
-    from None so a never-written scope still caches instead of skipping forever.
+    None means Redis is unavailable (skip the query cache); a missing key is generation 0,
+    distinct from None so a never-written scope still caches instead of skipping forever.
     """
     client = redis_cache.redis
     if client is None:

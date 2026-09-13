@@ -1,19 +1,15 @@
 """Shared building blocks for VFS materializers under /workspace/.
 
-The two materializers (gaia_tasks_vfs, user_todos_vfs) project
-MongoDB state into JuiceFS as a hash-gated tree of folders. They differ
-only in:
+The two materializers (gaia_tasks_vfs, user_todos_vfs) project MongoDB state
+into JuiceFS as a hash-gated tree of folders, differing only in the per-doc
+body fields, the active-set Mongo filter, the on-disk path constants, and the
+GUIDE.md/index.md prose.
 
-* what fields make up the per-doc body (canvas+log+meta vs meta-only),
-* the active-set Mongo filter,
-* the on-disk path constants,
-* the prose in GUIDE.md and the glyphs in index.md.
-
-Everything else — slug/shortid naming, marker read/write, the
-shutil.rmtree chmod-and-retry hook, the meta-JSON encoding, the
-"only rewrite if changed" guard — is identical and lives here. Keep
-this module dependency-free (no app imports) so it stays cheap to load
-and safe to reference from anywhere in app.services.storage.
+Everything else — slug/shortid naming, marker read/write, the shutil.rmtree
+chmod-and-retry hook, meta-JSON encoding, the "only rewrite if changed" guard
+— is identical and lives here. Keep this module dependency-free (no app
+imports) so it stays cheap to load and safe to reference from anywhere in
+app.services.storage.
 """
 
 from __future__ import annotations
@@ -36,11 +32,9 @@ META_FILENAME = "meta.json"
 INDEX_FILENAME = "index.md"
 GUIDE_FILENAME = "GUIDE.md"
 
-# --- File modes -------------------------------------------------------------
-#
-# Projected bodies (canvas / log / meta) are read-only so raw `Edit` from
-# the agent fails loudly instead of silently desyncing the projection.
-# GUIDE / index are author-writable because we rewrite them on every sync.
+# --- File modes ---------------------------------------------------------
+# Read-only bodies make a raw `Edit` fail loudly instead of desyncing the
+# projection; GUIDE/index are writable since we rewrite them each sync.
 
 READONLY_MODE = 0o444
 RW_MODE = 0o644
@@ -203,9 +197,7 @@ def write_readonly_body(target: Path, content: str) -> None:
 
 
 def write_rw_if_changed(target: Path, content: str) -> bool:
-    """Write to target (mode 0644) only if its content differs. Returns
-    True if a write happened — useful for telemetry/skip-counts.
-    """
+    """Write to target (mode 0644) only if content differs; return True if it wrote."""
     if matches_text(target, content):
         return False
     target.write_text(content, encoding="utf-8")

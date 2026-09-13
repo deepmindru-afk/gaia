@@ -68,7 +68,7 @@ SLACK = "slack"
 
 @pytest.fixture
 async def gated_user(mongo_db):
-    """A real user with HIL on and both test tools explicitly gated.
+    """Create a real user with HIL on and both test tools explicitly gated.
 
     Written through mongo_db so it lands in the same database the repository
     layer is patched at — a direct accessor would seed a database the gate never
@@ -93,7 +93,7 @@ async def gated_user(mongo_db):
 
 
 def _make_subagent_graph(name: str, conv: str, side_effects: dict[str, int], saver: Any):
-    """A subagent whose node runs the REAL gate around a real side effect."""
+    """Build a subagent graph whose node runs the REAL gate around a real side effect."""
     tool_name = f"SEND_{name.upper()}"
 
     async def act(state: MessagesState, config: RunnableConfig) -> dict:
@@ -148,7 +148,7 @@ def _subagent_ctx(
 
 
 async def _executor_node(state: MessagesState, config: RunnableConfig) -> dict:
-    """The executor's node runs the REAL barrier tool."""
+    """Run the REAL barrier tool in the executor's node."""
     return {"messages": [AIMessage(content=await wait_for_subagents.coroutine(config, 30))]}
 
 
@@ -204,7 +204,7 @@ async def _park_both_subagents(j: _Journey) -> dict[str, Any]:
 
 
 async def _pause_executor_on_batch(j: _Journey, by_agent: dict[str, Any]) -> dict:
-    """The barrier pauses the executor ONCE, with the whole batch."""
+    """Pause the executor ONCE, with the whole batch."""
     await j.executor_graph.ainvoke(
         {"messages": [HumanMessage(content="collect")]}, j.executor_config
     )
@@ -264,8 +264,7 @@ async def _deny_slack_and_finish(
     snapshot = await j.executor_graph.aget_state(j.executor_config)
     assert not snapshot.next, "the executor thread is finished"
 
-    # outcome.text accumulates from streamed LLM tokens and these toy
-    # graphs have no LLM, so the join's own output is asserted
+    # These toy graphs have no LLM, so the join's output is asserted
     # structurally; each subagent's real content is read from its
     # checkpointed thread below.
     final_text = final_state["messages"][-1].content
@@ -351,11 +350,9 @@ class TestCoalescedApprovalBarrier:
                 by_agent = await _park_both_subagents(journey)
                 payload = await _pause_executor_on_batch(journey, by_agent)
 
-                # The real dataclass, not a SimpleNamespace: _record_pause reads
-                # the run field by field, so a hand-rolled stand-in silently
-                # loses every field the run grows (bot_message_id did exactly
-                # that) and the AttributeError surfaces only as "could not
-                # record resume context".
+                # Real dataclass, not SimpleNamespace: _record_pause reads fields one
+                # by one, so a hand-rolled stand-in silently drops fields it grows
+                # (bot_message_id did) and fails only as "could not record resume context".
                 run = ExecutorRun(
                     stream_id=stream,
                     conversation_id=conv,

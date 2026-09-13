@@ -135,10 +135,9 @@ async def request_desktop_action(
 
         return outcome
     finally:
-        # Best-effort cleanup in independent guards: a failure here must never
-        # mask the real outcome, and a failed key-delete must not skip the
-        # pubsub teardown (the request key also carries a TTL, so it expires
-        # regardless).
+        # Best-effort, independent guards: a failure here must never mask the
+        # real outcome, and a failed key-delete must not skip pubsub teardown
+        # (the request key also carries a TTL, so it expires regardless).
         with contextlib.suppress(Exception):
             await redis_cache.delete(request_key)
         with contextlib.suppress(Exception):

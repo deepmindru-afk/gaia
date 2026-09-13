@@ -56,8 +56,7 @@ class _FakePool:
 
 
 async def _yielding_execution(*_args: Any, **_kwargs: Any) -> str:
-    """The winner's critical section: yields to the loop so concurrent
-    claimants get scheduled while the lock is still held."""
+    """Yield to the loop mid-critical-section so concurrent claimants get scheduled while the lock is held."""
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     return "success:todo-1"
@@ -85,9 +84,7 @@ class TestTrackedTodoClaimRace:
         assert pool.delete_calls == [LOCK_KEY]
 
     async def test_lock_holds_for_the_whole_critical_section_then_releases(self):
-        """Adversarial: the winner holds the lock across loop turns; every claim
-        arriving mid-section skips, and a claim after completion executes —
-        proving the lock covers the section and is genuinely released."""
+        """A claim after completion succeeds too, proving the lock is genuinely released, not just held."""
         pool = _FakePool()
         entered = asyncio.Event()
         release = asyncio.Event()

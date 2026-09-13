@@ -37,12 +37,9 @@ async def send_workflow_completion_notification(
 ) -> None:
     """Send the in-app "workflow done" heads-up (web only).
 
-    The workflow's actual result is delivered into the user's chat as real
-    messages by the executor delivery path, so this is only a short human nudge
-    in the web app: scoped to the in-app channel (no external push) and carrying
-    no result payload. It keeps a single "View Results" button that opens the
-    run's conversation, so a web user (who has no external chat) still reaches
-    the result in one tap. Best-effort: never raises into the caller.
+    Carries no result payload — the real result lands in chat via the executor
+    delivery path. Just a nudge with a "View Results" button, since a web user
+    has no external chat to reach it another way. Best-effort: never raises.
     """
     # ``salt`` only rotates the copy per run; it is never shown to the user.
     title, body = pick_workflow_done_copy(

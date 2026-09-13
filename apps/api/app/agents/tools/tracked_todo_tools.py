@@ -356,13 +356,11 @@ async def _apply_field_updates(
     update_fields: dict[str, object],
     notes: list[str],
 ) -> str | None:
-    """Run each field validator in order, short-circuiting on the first error so the
-    async _get_user_tz Mongo lookup in the recurrence validator never runs after an
-    earlier field already failed. Populates update_fields/notes in place.
+    """Run each field validator in order, short-circuiting on the first error.
 
-    _build_labels_update can never actually return an error today (there is no label
-    validation yet); the check is kept for the same shape as the others so adding one
-    later needs no restructuring.
+    Avoids the async _get_user_tz Mongo lookup running after an earlier
+    field already failed. _build_labels_update can't return an error today;
+    kept for shape consistency so adding one later needs no restructuring.
     """
     if error := _build_labels_update(inputs.labels, update_fields):  # pragma: no cover
         return error
@@ -479,13 +477,9 @@ def _patch_canvas_section(current: str, section: str, content: str) -> str:
         pos = current.find(heading, search_start)
         if pos == -1:
             break
-        # A real heading match must (a) start a line — position 0 or right
-        # after a "\n" — and (b) end the heading exactly — end-of-string or
-        # right before a "\n". Without both checks a plain substring search
-        # either misses the section when it's the canvas's first line (no
-        # leading "\n" to match against), or false-positives on a DIFFERENT
-        # section whose name happens to start with this one (e.g. searching
-        # for "Current" would otherwise match inside "## Current State").
+        # Must start a line (pos 0 or after "\n") and end the heading exactly
+        # (end-of-string or before "\n"), or e.g. "Current" would match inside
+        # "## Current State".
         at_line_start = pos == 0 or current[pos - 1] == "\n"
         end_pos = pos + len(heading)
         is_exact_heading = end_pos == len(current) or current[end_pos] == "\n"
@@ -610,10 +604,8 @@ async def create_tracked_todo(
     user_id = metadata.get("user_id")
     if not user_id:
         return _ERR_NO_USER_ID
-    # The chat this tracked todo was created in, captured for a later push back
-    # into it. build_agent_config puts conversation_id in `configurable` (not
-    # `metadata`), so read it there — matching reminder_tool. None for a non-chat
-    # root (onboarding/REST).
+    # conversation_id lives in `configurable`, not `metadata` (matching
+    # reminder_tool). None for a non-chat root (onboarding/REST).
     source_conversation_id = agent_configurable(config).get("conversation_id")
 
     # Recurrence is always evaluated in the user's stored timezone. We only

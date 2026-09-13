@@ -42,10 +42,9 @@ class TestGetMe:
         new_callable=AsyncMock,
     )
     async def test_get_me_success(self, mock_onboarding: AsyncMock, client: AsyncClient):
-        # Must be the real return type, not a dict: get_user_onboarding_status was
-        # typed to return OnboardingStatusResponse while this mock still handed back
-        # the pre-refactor dict, so the endpoint 500'd in production on every page
-        # load while this test stayed green.
+        # Must be the real return type, not a dict: a mock returning the
+        # pre-refactor dict shape let this stay green while the endpoint
+        # 500'd in production.
         mock_onboarding.return_value = OnboardingStatusResponse(
             completed=True,
             completed_at=None,
@@ -65,12 +64,9 @@ class TestGetMe:
         assert response.status_code == 401
 
     def test_onboarding_field_type_tracks_the_service_return_type(self) -> None:
-        # The 500 above was a *drift* bug: get_user_onboarding_status was retyped to
-        # return OnboardingStatusResponse while this field stayed dict[str, Any].
-        # test_get_me_success can't catch a repeat on its own — it asserts against a
-        # hand-written mock, so correcting the mock is what makes it pass. This
-        # compares the declared field against the real annotation, with no mock in
-        # between, so retyping the service without updating the response fails here.
+        # test_get_me_success can't catch a repeat of the drift bug above on
+        # its own since it asserts against a hand-written mock; this compares
+        # the declared field against the real annotation, with no mock.
         service_returns = get_type_hints(get_user_onboarding_status)["return"]
         field_type = AuthenticatedUserResponse.model_fields["onboarding"].annotation
         assert field_type is service_returns, (
@@ -378,8 +374,7 @@ class TestLogout:
     async def test_logout_track_failure_is_logged_not_fatal(
         self, mock_track: MagicMock, mock_workos: MagicMock, client: AsyncClient
     ):
-        """A PostHog tracking failure must not break the logout flow — it is
-        logged and the redirect still happens."""
+        """A PostHog tracking failure must not break the logout flow — it is logged and the redirect still happens."""
         session = MagicMock()
         session.get_logout_url.return_value = "https://auth.example.com/logout"
         mock_workos.user_management.load_sealed_session.return_value = session

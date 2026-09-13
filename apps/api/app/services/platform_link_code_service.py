@@ -46,7 +46,7 @@ def _code_key(code: str) -> str:
 
 
 def build_handoff_text(first_message: str, code: str) -> str:
-    """The exact text a WhatsApp/iMessage user sends: the message plus its code.
+    """Build the exact text a WhatsApp/iMessage user sends: the message plus its code.
 
     The adapters strip the #<code> suffix back off before the text reaches
     the agent, so the trailing separator here is part of the wire format.
@@ -102,13 +102,12 @@ async def mint_platform_link_code(user_id: str, preferences: OnboardingPreferenc
 
 
 async def peek_platform_link_code(code: str) -> PlatformLinkCodePayload | None:
-    """The binding behind code, or None if it is not live.
+    """Return the binding behind code, or None if it is not live.
 
-    Reading does not spend the code: the redeem endpoint checks the plan and
-    the platform-account conflict first and only discards after the link
-    is written, so a refused tap ("already connected to someone else") leaves
-    the code usable for the retry the refusal asks for. A second successful
-    tap in the same window links the same user again, which is a no-op.
+    Reading does not spend it: the redeem endpoint checks the plan and the
+    platform-account conflict first and only discards after the link is
+    written, so a refused tap leaves the code usable for the retry it asks
+    for. A second successful tap in the same window is a no-op.
     """
     return await get_cache(_code_key(code), PlatformLinkCodePayload)
 

@@ -131,14 +131,11 @@ class Tool:
         self.tool = tool
         self.name = name or tool.name
         self.is_core = is_core
-        # HIL destructive flag — the single source of truth for tool risk.
-        # None = unclassified (custom/MCP tools until the LLM classifier decides);
-        # True/False = reviewed (internal tools + curated integration slugs).
+        # HIL destructive flag: None = unclassified (LLM classifier decides
+        # later); True/False = reviewed (internal tools + curated slugs).
         self.destructive = destructive
-        # Forced-ask stamp: this tool pauses for user approval in EVERY HIL mode,
-        # ignoring ``always_allow`` and per-tool overrides. Stronger than
-        # ``destructive`` (which only shapes auto-mode judging). For settings on
-        # the user's own account and similar product invariants.
+        # Forced-ask stamp: pauses for approval in EVERY HIL mode, ignoring
+        # ``always_allow`` — for account settings and similar invariants.
         self.always_gate = always_gate
 
 
@@ -226,11 +223,9 @@ class ToolCategory:
     ) -> None:
         """Add multiple tools to this category.
 
-        destructive_tools is a curated set of tool names: when provided,
-        every tool is stamped destructive by membership (so an empty set marks
-        the whole category reviewed-safe); when None the tools stay
-        unclassified and fall to the HIL LLM classifier at gate time.
-        always_gate_tools stamps forced-ask members (see Tool.always_gate).
+        destructive_tools, when provided, stamps every tool destructive by
+        membership (empty set = whole category reviewed-safe); None leaves
+        tools unclassified for the HIL LLM classifier.
         """
         gated = always_gate_tools or set()
         for tool in tools:
@@ -264,10 +259,8 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._categories: dict[str, ToolCategory] = {}
-        # name -> (category_name, Tool) index. Tool names are globally unique
-        # (the executor's tool dict is keyed by name), so a flat map is safe;
-        # it serves the per-tool-call lookups on the HIL gate path without
-        # scanning every category.
+        # name -> (category_name, Tool) index. Tool names are globally unique,
+        # so this serves per-tool-call lookups without scanning every category.
         self._tools_by_name: dict[str, tuple[str, Tool]] = {}
 
     def setup(self) -> None:
@@ -283,12 +276,10 @@ class ToolRegistry:
     ) -> None:
         """Helper to create and register a category.
 
-        risk.destructive_tools is the curated HIL risk set for this category
-        (see ToolCategory.add_tools). Every internal category MUST pass an
-        explicit set (empty if none are destructive) so in-repo tools are never
-        left unclassified; None is reserved for uncurated (custom MCP /
-        provider) tools that the HIL LLM classifier resolves at gate time.
-        risk.always_gate_tools names members that ask in every HIL mode.
+        risk.destructive_tools is the curated HIL risk set (see
+        ToolCategory.add_tools). Every internal category MUST pass an
+        explicit set so in-repo tools are never left unclassified; None is
+        reserved for uncurated custom MCP/provider tools.
         """
         options = options or CategoryOptions()
         risk = risk or CategoryRisk()
@@ -344,12 +335,9 @@ class ToolRegistry:
         """Initialize core tool categories. Provider tools are loaded lazily.
 
         HIL INVARIANT: every internal category passes an explicit
-        destructive_tools set (empty when none are destructive) so no in-repo
-        tool is ever left unclassified. The three destructive built-ins are
-        code-reviewed: send_notification (external delivery),
-        execute_workflow (autonomous run-now), connect_integration
-        (connects an external account). Everything else is reversible /
-        user-owned / read-only / sandbox-local and therefore safe.
+        destructive_tools set so no in-repo tool is ever left unclassified.
+        The three destructive built-ins: send_notification (external
+        delivery), execute_workflow (autonomous run-now), connect_integration.
         """
 
         # NOTE: Import tool modules lazily to avoid circular imports during app startup.
@@ -402,11 +390,8 @@ class ToolRegistry:
             tools=[*notification_tool.tools],
             risk=CategoryRisk(destructive_tools={"send_notification"}),
         )
-        # Account-center mutations: settings on the user's own account. The
-        # settings tools are forced-ask — they change state the user owns
-        # outright, so no approval mode or per-tool override may wave them
-        # through. manage_linked_account is argument-gated instead (disconnect
-        # asks, generate_link doesn't) — see hil/policy.ARGUMENT_GATED_TOOLS.
+        # Account-center mutations are forced-ask; manage_linked_account is
+        # argument-gated instead — see hil/policy.ARGUMENT_GATED_TOOLS.
         self._add_category(
             "account",
             tools=[*account_tools.tools],
@@ -590,21 +575,12 @@ class ToolRegistry:
         return self._categories[toolkit_name]
 
     async def populate_provider_catalog(self) -> int:
-        """Index provider-tool METADATA for retrieval and the /tools catalog
-        *without* materializing executable StructuredTools.
+        """Index provider-tool METADATA for retrieval and the /tools catalog, without executable StructuredTools.
 
-        Replaces an eager warmup that wrapped every one of the ~1.6k catalog
-        tools into a StructuredTool (a Pydantic args-model + closure per tool,
-        ~100KB each) and kept them resident for the whole process lifetime —
-        the single largest contributor to backend RSS. Here we only:
-
-          1. fetch raw tool metadata (name + description) per toolkit,
-          2. index name+description into ChromaDB so retrieval works, and
-          3. store name+description in Mongo so the /tools listing is complete.
-
-        Executable tools are built lazily, per provider, when that provider's
-        subagent is first created (register_provider_tools), so a process
-        only ever holds the working set of tools it actually uses.
+        Replaces an eager warmup that materialized every one of the ~1.6k
+        catalog tools (~100KB each), the single largest contributor to
+        backend RSS. Only indexes name+description into ChromaDB and Mongo;
+        executable tools are built lazily per provider on first use.
         """
         # index_tools_to_store lives in chroma_tools_store, which imports
         # get_tool_registry from this module — keep this one local to break the
@@ -706,12 +682,8 @@ class ToolRegistry:
     async def _index_category_tools(self, category_name: str) -> None:
         """Index tools from a category into ChromaDB store.
 
-        Delegates all caching and diff logic to index_tools_to_store(),
-        which uses namespace-based cache keys for consistency.
-
-        All tools in a category share the same space (namespace) by design —
-        _add_category assigns a single space to the entire category, so
-        index_tools_to_store always receives a homogeneous list.
+        Delegates caching/diff logic to index_tools_to_store(). All tools in
+        a category share the same space, so it always receives a homogeneous list.
         """
         # Import here to avoid circular import
         from app.db.chroma.chroma_tools_store import index_tools_to_store
@@ -830,16 +802,7 @@ class ToolRegistry:
         return core_tools
 
     def get_core_categories(self) -> list[ToolCategory]:
-        """
-        Get all core categories (those that don't require integration).
-
-        Core categories are the built-in tool categories that are always
-        available, as opposed to integration-specific categories that
-        require user authentication.
-
-        Returns:
-            List of core ToolCategory objects.
-        """
+        """Get all core categories: built-ins always available, unlike integration-specific ones."""
         return [
             category for category in self._categories.values() if not category.require_integration
         ]
@@ -879,14 +842,10 @@ def integration_destructive_tools(name: str) -> set[str] | None:
 
 
 async def get_tool_registry() -> ToolRegistry:
-    """
-    Accessor for the global tool registry instance.
+    """Accessor for the global tool registry instance.
 
-    Note: We can use sync access here because the tool registry is
-    initialized with auto_initialize=True in the lazy provider.
-
-    Returns:
-        The global ToolRegistry instance.
+    Sync access is safe because the registry is initialized with
+    auto_initialize=True in the lazy provider.
     """
     tool_registry = await providers.aget("tool_registry")
 

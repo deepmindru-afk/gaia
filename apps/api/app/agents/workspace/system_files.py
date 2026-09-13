@@ -91,8 +91,7 @@ def builtin_skill_rel_path(skill: BuiltinSkill) -> str:
 
 
 def system_files() -> list[SystemFile]:
-    """Every system-owned file: static docs + builtin skill bodies + the skills'
-    bundled resources (templates/, reference.md, scripts/…)."""
+    """Every system-owned file: static docs, builtin skill bodies, and their bundled resources."""
     files = [SystemFile(path, body) for path, body in _STATIC_DOCS]
     for skill in load_builtin_skills():
         root = builtin_skill_root_rel(skill)

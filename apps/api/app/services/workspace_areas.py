@@ -38,7 +38,7 @@ def all_areas() -> tuple[WorkspaceArea, ...]:
 
 
 def get_area(name: str) -> WorkspaceArea | None:
-    """The named area, or None."""
+    """Return the named area, or None."""
     return next((area for area in _AREAS if area.name == name), None)
 
 

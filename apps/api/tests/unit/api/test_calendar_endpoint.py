@@ -582,10 +582,9 @@ class TestBatchCreateEvents:
         assert len(data["failed"]) == 1
 
     async def test_batch_create_per_event_failure_does_not_500(self, client: AsyncClient) -> None:
-        # Per-event failures are recorded in results["failed"] and the endpoint
-        # still returns 200. The outer 500 path is only reachable when the
-        # per-event loop setup fails — no longer testable now that token
-        # fetching has moved into the proxy client.
+        # Per-event failures land in results["failed"] with a 200; the outer
+        # 500 path (per-event loop setup failing) is no longer reachable now
+        # that token fetching moved into the proxy client.
         with (
             patch(INTEGRATION_PATCH, new_callable=AsyncMock, return_value=True),
             patch(SVC_PATCH, new_callable=AsyncMock) as mock_svc,

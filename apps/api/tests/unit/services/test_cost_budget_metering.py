@@ -43,8 +43,7 @@ async def fake_redis() -> AsyncIterator[fakeredis.aioredis.FakeRedis]:
 
 @pytest.fixture(autouse=True)
 def rollup() -> Iterator[AsyncMock]:
-    """The durable Mongo rollup, stubbed — its own writes are covered elsewhere;
-    here we only care WHICH bucket a call is booked into."""
+    """Stub the durable Mongo rollup — its own writes are covered elsewhere; here we only care WHICH bucket a call is booked into."""
     with patch.object(cost_budget, "record_cost", AsyncMock()) as mock:
         yield mock
 
@@ -175,9 +174,7 @@ class TestAuxiliarySpend:
 
 @pytest.mark.unit
 class TestRequestCounterBoundaries:
-    """The ceiling counts every billable token, and ONLY billable tokens —
-    pinned at the exact boundaries (1 token, 0 billable) where an off-by-one
-    or a flipped comparison would otherwise be invisible."""
+    """The ceiling counts every billable token and ONLY billable tokens, pinned at the exact boundaries (1 token, 0 billable) an off-by-one would miss."""
 
     async def test_a_single_billable_token_is_still_counted(self) -> None:
         await record_model_call_usage(
@@ -274,9 +271,7 @@ class TestTokenOnlyCalls:
         rollup.assert_not_awaited()
 
     async def test_unattributed_token_data_is_not_rolled_up(self, rollup: AsyncMock) -> None:
-        """The rollup is per-user; with no user there is nothing to book it
-        against, and writing it anyway would file another user's spend under a
-        null key."""
+        """The rollup is per-user; writing it anyway with no user would file another user's spend under a null key."""
         await record_model_call_usage(
             None,
             UsageDailyIncrement(cost=0.0, input_tokens=10, output_tokens=5),
@@ -287,10 +282,7 @@ class TestTokenOnlyCalls:
         rollup.assert_not_awaited()
 
     async def test_unattributed_tokens_still_count_against_the_request_ceiling(self) -> None:
-        """Losing the rollup must not lose the runaway-loop guard with it. That
-        ceiling is keyed on the request tree, not the user, so a call nobody can
-        be billed for still has to move it — otherwise an unattributed loop runs
-        forever."""
+        """The ceiling is keyed on the request tree, not the user, so an unattributed call must still move it or an unattributed loop runs forever."""
         await record_model_call_usage(
             None,
             UsageDailyIncrement(cost=0.0, input_tokens=10, output_tokens=5),
@@ -302,13 +294,7 @@ class TestTokenOnlyCalls:
 
     @pytest.mark.regression
     async def test_cached_input_does_not_count_against_the_request_ceiling(self) -> None:
-        """The ceiling bounds runaway loops, not cache economics.
-
-        A cached prompt prefix rides every model call in a turn nearly free —
-        an ordinary retrieve→bind→act turn re-sends ~30k cached tokens per call
-        and blew the 300k free ceiling (82% of it cache reads) before the agent
-        could deliver its result. Only uncached input counts as work here.
-        """
+        """The ceiling bounds runaway loops, not cache economics: a real turn re-sent ~30k cached tokens/call and blew the 300k ceiling (82% cache reads) before finishing."""
         await record_model_call_usage(
             USER,
             UsageDailyIncrement(cost=0.01, input_tokens=1000, output_tokens=100, cached_tokens=900),

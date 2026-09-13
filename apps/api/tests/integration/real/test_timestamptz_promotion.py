@@ -47,7 +47,7 @@ def connection(postgres_url: str) -> Iterator[Connection]:
 
 @pytest.fixture
 def legacy_table(connection: Connection) -> Iterator[None]:
-    """A table holding a naive timestamp column whose name requires quoting."""
+    """Create a table holding a naive timestamp column whose name requires quoting."""
     connection.execute(DDL(f"DROP TABLE IF EXISTS {_QUALIFIED}"))
     connection.execute(
         DDL(f"CREATE TABLE {_QUALIFIED} (id serial PRIMARY KEY, {_QUOTED_COLUMN} timestamp)")

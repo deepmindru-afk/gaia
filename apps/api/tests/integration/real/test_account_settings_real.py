@@ -118,8 +118,7 @@ class TestCustomInstructions:
 
 class TestVoiceSelection:
     async def test_selected_voice_id_persists_through_the_real_validator(self, mongo_db):
-        """Mock ONLY the ElevenLabs data source; the real set_user_voice
-        validation body runs and the real repository write lands."""
+        """Mock only the ElevenLabs data source; the real set_user_voice validation and repository write run."""
         canned_catalog = SimpleNamespace(
             voices=[SimpleNamespace(voice_id="v-real-1", name="Rachel", starred=False)],
             selected_voice_id=None,

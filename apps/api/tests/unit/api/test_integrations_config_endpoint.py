@@ -96,8 +96,7 @@ class TestGetIntegrationsConfig:
         assert len(data["integrations"]) == 1
 
     async def test_config_requires_auth(self, unauthed_client: AsyncClient) -> None:
-        """Config endpoint is public (no Depends(get_current_user)), but the
-        test still verifies it doesn't 500."""
+        """Config endpoint is public (no Depends(get_current_user)); the test verifies it doesn't 500."""
         from app.schemas.integrations.responses import IntegrationsConfigResponse
 
         mock_response = IntegrationsConfigResponse(integrations=[])
@@ -479,8 +478,7 @@ class TestConnectIntegration:
         mock_connect.assert_not_awaited()
 
     async def test_connect_composio_no_provider(self, client: AsyncClient) -> None:
-        """The 400 raised for a provider-less platform row is caught by the
-        connect's error boundary, so it surfaces as a 200 ``error`` result."""
+        """Catch a provider-less platform row's 400 in connect's error boundary; respond 200 error."""
         resolved = _resolved(managed_by="composio", name="GitHub", provider=None)
         with (
             patch(
@@ -552,8 +550,7 @@ class TestConnectIntegration:
         )
 
     async def test_connect_service_exception(self, client: AsyncClient) -> None:
-        """When the connect function itself raises, endpoint returns error
-        status (not 500)."""
+        """When the connect function itself raises, the endpoint returns error status, not 500."""
         resolved = _resolved(managed_by="mcp")
         with (
             patch(
@@ -624,8 +621,7 @@ class TestConnectLinkEndpoint:
         assert "connect_error=invalid_or_expired_link" in resp.headers["location"]
 
     async def test_works_without_login(self, unauthed_client: AsyncClient) -> None:
-        """The whole point: a logged-out user reaches it (not 401) and is sent
-        into OAuth — identity comes from the single-use code, not a session."""
+        """A logged-out user reaches it (not 401) and is sent into OAuth — identity comes from the single-use code, not a session."""
         result = MagicMock(status="redirect", redirect_url="https://oauth.example/go", error=None)
         with (
             patch(

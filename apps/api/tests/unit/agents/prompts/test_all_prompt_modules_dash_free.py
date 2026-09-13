@@ -63,8 +63,7 @@ MODULE_NAMES = _discover_module_names()
 
 
 def _dict_entry_strings(name: str, key: object, entry: object) -> dict[str, str]:
-    """Every str reachable from one dict value: the value itself, or, for a
-    NamedTuple record (e.g. operational_docs' ManualDoc), each str field."""
+    """Return every str reachable from one dict value: the value itself, or each str field of a NamedTuple record."""
     if isinstance(entry, str):
         return {f"{name}[{key!r}]": entry}
     if isinstance(entry, tuple) and hasattr(entry, "_fields"):
@@ -77,8 +76,7 @@ def _dict_entry_strings(name: str, key: object, entry: object) -> dict[str, str]
 
 
 def _string_constants(module: ModuleType) -> dict[str, str]:
-    """Every module-level str constant, plus every str reachable inside a
-    module-level dict constant (dict-of-str, or dict-of-NamedTuple-of-str)."""
+    """Return every module-level str constant, plus every str reachable inside a module-level dict constant."""
     found: dict[str, str] = {}
     for name, value in vars(module).items():
         if name.startswith("_"):
@@ -107,11 +105,7 @@ def test_module_string_constants_have_no_dashes(module_name: str) -> None:
 
 
 def test_discovery_actually_found_the_known_modules() -> None:
-    """Guards the discovery mechanism itself: if pkgutil ever silently found
-    zero submodules (e.g. a namespace-package path resolution regression),
-    every parametrized case above would vacuously pass without checking
-    anything. Pin a lower bound so that failure mode is loud instead of a
-    silently-green suite."""
+    """Pin a lower bound so pkgutil silently finding zero submodules is loud, not a vacuously-green suite."""
     assert len(MODULE_NAMES) >= 30, (
         f"only discovered {len(MODULE_NAMES)} modules, expected at least 30 "
         "across app.agents.prompts, app.agents.core.subagents, "
@@ -121,9 +115,7 @@ def test_discovery_actually_found_the_known_modules() -> None:
 
 
 def test_operational_docs_manual_docs_dict_was_actually_checked() -> None:
-    """MANUAL_DOCS is the whole reason operational_docs is in scope: pin that
-    the dict-of-str branch of _string_constants actually walked it, not just
-    that the module happened to import cleanly."""
+    """Pin that the dict-of-str branch of _string_constants actually walked MANUAL_DOCS."""
     module = importlib.import_module("app.agents.workspace.operational_docs")
     manual_docs = module.MANUAL_DOCS
     assert isinstance(manual_docs, dict)

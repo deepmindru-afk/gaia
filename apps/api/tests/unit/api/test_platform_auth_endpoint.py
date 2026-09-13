@@ -90,12 +90,9 @@ class TestPlatformOAuthCallback:
         mock_validate.assert_called_once_with("s1")
         assert resp.status_code in (302, 307)
         assert "oauth_success=true" in resp.headers["location"]
-        # Explicit user id, not the request context: the platform OAuth
-        # redirect carries no WorkOS session, so a context capture would land
-        # the link on an anonymous profile.
-        # One implementation of the link's follow-through (greeting, account
-        # sync, analytics) for every route that creates a link: this one used
-        # to inline three of the four and skip the sync.
+        # Explicit user id, not the request context: the OAuth redirect carries
+        # no WorkOS session. One shared follow-through implementation for every
+        # route that creates a link; this one used to inline three and skip the sync.
         mock_complete.assert_awaited_once()
         assert mock_complete.await_args.args == ("uid1", "discord", "DISC1")
 

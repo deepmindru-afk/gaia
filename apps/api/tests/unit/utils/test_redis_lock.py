@@ -33,7 +33,7 @@ TIMING = {
 
 
 def _mock_client(*, acquire: object) -> tuple[MagicMock, MagicMock]:
-    """A redis client whose .lock(...) returns a lock with the given acquire.
+    """Build a redis client whose .lock(...) returns a lock with the given acquire.
 
     acquire is a bool the mock returns, or an exception it raises.
     """

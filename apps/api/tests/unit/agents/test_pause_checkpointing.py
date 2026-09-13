@@ -1,28 +1,18 @@
 """What a pause does to the tool calls that already finished beside it.
 
-A turn can ask for several tools at once. create_agent gives each call its own
-Send, so they are separate tasks in one superstep, and when one of them pauses for
-HIL approval the others have usually already run. Whether their results survive that
-pause is not a detail: if they do not, LangGraph re-runs those tasks on resume and the
-user's email is sent twice, invisibly — only the replayed ToolMessage reaches the stream.
+If a paused task's sibling results do not survive the pause, LangGraph re-runs
+them on resume and, e.g., the user's email is sent twice invisibly. LangGraph
+itself persists writes of tasks COMPLETED in an interrupting step and skips
+them on resume; two things we do can throw that away:
 
-LangGraph handles this correctly on its own. It persists the writes of every task that
-COMPLETED in an interrupting step, and skips those tasks on resume. Two things we do can
-throw that away, and both are exercised here:
-
-* durability="exit" makes the run-exit save the ONLY checkpoint write there is, so
+* durability="exit" makes the run-exit save the ONLY checkpoint write, so
   abandoning the stream early skips it (subagent_runner used to break).
-* LangGraph emits one __interrupt__ event PER paused task, so a driver that keeps
-  only the last one it sees loses every other approval's id — and an approval whose id
-  never reaches _record_pause gets no resume_item, which makes it permanently
-  un-decidable.
+* LangGraph emits one __interrupt__ event PER paused task, so a driver keeping
+  only the last one loses every other approval's id, and an id that never
+  reaches _record_pause gets no resume_item and is permanently un-decidable.
 
-Where the interrupt() is raised makes no difference — a tool's own gate and a gate
-bubbled up from a subagent two frames down (handoff) behave identically. That was
-once written down as a gap; the last class here is what proves it is not.
-
-These run against a real compiled graph with a real checkpointer and real interrupts:
-nothing here is mocked, because the thing under test IS the framework contract.
+A tool's own gate and a gate bubbled up from a subagent (handoff) behave
+identically here. Runs against a real compiled graph — nothing here is mocked.
 """
 
 from __future__ import annotations
@@ -149,14 +139,7 @@ class TestACompletedSiblingSurvivesThePause:
         )
 
     async def test_abandoning_the_stream_at_the_pause_loses_it(self) -> None:
-        """Why the runner drains instead of breaking.
-
-        This is the defect itself, pinned as a fact about the framework rather than
-        about our code: under durability="exit" the run-exit save is the only
-        checkpoint write, so leaving the generator early skips it and the completed
-        sibling has no record of having run. If this ever starts passing, LangGraph has
-        changed its persistence contract and the drain in subagent_runner can go.
-        """
+        """If this passes, LangGraph changed its persistence contract and the drain can go."""
         sim = ToolCallSimulator(
             calls=["get_weather", "send_email"], gated={"send_email"}, drain=False
         )

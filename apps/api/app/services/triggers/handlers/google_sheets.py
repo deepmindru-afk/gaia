@@ -206,14 +206,7 @@ class GoogleSheetsTriggerHandler(TriggerHandler):
         trigger_name: str,
         trigger_config: TriggerConfig,
     ) -> list[str]:
-        """Register Google Sheets triggers with parallel execution and rollback.
-
-        All triggers are registered in parallel. If any fail, all successfully
-        created triggers are rolled back (deleted) to maintain atomicity.
-
-        Raises:
-            TriggerRegistrationError: If any trigger registration fails
-        """
+        """Register Google Sheets triggers in parallel, rolling back all on any failure."""
         composio_slug = self.TRIGGER_TO_COMPOSIO.get(trigger_name)
         if not composio_slug:
             log.error(

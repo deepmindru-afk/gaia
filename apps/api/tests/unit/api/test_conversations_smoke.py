@@ -111,14 +111,7 @@ class TestListConversations:
     async def test_list_rejects_page_that_would_overflow_the_mongo_skip(
         self, client: AsyncClient
     ) -> None:
-        """A page too large to page with is a 422, not a 500.
-
-        page was bounded below (ge=1) but not above, and the service turns it
-        into skip = (page - 1) * limit. These exact values came from the
-        schemathesis contract gate, which drove GET /api/v1/conversations to a
-        500: the product is 10534517480782774985, past int64 max, so BSON cannot
-        encode the skip and the driver error escapes as a server error.
-        """
+        """A page too large is a 422, not a 500: schemathesis drove skip to 10534517480782774985, past int64 max, which BSON cannot encode."""
         resp = await client.get("/api/v1/conversations?limit=55&page=191536681468777728")
 
         assert resp.status_code == 422
@@ -267,10 +260,9 @@ class TestPinnedMessages:
     """GET /api/v1/messages/pinned."""
 
     async def test_get_pinned(self, client: AsyncClient):
-        # The payload key is "results", not "messages" — the old dict mock made
-        # this test pass while asserting nothing about the real shape. A
-        # non-empty row is deliberate: with results=[] the assertion cannot tell
-        # a forwarded result from an empty one the endpoint invented itself.
+        # The payload key is "results", not "messages"; a non-empty row is
+        # deliberate — results=[] can't tell a forwarded result from one the
+        # endpoint invented itself.
         mock_resp = PinnedMessagesResponse(
             results=[
                 ConversationMessageHit(

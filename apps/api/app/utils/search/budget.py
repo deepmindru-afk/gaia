@@ -24,7 +24,7 @@ class FreeTierBudget:
         return f"search_budget:{provider}:{datetime.now(UTC):%Y%m}"
 
     async def has_headroom(self, provider: str) -> bool:
-        """True if the provider still has free-tier calls left this month (or is uncapped)."""
+        """Return True if the provider still has free-tier calls left this month (or is uncapped)."""
         limit = self._limits.get(provider)
         if not limit:
             return True

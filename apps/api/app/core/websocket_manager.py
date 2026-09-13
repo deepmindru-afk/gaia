@@ -18,17 +18,14 @@ class WebSocketBroadcastError(RuntimeError):
 class WebSocketManager:
     """The user WebSockets *this* process holds, plus the publisher that reaches the rest.
 
-    Sending is never a direct write. broadcast_to_user only publishes to
-    WEBSOCKET_BROADCAST_CHANNEL; every replica's
-    websocket_broadcast_listener picks the message up and calls
-    deliver_local on its own sockets. That holds for the publishing replica
-    too — it delivers through its own subscription like any other.
+    Sending is never a direct write: broadcast_to_user only publishes to
+    WEBSOCKET_BROADCAST_CHANNEL, and every replica's websocket_broadcast_listener
+    calls deliver_local on its own sockets — including the publishing replica,
+    which delivers through its own subscription like any other.
 
-    Both halves of that are load-bearing. Publishing (rather than writing
-    locally) is what lets a broadcast raised on replica A or in an ARQ worker
-    reach a user whose socket lives on replica B. *Only* publishing is what
-    keeps the publishing replica from delivering the same message twice, once
-    directly and once off its own subscription.
+    Publishing (not writing locally) is what lets a broadcast raised on
+    replica A or in an ARQ worker reach a user on replica B, and is what
+    keeps the publishing replica from delivering the same message twice.
     """
 
     _instance: ClassVar["WebSocketManager | None"] = None

@@ -47,10 +47,8 @@ DEFAULT_SUMMARY_FIELDS: list[MessageFieldLiteral] = [
 UNKNOWN_SENDER = "[Unknown]"
 NO_SUBJECT = "[No Subject]"
 
-# Email attachment resolution (app/services/composio/attachments.py): observability
-# and user-facing error prose. Kept as single-line constants so mutation testing
-# can suppress them (it cannot suppress interior lines of a multi-line
-# log/error call); the tests assert behaviour, not this wording.
+# Kept as single-line constants so mutation testing can suppress them (it
+# cannot suppress interior lines of a multi-line log/error call).
 EMAIL_ATTACHMENT_FAIL_LOG = "File attachment could not be resolved"  # pragma: no mutate
 EMAIL_ATTACHMENT_FAIL_WHY = "The file could not be read or uploaded."  # pragma: no mutate
 EMAIL_ATTACHMENT_FAIL_FIX = (

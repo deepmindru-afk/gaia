@@ -51,7 +51,7 @@ class ExternalPlatformAdapter(ChannelAdapter[ExternalPayload]):
         return self.platform.value
 
     def can_handle(self, notification: NotificationRequest) -> bool:  # noqa: ARG002 -- polymorphic interface; implementations keep the full signature
-        """Always claim the notification; the real guards live downstream.
+        """Return True unconditionally; the real guards live downstream.
 
         External adapters are auto-injected by the orchestrator regardless of
         the explicit channel list. The orchestrator's preference check and the

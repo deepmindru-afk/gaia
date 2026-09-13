@@ -88,15 +88,9 @@ class TestGetNextRunTime:
         local = result.astimezone(tz.tzinfo)
         minute, hour = (int(part) for part in cron_expr.split()[:2])
         if (local.hour, local.minute) != (hour, minute):
-            # Spring-forward gap: the cron wall time does not exist on the
-            # fire date (e.g. 02:30 in America/New_York on the transition
-            # day), and the schedule library fires at the next real instant —
-            # the wall time shifted forward by the DST offset. Assert that is
-            # what happened, not a genuine miss.
-            # zoneinfo has no "this time does not exist" answer — it resolves a
-            # gap time to the pre-transition offset at fold=0 and the
-            # post-transition one at fold=1, and returns the same offset for
-            # both when the time is real. That disagreement IS the gap.
+            # Spring-forward gap: the wall time doesn't exist that day, so the
+            # library fires at the next real instant, shifted forward by the
+            # DST offset. zoneinfo flags this via a fold=0/fold=1 offset disagreement.
             wall_naive = datetime(local.year, local.month, local.day, hour, minute)
             in_zone = wall_naive.replace(tzinfo=tz.tzinfo)
             assert in_zone.utcoffset() != in_zone.replace(fold=1).utcoffset(), (

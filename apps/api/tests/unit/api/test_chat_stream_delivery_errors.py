@@ -44,7 +44,7 @@ def _request(disconnected: bool = False) -> Any:
 
 
 def _error_payloads(frames: list[str]) -> list[str]:
-    """The error field of every frame that carries one."""
+    """Extract the error field of every frame that carries one."""
     errors: list[str] = []
     for frame in frames:
         body = frame.removeprefix("data: ").strip()

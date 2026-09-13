@@ -136,9 +136,7 @@ class TestSearchBlogs:
 
 class TestSearchBlogsRegexEscaping:
     async def test_search_query_is_regex_escaped(self):
-        """The repository must feed a literal (escaped) query into every $regex
-        stage; a raw metacharacter query would otherwise run as an arbitrary
-        pattern. Asserted against the repository's own pipeline builder."""
+        """The repository must feed a literal (escaped) query into every $regex stage, not a raw metacharacter pattern."""
         raw_query = "a.*(b|c)+[x]$"
         escaped = re.escape(raw_query)
         assert escaped != raw_query

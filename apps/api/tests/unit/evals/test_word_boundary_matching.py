@@ -43,10 +43,7 @@ def test_fragments_do_not_count(text: str, needle: str) -> None:
 
 
 def test_hyphenated_compounds_do_match_in_prose() -> None:
-    """A hyphen is a word boundary, so "personal-finance" does contain the word
-    "personal" — correct for prose, and deliberately different from the LIST
-    comparison in _arg_matches, where a label must match whole so the label
-    "personal" is not satisfied by "personal-finance"."""
+    """A hyphen is a word boundary, so "personal-finance" contains the word "personal" — different from _arg_matches' whole-label rule."""
     assert says("filed under personal-finance", "personal") is True
 
 
@@ -66,8 +63,7 @@ def test_communicate_gate_rejects_a_fragment() -> None:
 
 
 def test_must_not_communicate_does_not_fire_on_a_fragment() -> None:
-    """The mirror direction: a false leak report is noise that erodes trust in
-    the gate, even though it is the safe direction to be wrong in."""
+    """A false leak report is noise that erodes trust in the gate, even though it is the safe direction to be wrong in."""
     messages = [{"role": "assistant", "content": "I won't discuss the classifier"}]
     result = MustNotCommunicate().score(
         output="", messages=messages, expected={"must_not_communicate": ["class"]}

@@ -1,15 +1,10 @@
-"""
-Integration Inference Service.
+"""Generate marketplace category and detail-page copy for custom integrations.
 
-LLM-backed inference for published custom integrations: their marketplace
-category and the rich detail-page content (use cases, how-it-works,
-FAQs). Native integrations ship both curated by hand in
-app/config/oauth_content.py; custom integrations get them generated here at
-publish time so they show tailored copy instead of the frontend's generic
-fallbacks.
-
-Both run on the default model via get_helper_llm + ainvoke_llm — the same
-path used for memory extraction, follow-ups, and research helpers.
+Native integrations ship both curated by hand in app/config/oauth_content.py;
+custom integrations get them generated here at publish time instead of the
+frontend's generic fallbacks. Both run on the default model via
+get_helper_llm + ainvoke_llm — the same path used for memory extraction,
+follow-ups, and research helpers.
 """
 
 import asyncio

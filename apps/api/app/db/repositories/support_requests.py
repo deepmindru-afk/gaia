@@ -34,7 +34,7 @@ class SupportRequestsRepository(UserScopedRepository[SupportRequestDocument, Sup
         skip: int,
         limit: int,
     ) -> list[SupportRequestDocument]:
-        """A user's requests, newest first, optionally filtered by status."""
+        """Return a user's requests, newest first, optionally filtered by status."""
         return await self._find(
             self._user_filter(user_id, status),
             sort=[("created_at", -1)],

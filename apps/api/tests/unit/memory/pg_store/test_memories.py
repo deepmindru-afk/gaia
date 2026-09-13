@@ -61,7 +61,7 @@ def make_record(
     relation_type: str | None = None,
     is_latest: bool = True,
 ) -> MemoryRecord:
-    """A detached MemoryRecord — no session, no DB."""
+    """Build a detached MemoryRecord — no session, no DB."""
     now = datetime.now(UTC)
     return MemoryRecord(
         id=memory_id or uuid.uuid4(),
@@ -96,21 +96,21 @@ def _patched_memory_session(session: MagicMock) -> Iterator[MagicMock]:
 
 
 def _scalars_result(rows: list[MemoryRecord]) -> MagicMock:
-    """A result whose .scalars().all() returns rows."""
+    """Build a result whose .scalars().all() returns rows."""
     result = MagicMock()
     result.scalars.return_value.all.return_value = rows
     return result
 
 
 def _all_result(rows: list[tuple[Any, ...]]) -> MagicMock:
-    """A result whose .all() returns rows."""
+    """Build a result whose .all() returns rows."""
     result = MagicMock()
     result.all.return_value = rows
     return result
 
 
 def _scalar_one_result(value: Any) -> MagicMock:
-    """A result whose .scalar_one() returns value."""
+    """Build a result whose .scalar_one() returns value."""
     result = MagicMock()
     result.scalar_one.return_value = value
     return result
@@ -123,7 +123,7 @@ def _compiled(stmt: Select | Update) -> tuple[str, dict[str, Any]]:
 
 
 def _executed_stmts(session: MagicMock) -> list[Select | Update]:
-    """The statements passed to session.execute, in call order."""
+    """Return the statements passed to session.execute, in call order."""
     return [call.args[0] for call in session.execute.await_args_list]
 
 
@@ -869,9 +869,7 @@ class TestGetAgendaMemories:
 
 class TestSweepExpiredMemories:
     async def test_retires_past_due_rows_and_returns_owner_id_pairs(self) -> None:
-        """The swept row ids come back too: the worker must retire the same
-        rows' Chroma flags, or reconciliation keeps matching them and swallows
-        identical restatements as DUPLICATE forever."""
+        """The swept row ids come back too, so the worker can retire the same rows' Chroma flags."""
         id_a, id_b, id_c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
         session = MagicMock()
         session.execute = AsyncMock(
@@ -945,11 +943,7 @@ class TestSweepExpiredMemories:
 
 class TestBackfillAgendaExpiry:
     async def test_stamps_only_live_expiryless_agenda_rows(self) -> None:
-        """Legacy agenda rows (pre task-shelf-life) carry no forget_after,
-        so the sweep never retires them: production held year-old items in the
-        always-injected agenda block. The stamp must scope to exactly the
-        agenda folder's live expiry-less rows — anything wider would put an
-        expiry on durable facts."""
+        """Legacy agenda rows carry no forget_after; the stamp must scope to only the live expiry-less agenda rows."""
         session = MagicMock()
         result = MagicMock()
         result.rowcount = 152

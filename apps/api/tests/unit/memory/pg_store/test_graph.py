@@ -32,11 +32,7 @@ USER = "user-1"
 
 class TestGetEntitiesByType:
     async def test_only_entities_with_a_live_memory_are_returned(self) -> None:
-        """The register feeds the people.md rewrite, and an entity whose every
-        supporting memory is gone (forgotten, superseded, expired) is exactly
-        the junk that ended up listed — probed live: register-only names with
-        zero facts (public figures from lookups, one bare register entry) were
-        all written into the document. Live-linked is the register's meaning."""
+        """An entity whose every supporting memory is gone must not appear — register-only names were shipped."""
         session = MagicMock()
         session.execute = AsyncMock(return_value=_all_result([]))
         with _patched_graph_session(session):

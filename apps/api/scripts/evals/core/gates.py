@@ -43,11 +43,9 @@ from .types import Case, CaseRun
 
 _Scorer = Callable[[Case, CaseRun], float]
 
-#: A gate a suite computes inside its own ``score()`` rather than through this
-#: dispatcher — a benchmark metric like ``gaia_exact`` or ``probes``, whose value
-#: comes from the transport's end state rather than from a reusable check.
-#: Declaring it as ``{name: SELF_SCORED}`` tells :func:`validate_gates` the name
-#: is real, without claiming this module can produce it.
+#: A gate a suite computes inside its own score() rather than through this
+#: dispatcher (e.g. gaia_exact, probes, from the transport's end state).
+#: {name: SELF_SCORED} tells validate_gates the name is real but not ours.
 SELF_SCORED: _Scorer | None = None
 
 #: Every gate name shared across suites, and the single implementation of each.
@@ -89,7 +87,7 @@ ExtraGates = Mapping[str, _Scorer | None]
 
 
 def known_gates(extra: ExtraGates | None = None) -> dict[str, _Scorer | None]:
-    """The shared gates plus whatever this suite implements for itself."""
+    """Return the shared gates plus whatever this suite implements for itself."""
     return {**GATES, **dict(extra or {})}
 
 

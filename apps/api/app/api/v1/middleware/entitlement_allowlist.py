@@ -30,20 +30,17 @@ FREE_PATH_PREFIXES: tuple[str, ...] = (
     "/openapi.json",  # schema both doc UIs fetch
     "/static",  # mounted static assets (favicons, email images)
     "/api/v1/ping",  # v1-prefixed readiness probe
-    # ── Identity: a lapsed user must still be able to see who they are ─────
-    # The web shell renders the paywall modal *inside* the authenticated
-    # layout, so it needs the session user before it can show the wall. A 402
-    # here would loop: paywall opens -> layout refetches -> 402 -> paywall.
+    # Identity: the web shell renders the paywall modal *inside* the authenticated layout,
+    # so it needs the session user before it can show the wall — a 402 here would loop
+    # (paywall opens -> layout refetches -> 402 -> paywall).
     "/api/v1/user/me",  # GET (session bootstrap) + PATCH (profile)
     "/api/v1/user/name",  # profile chores: no spend, and the wall shows the name
     "/api/v1/user/timezone",  # the wall and receipts render in the user's zone
     "/api/v1/user/holo-card",  # public card lookup by id, plus the owner's colour
     #                             pick: a profile chore like name and timezone
-    "/api/v1/user/first-steps",  # the activation checklist (read + its collapse
-    #                               toggle) is the user's own state, and the
-    #                               widget refetches on every route change — a
-    #                               402 during the entitlement cache window
-    #                               shows a just-paid user the paywall
+    "/api/v1/user/first-steps",  # activation checklist state, refetched on every route
+    #                               change — a 402 during the cache window would show a
+    #                               just-paid user the paywall
     "/api/v1/user/logout",  # a lapsed user must be able to leave
     "/api/v1/oauth",  # login redirects + provider callbacks (no session yet)
     "/api/v1/dev/",  # dev-only identity router; mounted only in development
@@ -59,13 +56,10 @@ FREE_PATH_PREFIXES: tuple[str, ...] = (
     # ── Support: a blocked user must be able to tell us they are blocked ───
     "/api/v1/support",  # request submission + its rate-limit status
     # ── Self-authenticating callbacks and bridges (no user session) ────────
-    "/api/v1/bot",  # internal bot API-key router. Its two spend-incurring
-    #                 turns gate themselves per turn against the *linked*
-    #                 user (bot.py `_bot_stream_entitlement_gate` and the
-    #                 `require_active_subscription` call in bot_transcribe);
-    #                 the rest are linking/admin. WorkOSAuthMiddleware also
-    #                 excludes this prefix, so request.state.user is never
-    #                 populated here and the middleware could not gate it.
+    "/api/v1/bot",  # internal bot API-key router; its two spend-incurring
+    #                 turns gate themselves per turn against the *linked* user.
+    #                 WorkOSAuthMiddleware excludes this prefix too, so
+    #                 request.state.user is never populated here.
     "/api/v1/webhook",  # Composio provider webhook, signature-authenticated
     "/api/v1/platform-auth",  # Discord/Slack OAuth callbacks, no session
     "/api/v1/notifications/unsubscribe",  # HMAC-signed one-click unsubscribe

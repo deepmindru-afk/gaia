@@ -102,8 +102,7 @@ class TestStreamManagerReal:
         assert await StreamManager.is_cancelled("s5")
 
     async def test_update_progress_accumulates_text(self, real_redis):
-        """Chunks accumulate as pending text and land in complete_message once the
-        message boundary settles them (a retracted preamble is dropped instead)."""
+        """Chunks accumulate as pending text and land in complete_message once the message boundary settles them."""
         await StreamManager.start_stream("s6", "conv-6", "user-6")
 
         await StreamManager.update_progress("s6", message_chunk="Hello ")

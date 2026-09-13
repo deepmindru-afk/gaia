@@ -97,13 +97,11 @@ async def materialize_user_integrations(user_id: str, connected_ids: set[str]) -
 
 
 async def provision_user_workspace(user_id: str, connected_ids: set[str] | None = None) -> None:
-    """User-level workspace provisioning: system-file symlinks (INDEX/GUIDE +
-    builtin skills) + the SKILL.md / instructions catalog.
+    """User-level workspace provisioning: system-file symlinks + the SKILL.md/instructions catalog.
 
-    Run on the events that actually change it — registration, integration
-    connect/disconnect, and startup — instead of every chat turn. Idempotent and
-    hash-gated, so repeat calls are near-zero I/O. Soft-fails when JuiceFS is
-    unmounted (native dev).
+    Run on events that change it — registration, integration
+    connect/disconnect, startup — not every chat turn. Idempotent and
+    hash-gated; soft-fails when JuiceFS is unmounted (native dev).
     """
     # Late-bound: ``app.services.storage`` re-exports this module, so importing
     # ``system_workspace`` (which imports ``storage.juicefs``) at top level would

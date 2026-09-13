@@ -105,10 +105,8 @@ from app.services.integrations.integration_connection_service import (
     connect_composio_integration,
 )
 
-# --------------------------------------------------------------------------
 # Live configuration — read once at collection time so the skip reasons are
 # specific about what is missing.
-# --------------------------------------------------------------------------
 
 LIVE_USER_ID = os.environ.get("COMPOSIO_LIVE_USER_ID", "")
 LIVE_INTEGRATION_ID = os.environ.get("COMPOSIO_LIVE_INTEGRATION_ID", "")
@@ -118,18 +116,14 @@ LIVE_REVOKE = os.environ.get("COMPOSIO_LIVE_REVOKE", "")
 LIVE_RECONNECT = os.environ.get("COMPOSIO_LIVE_RECONNECT", "")
 REAL_SERVICES = os.environ.get("USE_REAL_SERVICES", "0") == "1"
 
-# composio_client 1.39.0 has no typed method for the user-initiated revoke route
-# (its own docs mention it: "Revoked via user-initiated revoke endpoint"), so it
-# goes through the raw client. The version prefix matches every other
-# connected_accounts route in that client. If Composio moves the route, L2/L3
-# fail loudly at the revoke step with the API's own response — that is a real
-# signal about the SDK, not a test bug.
+# composio_client 1.39.0 has no typed method for the user-initiated revoke
+# route, so it goes through the raw client; if Composio moves the route,
+# L2/L3 fail loudly at the revoke step with the API's own response.
 _REVOKE_PATH = "/api/v3.1/connected_accounts/{nanoid}/revoke"
 
-# The expiry transition is dispatched fire-and-forget from the tool's executor
-# thread, so a state assertion has to wait for it. The positive case polls; the
-# negative case (L5) has to wait out the same window before it can claim nothing
-# happened.
+# The expiry transition is dispatched fire-and-forget from the tool's
+# executor thread, so a state assertion has to poll; L5 waits out the same
+# window before it can claim nothing happened.
 _EXPIRY_TIMEOUT_S = 30.0
 _NO_EXPIRY_SETTLE_S = 15.0
 _POLL_INTERVAL_S = 1.0
@@ -231,12 +225,11 @@ def auth_config_id(integration: OAuthIntegration) -> str:
 
 @pytest.fixture
 async def composio_service() -> ComposioService:
-    """A real ComposioService, built per test on the test's own event loop.
+    """Build a real ComposioService, per test, on the test's own event loop.
 
     LangchainProvider captures the running loop at construction and later
-    dispatches the expiry transition onto it with run_coroutine_threadsafe.
-    pytest-asyncio gives every test a fresh loop, so a shared service instance
-    would post the transition to a dead one.
+    dispatches the expiry transition onto it; pytest-asyncio gives every
+    test a fresh loop, so a shared instance would post to a dead one.
     """
     assert settings.COMPOSIO_KEY is not None
     return ComposioService(settings.COMPOSIO_KEY)
@@ -286,11 +279,9 @@ async def _run_tool_in_graph(
 ) -> _ToolRun:
     """Execute a Composio tool inside a real LangGraph run and capture what it streamed.
 
-    _handle_dead_connected_account calls get_stream_writer(), which only
-    resolves inside a LangGraph runtime, and reads user_id out of the run's
-    config metadata to decide whether to expire anything. Invoking the tool
-    directly gives it neither, so the code under test would take a different
-    branch than it does in production.
+    _handle_dead_connected_account calls get_stream_writer() (resolves only
+    inside a LangGraph runtime) and reads user_id from the run's config
+    metadata; invoking the tool directly gives it neither.
     """
     events: list[dict[str, object]] = []
     result: object = None
@@ -372,13 +363,7 @@ async def _require_connected_record() -> UserIntegrationDocument:
 async def test_l1_connect_account_mints_a_reachable_connect_link(
     composio_service: ComposioService, integration: OAuthIntegration
 ) -> None:
-    """connect_account() goes through link(), not the retiring initiate() endpoint.
-
-    Proven by the shape of what comes back: link() returns a Composio-hosted
-    Connect Link plus the ca_* nanoid of the account it just staged. The
-    retired path would raise ComposioLegacyConnectedAccountsEndpointRetiredError
-    instead of returning anything.
-    """
+    """connect_account() goes through link(), not the retiring initiate() endpoint (which raises ComposioLegacyConnectedAccountsEndpointRetiredError)."""
     result = await composio_service.connect_account(integration.provider, LIVE_USER_ID)
     connection_id = result["connection_id"]
 
@@ -421,20 +406,7 @@ async def test_l5_healthy_connected_account_is_left_alone(
     auth_config_id: str,
     tool_args: dict[str, object],
 ) -> None:
-    """A working tool call must not trip the dead-account classifier.
-
-    This is the one that matters. The 1810 markers include loose message
-    substrings ("no connected account"), and a false positive here does not
-    degrade anything gracefully — it marks a healthy integration expired, pauses
-    the user's workflows, and shows them a Reconnect nudge for a connection that
-    was never broken.
-
-    What it does not prove: that the tool call *succeeded*. A registered
-    after-hook may narrow the Composio envelope to a tool-specific shape, so
-    there is no portable successful field to assert on. The positive signal
-    is the pre-flight check that Composio reports the account ACTIVE; the guard
-    itself is the three negatives below.
-    """
+    """A false positive here wrongly expires a healthy integration and pauses the user's workflows; does not prove the tool call itself succeeded."""
     before = await _require_connected_record()
     active_id = await _active_connected_account_id(composio_service, auth_config_id)
     assert active_id is not None, (
@@ -482,13 +454,7 @@ async def test_l2_revoked_account_expires_the_integration_at_tool_execution(
     auth_config_id: str,
     tool_args: dict[str, object],
 ) -> None:
-    """Revoke for real, then let a real tool call discover it.
-
-    The returned payload is what pins the tool path specifically: only
-    _handle_dead_connected_account produces the reconnect instruction and
-    the connect-card stream event, so neither can be explained by a webhook
-    racing this test.
-    """
+    """Revoke for real; only _handle_dead_connected_account produces the reconnect instruction and connect-card event, so a racing webhook can't explain it."""
     await _require_connected_record()
     account_id = await _active_connected_account_id(composio_service, auth_config_id)
     assert account_id is not None, (
@@ -551,17 +517,7 @@ async def test_l2_revoked_account_expires_the_integration_at_tool_execution(
 async def test_l3_expired_webhook_delivery_expires_the_integration(
     composio_service: ComposioService, auth_config_id: str
 ) -> None:
-    """A real composio.connected_account.expired delivery drives the expiry.
-
-    No tool runs in this test, so the only thing that can move the record is a
-    delivery Composio made to /api/v1/webhook/composio on the running API —
-    signature check, dedupe, envelope validation, terminal-status filter and the
-    background transition, all real.
-
-    If the delivery never arrives the test fails rather than passing quietly:
-    with the subscription and tunnel declared present (COMPOSIO_LIVE_REVOKE=
-    webhook), silence is the bug this test exists to catch.
-    """
+    """No tool runs here — only a real webhook delivery to /api/v1/webhook/composio can move the record, and a silent non-delivery fails the test rather than passing quietly."""
     await _require_connected_record()
     account_id = await _active_connected_account_id(composio_service, auth_config_id)
     assert account_id is not None, (
@@ -601,12 +557,7 @@ async def test_l3_expired_webhook_delivery_expires_the_integration(
 async def test_l4_reconnecting_clears_the_expiry_and_records_the_new_account(
     integration: OAuthIntegration,
 ) -> None:
-    """The human half: real consent, real OAuth callback, real restored record.
-
-    status == 'connected' is only ever written by the callback path, so the
-    assertion cannot be satisfied by the created upsert this test performs
-    when it mints the link.
-    """
+    """The status "connected" is only ever written by the callback path, not by the created upsert this test performs when it mints the link."""
     record = await user_integration_repository.get_for_user(LIVE_USER_ID, LIVE_INTEGRATION_ID)
     if record is None or record.status != INTEGRATION_STATUS_EXPIRED:
         pytest.skip(

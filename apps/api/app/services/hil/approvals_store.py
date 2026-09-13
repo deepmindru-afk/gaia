@@ -163,15 +163,12 @@ async def stamp_subagent_resume(
 
 
 async def list_parked_subagents_for_conversation(conversation_id: str) -> list[HILApprovalRecord]:
-    """A conversation's background-subagent approvals — the join's work list.
+    """Return the conversation's uncollected background-subagent approvals.
 
-    Records stamped with a subagent_thread_id (a detached subagent parked on them)
-    whose subagent has not yet been collected — pending (still awaiting a decision)
-    or decided (ready to resume). Filtered on subagent_collected_at, NOT
-    resumed_at: the latter records executor re-dispatch, which happens on the first
-    decision while other batch members are still uncollected. Conversation-scoped
-    because the executor busy lock guarantees one run per conversation; stream_id
-    cannot be used — it changes on resume.
+    Filtered on subagent_collected_at, NOT resumed_at: the latter records executor
+    re-dispatch, which happens on the first decision while other batch members are
+    still uncollected. Conversation-scoped because the executor busy lock guarantees
+    one run per conversation; stream_id can't be used since it changes on resume.
     """
     return await hil_approval_repository.list_parked_subagents_for_conversation(conversation_id)
 
@@ -196,8 +193,10 @@ async def list_expired_pending() -> list[HILApprovalRecord]:
 
 
 async def list_decided_unresumed(grace_seconds: float) -> list[HILApprovalRecord]:
-    """Decided records whose resume never dispatched (crash between the decided
-    transition and the run spawn) — the sweep re-dispatches them."""
+    """Return decided records whose resume never dispatched, for the sweep to retry.
+
+    Covers a crash between the decided transition and the run spawn.
+    """
     return await hil_approval_repository.list_decided_unresumed(
         list(HIL_UNRESUMED_SWEEP_STATUSES), grace_seconds
     )

@@ -1,19 +1,18 @@
 """The one writer of a subscription's local state.
 
-Every source of a billing change — the Dodo subscription webhooks, the user's
-own cancel request, payment verification reconciling against Dodo when the
-webhook never landed — is reduced to a SubscriptionEvent and applied here.
-Nothing else writes status, the billing dates, the plan-cache drop, the
-subscription:* analytics or the workflow pause/resume: three call sites
-each doing their own version is how a recovered subscription was left
-lapsed, a scheduled cancel downgraded a user early on one path and not the
-other, and a replayed webhook counted an activation twice.
+Every source of a billing change — Dodo's webhooks, the user's own cancel
+request, payment verification reconciling against Dodo when the webhook never
+landed — is reduced to a SubscriptionEvent and applied here. Nothing else
+writes status, billing dates, the plan-cache drop, subscription:* analytics,
+or workflow pause/resume — three call sites each doing their own version is
+how a recovered subscription was left lapsed and a replayed webhook
+double-counted an activation.
 
-The rules, in order: an event older than the row's last applied one is
-stale and ignored; an event that changes nothing writes nothing and captures
-nothing; what did change decides the side effects — a status crossing into
-active restores the workflows, a status leaving it pauses them, and each
-analytics event fires exactly once for the transition it names.
+The rules, in order: an event older than the row's last applied one is stale
+and ignored; an event that changes nothing writes and captures nothing; what
+changed decides the side effects — a status crossing into active restores the
+workflows, leaving it pauses them, and each analytics event fires once per
+transition.
 """
 
 from collections.abc import Callable, Mapping
@@ -68,9 +67,11 @@ class SubscriptionEventKind(StrEnum):
 
 @dataclass(frozen=True)
 class SubscriptionEvent:
-    """One reported change. occurred_at is the source's clock (Dodo's
-    event timestamp, or the moment Dodo answered a direct call), which is what
-    orders it against the row."""
+    """One reported change.
+
+    occurred_at is the source's clock (Dodo's event timestamp, or the moment
+    Dodo answered a direct call), which is what orders it against the row.
+    """
 
     kind: SubscriptionEventKind
     occurred_at: datetime
@@ -97,13 +98,14 @@ class SubscriptionEventResult:
 
 
 async def reactivate_workflows_safely(user_id: str) -> None:
-    """Turn a user's paused automation back on once they're paid again. Never
-    raises — a workflow-reactivation failure must not turn an otherwise-successful
-    billing webhook into a "failed" result that Dodo would retry."""
+    """Turn a user's paused automation back on once they're paid again.
+
+    Never raises — a workflow-reactivation failure must not turn an
+    otherwise-successful billing webhook into a "failed" result Dodo retries.
+    """
     # Deferred import: breaks a circular dependency. `app.decorators.entitlements`
-    # imports `payment_service`, which imports this module; a top-level import of
-    # `subscription_pause` would drag the whole workflow/triggers/composio stack
-    # into that chain, and it reaches back into `app.decorators`.
+    # imports `payment_service`, which imports this module; a top-level import
+    # would drag the whole workflow/triggers/composio stack into that chain.
     from app.services.workflow.subscription_pause import (  # noqa: PLC0415  # real cycle through app.decorators, see above
         reactivate_workflows_for_restored_subscription,
     )
@@ -120,8 +122,10 @@ async def reactivate_workflows_safely(user_id: str) -> None:
 
 
 async def deactivate_workflows_safely(user_id: str) -> None:
-    """Turn off this user's automation once they're no longer paid. Never
-    raises — see reactivate_workflows_safely."""
+    """Turn off this user's automation once they're no longer paid.
+
+    Never raises — see reactivate_workflows_safely.
+    """
     from app.services.workflow.subscription_pause import (  # noqa: PLC0415  # real cycle through app.decorators, see reactivate_workflows_safely
         deactivate_workflows_for_lapsed_subscription,
     )
@@ -160,7 +164,7 @@ async def send_welcome_email_safely(user_id: str) -> None:
 
 
 async def resolve_subscription_owner(sub_data: DodoSubscriptionData) -> str | None:
-    """The GAIA user this subscription belongs to.
+    """Return the GAIA user this subscription belongs to.
 
     Checkout stamps the user id into metadata; the customer email is the
     fallback for sessions minted before that (or created in Dodo's dashboard).
@@ -191,10 +195,13 @@ def _active_state(data: DodoSubscriptionData) -> SubscriptionUpdate:
 
 
 def _cancelled_state(data: DodoSubscriptionData) -> SubscriptionUpdate:
-    """A cancel scheduled for period end keeps the user on Pro until
-    subscription.expired; only an immediate cancel drops the status now.
-    The payload's own status is never trusted here — a scheduled cancel
-    reporting "cancelled" would downgrade early."""
+    """Build the update for a cancel: scheduled cancels keep Pro until expiry.
+
+    A cancel scheduled for period end keeps the user on Pro until
+    subscription.expired; only an immediate cancel drops the status now. The
+    payload's own status is never trusted here — a scheduled cancel reporting
+    "cancelled" would downgrade early.
+    """
     desired = SubscriptionUpdate(cancel_at_next_billing_date=data.cancel_at_next_billing_date)
     if not data.cancel_at_next_billing_date:
         desired.status = SubscriptionStatus.CANCELLED.value
@@ -230,7 +237,7 @@ DESIRED_STATE: dict[SubscriptionEventKind, Callable[[DodoSubscriptionData], Subs
 
 
 def _changes(row: SubscriptionDocument, desired: SubscriptionUpdate) -> dict[str, object]:
-    """The desired fields whose value differs from the row's."""
+    """Return the desired fields whose value differs from the row's."""
     return {
         field: value
         for field, value in desired.model_dump(exclude_unset=True).items()

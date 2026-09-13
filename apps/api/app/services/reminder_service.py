@@ -27,10 +27,7 @@ from shared.py.wide_events import log
 
 
 class ReminderScheduler(BaseSchedulerService):
-    """
-    Manages reminder scheduling and execution.
-    Inherits from BaseSchedulerService for common scheduling functionality.
-    """
+    """Manage reminder scheduling and execution."""
 
     def __init__(self, redis_settings: RedisSettings | None = None):
         """Initialize the reminder scheduler."""
@@ -136,7 +133,6 @@ class ReminderScheduler(BaseSchedulerService):
         )
 
     async def get_reminder(self, task_id: str, user_id: str | None = None) -> ReminderModel | None:
-        """Get a reminder by ID."""
         task = await self.get_task(task_id, user_id)
         return task if isinstance(task, ReminderModel) else None
 

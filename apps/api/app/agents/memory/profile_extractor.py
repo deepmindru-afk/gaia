@@ -292,8 +292,11 @@ def build_profile_url(username: str, platform: str) -> str:
 
 
 def _filter_garbage_content(text: str) -> str:
-    """Clean email text: fix encoding (ftfy), strip HTML (BeautifulSoup), and
-    remove noise patterns (repeated chars, code markers, long URLs)."""
+    """Clean email text.
+
+    Fix encoding (ftfy), strip HTML (BeautifulSoup), and remove noise
+    patterns (repeated chars, code markers, long URLs).
+    """
     # Fix text encoding issues (mojibake, unicode errors, etc.)
     text = ftfy.fix_text(text)
 
@@ -315,8 +318,10 @@ def _filter_garbage_content(text: str) -> str:
 
 
 def _deduplicate_emails(emails: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove near-duplicate emails by comparing normalized body similarity,
-    before sending to the LLM. No count limit, just dedup."""
+    """Remove near-duplicate emails by comparing normalized body similarity.
+
+    Run before sending to the LLM. No count limit, just dedup.
+    """
     if not emails:
         return []
 
@@ -335,9 +340,9 @@ def _deduplicate_emails(emails: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return text.strip().lower()
 
     def calculate_similarity(text1: str, text2: str) -> float:
-        """
-        Calculate similarity ratio between two texts using sequence matching.
-        Returns value between 0 (completely different) and 1 (identical).
+        """Calculate similarity ratio between two texts using sequence matching.
+
+        Returns a value between 0 (completely different) and 1 (identical).
         """
         if not text1 or not text2:
             return 0.0
@@ -382,8 +387,10 @@ def _deduplicate_emails(emails: list[dict[str, Any]]) -> list[dict[str, Any]]:
 async def extract_username_with_llm(
     platform: str, emails: list[dict[str, Any]], user_name: str | None = None, *, user_id: str
 ) -> str:
-    """Use an LLM with structured output to extract the user's username from
-    platform emails. Returns the username or "NOT_FOUND"."""
+    """Use an LLM with structured output to extract the user's username from platform emails.
+
+    Returns the username or "NOT_FOUND".
+    """
     start_time = time.time()
 
     if not emails or platform not in PLATFORM_CONFIG:

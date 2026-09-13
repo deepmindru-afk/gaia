@@ -124,8 +124,7 @@ class TestBackfillUserMemoriesIdempotency:
         assert b.user_repo.mark_calls == 1
 
     async def test_user_already_marked_is_skipped_with_zero_side_effects(self):
-        """The marker guard itself: without it, the second run would re-extract
-        and re-notify — this test goes red the moment the guard is removed."""
+        """Without the marker guard, this second run would re-extract and re-notify."""
         user = UserDocument(name="Arya", memory_backfilled=datetime(2026, 1, 1, tzinfo=UTC))
 
         with _backend(user, [_conversation("c1", "hi")]) as b:
@@ -137,9 +136,7 @@ class TestBackfillUserMemoriesIdempotency:
         assert b.user_repo.mark_calls == 0
 
     async def test_zero_fact_backfill_still_marks_but_does_not_notify(self):
-        """The marker is set even for a no-op so the cron stops re-selecting the
-        user, while the notification is suppressed — the idempotency loop closes
-        without spamming the user."""
+        """The marker is set even for a no-op so the cron stops re-selecting the user."""
         user = UserDocument(name="Arya", memory_backfilled=None)
 
         with _backend(user, [_conversation("c1", "hi")], facts=0) as b:

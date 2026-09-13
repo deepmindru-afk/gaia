@@ -96,10 +96,8 @@ class GraphRun:
     #: it on the way in and that rewrite never reaches the checkpoint, so this is
     #: the only place a hook's effect is observable.
     prompts: list[list[BaseMessage]] = field(default_factory=list)
-    #: Every node that emitted an update, in order — including nodes whose
-    #: update carried no messages (e.g. ``end_graph_hooks``, whose hooks are
-    #: side-effecting and write no channels). ``nodes()`` covers only the
-    #: message-bearing route.
+    #: Every node that emitted an update, in order, including message-less
+    #: nodes (e.g. end_graph_hooks); nodes() covers only the message-bearing route.
     visited: list[str] = field(default_factory=list)
     error: BaseException | None = None
 
@@ -150,11 +148,7 @@ class GraphRun:
         ]
 
     def result_for(self, tool_name: str) -> str | None:
-        """What a tool returned, joined to its call by tool_call_id.
-
-        None means the tool never produced a result — it was rejected,
-        never ran, or the run ended first.
-        """
+        """Return what a tool returned, joined to its call by tool_call_id, or None if it never produced a result."""
         ids = {call_id for name, _, call_id in self.tool_calls() if name == tool_name}
         for event in self.events:
             message = event.message
@@ -163,7 +157,7 @@ class GraphRun:
         return None
 
     def ran(self, tool_name: str) -> bool:
-        """True only if the tool's body executed in the tools node."""
+        """Return True only if the tool's body executed in the tools node."""
         ids = {call_id for name, _, call_id in self.tool_calls() if name == tool_name}
         return any(
             event.node in (TOOLS_NODE, FINISH_NODE)
@@ -182,7 +176,7 @@ class GraphRun:
         return seen
 
     def final_text(self) -> str:
-        """The model's last message with no tool calls — the run's answer."""
+        """Return the model's last message with no tool calls — the run's answer."""
         for event in reversed(self.events):
             message = event.message
             if event.node == AGENT_NODE and isinstance(message, AIMessage):
@@ -229,10 +223,8 @@ class RecordingFakeModel(BindableToolsFakeModel):
         """Record what the model was actually handed.
 
         The base fake returns self and throws the tool list away, which
-        makes every binding assertion in the suite unfalsifiable: deleting the
-        whole of build_tools_to_bind leaves the model with nothing and no
-        test can tell, because the only thing observable is
-        selected_tool_ids — what retrieval *decided*, not what was *bound*.
+        makes every binding assertion unfalsifiable: without this, only
+        selected_tool_ids (what retrieval decided) is observable, not what was bound.
         """
         self._bound.append([getattr(tool, "name", str(tool)) for tool in tools])
         return self
@@ -248,11 +240,8 @@ class RecordingFakeModel(BindableToolsFakeModel):
         return self._generate(messages, *args, **kwargs)
 
 
-#: What a scripted hand-off sends for `call_executor`'s required
-#: `acceptance_criteria`. The e2e suites are about graph wiring, not the tool's
-#: schema — that the field is required at all is pinned in
-#: `tests/unit/agents/test_executor_handoff_brief.py`. Filling it here keeps one
-#: schema change from rewriting fifty scripts by hand.
+#: What a scripted hand-off sends for call_executor's required
+#: acceptance_criteria, filled here so one schema change doesn't rewrite fifty scripts by hand.
 SCRIPTED_ACCEPTANCE_CRITERIA = ["scripted e2e hand-off"]
 
 
@@ -277,16 +266,11 @@ def call(name: str, args: dict[str, Any] | None = None, call_id: str = "c1") -> 
 
 
 def scripted_model(script: Sequence[Any]) -> RecordingFakeModel:
-    """A fake model that replays script, one entry per model call.
+    """Build a fake model that replays script, one entry per model call.
 
-    Four entry shapes, because a turn is not always one tool call:
-
-    * str — a plain assistant reply
-    * dict — a single tool call
-    * list[dict] — several tool calls in ONE turn, which is how a model
-      emits parallel work and the only way to reach the routing that picks
-      between them
-    * BaseMessage — used as-is, for shapes the others cannot express
+    Four entry shapes: str (plain reply), dict (one tool call), list[dict]
+    (several tool calls in ONE turn, the only way to reach parallel-call
+    routing), or BaseMessage (used as-is).
     """
     responses: list[BaseMessage] = []
     for item in script:
@@ -304,14 +288,7 @@ def scripted_model(script: Sequence[Any]) -> RecordingFakeModel:
 def call_all_tools_response_generator(
     messages: list[BaseMessage], tools: list[BaseTool]
 ) -> AIMessage:
-    """One tool call per bound tool, then a plain completion reply.
-
-    Mirrors LlamaIndex's _tool_calling_response_generator: once any tool
-    result is in the conversation, answer "Tool calls complete." instead of
-    calling again (or the graph would loop forever); otherwise emit one call
-    per tool, filling non-required args from the tool's schema defaults and
-    omitting required ones.
-    """
+    """Emit one tool call per bound tool, then a plain completion reply once a result is seen (or the graph would loop forever)."""
     if any(isinstance(message, ToolMessage) for message in messages):
         return AIMessage(content="Tool calls complete.")
     if not tools:
@@ -356,29 +333,11 @@ async def executor_graph(
     store: InMemoryStore | None = None,
     model: RecordingFakeModel | None = None,
 ) -> AsyncIterator[Any]:
-    """The REAL executor graph, with only the model and two I/O seams replaced.
+    """Build the REAL executor graph, with only the model and two I/O seams replaced.
 
-    Everything the tests assert on is production code: create_agent, the
-    real tool registry, the real retrieve_tools and its binding validation,
-    the real middleware stack, the real todo hooks.
-
-    model swaps in a pre-built recording model (e.g. :class:CallAllToolsModel)
-    instead of one scripted from script, which is then ignored.
-
-    Two patches only, both narrow:
-
-    * get_tools_store — the ChromaDB-backed vector store, swapped for a real
-      InMemoryStore. It must be a genuine BaseStore: retrieve_tools
-      declares it Annotated[BaseStore, InjectedStore] and pydantic rejects a
-      MagicMock. Binding by exact_tool_names never searches it, so exact
-      binding stays embedding-free and deterministic.
-    * get_checkpointer_manager — the Postgres checkpointer. Awaited
-      unconditionally at build time even when an in-memory checkpointer is
-      requested, and it raises when its provider is absent.
-
-    Deliberately NOT patched: get_tool_registry (the tests want the real 91
-    tools and their spaces) and create_executor_middleware (pure, and
-    stubbing it silently removes spawn_subagent).
+    Patches only get_tools_store (must be a genuine BaseStore, not a
+    MagicMock) and get_checkpointer_manager; get_tool_registry and
+    create_executor_middleware stay real. model overrides script when given.
     """
     # Registered rather than mocked: format_tool_call_entry and the retrieval
     # validator both resolve real categories through this provider singleton.
@@ -412,16 +371,11 @@ async def comms_graph(
     model: RecordingFakeModel | None = None,
     checkpointer_manager: Any | None = None,
 ) -> AsyncIterator[Any]:
-    """The REAL comms graph, with only the model and the external edges replaced.
+    """Build the REAL comms graph, with only the model and the external edges replaced.
 
-    Comms is the front door: three tools (call_executor, cancel_executor,
-    the memory pair), the filter/system-prompt/executor-status pre-model hooks,
-    and two end-graph hooks. The end hooks are where the external edges are —
-    follow-up generation calls a structured LLM and memory ingestion writes to
-    the memory engine — so those are doubled; everything between is real.
-
-    model swaps in a pre-built recording model (e.g. :class:CallAllToolsModel)
-    instead of one scripted from script, which is then ignored.
+    Three tools, the pre-model hooks and both end-graph hooks are the real
+    comms front door; only the end hooks' external edges (follow-up's LLM
+    call, memory ingestion) are doubled. model overrides script when given.
     """
     from app.agents.core.nodes.follow_up_actions_node import FollowUpActions
 
@@ -450,11 +404,9 @@ async def comms_graph(
     )
     memory.recall = AsyncMock(return_value=MagicMock(entries=[], episodes=[]))
 
-    # A real (fake) Redis rather than none: comms genuinely depends on it —
-    # call_executor takes a busy lock through it, and executor_status_hook reads
-    # that lock every turn. Without one the hook errors on every single comms
-    # test and delegation returns a ConnectionError string that a test asserting
-    # "the tool produced something" would happily accept.
+    # A real (fake) Redis, not none: call_executor takes a busy lock through
+    # it and executor_status_hook reads it every turn, so without one every
+    # comms test's delegation silently returns a ConnectionError string.
     redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
 
     with (
@@ -495,12 +447,12 @@ async def comms_graph(
 
 
 def memory_engine_of(graph: Any) -> Any:
-    """The memory double a comms graph was built with."""
+    """Return the memory double a comms graph was built with."""
     return _MEMORY_DOUBLES[id(graph)]
 
 
 def scripted_model_of(graph: Any) -> RecordingFakeModel:
-    """The scripted model a graph was built with — prompts, bindings, memory.
+    """Return the scripted model a graph was built with — prompts, bindings, memory.
 
     Only valid inside the graph's async with block: the harness unregisters
     the model when the graph is torn down.
@@ -525,12 +477,9 @@ async def run_graph(
     from langgraph.errors import GraphRecursionError
 
     run = GraphRun()
-    # user_id goes in BOTH places on purpose, exactly as build_agent_config does:
-    # the graph and retrieval read `configurable`, but every @tool reads
-    # `config["metadata"]["user_id"]` (get_user_id_from_config). Setting only the
-    # first makes tools return "Error: user_id not found in config" while still
-    # looking like they ran — a test asserting the tool produced *something*
-    # passes on the error string.
+    # user_id goes in BOTH places, as build_agent_config does: the graph reads
+    # `configurable` but every @tool reads `metadata["user_id"]`, so setting
+    # only one makes tools silently return "user_id not found" as if they ran.
     config = {
         "configurable": {"thread_id": thread_id, "user_id": user_id},
         "metadata": {"user_id": user_id},

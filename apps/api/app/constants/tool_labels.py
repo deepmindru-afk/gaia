@@ -177,11 +177,10 @@ _NOISE_TOKENS = frozenset({"CUSTOM", "TOOL", "TOOLS"})
 def humanize_tool_name(raw: str, category: str | None = None) -> str:
     """Return a clean display label for a raw tool slug.
 
-    Curated names win. Otherwise strip a leading toolkit token (when it matches
-    category) and CUSTOM noise, then title-case — so
-    GOOGLECALENDAR_CUSTOM_FETCH_EVENTS becomes "Fetch Events" rather than
-    "Googlecalendar Custom Fetch Events" (the toolkit is already shown as the
-    category, so repeating it is the redundancy we're removing).
+    Curated names win; otherwise strips a leading toolkit token (when it
+    matches category) and CUSTOM noise, then title-cases — so
+    GOOGLECALENDAR_CUSTOM_FETCH_EVENTS becomes "Fetch Events", not
+    "Googlecalendar Custom Fetch Events" (the toolkit is already the category).
     """
     if raw in TOOL_DISPLAY_NAMES:
         return TOOL_DISPLAY_NAMES[raw]

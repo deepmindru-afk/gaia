@@ -92,11 +92,7 @@ class TestSubscribeThroughTheGraph:
     async def test_a_typod_field_is_repaired_and_the_subscription_registers(
         self, thread_config, in_memory_store, memory_saver
     ):
-        """The model writes threadId; the catalog says thread_id.
-
-        No LLM repair pass runs — the deterministic stage resolves it, and the
-        tool reports what it changed so the model does not repeat the mistake.
-        """
+        """The model writes threadId; the deterministic stage resolves it to thread_id with no second LLM call, and the tool reports what it changed."""
         script = [
             AIMessage(
                 content="",
@@ -151,11 +147,7 @@ class TestSubscribeThroughTheGraph:
     async def test_a_rejection_gives_the_next_turn_the_catalog_to_retry_from(
         self, thread_config, in_memory_store, memory_saver
     ):
-        """The model invents a field, is refused, and its second turn succeeds.
-
-        This is the repair loop: the agent loop is the pass, and the catalog in
-        the error is what makes the retry right rather than another guess.
-        """
+        """The model invents a field, is refused with the catalog in the error, and its second turn succeeds instead of guessing again."""
         script = [
             AIMessage(
                 content="",

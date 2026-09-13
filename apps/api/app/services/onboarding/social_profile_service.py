@@ -151,8 +151,7 @@ async def extract_social_profiles_from_emails(
     user_name: str | None,
     user_email: str | None,
 ) -> list[SocialProfile]:
-    """Extract social profiles from emails: broad URL harvest + LLM ownership
-    filter to keep only profiles owned by the user."""
+    """Extract social profiles from emails via broad URL harvest + LLM ownership filter."""
     candidates: dict[tuple[str, str], _ProfileCandidate] = {}
 
     for email in emails:

@@ -84,12 +84,7 @@ def mock_redis_cache():
 
 
 async def _require_bot_api_key_from_header(request: Request) -> None:
-    """Replacement for require_bot_api_key that checks the header directly.
-
-    The test app strips BotAuthMiddleware (it needs Redis). This function
-    replicates the API key verification so bot endpoints can be tested via
-    the HTTP client without the full middleware stack.
-    """
+    """Check the header directly, replacing require_bot_api_key since the test app strips BotAuthMiddleware (it needs Redis)."""
 
     api_key = request.headers.get("X-Bot-API-Key")
     bot_api_key = getattr(settings, "GAIA_BOT_API_KEY", None)

@@ -70,14 +70,7 @@ class TestLegacyProfessionDoesNotBreakTheRead:
 
     @pytest.mark.parametrize("stored", ["", 12345, 3.14, [], {}])
     def test_a_profession_that_is_not_usable_text_reads_as_unset(self, stored: object) -> None:
-        """Empty and non-string stored values both read as unset.
-
-        Neither reaches clean_profession: a number has no .strip(), and
-        "" is read as unset by the field validator regardless of this guard, so
-        the guard hands both straight through. This pins that they end up unset
-        rather than raising — the mutation gate found the branch untested when it
-        was written as a special case, which is what showed the case was dead.
-        """
+        """Neither reaches clean_profession (a number has no .strip(); "" is already unset), so both end up unset rather than raising."""
         document = UserDocument.model_validate(_user_row(stored))
 
         assert document.onboarding is not None

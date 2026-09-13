@@ -20,8 +20,7 @@ USER_ID = "507f1f77bcf86cd799439011"
 
 
 def _ws(protocol: str = "") -> MagicMock:
-    """A stubbed WebSocket transport: headers dict, accept/close awaitables,
-    and a receive_text that disconnects on its first read."""
+    """Build a stubbed WebSocket transport whose receive_text disconnects on its first read."""
     ws = MagicMock()
     ws.headers = {"sec-websocket-protocol": protocol}
     ws.accept = AsyncMock()
@@ -32,7 +31,7 @@ def _ws(protocol: str = "") -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _clean_connections():
-    """The manager is a singleton shared across tests — start from an empty pool."""
+    """Clear the connection pool: the manager is a singleton shared across tests."""
     websocket_manager.connections.clear()
     yield
     websocket_manager.connections.clear()

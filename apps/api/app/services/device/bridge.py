@@ -25,11 +25,9 @@ from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
 from shared.py.wide_events import log
 
-# Unique per process. Two uses: (1) stamped into a device's presence key so
-# teardown can tell "I still own this device" from "it reconnected onto another
-# pod" (the ownership guard DeviceConnectionManager.remove applies to the socket
-# map); (2) the address of this pod's shared up-channel, so a device's owning pod
-# can route reply frames to whichever pod is running the MCP session.
+# Unique per process. Stamped into a device's presence key so teardown can tell
+# "I still own this device" from "it reconnected onto another pod", and doubles
+# as the address of this pod's shared up-channel for routing reply frames.
 POD_ID: Final[str] = uuid.uuid4().hex
 
 # Compare-and-delete: clear the presence key only if it still holds this pod's id,

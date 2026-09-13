@@ -51,18 +51,9 @@ class PostHogRequestContextMiddleware(BaseHTTPMiddleware):
         if providers.get("posthog") is None:
             return await call_next(request)
 
-        # capture_exceptions=False, and it is load-bearing. The context manager
-        # defaults to autocapturing whatever escapes it, through the MODULE-LEVEL
-        # posthog client — which GAIA never configures, because it builds a
-        # Posthog() INSTANCE via the lazy provider instead. The autocapture then
-        # raises ValueError("API key is required") on the way out and REPLACES the
-        # real exception: every authenticated 500 would reach the error handler,
-        # the wide event and Sentry as that same bogus ValueError, with the actual
-        # crash buried two levels down in __context__.
-        #
-        # Nothing is lost by disabling it — unhandled_exception_handler captures
-        # the exception explicitly, with the user attached, so autocapture here
-        # would only double-count what that handler already records.
+        # capture_exceptions=False is load-bearing: autocapture uses the
+        # unconfigured module-level posthog client, which raises and REPLACES
+        # the real exception; unhandled_exception_handler already captures it.
         with new_context(capture_exceptions=False):  # pragma: no mutate — None is falsy too
             identify_context(str(user_id))
             return await call_next(request)
@@ -106,12 +97,9 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
             # Login-free connect link — self-authenticates via a single-use,
             # server-bound connect code (see connect_link_service).
             "/api/v1/integrations/connect-link",
-            # Device bridge: the daemon isn't logged in. Pairing start/poll
-            # self-authenticate via the pairing code, token exchange via the
-            # refresh credential, and server registration via the device connect
-            # JWT (checked in-handler). /device/pair/approve is NOT here — it
-            # requires a user session (matched by startswith, so the pair
-            # subroutes are listed explicitly rather than the /device/pair prefix).
+            # Device bridge: the daemon isn't logged in, so these self-authenticate
+            # (pairing code / refresh credential / device JWT). /device/pair/approve
+            # needs a session, so subroutes are listed explicitly, not by prefix.
             "/api/v1/device/pair/start",
             "/api/v1/device/pair/poll",
             "/api/v1/device/token",
@@ -119,15 +107,13 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
             # One-click email unsubscribe — opened from mail clients with no
             # session; the HMAC-signed token authenticates the user itself.
             "/api/v1/notifications/unsubscribe",
-            # Single-purpose file-share downloads — fetched server-side by
-            # Composio during tool execution with no session; the unguessable
-            # token authenticates the grant itself. Trailing slash keeps this
-            # from matching anything else under /api/v1/files.
+            # Single-purpose file-share downloads: fetched server-side by
+            # Composio with no session; the unguessable token authenticates the
+            # grant. Trailing slash avoids matching the rest of /api/v1/files.
             "/api/v1/files/s/",
-            # Dev identity router (mounted only in development). Excluded so the
-            # mint endpoint is reachable before any user exists — otherwise the
-            # bypass would 401 the very request that bootstraps the first user.
-            # Trailing slash keeps this from also matching "/api/v1/device".
+            # Dev identity router (dev only): excluded so the mint endpoint is
+            # reachable before any user exists, or the bypass 401s the request
+            # that bootstraps it. Trailing slash avoids matching "/api/v1/device".
             "/api/v1/dev/",
         ]
         # Routes that also accept an "Authorization: Bearer <agent JWT>" in
@@ -206,12 +192,9 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
             # Don't block request on auth failures - routes can handle this
             return
         if not user_info:
-            # Session was present but rejected. We can't call ``log.set()``
-            # here — WorkOSAuthMiddleware runs outside LoggingMiddleware's
-            # context (Starlette copies context at call_next), so any wide
-            # event fields would be wiped by ``log.reset()``. Stash the reason
-            # on request.state so the route layer can log it inside the right
-            # context.
+            # Can't log.set() here — this runs outside LoggingMiddleware's context, so
+            # wide event fields would be wiped by log.reset(). Stash the reason instead
+            # so the route layer can log it inside the right context.
             request.state.auth_failure = "invalid_or_expired_session"
             return
         request.state.user = user_info
@@ -238,10 +221,9 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
             return
         if user_data is None:
             return
-        # Same shape as the WorkOS session path — the shared builder spreads the
-        # full doc so the agent token carries timezone + onboarding (custom
-        # instructions, preferences, writing style). Hand-picking fields here
-        # dropped them, so voice mode lost the user's system instructions.
+        # Same shape as the WorkOS session path: the shared builder spreads the full doc so
+        # the agent token carries timezone + onboarding. Hand-picking fields here dropped
+        # them, so voice mode lost the user's system instructions.
         request.state.user = build_user_context(
             user_to_legacy_dict(user_data), auth_provider="workos", impersonated=True
         )
@@ -252,16 +234,10 @@ class WorkOSAuthMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         """Authenticate the request as a dev user, skipping WorkOS.
 
-        Only reachable when DEV_AUTH_BYPASS_EMAIL is set in development
-        (production refuses to boot with it — see get_settings). The target
-        user is resolved by resolve_dev_bypass_user: the X-Dev-User
-        header (per-request impersonation, so one server can act as many users),
-        else the dev_bypass_user cookie (so two browser profiles can act as
-        different users against one instance — how free vs pro get tested side
-        by side), else DEV_AUTH_BYPASS_EMAIL. A target email that doesn't
-        resolve to a Mongo user fails loud with a 401 that names the fix — mint
-        it via the dev router — rather than silently degrading to a generic
-        auth error.
+        Only reachable when DEV_AUTH_BYPASS_EMAIL is set (dev only). Target
+        user resolved in order: X-Dev-User header, dev_bypass_user cookie,
+        then DEV_AUTH_BYPASS_EMAIL. An email with no Mongo user 401s loud,
+        naming the fix (mint via the dev router) rather than a generic error.
         """
         request.state.user = None
         request.state.authenticated = False

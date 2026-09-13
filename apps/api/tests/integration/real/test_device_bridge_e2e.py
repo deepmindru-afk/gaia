@@ -1,27 +1,18 @@
-"""True black-box E2E tests for the device bridge — driven only through the real
-wire protocol, exactly as a real user/device would:
+"""True black-box E2E tests for the device bridge, driven only through the real wire protocol as a real user/device would.
 
-  * the gaia bridge daemon runs as a real Node subprocess (via tsx, no
-    build step) and does its own real pairing/token/WebSocket work — nothing
-    about the daemon is mocked or called into directly from Python;
-  * the "signed-in user" side (approve, list, test-connection, revoke) is
-    driven by real HTTP calls against a real, live GAIA API instance (see
-    live_api_server in conftest.py) — no internal service-function calls;
-  * the local MCP server the daemon exposes is the real, official
-    @modelcontextprotocol/server-everything reference server, spawned by
-    the daemon over real stdio — not the built-in filesystem special case.
+The daemon runs as a real Node subprocess (via tsx); the signed-in-user side
+is driven by real HTTP calls against a real, live GAIA API instance (see
+live_api_server in conftest.py); the local MCP server is the real, official
+@modelcontextprotocol/server-everything reference server over real stdio.
 
-Direct Redis access is used in exactly two places, both called out inline,
-for states a real client genuinely cannot produce without waiting out a real
-TTL: a 15-minute pairing-code expiry and a 60-second refresh-token retry
-grace window. Every assertion in those tests is still made through the real
-API response, never by reading the seeded state back out of Redis.
+Direct Redis access, called out inline, covers only a 15-minute pairing-code
+expiry and a 60-second refresh-token retry grace window a real client can't
+otherwise produce without waiting it out — every assertion is still made
+through the real API response.
 
 Contrast with test_device_bridge_real.py, which calls internal Python
-functions (mark_online, register_up_session, etc.) directly against real
-Redis to regression-test specific plumbing bugs (presence CAS, dispatch
-isolation) — a different, still-valuable tier that this file does not
-replace.
+functions directly against real Redis to regression-test plumbing bugs — a
+different, still-valuable tier.
 """
 
 from __future__ import annotations
@@ -53,19 +44,16 @@ CLI_DIR = next(
     for parent in Path(__file__).resolve().parents
     if (parent / "packages" / "cli").is_dir()
 )
-# tsx's bin location depends on pnpm's node-linker. The repo now runs the
-# default isolated linker everywhere (no .npmrc), which puts tsx in the CLI
-# package's own node_modules/.bin; the repo-root fallback keeps this working on
-# a hoisted install (an older checkout, or a consumer that sets node-linker).
+# tsx's bin location depends on pnpm's node-linker: the default isolated
+# linker (no .npmrc) puts it in the CLI package's own node_modules/.bin; the
+# repo-root fallback covers a hoisted install (older checkout, or node-linker set).
 _CLI_TSX = CLI_DIR / "node_modules" / ".bin" / "tsx"
 _ROOT_TSX = CLI_DIR.parent.parent / "node_modules" / ".bin" / "tsx"
 TSX_BIN = _CLI_TSX if _CLI_TSX.exists() else _ROOT_TSX
 EVERYTHING_PACKAGE = "@modelcontextprotocol/server-everything"
-# Pinned: an unpinned spec makes npx re-resolve `latest` against
-# registry.npmjs.org on every run even when the package is already in its
-# cache — 15-19s on the CI box's residential uplink under load. To bump, run
-# `npx -y @modelcontextprotocol/server-everything@<new> stdio </dev/null` once
-# and set the new version here.
+# Pinned: an unpinned spec makes npx re-resolve latest on every run even when
+# cached — 15-19s on the CI box's uplink under load. To bump, run
+# npx -y @modelcontextprotocol/server-everything@<new> stdio </dev/null and set it here.
 EVERYTHING_VERSION = "2026.8.18"
 
 
@@ -91,40 +79,18 @@ def _npm_cache_dir() -> str:
 
 USER_CODE_RE = re.compile(r"enter this code:\s*([A-Z0-9-]+)")
 
-# How long the daemon gets to print its pairing code, measured rather than guessed.
-# `runLogin` prints NOTHING until `startPairing` returns, so this window covers
-# node boot + tsx transpiling src/index.ts's whole import graph (it statically
-# imports every command — ink, react, simple-git, execa, the MCP SDK — before
-# commander even parses argv) + one HTTP round trip. Measured cost of that whole
-# prefix: 0.76s on a dev laptop, ~1s on the runner's i7-10700K, and the complete
-# golden path (pair, tunnel up, real MCP round trip, revoke) runs in 5.0s when the
-# runner is idle (run 33302182969, bridge alone on the box).
-#
-# The old 10s was inside the noise, not outside it. The self-hosted box schedules
-# up to seven jobs across 8 physical cores at once — unit-a/unit-b/integration
-# claim 16 xdist workers between them, plus test-typescript, build and
-# docker-image — and this slice is budgeted no share at all. Under that load the
-# same fixture's setup goes 4.1s -> 9.5s (run 33301137881) and the daemon's spawn
-# is hit harder still: the test failed ~50% of the time with an EMPTY transcript.
-# This is the contended ceiling, not the expected cost; a genuinely dead child now
-# fails in under a second via the liveness check in wait_for_user_code, so the
-# only thing a large ceiling buys is not flaking on a busy machine.
+# Measured prefix (node boot + tsx transpile + one HTTP round trip): 0.76s dev
+# laptop, ~1s CI idle; golden path 5.0s idle (run 33302182969), contended to
+# 4.1-9.5s with ~50% empty-transcript failures (run 33301137881) — a dead child now fails in under a second via wait_for_user_code's liveness check.
 USER_CODE_TIMEOUT_SECONDS = 60.0
 
 
 def everything_server(entry: Path) -> dict:
-    """The third-party stdio MCP server config the daemon is told to expose.
+    """Build the third-party stdio MCP server config, spawning entry directly with node instead of npx.
 
-    entry is the server's own entry script, resolved out of the npx cache by
-    everything_server_cached, and it is spawned with node directly
-    rather than through npx. This is inside the timed /api/v1/mcp/test
-    request, and npx is not free there: it is a whole extra Node process
-    that re-resolves the package before exec'ing the real one. Measured on the
-    CI box, the gap between the tunnel opening the session and the server
-    printing its banner was 5.3s idle and 9.4-15.2s under load — enough to put
-    a 28s round trip inside a 35s client budget. Resolving once in a fixture
-    and exec'ing the script leaves only the server's own Node startup in the
-    request. It is still the real, official reference server over real stdio.
+    Inside the timed /api/v1/mcp/test request, resolving via npx measured a
+    5.3s idle / 9.4-15.2s under-load gap between tunnel-open and server
+    banner — enough to blow a 28s round trip past the 35s client budget.
     """
     return {
         "type": "stdio",
@@ -137,9 +103,7 @@ def everything_server(entry: Path) -> dict:
 
 
 class BridgeDaemon:
-    """Drives the real gaia bridge CLI as a subprocess, isolated to a
-    scratch HOME so it can never touch a developer's real pairing.
-    """
+    """Drives the real gaia bridge CLI as a subprocess, isolated to a scratch HOME so it can never touch a developer's real pairing."""
 
     def __init__(self, home: Path) -> None:
         self.home = home
@@ -200,8 +164,7 @@ class BridgeDaemon:
         self._pump(self.login_process.stderr, self.login_output, "login/err")
 
     async def _drain(self, timeout: float = 2.0) -> None:
-        """Let the output pumps reach EOF so a dead child's last words — the
-        stack trace saying *why* it died — make it into the message we raise."""
+        """Let the output pumps reach EOF so a dead child's last words make it into the raised message."""
         if self._tasks:
             await asyncio.wait(self._tasks, timeout=timeout)
 
@@ -213,10 +176,9 @@ class BridgeDaemon:
             if match:
                 return match.group(1)
             assert self.login_process is not None
-            # The same liveness guard wait_connected already has. Without it a
-            # daemon that crashed and a daemon that is merely slow both report
-            # the collected output after the full timeout, which is how a CI
-            # failure with an empty transcript stayed ambiguous for two days.
+            # Same liveness guard as wait_connected — without it a crashed and a
+            # merely-slow daemon both report the timeout output, which is how a
+            # CI failure with an empty transcript stayed ambiguous for two days.
             returncode = self.login_process.returncode
             if returncode is not None:
                 await self._drain()
@@ -266,8 +228,7 @@ class BridgeDaemon:
             await asyncio.sleep(0.1)
 
     async def wait_exits_on_its_own(self, timeout: float = 10.0) -> None:
-        """After a revoke, the real daemon must drop the tunnel itself — proof
-        revocation propagates over the wire, not just as a Postgres flag."""
+        """After a revoke, the real daemon must drop the tunnel itself — proof revocation propagates over the wire, not just as a Postgres flag."""
         assert self.up_process is not None
         await asyncio.wait_for(self.up_process.wait(), timeout=timeout)
 
@@ -286,7 +247,7 @@ class BridgeDaemon:
 
 
 def _cached_everything_entry(cache_dir: str) -> Path | None:
-    """The pinned server's entry script if npx has already installed it, else None."""
+    """Return the pinned server's entry script if npx has already installed it, else None."""
     for package in sorted(Path(cache_dir).glob(f"_npx/*/node_modules/{EVERYTHING_PACKAGE}")):
         manifest = json.loads((package / "package.json").read_text())
         if manifest["version"] != EVERYTHING_VERSION:
@@ -302,18 +263,12 @@ def _cached_everything_entry(cache_dir: str) -> Path | None:
 
 @pytest.fixture(scope="session")
 def everything_server_cached() -> Path:
-    """Fetch the third-party MCP server once, before any test, and resolve it.
+    """Fetch the third-party MCP server once, untimed, before any test.
 
-    The fetch has to happen somewhere, and here is the only place where it is
-    not being timed. Feeding the real spawn a closed stdin is what makes this a
-    fetch rather than an approximation of one: the server sees EOF on its stdio
-    transport and exits 0 on its own, so the package is installed by exactly the
-    command a user would run. What the tests then spawn is the entry script this
-    resolves out of that install — see everything_server.
-
-    A warm cache (the persistent home runner, a developer laptop) skips the npx
-    step entirely: the pinned version is already on disk, and npx would only
-    spend the time re-resolving the spec against the registry.
+    A closed stdin makes this a real fetch, not an approximation: the server
+    sees EOF and exits 0 on its own, installed by the exact command a user
+    would run. A warm cache skips the npx step entirely, since the pinned
+    version is already on disk.
     """
     cache_dir = _npm_cache_dir()
     entry = _cached_everything_entry(cache_dir)
@@ -350,16 +305,10 @@ def everything_server_cached() -> Path:
 def warm_cli() -> None:
     """Run the real CLI once, before any test's readiness clock starts.
 
-    Two jobs, both learned from a CI failure whose only symptom was an empty
-    transcript. It pays node's boot plus tsx's transpile of src/index.ts's whole
-    import graph (every command is a static import — ink, react, simple-git,
-    execa, the MCP SDK — so bridge login loads all of it before printing
-    anything) outside the window the tests measure. And it turns an unrunnable
-    CLI — tsx missing, a node_modules symlink dangling after a pnpm store move,
-    a node/ABI mismatch — into a named failure here rather than a silent
-    "user_code never appeared" inside a test that looks like a timing flake.
-
-    Same trick, for the same reason, as everything_server_cached above.
+    This pays node boot plus tsx's transpile outside the timed window, and
+    turns an unrunnable CLI (missing tsx, a dangling symlink, a node/ABI
+    mismatch) into a named failure here instead of a silent "user_code never
+    appeared" that looks like a timing flake.
     """
     probe = subprocess.run(
         [str(TSX_BIN), "src/index.ts", "--version"],
@@ -377,12 +326,9 @@ def warm_cli() -> None:
 
 def _client(base_url: str, user_id: str | None = None) -> httpx.AsyncClient:
     headers = {"x-test-user-id": user_id} if user_id else {}
-    # Sized from the measured cost of the slowest call these clients make — the
-    # /api/v1/mcp/test round trip: open the tunnel session (the daemon spawns the
-    # local MCP server), then initialize + list_tools over Redis pub/sub. 35s is
-    # headroom for a loaded runner, not a budget for process startup: keep the
-    # spawn a direct `node` exec of a pre-resolved script (see
-    # everything_server) rather than raising this.
+    # Sized for the slowest call these clients make: /api/v1/mcp/test's tunnel
+    # open + initialize + list_tools round trip. 35s is headroom for a loaded
+    # runner, not a startup budget — keep spawn a direct node exec, not this.
     return httpx.AsyncClient(base_url=base_url, headers=headers, timeout=35.0)
 
 
@@ -401,10 +347,8 @@ class TestFullDeviceLifecycle:
     ):
         """The golden path, end to end, with no shortcuts anywhere in the chain."""
         # The device tunnel is paid-only and checks the subscription at connect
-        # (device_ws.py), so the owner needs a real active subscription before
-        # the daemon dials — otherwise the handshake is refused with a 403 and
-        # the whole lifecycle never starts. A free user's rejection is covered
-        # by tests/unit/api/test_device_ws_paid_only_gate.py.
+        # (device_ws.py); without it the handshake 403s and nothing starts. A
+        # free user's rejection is covered by test_device_ws_paid_only_gate.py.
         await make_pro_subscription(OWNER_USER_ID)
         daemon = BridgeDaemon(tmp_path / "home")
         owner = _client(live_api_server.url, OWNER_USER_ID)
@@ -433,11 +377,9 @@ class TestFullDeviceLifecycle:
             await daemon.start_up()
             await daemon.wait_connected()
             daemon.mark("tunnel connected (token exchanged, ws up)")
-            # Regression guard: tunnel.ts's connectOnce() once resolved its
-            # connection promise on the socket's `open` event instead of
-            # `close`, so run() immediately looped and opened a new socket on
-            # every tick — a real reconnect storm a live daemon process (and
-            # only a live daemon process) can actually surface.
+            # Regression guard: connectOnce() once resolved on the socket's open
+            # event instead of close, looping run() into a reconnect storm — only
+            # a live daemon process can surface this.
             await asyncio.sleep(0.5)
             assert "reconnecting in" not in "".join(daemon.up_output)
 
@@ -479,9 +421,7 @@ class TestFullDeviceLifecycle:
             await owner.aclose()
             await daemon.stop_all()
             # Always, not only on failure: pytest shows this under "Captured
-            # stdout teardown" for a failing test, and the daemon's own output
-            # is otherwise discarded — which is why the last CI timeout could
-            # not be attributed to a phase at all.
+            # stdout teardown", and the daemon's output is otherwise discarded.
             print(f"\n--- bridge daemon timeline ---\n{daemon.dump()}")
 
 
@@ -518,17 +458,7 @@ class TestDaemonStartupDiagnostics:
     async def test_a_dead_login_child_is_reported_as_a_death_not_as_silence(
         self, tmp_path, warm_cli
     ):
-        """A gaia bridge login that exits must fail the wait immediately, naming
-        its exit code — not time out looking like a slow one.
-
-        This is the gap that cost two days of CI triage: wait_connected below
-        already checks returncode is not None and says "exited early", but
-        wait_for_user_code only ever reported the collected output, so a child
-        that died at 0.8s and a child still transpiling at 10s produced the same
-        message. Pointing the CLI at a port nothing is listening on makes
-        startPairing's fetch reject, which is a real, unmocked death of the
-        real child process.
-        """
+        """Fixes the 2-day CI triage gap where a child dead at 0.8s and one still transpiling at 10s produced the same timeout message."""
         daemon = BridgeDaemon(tmp_path / "home")
         try:
             await daemon.start_login(f"http://127.0.0.1:{pick_free_port()}", "dead-child")
@@ -551,11 +481,7 @@ class TestDaemonStartupDiagnostics:
 
 class TestPairingCodeExpiry:
     async def test_expired_pairing_code_is_rejected(self, live_api_server, real_redis):
-        """Waiting out the real 15-minute TTL isn't practical in a test run.
-        Expiring the pairing key directly in Redis is the one part of this test
-        not driven through the wire — the poll response itself is still a real
-        API call and is what's actually asserted on.
-        """
+        """Expires the pairing key directly in Redis rather than waiting out the real 15-minute TTL; the poll response asserted on is still real."""
         async with _client(live_api_server.url) as client:
             start = await client.post(
                 "/api/v1/device/pair/start",
@@ -574,12 +500,7 @@ class TestRefreshTokenReuseDetection:
     async def test_replaying_a_rotated_refresh_token_revokes_the_device(
         self, live_api_server, real_redis, clean_bridge_tables
     ):
-        """Same carve-out as pairing expiry: the 60s post-rotation grace window
-        can't be skipped through any exposed API, so the grace-window Redis key
-        is cleared directly to force the genuine reuse-detection branch instead
-        of the lost-response retry branch. Every assertion is still made
-        through real /device/token responses.
-        """
+        """Clears the 60s post-rotation grace-window Redis key directly, since no exposed API can skip it, to force the real reuse-detection branch."""
         owner = _client(live_api_server.url, "reuse-test-owner")
         anon = _client(live_api_server.url)
         try:

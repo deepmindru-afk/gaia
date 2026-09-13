@@ -47,11 +47,10 @@ def define_mutation_tool(
 ) -> BaseTool:
     """Build a state-changing tool around apply.
 
-    apply(user_id, **args) runs the real mutation through the owning
-    service/repository and returns the agent-facing confirmation text; raise
-    AppError (or anything else) to fail the call loud. event is captured
-    with {"area": area} only on success. resync schedules the owning
-    area's projection refresh, fire-and-forget.
+    apply(user_id, **args) runs the mutation and returns the agent-facing
+    confirmation text; raise to fail the call loud. event is captured with
+    {"area": area} only on success. resync schedules the owning area's
+    projection refresh, fire-and-forget.
     """
 
     @tool(name, description=description, args_schema=args_model)

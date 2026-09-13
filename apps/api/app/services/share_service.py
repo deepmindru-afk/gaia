@@ -42,7 +42,7 @@ _SALT = "file-share-grant"
 
 
 def _configured_secret() -> str | None:
-    """The share signing secret, or None if it is unset or too short to use."""
+    """Return the share signing secret, or None if it is unset or too short to use."""
     secret: object = settings.SHARE_GRANT_SECRET
     return secret if isinstance(secret, str) and len(secret) >= 32 else None
 

@@ -24,11 +24,9 @@ GOOGLEDOCS_DESTRUCTIVE_TOOLS: list[str] = [
     "GOOGLEDOCS_DELETE_TAB",
 ]
 
-# Permanent, trash-bypassing deletes gate (DELETE_REVISION permanently drops a
-# file version). CREATE_PERMISSION gates too: sharing exposes the file's contents
-# to the grantee the instant it is granted, and revoking the grant later cannot
-# undo what they already read or copied (CWE-200). TRASH_FILE / UNTRASH_FILE stay
-# ungated — recoverable from Drive trash.
+# Permanent, trash-bypassing deletes gate. CREATE_PERMISSION gates too: sharing
+# exposes the file's contents the instant it's granted, and revoking later
+# can't undo what was already read (CWE-200). TRASH_FILE stays ungated (recoverable).
 GOOGLEDRIVE_DESTRUCTIVE_TOOLS: list[str] = [
     "GOOGLEDRIVE_CREATE_PERMISSION",
     "GOOGLEDRIVE_DELETE_DRIVE",
@@ -39,10 +37,8 @@ GOOGLEDRIVE_DESTRUCTIVE_TOOLS: list[str] = [
     "GOOGLEDRIVE_GOOGLE_DRIVE_DELETE_FOLDER_OR_FILE_ACTION",
 ]
 
-# GMAIL_DELETE_DRAFT is intentionally NOT gated: a draft is an unsent, agent-managed
-# artifact, and revising a draft means deleting the old one and creating a new one
-# (Gmail has no in-place edit). Gating it would prompt on every draft edit — routine
-# cleanup, not irreversible loss of real mail. Real message deletes below stay gated.
+# GMAIL_DELETE_DRAFT is intentionally NOT gated: revising a draft deletes the
+# old one and creates a new one, so gating it would prompt on routine cleanup.
 GMAIL_DESTRUCTIVE_TOOLS: list[str] = [
     "GMAIL_BATCH_DELETE_MESSAGES",
     "GMAIL_DELETE_FILTER",

@@ -56,12 +56,7 @@ class TestMultiToolScenario:
     async def test_graph_calls_two_tools_in_sequence(
         self, thread_config, in_memory_store, memory_saver
     ):
-        """Build a real GAIA graph and verify sequential tool calls work end-to-end.
-
-        The graph uses manage_system_prompts_node and filter_messages_node as
-        real pre-model hooks. Two tools are called in sequence: get_weather then
-        create_note. We verify both ToolMessages appear in the final state.
-        """
+        """Uses the real manage_system_prompts_node and filter_messages_node pre-model hooks while calling get_weather then create_note in sequence."""
         fake_llm = BindableToolsFakeModel(
             responses=[
                 AIMessage(
@@ -168,21 +163,7 @@ class TestMultiToolScenario:
     async def test_filter_and_manage_hooks_both_run_as_pre_model_hooks(
         self, thread_config, in_memory_store, memory_saver
     ):
-        """Both real GAIA pre-model hooks run without crashing and the model responds.
-
-        Pre-model hooks (filter_messages_node, manage_system_prompts_node) are
-        ephemeral: they modify state only for the model call via execute_hooks(),
-        not the LangGraph-checkpointed state. The add_messages reducer appends
-        new messages; it does not replace existing ones with hook output.
-
-        What we CAN verify:
-        - The graph does not raise despite receiving a dangling tool call and
-          multiple system prompts (hooks handled the messy state gracefully).
-        - The model produced a response (an AIMessage with the expected content
-          appears in the final checkpointed messages).
-        - No NEW tool calls were introduced by the graph run (the model
-          responded with plain text, not another tool invocation).
-        """
+        """Confirms both real pre-model hooks run without crashing on a dangling tool call and multiple system prompts, and the model's final response has no new tool calls."""
         fake_llm = BindableToolsFakeModel(responses=[AIMessage(content="All cleaned up.")])
 
         graph = build_gaia_test_graph(

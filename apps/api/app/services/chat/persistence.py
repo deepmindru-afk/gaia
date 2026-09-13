@@ -30,7 +30,7 @@ from app.utils.chat_utils import create_conversation
 
 
 def user_message_content_from(body: MessageRequestWithHistory) -> str:
-    """The turn's user message text — single derivation for init + persist.
+    """Return the turn's user message text; the single derivation for init + persist.
 
     Clients omit empty-text turns (file-only sends) from messages, so the
     last history entry is the current turn only when its role is user —
@@ -81,12 +81,9 @@ async def initialize_new_conversation(
 def absolutize_artifact_urls(message: str, conversation_id: str) -> str:
     """Rewrite relative artifact paths in a bot response to absolute backend URLs.
 
-    The agent's prompt teaches it to reference files at ./artifacts/<name>,
-    which is correct INSIDE the sandbox but breaks when the frontend tries to
-    fetch the same path from the browser origin. Substituting the full
-    <HOST>/api/v1/sessions/<conv>/artifacts/<name> URL once at save time
-    means the saved message renders the right image regardless of whether the
-    user's browser still holds a stale frontend bundle.
+    ./artifacts/<name> is correct inside the sandbox but breaks when the
+    frontend fetches it from the browser origin; substituting the full URL
+    once at save time renders correctly even with a stale frontend bundle.
     """
     if not message or not conversation_id:
         return message
@@ -117,13 +114,10 @@ async def save_conversation_async(
 ) -> None:
     """Persist the finished turn to Mongo and bill token usage.
 
-    Bakes absolute artifact URLs into the saved bot message so the chat renders
-    correctly even when the user's browser holds a stale frontend chunk.
-
-    bot_timestamp lets the caller stamp the turn at comms-completion time
-    rather than now() — needed in voice mode, where finalize is deferred until a
-    delegated executor finishes, so the user/comms messages must still sort ahead
-    of the executor's answer (saved mid-wait).
+    Bakes absolute artifact URLs into the saved bot message. bot_timestamp
+    lets the caller stamp the turn at comms-completion time rather than
+    now() — needed in voice mode so the user/comms messages still sort ahead
+    of the executor's deferred answer.
     """
     bot_timestamp = bot_timestamp or datetime.now(UTC)
     user_timestamp = bot_timestamp - timedelta(milliseconds=100)

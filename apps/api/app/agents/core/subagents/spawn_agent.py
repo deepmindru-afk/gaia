@@ -50,13 +50,11 @@ _cache_lock = asyncio.Lock()
 def _cache_key(
     llm: LanguageModelLike, tool_space: str, runtime: ToolRuntimeConfig
 ) -> SpawnGraphCacheKey:
-    """What makes two spawn graphs interchangeable.
+    """Return what makes two spawn graphs interchangeable.
 
-    The model belongs in the key: it is bound into the compiled graph, so two
-    parents that differ only by model must not share one. Keyed by model identity
-    rather than object identity because per-run model selection still happens
-    through llm.with_config(configurable=...) inside the model node — two
-    handles on the same model are genuinely interchangeable.
+    The model belongs in the key since it's bound into the compiled graph.
+    Keyed by model identity, not object identity: two handles on the same
+    model (via llm.with_config(configurable=...)) are genuinely interchangeable.
     """
     model = getattr(llm, "model_name", None) or getattr(llm, "model", None) or type(llm).__name__
     return (
@@ -76,7 +74,7 @@ async def get_spawn_graph(
     runtime: ToolRuntimeConfig,
     middleware_factory: Callable[[], Sequence[AnyAgentMiddleware]],
 ) -> CompiledStateGraph:
-    """The compiled graph for this parent's spawn configuration, built once."""
+    """Return the compiled graph for this parent's spawn configuration, built once."""
     key = _cache_key(llm, tool_space, runtime)
     cached = _graph_cache.get(key)
     if cached is not None:

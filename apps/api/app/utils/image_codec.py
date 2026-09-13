@@ -115,7 +115,7 @@ class ImageCodec:
 
     @staticmethod
     def _probe(data: bytes) -> tuple[str | None, tuple[int, int]]:
-        """The sniffed MIME and dimensions of a real image. Raises InvalidImageError.
+        """Return the sniffed MIME and dimensions of a real image, or raise InvalidImageError.
 
         The MIME comes off the decoded header, never from the caller — a file
         extension and an MCP server's declared mimeType can both lie, and a block
@@ -135,11 +135,9 @@ class ImageCodec:
     def _transcode(data: bytes) -> bytes:
         """Downscale and re-encode as JPEG under the inline byte budget.
 
-        Animated formats keep frame one. Quality steps down until the payload fits
-        TARGET_INLINE_IMAGE_BYTES — a dense 1568px image can still exceed it at
-        full quality, and that payload is persisted in every checkpoint. The last
-        step is the floor: it ships even if still over budget, rather than failing
-        the turn over an unusually dense image.
+        Animated formats keep frame one. Quality steps down until the payload
+        fits TARGET_INLINE_IMAGE_BYTES; the last step ships even if still
+        over budget, rather than failing the turn.
         """
         try:
             image = Image.open(BytesIO(data)).convert("RGB")

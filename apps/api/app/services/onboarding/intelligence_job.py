@@ -58,9 +58,10 @@ async def is_intelligence_job_live(user_id: str) -> bool:
 
 
 async def abort_active_intelligence_job(user_id: str) -> bool:
-    """Abort the user's in-flight personalization job, if one exists (an
-    onboarding reset must not let it finish writing the card it is tearing
-    down). Returns True if a job was aborted."""
+    """Abort the user's in-flight personalization job, if one exists.
+
+    An onboarding reset must not let it finish writing the card it is tearing down.
+    """
     status = await _job_status(user_id)
     if status not in LIVE_STATUSES:
         return False

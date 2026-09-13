@@ -81,7 +81,6 @@ async def close_postgresql_async() -> None:
 
 
 async def close_reminder_scheduler() -> None:
-    """Close reminder scheduler."""
     try:
         from app.services.reminder_service import reminder_scheduler  # noqa: PLC0415 -- function
 
@@ -92,7 +91,6 @@ async def close_reminder_scheduler() -> None:
 
 
 async def close_workflow_scheduler() -> None:
-    """Close workflow scheduler."""
     try:
         await workflow_scheduler.close()
         log.info("Workflow scheduler closed")

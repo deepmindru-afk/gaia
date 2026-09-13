@@ -65,12 +65,7 @@ def test_no_scorer_logs_itself_as_a_trace(metric: base_metric.BaseMetric) -> Non
 
 
 def test_the_check_can_actually_fail() -> None:
-    """A tracked metric must trip the assertion — otherwise the test proves nothing.
-
-    Without this, _is_tracked returning False for every input would look like
-    a clean sweep. This is the mutation check: a deliberately tracked metric has
-    to be detected.
-    """
+    """Mutation guard: a tracked metric must trip the assertion, or _is_tracked returning False for everything looks like a clean sweep."""
 
     class Tracked(base_metric.BaseMetric):
         def __init__(self) -> None:
@@ -99,13 +94,7 @@ def test_gate_base_forces_tracking_off() -> None:
 
 
 def test_every_scorer_in_the_module_inherits_the_untracked_base() -> None:
-    """A scorer added later must not be able to reintroduce this by accident.
-
-    The parametrised test above only covers the scorers named in this file, so it
-    passes forever while a new tracked scorer quietly floods a project. This walks
-    the module instead: anything that is an opik metric here has to come through
-    :class:Gate.
-    """
+    """Walks the module rather than a named list, so a new tracked scorer cannot quietly flood a project; it must come through Gate."""
     offenders = [
         name
         for name, obj in vars(scorers).items()

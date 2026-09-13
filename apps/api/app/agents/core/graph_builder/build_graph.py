@@ -121,10 +121,8 @@ async def build_executor_graph(
                 "unsubscribe_todo_from_trigger",
                 "save_learned_skill",
                 # Bound statically, not left to retrieve_tools: the <playbook_check>
-                # and heal briefs name these directly, so a run whose semantic
-                # retrieval happens to miss them would read the instruction, be
-                # unable to act on it, and silently never decide. A tool a prompt
-                # names by hand has to be reachable by hand.
+                # and heal briefs name these directly, so semantic retrieval
+                # missing them would leave the instruction unactionable.
                 "write_playbook",
                 "decline_playbook",
                 "read_playbook",

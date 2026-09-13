@@ -38,8 +38,11 @@ def python_bot_platforms() -> set[str]:
 
 
 def ts_outbound_platforms() -> set[str]:
-    """Keys of the TS OUTBOUND_QUEUES record (values are template literals
-    containing ${...}, so the block is captured up to the closing };)."""
+    """Return the keys of the TS OUTBOUND_QUEUES record.
+
+    Values are template literals containing ${...}, so the block is
+    captured up to the closing };.
+    """
     text = TOPOLOGY_TS.read_text(encoding="utf-8")
     match = re.search(
         r"OUTBOUND_QUEUES:\s*Record<PlatformName,\s*string>\s*=\s*\{(.*?)\n\};",

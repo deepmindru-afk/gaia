@@ -70,7 +70,7 @@ class SubagentTools:
 
 
 def handoff_tool_space(space: SubagentTools) -> ToolSpace:
-    """The space a handoff's children run in, built from the resolved subagent.
+    """Return the space a handoff's children run in, built from the resolved subagent.
 
     One construction for both sides: the validator building the runtime config
     one way and the runner another is exactly how a playbook is accepted at
@@ -110,7 +110,7 @@ def tool_space_denial(tool_name: str, space: ToolSpace) -> str | None:
 async def resolve_subagent_tools(
     subagent_id: str, user_id: str, registry: ToolRegistry
 ) -> SubagentTools | None:
-    """The tools a handoff to subagent_id can reach, or None if no such subagent.
+    """Return the tools a handoff to subagent_id can reach, or None if no such subagent.
 
     An MCP integration's tools are fetched from the user's own client, which is
     the only place they exist. A connection failure returns an empty tool set
@@ -149,11 +149,9 @@ async def resolve_subagent_tools(
         )
         return SubagentTools(tools={}, initial_tool_ids=initial, subagent=subagent)
 
-    # The live subagent binds its MCP tools at startup (``build_scoped_tool_dict``
-    # with ``mcp_tools`` set), so they belong in ``initial_tool_ids`` here too:
-    # a handoff that cannot retrieve refuses every tool outside that set, and a
-    # replay bound to the registry-only ids would reject the very MCP step the
-    # validator just accepted.
+    # The live subagent binds its MCP tools at startup, so they belong in
+    # ``initial_tool_ids`` here too — a replay bound to registry-only ids
+    # would reject the very MCP step the validator just accepted.
     bound = set(initial)
     return SubagentTools(
         tools={**scoped, **{tool.name: tool for tool in mcp_tools}},

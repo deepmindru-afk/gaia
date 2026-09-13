@@ -39,7 +39,7 @@ BOT_BASE = "/api/v1/bot"
 
 
 async def _never_upgrade() -> str:
-    """An upgrade-URL resolver for streams that must never mint a checkout link."""
+    """Fail if called: a stream with no rate-limit card must never resolve an upgrade URL."""
     raise AssertionError("the upgrade URL was resolved for a stream with no rate-limit card")
 
 
@@ -63,15 +63,12 @@ def _make_request(bot_api_key_valid: bool = True, **extra_state: object) -> Magi
 
 @pytest.fixture(autouse=True)
 def _no_real_redis_cost_budget():
-    """bot_chat_stream calls enforce_daily_cost_budget -> get_cost
-    directly (unmocked in the tests below), which reads the module-singleton
-    redis_cache.redis — a real client pointed at the test env's local Redis
-    (tests/conftest.py). Under randomized test order a connection opened by
-    an earlier test's event loop can outlive it, and a later .get() on the
-    same pooled connection raises RuntimeError: Event loop is closed instead
-    of the RedisError/OSError get_cost actually catches — an
-    unhandled 500, not a flaky assertion. Nulling the client forces the
-    documented fail-open (cost reads 0.0) with no network call at all.
+    """Null the Redis client to force the documented fail-open (cost reads 0.0).
+
+    get_cost uses the real client; under randomized test order a stale
+    connection can raise RuntimeError: Event loop is closed instead of the
+    RedisError/OSError it actually catches — an unhandled 500, not a flaky
+    assertion.
     """
     original = redis_cache.redis
     redis_cache.redis = None
@@ -186,8 +183,10 @@ class TestResetSession:
 
 
 class TestResolveUserId:
-    """One seam, four call sites. A wrong answer here silently moves an event
-    or an audit record onto a different PostHog profile."""
+    """One seam, four call sites.
+
+    A wrong answer here silently moves an event or an audit record onto a different PostHog profile.
+    """
 
     def test_prefers_the_auth_middleware_shape(self):
         from app.api.v1.endpoints.bot import _resolve_user_id
@@ -201,8 +200,7 @@ class TestResolveUserId:
         assert _resolve_user_id({"_id": "507f1f77bcf86cd799439011"}) == ("507f1f77bcf86cd799439011")
 
     def test_a_document_with_neither_key_yields_empty_not_the_string_none(self):
-        """str(user.get("_id", None)) would return the literal "None" here —
-        a garbage distinct_id that looks valid and silently creates a profile."""
+        """str(user.get("_id", None)) would return the literal "None" — a garbage distinct_id that looks valid."""
         from app.api.v1.endpoints.bot import _resolve_user_id
 
         assert _resolve_user_id({}) == ""
@@ -254,8 +252,7 @@ class TestCheckAuthStatus:
         mock_get_user: AsyncMock,
         client: AsyncClient,
     ):
-        """A user document carrying only `_id` still yields an id — the same
-        fallback the chat route uses, so both attribute to one distinct_id."""
+        """A user document carrying only _id still yields an id, the same fallback the chat route uses."""
         mock_get_user.return_value = {"_id": "507f1f77bcf86cd799439011"}
         response = await client.get(f"{BOT_BASE}/auth-status/discord/u1")
         assert response.status_code == 200
@@ -502,8 +499,7 @@ class TestBotChatStream:
         mock_get_user: AsyncMock,
         client: AsyncClient,
     ):
-        """A bot chat message is attributed to the linked user via capture_event
-        (bot routes are auth-excluded, so the request context has no identity)."""
+        """Attributed via capture_event since bot routes are auth-excluded and the request context has no identity."""
         mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
@@ -653,13 +649,7 @@ class TestBotChatStream:
         mock_capture: MagicMock,
         client: AsyncClient,
     ):
-        """chat:message_submitted is the ground-truth volume metric.
-
-        A turn refused at the plan gate never reaches the agent, so counting it
-        would inflate bot volume by exactly the traffic of the users who hit
-        walls most — and make the bot surface incomparable to the web one, which
-        captures after its own gates. The refusal is its own event, with why.
-        """
+        """Counting a plan-gate refusal would inflate bot volume and make it incomparable to web, which captures after its own gates."""
         with (
             patch(
                 "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
@@ -682,9 +672,7 @@ class TestBotChatStream:
         assert refusal.args[2] == {"platform": "imessage", "reason": "plan_required"}
 
     @pytest.mark.parametrize(
-        # Both PRO: paid-only means a FREE user never reaches quota on any
-        # platform now (see TestBotChatStreamSubscriptionGate) — this proves a
-        # PAYING user reaches it regardless of whether the platform is
+        # A PAYING user reaches quota regardless of whether the platform is
         # premium-gated (imessage) or not (telegram).
         ("platform", "plan"),
         [("imessage", PlanType.PRO), ("telegram", PlanType.PRO)],
@@ -742,14 +730,7 @@ class TestBotChatStream:
         mock_sm: MagicMock,
         mock_get_user: AsyncMock,
     ):
-        """The wide event is the only record of a bot turn that survives the request.
-
-        ``user.id`` is what joins a bot turn to the same human's web traffic in
-        Loki — the same stable GAIA id PostHog is given — and ``outcome`` is what
-        separates a served turn from the gated ones. Emitted unattributed, or
-        with the refusal vocabulary, the line is still there and still parses;
-        it just answers the wrong question.
-        """
+        """user.id joins a bot turn to the same human's web traffic in Loki, and outcome separates served from gated turns."""
         mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
@@ -795,10 +776,7 @@ class TestBotChatStream:
         mock_sm: MagicMock,
         mock_get_user: AsyncMock,
     ):
-        """`BotService.enforce_rate_limit` is the flat per-platform anti-spam
-        gate — it must see the platform AND the platform user id, positionally
-        in that order, taken from the request body rather than swapped or
-        dropped."""
+        """BotService.enforce_rate_limit is the flat per-platform anti-spam gate; it must see platform and platform_user_id positionally in that order."""
         mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
@@ -839,10 +817,7 @@ class TestBotChatStream:
         mock_sm: MagicMock,
         mock_get_user: AsyncMock,
     ):
-        """When `BotAuthMiddleware` already put an authenticated user on
-        `request.state`, the handler must use it as-is rather than re-resolving
-        through `PlatformLinkService` — the DB round trip is a fallback for the
-        unlinked/legacy path, not the common one."""
+        """When BotAuthMiddleware already authenticated the user, the handler must use it as-is rather than re-resolving through PlatformLinkService."""
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
@@ -892,8 +867,7 @@ class TestBotChatStream:
         mock_sm: MagicMock,
         mock_get_user: AsyncMock,
     ):
-        """`request.state.user` alone is not enough — `authenticated` must also
-        be true, or a stale/partial state object would be trusted."""
+        """request.state.user alone is not enough — authenticated must also be true, or a stale/partial state object would be trusted."""
         mock_get_user.return_value = {"user_id": "uid_from_lookup", "_id": "uid_from_lookup"}
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
@@ -936,9 +910,7 @@ class TestBotChatStream:
         mock_run_background: MagicMock,
         mock_spawn: MagicMock,
     ):
-        """Every argument that reaches the background stream and the session
-        token — a wrong platform, user, or conversation id here silently
-        streams to (or authenticates) the wrong session."""
+        """A wrong platform, user, or conversation id here silently streams to (or authenticates) the wrong session."""
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-77")
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
@@ -1040,9 +1012,7 @@ class TestBotChatStreamBody:
     async def test_a_silent_stretch_of_web_only_frames_still_reaches_the_socket(
         self, client: AsyncClient
     ):
-        """The regression. A turn busy with tool work publishes frames the bot
-        never sees; without padding the connection goes quiet and a proxy kills
-        it (nginx's stock proxy_read_timeout is 60s)."""
+        """The regression: tool work with no frames leaves the connection quiet, and a proxy (nginx's stock proxy_read_timeout is 60s) kills it."""
 
         async def tool_work() -> AsyncGenerator[str, None]:
             for i in range(3):
@@ -1073,14 +1043,7 @@ class TestBotChatStreamBody:
     async def test_a_rate_limit_card_reaches_the_bot_as_a_notice_for_this_user(
         self, client: AsyncClient
     ):
-        """The web-only rate-limit card is the one frame the translator must
-        convert, not drop — and it is minted for the RESOLVED user, so the
-        checkout link inside it attributes to their account.
-
-        It converts to a typed notice frame, never to reply text: text
-        belongs to the assistant message in flight, so a notice sent that way
-        went down with any message that got discarded (a handoff preamble, a
-        rewritten draft) and the user hit a wall in silence."""
+        """The web-only rate-limit card converts to a typed notice frame, never reply text, and is minted for the resolved user so its checkout link attributes correctly."""
 
         async def walled() -> AsyncGenerator[str, None]:
             yield (
@@ -1124,13 +1087,7 @@ class TestBotChatStreamBody:
         assert '"notice"' not in body
 
     async def test_a_message_boundary_reaches_the_bot_intact(self, client: AsyncClient):
-        """The one web frame the translator forwards verbatim.
-
-        A bot needs it twice over: to close a bubble, and — when discarded —
-        to take back a handoff preamble it has already shown the user. Both the
-        key and the payload underneath it are the contract, so this reads the
-        frame back rather than checking the word appears somewhere.
-        """
+        """A bot needs this frame twice: to close a bubble, and, when discarded, to take back an already-shown handoff preamble."""
 
         async def retracted_then_replaced() -> AsyncGenerator[str, None]:
             yield 'data: {"response": "let me get that set up"}\n\n'
@@ -1164,9 +1121,7 @@ class TestBotChatStreamBody:
     async def test_a_disconnected_client_stops_forwarding_before_any_frame(
         self, client: AsyncClient
     ):
-        """request.is_disconnected() is checked before translating each chunk —
-        a client gone before the first one gets neither text nor done, and the
-        background task (already launched) is left to persist the result alone."""
+        """request.is_disconnected() is checked before each chunk; a client gone before the first gets neither text nor done, though the background task still persists the result."""
 
         async def answer() -> AsyncGenerator[str, None]:
             yield 'data: {"response": "too late"}\n\n'
@@ -1180,8 +1135,7 @@ class TestBotChatStreamBody:
         assert '"session_token": "tok"' in body
 
     async def test_a_subscription_error_yields_a_generic_error_frame(self, client: AsyncClient):
-        """An exception from subscribe_stream must still end the turn with a
-        frame the bot can render, not a silently dead connection."""
+        """An exception from subscribe_stream must still end the turn with a renderable frame, not a silently dead connection."""
 
         async def broken() -> AsyncGenerator[str, None]:
             yield 'data: {"response": "partial"}\n\n'
@@ -1216,9 +1170,7 @@ class TestBotChatStreamBody:
         mock_get_user: AsyncMock,
         client: AsyncClient,
     ):
-        """`_build_bot_message_request`'s third argument is whose conversation
-        history gets loaded — swapping it for `None` (or another user's id)
-        would load the wrong user's history, or none at all, silently."""
+        """_build_bot_message_request's third argument is whose conversation history loads; swapping it for None or another user's id would silently load the wrong (or no) history."""
         mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
@@ -1265,9 +1217,7 @@ class TestBotChatStreamBody:
         mock_get_user: AsyncMock,
         client: AsyncClient,
     ):
-        """`_bot_stream_failure_logger`'s two args identify WHICH stream and
-        conversation a background crash belongs to — swapping either for
-        `None` would make a real failure unattributable in the logs."""
+        """_bot_stream_failure_logger's two args identify which stream and conversation a background crash belongs to; swapping either for None makes a failure unattributable."""
         mock_get_user.return_value = {"user_id": "uid1", "_id": "uid1"}
         mock_bot_svc.enforce_rate_limit = AsyncMock()
         mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
@@ -1322,11 +1272,9 @@ class TestBotTranscribe:
         )
         assert response.status_code == 401
 
-    # The mime allowlist and Whisper invocation are covered directly in
-    # tests/unit/services/test_audio_transcription_service.py. The route-level
-    # success path is reachable here: `get_current_user` is a Depends the
-    # authenticated `client` fixture already overrides, and
-    # `require_bot_api_key` is patchable.
+    # Mime allowlist and Whisper invocation are covered in
+    # test_audio_transcription_service.py; only the route-level success path
+    # is exercised here.
 
     @patch("app.api.v1.endpoints.bot.capture_event")
     @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
@@ -1336,15 +1284,7 @@ class TestBotTranscribe:
         mock_capture: MagicMock,
         client: AsyncClient,
     ):
-        """A refused transcribe and a served one must not leave identical events.
-
-        The block itself is already logged and attributed by
-        ``require_active_subscription``, but that stamps the gate's event, not
-        this route's. Without an outcome here, "are voice notes failing on the
-        paywall or on the provider?" — the question an incident asks — has no
-        answer. The value matches ``_bot_stream_entitlement_gate`` so one query
-        covers both bot surfaces.
-        """
+        """A refused transcribe and a served one must leave different events, since require_active_subscription stamps the gate's own event, not this route's."""
         with (
             patch(
                 "app.decorators.entitlements.payment_service.get_cached_plan_type",
@@ -1418,10 +1358,9 @@ class TestBotTranscribe:
         assert response.json()["text"] == "hello there"
         mock_capture.assert_called_once()
         args = mock_capture.call_args.args
-        # args[0] is the distinct_id and is the whole point: a bot route is
-        # auth-excluded, so a wrong or None id silently lands the event on an
-        # anonymous profile. Five mutants of exactly this argument survived
-        # until it was asserted.
+        # args[0] is the distinct_id: bot routes are auth-excluded, so a
+        # wrong or None id lands the event on an anonymous profile. Five
+        # mutants of this argument survived until asserted.
         assert args[0] == fake_user["user_id"]
         assert args[1] == AnalyticsEvents.BOT_AUDIO_TRANSCRIBED
         assert args[2] == {
@@ -1442,9 +1381,7 @@ class TestBotTranscribe:
         mock_transcribe: AsyncMock,
         client: AsyncClient,
     ):
-        """Transcription is Whisper spend, so a linked-but-unsubscribed user is
-        turned away. Gated imperatively rather than by decorator so the bot API
-        key is verified first — see the comment on the handler."""
+        """Transcription is Whisper spend, so a linked-but-unsubscribed user is turned away, gated imperatively so the bot API key is verified first."""
         with patch(PLAN_PATCH, new_callable=AsyncMock, return_value=PlanType.FREE):
             response = await client.post(
                 f"{BOT_BASE}/transcribe",
@@ -1468,9 +1405,7 @@ class TestBotTranscribe:
         client: AsyncClient,
         fake_user: dict,
     ):
-        """The user id is what makes the gate a gate — asked about nobody, every
-        caller passes — and `feature` is what the 402 and its metrics are keyed
-        on, so a wrong one turns transcription refusals into someone else's."""
+        """The user id makes the gate a gate (asked about nobody, every caller passes), and feature is what the 402 and its metrics key on."""
         with patch(
             "app.api.v1.endpoints.bot.require_active_subscription", new_callable=AsyncMock
         ) as mock_gate:
@@ -1606,9 +1541,7 @@ class TestBotChatStreamMetering:
         assert limiter.await_args.kwargs["user_id"] == "u_bot_1"
 
     async def test_a_bot_turn_checks_the_daily_cost_wall_too(self, client: AsyncClient):
-        """Web chat charges TWO walls: how many messages, and how expensive the
-        day has been. Metering only the first left a bot user over budget with a
-        stream that opened and died partway instead of a clean refusal."""
+        """Web chat charges two walls — message count and daily cost — metering only the first left a bot user mid-stream instead of cleanly refused."""
         limiter = AsyncMock(return_value={})
         cost_wall = AsyncMock()
         p = self._patches(limiter)
@@ -1673,12 +1606,9 @@ class TestBotChatStreamMetering:
 def upgrade_link_window_open():
     """Open the once-per-window mint gate, so link tests are about the link.
 
-    _bot_upgrade_url mints at most once per user per window, gated by a
-    Redis SET NX EX. Without this the second test in a run to use the same
-    user id takes the pricing-page branch and passes for the wrong reason —
-    which is exactly what test_dodo_failure_degrades_to_the_pricing_page
-    did the moment the window landed. The window's own behaviour is proven in
-    TestBotUpgradeLinkWindow.
+    _bot_upgrade_url mints once per user per window via a Redis SET NX EX;
+    without this, a repeat user id falls through to the pricing-page branch
+    and passes for the wrong reason.
     """
     with patch(
         "app.api.v1.endpoints.bot._may_mint_bot_upgrade_link",
@@ -1979,11 +1909,7 @@ class TestBotUpgradeLinkWindow:
         checkout.assert_not_awaited()
 
     async def test_a_blocked_turn_outside_the_window_still_answers_the_user(self) -> None:
-        """A bot has no modal to fall back on: silence would read as broken.
-
-        Only the mint is gated, so the notice still goes out — with the pricing
-        page in place of the personalised link.
-        """
+        """A bot has no modal fallback so the notice still goes out, with the pricing page in place of the personalised link when only the mint is gated."""
         checkout = self._checkout("https://checkout.dodopayments.com/s/cs_1")
         with (
             patch("app.api.v1.endpoints.bot.redis_cache", self._redis(None)),
@@ -2014,25 +1940,16 @@ class TestBotUpgradeLinkWindow:
             await _bot_upgrade_url("user_1")
             await _bot_upgrade_url("user_2")
 
-        # The whole claim, not just the key. `SET key value NX EX ttl` is only a
-        # once-per-window gate while all three of the last parts hold: without
-        # NX every turn re-claims and mints again, and without EX the very first
-        # turn locks the user out of a personalised link forever. Both survived
-        # as mutants under a key-only assertion — the same shape as the
-        # limit-notice gate whose lost NX shipped six notifications for one
-        # event.
+        # SET key value NX EX ttl: without NX every turn re-mints, without EX
+        # the first turn locks the user out forever. Both survived as mutants
+        # under a key-only assertion.
         assert cache.client.set.await_args_list == [
             call("bot:upgrade-link:user_1", "1", nx=True, ex=BOT_UPGRADE_LINK_TTL),
             call("bot:upgrade-link:user_2", "1", nx=True, ex=BOT_UPGRADE_LINK_TTL),
         ]
 
     async def test_an_unavailable_window_skips_the_mint_and_says_so(self) -> None:
-        """Fails CLOSED, unlike the workflow limit-notice gate it copies.
-
-        Losing that gate costs a duplicate notification; losing this one costs
-        a trail of orphan sessions that bury a real payment. A degraded link is
-        the cheaper failure, and it must not be a silent one.
-        """
+        """Fails CLOSED, unlike the workflow limit-notice gate it copies — a degraded link costs orphan sessions, cheaper than silently burying a real payment."""
         log.reset()
         cache = MagicMock()
         cache.client.set = AsyncMock(side_effect=ConnectionError("redis down"))
@@ -2059,8 +1976,7 @@ class TestBotUpgradeLinkWindow:
 
 
 class TestForwarderWiring:
-    """The handler starts a stream and hands the forwarder that stream and the
-    bot's own platform; a mismatch here is a bot reading the wrong turn."""
+    """The handler hands the forwarder the started stream and the bot's own platform; a mismatch here is a bot reading the wrong turn."""
 
     async def test_the_forwarder_is_given_the_started_stream_and_the_bots_platform(
         self, client: AsyncClient
@@ -2115,8 +2031,7 @@ class TestForwarderWiring:
 
 
 class TestBotStreamFromRedis:
-    """The forwarding generator on its own: its boundary, its first bytes, and
-    what it records when the client goes away or the subscription breaks."""
+    """The forwarding generator on its own: its boundary, its first bytes, and what it records when the client goes away or the subscription breaks."""
 
     @staticmethod
     def _request(disconnected: bool = False) -> MagicMock:

@@ -42,12 +42,12 @@ def outlook_hide_user_id_schema_modifier(tool: str, toolkit: str, schema: Tool) 
 
 
 def _needs_grant(value: object) -> TypeGuard[str]:
-    """A path string Composio would have to read from our sandbox itself."""
+    """Return True for a path string Composio would have to read from our sandbox itself."""
     return isinstance(value, str) and not value.startswith(("http://", "https://"))
 
 
 def _mint_attachment(value: object, *, user_id: str, tool: str, toolkit: str) -> object:
-    """A fetchable grant URL for a workspace-local path; anything else unchanged."""
+    """Return a fetchable grant URL for a workspace-local path; anything else unchanged."""
     if not _needs_grant(value):
         return value
     try:

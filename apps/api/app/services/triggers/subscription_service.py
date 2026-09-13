@@ -47,7 +47,7 @@ class SubscriptionError(Exception):
 
 
 def build_trigger_config(trigger_name: str, trigger_data: dict[str, Any] | None) -> TriggerConfig:
-    """The TriggerConfig a handler expects, for a todo rather than a workflow.
+    """Build the TriggerConfig a handler expects, for a todo rather than a workflow.
 
     trigger_data carries the registration-time knobs the payload cannot express
     — a calendar's minutes_before_start, a Slack channel id. The discriminated
@@ -235,12 +235,10 @@ async def unregister_subscription(
 async def teardown_subscriptions(todo_id: str, user_id: str, *, reason: str) -> int:
     """Unregister every subscription on todo_id and clear them from the document.
 
-    Called on every path that ends a todo's life — completion, archival, failure and
-    deletion. Deletion matters most: once the document is gone nothing names the
-    Composio trigger any more, so it would leak with no way to find it.
-
-    Composio deletion is reference-counted, and this todo is excluded from its own
-    count so the last reference actually releases the trigger.
+    Called on every path that ends a todo's life — completion, archival, failure
+    and deletion — since once the document is gone nothing names the Composio
+    trigger any more. Composio deletion is reference-counted, and this todo is
+    excluded from its own count so the last reference actually releases the trigger.
     """
     todo = await todo_repository.get(todo_id, user_id=user_id)
     if todo is None or not todo.trigger_subscriptions:
@@ -280,11 +278,10 @@ async def teardown_subscriptions(todo_id: str, user_id: str, *, reason: str) -> 
 async def pause_subscriptions_for_trigger_names(user_id: str, trigger_names: set[str]) -> int:
     """Mark subscriptions on trigger_names paused and flag their todos.
 
-    Called when the integration behind them loses its connection. The subscription
-    keeps its stored Composio ids so the refcount still protects the trigger while
-    it is paused, and the todo gains the blocking label the maintenance sweep
-    already understands — a dead watch the user cannot see is the failure this
-    avoids.
+    Called when the integration behind them loses its connection. The
+    subscription keeps its stored Composio ids so the refcount still protects
+    the trigger while paused, and the todo gains the blocking label the
+    maintenance sweep already understands.
     """
     paused = 0
     for trigger_name in trigger_names:

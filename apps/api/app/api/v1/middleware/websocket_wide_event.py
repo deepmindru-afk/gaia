@@ -57,12 +57,10 @@ class WebSocketWideEventMiddleware:
 
 
 def _task_name(path: str) -> str:
-    """The boundary's unit-of-work name, derived from the connection path.
+    """Return the boundary's unit-of-work name, derived from the connection path.
 
-    One name per route so dashboards keyed on task (as they are for every
-    other boundary) keep their identity. Matched against the exact registered
-    paths so a future device subroute can never be silently mislabelled as
-    something else; an unknown websocket path still gets the generic name.
+    Matched against the exact registered paths so a future device subroute
+    is never silently mislabelled; an unknown path gets the generic name.
     """
     if path.rstrip("/") == "/api/v1/ws/device":
         return "device_ws_connection"
@@ -70,7 +68,7 @@ def _task_name(path: str) -> str:
 
 
 def _header(scope: dict[str, Any], key: bytes) -> str | None:
-    """The value of a header in a raw ASGI scope, if present."""
+    """Return the value of a header in a raw ASGI scope, if present."""
     for name, value in scope.get("headers", ()):
         if name == key:
             return str(value.decode("latin-1"))

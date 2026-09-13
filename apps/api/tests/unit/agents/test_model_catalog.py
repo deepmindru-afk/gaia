@@ -31,7 +31,7 @@ PAYLOAD_VISION = {
 
 
 def _httpx_client(payload: dict | None = None, error: Exception | None = None) -> MagicMock:
-    """A mocked httpx.AsyncClient whose GET returns payload or raises error."""
+    """Build a mocked httpx.AsyncClient whose GET returns payload or raises error."""
     mock_client_cls = MagicMock()
     client_instance = mock_client_cls.return_value.__aenter__.return_value
     if error is not None:

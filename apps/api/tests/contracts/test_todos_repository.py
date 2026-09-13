@@ -134,8 +134,7 @@ class TestTodosRepository(UserScopedRepositoryContract):
         assert all(t.priority is Priority.HIGH for t in page.items)
 
     async def test_list_page_slices_pages_without_overlap(self, repo, make_doc):
-        """page/per_page walk disjoint windows, and every page reports the
-        unpaginated total for the same filter."""
+        """page/per_page walk disjoint windows, and every page reports the unpaginated total for the same filter."""
         now = datetime.now(UTC)
         for i in range(5):
             await repo.create(
@@ -360,14 +359,7 @@ class TestTodosRepository(UserScopedRepositoryContract):
         assert [t.title for t in found] == ["gmail"]
 
     async def test_a_subscription_written_by_update_is_findable(self, repo, make_doc):
-        """Registration writes through update, not create.
-
-        _apply_update dumps with exclude_unset=True, which recurses into
-        the nested subscription: every field left at its default was dropped
-        before reaching Mongo, so the stored record had no status — and the
-        dispatch finders match on status. The write succeeded, the document
-        looked plausible, and the watch simply never fired.
-        """
+        """Regression: _apply_update's exclude_unset=True dropped default-valued nested subscription fields (including status), so dispatch finders never matched."""
         doc = await repo.create(make_doc(user_id="u"))
         subscription = _subscription()
 

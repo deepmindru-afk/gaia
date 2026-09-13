@@ -100,12 +100,10 @@ def _plan_reminder_recovery(
 ) -> tuple[dict[str, object], str, datetime | None] | None:
     """Decide how to stop an overdue reminder from replaying on the next scan.
 
-    Returns (set_fields, outcome, enqueue_at) where outcome is "settled" or
-    "rearmed", or None when the reminder is future-dated or not in the resting
-    scheduled state (type-fix only — leave its run-state alone). A re-armed reminder
-    carries enqueue_at so the caller re-adds its deferred ARQ job; the startup scan
-    only re-enqueues overdue tasks, so a future-armed reminder would otherwise be
-    orphaned once its original (long-expired) job is gone.
+    Returns (set_fields, outcome, enqueue_at); outcome is "settled" or
+    "rearmed", or None for a future-dated/non-scheduled reminder (type-fix
+    only). A re-armed reminder carries enqueue_at so the caller re-adds its
+    deferred ARQ job, since the startup scan only re-enqueues overdue tasks.
     """
     if doc.get("status") != ScheduledTaskStatus.SCHEDULED.value:
         return None
@@ -132,8 +130,7 @@ def _plan_reminder_recovery(
 async def _migrate_reminders(
     scheduler: ReminderScheduler, now: datetime, apply: bool
 ) -> dict[str, int]:
-    """Type-repair reminder datetimes, then settle/re-arm any overdue reminder so the
-    startup recovery scan never replays a long-missed fire."""
+    """Type-repair reminder datetimes, then settle/re-arm any overdue reminder so the startup recovery scan never replays a long-missed fire."""
     counts = {"type_fixed": 0, "rearmed": 0, "settled": 0}
     async for doc in reminders_collection.find({}):
         set_fields: dict[str, object] = dict(_build_type_fixes(doc))

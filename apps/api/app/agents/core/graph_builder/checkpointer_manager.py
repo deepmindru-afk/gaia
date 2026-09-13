@@ -37,13 +37,9 @@ class CheckpointerManager:
 
     async def setup(self) -> "CheckpointerManager":
         """Initialize the connection pool and checkpointer."""
-        # Swarm VXLAN overlay silently drops idle TCP connections (conntrack
-        # timeout ~15 min). Without keepalives + pool recycling the pool hands
-        # out dead sockets and chat_stream fails with "server closed the
-        # connection unexpectedly". Defence in depth:
-        #   1. libpq TCP keepalives keep the NAT entry alive.
-        #   2. max_idle / max_lifetime recycle in the pool.
-        #   3. check=... pings each connection before handing it out.
+        # Swarm VXLAN drops idle TCP after ~15 min (conntrack timeout); without
+        # keepalives + pool recycling the pool hands out dead sockets. Defence
+        # in depth: libpq keepalives, max_idle/max_lifetime recycling, check=....
         connection_kwargs = {
             "autocommit": True,
             "prepare_threshold": 0,
@@ -66,11 +62,9 @@ class CheckpointerManager:
         )
         await self.pool.open(wait=True, timeout=30)
 
-        # AsyncPostgresSaver's signature demands a dict_row pool, but it sets
-        # row_factory=dict_row on every cursor it opens, so the pool's own factory
-        # is irrelevant to it. Keep the pool on the default tuple rows — callers
-        # that borrow it (conversation cleanup, checkpoint retention) index by
-        # position.
+        # AsyncPostgresSaver sets row_factory=dict_row on every cursor itself,
+        # so the pool's own factory is irrelevant — kept on default tuple rows
+        # since other callers (cleanup, retention) index by position.
         self.checkpointer = AsyncPostgresSaver(
             conn=cast(AsyncConnectionPool[AsyncConnection[DictRow]], self.pool)
         )

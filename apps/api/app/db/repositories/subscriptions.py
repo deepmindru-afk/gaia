@@ -57,10 +57,11 @@ class SubscriptionsRepository(MongoRepository[SubscriptionDocument, Subscription
     async def apply_update_by_dodo_id(
         self, dodo_subscription_id: str, update: SubscriptionUpdate
     ) -> bool:
-        """Apply a $set patch to the subscription with this Dodo id, returning
-        whether one matched. Only the fields the caller actually set are written
-        (exclude_unset), so an untouched field is never overwritten with its
-        default. updated_at is auto-stamped by the base."""
+        """Apply a $set patch to the subscription with this Dodo id, returning whether one matched.
+
+        Only the fields the caller actually set are written (exclude_unset), so
+        an untouched field is never overwritten with its default.
+        """
         set_fields = update.model_dump(exclude_unset=True)
         if not set_fields:
             return False

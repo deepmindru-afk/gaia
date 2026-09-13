@@ -52,14 +52,12 @@ def looks_like_html(text: str) -> bool:
 
 
 def normalize_email_body_to_html(body: str) -> str:
-    """Always return HTML for an email body.
+    """Convert an email body to HTML.
 
-    The agent produces Markdown, users/forms sometimes paste Markdown, and the
-    REST layer historically had an is_html flag that was unreliable.
-    Normalising at the send boundary means Gmail always receives HTML and
-    renders consistently — **bold** never leaks into the recipient's
-    inbox as literal asterisks. markdown2 wraps plain-text bodies in <p>
-    tags, so this is safe for both Markdown and plain-text inputs.
+    The agent produces Markdown, users sometimes paste it, and a stale
+    is_html flag was unreliable. Normalising at the send boundary keeps
+    Gmail rendering consistent; markdown2 wraps plain-text bodies in <p>
+    tags, so both inputs are safe.
     """
     if not body:
         return body
@@ -69,16 +67,9 @@ def normalize_email_body_to_html(body: str) -> str:
 
 
 def split_yaml_frontmatter(content: str) -> tuple[str, str] | None:
-    """Split YAML frontmatter from markdown body.
+    """Split YAML frontmatter (---, yaml, ---, body) from a markdown body.
 
-    Expected format:
-    ---
-    <yaml>
-    ---
-    <body>
-
-    Returns:
-        (frontmatter_yaml, body) if frontmatter exists, else None.
+    Returns (frontmatter_yaml, body) if frontmatter exists, else None.
     """
     if not content:
         return None

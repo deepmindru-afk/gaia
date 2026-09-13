@@ -9,10 +9,8 @@ app.services.desktop.releases.
 GAIA_GITHUB_REPO = "theexperiencecompany/gaia"
 DESKTOP_RELEASE_TAG_PREFIX = "desktop-"
 
-# GitHub's max page size. Desktop releases recur often enough that the newest one
-# always lands within the first page even interleaved with the far more frequent
-# web/api/cli/bots/mobile releases — a smaller page silently hid it and forced
-# every download button to fall back to the raw releases list.
+# GitHub's max page size: keeps the newest desktop release within the first
+# page even interleaved with far more frequent web/api/cli/bots/mobile releases.
 DESKTOP_RELEASES_PAGE_SIZE = 100
 
 # Upper bound on the GitHub releases fetch.

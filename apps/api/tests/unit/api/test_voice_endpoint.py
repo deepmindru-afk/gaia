@@ -23,10 +23,9 @@ USER_ID = "507f1f77bcf86cd799439011"
 FAKE_API_KEY = "test_api_key"
 FAKE_API_SECRET = "test_api_secret"  # nosec B105 — fake test credential
 
-# The `client` fixture's user is FREE by default (root conftest patches
-# get_user_subscription_status to FREE) — voice is paid-only, so /token 402s
-# before the handler runs. Classes exercising token behavior (not the paywall
-# itself) opt into PRO through the same seam the gate reads.
+# The `client` fixture's user is FREE by default, so /token 402s before the
+# handler runs; classes exercising token behavior opt into PRO through the
+# same seam the gate reads.
 _GET_SUBSCRIPTION_STATUS = (
     "app.services.payments.payment_service.payment_service.get_user_subscription_status"
 )
@@ -40,10 +39,7 @@ def _subscription_mock(plan_type: PlanType = PlanType.PRO) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _no_real_redis_plan_cache():
-    """get_cached_plan_type caches the tier in Redis under a key derived
-    from the user id, and every test here shares FAKE_USER's id — without this
-    a tier cached by one test leaks into the next (the stray local-Redis
-    singleton flake noted in apps/api/CLAUDE.md)."""
+    """Every test here shares FAKE_USER's id; without this a plan tier cached by one test leaks into the next via the local-Redis singleton."""
     with (
         patch(
             "app.services.payments.payment_service.redis_cache.get",

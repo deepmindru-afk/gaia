@@ -49,8 +49,7 @@ class ProcessedWebhooksRepository(
         await self.update(webhook_id, outcome)
 
     async def release(self, webhook_id: str) -> None:
-        """Give a claim back after the handler failed, so the sender's retry
-        gets a clean run instead of an "already processed" skip."""
+        """Give a claim back after the handler failed, so a retry doesn't hit an "already processed" skip."""
         await self.delete(webhook_id)
 
 

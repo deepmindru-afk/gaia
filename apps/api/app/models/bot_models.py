@@ -1,7 +1,4 @@
-"""Bot Models.
-
-Pydantic models for bot chat, sessions, and related operations.
-"""
+"""Pydantic models for bot chat, sessions, and related operations."""
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 

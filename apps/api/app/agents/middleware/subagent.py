@@ -261,10 +261,9 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
                     }
                 )
 
-        # The thread deliberately outlives the run: a later sibling in this same AI
-        # message can still pause, which replays the tool node from the top, and the
-        # checkpoint is what tells the replay this spawn already finished instead of
-        # redoing its whole task. The nightly sweep reclaims it once it is stale.
+        # The thread deliberately outlives the run: a later sibling in this
+        # same AI message can still pause and replay the tool node from the
+        # top, and the checkpoint tells the replay this spawn already finished.
         return outcome.text
 
     async def _drive(
@@ -276,12 +275,10 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
     ) -> SubagentOutcome:
         """Run the graph, bubbling every HIL pause up to the parent.
 
-        The spawn is invoked imperatively, so its GraphInterrupt never reaches the
-        parent's runtime — each pause is re-raised here with interrupt(). A LOOP,
-        not an if: one task can gate several destructive calls in sequence, and each
-        must suspend the parent again. resume_for_gate raises on the first pass and
-        returns that gate's own decision on the replay (matching the recovered park, not
-        an earlier gate's already-applied decision).
+        The spawn is invoked imperatively, so its GraphInterrupt never reaches
+        the parent's runtime — each pause is re-raised here with interrupt().
+        A LOOP, not an if: one task can gate several destructive calls in
+        sequence, each suspending the parent again.
         """
         recovered = await recover_from_checkpoint(ctx) if probe_parked else None
         outcome = recovered or await execute_subagent_stream(
@@ -325,12 +322,9 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
             middleware_factory=lambda: middleware_factory(tool_space),
         )
 
-        # One thread per spawn call, never reused. ``tool_call_id`` is unique per call
-        # AND stable across node replays (it lives in the checkpointed AI message),
-        # which is what lets a resumed spawn find its own run — parked or finished —
-        # instead of starting a second one. The ``spawn_`` prefix is what
-        # workers/tasks/checkpoint_retention_tasks.py selects on to reclaim these once
-        # stale; the conversation uuid keeps them collectable with the conversation.
+        # One thread per spawn call, never reused: ``tool_call_id`` is unique
+        # and stable across replays. ``spawn_`` prefix lets
+        # checkpoint_retention_tasks.py reclaim these once stale.
         thread_id = f"{SPAWN_THREAD_PREFIX}{conversation_id}_{tool_call_id}"
 
         spawn_config = await build_agent_config(

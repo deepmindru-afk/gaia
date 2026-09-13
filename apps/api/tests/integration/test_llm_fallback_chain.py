@@ -54,8 +54,7 @@ class TestProviderPriorityOrdering:
     """Verify provider ordering follows PROVIDER_PRIORITY and respects preferences."""
 
     def test_default_priority_order(self) -> None:
-        """Without a preferred provider, ordering follows PROVIDER_PRIORITY
-        (openrouter > gemini — the default provider leads)."""
+        """Without a preferred provider, ordering follows PROVIDER_PRIORITY (openrouter > gemini)."""
         mock_gemini = _make_mock_llm("gemini")
         mock_openrouter = _make_mock_llm("openrouter")
 
@@ -187,12 +186,7 @@ class TestProviderInitialization:
                 init_llm()
 
     def test_init_llm_preferred_unavailable_no_fallback_uses_priority(self) -> None:
-        """Preferred provider unavailable with fallback disabled still returns from priority order.
-
-        The _get_ordered_providers logic has if fallback_enabled or not ordered,
-        meaning when no preferred provider matched and ordered is empty, it falls
-        through to priority-based ordering regardless of fallback_enabled.
-        """
+        """_get_ordered_providers falls through to priority order when no preferred provider matched, regardless of fallback_enabled."""
         mock_gemini = _make_mock_llm("gemini")
 
         with patch(
@@ -264,8 +258,7 @@ class TestProviderConstants:
             )
 
     def test_default_priority_matches_the_default_provider(self) -> None:
-        """Priority 1 is the provider serving DEFAULT_MODEL_NAME — the fallback
-        chain must start at the lane the app actually defaults to."""
+        """Priority 1 is the provider serving DEFAULT_MODEL_NAME."""
         assert PROVIDER_PRIORITY[1] == DEFAULT_LLM_PROVIDER == "openrouter"
 
     def test_provider_models_have_expected_keys(self) -> None:

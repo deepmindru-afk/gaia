@@ -51,12 +51,7 @@ def _trace(**overrides: object) -> CaseTrace:
 
 @pytest.mark.parametrize("key", REQUIRED_METADATA)
 def test_metadata_carries_every_key_the_check_requires(key: str) -> None:
-    """The writer and the verifier must not be able to drift apart.
-
-    Parametrising over REQUIRED_METADATA means adding a key to the check
-    without emitting it fails here, rather than silently failing every future
-    ingest.
-    """
+    """Parametrising over REQUIRED_METADATA means adding a key to the check without emitting it fails here, not on every future ingest."""
     assert _trace().metadata.get(key), f"trace metadata is missing {key!r}"
 
 
@@ -87,9 +82,7 @@ def test_a_trace_and_its_span_do_not_share_an_id() -> None:
 
 
 def test_different_cases_runs_and_projects_get_different_ids() -> None:
-    """The mutation check: if the id ignored any part of the identity, a re-seed
-    would collapse distinct executions onto one trace instead of duplicating
-    them — silent data loss, which is worse than the duplicates it replaced."""
+    """If the id ignored any part of the identity, a re-seed would collapse distinct executions onto one trace — silent data loss."""
     base = trace_id_for("gaia-capability", _trace())
     other_case = trace_id_for("gaia-capability", _trace(case_id="cap-todo-delete"))
     other_project = trace_id_for("gaia-quality", _trace())
@@ -123,17 +116,9 @@ def test_a_later_run_of_the_same_case_is_a_distinct_trace() -> None:
 
 
 def test_ids_are_stable_across_processes() -> None:
-    """Derived from a content hash, not from anything process-local.
-
-    Comparing two calls inside one process would pass even if the id were
-    memoised from a random seed drawn at import. Seeding runs in a fresh process
-    every time, so the id has to survive one — this computes it in a subprocess
-    and compares. If it did not hold, every re-seed would duplicate everything.
-    """
-    # The child builds the trace from the same literals rather than importing
-    # this module: importing it would pull pytest, ingest_check and litellm into
-    # a process whose only job is one hash, and the SDK-free ``trace_id_for``
-    # is exactly what seeding relies on.
+    """Derived from a content hash, not from anything process-local — computed in a subprocess since seeding runs in a fresh one."""
+    # Built from the same literals rather than importing this module, which
+    # would pull pytest, ingest_check and litellm into a one-hash process.
     source = (
         "import json;"
         "from scripts.evals.core.opiksink import trace_id_for;"

@@ -221,7 +221,7 @@ def _narration(result: str = "Twelve events, mail sent.") -> PlaybookNarration:
 
 
 def _slot(prompt: str, max_tokens: int | None = None) -> dict[str, Any]:
-    """An ask slot as it is authored: the instruction, standing in the argument.
+    """Build an ask slot as it is authored: the instruction standing in for the argument.
 
     Written as a plain dict rather than through AskSlot because that is what
     a stored playbook holds and what the runner has to recognise.
@@ -233,19 +233,19 @@ def _slot(prompt: str, max_tokens: int | None = None) -> dict[str, Any]:
 
 
 def _ask_fill(asks: dict[str, str] | None = None) -> PlaybookAskFill:
-    """What one ask call answers, keyed by each slot's <step>.<arg> key."""
+    """Return what one ask call answers, keyed by each slot's <step>.<arg> key."""
     return PlaybookAskFill(
         asks=[PlaybookAskAnswer(name=name, text=text) for name, text in (asks or {}).items()]
     )
 
 
 def _ask_prompt(llm: AsyncMock, index: int = 0) -> str:
-    """The prompt an ask call was given; the ask calls come before the end-of-run one."""
+    """Return the prompt an ask call was given; ask calls come before the end-of-run one."""
     return str(llm.await_args_list[index].args[1])
 
 
 def _result_prompt(llm: AsyncMock) -> str:
-    """The prompt the end-of-run call was given: always the LAST model call."""
+    """Return the prompt the end-of-run call was given: always the LAST model call."""
     return str(llm.await_args.args[1])
 
 
@@ -281,16 +281,11 @@ async def _run(
     policy: str = "allow",
     seams: _Seams | None = None,
 ) -> tuple[PlaybookRunResult, AsyncMock]:
-    """Run the playbook with mocked seams; hands back the result and the LLM mock.
+    """Run the playbook with mocked seams; hand back the result and the LLM mock.
 
-    narration is what the end-of-run call returns; ask_fill is what the
-    ask call returns, and giving one makes the model answer the ask call first
-    and the narration second, in that order — so it fits a playbook whose slots
-    all sit on one step. A playbook with slots on several steps makes an ask
-    call per step and scripts them through seams.llm instead. runnable,
-    find_previous and llm let a test hold on to the seam it is asserting
-    about: how a model call is built, what the previous execution's trace was
-    looked up with, and what the model calls do.
+    ask_fill is answered before narration, for a playbook whose slots sit on
+    one step; slots across several steps script a per-step ask through
+    seams.llm instead. seams lets a test hold on to the mock it asserts on.
     """
     seams = seams or _Seams()
     subagent, runnable, find_previous, llm = (

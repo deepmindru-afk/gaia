@@ -118,8 +118,7 @@ async def test_rotation_exhausted_on_one_case_does_not_drop_the_rest(
 async def test_a_case_that_never_ran_is_recorded_as_errored(
     isolated: _FirstCaseBurnsRotation, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With every lane over budget there is nothing to attempt — the case still
-    has to appear, labelled unrun, rather than disappearing from the count."""
+    """With every lane over budget the case still has to appear, labelled unrun, rather than disappearing from the count."""
 
     class _AllOverBudget:
         total_exceeded = False

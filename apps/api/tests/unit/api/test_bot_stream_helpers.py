@@ -54,8 +54,7 @@ class TestBotStreamControlFrame:
         assert stop is False
 
     def test_id_prefix_with_no_newline_at_all_yields_nothing(self):
-        """An id-tagged chunk with no trailing data line at all — the
-        partition leaves nothing that starts with data: ."""
+        """An id-tagged chunk with no trailing data line leaves nothing that starts with data: ."""
         frame, data, stop = _bot_stream_control_frame("id: 42", "conv-1")
         assert frame is None
         assert data is None
@@ -186,11 +185,7 @@ class TestBotStreamPayloadFrame:
         ],
     )
     async def test_each_web_only_field_takes_priority_over_a_response_field(self, key: str):
-        """A payload carrying BOTH a web-only field and response is dropped —
-        the web-only check runs first, same as the real message stream shape.
-        Parametrized per key so a mutation to any single list entry (rather than
-        the whole check) still shows up as a different result than the no-op
-        catchall branch."""
+        """A payload carrying both a web-only field and response is dropped since the web-only check runs first; parametrized per key so a mutation to any single entry still shows a different result."""
         frame, stop = await _bot_stream_payload_frame({"response": "hello", key: "x"}, "user-1")
         assert frame is None
         assert stop is False
@@ -362,8 +357,7 @@ class TestRefusalStream:
         assert chunks == [sse_frame({"error": BOT_STREAM_ERROR_PLAN_REQUIRED})]
 
     async def test_is_served_as_event_stream_so_the_bot_can_read_the_body(self):
-        """Not decoration: a bot reads this endpoint with a streaming parser and
-        will not read a refusal served under any other (or no) media type."""
+        """Not decoration: a bot's streaming parser will not read a refusal served under any other (or no) media type."""
         response = _refusal_stream(BOT_STREAM_ERROR_PLAN_REQUIRED)
         assert response.media_type == "text/event-stream"
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
@@ -426,8 +420,7 @@ class TestBotStreamEntitlementGate:
         mock_capture.assert_called_once_with("user-1", "discord", "subscription_required")
 
     async def test_a_user_who_just_paid_passes_off_the_row_not_the_stale_cache(self):
-        """A bot turn sent minutes after paying reads FREE from the cache;
-        the gate must ask the database before showing the paywall notice."""
+        """A bot turn sent minutes after paying reads FREE from the cache; the gate must ask the database before showing the paywall notice."""
         with (
             patch(
                 "app.api.v1.endpoints.bot.platform_requires_upgrade",

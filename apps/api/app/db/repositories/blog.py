@@ -124,16 +124,9 @@ class BlogsRepository(MongoRepository[BlogDocument, BlogUpdate]):
     ) -> list[BlogPost]:
         """Case-insensitive substring match over title, category and body.
 
-        Deliberately regex-only. MongoDB cannot plan a $text clause nested in
-        an $or beside other predicates unless every sibling branch is indexed,
-        and on 7.x it additionally refuses to attach textScore metadata to such
-        a query at all — so the previous $text-in-$or shape sorted by
-        {$meta: textScore} failed outright rather than degrading. Substring
-        matching covers what the text index was reached for (title and body) plus
-        the partial matches $text's whole-word stemming never caught.
-
-        Ordered newest-first like :meth:list_page, which also makes the
-        skip/limit window deterministic.
+        Deliberately regex-only: MongoDB can't plan $text nested in an $or with other
+        predicates unless every branch is indexed, and refuses textScore metadata for such
+        a query on 7.x. Ordered newest-first, like list_page.
         """
         condition = {"$regex": re.escape(query), "$options": "i"}
         pipeline: list[Mapping[str, object]] = [

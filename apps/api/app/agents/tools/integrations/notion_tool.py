@@ -105,11 +105,9 @@ def _fetch_page_title(
             status_code=502,
         )
 
-    # ToolExecutionResponse.data is typed as a plain Dict, but real
-    # Notion API responses aren't guaranteed to match — widen via
-    # annotation so the isinstance narrowing below is meaningful.
-    # (A runtime cast("object", …) here is a no-op the interpreter
-    # discards; an annotation widens without executable code.)
+    # ToolExecutionResponse.data is typed as a plain Dict, but real Notion API
+    # responses aren't guaranteed to match — widen via annotation so the
+    # isinstance narrowing below is meaningful.
     title_data: object = title_response["data"]
     # No .get default: a missing key yields None, and isinstance(None, list)
     # below already routes it to the no-title path — same as any non-list value.

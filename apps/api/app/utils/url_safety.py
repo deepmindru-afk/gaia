@@ -1,24 +1,18 @@
 """SSRF guards for HTTP(S) URLs.
 
-Server-side fetch/connect paths must not let a user-supplied URL reach loopback,
-private, link-local (incl. cloud metadata 169.254.169.254), or otherwise reserved
-addresses.
+Server-side fetch/connect paths must not let a user-supplied URL reach
+loopback, private, link-local (incl. 169.254.169.254), or otherwise
+reserved addresses.
 
-- assert_public_http_url is the full guard: it resolves DNS off the event
-  loop and rejects any non-public address. Call it immediately before every
-  outbound request (probe/connect/fetch) so DNS-rebinding can't slip an internal
-  address past an earlier check. assert_public_http_url_sync is the same
-  policy for call sites that already run off the loop and cannot await
-  (Composio's synchronous hook chain).
-- assert_safe_url_shape is a cheap synchronous pre-check for contexts that
-  cannot await (pydantic validators). It rejects bad schemes, missing hosts, and
-  literal private-IP hosts without a DNS lookup — the resolving check runs later
-  on the async path.
-- open_public_http_url applies the guard across a redirect chain, which is
-  what every outbound fetch in the app actually needs.
+assert_public_http_url resolves DNS off the loop and rejects any non-public
+address; call it immediately before every outbound request so DNS-rebinding
+can't slip an address past an earlier check (assert_public_http_url_sync is
+the same for callers that can't await). assert_safe_url_shape is a cheap
+sync pre-check (bad schemes, missing hosts, literal private IPs) for
+contexts that can't await at all. open_public_http_url applies the guard
+across a redirect chain.
 
-This is the single source of truth for the SSRF allow/deny policy; the async
-web-fetch guard delegates here rather than re-implementing the IP checks.
+Single source of truth for SSRF policy; the async web-fetch guard delegates here.
 """
 
 import asyncio
@@ -39,10 +33,9 @@ ResponseOpener = Callable[[str], AbstractAsyncContextManager[httpx.Response]]
 
 
 def _parse_http_host_port(url: str) -> tuple[str, int]:
-    # Parse with httpx.URL — the same parser the outbound httpx connection uses —
-    # so the host we validate can't diverge from the host that's actually dialed
-    # (parser-differential SSRF bypass). It also rejects malformed URLs that
-    # urllib.parse silently accepts.
+    # Parsed with httpx.URL — the same parser the outbound connection uses —
+    # so the validated host can't diverge from the dialed host (a
+    # parser-differential SSRF bypass).
     try:
         parsed = httpx.URL(url)
     except httpx.InvalidURL as e:
@@ -57,11 +50,9 @@ def _parse_http_host_port(url: str) -> tuple[str, int]:
 
 
 def _assert_ip_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
-    # ``is_global`` is the stdlib's single source of truth for "publicly
-    # routable". It rejects private, loopback, link-local (incl. the cloud
-    # metadata address 169.254.169.254), reserved, multicast and unspecified
-    # ranges — plus ones an explicit list is easy to forget: CGNAT
-    # (100.64.0.0/10) and benchmarking (198.18.0.0/15).
+    # ``is_global`` rejects private, loopback, link-local (incl.
+    # 169.254.169.254), reserved, multicast, unspecified, CGNAT
+    # (100.64.0.0/10) and benchmarking (198.18.0.0/15) ranges.
     if not ip.is_global:
         raise ValueError(f"refusing to connect to non-public address {ip}")
 
@@ -120,12 +111,8 @@ async def open_public_http_url(
     """Yield the terminal response for url, re-checking the guard on every hop.
 
     httpx's own follow_redirects would dial a redirected-to internal address
-    without re-validation, so the chain is walked by hand — here, once, rather than
-    in each fetch path. The terminal response is yielded inside open_response's
-    context so a streamed body is still open to the caller.
-
-    Raises ValueError on a blocked hop, a broken redirect, or an over-long
-    chain; callers translate it to their own error type.
+    without re-validation, so the chain is walked by hand, once, here. Raises
+    ValueError on a blocked hop, a broken redirect, or an over-long chain.
     """
     for _ in range(max_redirects + 1):
         await assert_public_http_url(url)

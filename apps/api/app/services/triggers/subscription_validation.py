@@ -91,7 +91,7 @@ def _normalize(name: str) -> str:
 
 
 def _resolve_field(entry: MatchableTrigger, name: str) -> tuple[MatchableField | None, str | None]:
-    """The catalog field name refers to, plus a reason when it had to be repaired."""
+    """Return the catalog field name refers to, plus a reason when it had to be repaired."""
     exact = entry.field(name)
     if exact is not None:
         return exact, None

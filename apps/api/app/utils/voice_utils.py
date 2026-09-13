@@ -19,12 +19,10 @@ from app.schemas.voice_schemas import VoiceOption
 def _verified_language_codes(voice: dict[str, Any]) -> list[str]:
     """Ordered, deduped ISO codes from a voice's verified_languages.
 
-    Reads the RAW provider voice object, before it is trimmed into one of the
-    ElevenLabsVoice models — this is the untyped boundary, so a plain dict
-    is the honest parameter type here.
-
-    ElevenLabs repeats a language once per supporting model — collapse to one
-    entry per language, preserving first-seen order.
+    Reads the RAW provider voice object, before it is trimmed into an
+    ElevenLabsVoice model — the untyped boundary. ElevenLabs repeats a
+    language once per supporting model, so this collapses to one entry per
+    language, preserving first-seen order.
     """
     seen: list[str] = []
     for entry in voice.get("verified_languages") or []:

@@ -36,13 +36,10 @@ def _mount_root() -> Path:
 def _is_mounted() -> bool:
     """Whether the JuiceFS sidecar is actually mounted at the configured root.
 
-    Checks for a real mountpoint, not merely an existing directory. The
-    Dockerfile pre-creates an empty /mnt/jfs; if the mount never converges
-    (e.g. the metadata engine is unreachable), an is_dir() check would
-    wrongly pass and every storage helper would silently write to the
-    container's local disk — invisible to the sandbox, which mounts the real
-    JuiceFS namespace. is_mount() is stat-based (no subprocess), so it stays
-    cheap enough for the hot path, and returns False for a missing path.
+    Checks for a real mountpoint, not merely an existing directory — the
+    Dockerfile pre-creates an empty /mnt/jfs, so an is_dir() check would
+    wrongly pass if the mount never converges, and every storage helper
+    would silently write to the container's local disk instead.
     """
     try:
         return _mount_root().is_mount()
@@ -79,12 +76,10 @@ def user_workspace_path(user_id: str) -> Path:
 def _host_base_and_rel(user_id: str, workspace_rel_path: str) -> tuple[Path, str]:
     """Map a /workspace-relative path to its host (base_root, rel_under_base).
 
-    /workspace/skills is a SEPARATE JuiceFS subtree — the read-only overlay of
-    /skills/<uid> (see mount_juicefs.sh) — while everything else lives under
-    /users/<uid>. Built-in skill bodies are served from process memory
-    (system_files), so the only host reads under skills/ are user-installed
-    skills, which live in the /skills/<uid> subtree. Routing them here keeps the
-    host read consistent with what the sandbox sees at /workspace/skills.
+    /workspace/skills is a SEPARATE JuiceFS subtree (the read-only overlay of
+    /skills/<uid>) from everything else, which lives under /users/<uid>. Only
+    user-installed skills need a host read here — built-ins are served from
+    process memory.
     """
     mount = _require_mount()
     if workspace_rel_path == "skills" or workspace_rel_path.startswith("skills/"):
@@ -115,11 +110,9 @@ WORKSPACE_PREFIX = "/workspace/"
 def to_workspace_relative_path(path: str) -> str:
     """Strip a leading /workspace/ (or /) so the path is workspace-relative.
 
-    Canonical helper for every caller that accepts a sandbox-visible path (agents
-    hand us /workspace/sessions/...) but resolves against the workspace root
-    (resolve_user_file_sync and friends take paths relative to /workspace).
-    A bare leading / must go too: base / "/abs" discards the base in
-    pathlib, so it would escape containment in _contained.
+    Canonical helper for callers holding a sandbox-visible path that must
+    resolve against the workspace root. A bare leading / must go too: base /
+    "/abs" discards the base in pathlib, escaping containment in _contained.
     """
     stripped = path.strip()  # pragma: no mutate -- defensive whitespace trim
     if stripped.startswith(WORKSPACE_PREFIX):
@@ -249,18 +242,10 @@ async def read_user_file(
 ) -> tuple[list[str], int]:
     """Read a workspace file straight from the host JuiceFS mount — no sandbox.
 
-    /workspace inside the sandbox is a bind-mount of /mnt/jfs/users/<id>,
-    so the same bytes are readable host-side without paying an E2B spin-up.
-    workspace_rel_path is relative to /workspace (e.g.
-    sessions/<conv>/scratch/out.txt); it is resolved under the user's OWN
-    root via _contained and cannot escape it — this defeats .. traversal
-    and symlink escape (.resolve() + relative_to), so a model-supplied
-    path can only ever reach this user's files.
-
-    Returns (lines, total_line_count) where lines is the 1-indexed slice
-    [start, start + limit) with trailing newlines stripped. Raises
-    FileNotFoundError if the target is missing or not a regular file, and
-    JuiceFSUnavailable if the host mount is absent (e.g. native dev).
+    /workspace in the sandbox is a bind-mount of /mnt/jfs/users/<id>, so the
+    same bytes are readable host-side without an E2B spin-up. Resolves under
+    the user's own root via _contained, defeating .. traversal and symlink
+    escape. Returns the 1-indexed [start, start+limit) slice and total count.
     """
     start, end = page_bounds(offset, limit)
 
@@ -314,11 +299,11 @@ async def read_user_file_bytes(
     *,
     max_bytes: int,
 ) -> bytes:
-    """Read a workspace file's raw bytes from the host mount (binary content
-    such as images — read_user_file is line-oriented and decodes UTF-8).
+    """Read a workspace file's raw bytes — for binary content such as images.
 
-    Same containment rules as read_user_file. Raises ValueError when
-    the file exceeds max_bytes and FileNotFoundError when it is missing.
+    read_user_file is line-oriented and decodes UTF-8; this is not. Same
+    containment rules as read_user_file. Raises ValueError when the file
+    exceeds max_bytes and FileNotFoundError when it is missing.
     """
 
     def _read() -> bytes:
@@ -339,15 +324,12 @@ async def read_user_file_bytes(
 
 
 async def user_owns_regular_file(user_id: str, workspace_rel_path: str) -> bool:
-    """True if the user has a real (non-symlink) regular file at this path.
+    """Return True if the user has a real (non-symlink) regular file at this path.
 
-    The read tool serves system-owned files (INDEX.md, the GUIDE.md docs,
-    builtin skill bodies) from process memory. This lets it skip that fast-path
-    when the user has created their OWN file at the same workspace path, so a
-    user file is never shadowed by the in-memory system copy. A symlink (the
-    de-duplicated system projection) does not count as an override. Never raises;
-    returns False when the mount is absent (native dev) so the memory
-    fast-path still applies there.
+    Lets the read tool skip its system-file memory fast-path (INDEX.md,
+    GUIDE.md, builtin skills) when the user has their OWN file at the same
+    path; a symlink (the de-duplicated system projection) doesn't count.
+    Never raises — returns False when the mount is absent.
     """
     if not _is_mounted():
         return False

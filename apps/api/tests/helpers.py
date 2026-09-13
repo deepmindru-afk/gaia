@@ -22,7 +22,7 @@ from shared.py.wide_events import log, log_context
 
 
 def effective_limit(config: RateLimitConfig, period: str) -> float:
-    """Comparable allowance for a period under RateLimitConfig's 0-semantics.
+    """Compute a comparable allowance for a period under RateLimitConfig's 0-semantics.
 
     0 is overloaded: a tier with BOTH periods 0 has no access at all
     (returns 0.0); otherwise a period of 0 means that period is uncapped
@@ -46,26 +46,15 @@ def pick_free_port() -> int:
         return s.getsockname()[1]
 
 
-# Test suites that use this helper ``flushdb()`` their Redis client on teardown,
-# so the resolved DB must NEVER be the application's live database. A URL with no
-# DB path (the repo default ``redis://localhost:6379``) and one that pins ``/0``
-# both resolve to DB 0 — the app's live DB — so an unguarded offset (``0 + gw0``)
-# would wipe it. Runs therefore land in a dedicated high-DB block whenever the URL
-# pins no DB or DB 0, and the resolved DB is never 0 for any worker. An explicitly
-# configured non-zero DB is a deliberate caller choice and is preserved (offset
-# per worker).
-#
-# GAIA_REDIS_DB_BASE moves that block so several CI lanes can share ONE Redis
-# (scripts/ci/test-services.sh runs it with --databases 448 and hands lane
-# r the base ``8 + r*32``). Unset = 8, the historical single-lane block.
+# Resolved DB is never 0 (the app's live DB, flushed by this helper's teardown).
+# GAIA_REDIS_DB_BASE (default 8) moves the high-DB block; CI lanes get 8 + r*32
+# (scripts/ci/test-services.sh runs Redis with --databases 448).
 try:
     _TEST_REDIS_DB_BLOCK_START = int(os.environ.get("GAIA_REDIS_DB_BASE", "8"))
 except ValueError:
     _TEST_REDIS_DB_BLOCK_START = 8
-# Each lane owns a 32-DB stripe. Within it the throwaway block starts at the
-# base's offset into the stripe, so a lane gets the same 24 flushable DBs the
-# single-lane layout always had (8-31 for base 8, 40-63 for base 40, ...) and
-# DB 0 of the server stays untouched.
+# Each lane owns a 32-DB stripe, giving 24 flushable DBs (8-31 for base 8,
+# 40-63 for base 40, ...) with DB 0 of the server untouched.
 _TEST_REDIS_STRIPE = 32
 _TEST_REDIS_STRIPE_BASE = _TEST_REDIS_DB_BLOCK_START - (
     _TEST_REDIS_DB_BLOCK_START % _TEST_REDIS_STRIPE
@@ -76,15 +65,10 @@ _TEST_REDIS_DB_BLOCK_SIZE = _TEST_REDIS_STRIPE - (_TEST_REDIS_DB_BLOCK_START % _
 def worker_redis_url(base_url: str) -> str:
     """Return a Redis URL with a per-xdist-worker DB number that is safe to flush.
 
-    Each xdist worker gets its own logical DB so flushdb() teardown cannot wipe
-    another worker's in-flight keys, and the resolved DB is never 0 — so teardown
-    can never touch the application's live database. When the URL pins no DB (or
-    pins DB 0), the run is relocated into a dedicated high-DB block of 24 DBs
-    starting at GAIA_REDIS_DB_BASE (default 8, i.e. the historical 8–31).
-
-    Setting GAIA_REDIS_DB_BASE to 8 + lane*32 gives each concurrent CI
-    lane a disjoint 32-DB stripe on one shared Redis, so lanes cannot flush each
-    other's keys either — see scripts/ci/test-services.sh.
+    The resolved DB is never 0 (the app's live DB); an unpinned or DB-0 URL is
+    relocated into a high-DB block of 24 DBs starting at GAIA_REDIS_DB_BASE
+    (default 8). Setting that to 8 + lane*32 gives each CI lane its own
+    32-DB stripe on one shared Redis (see scripts/ci/test-services.sh).
     """
     worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
     try:
@@ -93,12 +77,8 @@ def worker_redis_url(base_url: str) -> str:
         worker_num = 0
     match = re.search(r"/(\d+)$", base_url)
     configured_db = int(match.group(1)) if match else 0
-    # The per-lane block is 24 DBs wide (test-services.sh runs Redis with
-    # --databases 32 per job and 448 for the shared set): room for 24 workers with
-    # NO wrapping. The original 8-15 block wrapped at eight workers, which on a
-    # 16-worker run put gw0 and gw8 on the same DB — and teardown is flushdb(),
-    # so each wiped the other's in-flight keys. Wrapping only happens past 24
-    # workers, and is then a deliberate, documented degradation, not a silent one.
+    # The per-lane block is 24 DBs wide, room for 24 workers with no wrapping;
+    # wrapping only happens past 24 workers, a deliberate documented degradation.
     if configured_db:
         # Deliberate non-zero DB: offset per worker within this lane's stripe,
         # but never land on the stripe's DB 0.
@@ -114,15 +94,10 @@ def worker_redis_url(base_url: str) -> str:
 def worker_mongo_db_name(base_name: str | None = None) -> str:
     """Return a per-xdist-worker MongoDB database name.
 
-    The same reason worker_redis_url exists: the service fixtures wipe collections
-    with delete_many({}) on setup and teardown, so on a shared database one worker
-    clears another worker's in-flight documents and its conversation vanishes mid-test.
-    Giving each worker its own database makes that impossible rather than unlikely.
-
-    The base defaults to GAIA_MONGO_DB_BASE (itself defaulting to gaia_test)
-    so several CI lanes can share ONE mongod: lane r is handed
-    GAIA_MONGO_DB_BASE=gaia_test_r<r> and its workers land on
-    gaia_test_r<r>_gw<n>, a namespace teardown in another lane cannot reach.
+    Same reason as worker_redis_url: fixtures wipe collections with
+    delete_many({}) on setup/teardown, so a shared database lets one worker
+    clear another's in-flight documents. Base defaults to GAIA_MONGO_DB_BASE
+    (default gaia_test) so CI lanes can share one mongod without colliding.
     """
     base = base_name if base_name is not None else os.environ.get("GAIA_MONGO_DB_BASE", "gaia_test")
     worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
@@ -143,10 +118,8 @@ class BindableToolsFakeModel(FakeMessagesListChatModel):
     graph-building tests on the same contract.
     """
 
-    # The bind_tools() override below stays on purpose: langchain-core's
-    # inherited implementation returns a NEW RunnableBinding instead of self,
-    # and dozens of tests (plus create_agent's re-binding flow) rely on the
-    # fake remaining the same object with its scripted responses intact.
+    # bind_tools() override stays on purpose: the inherited implementation
+    # returns a NEW RunnableBinding, but callers rely on the fake staying the same object.
     profile: dict[str, int] = Field(default={"max_input_tokens": 100_000})
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> "BindableToolsFakeModel":
@@ -172,21 +145,13 @@ def create_fake_llm_with_tool_calls(
 class PassthroughFakeLLM:
     """Base for hand-rolled fake LLMs that create_agent drives directly.
 
-    create_agent reshapes the model before every call — with_config,
-    bind_tools, bind (the OpenRouter sticky-routing key), and
-    with_retry via with_llm_retry — and each returns a new runnable in
-    production. A fake only needs them to hand itself back, so they live here
-    once: subclasses write ainvoke and nothing else.
-
-    Duck-typed rather than a BaseChatModel subclass on purpose — these
-    fakes answer from the messages they are shown, which is what makes them
-    replay-safe, and FakeMessagesListChatModel answers from a fixed list
-    instead. The shared base is what stops the next reshaping call production
-    adds from breaking every one of them separately.
-
-    Carries the two model attributes production middleware reads without
-    invoking: _llm_type (token-counter selection) and profile
-    (fractional-token triggers) — same invariant every real chat LLM meets.
+    create_agent reshapes the model before every call (with_config,
+    bind_tools, bind, with_retry); each returns a new runnable in production,
+    so these hand themselves back once here — subclasses write only ainvoke.
+    Duck-typed rather than a BaseChatModel subclass so these answer from the
+    messages they are shown, unlike FakeMessagesListChatModel's fixed list.
+    Carries _llm_type and profile, the two attributes production middleware
+    reads without invoking.
     """
 
     _llm_type = "passthrough-fake"
@@ -249,14 +214,11 @@ class NoAuthMiddleware(BaseHTTPMiddleware):
 
 
 class HeaderDrivenAuthMiddleware(BaseHTTPMiddleware):
-    """Test-only stand-in for WorkOSAuthMiddleware that trusts an
-    X-Test-User-Id header instead of a real WorkOS session.
+    """Test-only stand-in for WorkOSAuthMiddleware that trusts an X-Test-User-Id header.
 
     Unlike MockAuthMiddleware (one fixed user baked in at app-construction
     time), this lets a single live server be hit as several different
-    signed-in users — simulating separate browsers/accounts — by varying a
-    request header, which a plain httpx client pointed at a real bound port
-    can do per-call.
+    signed-in users by varying a request header per call.
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -271,7 +233,7 @@ class HeaderDrivenAuthMiddleware(BaseHTTPMiddleware):
 
 
 def real_services_available() -> bool:
-    """True when the run is allowed to dial real service containers.
+    """Return True when the run is allowed to dial real service containers.
 
     CI (the Dagger service container) sets USE_REAL_SERVICES=1 explicitly; a
     bare local run must stay offline.
@@ -297,15 +259,11 @@ def skip_items_without_real_services(
 
 
 class AssertNumDbCalls:
-    """Assert exactly N SQL statements executed inside the block (Django's
-    assertNumQueries pattern).
+    """Assert exactly N SQL statements executed inside the block (Django's assertNumQueries pattern).
 
-    Listens for SQLAlchemy before_cursor_execute on the given engine
-    (sync or async — the event fires on both) and asserts the count,
-    dumping every captured statement on mismatch so the accidental query is
-    visible, not just counted. warmup excludes the first statements that
-    only establish the pool, so a warm-up connection is never mistaken for
-    a query.
+    Listens for SQLAlchemy before_cursor_execute on the given engine (sync or
+    async) and dumps every captured statement on mismatch. warmup excludes
+    the first statements that only establish the pool.
     """
 
     def __init__(self, expected: int, engine: Any, *, warmup: int = 0) -> None:
@@ -344,9 +302,11 @@ class AssertNumDbCalls:
 
 
 def assert_num_db_calls(expected: int, engine: Any, *, warmup: int = 0) -> AssertNumDbCalls:
-    """Context manager: fail if the block runs anything but expected SQL
-    statements against engine. Attach to a real engine at the repository
-    layer — N+1 and accidental-query regressions die here."""
+    """Context manager: fail if the block runs anything but expected SQL statements against engine.
+
+    Attach to a real engine at the repository layer — N+1 and
+    accidental-query regressions die here.
+    """
     return AssertNumDbCalls(expected, engine, warmup=warmup)
 
 
@@ -383,8 +343,10 @@ class WideEventRecorder:
         return lambda *a, **k: None
 
     def event(self, task: str) -> dict[str, Any]:
-        """The single event emitted by the wide_task/log_context named
-        task. Raises if that boundary emitted nothing or emitted twice."""
+        """Return the single event emitted by the wide_task/log_context named task.
+
+        Raises if that boundary emitted nothing or emitted twice.
+        """
         matches = [event for event in self.events if event.get("task") == task]
         if len(matches) != 1:
             raise AssertionError(
@@ -398,28 +360,17 @@ class WideEventRecorder:
 async def captured_wide_event(operation: str = "test") -> AsyncIterator[dict[str, Any]]:
     """Run a block inside a real wide-event boundary, exposing its live fields.
 
-    log.warning/log.error append to the event's warnings/errors
-    ONLY inside a boundary — outside one every write is discarded — so this is
-    what a test needs to prove a swallowed failure is actually observable
-    rather than silent. That claim is the entire justification for swallowing,
-    and without a boundary it cannot be asserted at all.
-
-        async with captured_wide_event() as event:
-            await build_core_memory_block(ctx)
-        (warning,) = event["warnings"]
-        assert warning["error_type"] == "RuntimeError"
+    log.warning/log.error append to the event's warnings/errors only inside
+    a boundary — outside one every write is discarded — so this is what a
+    test needs to prove a swallowed failure is actually observable.
     """
     async with log_context(operation):
         yield log.get()
 
 
-# Postgres runs CREATE TABLE IF NOT EXISTS as create-then-check, so two xdist
-# workers calling langgraph's checkpointer/store setup() at the same instant
-# race on pg_type ("duplicate key value violates unique constraint
-# pg_type_typname_nsp_index ... checkpoint_migrations", run 33182536377).
-# A session-level advisory lock on its own autocommit connection serializes
-# the DDL across workers; the id is arbitrary and distinct from the memory
-# suite's schema lock (743_001_993).
+# Two xdist workers racing langgraph's checkpointer setup() hit a pg_type
+# unique-constraint race (run 33182536377); this advisory lock id is
+# arbitrary and distinct from the memory suite's schema lock (743_001_993).
 LANGGRAPH_SETUP_LOCK_ID = 743_001_994
 
 

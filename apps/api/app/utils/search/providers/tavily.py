@@ -22,7 +22,7 @@ class TavilyProvider(SearchProvider):
         self._client: TavilyClient | None = None
 
     def is_configured(self) -> bool:
-        """True when a Tavily API key is configured."""
+        """Return True when a Tavily API key is configured."""
         return bool(settings.TAVILY_API_KEY)
 
     def _get_client(self) -> TavilyClient:

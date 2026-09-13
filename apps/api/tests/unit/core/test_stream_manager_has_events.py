@@ -62,13 +62,7 @@ class TestHasEvents:
 
     @pytest.mark.regression
     async def test_true_after_completion_while_the_log_survives(self, fake_redis) -> None:
-        """A completed stream still has frames to replay.
-
-        The short-circuit reads this to decide between replaying the log and
-        answering a bare [DONE]. A resumed HIL turn publishes its second
-        approval card and completes before the client re-attaches, so False here
-        means the user never sees the card.
-        """
+        """A resumed HIL turn publishes its second approval card and completes before the client re-attaches; False here hides the card."""
         await StreamManager.start_stream(SID, CONV, USER)
         await StreamManager.publish_chunk(SID, APPROVAL_FRAME)
         await StreamManager.complete_stream(SID)
@@ -94,8 +88,7 @@ class TestHasEvents:
         assert await StreamManager.has_events(f"{SID}-other") is False
 
     async def test_false_when_redis_is_unavailable(self, monkeypatch) -> None:
-        """Startup order and a dropped connection both leave the singleton unset;
-        the probe must answer False rather than raise into the SSE handler."""
+        """Startup order or a dropped connection can leave the singleton unset; the probe must answer False, not raise into the SSE handler."""
         monkeypatch.setattr(redis_cache, "redis", None)
 
         assert await StreamManager.has_events(SID) is False

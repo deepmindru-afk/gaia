@@ -51,16 +51,10 @@ MCP_ANNOTATIONS_METADATA_KEY = "mcp_annotations"
 async def _tool_result_to_content(result: CallToolResult) -> str | list[dict[str, Any]]:
     """Map MCP content items to LangChain message content.
 
-    Text-only results collapse to a plain string (the common case). Image items
-    become inline media blocks so multimodal models see the actual pixels;
-    per-lane delivery is decided later, at the request boundary (see
-    app/agents/llm/vision/).
-
-    MCP servers are third-party code we do not control, so images are held to
-    the same budget as any other producer: ImageCodec bounds and validates
-    each one, and MAX_MEDIA_BLOCKS_PER_TOOL_RESULT bounds how many a single
-    result may contribute. A rejected image degrades to a note rather than
-    failing the tool call — the text half of the result is usually the point.
+    Text-only results collapse to a plain string; image items become inline
+    media blocks. Each image is bounded/validated by ImageCodec, capped at
+    MAX_MEDIA_BLOCKS_PER_TOOL_RESULT; a rejected image degrades to a note
+    rather than failing the tool call.
     """
     images = [item for item in result.content if isinstance(item, ImageContent)]
     kept = images[:MAX_MEDIA_BLOCKS_PER_TOOL_RESULT]
@@ -124,21 +118,10 @@ class SanitizingLangChainAdapter(LangChainAdapter):
     def fix_schema(self, schema: Any) -> Any:  # noqa: ANN401 -- framework contract
         """Fix JSON schema for Pydantic compatibility.
 
-        Signature kept as Any on purpose: this overrides mcp_use's
-        LangChainAdapter.fix_schema, which the base adapter calls with
-        arbitrary JSON-schema nodes (dict, list, or scalar) and whose own
-        annotation is Any. Narrowing it here would break that contract
-        (Type Safety item 14).
-
-        Extends the base fix_schema to also:
-        - Strip leading underscores from property names
-        - Update 'required' array to match renamed properties
-
-        Args:
-            schema: The JSON schema to fix.
-
-        Returns:
-            The fixed JSON schema.
+        Strips leading underscores from property names (updating required
+        to match) in addition to the base class's type/enum fixes. Signature
+        kept as Any because it overrides mcp_use's LangChainAdapter.fix_schema,
+        which is also typed Any there.
         """
         if isinstance(schema, dict):
             # First, apply the base class fixes (type arrays, enums)
@@ -184,11 +167,10 @@ class SanitizingLangChainAdapter(LangChainAdapter):
     def _convert_tool(self, mcp_tool: MCPTool, connector: BaseConnector) -> BaseTool | None:
         """Convert an MCP tool to LangChain format.
 
-        Mirrors mcp_use's implementation except for two things upstream gets
-        wrong for us: result parsing (upstream returns str(tool_result.content),
-        which leaks pydantic reprs and destroys media blocks, see
-        _tool_result_to_content), and the MCP annotations, which upstream
-        drops but the HIL gate reads for destructiveHint.
+        Mirrors mcp_use's implementation except for two fixes: result parsing
+        (see _tool_result_to_content) avoids leaking pydantic reprs and
+        destroying media blocks, and MCP annotations survive so the HIL gate
+        can read destructiveHint.
         """
         if mcp_tool.name in self.disallowed_tools:
             return None

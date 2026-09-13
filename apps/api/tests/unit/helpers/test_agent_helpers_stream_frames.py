@@ -44,7 +44,7 @@ HELPERS = "app.helpers.agent_helpers"
 
 
 def _sse(payload: dict[str, Any]) -> str:
-    """The exact bytes format_sse_data produces for this payload."""
+    """Build the exact bytes format_sse_data produces for this payload."""
     return f"data: {json.dumps(payload)}\n\n"
 
 
@@ -1015,14 +1015,7 @@ async def test_a_cancelled_run_emits_the_cancelled_nostream_frame() -> None:
     record.assert_awaited_once_with(graph, config)
 
 
-# ── _emit_mcp_app_event ──────────────────────────────────────────────
-#
-# The deferred MCP-App frame is assembled from two sources that can disagree:
-# what the MCP server served back with the UI resource, and what the tool call
-# declared in its ``mcp_ui`` metadata. Served values win, declared values are the
-# fallback, and ``permissions`` bottoms out at ``[]`` rather than null — an
-# iframe sandbox attribute built from null is not the same page as one built
-# from an empty list. Each of those three layers gets its own test.
+# Served MCP values win over declared mcp_ui metadata; permissions defaults to [] not null.
 
 
 def _emit_meta(**overrides: Any) -> dict[str, Any]:

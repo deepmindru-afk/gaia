@@ -71,11 +71,8 @@ def generate_integration_slug(
     No longer appends a hash suffix — the slug is human-readable and
     stored/indexed in MongoDB for direct lookup.
     """
-    # Named constant, not an inline literal: the strip charset is part of the
-    # slug format contract, and rstrip("XX-XX")-style mutations of an inline
-    # "-" are behaviorally identical to the original (the set still contains
-    # '-'), which makes them untestable. A named reference has no value to
-    # mutate.
+    # Named constant, not an inline literal: an inline "-" mutation would still
+    # contain '-' and be behaviorally identical, making it untestable.
     slug = f"{slugify(name, max_length=40)}-mcp-{slugify(category, max_length=20)}"
 
     if len(slug) > max_length:

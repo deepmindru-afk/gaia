@@ -50,14 +50,10 @@ def mock_repo():
 
 @pytest.fixture
 def mock_chroma():
-    """The patched collection lookup; .return_value is the collection it hands back.
+    """Patch the collection lookup, not the collection, so a test can pin which name it opens.
 
-    Yielding the lookup rather than the collection is what lets a test pin WHICH
-    collection the service opens. That matters because the name carries the
-    GAIA_CHROMA_COLLECTION_SUFFIX lane namespace — a service that opened a
-    hardcoded "notes" would read and write a different collection from the
-    one the app indexes into, and every assertion about "it called Chroma"
-    would still pass.
+    The name carries the GAIA_CHROMA_COLLECTION_SUFFIX lane namespace — a
+    hardcoded "notes" would silently open the wrong collection.
     """
     with patch(
         "app.services.notes_service.ChromaClient.get_langchain_client",

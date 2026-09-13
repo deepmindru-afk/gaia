@@ -22,9 +22,7 @@ EMBEDDING = [0.1, 0.2]
 
 
 def freeze_time(*args, **kwargs):
-    """freeze_time that skips transformers — its module-restore walk trips on
-    the library's lazy attributes (same workaround as the worker lifecycle
-    tests)."""
+    """Freeze time while skipping transformers, whose lazy attributes trip the module-restore walk."""
     kwargs.setdefault("ignore", ["transformers"])
     return _freeze_time(*args, **kwargs)
 
@@ -51,7 +49,7 @@ def make_row(
     is_forgotten: bool = False,
     forget_after: datetime | None = None,
 ) -> MemoryRecord:
-    """A detached candidate row — no session, no DB."""
+    """Build a detached candidate row — no session, no DB."""
     return MemoryRecord(
         id=uuid.uuid4(),
         user_id=USER,
@@ -141,8 +139,7 @@ class TestCandidateLiveness:
         llm.assert_not_awaited()
 
     async def test_live_identical_candidate_still_collapses_to_duplicate(self) -> None:
-        """The liveness filter must not be over-broad: a genuinely live exact
-        match keeps collapsing without the LLM."""
+        """The liveness filter must not be over-broad: a genuinely live exact match still collapses."""
         fact = make_fact()
         row = make_row(content=fact.content, forget_after=NOW + timedelta(days=30))
 

@@ -56,10 +56,8 @@ class _ModerationResult(BaseModel):
     )
 
 
-# Offline wordlist fallback. Used only when the LLM is unavailable or errors.
-# Kept intentionally small — it does not need to be a content-moderation
-# pipeline, just a safety net so publish doesn't open up to obvious slurs when
-# the moderator LLM is degraded.
+# Offline wordlist fallback, used only when the LLM is unavailable or errors.
+# Kept small — a safety net so publish doesn't open up to obvious slurs.
 _PROFANITY: frozenset[str] = frozenset(
     {
         "fuck",
@@ -127,13 +125,9 @@ def _contains_profanity_wordlist(text: str) -> bool:
 async def contains_profanity(**fields: str | None) -> bool:
     """Return True if any provided field is offensive.
 
-    Pass each user-facing field as a keyword argument (e.g. name=...,
-    description=...). All fields are sent in a single LLM call returning
-    one boolean — one request covers any number of fields.
-
-    Primary path: LLM moderation via the default model with structured
-    output. Falls back to the offline wordlist if the LLM provider is missing,
-    the call errors, or it exceeds _MODERATION_TIMEOUT_SECONDS.
+    Pass each user-facing field as a keyword argument; all are sent in one
+    LLM call. Falls back to the offline wordlist if the LLM is unconfigured,
+    errors, or exceeds _MODERATION_TIMEOUT_SECONDS.
     """
     non_empty = {label: value for label, value in fields.items() if value and value.strip()}
     if not non_empty:

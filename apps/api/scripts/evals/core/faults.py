@@ -44,17 +44,9 @@ _TRANSPORT_FAULTS: tuple[tuple[type[BaseException], str], ...] = (
     (BrokenPipeError, "api"),
 )
 
-# Faults that arrive as a generic exception type (usually ``RuntimeError``), so
-# only the message identifies them. Every entry is anchored to a named backend
-# and copied from something that actually exists — either an error text found in
-# a journal record, or a literal ``raise`` in ``app/db`` (postgresql.py:147,
-# chromadb.py:44/50/285, rabbitmq.py:85). None is invented, and none can be
-# emitted by an agent answering a question.
-#
-# These are string matches against another module's messages, so they rot if
-# those messages are reworded. ``never_conducted`` is deliberately not built on
-# this table for exactly that reason — a re-grade must not depend on having
-# guessed the wording right.
+# Faults arriving as a generic exception type (usually RuntimeError), matched
+# by message and anchored to a real raise in app/db (postgresql.py:147,
+# chromadb.py:44/50/285, rabbitmq.py:85); none is invented or agent-emitted.
 _FAULT_SIGNATURES: tuple[tuple[str, str], ...] = (
     ("postgresql engine not available", "postgres"),
     ("the database system is shutting down", "postgres"),
@@ -80,12 +72,12 @@ class Fault:
     reason: str
 
     def as_infra_error(self) -> InfraError:
-        """The exception the run loop aborts on."""
+        """Return the exception the run loop aborts on."""
         return InfraError(self.backend, self.reason)
 
 
 def classify(exc: BaseException) -> Fault | None:
-    """The outage behind exc, or None if it is not an outage.
+    """Return the outage behind exc, or None if it is not an outage.
 
     None does not mean the case succeeded — a harness bug is still a fault,
     and the run loop still records it as errored. It means only that the run
@@ -104,16 +96,12 @@ def classify(exc: BaseException) -> Fault | None:
 
 
 def confirmed_down(fault: Fault) -> bool:
-    """Whether the backend the fault points at is actually unreachable.
+    """Return whether the backend the fault points at is actually unreachable.
 
-    A transport exception's TYPE cannot say which peer dropped the connection:
-    an httpx.RemoteProtocolError from the remote LLM provider's gateway looks
-    identical to one from our own API. Aborting on type alone killed three
-    LongMemEval runs whose API was healthy the whole time — the provider's
-    CDN hiccuped. So before a run aborts, the accused backend is probed; if it
-    answers, the fault was elsewhere and the case is an ordinary retryable
-    error. Signature-matched faults (a Postgres raise, a Chroma raise) name
-    their backend unambiguously and are not second-guessed.
+    A transport exception's type can't say which peer dropped: it once
+    killed three healthy LongMemEval runs (a CDN hiccup mislabeled as our
+    API). So the accused backend is probed before abort; signature-matched
+    faults (Postgres, Chroma) are not second-guessed.
     """
     if fault.backend != "api":
         return True
@@ -129,18 +117,12 @@ def confirmed_down(fault: Fault) -> bool:
 
 
 def never_conducted(record: dict[str, Any]) -> bool:
-    """Whether this journal record is a case that never actually ran.
+    """Return whether this journal record is a case that never actually ran.
 
-    Deliberately independent of :func:classify: it asks what the record *is*,
-    not what raised it. A case that hit a fault and produced no transcript, no
-    tool calls and no scores did not answer anything — grading it as a wrong
-    answer invents a measurement that was never taken. This is what makes the
-    re-grade complete rather than limited to outages we happened to anticipate:
-    a NameError in our own runner is just as much "not conducted" as a dead
-    datastore, and both must leave the accuracy denominator.
-
-    A case that errored *after* producing output is not covered here — it has
-    real evidence in it, and the run loop already recorded it as errored.
+    Deliberately independent of classify: it asks what the record is, not
+    what raised it, so a NameError in our own runner counts the same as a
+    dead datastore. A case that errored after producing real output is not
+    covered here — the run loop already recorded that as errored.
     """
     if not record.get("error"):
         return False

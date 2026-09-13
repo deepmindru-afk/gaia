@@ -59,9 +59,7 @@ integrations_collection = get_async_collection("integrations")
 
 @dataclass(frozen=True)
 class Replacement:
-    """A curated URL fix. name/description/icon_url are set only for server
-    swaps where the new server differs from what the stored metadata describes.
-    """
+    """A curated URL fix; name/description/icon_url are set only for server swaps that differ from the stored metadata."""
 
     url: str
     name: str | None = None

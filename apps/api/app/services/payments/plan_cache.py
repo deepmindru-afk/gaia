@@ -13,9 +13,7 @@ from shared.py.wide_events import log
 async def invalidate_plan_cache(user_id: str) -> None:
     """Drop user_id's cached plan tier so the next gate read is fresh."""
     await redis_cache.delete(f"{SUBSCRIPTION_PLAN_CACHE_PREFIX}{user_id}")
-    # On the event rather than a line of its own — this runs on every billing
-    # change, and the question it answers ("did the bust actually run, and for
-    # whom") only ever gets asked about a user who is still being paywalled.
-    # The id matters most on the webhook paths, which have no authenticated
-    # request for the middleware to attribute to.
+    # On the event rather than a log line: runs on every billing change, and the
+    # id matters most on the webhook paths, which have no authenticated request
+    # for the middleware to attribute to.
     log.set(user={"id": user_id}, payment={"plan_cache_dropped": True})

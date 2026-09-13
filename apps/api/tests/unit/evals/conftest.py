@@ -18,7 +18,7 @@ from scripts.evals.core.types import ProviderHealth
 
 
 def eval_config() -> EvalConfig:
-    """A single fake provider on a dead port — nothing here may reach a network."""
+    """Build a single fake provider on a dead port — nothing here may reach a network."""
     provider = ProviderConfig(
         name="fake",
         lane="custom",

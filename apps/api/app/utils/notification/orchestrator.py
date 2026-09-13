@@ -46,8 +46,7 @@ from shared.py.wide_events import NotificationContext, log
 
 
 class NotificationOrchestrator:
-    """Core notification engine: creation, multi-channel delivery, actions,
-    bulk operations, and status management."""
+    """Core notification engine: creation, multi-channel delivery, actions, bulk operations, and status management."""
 
     def __init__(self, storage: MongoDBNotificationStorage | None = None) -> None:
         self.storage = storage or MongoDBNotificationStorage()
@@ -57,13 +56,11 @@ class NotificationOrchestrator:
         self.channel_adapters: dict[str, ChannelAdapter[Any]] = {}
         self.action_handlers: dict[str, ActionHandler] = {}
 
-        # Register default components
         self._register_default_components()
 
     # INITIALIZATION & REGISTRATION METHODS
     def _register_default_components(self) -> None:
         """Register default adapters, handlers, and sources."""
-        # Channel adapters
         self.register_channel_adapter(InAppChannelAdapter())
         self.register_channel_adapter(TelegramChannelAdapter())
         self.register_channel_adapter(DiscordChannelAdapter())
@@ -71,20 +68,17 @@ class NotificationOrchestrator:
         self.register_channel_adapter(SlackChannelAdapter())
         self.register_channel_adapter(ImessageChannelAdapter())
 
-        # Action handlers
         self.register_action_handler(ApiCallActionHandler())
         self.register_action_handler(RedirectActionHandler())
         self.register_action_handler(ModalActionHandler())
 
     def register_channel_adapter(self, adapter: ChannelAdapter[Any]) -> None:
-        """Register a new channel adapter."""
         self.channel_adapters[adapter.channel_type] = adapter
         log.info(
             f"{LogTag.NOTIFICATION} Registered channel adapter", channel_type=adapter.channel_type
         )
 
     def register_action_handler(self, handler: ActionHandler) -> None:
-        """Register a new action handler."""
         self.action_handlers[handler.action_type] = handler
         log.info(
             f"{LogTag.NOTIFICATION} Registered action handler", action_type=handler.action_type
@@ -109,10 +103,8 @@ class NotificationOrchestrator:
             original_request=request,
         )
 
-        # Save to storage
         await self.storage.save_notification(notification_record)
 
-        # Deliver the notification
         await self._deliver_notification(notification_record)
 
         return notification_record
@@ -264,21 +256,18 @@ class NotificationOrchestrator:
             notification_id=notification_id,
         )
 
-        # Get notification
         notification = await self.storage.get_notification(notification_id, user_id)
         if not notification:
             return ActionResult(
                 success=False, message="Notification not found", error_code="NOT_FOUND"
             )
 
-        # Find action
         action = notification.get_action_by_id(action_id)
         if not action:
             return ActionResult(
                 success=False, message="Action not found", error_code="ACTION_NOT_FOUND"
             )
 
-        # Check if action can be executed
         if not action.is_executable():
             return ActionResult(
                 success=False,
@@ -288,7 +277,6 @@ class NotificationOrchestrator:
                 error_code=("ACTION_ALREADY_EXECUTED" if action.executed else "ACTION_DISABLED"),
             )
 
-        # Get handler
         handler = self.action_handlers.get(action.type.value)
         if not handler or not handler.can_handle(action):
             return ActionResult(
@@ -297,10 +285,8 @@ class NotificationOrchestrator:
                 error_code="NO_HANDLER",
             )
 
-        # Execute the action
         result = await handler.execute(action, notification, user_id, request=request)
 
-        # If action was successful, mark it as executed
         if result.success:
             notification.mark_action_as_executed(action_id)
 
@@ -354,10 +340,8 @@ class NotificationOrchestrator:
             },
         )
 
-        # Get the updated notification
         updated_notification = await self.storage.get_notification(notification_id, user_id)
 
-        # Broadcast update via websocket
         await websocket_manager.broadcast_to_user(
             user_id, {"type": "notification.read", "notification_id": notification_id}
         )
@@ -365,7 +349,6 @@ class NotificationOrchestrator:
         return updated_notification
 
     async def archive_notification(self, notification_id: str, user_id: str) -> bool:
-        """Archive a notification."""
         notification = await self.storage.get_notification(notification_id, user_id)
         if not notification:
             return False
@@ -390,7 +373,7 @@ class NotificationOrchestrator:
     async def get_user_notifications(
         self, user_id: str, query: NotificationQuery | None = None
     ) -> list[NotificationView]:
-        """A user's notifications, filtered and paged by query."""
+        """Return a user's notifications, filtered and paged by query."""
         q = query or NotificationQuery()
         notifications = await self.storage.get_user_notifications(
             user_id, q.status, q.limit, q.offset, q.channel_type, q.notification_type, q.source

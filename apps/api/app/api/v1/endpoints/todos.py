@@ -229,11 +229,9 @@ async def create_todo(
         ) from e
 
 
-# Bulk Operations
-# These literal ``/todos/bulk`` paths MUST be declared before the parameterized
-# ``/todos/{todo_id}`` routes below: FastAPI matches in declaration order, so if
-# ``PUT/DELETE /todos/{todo_id}`` came first they would capture ``/todos/bulk``
-# with todo_id="bulk" and 500 instead of running the bulk operation.
+# These literal /todos/bulk paths MUST be declared before /todos/{todo_id}:
+# FastAPI matches in declaration order, so {todo_id} first would capture
+# /todos/bulk with todo_id="bulk" and 500 instead of running the bulk op.
 @router.put("/todos/bulk", response_model=BulkOperationResponse)
 @tiered_rate_limit("todo_operations")
 async def bulk_update_todos(

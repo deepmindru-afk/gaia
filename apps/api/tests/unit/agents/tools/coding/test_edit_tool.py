@@ -52,7 +52,7 @@ MTIME = 1_700_000_000.0
 
 @pytest.fixture(autouse=True)
 def _rate_limit_passes() -> None:
-    """The @with_rate_limiting seam (not under test) — fixed to pass.
+    """Fix the @with_rate_limiting seam (not under test) to pass.
 
     edit is invoked with a chat-shaped config, so the wrapper's user-context
     branch runs; its Redis lookups are the seam, not edit's logic.
@@ -71,7 +71,7 @@ def _rate_limit_passes() -> None:
 
 
 def _sbx(content: bytes = b"", *, read_error: Exception | None = None) -> AsyncMock:
-    """A sandbox whose native filesystem read returns fixed content or raises."""
+    """Build a sandbox whose native filesystem read returns fixed content or raises."""
     sbx = AsyncMock()
     if read_error is not None:
         sbx.files.read = AsyncMock(side_effect=read_error)

@@ -104,16 +104,12 @@ async def sync_stale_user_workspaces(
 
 
 async def init_system_subtree() -> None:
-    """Startup: materialize the global shared _system subtree once the mount
-    is live. The subtree is global and only changes when the skill library ships,
-    so startup is the right place. Idempotent + hash-gated; no-ops without a mount."""
+    """Materialize the shared _system subtree at startup (idempotent, hash-gated; no-op without a mount)."""
     await providers.aget("juicefs_mount")
     await ensure_system_subtree()
 
 
 async def resync_stale_user_workspaces() -> None:
-    """Startup: re-provision active users whose skill catalog is stale vs. the
-    current library (e.g. a deploy shipped new builtin skills). The developer
-    script covers backfill / ad-hoc runs."""
+    """Re-provision active users whose skill catalog is stale; the dev script covers backfill/ad-hoc runs."""
     await providers.aget("juicefs_mount")
     await sync_stale_user_workspaces(active_only=True)

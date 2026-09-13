@@ -52,8 +52,7 @@ class TestGetOverviewCounts:
         return [_compiled(call.args[0]) for call in session.execute.await_args_list]
 
     async def test_memory_count_excludes_forgotten_and_expired_rows(self) -> None:
-        """The headline number must agree with the folder tree and the live
-        cap count, which all exclude expired rows — not just forgotten ones."""
+        """The headline number must agree with the folder tree and live cap count, which exclude expired rows too."""
         memory_sql = (await self._run())[0]
         assert "memories.user_id = %(user_id_1)s" in memory_sql
         assert "memories.is_latest IS true" in memory_sql

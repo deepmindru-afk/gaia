@@ -54,10 +54,9 @@ INTEGRATION_STATUS_UPDATE_EVENT = "integration_status_update"
 class ExpiryOptions:
     """Why the connection is being expired, and what the expiry should trigger."""
 
-    # Required, not defaulted: every caller passes both explicitly. A default
-    # `trigger` silently decides which detection path an expiry reads as, and a
-    # default `notify` silently decides whether the user hears about it — both
-    # are the caller's call, and neither should be inherited by omission.
+    # Required, not defaulted: a default `trigger` silently picks the detection
+    # path and a default `notify` silently decides if the user is told — both
+    # are the caller's call, never inherited by omission.
     trigger: ExpiryTrigger
     notify: bool
     reason: str | None = None
@@ -146,11 +145,9 @@ async def expire_user_integration(
     return True
 
 
-# Composio never enumerates `status_reason`: the pinned SDK types it as a bare
-# `Optional[str]` on both the webhook payload (`composio.core.models.webhook_events`)
-# and the REST response. `refresh_token_revoked` is the only value we have observed,
-# so this matches meaningful tokens rather than a guessed enum \u2014 grow it as new
-# values show up in the `integration_expiry.reason` wide-event field.
+# Composio types `status_reason` as a bare `Optional[str]` (SDK's webhook
+# payload and REST response); `refresh_token_revoked` is the only value
+# observed, so this matches known tokens rather than a guessed enum.
 _EXPIRY_CAUSE_BY_TOKEN: tuple[tuple[str, str], ...] = (
     ("revoked", "Your {integration} account revoked GAIA's access."),
     ("expired", "The sign-in for your {integration} account expired."),

@@ -30,7 +30,7 @@ def _echo_registry() -> dict[str, Any]:
 
 
 def _make_node() -> tuple[DynamicToolNode, MagicMock]:
-    """A DynamicToolNode whose middleware executor claims wrap_tool_call."""
+    """Build a DynamicToolNode whose middleware executor claims wrap_tool_call."""
     executor = MagicMock()
     executor.has_wrap_tool_call.return_value = True
     executor.wrap_tool_invocation = AsyncMock(

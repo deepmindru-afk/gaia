@@ -72,11 +72,9 @@ def _write_skill_dir(slug_dir: Path, skill: BuiltinSkill) -> int:
     if not matches_text(target, skill.body):
         target.write_text(skill.body, encoding="utf-8")
         written += 1
-    # Also write the skill's bundled resources (templates/, reference.md,
-    # scripts/, …) so multi-file skills work when the shared _system
-    # subtree + symlinks are unavailable (the linker replaces these with
-    # symlinks once the subtree exists). `rel` is always contained within
-    # the skill dir (see skill_loader._load_resources), so no traversal.
+    # Bundled resources (templates/, reference.md, scripts/) let multi-file
+    # skills work before the shared _system subtree/symlinks exist; rel is
+    # always contained within the skill dir (skill_loader._load_resources).
     for rel, content in skill.resources:
         res = slug_dir / rel
         if not matches_text(res, content):
@@ -90,10 +88,9 @@ def _write_skill_dir(slug_dir: Path, skill: BuiltinSkill) -> int:
     for existing in slug_dir.rglob("*"):
         if existing.is_symlink() or not existing.is_file():
             continue
-        # Compare the skill-relative path, not the basename: `expected` holds
-        # entries like "templates/report.md", so matching on `.name` pruned every
-        # nested resource immediately after writing it — a multi-file skill's
-        # SKILL.md pointed at templates/ that was already deleted.
+        # Compare the skill-relative path, not the basename: expected holds paths
+        # like templates/report.md, and matching on .name pruned every nested
+        # resource right after writing it.
         if existing.relative_to(slug_dir).as_posix() not in expected:
             existing.unlink(missing_ok=True)
     return written
@@ -132,35 +129,28 @@ def materialize_skills(user_root: Path, connected_ids: set[str]) -> int:
             written += _write_skill_dir(skills_dir / skill.slug, skill)
         _write_connected_marker(agent_dir, connected=iid in connected_ids)
 
-    # Executor (general) skill bodies are NOT written here: they belong in the
-    # /skills/<uid> overlay subtree (what the sandbox shows at /workspace/skills),
-    # and link_system_files_into_workspace places them there as symlinks into the
-    # shared _system copy. Writing them under /users/<uid>/skills would only land
-    # in the shadowed subtree.
+    # Executor (general) skills are NOT written here — they belong in the
+    # /skills/<uid> overlay (link_system_files_into_workspace symlinks them
+    # there); /users/<uid>/skills would only land in the shadowed subtree.
     return written
 
 
 def materialize_instructions(user_root: Path, instructions: dict[str, str]) -> int:
     """Write per-user custom instructions under integrations/<id>/agent/.
 
-    instructions maps integration id → markdown body (already filtered to
-    non-empty by the service). Each lands at
-    integrations/<id>/agent/instructions.md as a read-only projection of the
-    integration_instructions MongoDB collection — the same Mongo-is-truth
-    contract as the skill bodies beside it. Stale files (instructions the user
-    cleared) are removed so the projection never outlives its source.
-
-    Returns the count of files actually rewritten.
+    Each entry lands at integrations/<id>/agent/instructions.md as a
+    read-only projection of the integration_instructions MongoDB collection.
+    Stale files (cleared instructions) are removed so the projection never
+    outlives its source.
     """
     written = 0
     integrations_root = user_root / "integrations"
     for iid, content in instructions.items():
         if not content:
             continue
-        # Backstop: iid is user/agent-supplied. Refuse anything that isn't a
-        # single safe path component so a crafted id (e.g. "../../<victim>")
-        # cannot escape the user's integrations/ root and write elsewhere on the
-        # shared mount. Skip the bad entry rather than aborting the bootstrap.
+        # Backstop: iid is user/agent-supplied; a crafted id like "../../<victim>"
+        # must not escape integrations/ onto the shared mount. Skip the bad
+        # entry rather than aborting the bootstrap.
         try:
             ensure_safe_path_id(iid, label="integration_id")
         except ValueError:

@@ -5,16 +5,11 @@ browser. This mints a short, single-use link they can open in any browser to
 start the OAuth flow for ONE integration — no GAIA login required, because the
 link itself is the credential.
 
-Security properties:
-- **High-entropy opaque code** (96-bit, secrets.token_urlsafe) → unguessable;
-  the only way to test a code is an online request to the (rate-limited)
-  connect-link endpoint — there is no offline oracle.
-- **Server-side binding** → the code maps to one (user_id, integration_id)
-  in Redis; nothing sensitive travels in the link.
-- **Single-use** → consumed atomically with GETDEL on first open, so a
-  second open (or a brute-force hit racing a real user) gets nothing.
-- **Bounded lifetime** → CONNECT_LINK_TTL_MINUTES.
-- The endpoint it points at only redirects into OAuth; it never returns data.
+Security properties: a high-entropy opaque code (96-bit, secrets.token_urlsafe)
+testable only via the rate-limited connect-link endpoint (no offline oracle);
+server-side binding, so nothing sensitive travels in the link; single-use via
+atomic GETDEL on first open; a bounded lifetime (CONNECT_LINK_TTL_MINUTES);
+and an endpoint that only redirects into OAuth, never returns data.
 """
 
 from __future__ import annotations

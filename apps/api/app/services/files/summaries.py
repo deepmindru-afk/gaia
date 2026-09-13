@@ -18,14 +18,9 @@ GeneratedSummary = str | list[DocumentSummaryModel] | DocumentSummaryModel
 def process_summary(summary: object) -> tuple[str, PageWiseSummary]:
     """Normalize a generated summary into (description, page_wise_summary).
 
-    - str            → (text, None)
-    - list[pages]    → (joined page summaries, [page dicts])
-    - single page    → (page summary, page dict)
-
-    Typed object rather than GeneratedSummary (the type generate_file_summary
-    currently promises) so the trailing "unrecognized shape" branch stays a real,
-    reachable safety net if that union ever grows a case this function isn't
-    updated for, instead of silently becoming dead code.
+    Typed object rather than GeneratedSummary so the trailing "unrecognized
+    shape" branch stays a reachable safety net if that union ever grows a case
+    this function isn't updated for, instead of silently becoming dead code.
     """
     if isinstance(summary, str):
         return summary, None

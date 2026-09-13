@@ -111,18 +111,9 @@ from prometheus_client import (  # Gauge used via lambda factories below
 
 from shared.py.wide_events import log
 
-# Prometheus collectors. Allowed labels (CHANGES REQUIRE A SPEC UPDATE on
-# either the `fs-metrics-prometheus` or `fs-metrics-coverage` capability):
-#   - fs_op_duration_seconds:        operation, mode, status
-#   - fs_op_bytes_total:              operation
-#   - fs_op_total:                    operation, mode, status
-#   - fs_op_last_seen_unix_seconds:   operation
-#   - fs_op_in_flight:                operation
-#   - sandbox_pool_size:              kind, shard
-# High-cardinality identifiers (user_id, conv_id, paths) MUST stay on the wide
-# event, never on these collectors. The default registry is what the existing
-# /metrics endpoint serves; the worker process re-registers these same instances
-# on its custom registry inside app/workers/metrics.py.
+# Prometheus collectors — allowed labels are exactly those listed in the
+# module docstring's Prometheus export section; changing them requires
+# updating the fs-metrics-prometheus/fs-metrics-coverage OpenSpec capability.
 
 _FS_OP_BUCKETS: Final[tuple[float, ...]] = (
     0.001,
@@ -221,14 +212,10 @@ _SANDBOX_POOL_SIZE = _register_once(
 def set_sandbox_pool_size(kind: str, shard: str, n: int) -> None:
     """Publish the current pool size for (kind, shard).
 
-    kind is "user" (per-user pooled sandboxes) or "warm" (warm
-    pre-created sandboxes). shard is the stringified shard id. The
-    underlying sandbox_pool_size gauge supports set semantics —
-    last-writer-wins per (kind, shard), which matches the desired "current
-    count" view.
-
-    Wrap in try/except so a registry bug never breaks the pool mutation that
-    called us.
+    kind is "user" (per-user pooled sandboxes) or "warm" (pre-created warm
+    ones); shard is the stringified shard id. Uses gauge set semantics
+    (last-writer-wins) for a "current count" view. Wrapped in try/except so a
+    registry bug never breaks the pool mutation that called this.
     """
     try:
         _SANDBOX_POOL_SIZE.labels(kind=kind, shard=shard).set(n)
@@ -372,15 +359,10 @@ def record_fs_op(
 ) -> None:
     """Record one completed FS op.
 
-    error if non-None bumps the error counter and stamps the type. Labels
-    are merged into the op's labels dict on a last-write-wins basis — use
-    them for very low-cardinality identifiers (role, mount status). High-
-    cardinality values (conv_id, path) belong in the wide event, not here.
-
-    Additionally emits to the Prometheus collectors declared at module scope.
-    Prometheus emit is wrapped in try/except so a registry bug never breaks
-    the wide event flush — the ContextVar bucket update above is the canonical
-    record, the Prometheus emit is a parallel surface.
+    error, if non-None, bumps the error counter and stamps its type. Labels
+    merge last-write-wins — low-cardinality identifiers only (role, mount
+    status); high-cardinality values (conv_id, path) go in the wide event.
+    Also emits to Prometheus, guarded so a registry bug never breaks the flush.
     """
     stats = _bucket().setdefault(op, _OpStats())
     stats.count += 1
@@ -440,15 +422,10 @@ def add_fs_bytes(op: str, n: int) -> None:
 async def fs_timer(op: str, **labels: str) -> AsyncIterator[None]:
     """Async context manager that records the wall-clock duration of op.
 
-    On exception, the op is still recorded (with error=<exception>) so we
-    can see the latency cost of a failure path in the same dashboard. The
-    exception is then re-raised; never swallow.
-
-    Also maintains the fs_op_in_flight Prometheus gauge: incremented on
-    entry, decremented in finally. The increment is wrapped in
-    try/except so a registry bug never breaks the yield; the decrement is
-    similarly guarded so a paired-state inconsistency never blocks
-    record_fs_op from running.
+    On exception the op is still recorded (error=<exception>) so failure-path
+    latency shows in the dashboard; the exception is re-raised, never
+    swallowed. Also maintains the fs_op_in_flight gauge (inc on entry, dec in
+    finally), each guarded so a registry bug can't break the yield.
     """
     start = time.monotonic()
     err: BaseException | None = None
@@ -484,12 +461,8 @@ async def fs_timer(op: str, **labels: str) -> AsyncIterator[None]:
 def flush_fs_metrics() -> dict[str, OpStatsSnapshot]:
     """Return the accumulated metrics as a serializable dict, and clear the bucket.
 
-    Call from inside a wide_task / request middleware just before emitting
-    the canonical log line::
-
-        log.set(fs=flush_fs_metrics())
-
-    Returns {} if nothing was recorded — safe to attach unconditionally.
+    Call just before emitting the canonical wide-event log line via
+    log.set(fs=flush_fs_metrics()). Returns {} if nothing was recorded.
     """
     bucket = _metrics_var.get()
     if not bucket:

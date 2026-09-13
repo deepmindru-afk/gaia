@@ -49,17 +49,7 @@ def reset_captured_loop() -> None:
 def run_on_captured_loop(coro: Coroutine[Any, Any, _T], *, timeout: float | None = None) -> _T:
     """Run coro to completion from a worker thread that has no running loop.
 
-    When a server loop was captured (production: the loop the Motor/Redis clients
-    are bound to), dispatch onto it via run_coroutine_threadsafe so a
-    loop-bound client stays on its own loop — asyncio.run here would spin a
-    fresh loop and make Motor raise "attached to a different loop".
-
-    Without a captured loop — a loop-less context such as a synchronous
-    graph.stream in tests or a standalone script, where the services are
-    loop-agnostic — a fresh loop is the right thing. This is not a bug-hiding
-    fallback: a genuinely loop-bound client reached with no capture still fails
-    loud with the same cross-loop error, so the case this exists to prevent can
-    never pass silently.
+    Dispatches onto the captured server loop via run_coroutine_threadsafe so a loop-bound client (Motor/Redis) stays on its own loop; without a captured loop (tests, scripts) a fresh loop is used instead, and a genuinely loop-bound client reached with no capture still fails loud rather than passing silently.
     """
     loop = _captured_loop
     if loop is None:
@@ -77,13 +67,9 @@ def run_on_captured_loop(coro: Coroutine[Any, Any, _T], *, timeout: float | None
 
 
 def loop_bound_semaphore(key: str, size: int) -> asyncio.Semaphore:
-    """A process-wide asyncio.Semaphore for key, rebound to the running loop.
+    """Return a process-wide asyncio.Semaphore for key, rebound to the running loop.
 
-    asyncio.Semaphore binds to the loop that created its internal futures, so
-    one built under a different loop raises "bound to a different event loop" when
-    awaited (a sync caller that spins its own loop, or a fresh test loop).
-    Recreating it whenever the running loop changes keeps it usable everywhere;
-    in production there is a single long-lived loop so it is created once.
+    A Semaphore binds to the loop that created its futures and raises if awaited under a different one (a sync caller spinning its own loop, or a fresh test loop); recreating it when the running loop changes keeps it usable everywhere, though production has one long-lived loop so it's created once.
     """
     loop = asyncio.get_running_loop()
     sem, sem_loop = _loop_semaphores.get(key, (None, None))

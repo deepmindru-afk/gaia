@@ -204,11 +204,9 @@ async def send_email(
             to=to,
         )
 
-        # ``attachment`` is Gmail's own param name. The agent-facing schema
-        # modifier replaces it with the reference-based ``attachments`` the model
-        # can fill, and the before-hook that translates one into the other is off
-        # on this path — so under that schema LangChain drops the key and the mail
-        # goes out with no file. A call carrying files asks for the native schema.
+        # ``attachment`` is Gmail's native param; the agent schema modifier swaps it
+        # for ``attachments``, but its before-hook is off on this path, so that
+        # schema would drop the key and send with no file — use the native schema.
         result = await invoke_gmail_tool(
             user_id, tool_name, parameters, use_schema_modifier=not attachments
         )

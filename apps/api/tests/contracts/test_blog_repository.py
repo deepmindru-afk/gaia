@@ -25,7 +25,7 @@ def repo(raw_collection) -> BlogsRepository:
 
 @pytest.fixture
 async def team(raw_collection) -> AsyncIterator[AsyncIOMotorCollection]:
-    """The shared gaia_test.team collection, with per-test ids cleaned up."""
+    """Return the shared gaia_test.team collection, with per-test ids cleaned up."""
     coll = raw_collection.database["team"]
     inserted: list[ObjectId] = []
 

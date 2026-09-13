@@ -80,11 +80,9 @@ async def upsert_instructions(
 ) -> IntegrationInstructions:
     """Create or replace one integration's instructions (full-content write).
 
-    Truncates to MAX_INSTRUCTIONS_CHARS so a runaway agent write can't bloat
-    every subsequent context window. Whitespace-only content is stored as ""
-    (i.e. cleared) so it never surfaces as a noisy, empty instructions block.
-    Invalidates the per-user cache; the VFS projection re-syncs on the next
-    session bootstrap via the staleness gate.
+    Truncates to MAX_INSTRUCTIONS_CHARS; whitespace-only content is stored as
+    "". Invalidates the per-user cache; the VFS projection re-syncs on the
+    next session bootstrap.
     """
     log.set(
         user_id=user_id,

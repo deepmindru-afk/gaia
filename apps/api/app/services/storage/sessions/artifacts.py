@@ -46,18 +46,10 @@ class ArtifactInfo:
 def _list_files(base: Path) -> list[ArtifactInfo]:
     """List regular files under base.
 
-    Walks with os.scandir instead of Path.rglob: every path here lives on
-    JuiceFS, where each stat/lstat/resolve is a metadata-DB round-trip.
-    A DirEntry carries the directory's d_type and caches its own stat,
-    so is_symlink/is_dir/is_file/stat cost at most one op per entry
-    (often zero — served from d_type). The old rglob path paid ~3+depth ops
-    per file: a separate lstat + is_file stat + a redundant second stat
-    + a full resolve() that walks every path component.
-
-    Symlinks are skipped and never followed into directories, so the walk can't be
-    redirected outside base — the same escape protection the old per-file
-    resolve() gave, without its cost. Per-entry errors are skipped so a racing
-    or hostile entry under the agent-writable tree can't 500 the whole listing.
+    Walks with os.scandir, not Path.rglob: on JuiceFS every stat/lstat/resolve
+    is a metadata-DB round-trip, and a DirEntry's cached d_type/stat costs at
+    most one op per entry versus rglob's ~3+depth. Symlinks are skipped and
+    never followed; per-entry errors are skipped so a hostile entry can't 500.
     """
     if not base.is_dir():
         return []
@@ -149,11 +141,9 @@ async def stat_artifact(user_id: str, conv_id: str, rel_path: str) -> ArtifactIn
 
     def _stat() -> ArtifactInfo | None:
         base = session_base(user_id, conv_id) / ARTIFACTS_DIRNAME
-        # `_contained` already resolves + containment-checks the path (one walk).
-        # Then a SINGLE stat — the old `is_file()` + `.stat()` pair stat'd the
-        # same inode twice, doubling the JuiceFS metadata round-trips on the
-        # watcher's hottest per-event path. Reject non-regular files via the
-        # mode bits from that one stat.
+        # _contained already resolves + containment-checks (one walk); a single
+        # stat avoids the old is_file()+stat() double round-trip on the
+        # watcher's hottest per-event path.
         target = _contained(base, rel_path)
         try:
             st = target.stat()

@@ -31,7 +31,7 @@ DEFAULT_NAME = "Alex"
 
 
 def dev_client(email: str) -> httpx.AsyncClient:
-    """A client that is authenticated as email on the dev bypass.
+    """Build a client authenticated as email on the dev bypass.
 
     Both the header and the cookie are sent because the bypass is read from
     either depending on the route: REST endpoints take X-Dev-User, and the
@@ -85,7 +85,7 @@ async def provision(
     *,
     name: str = DEFAULT_NAME,
 ) -> None:
-    """A fresh Pro dev user, optionally carrying an onboarding profile.
+    """Provision a fresh Pro dev user, optionally carrying an onboarding profile.
 
     preferences is optional only so a caller that genuinely wants the
     default-onboarding state can say so explicitly; every current caller passes

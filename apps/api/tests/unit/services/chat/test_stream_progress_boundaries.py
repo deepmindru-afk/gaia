@@ -91,8 +91,7 @@ class TestWorkingNotesNeverSurviveRecovery:
         assert message == "Working the week now."
 
     async def test_two_kept_drafts_stay_two_bubbles(self) -> None:
-        """The second symptom of the same glue: one email draft arriving twice,
-        run together as a single paragraph."""
+        """The same glue bug: two drafts arriving glued into one paragraph."""
         message = await _recover(
             [
                 _response("Here's a clean three-liner."),
@@ -110,9 +109,7 @@ class TestWorkingNotesNeverSurviveRecovery:
 
 class TestRecoveryStillReturnsWhatTheTurnOwed:
     async def test_text_still_streaming_when_the_turn_stopped_is_kept(self) -> None:
-        """A cancelled turn never reaches its boundary. The user watched that
-        text arrive, so it is still owed — the driver flushes its own held text
-        for the same reason."""
+        """A cancelled turn never reaches its boundary, but the user watched the text arrive, so it is still owed."""
         message = await _recover([_response("Half a sentence")])
 
         assert message == "Half a sentence"
@@ -140,9 +137,10 @@ async def _recover_from(progress: dict[str, Any]) -> str:
 
 
 class TestRecoveringARecordMissingTheBubbleFields:
-    """A record written before the settled/pending split is still in Redis under
-    its TTL, so recovery supplies both defaults itself. Neither may become text
-    the user never saw."""
+    """A record written before the settled/pending split is still in Redis under its TTL.
+
+    Recovery supplies both defaults itself; neither may become text the user never saw.
+    """
 
     async def test_a_record_with_neither_field_recovers_nothing(self) -> None:
         assert await _recover_from({"tool_data": {}}) == ""
@@ -154,8 +152,7 @@ class TestRecoveringARecordMissingTheBubbleFields:
         assert await _recover_from({"complete_message": "Done."}) == "Done."
 
     async def test_the_recovered_length_is_logged(self) -> None:
-        """The count is how a recovered-but-empty turn is told apart from a turn
-        that never wrote progress at all."""
+        """The count is how a recovered-but-empty turn is told apart from a turn that never wrote progress at all."""
         with patch("app.services.chat.state.log") as mock_log:
             await _recover_from({"complete_message": "Done.", "pending_message": "And one more"})
 

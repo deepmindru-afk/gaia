@@ -52,7 +52,7 @@ def redis_url() -> str:
 async def raw_collection(
     mongodb_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[AsyncIOMotorCollection]:
-    """A fresh, uniquely-named Motor collection wired into the repository accessor.
+    """Return a fresh, uniquely-named Motor collection wired into the repository accessor.
 
     Fresh client per test avoids event-loop cross-contamination; the unique name
     keeps parallel xdist workers from colliding. Every repository under test

@@ -16,7 +16,7 @@ from app.models.notification.notification_models import (
 
 
 def todo_redirect_action(label: str, todo_id: str | None) -> NotificationAction:
-    """A primary REDIRECT action to the todos page.
+    """Build a primary REDIRECT action to the todos page.
 
     Deep-links the specific todo via ?todoId when one is given (single-item
     notifications), otherwise lands on the todos list (multi-item digest).

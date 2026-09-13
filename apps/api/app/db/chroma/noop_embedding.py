@@ -39,28 +39,20 @@ class NoOpEmbeddingFunction(EmbeddingFunction[EmbeddingInput]):
 
     @staticmethod
     def name() -> str:
-        """ChromaDB requires embedding functions to declare a name (added in
-        0.5.x; a missing name() emits a deprecation warning and will become
-        a hard requirement). Called on the class during registration."""
+        """Name required by ChromaDB (0.5.x+); missing it emits a deprecation warning."""
         return NOOP_EMBEDDING_NAME
 
     def get_config(self) -> dict[str, str]:
-        """ChromaDB requires embedding functions to describe their config for
-        collection hashing (same deprecation path as name())."""
+        """Config for collection hashing, required by ChromaDB (same deprecation path as name())."""
         return {"name": NOOP_EMBEDDING_NAME}
 
     @staticmethod
     def build_from_config(config: dict) -> "NoOpEmbeddingFunction":
-        """Reconstruct the embedding function from its config dict; the config
-        only carries the name, so the no-op constructor suffices."""
+        """Reconstruct from config; the config only carries the name, so the no-op ctor suffices."""
         return NoOpEmbeddingFunction()
 
     def __call__(self, input: EmbeddingInput) -> Embeddings:
-        # `input` must keep this exact name: chromadb calls embedding functions
-        # as `self._embedding_function(input=input)` (keyword), not positionally.
-        # chromadb's own EmbeddingFunction.__call__ contract declares
-        # list[numpy.ndarray], but ChromaDB accepts plain float lists at
-        # runtime just fine — do NOT convert this to numpy arrays; that broke
-        # collection initialization previously. cast() only changes what the
-        # type checker sees, not the actual returned values.
+        # `input` must keep this name: chromadb calls it as `input=input` (keyword).
+        # Do NOT convert to numpy arrays — that broke collection init previously,
+        # even though the declared type is list[numpy.ndarray].
         return cast(Embeddings, [[0.0] * EMBEDDING_DIM for _ in input])

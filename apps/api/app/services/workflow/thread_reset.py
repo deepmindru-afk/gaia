@@ -46,10 +46,9 @@ async def reset_workflow_threads(conversation_id: str) -> int:
             return 0
         checkpointer = manager.get_checkpointer()
 
-        # The conversation's own thread, the executor's, and each handoff
-        # subagent's `<namespace>_executor_<conv>`. Compared with `right()`
-        # rather than LIKE: the ids are full of underscores, and a LIKE pattern
-        # would need them escaped to keep `_` from matching any character.
+        # Covers the conversation's own thread, the executor's, and each handoff
+        # subagent's `<namespace>_executor_<conv>`. Compared with `right()` not
+        # LIKE: the ids are full of underscores that LIKE would need escaped.
         executor_thread = f"{EXECUTOR_THREAD_PREFIX}{conversation_id}"
         suffix = f"_{executor_thread}"
         async with pool.connection() as conn, conn.cursor() as cur:

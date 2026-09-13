@@ -1,23 +1,18 @@
 """Repository for the users collection.
 
-Caching is on: every writer of the users collection now routes through this
-repository, so a write refreshes the entity cache and bumps the generation —
-a read can never serve a value staler than the last write. That guarantee is
-what makes caching safe here at all: get_by_email is the authentication hot
-path, so a stale hit would mean stale auth context, permissions and preferences.
+Caching is on: every writer routes through this repository, so a write
+refreshes the entity cache and bumps the generation — a read can never serve
+a value staler than the last write, which is what makes caching safe for
+get_by_email, the authentication hot path.
 
-This repository is global, so all three key families live under the global
-scope: any user's write bumps the single generation and orphans *every* user's
-query-cache entries. Correct, and deliberately so — get_by_email cannot know
-which user it will resolve to before it reads, so a per-user generation is not
-expressible. The entity cache is keyed per user id and unaffected by the bump.
+This repository is global, so any user's write bumps the single generation
+and orphans *every* user's query-cache entries — deliberate, since
+get_by_email cannot know which user it will resolve to before it reads.
 
-The one deliberate exception is touch_last_active, which writes
-last_active_at through the cache-exempt path: it fires on every
-authenticated request, so bumping the generation there would invalidate the
-whole cache on every request and make it worse than useless. The cost is that a
-cached read may carry a slightly stale last_active_at; nothing reads that
-field off a cached path (the inactivity scan is an uncached query).
+The one exception is touch_last_active, which writes last_active_at through
+the cache-exempt path: it fires on every request, so bumping the generation
+there would invalidate the whole cache. A cached read may carry a slightly
+stale last_active_at; nothing reads that field off a cached path.
 """
 
 from collections.abc import Iterable
@@ -65,8 +60,7 @@ _SOCIAL_PROFILES_FIELD = "onboarding.social_profiles"
 
 
 class UserRepository(MongoRepository[UserDocument, UserUpdate]):
-    """The users collection repository — see the module docstring for the
-    caching contract that makes reads here safe."""
+    """The users collection repository — see the module docstring for the caching contract."""
 
     collection_name = "users"
     document_model = UserDocument
@@ -78,40 +72,37 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
 
     @cached_query(UserDocument)
     async def get_by_email(self, email: str) -> UserDocument | None:
-        """A user by email — the authentication hot path."""
+        """Return a user by email — the authentication hot path."""
         return await self._find_one({"email": email})
 
     async def find_by_ids(self, user_ids: list[str]) -> list[UserDocument]:
-        """Users whose _id is in user_ids (invalid ids skipped) — the
-        creator-join for the integrations marketplace."""
+        """Return users whose _id is in user_ids (invalid ids skipped) — the marketplace creator-join."""
         oids = [ObjectId(uid) for uid in user_ids if ObjectId.is_valid(uid)]
         if not oids:
             return []
         return await self._find({"_id": {"$in": oids}})
 
     async def get_by_platform_id(self, platform: str, platform_user_id: str) -> UserDocument | None:
-        """A user linked to platform_user_id on platform."""
+        """Return a user linked to platform_user_id on platform."""
         return await self._find_one({f"platform_links.{platform}.id": platform_user_id})
 
     async def list_all_ids(self) -> list[str]:
-        """Every user id — the bulk workspace-provisioning scan."""
+        """Return every user id — the bulk workspace-provisioning scan."""
         return [doc.id for doc in await self._find({})]
 
     async def count_created_before(self, created_at: datetime) -> int:
-        """Number of users created before created_at — the holo-card rank."""
+        """Return the number of users created before created_at — the holo-card rank."""
         return await self._count({"created_at": {"$lt": created_at}})
 
     # ------------------------------------------------------------ worker scans
 
-    # The cohort reads below are lenient: a single legacy row whose
-    # ``onboarding`` is the wrong type used to raise here — above the per-user
-    # try/except in every sweep — so nobody in the cohort got their mail. The
-    # bad row is skipped and logged; the rest of the cohort goes through.
+    # The cohort reads below are lenient: a legacy row with a malformed
+    # ``onboarding`` used to raise above the per-user try/except in every
+    # sweep, denying mail to the whole cohort. It is now skipped and logged.
     async def find_stuck_personalization(
         self, cutoff: datetime, *, limit: int = 50
     ) -> list[UserDocument]:
-        """Users stuck at personalization-pending whose last update predates
-        cutoff (or was never stamped) — the re-queue candidates."""
+        """Users stuck at personalization-pending, last updated before cutoff or never stamped."""
         return await self._find_lenient(
             {
                 "onboarding.phase": OnboardingPhase.PERSONALIZATION_PENDING.value,
@@ -124,8 +115,7 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
         )
 
     async def find_inactive_email_candidates(self, before: datetime) -> list[UserDocument]:
-        """Active users inactive since before who have not been emailed since
-        then — the inactivity-email candidates (throttling is decided per user)."""
+        """Active users inactive since before, not yet emailed since then (throttling is per-user)."""
         return await self._find_lenient(
             {
                 "last_active_at": {"$lt": before},
@@ -139,9 +129,10 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
 
     async def find_dormant_since(self, before: datetime) -> list[UserDocument]:
         """Users with no activity since before — the dormancy sweep's cohort.
-        last_active_at missing means the account has never been seen active, so
-        those count as dormant too; without the $exists arm a $lt comparison
-        silently skips them."""
+
+        last_active_at missing means never seen active, which also counts as
+        dormant; a bare $lt would silently skip those.
+        """
         return await self._find_lenient(
             {
                 "is_active": {"$ne": False},
@@ -155,8 +146,10 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
 
     async def find_nurture_candidates(self, created_since: datetime) -> list[UserDocument]:
         """Recently-signed-up, still-active users — the nurture-sequence cohort.
-        Send eligibility (timezone hour, frequency caps, step windows) is decided
-        per user per run, not by this query."""
+
+        Send eligibility (timezone hour, frequency caps, step windows) is
+        decided per user per run, not by this query.
+        """
         return await self._find_lenient(
             {"created_at": {"$gte": created_since}, "is_active": {"$ne": False}},
         )
@@ -225,12 +218,11 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
     # ------------------------------------------------------- last-active bump
 
     async def touch_last_active(self, email: str) -> None:
-        """Debounced, cache-exempt last_active_at bump. Never raises into the
-        caller — a failed touch logs and continues so it can't fail authentication.
+        """Debounced, cache-exempt last_active_at bump; failures are logged, never raised.
 
-        A Redis SET NX EX gate collapses the per-request writes to one per user
-        per debounce window. If Redis is unavailable the gate is skipped and every
-        call writes — correctness over the write-rate optimization.
+        A Redis SET NX EX gate collapses per-request writes to one per user per
+        debounce window; if Redis is unavailable the gate is skipped and every
+        call writes (correctness over the write-rate optimization).
         """
         try:
             client = redis_cache.redis
@@ -268,11 +260,9 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
     ) -> UserDocument | None:
         """Atomically mark onboarding complete (gated on it not being complete yet).
 
-        The gate is onboarding.completed, not the subdocument's existence:
-        the wizard writes onboarding.preferences before payment, so the
-        subdocument exists long before completion. Returns None when the
-        gate misses — already completed (idempotent replay) or the user is
-        gone; the caller distinguishes via get.
+        The gate is onboarding.completed, not the subdocument's existence,
+        since the wizard writes onboarding.preferences before payment. None
+        when the gate misses — already completed, or the user is gone.
         """
         now = datetime.now(UTC)
         set_fields: dict[str, object] = {
@@ -294,9 +284,7 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
     async def update_onboarding_preferences(
         self, user_id: str, preferences: OnboardingPreferences
     ) -> UserDocument | None:
-        """PATCH onboarding.preferences — only the fields the caller actually
-        set are written, each at its own dotted path, so a partial save from one
-        settings surface cannot clobber a field owned by another."""
+        """PATCH onboarding.preferences, field by dotted path, so one settings surface can't clobber another."""
         set_fields: dict[str, object] = {}
         for field, value in preferences.model_dump(exclude_unset=True).items():
             set_fields[f"onboarding.preferences.{field}"] = value
@@ -389,17 +377,10 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
     async def set_hil_tool_override(self, user_id: str, tool_name: str, ask: bool | None) -> None:
         """Set (ask = True/False) or clear (ask = None) one HIL tool override.
 
-        Touches only this tool's key, so toggling several tools at once (each switch
-        on the integration panel fires its own request) cannot lose an override: a
-        read-modify-write of the whole map would have each request overwrite the
-        others' keys with the snapshot it read before they landed.
-
-        $setField in an aggregation-pipeline update rather than a dotted $set
-        path because MCP tool names can contain dots (e.g. server.action), which
-        Mongo would split into a nested subdocument, diverging from the flat map the
-        read path expects. A pipeline update cannot travel through
-        _apply_raw_update (it takes an update *document*), so the cache steps it
-        would have done — evict the entity, bump the generation — are applied here.
+        Touches only this tool's key so concurrent toggles can't overwrite each
+        other. Uses $setField in a pipeline update, not a dotted $set, since MCP
+        tool names can contain dots that Mongo would otherwise nest; that update
+        shape can't go through _apply_raw_update, so cache eviction is done here.
         """
         overrides_path = "hil_preferences.tool_overrides"
         await self._raw_collection().update_one(
@@ -474,8 +455,7 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
         )
 
     async def set_bio_status(self, user_id: str, bio_status: BioStatus) -> None:
-        """Update the onboarding bio-generation status (e.g. back to processing on a
-        post-onboarding Gmail reconnect)."""
+        """Update the onboarding bio-generation status (e.g. back to processing on a Gmail reconnect)."""
         await self._apply_raw_update(
             {"_id": self._id_value(user_id)},
             {"$set": {"onboarding.bio_status": bio_status}},
@@ -502,8 +482,7 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
         )
 
     async def save_personalization(self, user_id: str, bundle: PersonalizationBundle) -> None:
-        """Persist the generated personalization bundle and advance the phase to
-        personalization-complete."""
+        """Persist the generated personalization bundle and advance the phase to personalization-complete."""
         set_fields: dict[str, object] = {
             f"onboarding.{field}": value for field, value in bundle.model_dump().items()
         }
@@ -557,15 +536,10 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
     ) -> UserDocument | None:
         """Take the weekly limit-email slot, or return None if it is already taken.
 
-        Stamping the marker AFTER sending let two concurrent limit hits both read
-        an eligible user and both send — the read and the write straddle a network
-        send, so the window is wide, not theoretical. The claim is one conditional
-        update: only a document whose marker is missing or older than
-        stale_before matches, so exactly one caller wins and the loser sends
-        nothing.
-
-        Returns the BEFORE image, whose last_limit_email_sent is the value to
-        put back if the send then fails (see release_limit_email_slot).
+        One conditional update matches only a document whose marker is missing
+        or older than stale_before, so exactly one caller wins. Returns the
+        BEFORE image, whose last_limit_email_sent is the value to restore if
+        the send then fails (see release_limit_email_slot).
         """
         return await self._apply_raw_update(
             {
@@ -596,17 +570,12 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
     async def record_activity_tier_promotion(
         self, user_id: str, tier: str, lower_tiers: list[str]
     ) -> UserDocument | None:
-        """Persist tier as the user's highest activity badge ever reached;
-        return the updated document only on a FIRST-TIME promotion, else None.
+        """Persist tier as the user's highest badge, returning the document only on a first-time promotion.
 
-        The guard is monotonic — a stored tier is only ever replaced by one in
-        lower_tiers' complement — so downgrades are silent and re-crossing a
-        boundary can never re-fire. The filtered update is also the idempotency
-        lock: a retried job matches zero documents the second time.
-
-        A user_id that is not a valid ObjectId (synthetic/dev identities in
-        the rollups) is skipped with a warning rather than failing the sweep —
-        id-encoding concerns stay inside the repository layer.
+        The guard is monotonic, so downgrades are silent and a re-crossed
+        boundary can't re-fire; the filtered update also makes a retried job
+        idempotent. A non-ObjectId user_id (synthetic/dev identities) is
+        skipped with a warning rather than failing the sweep.
         """
         if not ObjectId.is_valid(user_id):
             log.warning(
@@ -686,8 +655,7 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
         slack: bool | None = None,
         email: bool | None = None,
     ) -> None:
-        """Set the given notification channel flags; unspecified channels are left
-        untouched (a None argument is not written)."""
+        """Set the given notification channel flags; a None argument leaves that channel untouched."""
         set_fields: dict[str, object] = {}
         if telegram is not None:
             set_fields["notification_channel_prefs.telegram"] = telegram
@@ -770,8 +738,7 @@ class UserRepository(MongoRepository[UserDocument, UserUpdate]):
     async def set_provider_metadata(
         self, user_id: str, provider: str, metadata: dict[str, str]
     ) -> bool:
-        """Store a provider's extracted user metadata under provider_metadata.
-        Returns whether the user existed (the write landed)."""
+        """Store a provider's extracted user metadata under provider_metadata; returns whether the user existed."""
         updated = await self._apply_raw_update(
             {"_id": self._id_value(user_id)},
             {"$set": {f"provider_metadata.{provider}": metadata}},

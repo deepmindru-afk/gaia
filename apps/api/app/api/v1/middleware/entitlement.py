@@ -45,10 +45,9 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        # CORS preflight carries no credentials and is answered by
-        # CORSMiddleware, which sits *inside* this one. Blocking it here would
-        # break every cross-origin call with an opaque CORS failure rather than
-        # a readable 402.
+        # CORS preflight carries no credentials and is answered by CORSMiddleware, which
+        # sits *inside* this one — blocking it here breaks cross-origin calls with an
+        # opaque CORS failure rather than a readable 402.
         if request.method == "OPTIONS":
             return await call_next(request)
 
@@ -65,19 +64,9 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
         except SubscriptionRequiredException as exc:
             return self._payment_required(exc)
         except Exception as e:
-            # Still fails CLOSED — the request never reaches its handler, so no
-            # paid surface goes free — but it does NOT claim the caller is
-            # unsubscribed. "We could not read your plan" and "you are not on
-            # PRO" are different facts, and only the second one is a 402.
-            #
-            # The distinction is worth a status code because the blast radius
-            # changed with this middleware: the plan read touches Redis, and on
-            # a miss Mongo, on EVERY authenticated request. Answering 402 there
-            # showed every paying user in the product a "GAIA is paid only"
-            # modal during an infrastructure blip — indistinguishable, from
-            # their side, from having been wrongly unsubscribed. 503 says the
-            # true thing, and clients already retry it instead of routing the
-            # user to a checkout they do not need.
+            # Still fails CLOSED (no paid surface goes free) but does not claim the caller
+            # is unsubscribed: "could not read your plan" and "not on PRO" are different
+            # facts, and answering 402 here showed every paying user a paywall during a Redis/Mongo blip — clients already retry a 503 instead of routing to an unneeded checkout.
             log.error(
                 "Entitlement check failed — denying request (fail-closed)",
                 user={"id": str(user_id)},

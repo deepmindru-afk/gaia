@@ -3,17 +3,13 @@
 Powers link previews for email anchors in chat markdown. Sources, merged
 field-wise in priority order (the same surface Gmail itself draws from):
 
-1. Saved Google contacts (People API people:searchContacts via the
-   user's Composio Gmail connection) — saved names and contact photos.
-2. Other contacts (otherContacts:search) — anyone the user has ever
-   emailed, with their actual Google profile photo even when unsaved.
-3. Gravatar public profile — name, avatar, and bio for addresses with a
-   Gravatar account.
-4. Domain favicon — for company addresses with no personal photo, the
-   organization's logo beats an empty circle.
+1. Saved Google contacts (People API people:searchContacts) — saved names and photos.
+2. Other contacts (otherContacts:search) — anyone the user has ever emailed.
+3. Gravatar public profile — name, avatar, and bio for addresses with one.
+4. Domain favicon — for company addresses with no personal photo.
 
-Results are cached per (user, email) in Redis: contact lookups are
-user-specific, so they must never share the global URL-metadata cache.
+Cached per (user, email) in Redis, since contact lookups are user-specific
+and must never share the global URL-metadata cache.
 """
 
 import asyncio
@@ -159,11 +155,10 @@ async def _search_google_people(
 async def _fetch_profile_photo(user_id: str, person: dict[str, Any]) -> str | None:
     """Fetch a saved contact's full photo list and pick the real one.
 
-    searchContacts only returns the contact-card photo, which for contacts
-    without an explicit picture is a generated gradient/monogram that is NOT
-    flagged default. people.get on the same resource also returns
-    PROFILE-source photos — the person's actual Google account picture —
-    which _pick_photo prefers.
+    searchContacts only returns the contact-card photo, which for contacts without
+    an explicit picture is a generated gradient/monogram not flagged as default.
+    people.get on the same resource also returns PROFILE-source photos — the
+    person's actual Google account picture — which _pick_photo prefers.
     """
     resource_name = person.get("resourceName") or ""
     if not resource_name.startswith("people/"):

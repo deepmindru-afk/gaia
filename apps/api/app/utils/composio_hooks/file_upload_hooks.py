@@ -1,22 +1,6 @@
 """File-upload capability for every Composio tool, not one toolkit.
 
-Composio's native file param (an {name, mimetype, s3key} object the model
-cannot produce — it has no s3key) is unusable by an agent. Rather than teaching
-each toolkit its own workaround, this module gives the model one friendly
-attachments reference list everywhere it can work:
-
-- schema modifier (all tools, scoped by shape): any tool whose schema carries
-  Composio's file_uploadable marker gets that param swapped for
-  attachments, and the swap is recorded per tool. Outlook, Slack uploads,
-  and future toolkits need zero per-toolkit code — the marked param is found by
-  marker, not by name.
-- before-hook (only the tools we swapped): attachments references are
-  uploaded and written back under the tool's own native param name before it
-  runs. A tool we never swapped is left completely alone, even if it happens to
-  take an attachments argument of its own.
-
-Per-surface hooks (Gmail's compose card) keep only their display logic and call
-resolve_tool_attachments for the shared resolution.
+Composio's native file param (an {name, mimetype, s3key} object the model cannot produce) is unusable by an agent. A schema modifier finds any tool whose schema carries the file_uploadable marker and swaps that param for a friendly attachments list, recording the swap per tool; a before-hook then uploads referenced attachments and writes them back under the tool's original param name before it runs, leaving unswapped tools untouched. New toolkits need zero per-toolkit code — the marker, not the param name, decides what gets swapped. Per-surface hooks (Gmail's compose card) reuse resolve_tool_attachments for the shared resolution.
 """
 
 from typing import Any, TypedDict
@@ -44,10 +28,9 @@ from .registry import HookAbortError, register_before_hook, register_schema_modi
 NATIVE_UPLOAD_PARAM = "attachment"
 FRIENDLY_UPLOAD_PARAM = "attachments"
 
-# Tool slug -> the native upload param name this module swapped out of its
-# schema. Written by the schema modifier when tools are bound, read by the
-# before-hook at execution: it is the only evidence that ``attachments`` on a
-# call is the param we injected rather than one the tool already had.
+# Tool slug -> native upload param name swapped out of its schema; the only
+# evidence, read by the before-hook, that attachments on a call is injected
+# rather than the tool's own.
 _swapped_upload_params: dict[str, str] = {}
 
 
@@ -59,18 +42,9 @@ class AttachmentDisplay(TypedDict):
 
 
 def _is_file_upload_node(node: object) -> bool:
-    """file_uploadable: True on this node itself, its variants, or its items.
+    """Return True if node itself, an anyOf/oneOf/allOf variant, or its items carry the file_uploadable marker.
 
-    FileUploadable emits the marker onto the field's own schema node, so the
-    marker is read there — through anyOf/oneOf/allOf (an optional
-    param) and items (a list of files), which are still the same param.
-
-    Deliberately does NOT descend into properties: a composite param that
-    merely *contains* a file field is not one we can swap. The modifier deletes
-    the whole property it claims and the before-hook writes a bare
-    {name, mimetype, s3key} back under it, so claiming e.g. a
-    message: {text, file} param would delete the param the tool needs and
-    hand it a shape it cannot accept.
+    Deliberately does not descend into properties: a composite param that merely contains a file field can't be swapped without deleting a shape the tool still needs.
     """
     if not isinstance(node, dict):
         return False
@@ -116,11 +90,9 @@ def find_native_upload_param(schema: Tool) -> str | None:
     for name, prop in props.items():
         if _is_file_upload_node(prop):
             return str(name)
-    # Legacy fallback: marker presence in live schemas is unverifiable offline,
-    # so an s3key-fingerprinted object still swaps (logged) instead of silently
-    # dropping attach capability. Scoped to the conventional param name — an
-    # unmarked s3key shape anywhere in the schema is too weak a signal to act
-    # on. Remove once live-verified.
+    # Legacy fallback: marker presence is unverifiable offline, so an
+    # s3key-fingerprinted object at the conventional param name still swaps
+    # (logged); remove once live-verified.
     native = props.get(NATIVE_UPLOAD_PARAM)
     if isinstance(native, dict) and _looks_like_legacy_upload_param(native):
         log.debug(
@@ -172,19 +144,9 @@ def _display_from_native(native: object) -> list[AttachmentDisplay]:
 def resolve_tool_attachments(
     tool: str, toolkit: str, params: ToolExecuteParams, *, native_param: str
 ) -> list[AttachmentDisplay]:
-    """Turn friendly attachments references into the tool's native upload arg.
+    """Turn friendly attachments references into the tool's native upload arg, rewriting arguments in place.
 
-    Uploads each referenced file and rewrites arguments in place, collapsing
-    one file to a bare object (Composio accepts a single FileUploadable or a
-    list; the bare form is the widely accepted one). Raises HookAbortError
-    instead of running the tool with a missing file — a silently attachment-less
-    send would be a data-loss bug.
-
-    Callers must already know attachments is the param this module injected
-    (the Gmail hook by tool identity, the generic hook via
-    _swapped_upload_params), so anything unexpected in it aborts rather than
-    passing through. Order-independent: whichever hook runs first consumes
-    attachments; the other derives display from the resolved native arg.
+    Collapses a single file to a bare object (Composio accepts one FileUploadable or a list). Callers must already know attachments is the param this module injected, since anything unexpected aborts with HookAbortError instead of silently sending attachment-less. Order-independent: whichever hook runs first consumes attachments, the other derives display from the resolved native arg.
     """
     arguments = params.get("arguments", {})
     raw = arguments.get(FRIENDLY_UPLOAD_PARAM)
@@ -230,7 +192,7 @@ def resolve_tool_attachments(
 
 
 def swapped_upload_param(tool: str) -> str | None:
-    """The native upload param this module swapped out of tool's schema, if any.
+    """Return the native upload param this module swapped out of tool's schema, if any.
 
     The single source of truth for that name: Composio names the param per tool,
     so any caller that hardcodes one is guessing. None means we never swapped

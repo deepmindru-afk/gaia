@@ -80,7 +80,7 @@ class Crawl4aiFetcher(WebpageFetcher):
     name = "crawl4ai"
 
     def is_configured(self) -> bool:
-        """Always available — no external credentials required."""
+        """Return True unconditionally — no external credentials required."""
         return True
 
     async def fetch(self, url: str) -> str:
@@ -108,7 +108,7 @@ class FirecrawlFetcher(WebpageFetcher):
         self._client: FirecrawlApp | None = None
 
     def is_configured(self) -> bool:
-        """True when a Firecrawl API key is configured."""
+        """Return True when a Firecrawl API key is configured."""
         return bool(settings.FIRECRAWL_API_KEY)
 
     def _get_client(self) -> FirecrawlApp:
@@ -140,7 +140,7 @@ class HttpxFetcher(WebpageFetcher):
     name = "httpx"
 
     def is_configured(self) -> bool:
-        """Always available — pure-Python, no external service."""
+        """Return True unconditionally — pure-Python, no external service."""
         return True
 
     async def fetch(self, url: str) -> str:
@@ -181,7 +181,7 @@ class HttpxFetcher(WebpageFetcher):
 
 
 def _default_fetchers() -> list[WebpageFetcher]:
-    """The fetch waterfall, cheapest/most-capable first."""
+    """Return the fetch waterfall, cheapest/most-capable first."""
     return [Crawl4aiFetcher(), FirecrawlFetcher(), HttpxFetcher()]
 
 

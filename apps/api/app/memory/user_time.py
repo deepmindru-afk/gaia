@@ -16,7 +16,7 @@ from shared.py.wide_events import log
 
 
 async def resolve_user_timezone(user_id: str) -> Timezone:
-    """The user's home timezone from their profile; UTC when missing or invalid.
+    """Return the user's home timezone from their profile; UTC when missing or invalid.
 
     Timezone resolution is enrichment: a repository failure (malformed id, an
     infra hiccup) degrades to UTC instead of failing the retain that asked —

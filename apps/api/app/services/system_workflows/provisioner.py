@@ -142,11 +142,10 @@ async def provision_system_workflows(
 async def _activate_for_paying_user(workflow_id: str, user_id: str, key: str) -> None:
     """Switch a freshly provisioned system workflow on for a Pro user.
 
-    GAIA's opening conversation promises the inbox triage runs tonight; a
-    dormant workflow would make that a lie. Free users keep it dormant (the
-    paid-only gate would refuse to run it anyway), and an activation failure is
-    logged but never blocks the rest of provisioning: the workflow exists and can
-    be switched on by hand.
+    GAIA's opening conversation promises the inbox triage runs tonight, so
+    free users keep it dormant instead (the paid-only gate would refuse to
+    run it anyway); an activation failure is logged but never blocks the
+    rest of provisioning.
     """
     if not await is_paid(user_id):
         log.info(
@@ -310,8 +309,7 @@ async def _unregister_old_triggers_for_reset(
 async def _rearm_reset_schedule(
     existing: WorkflowDocument, trigger_config: TriggerConfig, workflow_id: str, user_id: str
 ) -> bool:
-    """Re-arm the schedule after a reset preserves liveness. False only when arming was
-    required (an activated schedule workflow) but failed."""
+    """Re-arm the schedule after a reset; return False only if arming was required and failed."""
     if not (
         existing.activated
         and trigger_config.type == TriggerType.SCHEDULE
@@ -336,11 +334,10 @@ async def _rearm_reset_schedule(
 async def reset_system_workflow_to_default(workflow_id: str, user_id: str) -> bool:
     """Re-apply the original definition to a system workflow document.
 
-    Restores: title, description, prompt, steps, trigger_config. Schedule
-    triggers get the profile timezone stamped and next_run recomputed (same as
-    provisioning), and an activated workflow is re-armed with a queued fire.
-    Preserves: _id, user_id, activated state, execution stats, created_at.
-    Returns False if the workflow is not found or not resettable.
+    Restores title, description, prompt, steps, trigger_config; preserves
+    _id, user_id, activated state, execution stats, created_at. Schedule
+    triggers get the profile timezone stamped and next_run recomputed, and
+    an activated workflow is re-armed with a queued fire.
     """
     log.set(
         component="system_workflow_provisioner",
@@ -394,10 +391,8 @@ async def reset_system_workflow_to_default(workflow_id: str, user_id: str) -> bo
         ),
     )
 
-    # Reset preserves liveness — an activated schedule workflow needs a queued
-    # fire for the recomputed next_run or it never runs again. A failed re-arm
-    # must fail the reset: reporting success here would leave a workflow that
-    # looks reset but never fires (retrying the reset re-arms it).
+    # A failed re-arm must fail the reset: reporting success would leave a
+    # workflow that looks reset but never fires (retrying re-arms it).
     if not await _rearm_reset_schedule(existing, trigger_config, workflow_id, user_id):
         return False
 

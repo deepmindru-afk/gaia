@@ -47,19 +47,16 @@ class AssembledContext:
         return [self.stable] if self.volatile is None else [self.stable, self.volatile]
 
 
-#: Backstop against a pathological volatile block blowing the context window and
-#: the bill — a runaway section, not a caching mechanism: nothing here affects
-#: the prompt cache, which is decided by slot ORDER (see ``slots``), not size.
-#: Sections are otherwise emitted in full. Head and tail are kept — the head is
-#: the agenda and journal, the tail the todo and run-binding directives that
-#: carry recency value — and the middle goes.
+#: Backstop against a pathological volatile block blowing the context window
+#: and the bill (not a caching mechanism — that's slot ORDER, see ``slots``).
+#: Head (agenda/journal) and tail (todo/run-binding directives) are kept.
 VOLATILE_BLOCK_MAX_CHARS = 8_000
 VOLATILE_BLOCK_HEAD_CHARS = 4_000
 VOLATILE_BLOCK_TAIL_CHARS = 4_000
 
 
 def _bounded(volatile_text: str) -> str:
-    """The volatile block, clipped to :data:VOLATILE_BLOCK_MAX_CHARS."""
+    """Return the volatile block, clipped to :data:VOLATILE_BLOCK_MAX_CHARS."""
     if len(volatile_text) <= VOLATILE_BLOCK_MAX_CHARS:
         return volatile_text
     return (
@@ -70,13 +67,11 @@ def _bounded(volatile_text: str) -> str:
 
 
 async def _render_section(section: Section, ctx: SectionContext) -> tuple[str, str]:
-    """A section's id alongside its rendered text.
+    """Return a section's id alongside its rendered text.
 
-    The id travels WITH the result so nothing downstream has to re-derive which
-    text belongs to which section. Gathering bare strings and pairing them back
-    against the section list by position is the one place a per-turn section can
-    silently land in the byte-stable block — the failure this whole package
-    exists to prevent — and an off-by-one there is invisible in the output.
+    The id travels WITH the result so nothing downstream has to re-derive
+    which text belongs to which section — pairing bare strings back by
+    position risked an invisible off-by-one landing in the byte-stable block.
     """
     return section.id, await section.fetch(ctx)
 
@@ -137,7 +132,7 @@ async def _gather_sections(ctx: SectionContext) -> AssembledContext:
 
 
 async def assemble_context(ctx: SectionContext) -> AssembledContext:
-    """The context ctx.tier hands its model — the one entry point for it.
+    """Build the context ctx.tier hands its model — the one entry point for it.
 
     Degrades to an empty stable block if the gather itself fails. That block is
     byte-stable on purpose: a persistent failure here must not produce a

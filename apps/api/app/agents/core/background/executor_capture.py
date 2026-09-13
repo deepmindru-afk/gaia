@@ -101,7 +101,7 @@ def _running_task_stacks() -> list[str]:
 
 
 def _agent_task_name(task: asyncio.Task[object]) -> str | None:
-    """The task's coroutine name when it is an agent run, else None."""
+    """Return the task's coroutine name when it is an agent run, else None."""
     coro = task.get_coro()
     name = getattr(coro, "__qualname__", type(coro).__name__)
     return name if any(marker in name for marker in _AGENT_TASK_MARKERS) else None
@@ -129,25 +129,22 @@ def drain_executor_tool_data(stream_id: str) -> list[ToolDataEntry]:
 
     Non-destructive read. Mirrors the comms-graph accumulation path:
     tool_calls_data outputs are merged in, and subagent start/end pairs are
-    grouped into subagent_group entries via reconstruct_subagent_groups.
-    Only tool_calls_data entries get their output backfilled — the message
-    owns those, while subagent groups carry their own outputs from the session.
+    grouped via reconstruct_subagent_groups. Only tool_calls_data entries
+    get their output backfilled.
     """
     session = get_session(stream_id)
     if session is None or not session.tool_events:
         return []
     entries: list[ToolDataEntry] = []
-    # The accumulator envelope is an open bag (see utils/stream_utils); only its
-    # "tool_data" list has a fixed shape, and it is this list object throughout —
-    # seeded here, mutated in place by every helper below, and rebound by
+    # The accumulator envelope is an open bag; only "tool_data" has a fixed
+    # shape, and it's this list object throughout, rebound by
     # reconstruct_subagent_groups, hence the re-read at the end.
     accumulated: dict[str, Any] = {"tool_data": entries}
     outputs: dict[str, str] = {}
     for evt in session.tool_events:
-        # Hooks (e.g. GMAIL_FETCH_MESSAGES) emit raw field payloads like
-        # {"email_fetch_data": [...]}; normalize them to {"tool_data": {...}}
-        # before absorbing, or absorb_collector_event drops them and the list
-        # card never persists onto the background-executor message.
+        # Hooks emit raw field payloads like {"email_fetch_data": [...]};
+        # normalize to {"tool_data": {...}} or absorb_collector_event drops
+        # them and the list card never persists.
         absorb_collector_event(normalize_custom_event(evt), accumulated, outputs)
     apply_outputs_to_tool_data(accumulated["tool_data"], outputs, only_tool_name="tool_calls_data")
     reconstruct_subagent_groups(accumulated)
@@ -158,18 +155,10 @@ def drain_executor_tool_data(stream_id: str) -> list[ToolDataEntry]:
 def build_returned_to_frontend_note(stream_id: str) -> str:
     """Build a note telling comms which native cards already rendered this turn.
 
-    Sourced from the executor's emitted tool events (the same session +
-    tool_fields source of truth as OPENUI_SUPPRESSED_TOOLS), so it states
-    what was RETURNED to the frontend — not a claim about DOM rendering.
-
-    Each row names the subagent that produced the card. Without that, the note
-    says a todo card exists but not which system holds those todos, so comms has
-    nothing to weigh against an executor summary that credits the wrong product
-    (eight GAIA todos reached a user as "8 tasks created (Todoist)").
-
-    MUST be called before the session is torn down (and, for live streams,
-    before done_event is set, since the chat stream drains + tears down in
-    parallel). Returns "" when nothing card-worthy was emitted.
+    States what was RETURNED to the frontend, not a claim about DOM
+    rendering. Each row names the producing subagent (once missing, an
+    executor summary credited the wrong product: "8 tasks created (Todoist)"
+    for GAIA todos). MUST be called before the session is torn down.
     """
     entries = drain_executor_tool_data(stream_id)
     subagent_names: dict[str, str] = {}

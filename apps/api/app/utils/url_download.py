@@ -83,7 +83,7 @@ async def _read_capped(response: httpx.Response, max_bytes: int, url: str) -> by
 
 
 def download_filename(url: str, ext: str) -> str:
-    """A stable, collision-resistant on-disk name for a URL's download.
+    """Return a stable, collision-resistant on-disk name for a URL's download.
 
     Keyed on the URL so re-downloading is idempotent (same name, last-writer-wins)
     and the path stays constant across turns. The hash also strips any hostile
@@ -94,7 +94,7 @@ def download_filename(url: str, ext: str) -> str:
 
 
 def extension_from_url(url: str) -> str:
-    """A real file extension named in the URL path, or "" if there isn't one."""
+    """Return a real file extension named in the URL path, or "" if there isn't one."""
     suffix = PurePosixPath(urlparse(url).path).suffix.lower()
     # A short alnum suffix is a real file extension (.png, .pdf, .tar); a long or
     # symbol-laden one is almost certainly a path segment that merely contains a
@@ -103,7 +103,7 @@ def extension_from_url(url: str) -> str:
 
 
 def extension_from_content_type(content_type: str | None) -> str:
-    """A file extension for a response's content type, or "" if unknown."""
+    """Return a file extension for a response's content type, or "" if unknown."""
     if not content_type:
         return ""
     return mimetypes.guess_extension(content_type) or ""

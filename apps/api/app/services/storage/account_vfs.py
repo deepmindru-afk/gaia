@@ -9,13 +9,9 @@ The GUIDE.md docs under account/ are NOT written here: they are static
 system files (system_files._STATIC_DOCS), served by the read tool's memory
 fast-path and symlinked from the shared _system subtree.
 
-Layout::
-
-    account/
-        subscription.json  usage.json  notifications.json
-        preferences.json   custom-instructions.json
-        voices/catalog.json          voices/selected.json
-        linked-accounts/<platform>.json
+Layout: account/{subscription,usage,notifications,preferences,
+custom-instructions}.json, voices/{catalog,selected}.json,
+linked-accounts/<platform>.json.
 """
 
 from __future__ import annotations

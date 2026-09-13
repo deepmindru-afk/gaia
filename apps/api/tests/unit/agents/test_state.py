@@ -101,11 +101,7 @@ class TestMessagesDeltaReducer:
         assert [m.id for m in result] == ["s1", "a2"]
 
     def test_remove_all_sentinel_is_batching_invariant(self):
-        """DeltaChannel replays writes in arbitrary batch sizes and requires
-        reducer(reducer(s, xs), ys) == reducer(s, xs + ys). A REMOVE_ALL
-        write that is not applied in stream order breaks that invariant, and the
-        channel then reconstructs a different history on replay than it had live.
-        """
+        """DeltaChannel requires reducer(reducer(s, xs), ys) == reducer(s, xs + ys); out-of-order REMOVE_ALL breaks it."""
         state = [HumanMessage(content="old", id="h1")]
         xs = [[RemoveMessage(id=REMOVE_ALL_MESSAGES), HumanMessage(content="summary", id="s1")]]
         ys = [[AIMessage(content="new", id="a1")]]

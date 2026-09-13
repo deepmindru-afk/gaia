@@ -101,12 +101,7 @@ class TestGetCollectionConcurrentCreate:
 
 
 class _ConflictingChromaServer:
-    """A server whose get-or-create rejects a differing persisted embedding
-    function, exercising _get_collection's plain-get fallback.
-
-    get_collection is keyed by name, so a fallback that drops the name (or
-    returns nothing) fails to resolve the right collection.
-    """
+    """A server whose get-or-create rejects a differing persisted embedding function, exercising the plain-get fallback."""
 
     def __init__(self, by_name: dict[str, AsyncMock]) -> None:
         self._by_name = by_name

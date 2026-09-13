@@ -116,12 +116,9 @@ async def publish_decision(
             feedback,
         ),
     )
-    # Also settle the PERSISTED frame right now. Final delivery reconciles too,
-    # but the run may pause again on a later gate first — a revisit in that
-    # window would otherwise render a dead pending card for a decided approval.
-    # Isolated on purpose: this is a redraw of an already-decided card, and the
-    # caller is the gate, which fails CLOSED. Letting a write error escape here
-    # would turn a cosmetic failure into a denial of the user's own decision.
+    # Settle the PERSISTED frame now too, since a later pause before final delivery
+    # reconciles would otherwise show a dead pending card. Isolated: the caller
+    # (the gate) fails CLOSED, so a write error here must not become a denial.
     try:
         await conversation_repository.set_message_approval_status(
             record.conversation_id,
@@ -197,8 +194,10 @@ async def remember_declined_call(
 async def recall_declined_call(
     stream_id: str, tool_name: str, args: dict[str, Any]
 ) -> ApprovalOutcome | None:
-    """The prior decline for this exact call in this turn, if any — so the gate
-    can auto-deny a retry with the user's original feedback and never re-prompt."""
+    """Return the prior decline for this exact call in this turn, if any.
+
+    Lets the gate auto-deny a retry with the user's original feedback and never re-prompt.
+    """
     if not redis_cache.redis:
         return None
     raw = await redis_cache.get(_declined_key(stream_id, tool_name, args))
@@ -221,12 +220,11 @@ def build_summary(tool_name: str, args: dict[str, Any], integration_name: str | 
 def build_action_detail(summary: str, args: dict[str, Any]) -> str:
     """Richer rendering of a gated call for the conversational classifier.
 
-    The card's one-line summary (tool + integration identity, truncated args)
-    as the label, plus every argument up to a bound with non-scalar values as
-    compact JSON — so the classifier sees the full content (recipient, subject,
-    body, ...) the summary omits. The total is capped by
-    HIL_CLASSIFIER_MAX_DETAIL_CHARS; the per-value clip only stops one
-    pathological arg from eating the whole budget. No LLM here."""
+    Adds every argument up to a bound (non-scalars as compact JSON) so the
+    classifier sees content the one-line summary omits. Capped by
+    HIL_CLASSIFIER_MAX_DETAIL_CHARS; the per-value clip stops one pathological
+    arg from eating the whole budget. No LLM here.
+    """
     lines = [summary]
     arg_lines = []
     for key, value in list((args or {}).items())[:HIL_CLASSIFIER_MAX_ARGS]:
@@ -246,8 +244,10 @@ def build_action_detail(summary: str, args: dict[str, Any]) -> str:
 def _schedule_pending_notification(
     user_id: str, conversation_id: str, approval_id: str, summary: str
 ) -> None:
-    """Wake clients not watching the stream. Detached — a notify failure must
-    never block the gate."""
+    """Wake clients not watching the stream.
+
+    Detached, since a notify failure must never block the gate.
+    """
     spawn_logged_task(
         "approval_pending_notification",
         notify_approval_pending(user_id, conversation_id, approval_id, summary),
@@ -301,7 +301,7 @@ def _approval_entry(
 
 
 def _summary_arg_parts(args: dict[str, Any]) -> list[str]:
-    """A few short key: value scalars for the card's one-line summary."""
+    """Build a few short key: value scalars for the card's one-line summary."""
     parts: list[str] = []
     for key, value in (args or {}).items():
         if len(parts) >= HIL_SUMMARY_MAX_ARGS:

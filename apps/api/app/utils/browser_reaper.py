@@ -37,7 +37,7 @@ _reaper_task: asyncio.Task[None] | None = None
 
 
 def _is_leaked_driver(proc: psutil.Process, now: float) -> bool:
-    """True when proc is a browser driver older than the reaper age gate."""
+    """Return True when proc is a browser driver older than the reaper age gate."""
     try:
         if now - proc.create_time() < BROWSER_REAPER_MAX_AGE_SECONDS:
             return False

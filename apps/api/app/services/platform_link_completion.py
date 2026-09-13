@@ -47,19 +47,10 @@ async def complete_platform_link(
 ) -> PlatformLinkCompletion:
     """Link the account and run every side effect a successful link owes.
 
-    Whatever GAIA says after the link is sent from here, on the outbound queue
-    every other server-initiated message uses. first_contact is the
-    composed opening for the one-tap onboarding link (hello, promise, first
-    move) and is delivered as-is; without it a new link gets the generic
-    "you're connected" text. The bots deliver, they never compose.
-
-    Reports back whether that first contact actually went out: nothing retries
-    the publish, so a caller holding the bubbles is the only thing standing
-    between a failed delivery and a linked platform that never said a word.
-
-    Raises AppError(409) when the platform account belongs to another GAIA user
-    (or the user already has a different account on this platform) — the one
-    failure a caller is expected to report back to the person linking.
+    first_contact is the composed opening for a one-tap onboarding link,
+    delivered as-is; without it a new link gets the generic "you're connected"
+    text. Reports whether that delivery went out — nothing retries it. Raises
+    AppError(409) on a platform-account conflict.
     """
     try:
         result = await PlatformLinkService.link_account(
@@ -76,17 +67,9 @@ async def complete_platform_link(
             error_type=type(e).__name__,
             error=str(e),
         )
-        # Two different conflicts wearing one 409 sent people to fix the wrong
-        # account: told "disconnect it from the other GAIA account", a user whose
-        # own account merely holds a different handle goes looking for an account
-        # that does not exist. The code travels with the response so the bots can
-        # stop inferring the reason from the status alone.
-        #
-        # An empty platform_user_id or a missing user still raises the plain
-        # ValueError that ``link_account`` documents, and is deliberately NOT
-        # caught here: neither is something the person linking can act on, and
-        # dressing an internal fault as a 409 is how "User not found" came to be
-        # reported to users as an ownership conflict.
+        # Distinct codes for the two conflicts: conflating them misdirected users
+        # to fix the wrong account. A bare ValueError (empty platform_user_id, a
+        # missing user) is deliberately NOT caught here — it's an internal fault, not a 409.
         if isinstance(e, PlatformAccountTakenError):
             raise create_error(
                 message=str(e),
@@ -126,13 +109,9 @@ async def complete_platform_link(
         await notify_account_linked(platform, user_id)
     schedule_account_sync(user_id)
     if result.is_new_link:
-        # Only a link that did not exist a moment ago is a connection. An
-        # idempotent re-link — a second tap on the same deep link, a re-issued
-        # token — used to capture too, so the connection count tracked taps.
-        #
-        # capture_event, not capture_context_event: the bot route resolves its
-        # user from the link code, not a session, so there is no request
-        # identity to inherit and the event would land on an anonymous profile.
+        # Only a genuinely new link counts — an idempotent re-link used to
+        # capture too, inflating the count. capture_event, not
+        # capture_context_event: the bot route has no session identity to inherit.
         capture_event(
             user_id,
             AnalyticsEvents.INTEGRATION_CONNECTED,

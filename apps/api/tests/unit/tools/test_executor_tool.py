@@ -46,7 +46,7 @@ def _spawned(stream_id: str) -> bool:
 
 
 def tool_function(tool_obj: BaseTool) -> Callable[..., Awaitable[str]]:
-    """The undecorated coroutine behind a @tool.
+    """Return the undecorated coroutine behind a @tool.
 
     Called directly instead of ainvoke so a test never opens a LangSmith
     trace: langsmith.utils.get_env_var is lru_cached, so a fixture that

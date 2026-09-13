@@ -10,11 +10,8 @@ from __future__ import annotations
 from enum import StrEnum
 import re
 
-# Source, config, and log files an agent commonly writes render inline as plain
-# text — the file viewer syntax-highlights by file extension, so a more specific
-# text/* subtype would buy nothing here. Enumerated explicitly (rather than a
-# catch-all default) so genuinely binary or unknown files still fall through to
-# application/octet-stream and are never base64-decoded as UTF-8 for inlining.
+# Enumerated explicitly (not a catch-all) so binary/unknown files fall through
+# to application/octet-stream instead of being base64-decoded as UTF-8.
 _PLAIN_TEXT_EXTS = (
     "py",
     "pyi",
@@ -88,10 +85,8 @@ _EXT_CONTENT_TYPES = {
     **dict.fromkeys(_PLAIN_TEXT_EXTS, "text/plain"),
 }
 
-# Small textual artifacts ride the SSE event (and the Mongo conversation)
-# inline so the side-panel preview is instant and survives reload without
-# an extra round-trip. 64 KB covers virtually every agent-written
-# HTML/MD/code file while keeping per-message documents bounded.
+# Rides the SSE event + Mongo conversation inline for an instant, reload-safe
+# preview. 64 KB covers virtually every agent-written HTML/MD/code file.
 INLINE_ARTIFACT_MAX_BYTES = 64 * 1024
 
 _INLINEABLE_APPLICATION_TYPES = frozenset(
@@ -161,10 +156,9 @@ def session_artifacts(conv_id: str) -> str:
     return f"{session_dir(conv_id)}/{ARTIFACTS_DIRNAME}"
 
 
-# Both dirs are system-written, like `tool_outputs/` and `archives/`: a place
-# something evicted from context can be read back from. Deliberately NOT
-# `artifacts/` — the watcher only tails that dir, so a capture of the user's screen
-# never lands in their file panel or reaches a bot user as an outbound file.
+# Deliberately not `artifacts/` — the watcher only tails that dir, so a
+# screen capture never lands in the file panel or reaches a bot as an
+# outbound file.
 def session_screenshot_relpath(filename: str) -> str:
     """Session-relative path of a captured screenshot (what write_session_file takes)."""
     return f"{SCREENSHOTS_DIRNAME}/{filename}"
@@ -186,15 +180,7 @@ def is_under_workspace(abs_path: str) -> bool:
 
 
 def classify(abs_path: str) -> tuple[MountRole, str | None]:
-    """Return (role, conv_id_or_None). Used to route writes + emit events.
-
-    Examples:
-        "/workspace/sessions/abc/scratch/foo.py"        -> (SCRATCH, "abc")
-        "/workspace/sessions/abc/artifacts/x.html"  -> (ARTIFACTS, "abc")
-        "/workspace/sessions/abc/user-uploaded/d.csv"   -> (USER_UPLOADED, "abc")
-        "/workspace/skills/my-skill/main.py"            -> (SKILLS, None)
-        "/workspace/.gaia/runs/abc.log"                 -> (GAIA_RUNTIME, None)
-    """
+    """Return (role, conv_id_or_None). Used to route writes + emit events."""
     if not is_under_workspace(abs_path):
         return MountRole.UNKNOWN, None
     rest = abs_path[len(WORKSPACE_ROOT) + 1 :].split("/") if abs_path != WORKSPACE_ROOT else []
@@ -236,11 +222,7 @@ def detect_content_type(path: str) -> str | None:
 def safe_upload_filename(filename: str) -> str:
     """Slugify an uploaded filename for safe use as a session FS path.
 
-    Strips directory separators, control chars and leading dots; collapses
-    whitespace; restricts to [A-Za-z0-9._-]. Raises ValueError if nothing
-    usable remains. Single source of truth for the on-disk name an upload
-    lands at — both the upload pipeline and the file-context formatter call
-    this so the agent always sees the exact path it can read.
+    Restricts to [A-Za-z0-9._-]. Raises ValueError if nothing usable remains.
     """
     base = filename.replace("\\", "/").rsplit("/", 1)[-1]
     cleaned = "".join(ch for ch in base if ch.isprintable() and ch not in "/\0").strip()

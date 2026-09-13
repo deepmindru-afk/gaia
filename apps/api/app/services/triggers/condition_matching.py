@@ -81,7 +81,7 @@ def _compare_list(operator: ConditionOperator, actual: list[object], expected: o
 def evaluate_condition(
     condition: SubscriptionCondition, payload: dict[str, Any], field_type: MatchableFieldType
 ) -> bool:
-    """Does one condition hold against this payload?"""
+    """Return whether one condition holds against this payload."""
     actual = resolve_payload_value(payload, condition.field_name)
     if actual is None:
         return False
@@ -107,16 +107,12 @@ def conditions_match(
     payload: dict[str, Any],
     match: ConditionMatch = ConditionMatch.ALL,
 ) -> bool:
-    """Do a subscription's conditions hold against this payload?
+    """Return whether a subscription's conditions hold against this payload.
 
-    ALL is the AND-chain; ANY is a flat OR. No conditions means the
-    subscription fires on every event for its trigger, which is the right default
-    for a per-resource trigger already scoped to one channel, calendar or
-    repository at registration time — regardless of match.
-
-    A condition naming a field the catalog no longer has does NOT match. The
-    alternative — ignoring it — would silently widen a subscription the moment a
-    payload schema changed upstream.
+    ALL is the AND-chain; ANY is a flat OR. No conditions means the subscription
+    fires on every event. A condition naming a field the catalog no longer has
+    does NOT match — the alternative would silently widen a subscription when
+    a payload schema changes upstream.
     """
     entry = get_matchable_trigger(trigger_name)
     if entry is None:

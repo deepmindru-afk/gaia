@@ -1,21 +1,14 @@
 """Canonical timezone module — the single source of truth for the API.
 
-Timezones bite because a bare str can secretly be an IANA name
-("Asia/Kolkata"), a fixed offset ("+05:30"), "UTC", "" or
-None, and nothing forces a caller to say which. This module makes illegal
-states unrepresentable: the :class:Timezone value object is *always valid*
-(constructed only via :meth:Timezone.parse / :meth:Timezone.try_parse), so
-.tzinfo always resolves and no consumer ever re-implements parsing. Bare
-str survives only at the Mongo / HTTP / LangGraph-config boundaries.
+Timezones bite because a bare str can secretly be an IANA name, a fixed
+offset, "UTC", "" or None. Timezone is always valid (constructed only via
+parse/try_parse), so .tzinfo always resolves. Bare str survives only at the
+Mongo/HTTP/LangGraph-config boundaries.
 
-Two distinct concepts (do not cross them):
-
-* **Home timezone** — where the user lives. Drives the agent's "now",
-  notification/display formatting, todos, and the *default* for a new schedule.
-  Resolved by :func:resolve_home_timezone (DB profile, healed from header).
-* **Schedule timezone** — the wall-clock zone one specific cron/reminder/event
-  fires in. Stored on the task; passed explicitly to cron math. Defaults to the
-  home timezone at creation time, but is independent thereafter.
+Two distinct concepts: home timezone (where the user lives; drives "now",
+notifications, todos, and the default for a new schedule; resolved by
+resolve_home_timezone) and schedule timezone (the zone one specific cron
+fires in; defaults to home at creation, independent thereafter).
 """
 
 from __future__ import annotations
@@ -73,7 +66,7 @@ class Timezone:
 
     @classmethod
     def utc(cls) -> Timezone:
-        """The UTC timezone."""
+        """Return the UTC timezone."""
         return cls("UTC", UTC)
 
     @classmethod
@@ -139,11 +132,10 @@ class Timezone:
 
     @property
     def is_utc(self) -> bool:
-        """Whether this is UTC."""
         return self.value.upper() == "UTC"
 
     def now(self) -> datetime:
-        """Current instant expressed in this zone (tz-aware)."""
+        """Return the current instant expressed in this zone (tz-aware)."""
         return datetime.now(self.tzinfo)
 
     def localize(self, instant: datetime) -> datetime:
@@ -196,14 +188,11 @@ class ResolvedTimezone:
 
 
 def resolve_home_timezone(stored: str | None, header: str | None) -> ResolvedTimezone:
-    """The one home-timezone precedence rule, pure and side-effect-free.
+    """Apply the one home-timezone precedence rule, pure and side-effect-free.
 
-    1. A real (non-UTC) stored user.timezone is authoritative.
-    2. Else (empty OR low-confidence "UTC" — often a junk default that then
-       sticks forever and silently runs everything in UTC) a valid non-UTC
-       header wins, and should_heal asks the caller to backfill the DB so
-       header-less background paths converge.
-    3. Else a genuine stored "UTC", else UTC.
+    A real (non-UTC) stored user.timezone wins; else a valid non-UTC header
+    wins (should_heal tells the caller to backfill the DB); else a genuine
+    stored "UTC", else UTC.
     """
     stored_tz = Timezone.try_parse(stored)
     if stored_tz is not None and not stored_tz.is_utc:

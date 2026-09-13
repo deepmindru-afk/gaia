@@ -46,9 +46,8 @@ router = APIRouter()
 workos = WorkOSClient(api_key=settings.WORKOS_API_KEY, client_id=settings.WORKOS_CLIENT_ID)
 
 
-# exclude_none: the per-auth-path flags (impersonated/bot_authenticated/dev_bypass)
-# and the optional profile fields are only meaningful when set — the response has
-# always omitted them rather than sending nulls, and clients rely on that.
+# exclude_none: the per-auth-path flags and optional profile fields are only
+# meaningful when set; the response has always omitted nulls, and clients rely on that.
 # evlog-map-disable-next-line audit -- read-only profile lookup, no state change to audit
 @router.get("/me", response_model_exclude_none=True)
 async def get_me(
@@ -58,7 +57,6 @@ async def get_me(
     Returns the current authenticated user's details.
     Uses the dependency injection to fetch user data.
     """
-    # Get onboarding status
     onboarding_status = await get_user_onboarding_status(user["user_id"])
 
     log.set(
@@ -113,7 +111,6 @@ async def update_me(
         picture_data = await picture.read()
         log.set(picture_size_bytes=picture.size)
 
-    # Update user profile
     updated_user = await update_user_profile(user_id=user_id, name=name, picture_data=picture_data)
 
     changed_fields = [

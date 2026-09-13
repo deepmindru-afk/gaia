@@ -17,7 +17,7 @@ FILE_BASE = "/api/v1"
 
 
 def _file_doc(**overrides: object) -> FileDocument:
-    """A stored file document as FileService.update returns it."""
+    """Build a stored file document as FileService.update returns it."""
     data: dict[str, object] = {
         "id": "0" * 24,
         "file_id": "file-001",
@@ -138,7 +138,7 @@ class TestUploadFile:
     async def test_upload_file_reports_the_stored_content_type(
         self, mock_upload: AsyncMock, client: AsyncClient
     ):
-        """The response's ``type`` mirrors the MIME type persisted on the document."""
+        """The response's type mirrors the MIME type persisted on the document."""
         mock_upload.return_value = _file_doc(
             file_id="file-003",
             url="https://cdn.example.com/data.csv",

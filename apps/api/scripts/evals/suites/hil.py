@@ -76,11 +76,9 @@ APPROVAL_CARD_TOOL = "approval_request"
 # Whole-case budget. Larger than the quality suite's: a HIL case is a turn that
 # pauses, an out-of-band decision, and a second run that has to finish.
 CASE_TIMEOUT_S = float(os.environ.get("EVALS_HIL_TIMEOUT_S", "420"))
-# How long to wait for a decided approval's card to settle in the conversation.
-# Its own budget, not a fraction of the case timeout: a card that will never
-# settle (see the send_notification finding in approval_gate.yaml) otherwise
-# spends 3.5 minutes per case failing. A settle is normally seen in one or two
-# polls — the create_tracked_todo path lands in ~3-6s.
+# Its own budget, not a fraction of the case timeout: a card that never
+# settles (see approval_gate.yaml) otherwise spends 3.5 minutes per case
+# failing. A settle is normally seen in one or two polls (~3-6s).
 RESUME_TIMEOUT_S = float(os.environ.get("EVALS_HIL_RESUME_TIMEOUT_S", "90"))
 RESUME_POLL_INTERVAL_S = 3.0
 
@@ -93,7 +91,7 @@ def _url(path: str) -> str:
 
 
 def _reduce(frames: list[Frame]) -> dict[str, Any]:
-    """The parts of a turn this suite gates on: id, text, calls, approval cards.
+    """Return the parts of a turn this suite gates on: id, text, calls, approval cards.
 
     Deliberately narrower than quality._parse_frames: that reduction exists to
     journal a readable summary of every frame kind, and truncates tool_data
@@ -212,10 +210,9 @@ class HilTransport:
                 duration_s=time.monotonic() - start,
                 error=error[:300],
             )
-        # Estimates only — the HIL endpoints report no usage. Deliberately NOT
-        # pushed through tracker.add_manual: that books into the per-case meter,
-        # and the runner would then stamp the figure "metered". A chars/4 guess
-        # entering the trusted channel is how 14-token cases passed for real.
+        # Estimates only — the HIL endpoints report no usage. Deliberately not
+        # pushed through tracker.add_manual: that would stamp a chars/4 guess
+        # "metered", which is how 14-token cases once passed for real.
         tokens_in = estimate_tokens(
             " ".join(m["content"] for m in transcript if m["role"] == "user")
         )
@@ -259,8 +256,7 @@ class HilTransport:
     async def _arm_gate(
         self, client: httpx.AsyncClient, email: str, case: Case, provider: ProviderConfig
     ) -> None:
-        """Write the case's HIL preferences. Fails loud — an unarmed gate would
-        turn every gate case into a green run that proved nothing."""
+        """Write the case's HIL preferences, failing loud since an unarmed gate turns every gate case into a green run that proved nothing."""
         hil = case.setup.get("hil")
         if not isinstance(hil, dict):
             raise ProviderError(provider.name, f"case {case.id} has no setup.hil block")
@@ -457,11 +453,9 @@ class HilTransport:
                 rows = resp.json().get("notifications") or [] if resp.status_code == 200 else []
                 projected[key] = len(rows)
             elif key == "notifications_containing":
-                # Count is not enough to prove the APPROVED action happened: the
-                # agent sends notifications of its own (observed: a "Confirm
-                # notification channel" question), and a bare `notifications: 1`
-                # is satisfied by that instead. Match the body/title so only the
-                # user's own payload can satisfy the gate.
+                # Count alone is satisfied by the agent's own notifications
+                # (observed: a "Confirm notification channel" question), so
+                # match the body/title to prove the APPROVED action happened.
                 term = str(verify["notifications_containing"]).lower()
                 resp = await client.get(_url("/notifications"), headers=headers)
                 rows = resp.json().get("notifications") or [] if resp.status_code == 200 else []

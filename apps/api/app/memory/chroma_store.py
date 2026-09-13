@@ -22,15 +22,14 @@ from app.db.chroma.chromadb import ChromaClient
 from app.db.chroma.noop_embedding import NoOpEmbeddingFunction
 
 # Collections are cached per event loop: an asyncio.Lock (and Chroma's async
-# client) binds to the loop that first uses it, so sharing one cache/lock
-# across loops raises "bound to a different event loop" in any context that
-# runs multiple loops (test workers, scripts, background runners).
+# client) binds to the loop that first uses it, so sharing one across loops
+# raises "bound to a different event loop" (test workers, background runners).
 _loop_collections: dict[int, dict[str, AsyncCollection]] = {}
 _loop_locks: dict[int, asyncio.Lock] = {}
 
 
 def _loop_state() -> tuple[dict[str, AsyncCollection], asyncio.Lock]:
-    """The collection cache + creation lock for the running event loop."""
+    """Return the collection cache + creation lock for the running event loop."""
     loop_id = id(asyncio.get_running_loop())
     if loop_id not in _loop_locks:
         _loop_locks[loop_id] = asyncio.Lock()
@@ -110,10 +109,8 @@ async def _get_collection(name: str) -> AsyncCollection:
 
         client = await ChromaClient.get_client()
         try:
-            # Atomic server-side get-or-create. A check-then-create (list then
-            # create) races when several processes share one Chroma server —
-            # the shared test collections under xdist, and cold-start
-            # concurrency in production — and the loser gets "already exists".
+            # Atomic server-side get-or-create: a check-then-create races when
+            # several processes share one Chroma server (xdist, cold-start).
             collection = await client.get_or_create_collection(
                 name=name,
                 metadata={"hnsw:space": "cosine"},
@@ -234,15 +231,10 @@ async def delete_user(user_id: str) -> None:
 
 
 async def delete_conversation_chunks(user_id: str, source_id: str) -> None:
-    """Hard-delete the verbatim chunks of one conversation.
+    """Hard-delete the verbatim chunks of one conversation, by id prefix {user_id}:{source_id}.
 
-    Chunk metadata carries only {user_id, date}, so the conversation is
-    identified by the id prefix {user_id}:{source_id}: that ingestion
-    stamps on every chunk. Called when a memory sourced from that conversation
-    is forgotten: forgetting a fact deliberately forfeits verbatim recall of
-    the conversation that produced it — the privacy-safe direction, since the
-    original sentence would otherwise stay quotable via conversation search
-    forever.
+    Called when a memory sourced from that conversation is forgotten, so the
+    original sentence doesn't stay quotable via conversation search forever.
     """
     collection = await _get_collection(CHROMA_CONVERSATION_CHUNKS_COLLECTION)
     result = await collection.get(where={"user_id": user_id}, include=[])

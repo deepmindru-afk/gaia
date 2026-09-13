@@ -263,7 +263,7 @@ class _StageSink:
         return [name for name, _ in self.events]
 
     def payload(self, stage: OnboardingStage) -> dict[str, Any]:
-        """The last payload emitted for stage — the one the client keeps."""
+        """Return the last payload emitted for stage — the one the client keeps."""
         for name, payload in reversed(self.events):
             if name == stage.value:
                 return payload
@@ -316,7 +316,7 @@ def seeded_descriptions(externals: _Externals) -> list[str]:
 
 
 def seeded_id_of(externals: _Externals, description: str) -> str:
-    """The id of the one seeded conversation carrying description."""
+    """Return the id of the one seeded conversation carrying description."""
     ids = [cid for cid, desc in externals.seeded_conversations if desc == description]
     assert len(ids) == 1, f"expected exactly one {description!r} conversation, got {ids}"
     return ids[0]
@@ -335,7 +335,7 @@ def _gmail_message(idx: int) -> dict[str, Any]:
 
 
 def _sent_email(idx: int) -> dict[str, Any]:
-    """A sent message long enough to survive the writing-style sampler's filters."""
+    """Build a sent message long enough to survive the writing-style sampler's filters."""
     return {
         "id": f"sent-{idx}",
         "subject": f"Re: thread {idx}",
@@ -350,7 +350,7 @@ HOLO_BIO = "Builds quietly, ships loudly."
 
 
 def _structured_result(schema: type) -> Any:
-    """A valid instance of whatever schema the caller asked the model for."""
+    """Build a valid instance of whatever schema the caller asked the model for."""
     if schema is WritingStyleOutput:
         return WritingStyleOutput(
             summary=STYLE_SUMMARY,
@@ -389,11 +389,10 @@ def users() -> _UserStore:
 
 @pytest.fixture
 async def arq_pool() -> Any:
-    """A real ArqRedis on fakeredis, installed as the process pool.
+    """Install a real ArqRedis on fakeredis as the process pool.
 
-    Real arq rather than a mock because job *liveness* is a branch of the code
-    under test: the personalization slot aborts an in-flight job on reset, and
-    "nothing was queued" has to be answered by the queue itself.
+    Real arq rather than a mock because job liveness is a branch of the code
+    under test: the personalization slot aborts an in-flight job on reset.
     """
     fake = fakeredis.aioredis.FakeRedis()
     pool = ArqRedis(connection_pool=fake.connection_pool)
@@ -484,7 +483,7 @@ def _enter_persistence_patches(stack: ExitStack, users: _UserStore, externals: _
 
 
 def _enter_transport_patches(stack: ExitStack, stages: _StageSink, externals: _Externals) -> None:
-    """The socket and the notification service, recorded rather than delivered."""
+    """Record the socket and the notification service rather than delivering them."""
 
     async def _create_notification(request: Any) -> None:
         externals.notifications.append(request.content.title)
@@ -536,10 +535,8 @@ def _enter_external_service_patches(stack: ExitStack, externals: _Externals) -> 
         )
 
     for patcher in (
-        # --- composio ----------------------------------------------------
         patch(f"{SVC}.intelligence_service.get_composio_service", lambda: composio),
         patch("app.api.v1.endpoints.onboarding.get_composio_service", lambda: composio),
-        # --- gmail -------------------------------------------------------
         patch(f"{SVC}.intelligence_service.fetch_emails_for_onboarding", _fetch_emails),
         patch(f"{SVC}.writing_style_service.search_messages", _search_messages),
         patch(f"{SVC}.intelligence_service.inbox_scan_cache.get", AsyncMock(return_value=None)),
@@ -548,11 +545,9 @@ def _enter_external_service_patches(stack: ExitStack, externals: _Externals) -> 
             f"{SVC}.intelligence_service.extract_social_profiles_from_emails",
             AsyncMock(return_value=[SocialProfile(platform="linkedin", url="https://li/x")]),
         ),
-        # --- llm ---------------------------------------------------------
         patch(f"{SVC}.writing_style_service.ainvoke_structured", _structured),
         patch(f"{SVC}.inbox_triage_service.ainvoke_structured", _structured),
         patch("app.utils.profile_card.ainvoke_structured", _structured),
-        # --- oauth connect side effects ----------------------------------
         patch(
             "app.services.oauth.oauth_service.update_user_integration_status",
             new_callable=AsyncMock,
@@ -620,8 +615,7 @@ async def queued_job_names(pool: ArqRedis) -> list[str]:
 
 
 async def connect_gmail() -> None:
-    """The real OAuth connect handler, Gmail branch — what actually starts the
-    personalization pipeline now."""
+    """Run the real OAuth connect handler's Gmail branch, which starts the personalization pipeline."""
     await handle_oauth_connection(USER_ID, GMAIL_CONFIG, BackgroundTasks())
 
 
@@ -647,8 +641,7 @@ class TestSubmittingTheFormIsCompletion:
     async def test_the_phase_lands_on_complete_in_one_write(
         self, client: AsyncClient, users: _UserStore
     ):
-        """Nothing runs after this any more, so anything short of complete parks
-        the user on a loading screen forever — there is no job to resolve it."""
+        """Anything short of complete parks the user on a loading screen forever — no job resolves it."""
         response = await complete_submit(client)
 
         assert response.status_code == 200
@@ -657,10 +650,7 @@ class TestSubmittingTheFormIsCompletion:
     async def test_no_job_is_queued_and_only_the_opener_is_seeded(
         self, client: AsyncClient, arq_pool: ArqRedis, externals: _Externals
     ):
-        """The pipeline and the holo-card announcement are Gmail's to earn.
-        Queued here they run for users with no inbox at all, and hand every user
-        a holo card built from nothing. GAIA's own opener is the one thing
-        completion does seed — it is composed from the answers, not the inbox."""
+        """The pipeline and holo card are Gmail's to earn; only GAIA's own opener seeds here."""
         await complete_submit(client)
 
         assert await queued_job_names(arq_pool) == []
@@ -669,10 +659,7 @@ class TestSubmittingTheFormIsCompletion:
     async def test_the_seeded_opener_is_recorded_on_its_own_field(
         self, client: AsyncClient, users: _UserStore, externals: _Externals
     ):
-        """The web lands the user in this conversation off the completion
-        response, and a reset tears it down by this id. Sharing the legacy
-        first_message_conversation_id would overwrite the conversation a
-        returning pre-relocation user still has, orphaning it forever."""
+        """Sharing the legacy first_message_conversation_id field would orphan a pre-relocation user's chat."""
         await complete_submit(client)
 
         onboarding = users.onboarding_of(USER_ID)
@@ -683,8 +670,7 @@ class TestSubmittingTheFormIsCompletion:
     async def test_the_submitted_choices_are_persisted(
         self, client: AsyncClient, users: _UserStore
     ):
-        """Both answers have to survive the write: the agent reads profession
-        and needs back off the document, and nothing re-asks the user."""
+        """The agent reads profession and needs back off the document; nothing re-asks the user."""
         response = await complete_submit(client, timezone="Europe/London")
 
         assert response.status_code == 200
@@ -696,9 +682,7 @@ class TestSubmittingTheFormIsCompletion:
     async def test_a_replayed_submit_returns_the_stored_user_unchanged(
         self, client: AsyncClient, arq_pool: ArqRedis
     ):
-        """The frontend advances on this payload. Returning an error or an empty
-        body on a retried request would strand a user whose first POST landed —
-        and the atomic gate must keep the second one from overwriting anything."""
+        """An error on a retried request would strand a user whose first POST already landed."""
         await complete_submit(client)
 
         response = await complete_submit(client, profession="Doctor")
@@ -739,9 +723,7 @@ class TestConnectingGmailEarnsThePersonalization:
         self.ran = await run_queued_jobs(arq_pool)
 
     async def test_connecting_gmail_is_what_runs_the_pipeline(self):
-        """Exactly one personalization job, plus the memory ingestion the scan
-        queues behind it. A second personalization job here would rebuild the
-        card and re-announce it."""
+        """A second personalization job here would rebuild the card and re-announce it."""
         assert self.ran == [INTELLIGENCE_TASK, MEMORY_TASK]
 
     async def test_the_inbox_scan_reports_what_it_found(self, stages: _StageSink):
@@ -751,8 +733,7 @@ class TestConnectingGmailEarnsThePersonalization:
     async def test_the_writing_style_the_user_sees_is_the_one_persisted(
         self, stages: _StageSink, users: _UserStore
     ):
-        """The card is shown from the socket and re-read over HTTP. Two different
-        answers is a card that changes under the user on a refresh."""
+        """The card is shown from the socket and re-read over HTTP; the two must agree."""
         emitted = stages.payload(OnboardingStage.WRITING_STYLE_READY)["style_summary"]
 
         assert emitted == STYLE_SUMMARY
@@ -772,9 +753,7 @@ class TestConnectingGmailEarnsThePersonalization:
     async def test_the_holo_card_is_generated_from_what_was_learned(
         self, users: _UserStore, externals: _Externals, stages: _StageSink
     ):
-        """The card is the whole reward for connecting Gmail, and it is built
-        from the inbox — a card generated without the triage and style in its
-        prompt is the generic one every user would get for free."""
+        """The card prompt must include the triage and style, or it's the generic one anyone gets."""
         onboarding = users.onboarding_of(USER_ID)
 
         assert onboarding["personality_phrase"] == HOLO_PHRASE
@@ -788,8 +767,7 @@ class TestConnectingGmailEarnsThePersonalization:
     async def test_the_user_is_handed_the_card_in_a_seeded_conversation(
         self, externals: _Externals
     ):
-        """Chat has no holo-card renderer, so the card travels as its public
-        link. Losing the link leaves an announcement pointing at nothing."""
+        """Chat has no holo-card renderer, so the card travels as its public link."""
         assert seeded_descriptions(externals) == [
             GETTING_STARTED_DESCRIPTION,
             HOLO_CARD_DESCRIPTION,
@@ -804,8 +782,7 @@ class TestConnectingGmailEarnsThePersonalization:
     async def test_the_marker_and_the_conversation_id_are_persisted_together(
         self, users: _UserStore, externals: _Externals
     ):
-        """The marker is what makes a reconnect a no-op, and the conversation id
-        is what lets a reset tear the announcement back down."""
+        """The marker makes a reconnect a no-op; the id lets a reset tear the announcement down."""
         onboarding = users.onboarding_of(USER_ID)
 
         assert onboarding[GMAIL_PERSONALIZATION_MARKER]
@@ -816,8 +793,7 @@ class TestConnectingGmailEarnsThePersonalization:
     async def test_the_personalization_endpoint_serves_what_the_pipeline_wrote(
         self, client: AsyncClient
     ):
-        """The reveal screen refetches over HTTP when the socket drops. It must
-        agree with the socket, or a reconnecting user sees a blank card."""
+        """The reveal screen refetches this over HTTP when the socket drops; the two must agree."""
         body = (await client.get(PERSONALIZATION)).json()
 
         assert body["has_personalization"] is True
@@ -836,10 +812,7 @@ class TestThePipelineRunsAtMostOnce:
         externals: _Externals,
         users: _UserStore,
     ):
-        """Reconnecting Gmail is routine — a re-auth, a scope change. Re-running
-        the pipeline would rewrite the holo card and seed a second announcement,
-        while skipping ingestion entirely would silently stop refreshing
-        memories on every reconnect from here on."""
+        """A reconnect must refresh memories without rebuilding the holo card or re-announcing it."""
         externals.inbox = [_gmail_message(i) for i in range(4)]
         externals.sent_emails = [_sent_email(i) for i in range(8)]
         await complete_submit(client)
@@ -856,8 +829,7 @@ class TestThePipelineRunsAtMostOnce:
     async def test_a_legacy_user_who_already_has_a_card_is_not_re_run(
         self, client: AsyncClient, arq_pool: ArqRedis, users: _UserStore
     ):
-        """Users who finished the pre-relocation onboarding carry house and no
-        marker. Treating them as new hands them a second card."""
+        """Pre-relocation users carry a house field and no marker; treating them as new duplicates the card."""
         await complete_submit(client)
         users.docs[USER_ID]["onboarding"]["house"] = "explorer"
 
@@ -868,8 +840,7 @@ class TestThePipelineRunsAtMostOnce:
     async def test_a_queued_job_that_lost_the_race_does_nothing(
         self, client: AsyncClient, arq_pool: ArqRedis, externals: _Externals, users: _UserStore
     ):
-        """A job can outlive a connect that already completed the pipeline. The
-        run-time re-check is the only thing between that and a duplicate card."""
+        """A queued job can outlive a connect that already completed the pipeline; it must re-check."""
         externals.inbox = [_gmail_message(0)]
         await complete_submit(client)
         await connect_gmail()
@@ -885,9 +856,7 @@ class TestGmailIsNotActuallyConnected:
     async def test_the_pipeline_aborts_without_claiming_it_ran(
         self, client: AsyncClient, arq_pool: ArqRedis, externals: _Externals, users: _UserStore
     ):
-        """Composio is the authority on the connection, not the callback. If the
-        connection is gone by the time the job runs, marking it done would deny
-        this user their personalization forever."""
+        """Composio, not the callback, is the authority on the connection when the job runs."""
         externals.has_gmail = False
         await complete_submit(client)
         await connect_gmail()
@@ -909,8 +878,7 @@ class TestThePipelineDegrades:
         users: _UserStore,
         stages: _StageSink,
     ):
-        """One node's model fails; the rest of the reward still has to arrive.
-        The style card must resolve explicitly rather than spin forever."""
+        """The style card must resolve explicitly rather than spin forever when its model fails."""
         externals.inbox = [_gmail_message(i) for i in range(4)]
         externals.sent_emails = [_sent_email(i) for i in range(8)]
         externals.llm_failures = {"onboarding_writing_style"}
@@ -930,8 +898,7 @@ class TestThePipelineDegrades:
     async def test_an_empty_sent_folder_resolves_the_card_rather_than_spinning(
         self, client: AsyncClient, arq_pool: ArqRedis, externals: _Externals, stages: _StageSink
     ):
-        """The frontend distinguishes "learned nothing" from "still learning",
-        and only one of those ever stops spinning."""
+        """The frontend distinguishes "learned nothing" from "still learning"."""
         externals.inbox = [_gmail_message(i) for i in range(4)]
         externals.sent_emails = [_sent_email(0)]  # under the sampler's minimum
 
@@ -947,9 +914,7 @@ class TestThePipelineDegrades:
     async def test_a_failed_seed_still_marks_the_pipeline_as_run(
         self, client: AsyncClient, arq_pool: ArqRedis, externals: _Externals, users: _UserStore
     ):
-        """The announcement is a reward, not the work. Losing the marker because
-        a conversation write failed would re-run the entire pipeline — and pay
-        for the whole inbox scan again — on the user's next reconnect."""
+        """A failed conversation write must not lose the marker and re-run the whole inbox scan."""
         externals.inbox = [_gmail_message(0)]
         externals.seeding_fails = True
 
@@ -984,8 +949,7 @@ class TestResettingOnboarding:
     async def test_the_user_can_run_onboarding_again(
         self, client: AsyncClient, users: _UserStore, personalized: None
     ):
-        """This is the only thing reset is for. If the subdoc survives, the next
-        submit is treated as a replay and the user never gets back in."""
+        """If the subdoc survives, the next submit is treated as a replay and the user never gets back in."""
         await client.post(RESET)
 
         assert "onboarding" not in users.docs[USER_ID]
@@ -995,11 +959,7 @@ class TestResettingOnboarding:
     async def test_both_seeded_conversations_are_torn_down(
         self, client: AsyncClient, externals: _Externals, personalized: None
     ):
-        """Left behind, the user restarts onboarding still holding a chat that
-        hands them a holo card built from the personalization they just wiped,
-        and an opener written from the answers they just replaced. Completion
-        and the pipeline each seed one, so a reset that knows about only one
-        field always orphans the other."""
+        """Completion and the pipeline each seed a conversation; a reset must not orphan either."""
         body = (await client.post(RESET)).json()
 
         assert externals.conversations_deleted == [
@@ -1011,9 +971,7 @@ class TestResettingOnboarding:
     async def test_a_legacy_first_message_conversation_is_deleted_too(
         self, client: AsyncClient, externals: _Externals, users: _UserStore, personalized: None
     ):
-        """Users from the pre-relocation flow carry that field as well. Nothing
-        writes it any more, so a reset is the only thing that will ever clear
-        it — skip it and the old first-message chat is orphaned forever."""
+        """Pre-relocation users carry this legacy field; a reset is the only thing left to clear it."""
         users.docs[USER_ID]["onboarding"]["first_message_conversation_id"] = "conv-legacy"
 
         body = (await client.post(RESET)).json()
@@ -1046,9 +1004,7 @@ class TestResettingOnboarding:
     async def test_a_live_pipeline_is_aborted_before_the_document_is_wiped(
         self, client: AsyncClient, arq_pool: ArqRedis, users: _UserStore
     ):
-        """A job that survives the reset keeps writing stages onto the socket of
-        a user who has already restarted, and re-marks a document that was
-        supposed to be blank."""
+        """A job surviving the reset would keep writing to the socket and re-mark the wiped document."""
         await complete_submit(client)
         await connect_gmail()
 
@@ -1087,8 +1043,10 @@ class TestResettingOnboarding:
 
 
 class TestTheRescueCronOnlyPicksUpTheGenuinelyStuck:
-    """Only pre-relocation users can still be at personalization_pending, and
-    the marker keeps the cron from re-running a pipeline that already ran."""
+    """Only pre-relocation users can still be at personalization_pending.
+
+    The marker keeps the cron from re-running a pipeline that already ran.
+    """
 
     async def test_a_user_whose_pipeline_already_ran_is_never_re_queued(
         self, client: AsyncClient, arq_pool: ArqRedis, users: _UserStore, personalized: None

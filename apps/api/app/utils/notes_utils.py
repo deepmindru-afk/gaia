@@ -27,10 +27,8 @@ async def insert_note(
     note_id = created.id
     log.info(f"{LogTag.API} Note created with ID", note_id=note_id)
 
-    # The note is already committed, so a vector-store failure must not fail the
-    # request — telling the user their note was lost would be a lie. But an
-    # unindexed note is invisible to search, so flag it for repair rather than
-    # letting it degrade silently.
+    # The note is already committed, so a vector-store failure must not fail
+    # the request; flag the unindexed note for repair instead of degrading silently.
     try:
         await index_note(note_id, user_id, created.plaintext or "")
     except Exception as e:

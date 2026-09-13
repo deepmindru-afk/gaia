@@ -58,8 +58,7 @@ class SkillInstallRequest:
 def _skills_invalidation_keys_for_request(
     _func_name: str, request: SkillInstallRequest
 ) -> list[str]:
-    """install_skill takes a single request object, so key_patterns' flat-argument
-    binding can't reach user_id -- resolve it from the request instead."""
+    """Resolve user_id from the request: install_skill's single request-object arg breaks key_patterns' flat binding."""
     return [pattern.format(user_id=request.user_id) for pattern in _SKILLS_INVALIDATION_PATTERNS]
 
 
@@ -167,7 +166,6 @@ async def get_skills_for_agent(user_id: str, agent_name: str) -> list[Skill]:
 
 @CacheInvalidator(key_patterns=_SKILLS_INVALIDATION_PATTERNS)
 async def enable_skill(user_id: str, skill_id: str) -> bool:
-    """Enable a skill."""
     return await skill_repository.set_enabled(user_id, skill_id, True)
 
 

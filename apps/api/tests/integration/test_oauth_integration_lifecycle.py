@@ -1,26 +1,14 @@
-"""
-TEST 10: OAuth Integration Connection Lifecycle.
+"""OAuth Integration Connection Lifecycle.
 
 Integration tests for the OAuth connection lifecycle — URL generation,
 callback handling, status tracking, token management, disconnect cleanup,
-reconnection, multi-provider isolation, and integration resolution.
+reconnection, multi-provider isolation, and integration resolution — against
+the real oauth/integration services (oauth_state_service,
+integration_connection_service, user_integration_status, user_integrations,
+integration_resolver, oauth_config, oauth_service, integration_pause).
 
-Tests exercise the real service logic from:
-- app.services.oauth.oauth_state_service (state creation, validation)
-- app.services.integrations.integration_connection_service (connect, disconnect)
-- app.services.integrations.user_integration_status (status upsert)
-- app.services.integrations.user_integrations (add, remove, check)
-- app.services.integrations.integration_resolver (resolve from platform/custom)
-- app.config.oauth_config (integration definitions, scopes)
-- app.services.oauth.oauth_service (status checks, connection handling)
-- app.services.workflow.integration_pause (workflow resume on reconnect)
-
-Mocking boundaries:
-- Redis (oauth state storage)
-- MongoDB collections (user_integrations, integrations, users)
-- Composio service (external OAuth provider)
-- Token repository (PostgreSQL token storage)
-- MCP client (external MCP connections)
+Mocked: Redis, MongoDB collections, the Composio service, the token
+repository, and the MCP client.
 """
 
 from contextlib import contextmanager
@@ -414,11 +402,7 @@ class TestUserIntegrationStatusTracking:
         assert doc.connected_at is not None
 
     async def test_callback_for_a_never_added_integration_creates_it_connected(self) -> None:
-        """A callback can be the first write for an integration — nothing pre-creates it.
-
-        Composio can hand back an account for an integration the user never
-        explicitly added, so the connected transition has to insert, not just update.
-        """
+        """A callback can be the first write for an integration — nothing pre-creates it."""
         repo = _FakeUserIntegrationRepo()
 
         with _patched_repo(repo):
@@ -810,17 +794,14 @@ class TestConnectionStatusLifecycle:
         repo = _FakeUserIntegrationRepo()
 
         with _patched_repo(repo):
-            # Step 1: Create
             await update_user_integration_status(USER_ID, "gmail", "created")
             assert repo.stored[0].status == "created"
 
-            # Step 2: Connect
             await update_user_integration_status(USER_ID, "gmail", "connected")
             doc = repo.stored[0]
             assert doc.status == "connected"
             assert doc.connected_at is not None
 
-            # Step 3: Disconnect (remove)
             removed = await remove_user_integration(USER_ID, "gmail")
             assert removed is True
             assert len(repo.stored) == 0
@@ -858,11 +839,7 @@ class TestReconnectionFlow:
             assert doc.integration_id == "gmail"
 
     async def test_reconnect_after_expiry_clears_the_expiry_stamps(self) -> None:
-        """A reconnected integration must not read as connected-but-broken.
-
-        Stale expired_at/expired_reason on a live record would make the
-        integration look dead to anything that reads them.
-        """
+        """A reconnected integration must not read as connected-but-broken (stale expired_at/expired_reason cleared)."""
         repo = _FakeUserIntegrationRepo()
 
         with _patched_repo(repo):
@@ -896,12 +873,7 @@ class TestWorkflowResumeOnReconnect:
     async def test_reconnect_leaves_workflows_waiting_on_another_integration_paused(
         self,
     ) -> None:
-        """Reconnecting Gmail resumes only the Gmail workflow, not the whole paused batch.
-
-        Every paused workflow carries the same INTEGRATION_EXPIRED reason, so the
-        per-workflow requirement check is the only thing keeping a Notion workflow
-        from being re-armed against a still-dead integration.
-        """
+        """Reconnecting Gmail resumes only the Gmail workflow, not the whole paused batch."""
         notion_workflow = MagicMock(id="wf-notion", blocked_on_integrations=[])
         gmail_workflow = MagicMock(id="wf-gmail", blocked_on_integrations=[])
 

@@ -59,11 +59,8 @@ Your conversational lines stay as normal text; the component goes between them i
   Anything else you'd like to see?
 """
 
-# ---------------------------------------------------------------------------
-# Quality / restraint notes: GAIA-owned. WHEN to reach for a component and how
-# NOT to overdo it. Component names track the current (react-ui) catalog; the
-# ingestion philosophy is unchanged from develop.
-# ---------------------------------------------------------------------------
+# Quality / restraint notes: WHEN to reach for a component and how NOT to
+# overdo it. Component names track the current (react-ui) catalog.
 
 OPENUI_QUALITY_NOTES: str = """
 Capability-aware component picks (use the one whose affordance matches the intent):

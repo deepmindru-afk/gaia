@@ -124,8 +124,7 @@ class TestRemoveIntegrationFromWorkspace:
         mock_capture.assert_not_called()
 
     async def test_remove_status_lookup_failure_keeps_removal(self, client: AsyncClient) -> None:
-        """A failed connection-status read must not block the removal — it is
-        an analytics-only read."""
+        """A failed connection-status read must not block the removal — it is an analytics-only read."""
         with (
             patch(f"{_USER}.user_integration_repository") as mock_repo,
             patch(

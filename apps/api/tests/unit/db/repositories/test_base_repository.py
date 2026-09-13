@@ -27,7 +27,7 @@ class _Update(BaseModel):
 
 
 def _concrete(**overrides: Any) -> type[_BaseRepository]:
-    """A minimally valid concrete repository, with ClassVars replaced by overrides."""
+    """Build a minimally valid concrete repository, with ClassVars replaced by overrides."""
     classvars: dict[str, Any] = {
         "collection_name": "things",
         "document_model": _Doc,
@@ -85,9 +85,7 @@ def test_a_filter_that_names_no_id_targets_no_doc() -> None:
 
 
 def test_an_operator_valued_id_targets_no_single_doc() -> None:
-    """{"_id": {"$in": [...]}} matches a SET, so no one entity key may be
-    evicted for it — stringifying the operator dict would evict a key that
-    exists for nobody and leave every real cached entity stale."""
+    """An operator-valued id matches a set, so stringifying it would evict a key that exists for nobody and leave real entities stale."""
     repo = _concrete()()
 
     assert repo._filter_doc_id({"_id": {"$in": ["a", "b"]}}) is None

@@ -303,10 +303,8 @@ class TestInitPostgresqlEngine:
 
             await _get_original_init_fn()()
 
-            # Named, not counted: _ensure_added_columns adds columns introduced
-            # after a table already existed (memories.shelf_life), and a startup
-            # that silently stopped running it would leave every such column
-            # missing on an existing database.
+            # Named, not counted: _ensure_added_columns backfills columns added
+            # after a table existed (memories.shelf_life) on existing databases.
             assert [call.args[0] for call in mock_conn.run_sync.await_args_list] == [
                 Base.metadata.create_all,
                 _ensure_added_columns,

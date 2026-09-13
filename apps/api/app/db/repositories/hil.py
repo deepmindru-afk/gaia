@@ -82,8 +82,7 @@ class HilApprovalRepository(MongoRepository[HILApprovalRecord, HILApprovalUpdate
     async def list_parked_subagents_for_conversation(
         self, conversation_id: str
     ) -> list[HILApprovalRecord]:
-        """Records a detached background subagent parked on, oldest first,
-        that the wait_for_subagents join has not yet collected."""
+        """Return parked detached-subagent records not yet collected by wait_for_subagents, oldest first."""
         return await self._find(
             {
                 "conversation_id": conversation_id,
@@ -102,8 +101,7 @@ class HilApprovalRepository(MongoRepository[HILApprovalRecord, HILApprovalUpdate
     async def list_decided_unresumed(
         self, statuses: list[str], grace_seconds: float
     ) -> list[HILApprovalRecord]:
-        """Decided records whose resume never dispatched (crash between the
-        decided transition and the run spawn) — the sweep re-dispatches them."""
+        """Decided records whose resume never dispatched (a crash after deciding but before the run spawn)."""
         cutoff = datetime.now(UTC) - timedelta(seconds=grace_seconds)
         return await self._find(
             {
@@ -132,7 +130,7 @@ class HilToolRiskRepository(MongoRepository[HILToolRiskRecord, HILToolRiskUpdate
     async def find_classification(
         self, tool_name: str, description_hash: str
     ) -> HILToolRiskRecord | None:
-        """The stored verdict for this exact tool+description, or None."""
+        """Return the stored verdict for this exact tool+description, or None."""
         return await self._find_one({"tool_name": tool_name, "description_hash": description_hash})
 
     async def upsert_classification(self, record: HILToolRiskRecord) -> None:

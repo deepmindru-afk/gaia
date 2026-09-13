@@ -27,8 +27,7 @@ DEEP_SESSION = "quality-hard-deep-session"
 
 
 def _config() -> EvalConfig:
-    """QualitySuite ignores cfg entirely (both __init__ and load_cases del it);
-    this exists only to satisfy the signature."""
+    """Build a config only to satisfy the signature — QualitySuite ignores cfg entirely."""
     return EvalConfig(
         providers={},
         rotation_order=[],
@@ -76,11 +75,7 @@ def test_deep_session_sends_all_three_turns() -> None:
 
 
 def test_every_declared_turn_is_sent() -> None:
-    """The general form: no case may silently drop turns its YAML declares.
-
-    This is what the bug actually was — a case declaring N turns running as 1 —
-    and it catches the next case authored in the setup: form too.
-    """
+    """No case may silently drop turns its YAML declares — the bug was a case declaring N turns running as 1."""
     cases = _quality_cases()
     dropped = {
         case_id: (declared, len(turns_for(cases[case_id])))

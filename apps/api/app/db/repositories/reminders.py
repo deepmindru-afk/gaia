@@ -29,7 +29,7 @@ class RemindersRepository(MongoRepository[ReminderDocument, ReminderUpdate]):
     # ------------------------------------------------------------------ reads
 
     async def get_for_user(self, reminder_id: str, user_id: str) -> ReminderDocument | None:
-        """A reminder by id, scoped to its owner — the user-facing read."""
+        """Return a reminder by id, scoped to its owner — the user-facing read."""
         return await self._find_one({"_id": self._id_value(reminder_id), "user_id": user_id})
 
     async def list_for_user(
@@ -40,8 +40,7 @@ class RemindersRepository(MongoRepository[ReminderDocument, ReminderUpdate]):
         limit: int = 100,
         skip: int = 0,
     ) -> list[ReminderDocument]:
-        """A user's reminders, optionally filtered by status (insertion order,
-        paginated) — matches the existing listing query."""
+        """Return a user's reminders, optionally filtered by status (insertion order, paginated)."""
         query: dict[str, Any] = {"user_id": user_id}
         if status is not None:
             query["status"] = status.value
@@ -63,8 +62,7 @@ class RemindersRepository(MongoRepository[ReminderDocument, ReminderUpdate]):
         )
 
     async def find_stale_executing(self, cutoff: datetime) -> list[ReminderDocument]:
-        """Reminders wedged in EXECUTING since before cutoff — the recovery
-        sweep's re-arm candidates (a worker died mid-fire)."""
+        """Reminders wedged in EXECUTING since before cutoff (a worker died mid-fire)."""
         return await self._find(
             {
                 "status": ReminderStatus.EXECUTING.value,
@@ -79,23 +77,10 @@ class RemindersRepository(MongoRepository[ReminderDocument, ReminderUpdate]):
     ) -> bool:
         """Atomically claim a scheduled reminder for a fire (SCHEDULED -> EXECUTING).
 
-        Returns False — and the caller skips the fire — when the reminder is
-        no longer scheduled, i.e. another worker already claimed it. Two ARQ
-        jobs for one reminder is routine (the startup scan runs in every replica
-        and every worker, and re-arms past-due reminders to that process's own
-        clock, so the job ids differ and ARQ does not dedup them). The status
-        predicate living inside the update is what makes it exactly-once.
-
-        expected_scheduled_at pins the occurrence the job was armed for, and
-        status alone is not enough without it: a RECURRING reminder goes back to
-        scheduled for its NEXT occurrence as soon as the first run re-arms,
-        so a sibling pod's late job would find it claimable again and deliver
-        the same reminder twice. Jobs enqueued before the stamp existed pass
-        None and claim on status alone, so a deploy never strands them.
-        Matched at second resolution (occurrence_window) because the stamp
-        the job carries is a unix int — see that helper for why equality here
-        silently matched nothing.
-        Mirrors WorkflowsRepository.claim_for_execution.
+        False means another worker claimed it first; the update's status predicate
+        makes this exactly-once despite routine duplicate ARQ jobs. expected_scheduled_at
+        pins the occurrence, since a RECURRING reminder re-arms immediately and a late
+        sibling job would otherwise double-fire it.
         """
         filter_: dict[str, Any] = {
             "_id": self._id_value(reminder_id),
@@ -113,8 +98,7 @@ class RemindersRepository(MongoRepository[ReminderDocument, ReminderUpdate]):
     async def update_for_user(
         self, reminder_id: str, user_id: str, update: ReminderUpdate
     ) -> ReminderDocument | None:
-        """Apply a flat $set update to the user's reminder. Returns the after
-        state, or None when no matching reminder exists."""
+        """Apply a flat $set update to the user's reminder; None when no matching reminder exists."""
         return await self._apply_update(
             reminder_id, REPO_GLOBAL_SCOPE, {"user_id": user_id}, update
         )
@@ -128,10 +112,11 @@ class RemindersRepository(MongoRepository[ReminderDocument, ReminderUpdate]):
         occurrence_count: int | None = None,
         scheduled_at: datetime | None = None,
     ) -> bool:
-        """Set a reminder's status (plus the scheduler's re-arm fields:
-        occurrence_count and a new scheduled_at). Returns whether a reminder
-        was matched. user_id adds the owner guard where the caller has one (e.g.
-        cancel); the worker paths update by id alone."""
+        """Set a reminder's status plus the scheduler's re-arm fields (occurrence_count, scheduled_at).
+
+        user_id adds the owner guard where the caller has one (e.g. cancel);
+        the worker paths update by id alone.
+        """
         filter_: dict[str, Any] = {"_id": self._id_value(reminder_id)}
         if user_id:
             filter_["user_id"] = user_id
@@ -146,8 +131,7 @@ class RemindersRepository(MongoRepository[ReminderDocument, ReminderUpdate]):
         return result is not None
 
     async def delete_finished_before(self, cutoff: datetime) -> int:
-        """Delete completed/cancelled reminders last updated before cutoff — the
-        cleanup cron. Returns the count deleted."""
+        """Delete completed/cancelled reminders last updated before cutoff, returning the count deleted."""
         return await self._delete_many(
             {
                 "status": {"$in": [ReminderStatus.COMPLETED.value, ReminderStatus.CANCELLED.value]},

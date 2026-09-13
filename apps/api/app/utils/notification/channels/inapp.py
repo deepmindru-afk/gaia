@@ -59,11 +59,8 @@ class InAppChannelAdapter(ChannelAdapter[InAppPayload]):
 
     def can_handle(self, notification: NotificationRequest) -> bool:  # noqa: ARG002 -- polymorphic interface; implementations keep the full signature
         """Return True — in-app delivery is always available for any request."""
-        # In-app is always deliverable. The orchestrator decides targeting:
-        # explicit requests look adapters up by channel_type, and auto-injection
-        # always includes inapp — checking the request's channel list here would
-        # silently skip the real-time push whenever channels are auto-injected
-        # (the list is empty in that mode).
+        # The orchestrator decides targeting; checking the request's channel
+        # list here would silently skip the push when auto-injected (list is empty).
         return True
 
     async def transform(self, notification: NotificationRequest) -> InAppPayload:

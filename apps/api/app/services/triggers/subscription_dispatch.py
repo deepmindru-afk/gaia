@@ -109,11 +109,9 @@ async def _fire_if_matching(
     """Gate one subscription on trigger, instance, status, conditions and cooldown, then act."""
     if subscription.trigger_name != trigger_name:
         return False
-    # Instance isolation: a resource-scoped subscription must only fire for one of
-    # the instances it registered. The account-level lookup returns every todo on
-    # this trigger name for the user, so without this gate an event from one
-    # resource would fire a todo subscribed to a different one. Account-level
-    # subscriptions register no instance and match on user + trigger name alone.
+    # A resource-scoped subscription must only fire for one of the instances it
+    # registered — without this gate, an event from one resource would fire a
+    # todo subscribed to a different one. Account-level subscriptions register no instance.
     if subscription.composio_trigger_ids and trigger_id not in subscription.composio_trigger_ids:
         return False
     if subscription.status is not TriggerSubscriptionStatus.ACTIVE:
@@ -148,12 +146,10 @@ async def _fire_if_matching(
 async def _claim_cooldown(subscription: TriggerSubscription) -> bool:
     """Take the subscription's cooldown slot, or report it is still held.
 
-    Set-if-absent rather than read-then-write: two events for one subscription can
-    arrive in the same second, and a read-then-write would let both through.
-
-    The key is written here — when the action is about to run — not when an event
-    merely arrives, so an event that was filtered out or deferred past a held
-    execution lock does not burn the window and suppress the real one.
+    Set-if-absent rather than read-then-write: two events for one subscription
+    can arrive in the same second, and a read-then-write would let both
+    through. The key is written when the action is about to run, not on mere
+    arrival, so a filtered-out event doesn't burn the window.
     """
     if subscription.cooldown_seconds <= 0:
         return True

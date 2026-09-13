@@ -166,11 +166,9 @@ def _resolve_connected_account_id(user_id: str, toolkit: str) -> str:
             total_accounts=total_accounts,
             account_summary=account_summary,
         )
-        # 403, not 401: the user's GAIA session is valid — they simply have no
-        # active connection for this integration. Returning 401 makes the web
-        # client's axios interceptor treat it as session expiry and pop the
-        # "please log in" modal at a logged-in user (e.g. /dashboard firing
-        # /calendar/events). 403 routes to the "reconnect integration" path.
+        # 403, not 401: the user's session is valid, they just have no active
+        # connection. 401 would trip the client's session-expiry interceptor and
+        # pop a "please log in" modal on a logged-in user; 403 routes to reconnect.
         raise AppError(
             message=f"No active {toolkit} connection",
             why=f"User {user_id} has no active connected account for {toolkit}",
@@ -218,7 +216,7 @@ def _build_parameters(
 
 
 def _proxy_call(request: ProxyRequest) -> ProxyResponse:
-    """Internal: send a proxy request and return its status, data and headers."""
+    """Send a proxy request and return its status, data and headers."""
     log.set(
         composio_proxy={
             "toolkit": request.toolkit,
@@ -271,11 +269,9 @@ def _proxy_call(request: ProxyRequest) -> ProxyResponse:
 
     status = int(response.status)
     if status >= 400:
-        # A provider 401 means Composio's stored token was rejected and refresh
-        # already failed — the *integration* needs reconnecting, not the user's
-        # GAIA session. Surface it as 403 so the web client routes it to the
-        # reconnect-integration path instead of passing 401 through and falsely
-        # telling a logged-in user to sign in again.
+        # A provider 401 means Composio's token was rejected and refresh failed —
+        # the integration needs reconnecting, not the GAIA session. Surface as 403
+        # so the web client routes to reconnect instead of a false "sign in again".
         if status == 401:
             invalidate_connected_account_cache(user_id=request.user_id, toolkit=request.toolkit)
         gaia_status = 403 if status == 401 else (status if 400 <= status < 600 else 502)
@@ -311,21 +307,10 @@ def _proxy_call(request: ProxyRequest) -> ProxyResponse:
 def proxy_request_sync(request: ProxyRequest) -> Any:
     """Send an authenticated request to a provider via Composio's proxy.
 
-    Returns the parsed data field from the proxy response. Raises
-    AppError on non-2xx provider responses or when the user has no
-    active connection for the toolkit.
-
-    The return stays Any: one function fronts every provider in the
-    codebase and each answers a different JSON shape, so the concrete type
-    only exists at the call site. Callers validate what they receive into a
-    real model there.
-
-    Measured, don't re-litigate: annotating this and proxy_request as
-    -> object (the honest type of parsed JSON) produced **47 new mypy errors
-    across 16 files** — 40 of them "object" has no attribute "get" in the
-    integration tools (linkedin 11, instagram 9, teams 5, twitter 3, ...), the
-    rest assignment/index errors. Every one would need a per-call-site cast or
-    model, which is the cross-file ripple Type Safety item 14 rules out.
+    Returns the parsed data field; raises AppError on a non-2xx response or
+    no active connection. Return stays Any: one function fronts every
+    provider's differently-shaped JSON, and annotating it -> object measured
+    47 new mypy errors across 16 files (mostly "object has no attribute get").
     """
     return _proxy_call(request)["data"]
 

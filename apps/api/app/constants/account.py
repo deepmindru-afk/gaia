@@ -45,10 +45,9 @@ ACCOUNT_READ_ONLY_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Executor tools that mutate account state live in
-# app/agents/tools/account_tools.py; their forced-ask HIL posture is stamped on
-# the tool registry at registration (Tool.always_gate) — the single source of
-# truth for gating.
+# Executor tools mutating account state (app/agents/tools/account_tools.py) get
+# their forced-ask HIL posture stamped on the tool registry at registration
+# (Tool.always_gate) — the single source of truth for gating.
 
 
 def account_area_for(rel_path: str) -> AccountArea | None:

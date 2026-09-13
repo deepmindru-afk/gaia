@@ -59,7 +59,7 @@ class WorkflowStepGenerationError(RuntimeError):
 
 
 def _failure_reason(error: BaseException) -> str:
-    """A one-line, user-showable summary of why generation failed.
+    """Build a one-line, user-showable summary of why generation failed.
 
     The exception type is included because provider errors (a 402 from the
     model gateway, a timeout) say nothing about workflows on their own, and a
@@ -79,14 +79,12 @@ async def _structured_one_shot(
     label: str,
     user_id: str,
 ) -> _StructuredSchemaT:
-    """A structured one-shot on the provider THIS deployment actually runs on.
+    """Run a structured one-shot on the provider this deployment actually runs on.
 
-    ainvoke_structured is hardwired to the OpenRouter aux lane. A deployment
-    pointed at a custom endpoint (DEV_DEFAULT_MODEL=custom) has no working
-    OpenRouter route, so every workflow generation died on a provider error
-    before the model was ever asked — which surfaced as a blank 500 from
-    /regenerate-steps. background_structured_runnable picks the lane
-    this deployment is configured for and falls back to the aux lane otherwise.
+    ainvoke_structured is hardwired to the OpenRouter aux lane, so a deployment
+    on a custom endpoint (DEV_DEFAULT_MODEL=custom) died with a blank 500 from
+    /regenerate-steps; this picks the deployment's configured lane instead,
+    falling back to aux.
     """
     config = metered_config(user_id)
     return cast(
@@ -306,11 +304,10 @@ def _build_integration_hints(
 ) -> list[str]:
     """Build the preferred/explicit integration hint lines appended to the prompt.
 
-    Each slug is resolved to a human label plus its category id: the name tells
-    the LLM what the user meant; the id is what each step's category must be
-    set to for that integration's tools to resolve. Custom integrations are
-    keyed by an opaque uuid, so display_names supplies the human name
-    OAUTH_INTEGRATIONS can't.
+    Each slug resolves to a human label plus the category id each step's
+    category must be set to for that integration's tools to resolve. Custom
+    integrations are keyed by an opaque uuid, so display_names supplies the
+    name OAUTH_INTEGRATIONS can't.
     """
 
     def _hint_label(slug: str) -> str:
@@ -372,10 +369,8 @@ async def _run_generation_attempt(
         )
         return None, e
     except Exception as e:
-        # Not regenerable: the provider itself failed (auth, credit,
-        # timeout) after ainvoke_llm's own retry+fallback. Re-raise as
-        # the typed error so the API answers with the reason instead of
-        # a blank 500 — the cause chain is kept, nothing is swallowed.
+        # Not regenerable: provider failure after ainvoke_llm's own retry+fallback.
+        # Re-raise typed so the API answers with the reason instead of a blank 500.
         log.error(
             f"{LogTag.WORKFLOW} ========== FAILED: provider error",
             attempt=attempt + 1,

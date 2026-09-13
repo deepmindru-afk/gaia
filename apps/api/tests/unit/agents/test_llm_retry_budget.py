@@ -33,7 +33,7 @@ from app.constants.llm import LLM_RETRY_MAX_ATTEMPTS
 
 @pytest.fixture(autouse=True)
 def _openrouter_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The hermetic conftest blanks credentials; these factories need a key."""
+    """Restore a fake OPENROUTER_API_KEY; the hermetic conftest blanks credentials."""
     from app.config.settings import settings
 
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test-key", raising=False)

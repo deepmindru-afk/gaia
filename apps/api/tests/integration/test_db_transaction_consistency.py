@@ -57,8 +57,7 @@ FAKE_USER: dict[str, Any] = {"user_id": USER_ID}
 
 
 def _stored_todo(document: TodoDocument, **overrides: Any) -> TodoDocument:
-    """Echo a to-be-created TodoDocument back as the repository would after a
-    write: same fields, plus a stored id and creation/update timestamps."""
+    """Echo a to-be-created TodoDocument back as the repository would after a write: same fields, plus a stored id and timestamps."""
     now = datetime.now(UTC)
     data = {
         **document.model_dump(),

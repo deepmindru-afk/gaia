@@ -31,8 +31,7 @@ MODULE = "app.services.hil.gate"
 
 
 class Handler:
-    """Stands in for the real tool, and records WHEN it ran relative to the gate's own
-    side effects — the receipt-before-action ordering is a requirement, not an accident."""
+    """Stand in for the real tool and record WHEN it ran — receipt-before-action ordering is a requirement, not an accident."""
 
     def __init__(self, log: list[str], explode: bool = False) -> None:
         self.log = log
@@ -49,8 +48,7 @@ class Handler:
 
 @pytest.fixture
 def gate():
-    """Every I/O edge of the gate, with the journey-neutral defaults: no prior record, no
-    earlier decline, no integration lookup."""
+    """Every I/O edge of the gate, with journey-neutral defaults: no prior record, no earlier decline, no integration lookup."""
     log: list[str] = []
     with (
         patch(f"{MODULE}.log"),
@@ -107,11 +105,11 @@ async def asks(gate: dict, request: Any) -> None:
 
 
 def decides(gate: dict, *, status: str, scope: str = "once", feedback: str | None = None) -> None:
-    """The user's decision, as the gate reads it: a SETTLED RECORD.
+    """Set the gate's stored decision to a SETTLED RECORD, never a resume payload.
 
-    Never a resume payload. resolve_approval writes the decision to Mongo and the
-    Command(resume=...) that follows is only a wake-up whose value is ignored — so a
-    test that fed a payload would be exercising a path production no longer has.
+    resolve_approval writes the decision to Mongo and the Command(resume=...) that
+    follows is only a wake-up whose value is ignored — so a test that fed a payload
+    would be exercising a path production no longer has.
     """
     gate["approval"].return_value = make_record(
         status=HILApprovalStatus(status), scope=scope, feedback=feedback
@@ -257,8 +255,7 @@ class TestExpiryJourney:
 
 
 class TestApprovalWindowLabel:
-    """The wording the expiry message carries. Pure arithmetic, so the boundaries are
-    where it breaks."""
+    """The wording the expiry message carries — pure arithmetic, so the boundaries are where it breaks."""
 
     @pytest.mark.parametrize(
         ("seconds", "expected"),
@@ -343,9 +340,7 @@ class TestAutoJourney:
 
 
 class TestUnpausableRun:
-    """A background/queued run carries an identity but has no live client to answer. The
-    gated call must be refused — never run unapproved, never parked on an interrupt that
-    nothing can resume."""
+    """A background/queued run has an identity but no live client to answer, so the gated call must be refused — never run unapproved, never parked on an interrupt nothing can resume."""
 
     def background_request(self) -> Any:
         return make_request(

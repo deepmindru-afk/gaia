@@ -21,7 +21,7 @@ class SearxngProvider(SearchProvider):
     monthly_free_limit = None
 
     def is_configured(self) -> bool:
-        """True when a SearXNG base URL is configured."""
+        """Return True when a SearXNG base URL is configured."""
         return bool(settings.SEARXNG_BASE_URL)
 
     async def search(self, query: str, count: int) -> SearchResponse:

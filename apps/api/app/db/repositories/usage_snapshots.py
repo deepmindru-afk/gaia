@@ -20,8 +20,7 @@ class UsageSnapshotsRepository(UserScopedRepository[UserUsageSnapshot, UsageSnap
     cache_policy = None
 
     async def upsert_hourly(self, snapshot: UserUsageSnapshot) -> str:
-        """Merge usage into the user's current-hour snapshot, or insert a new one.
-        Returns the snapshot id."""
+        """Merge usage into the user's current-hour snapshot, or insert a new one; returns the snapshot id."""
         current_hour = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
         hour_filter: dict[str, object] = {
             "user_id": snapshot.user_id,
@@ -50,7 +49,7 @@ class UsageSnapshotsRepository(UserScopedRepository[UserUsageSnapshot, UsageSnap
         return created.id
 
     async def history_for_user(self, user_id: str, *, since: datetime) -> list[UserUsageSnapshot]:
-        """A user's snapshots created since since, newest first."""
+        """Return a user's snapshots created since since, newest first."""
         return await self._find(
             {"user_id": user_id, "created_at": {"$gte": since}},
             sort=[("created_at", -1)],

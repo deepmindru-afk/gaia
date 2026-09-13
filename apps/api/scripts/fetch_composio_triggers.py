@@ -134,7 +134,7 @@ def format_config_schema(config: object) -> str:
 
 
 def main():
-    """Main function to fetch and display triggers."""
+    """Fetch and display triggers."""
     print("=" * 80)
     print("COMPOSIO TRIGGERS FETCH SCRIPT")
     print("=" * 80)

@@ -42,7 +42,7 @@ ISO_DATETIME_LAYOUT = "%Y-%m-%dT%H:%M:%S%z"
 
 
 def detect_layout(value: object) -> str | None:
-    """The strftime layout a recorded string argument is written in, or None.
+    """Return the strftime layout a recorded string argument is written in, or None.
 
     Text around the date is part of the layout: "Plan for September 5, 2026"
     is "Plan for %B %d, %Y", so a slot written from it renders the same
@@ -73,5 +73,5 @@ def _layout_of(text: str) -> str | None:
 
 
 def render_iso(moment: datetime, *, date_only: bool) -> str:
-    """The evaluator's default rendering: a date, or a datetime to the second."""
+    """Return the evaluator's default rendering: a date, or a datetime to the second."""
     return moment.date().isoformat() if date_only else moment.isoformat(timespec="seconds")

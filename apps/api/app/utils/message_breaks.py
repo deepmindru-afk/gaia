@@ -59,9 +59,8 @@ def _partial_sequence(words: tuple[str, ...]) -> str:
 
 
 #: A sentinel truncated by a chunk boundary, anchored to the end of the text.
-#: At least one character of the spelling is required: a bare trailing ``<`` is
-#: ordinary text far more often than it is a half-received sentinel, and eating
-#: it would corrupt code snippets and comparisons.
+#: At least one character is required: a bare trailing ``<`` is ordinary text
+#: far more often than a half-received sentinel.
 PARTIAL_MESSAGE_BREAK_RE = re.compile(
     _OPEN + "(?:" + "|".join(_partial_sequence(w) for w in _SENTINEL_WORD_SEQUENCES) + ")$",
     re.IGNORECASE,

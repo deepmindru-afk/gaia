@@ -221,11 +221,10 @@ class TrackedTodoService:
 
     @staticmethod
     async def get_active_tracked_summary(user_id: str, active_todo_id: str | None = None) -> str:
-        """Formatted summary of active tracked todos for context injection.
+        """Format active tracked todos for context injection.
 
-        When active_todo_id is provided, that todo is pinned at the top with
-        an ⭐ ACTIVE marker so the agent can quickly identify the run's
-        bound canvas.
+        When active_todo_id is provided, that todo is pinned at the top with an
+        ⭐ ACTIVE marker so the agent can identify the run's bound canvas.
         """
         docs = await todo_repository.list_active_tracked(user_id, limit=15)
         if not docs:

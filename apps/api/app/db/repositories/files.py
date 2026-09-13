@@ -28,7 +28,7 @@ class FilesRepository(UserScopedRepository[FileDocument, FileUpdate]):
         return await self._find({"user_id": user_id, "conversation_id": conversation_id})
 
     async def find_ids_for_conversation(self, conversation_id: str, user_id: str) -> list[str]:
-        """The user's file_ids visible in one conversation.
+        """Return the user's file_ids visible in one conversation.
 
         Files uploaded before conversation scoping existed carry no
         conversation_id (the old web client never sent one, and only new

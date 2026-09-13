@@ -38,7 +38,7 @@ def _not_expired_clause() -> ColumnElement[bool]:
 
 
 def _active_memories_query(user_id: str) -> Select[tuple[MemoryRecord]]:
-    """Base query for live memories: latest, not forgotten, not expired."""
+    """Return the base query for live memories: latest, not forgotten, not expired."""
     return select(MemoryRecord).where(
         MemoryRecord.user_id == user_id,
         MemoryRecord.is_latest.is_(True),
@@ -296,11 +296,9 @@ async def get_facts_for_consolidation(
 ) -> list[MemoryRecord]:
     """Live memories feeding one core-document rewrite, newest first.
 
-    category_prefixes match a folder exactly or as a subtree prefix
-    ('work' covers both 'work' and 'work/gaia'); shelf_life narrows to
-    durable rows, which is what keeps a value that was only true "as of" a
-    moment out of an always-injected document. Both filters optional and
-    AND-combined.
+    category_prefixes match a folder exactly or as a subtree prefix ('work'
+    covers 'work/gaia' too); shelf_life narrows to durable rows. Both filters
+    are optional and AND-combined.
     """
     query = _active_memories_query(user_id)
     if shelf_life is not None:
@@ -332,14 +330,11 @@ async def get_agenda_memories(user_id: str, limit: int) -> list[MemoryRecord]:
 
 
 async def backfill_agenda_expiry() -> int:
-    """Stamp forget_after on live agenda rows that never got one; returns count.
+    """Stamp forget_after on live agenda rows that never got one, returning the count.
 
-    Agenda rows written before the task shelf-life shipped were stored durable
-    with no expiry, so the sweep could never retire them — production carried
-    year-old interviews and long-closed follow-ups in the always-injected
-    agenda block. Stamping created_at + AGENDA_ITEM_TTL_DAYS gives legacy
-    rows the exact window a new agenda item gets; already-overdue ones are
-    retired by the sweep that runs right after.
+    Legacy rows (stored durable, before the task shelf-life shipped) never
+    expired; stamping created_at + AGENDA_ITEM_TTL_DAYS gives them the same
+    window a new item gets, and overdue ones retire on the next sweep.
     """
     async with memory_session() as session:
         result = await session.execute(
@@ -366,14 +361,10 @@ class SweptMemory:
 async def sweep_expired_memories(user_id: str | None = None) -> list[SweptMemory]:
     """Forget every row whose forget_after has passed; returns the swept rows.
 
-    Expiry was enforced only at read time, so an expired row stayed live in the
-    folder tree, the free-plan cap count, the /workspace/memory projection
-    and every rendered document forever. Each swept row comes back as
-    (owner, id) so the caller can repair exactly those users' derived state
-    and retire the same rows' Chroma flags — Postgres alone flipping
-    is_forgotten leaves the vector matchable, and reconciliation would keep
-    swallowing identical restatements as DUPLICATE. user_id scopes the
-    sweep for the repair script; the nightly task sweeps everyone.
+    Each row comes back as (owner, id) so the caller can repair those users'
+    derived state and retire the matching Chroma vectors (Postgres alone
+    flipping is_forgotten leaves them matchable). user_id scopes the sweep
+    for the repair script; the nightly task sweeps everyone.
     """
     filters: list[ColumnElement[bool]] = [
         MemoryRecord.is_forgotten.is_(False),

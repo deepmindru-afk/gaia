@@ -32,7 +32,7 @@ def artifact_url_base(conversation_id: str) -> str:
 
 
 def build_artifact_full_entry(payload: dict[str, Any]) -> ArtifactDataEntry:
-    """A live-stream artifact_data chunk carrying the file's full data."""
+    """Build a live-stream artifact_data chunk carrying the file's full data."""
     return {
         "tool_name": "artifact_data",
         "data": payload,
@@ -44,7 +44,7 @@ def build_artifact_full_entry(payload: dict[str, Any]) -> ArtifactDataEntry:
 def build_artifact_ref_entry(
     conversation_id: str, path: str, event: str | None
 ) -> ArtifactDataEntry:
-    """A lightweight artifact_data reference for a persisted message.
+    """Build a lightweight artifact_data reference for a persisted message.
 
     Full artifact data lives in the conversation registry; the message stores
     only the fields the frontend needs to resolve it back to a card.

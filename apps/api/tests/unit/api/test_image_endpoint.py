@@ -15,11 +15,9 @@ from app.models.image_models import ImageToTextResponse
 
 API = "/api/v1"
 
-# The `client` fixture's dependency override (`get_current_user` -> FAKE_USER)
-# is FastAPI DI, not the WorkOSAuthMiddleware-set request context that
-# the entitlement gate reads first — the test app strips
-# that middleware entirely. So a gate test has to set the context directly to
-# exercise the real resolution path, the same way production requests do.
+# client's dependency override (get_current_user -> FAKE_USER) is FastAPI
+# DI, not the request context the entitlement gate reads; the test app
+# strips WorkOSAuthMiddleware, so gate tests set the context directly.
 _GET_AUTHENTICATED_USER = "app.core.request_context.get_authenticated_user"
 
 

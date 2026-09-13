@@ -79,12 +79,7 @@ def _is_typed_body(model: Any) -> bool:
 
 
 def _declares_its_response_class(route: APIRoute) -> bool:
-    """A stream/file/redirect/HTML route names its Response class on the decorator.
-
-    Without response_class= FastAPI documents the body as an empty JSON
-    object; a JSON response class is not an answer either — that body needs a
-    model.
-    """
+    """Check that a stream/file/redirect/HTML route names its Response class on the decorator, else FastAPI documents an empty JSON body."""
     if isinstance(route.response_class, DefaultPlaceholder):
         return False
     return not issubclass(route.response_class, JSONResponse)
@@ -167,8 +162,7 @@ def _declared_body_refs(route: APIRoute) -> set[str]:
 def test_every_error_response_is_the_json_envelope(
     app: FastAPI, routes: list[RouteContext]
 ) -> None:
-    """A route-level responses= entry documents its status with no body unless it
-    names the envelope, and a text/html response class re-types the envelope as HTML."""
+    """Every non-2xx response is documented as the JSON envelope, or re-typed to HTML by a text/html response class."""
     schema = app.openapi()
     assert _ENVELOPE_REF[len(_SCHEMA_REF_PREFIX) :] in schema["components"]["schemas"]
     shadowed = []

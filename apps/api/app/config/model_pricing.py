@@ -33,13 +33,9 @@ DEFAULT_PRICING = ModelPricing(
     cached_input_cost_per_1k=0.001 * DEFAULT_CACHED_INPUT_FRACTION,
 )
 
-# Per-1k USD rates by model id, from each provider's published listing
-# (https://openrouter.ai/api/v1/models for the OpenRouter-served ids). Keys are
-# the ids the runtime actually passes to get_model_pricing — the constants in
-# constants/llm.py plus the aux routing alias. Nothing reconciles these against
-# the live listings: re-check the rates by hand whenever a model id here is
-# added or re-pointed, and keep tests/unit/config/test_model_pricing.py's
-# runtime-coverage test green so a referenced-but-unpriced model cannot ship.
+# Per-1k USD rates by model id (https://openrouter.ai/api/v1/models for the
+# OpenRouter-served ids). Nothing reconciles these against the live listings —
+# re-check by hand when a model id here is added or re-pointed.
 MODEL_PRICING: dict[str, ModelPricing] = {
     # DEFAULT_MODEL_NAME / PAID_MODEL_NAME — the graph lane on every tier.
     "deepseek/deepseek-v4-flash-0731": ModelPricing(
@@ -54,12 +50,9 @@ MODEL_PRICING: dict[str, ModelPricing] = {
         output_cost_per_1k=0.0004,
         cached_input_cost_per_1k=0.000025,
     ),
-    # "DeepSeek V4 Flash 0423" (Apr 2026). No lane produces this id any more —
-    # AUX_MODEL_NAME now resolves to the 0731 revision, because this id's
-    # provider pool cannot cache or hold session affinity for tool-carrying
-    # requests (measured; see constants/llm.py). The row stays so historical
-    # llm_call events and any straggler mid-deploy calls still meter at the
-    # rate they were actually served at, not at DEFAULT_PRICING's.
+    # "DeepSeek V4 Flash 0423" (Apr 2026): deprecated because its provider pool
+    # can't cache or hold session affinity for tool-carrying requests. Row stays
+    # so historical llm_call events still meter at the rate actually served.
     "deepseek/deepseek-v4-flash": ModelPricing(
         input_cost_per_1k=0.00006426,
         output_cost_per_1k=0.00012852,
@@ -69,8 +62,7 @@ MODEL_PRICING: dict[str, ModelPricing] = {
 
 
 def get_model_pricing(model_name: str) -> ModelPricing:
-    """The rate card for model_name, or DEFAULT_PRICING — loudly — when the
-    id was never registered above."""
+    """Return the rate card for model_name, or DEFAULT_PRICING (logged) if unregistered."""
     pricing = MODEL_PRICING.get(model_name)
     if pricing is not None:
         return pricing

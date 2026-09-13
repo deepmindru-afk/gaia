@@ -74,7 +74,7 @@ async def simulate(
     temperature: float,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> VerdictT:
-    """Same plumbing, warm on purpose: this generates behaviour, not a verdict.
+    """Use the same plumbing, warm on purpose: this generates behaviour, not a verdict.
 
     Separate from :func:judge so a temperature above 0 is never something a
     grading call can acquire by passing an argument — reaching for a different

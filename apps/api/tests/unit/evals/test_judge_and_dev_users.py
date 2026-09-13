@@ -73,8 +73,7 @@ class TestJudgePlumbing:
     async def test_passes_the_verdict_model_prompt_and_label_through(
         self, captured: dict[str, Any]
     ) -> None:
-        """The label is per-script on purpose: one shared name would make a run's
-        cost unattributable to the suite that spent it."""
+        """The label is per-script on purpose: one shared name would make a run's cost unattributable to the suite that spent it."""
         await judge(_Verdict, "the rubric text", label="chat_quality_judge", timeout=1.0)
         assert captured["model"] is _Verdict
         assert captured["prompt"] == "the rubric text"

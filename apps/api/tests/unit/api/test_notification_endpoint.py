@@ -43,7 +43,7 @@ FAKE_USER_ID = "507f1f77bcf86cd799439011"
 
 
 def _make_view(notification_id: str = "n1", title: str = "Hello") -> NotificationView:
-    """The flattened shape get_user_notifications / get_notification return."""
+    """Build the flattened shape get_user_notifications / get_notification return."""
     return NotificationView(
         id=notification_id,
         user_id=FAKE_USER_ID,
@@ -58,7 +58,7 @@ def _make_view(notification_id: str = "n1", title: str = "Hello") -> Notificatio
 def _make_record(
     notification_id: str = "n1", status: NotificationStatus = NotificationStatus.READ
 ) -> NotificationRecord:
-    """The stored record mark_as_read returns (not the flattened view)."""
+    """Build the stored record mark_as_read returns (not the flattened view)."""
     return NotificationRecord(
         id=notification_id,
         user_id=FAKE_USER_ID,

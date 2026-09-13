@@ -77,10 +77,11 @@ def tools() -> dict[str, Any]:
 
 @pytest.fixture(autouse=True)
 def _clear_connected_account_cache() -> Any:
-    """The proxy caches connected_account_id for 600s in a module global.
+    """Invalidate the cached connected_account_id before and after each test.
 
-    Without this, the second test to use a toolkit never re-resolves the
-    account, so its connected_accounts.list assertions read as zero calls.
+    The proxy caches it for 600s in a module global; without this, the second
+    test to use a toolkit never re-resolves the account, so its
+    connected_accounts.list assertions read as zero calls.
     """
     invalidate_connected_account_cache()
     yield
@@ -146,7 +147,7 @@ class FakeProxyResponse:
 
 
 def fake_composio(proxy: Any, *, account_status: str = "ACTIVE") -> MagicMock:
-    """A stand-in Composio SDK client for seam A.
+    """Build a stand-in Composio SDK client for seam A.
 
     Everything in proxy_client above the SDK call still runs for real.
     """
@@ -164,14 +165,14 @@ def fake_composio(proxy: Any, *, account_status: str = "ACTIVE") -> MagicMock:
 
 
 def query_params(proxy_kwargs: dict[str, Any]) -> dict[str, str]:
-    """The query string the proxy was asked to send, as a dict."""
+    """Extract the query string the proxy was asked to send, as a dict."""
     return {
         p["name"]: p["value"] for p in proxy_kwargs.get("parameters", []) if p["type"] == "query"
     }
 
 
 def gmail_message(message_id: str, *, body: str = "Invoice #42 is attached") -> dict[str, Any]:
-    """A raw Gmail users.messages.get payload, MIME tree and all."""
+    """Build a raw Gmail users.messages.get payload, MIME tree and all."""
     return {
         "id": message_id,
         "threadId": f"thread-{message_id}",
@@ -198,11 +199,6 @@ def gmail_message(message_id: str, *, body: str = "Invoice #42 is attached") -> 
 
 class TestGmailFetchMessages:
     def test_an_inbox_comes_back_curated_not_as_raw_gmail_json(self, tools):
-        """The shape is the whole product here. Gmail's own payload is a MIME
-        tree with base64 bodies and 20+ envelope fields per message; handing
-        that to the model burns the context window and it reads the wrong
-        fields. The tool must return the projected view — and *not* the body,
-        which the default field set deliberately excludes."""
         tool = tools["GMAIL_FETCH_MESSAGES"]
 
         def proxy(**kwargs: Any) -> FakeProxyResponse:
@@ -245,10 +241,6 @@ class TestGmailFetchMessages:
         ], "the inbox card the chat renders never reached the stream"
 
     def test_a_timeframe_is_resolved_in_the_users_home_timezone(self, tools):
-        """ "Today's email" is the single most common ask, and the process
-        timezone is not the user's. Resolving today in UTC serves a user in
-        IST the wrong day's mail for five and a half hours out of every
-        twenty-four."""
         tool = tools["GMAIL_FETCH_MESSAGES"]
         sent: list[dict[str, str]] = []
 
@@ -273,13 +265,7 @@ class TestGmailFetchMessages:
         assert sent[0]["q"] == expected
 
     def test_two_users_a_day_apart_are_served_different_days(self, tools):
-        """The timezone-independent half of the previous test: Kiritimati
-        (UTC+14) and Baker Island (UTC-12) are 26 hours apart, so their local
-        dates *always* differ. A tool that resolves today against the
-        server clock hands both users the identical query — which is exactly
-        the bug the timezone plumbing exists to prevent, and the one an
-        assertion pinned to a single zone can only catch for part of the day.
-        """
+        """Kiritimati (UTC+14) and Baker Island (UTC-12) are 26 hours apart, so their local dates always differ."""
         tool = tools["GMAIL_FETCH_MESSAGES"]
         sent: list[str] = []
 
@@ -300,9 +286,6 @@ class TestGmailFetchMessages:
         assert sent[0] != sent[1]
 
     def test_pagination_keeps_going_past_the_first_page(self, tools):
-        """Gmail returns a nextPageToken, not the whole result set. Stopping
-        at page one silently answers "you have 2 emails" when there are 4 —
-        wrong data, no error, and the agent acts on it."""
         tool = tools["GMAIL_FETCH_MESSAGES"]
         tokens: list[str | None] = []
 
@@ -335,8 +318,6 @@ class TestGmailFetchMessages:
         assert result["truncated"] is False
 
     def test_hitting_the_cap_is_reported_as_truncated(self, tools):
-        """A capped result that claims to be complete is worse than a small
-        one: the agent concludes "that's all your mail" and stops looking."""
         tool = tools["GMAIL_FETCH_MESSAGES"]
 
         def proxy(**kwargs: Any) -> FakeProxyResponse:
@@ -365,16 +346,7 @@ class TestGmailFetchMessages:
         assert result["truncated"] is True
 
     def test_a_large_inbox_offloads_to_a_file_the_agent_can_actually_mine(self, tools):
-        """Past 50 messages the result is written to JSONL and the model gets a
-        digest plus a read plan instead of the payload.
-
-        Two things have to hold or the feature is a trap: the file must carry
-        the **body** even though the inline projection drops it (the whole
-        point is query_json(where=body contains 'invoice') downstream — a
-        body-less file makes that silently return nothing), and the read plan's
-        chunks must cover every line exactly once (a gap means a subagent never
-        reads part of the inbox and nobody notices).
-        """
+        """Past 50 messages, the offloaded file must keep the body the inline projection drops (for downstream query_json), and its read plan must cover every line exactly once."""
         tool = tools["GMAIL_FETCH_MESSAGES"]
         ids = [f"m{i}" for i in range(61)]
         written: dict[str, Any] = {}
@@ -442,10 +414,7 @@ class TestGmailFetchMessages:
 
 class TestGmailMutations:
     def test_a_half_failed_bulk_mark_as_read_does_not_report_success(self, tools):
-        """Gmail caps batchModify at 1000 ids, so "mark all 1500 as read"
-        is two calls. If the second fails and the tool still reports a clean
-        success, the user is told their inbox is cleared while 500 messages sit
-        unread — and the agent has no idea to retry."""
+        """Gmail caps batchModify at 1000 ids, so marking 1500 as read is two calls."""
         tool = tools["GMAIL_MARK_AS_READ"]
         calls = 0
 
@@ -468,9 +437,6 @@ class TestGmailMutations:
         assert "quota exceeded" in result["error"]
 
     def test_the_first_batch_failing_outright_is_raised_not_swallowed(self, tools):
-        """Nothing was modified, so there is no partial result to report — a
-        {"modified_count": 0} success would tell the agent the mailbox was
-        already in that state."""
         tool = tools["GMAIL_ARCHIVE_EMAIL"]
 
         def proxy(**kwargs: Any) -> FakeProxyResponse:
@@ -486,9 +452,7 @@ class TestGmailMutations:
 
 class TestGmailConnectionErrors:
     def test_a_disconnected_gmail_tells_the_user_to_reconnect_not_to_log_in(self, tools):
-        """403, never 401. The web client's axios interceptor treats 401 as
-        session expiry and pops the login modal at an already-logged-in user;
-        403 + INTEGRATION_NOT_CONNECTED routes to the reconnect flow."""
+        """403, never 401 — the web client's axios interceptor treats 401 as session expiry and pops the login modal on an already-logged-in user."""
         tool = tools["GMAIL_GET_UNREAD_COUNT"]
         client = fake_composio(lambda **kwargs: FakeProxyResponse({}), account_status="INITIATED")
 
@@ -500,10 +464,7 @@ class TestGmailConnectionErrors:
         assert excinfo.value.meta["code"] == "INTEGRATION_NOT_CONNECTED"
 
     def test_a_rejected_token_invalidates_the_cached_account(self, tools):
-        """A provider 401 means Composio's stored token was rejected and its
-        refresh already failed. The connected-account id is cached for ten
-        minutes, so without invalidation every retry in that window replays the
-        dead account and the user's reconnect appears not to take effect."""
+        """The connected-account id is cached for ten minutes; without invalidation, a retry in that window replays the dead account after reconnect."""
         from app.services.composio.proxy_client import _connected_account_cache
 
         tool = tools["GMAIL_GET_UNREAD_COUNT"]
@@ -520,10 +481,6 @@ class TestGmailConnectionErrors:
         assert (USER, "GMAIL") not in _connected_account_cache
 
     def test_the_gmail_proxy_resolves_the_gmail_auth_config(self, tools):
-        """The toolkit → auth-config mapping is what ties a request to the
-        right OAuth connection. Resolving the wrong one reads a different
-        provider's account for this user — an integration mix-up, not an
-        error."""
         tool = tools["GMAIL_GET_UNREAD_COUNT"]
         client = fake_composio(
             lambda **kwargs: FakeProxyResponse(
@@ -574,9 +531,6 @@ def calendar_event(summary: str, start: datetime, end: datetime) -> dict[str, An
 
 class TestCalendarDaySummary:
     def test_the_day_is_windowed_in_the_users_timezone(self, tools):
-        """ "What's on today" is a day boundary question. Computing it in the
-        server's zone asks Google for the wrong 24 hours — the user's late
-        meetings vanish and tomorrow's early ones appear."""
         tool = tools["GOOGLECALENDAR_CUSTOM_GET_DAY_SUMMARY"]
         window: dict[str, Any] = {}
         tz = ZoneInfo(HOME_TZ)
@@ -638,9 +592,6 @@ class TestCalendarDaySummary:
         assert streamed == [{"calendar_fetch_data": result["events"]}]
 
     def test_the_next_event_is_one_that_has_not_happened_yet(self, tools):
-        """next_event drives "what's next?" and the proactive nudges. If it
-        can pick an event that already ended, the assistant reminds the user
-        about the standup they just left."""
         tool = tools["GOOGLECALENDAR_CUSTOM_GET_DAY_SUMMARY"]
         tz = ZoneInfo(HOME_TZ)
         now = datetime.now(tz)
@@ -677,9 +628,7 @@ class TestCalendarDaySummary:
 
 class TestCalendarGetEvent:
     def test_a_batch_where_one_event_is_missing_reports_both_halves(self, tools):
-        """Regression the code carries a comment about: dropping errors
-        made a partly-failed batch read as a clean success, so the agent told
-        the user about two events when it had only fetched one."""
+        """Regression noted in the code: dropping errors made a partly-failed batch read as a clean success."""
         tool = tools["GOOGLECALENDAR_CUSTOM_GET_EVENT"]
 
         def proxy(**kwargs: Any) -> FakeProxyResponse:
@@ -704,8 +653,6 @@ class TestCalendarGetEvent:
         assert result["errors"][0]["event_id"] == "deleted-one"
 
     def test_a_batch_where_every_event_fails_raises(self, tools):
-        """Nothing came back, so an empty-but-successful result would read as
-        "you have no such events" rather than "the lookup failed"."""
         tool = tools["GOOGLECALENDAR_CUSTOM_GET_EVENT"]
 
         def proxy(**kwargs: Any) -> FakeProxyResponse:
@@ -724,9 +671,7 @@ class TestCalendarGetEvent:
 
 class TestCalendarCreateEvent:
     def test_an_unconfirmed_event_is_drafted_and_never_reaches_google(self, tools):
-        """The human-in-the-loop contract. confirm_immediately=False must
-        draft only: one stray write here puts a real event on someone's
-        calendar (and mails every attendee) before they agreed to it."""
+        """confirm_immediately=False must draft only — a stray write puts a real event on someone's calendar and mails every attendee before they agreed."""
         tool = tools["GOOGLECALENDAR_CUSTOM_CREATE_EVENT"]
         client = fake_composio(
             lambda **kwargs: pytest.fail("a draft must not call Google Calendar")
@@ -784,8 +729,7 @@ class TestCalendarCreateEvent:
         ], "the confirmation card never reached the chat, so nothing can be confirmed"
 
     def test_a_confirmed_event_is_written_with_the_duration_the_user_asked_for(self, tools):
-        """The end time is derived, not given. Getting it wrong books the wrong
-        slot on a real calendar and mails the attendees about it."""
+        """The end time is derived from duration, not given directly — getting it wrong books the wrong slot."""
         tool = tools["GOOGLECALENDAR_CUSTOM_CREATE_EVENT"]
         posted: list[dict[str, Any]] = []
 
@@ -841,9 +785,7 @@ class TestCalendarCreateEvent:
 
 class TestGithubGatherContext:
     def test_pull_requests_are_split_out_of_the_assigned_issues(self, tools):
-        """GitHub's issues endpoint returns PRs *as* issues. Leaving them mixed
-        in makes the assistant report "you have 4 issues" when two are pull
-        requests waiting on a merge — different work, different urgency."""
+        """GitHub's issues endpoint returns PRs as issues too; left mixed in, they're reported as issues."""
         tool = tools["GITHUB_CUSTOM_GATHER_CONTEXT"]
 
         def fake_execute(name: str, params: dict[str, Any], user_id: str, *a: Any, **k: Any):
@@ -876,9 +818,7 @@ class TestGithubGatherContext:
         assert result["notifications"] == [{"id": "n1"}]
 
     def test_a_failing_review_search_still_returns_the_rest_of_the_snapshot(self, tools):
-        """Review search and notifications need scopes a token may not have.
-        One missing scope must not blank the whole context snapshot — the
-        assigned issues are the part the user asked about."""
+        """Review search and notifications need scopes a token may not have; one missing scope must not blank the rest of the snapshot."""
         tool = tools["GITHUB_CUSTOM_GATHER_CONTEXT"]
 
         def fake_execute(name: str, params: dict[str, Any], user_id: str, *a: Any, **k: Any):
@@ -897,9 +837,6 @@ class TestGithubGatherContext:
         assert result["notifications"] == []
 
     def test_the_first_call_failing_is_not_swallowed(self, tools):
-        """The assigned-issues call is the snapshot. If it fails and the tool
-        returns empty lists, the user is told they have nothing on their plate
-        when GitHub simply never answered."""
         tool = tools["GITHUB_CUSTOM_GATHER_CONTEXT"]
 
         def fake_execute(name: str, params: dict[str, Any], user_id: str, *a: Any, **k: Any):
@@ -913,8 +850,6 @@ class TestGithubGatherContext:
             tool.invoke_trusted(user_id=USER, request_kwargs={})
 
     def test_every_github_call_carries_the_invoking_user(self, tools):
-        """One call threaded with the wrong (or no) user reads another
-        account's issues into this user's snapshot."""
         tool = tools["GITHUB_CUSTOM_GATHER_CONTEXT"]
         users: list[str] = []
 
@@ -932,9 +867,6 @@ class TestGithubGatherContext:
         assert set(users) == {"user-42"}
 
     def test_missing_credentials_fail_loudly(self, tools):
-        """Without a user id the tool would query GitHub as nobody. Failing
-        here is the difference between "reconnect GitHub" and a confusing empty
-        snapshot."""
         tool = tools["GITHUB_CUSTOM_GATHER_CONTEXT"]
 
         with (
@@ -955,9 +887,7 @@ class TestGithubGatherContext:
 
 class TestSlackGatherContext:
     def test_a_mention_is_not_also_listed_as_an_ordinary_message(self, tools):
-        """Both searches hit the same day, so a message that @-mentions the
-        user comes back twice. Left unde-duplicated the assistant reports the
-        same message as a mention *and* as unrelated chatter."""
+        """Both searches hit the same day, so a mention comes back from each and must not be reported twice."""
         tool = tools["SLACK_CUSTOM_GATHER_CONTEXT"]
 
         def fake_execute(name: str, params: dict[str, Any], user_id: str, *a: Any, **k: Any):
@@ -984,15 +914,7 @@ class TestSlackGatherContext:
         assert result["unread_count"] == 2
 
     def test_a_workspace_with_only_mentions_does_not_report_nothing_waiting(self, tools):
-        """unread_count counts both lists it ships beside.
-
-        The two lists are disjoint by construction — a mention is removed from
-        messages — so counting either one alone under-reports. Counting only
-        the de-duplicated remainder is the worse half: a user whose entire day is
-        @-mentions gets unread_count: 0 next to a populated mentions
-        list, and the assistant tells them nothing is waiting while it is holding
-        the mentions that say otherwise.
-        """
+        """The two lists are disjoint by construction, so a mentions-only day must not show unread_count: 0."""
         tool = tools["SLACK_CUSTOM_GATHER_CONTEXT"]
         mentions = [{"ts": str(i), "text": f"@you please look at this {i}"} for i in range(5)]
 
@@ -1010,9 +932,7 @@ class TestSlackGatherContext:
         assert result["unread_count"] == 5
 
     def test_a_mention_outside_the_message_page_is_still_counted(self, tools):
-        """The two searches are independent calls with different page sizes (20
-        and 10), so a mention can arrive that the message search never returned.
-        Counting the raw message page misses it."""
+        """The two searches use different page sizes (20 and 10), so a mention can arrive that the message search never returned."""
         tool = tools["SLACK_CUSTOM_GATHER_CONTEXT"]
 
         def fake_execute(name: str, params: dict[str, Any], user_id: str, *a: Any, **k: Any):
@@ -1029,8 +949,6 @@ class TestSlackGatherContext:
         assert result["unread_count"] == 2
 
     def test_the_workspace_search_is_scoped_to_today(self, tools):
-        """An unscoped Slack search returns the whole workspace history — the
-        snapshot stops being "what happened today" and the model drowns."""
         tool = tools["SLACK_CUSTOM_GATHER_CONTEXT"]
         queries: list[str] = []
 
@@ -1048,8 +966,6 @@ class TestSlackGatherContext:
         assert queries == [f"on:{today}", f"on:{today} @me"]
 
     def test_a_failing_mention_search_still_returns_the_messages(self, tools):
-        """The mention search is the optional half; losing it must not blank
-        the day's messages."""
         tool = tools["SLACK_CUSTOM_GATHER_CONTEXT"]
 
         def fake_execute(name: str, params: dict[str, Any], user_id: str, *a: Any, **k: Any):

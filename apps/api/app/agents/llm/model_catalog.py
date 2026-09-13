@@ -124,12 +124,10 @@ OPENROUTER_MODEL_CATALOG_PROVIDER = "openrouter_model_catalog"
 def init_openrouter_model_catalog() -> OpenRouterModelCatalog:
     """Register the catalog as a sync provider.
 
-    The loader is deliberately sync: accepts_images is awaited from the
-    pre-model hook, which sync_execute_hooks runs under a fresh, short-lived
-    event loop each turn. An async provider guards initialization with an
-    asyncio.Lock bound to the loop it was first used on, which would then fail
-    against those later loops; a sync loader uses a thread lock and a lock-free
-    fast path once initialized, so it is loop-agnostic.
+    Deliberately sync: an async provider guards init with an asyncio.Lock
+    bound to its first event loop, which fails against the fresh, short-lived
+    loop sync_execute_hooks runs each turn. A sync loader's thread lock is
+    loop-agnostic.
     """
     return OpenRouterModelCatalog()
 

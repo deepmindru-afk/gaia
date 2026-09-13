@@ -1,5 +1,4 @@
-"""Vision support: one canonical media shape in history, per-lane delivery at
-the request boundary, and a text description for models that can't see at all.
+"""Vision support: one canonical media shape in history, per-lane delivery.
 
 - capability — what the active (provider, model) lane can receive.
 - adapter — rewrites a request's messages to fit that lane, within budget.

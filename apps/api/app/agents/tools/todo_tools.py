@@ -116,17 +116,10 @@ def _format_todos(todos: list[Todo]) -> str:
 def create_todo_tools(source: str = "executor", source_label: str | None = None) -> list[BaseTool]:
     """Create plan_tasks and update_tasks tools with source baked in.
 
-    Each tool reads current todos via InjectedState("todos"), mutates,
-    streams progress, and returns Command(update={"todos": ...}).
-
     Args:
-        source: Identifier for todo_progress events (e.g. "executor", "gmail")
-        source_label: Human-readable name for the source (e.g. a custom MCP
-            integration's display name). Streamed so the frontend shows the
-            name instead of the raw id.
-
-    Returns:
-        List of two BaseTool instances
+        source: Identifier for todo_progress events (e.g. "executor", "gmail").
+        source_label: Streamed so the frontend shows this name instead of
+            the raw id.
     """
 
     # TODO: Remove these tool calls from the conversation history, we are tracking
@@ -183,12 +176,9 @@ def create_todo_tools(source: str = "executor", source_label: str | None = None)
         summary_parts: list[str] = []
         added: list[str] = []
 
-        # Validate the whole batch before applying any of it. Two reasons this is
-        # all-or-nothing rather than best-effort: a silently skipped entry told
-        # the model "no changes" while reporting success, so it moved on with a
-        # checklist that never advanced; and partial application makes the
-        # model's retry non-idempotent — the valid additions would land twice
-        # once it corrects the bad entry and resends the batch.
+        # Validate the whole batch before applying any of it: a partial apply
+        # would make the model's retry non-idempotent (valid additions landing
+        # twice once it resends the corrected batch).
         problems: list[str] = []
         if not updates:
             problems.append("the updates list was empty")

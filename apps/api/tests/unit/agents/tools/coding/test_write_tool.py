@@ -44,7 +44,7 @@ SCRATCH_PATH = "/workspace/sessions/conv-1/scratch/notes.md"
 
 @pytest.fixture(autouse=True)
 def _rate_limit_passes() -> None:
-    """The @with_rate_limiting seam (not under test) — fixed to pass.
+    """Fix the @with_rate_limiting seam (not under test) to pass.
 
     write is invoked with a chat-shaped config, so the wrapper's user-context
     branch runs; its Redis lookups are the seam, not write's logic.

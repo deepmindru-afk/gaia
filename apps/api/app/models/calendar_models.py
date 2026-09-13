@@ -439,12 +439,9 @@ class RecurrenceRule(BaseModel):
             parsed = datetime.fromisoformat(self.until)
         except ValueError:
             return self.until
-        # An offset-aware value has to be shifted to UTC before it can wear a
-        # Z: stamping "+05:30" as Z moves the series' end by 5.5 hours. A naive
-        # value is already the caller's UTC wall-clock, so it needs no shift.
-        # Subtracting the offset rather than astimezone(UTC): only the wall
-        # clock is formatted, and this keeps the result independent of the
-        # host's local timezone.
+        # An offset-aware value must shift to UTC before wearing a Z, or the
+        # series' end moves; a naive value is already UTC wall-clock. Subtracting
+        # the offset (not astimezone) keeps the result host-timezone independent.
         offset = parsed.utcoffset()
         if offset is not None:
             parsed -= offset
@@ -752,10 +749,8 @@ class BaseCalendarEvent(BaseModel):
 class EventCreateRequest(BaseCalendarEvent):
     """Model for calendar event creation for service layer."""
 
-    # Direct time fields for service operations. Optional on the wire: an
-    # all-day event may omit them and the service picks its bounds (a missing
-    # start is today, a missing end is the day after); a timed event without
-    # them is rejected by the service, not the schema.
+    # Optional on the wire: an all-day event may omit them (service picks
+    # bounds); a timed event without them is rejected by the service, not the schema.
     start: str | None = Field(None, title="Start time in ISO format or date for all-day events")
     end: str | None = Field(None, title="End time in ISO format or date for all-day events")
     timezone: str | None = Field(

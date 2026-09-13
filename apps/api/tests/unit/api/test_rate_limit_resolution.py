@@ -125,13 +125,7 @@ def test_no_duplicate_decorator_remains() -> None:
 
 @pytest.mark.asyncio
 async def test_route_without_an_auth_dependency_is_still_limited() -> None:
-    """Auth comes from the middleware, not the handler's signature.
-
-    search_email_endpoint takes only query: str — no auth dependency at
-    all — yet it sits behind the global auth middleware and carries a
-    web_search limit. Resolving the caller from the request context (rather
-    than the handler's kwargs) is what lets that route be billed.
-    """
+    """search_email_endpoint takes only query: str, no auth dependency, yet resolving the caller from request context still lets it be billed."""
     app = FastAPI()
 
     @app.middleware("http")

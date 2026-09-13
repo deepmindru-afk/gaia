@@ -23,8 +23,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 
-#: What the loop-ending turn says. Never read by anything — a replay's
-#: user-facing text is written by the run's end-of-run model call — but an empty
+#: What the loop-ending turn says. Never read by anything — but an empty
 #: assistant message is rewritten to "Empty response from model." by
 #: ``create_agent``, which reads as a fault in a log.
 REPLAY_FINISHED_CONTENT = "Playbook replay finished."
@@ -39,7 +38,7 @@ class ScriptedCall:
 
 
 def scripted_call_id(turn: int) -> str:
-    """The tool_call_id turn turn emits — derived, so a replayed turn reuses it."""
+    """Return the tool_call_id this turn emits — derived, so a replayed turn reuses it."""
     return f"pb_call_{turn}"
 
 
@@ -78,7 +77,7 @@ class ScriptedModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=self.turn_for(messages))])
 
     def turn_for(self, messages: Sequence[BaseMessage]) -> AIMessage:
-        """The message this turn emits, derived entirely from messages."""
+        """Return the message this turn emits, derived entirely from messages."""
         turn = sum(1 for message in messages if isinstance(message, AIMessage))
         if turn >= len(self.script):
             return AIMessage(content=REPLAY_FINISHED_CONTENT)

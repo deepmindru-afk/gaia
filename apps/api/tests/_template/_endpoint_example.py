@@ -19,7 +19,7 @@ NOW = datetime.now(UTC)
 
 
 def _todo_response(todo_id: str = "abc123", title: str = "Buy milk") -> dict:
-    """A dict matching the TodoResponse shape, as the service returns it."""
+    """Return a dict matching the TodoResponse shape, as the service returns it."""
     return {
         "id": todo_id,
         "user_id": USER_ID,

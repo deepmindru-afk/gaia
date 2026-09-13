@@ -30,7 +30,6 @@ async def update_user_profile(
     name: str | None = None,
     picture_data: bytes | None = None,
 ) -> UserUpdateResponse:
-    """Update user profile information."""
     log.set(
         component="user_service",
         user_id=user_id,

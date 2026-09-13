@@ -98,9 +98,7 @@ class TestGuardrailValues:
 
 
 class TestScheduleFitsTheCaps:
-    """The comment on the caps claims 3/week + 2-day spacing "fits the
-    schedule". Simulate the sequence sending each step at its earliest
-    possible day and prove no enabled step is starved out of its window."""
+    """Simulate the sequence sending each step at its earliest possible day and prove the 3/week + 2-day spacing cap starves no enabled step."""
 
     @staticmethod
     def _day(offset: int) -> datetime:

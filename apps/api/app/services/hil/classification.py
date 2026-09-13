@@ -4,11 +4,9 @@ Resolution order (first match wins):
 
 1. Exempt orchestration/plumbing tools → safe.
 2. A server-declared MCP destructiveHint → destructive. Escalation-only: an
-   untrusted MCP server may flag danger but never clear it, so readOnlyHint
-   and destructiveHint=False are ignored; a true hint gates even over a
-   reviewed-safe registry flag.
-3. The tool registry's flag — authoritative for internal tools and curated
-   integration slugs.
+   untrusted MCP server may flag danger but never clear it, so readOnlyHint and
+   destructiveHint=False are ignored; a true hint gates even a reviewed-safe flag.
+3. The tool registry's flag — authoritative for internal tools and curated slugs.
 4. A cached Mongo classification for a previously-seen custom tool.
 5. A one-shot LLM classification, persisted to Mongo + the live registry.
 
@@ -104,18 +102,19 @@ async def _classify_unknown_tool(registry: ToolRegistry, tool_name: str, descrip
 
 
 async def _cached_classification(tool_name: str, description_hash: str) -> bool | None:
-    """A prior classification for this exact tool+description, or None."""
+    """Return a prior classification for this exact tool+description, or None."""
     record = await hil_tool_risk_repository.find_classification(tool_name, description_hash)
     return record.is_destructive if record else None
 
 
 async def _classify_with_llm(tool_name: str, description: str) -> _ClassifyResult:
-    """Classify a TOOL, not a request — so this call deliberately carries no
-    user attribution. The verdict is cached per tool+description (DB + registry)
-    and shared by every user, so billing its COGS to whichever user happened to
-    trigger the first classification would be arbitrary. The unattributed-spend
-    warning from ainvoke_structured is expected here, and rare: this runs
-    once per tool, not per call."""
+    """Classify a TOOL, not a request — deliberately carries no user attribution.
+
+    The verdict is cached per tool+description and shared by every user, so billing
+    its COGS to whichever user triggered the first classification would be
+    arbitrary. The unattributed-spend warning from ainvoke_structured is expected
+    here, and rare: this runs once per tool, not per call.
+    """
     return await ainvoke_structured(
         _ClassifyResult,
         TOOL_CLASSIFY_PROMPT.format(name=tool_name, description=description or "(none provided)"),
@@ -128,8 +127,10 @@ async def _classify_with_llm(tool_name: str, description: str) -> _ClassifyResul
 async def _persist_classification(
     tool_name: str, description_hash: str, result: _ClassifyResult
 ) -> None:
-    """Cache the classification in Mongo so restarts/refreshes don't re-run the
-    LLM (the description_hash key means only a changed description re-classifies)."""
+    """Cache the classification in Mongo so restarts/refreshes don't re-run the LLM.
+
+    The description_hash key means only a changed description re-classifies.
+    """
     record = HILToolRiskRecord(
         tool_name=tool_name,
         description_hash=description_hash,

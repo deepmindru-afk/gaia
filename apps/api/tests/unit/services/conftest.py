@@ -154,7 +154,7 @@ def _make_webhook_event(event_type: str, data: dict[str, Any]) -> dict[str, Any]
 
 @pytest.fixture
 def mock_webhook_subscription_repository():
-    """The repository behind subscription_events, the one writer of rows.
+    """Mock the repository behind subscription_events, the one writer of rows.
 
     By default the subscription already exists as an active row with no
     billing dates recorded (SAMPLE_SUBSCRIPTION), which is what every
@@ -201,8 +201,7 @@ def mock_track_subscription():
 
 @pytest.fixture
 def mock_deactivate_workflows():
-    """The reducer pauses lapsed workflows through a deferred import (see
-    mock_activation_workflow_reactivation), so the seam is the source."""
+    """Patch the deferred-import seam that pauses lapsed workflows (same seam mock_activation_workflow_reactivation uses)."""
     with patch(
         "app.services.workflow.subscription_pause.deactivate_workflows_for_lapsed_subscription",
         new_callable=AsyncMock,
@@ -222,13 +221,10 @@ def mock_webhook_send_email():
 
 @pytest.fixture
 def mock_activation_workflow_reactivation():
-    """The reducer resumes lapsed workflows on activation; that reaches the
-    workflow stack, which no webhook test wants to run. Patched at the source
-    module because the import is deferred to break a cycle.
+    """Patch the reducer that resumes lapsed workflows on activation, at its source module (import deferred to break a cycle).
 
-    Not autouse here: this conftest is shared by every file under
-    tests/unit/services/, so autouse would silently patch an unrelated
-    workflow-pause seam for every other service's tests. The payment webhook
+    Not autouse: this conftest is shared by every services test file, so autouse
+    would silently patch an unrelated seam for other tests. The payment webhook
     module opts in via pytestmark = pytest.mark.usefixtures(...).
     """
     with patch(
@@ -253,7 +249,7 @@ def webhook_service():
 
 @pytest.fixture
 def webhook_side_effects_stubbed(mock_track_subscription, mock_subscription_plan_cache_drop):
-    """The side effects a webhook fires that most tests only need kept in memory.
+    """Bundle the side effects a webhook fires that most tests only need kept in memory.
 
     Analytics and the plan-cache bust are requested by name where a test asserts
     on them; this bundles the pair for the tests that merely must not let them

@@ -137,12 +137,9 @@ async def lookup_pending_by_user_code(user_code: str) -> dict | None:
 async def approve_pairing(user_id: str, user_code: str) -> tuple[str, str]:
     """Approve a pending pairing for user_id; create the device + refresh token.
 
-    Returns (device_id, name) rather than the Device row itself: both
-    values are already known locally (they're what we just inserted), and the
-    row would come back detached — accessing its attributes after the session
-    below closes raises DetachedInstanceError (session.commit()
-    expires every mapped attribute; see rotate_refresh_token's identical
-    capture-before-return pattern).
+    Returns (device_id, name) rather than the Device row itself, since the row
+    comes back detached after the session below closes (session.commit()
+    expires every mapped attribute, so accessing it raises DetachedInstanceError).
     """
     normalized = user_code.strip().upper()
     pending = await lookup_pending_by_user_code(normalized)
@@ -202,21 +199,15 @@ async def poll_pairing(device_code: str) -> PollPairingResponse:
 async def rotate_refresh_token(refresh_token: str) -> tuple[str, str, str]:
     """Validate + rotate a refresh credential. Returns (device_id, user_id, new_refresh_token).
 
-    Reuse detection: a token matching previous_refresh_token_hash (already
-    rotated away) means it was captured and replayed — the device is revoked and
-    the exchange rejected. A brief post-rotation grace window (see
-    REFRESH_TOKEN_RETRY_GRACE_SECONDS) exempts the common lost-response case:
-    the daemon exchanges on every dial and persists the new token only after the
-    HTTP response lands, so a dropped response (or a crash before persist) leaves
-    it holding the old token. Within the window the just-consumed credential is
-    replayed its *same* replacement instead of bricking a healthy device.
+    A token matching previous_refresh_token_hash means it was captured and
+    replayed — the device is revoked and the exchange rejected. Within a brief
+    post-rotation grace window (REFRESH_TOKEN_RETRY_GRACE_SECONDS), a lost HTTP
+    response is instead handed the same replacement rather than bricking the device.
     """
     token_hash = hash_refresh_token(refresh_token)
 
-    # Lost-response retry: hand back the identical replacement so the daemon and
-    # server stay in sync. Keyed by the consumed token's hash; expires after the
-    # grace window, after which a match on ``previous_refresh_token_hash`` below
-    # is treated as genuine reuse.
+    # Lost-response retry, keyed by the consumed token's hash; expires after the
+    # grace window, after which a match below is treated as genuine reuse.
     cached = await get_cache(_refresh_retry_key(token_hash))
     if isinstance(cached, dict) and cached.get("new_token"):
         device_id = str(cached["device_id"])
@@ -238,11 +229,9 @@ async def rotate_refresh_token(refresh_token: str) -> tuple[str, str, str]:
                 )
             ).scalar_one_or_none()
             if replayed is not None and replayed.status == DeviceStatus.ACTIVE:
-                # Capture before commit: AsyncSession forbids the implicit
-                # lazy-load a post-commit attribute access on `replayed` would
-                # otherwise trigger (session.commit() expires every mapped
-                # attribute, including the primary key) — it raises
-                # MissingGreenlet instead of transparently refetching.
+                # Capture before commit: session.commit() expires every mapped
+                # attribute, and a post-commit access would raise MissingGreenlet
+                # rather than transparently refetch.
                 replayed_id = replayed.id
                 replayed_user_id = replayed.user_id
                 replayed.status = DeviceStatus.REVOKED
@@ -427,8 +416,7 @@ async def _device_server_integration_ids(session: AsyncSession, device_id: str) 
 async def _teardown_revoked_device(
     user_id: str, device_id: str, integration_ids: list[str]
 ) -> None:
-    """Post-revocation cleanup: drop the device's server integrations and fan out a
-    revoke so whichever pod owns the live socket closes it immediately."""
+    """Drop the device's server integrations and fan out a revoke to close its live socket."""
     for integration_id in integration_ids:
         await integration_repository.delete(integration_id)
         await remove_user_integration(user_id, integration_id)

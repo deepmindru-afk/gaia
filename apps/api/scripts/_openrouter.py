@@ -84,11 +84,10 @@ def _read_cache(path: Path) -> dict[str, GenerationRecord | None]:
 def default_cache_dir() -> Path:
     """Where resolved generations are cached between runs.
 
-    Under the invoking user's cache home, never a shared temp directory: the
-    cache is written and read back as the script's own input, so a world-
-    writable path lets anyone on the box pre-create it and decide what this
-    backfill believes each call cost — and that number is written to
-    usage_daily. Ephemeral either way; it only makes a re-run cheaper.
+    Under the invoking user's cache home, not a shared temp directory: a
+    world-writable path would let anyone pre-create it and decide what this
+    backfill believes a call cost, which is written to usage_daily. Ephemeral
+    either way — it only makes a re-run cheaper.
     """
     xdg = os.environ.get("XDG_CACHE_HOME")
     return (Path(xdg) if xdg else Path.home() / ".cache") / "gaia-true-cost"

@@ -34,7 +34,7 @@ _REF_PREFIX = "#/components/schemas/"
 
 
 def _identifier(name: str) -> str:
-    """The component name as a TypeScript/Python identifier.
+    """Return the component name as a TypeScript/Python identifier.
 
     Pydantic suffixes a model used both as a request and a response with
     -Input/-Output; the dash is the only non-identifier character a

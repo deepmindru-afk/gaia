@@ -19,7 +19,7 @@ from app.utils.errors import AppError
 
 
 async def get_first_steps(user_id: str) -> FirstStepsResponse:
-    """The checklist with each step's done derived from live data."""
+    """Return the checklist with each step's done derived from live data."""
     user = await user_repository.get(user_id)
     if user is None:
         raise _user_not_found(user_id)

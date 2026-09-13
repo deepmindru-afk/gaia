@@ -86,9 +86,11 @@ class GaiaClient:
     # --- workflows -----------------------------------------------------------
 
     def create_workflow(self, title: str, prompt: str, category: str = "todos") -> WorkflowRef:
-        """A one-step workflow whose step text is prompt: under the scripted
-        model that text IS the script (the step description is rendered verbatim
-        into the run's user message)."""
+        """Create a one-step workflow whose step text is prompt.
+
+        Under the scripted model that text IS the script: the step
+        description is rendered verbatim into the run's user message.
+        """
         self.wait_healthy()
         response = self.http.post(
             f"{self.api}/workflows",
@@ -126,9 +128,11 @@ class GaiaClient:
         return TodoRef.model_validate(response.json())
 
     def pending_todos(self) -> list[TodoRef]:
-        """Every pending todo, across every page: the list paginates with
-        per_page (max 100), and a page cap once left leftovers pending that a
-        "suspect" scenario then saw as items."""
+        """Return every pending todo, across every page.
+
+        The list paginates with per_page (max 100); a page cap once left
+        leftovers pending that a "suspect" scenario then saw as items.
+        """
         found: list[TodoRef] = []
         page = 1
         while True:
