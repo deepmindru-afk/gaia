@@ -46,7 +46,6 @@ from app.memory.embeddings import _embed_sync, _rerank_sync
 import app.memory.extraction as extraction_module
 from tests.integration.real.memory.llm import FakeMemoryLLM
 
-
 _schema_ready = False
 _chroma_collections_ready = False
 
