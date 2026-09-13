@@ -276,9 +276,7 @@ async def bulk_move_todos(
     )
     try:
         result = await TodoService.bulk_move_todos(request, user["user_id"])
-        capture_context_event(
-            AnalyticsEvents.TODO_UPDATED, {"bulk_count": len(request.todo_ids)}
-        )
+        capture_context_event(AnalyticsEvents.TODO_UPDATED, {"bulk_count": len(result.success)})
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

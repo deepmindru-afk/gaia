@@ -156,6 +156,7 @@ class AnalyticsEvents(StrEnum):
 
     # Device bridge
     DEVICE_SELF_PAIRED = "device:self_paired"
+    DEVICE_APPROVED = "device:approved"
     DEVICE_REVOKED = "device:revoked"
 
     NOTIFICATION_PREFERENCE_UPDATED = "settings:notifications_toggled"

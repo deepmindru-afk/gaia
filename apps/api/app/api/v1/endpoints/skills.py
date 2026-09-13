@@ -454,7 +454,8 @@ async def enable_skill_endpoint(
     try:
         success = await enable_skill(user_id, skill_id)
         log.set(outcome="success")
-        capture_context_event(AnalyticsEvents.SKILL_ENABLED)
+        if success:
+            capture_context_event(AnalyticsEvents.SKILL_ENABLED)
         return SkillToggleResponse(success=success, skill_id=skill_id, enabled=True)
     except Exception as e:
         log.error(
@@ -480,7 +481,8 @@ async def disable_skill_endpoint(
     try:
         success = await disable_skill(user_id, skill_id)
         log.set(outcome="success")
-        capture_context_event(AnalyticsEvents.SKILL_DISABLED)
+        if success:
+            capture_context_event(AnalyticsEvents.SKILL_DISABLED)
         return SkillToggleResponse(success=success, skill_id=skill_id, enabled=False)
     except Exception as e:
         log.error(

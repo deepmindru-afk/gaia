@@ -141,6 +141,7 @@ async def pair_approve(
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
     log.audit("device pairing approved", actor=user_id, resource=device_id)
+    capture_event(user_id, AnalyticsEvents.DEVICE_APPROVED)
     return DevicePairApproveResponse(device_id=device_id, name=name)
 
 

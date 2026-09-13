@@ -1,14 +1,16 @@
 """Analytics coverage for previously-missing backend events.
 
 Every mutating endpoint that had no PostHog event now emits exactly one,
-after success, attributed to the authenticated user. Each test below drives
-the real route with the service seam mocked and asserts the exact event plus
-the distinct_id — a call-count-only assertion would not catch attribution to
-an anonymous profile, which is the silent failure mode here.
+after success. Each test below drives the real route with the service seam
+mocked and asserts the exact event; the two ``capture_event`` paths
+(device revoke, notification unsubscribe) additionally assert the explicit
+user id. Context-attributed paths rely on ``PostHogRequestContextMiddleware``
+for identity — covered by ``TestPostHogIdentityBinding`` below, which pins
+the middleware binding itself rather than re-asserting it per endpoint.
 """
 
-import re
 from datetime import UTC, datetime
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,9 +48,7 @@ def _make_workflow(**overrides):  # type: ignore[no-untyped-def]
         "title": "My Workflow",
         "description": "A test workflow",
         "prompt": "Do the thing",
-        "steps": [
-            {"id": "step_1", "title": "Step 1", "category": "general", "description": "x"}
-        ],
+        "steps": [{"id": "step_1", "title": "Step 1", "category": "general", "description": "x"}],
         "trigger_config": {"type": "manual", "enabled": True},
         "activated": True,
         "is_public": False,
@@ -125,6 +125,24 @@ class TestWorkflowNewEvents:
             {"force_different_tools": False, "steps_count": 1},
         )
 
+    async def test_regenerate_without_steps_captures_zero(self, client: AsyncClient) -> None:
+        with (
+            patch(
+                f"{_WF_SERVICE}.regenerate_workflow_steps",
+                new_callable=AsyncMock,
+                return_value=_make_workflow(steps=[]),
+            ),
+            patch(_WF_CAPTURE) as mock_capture,
+        ):
+            resp = await client.post(
+                f"{WF}/wf_abc123/regenerate-steps", json={"instruction": "Better"}
+            )
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(
+            AnalyticsEvents.WORKFLOW_STEPS_REGENERATED,
+            {"force_different_tools": False, "steps_count": 0},
+        )
+
     async def test_from_todo_captures_created(self, client: AsyncClient) -> None:
         with (
             patch(f"{_WF_SERVICE}.create_workflow", new_callable=AsyncMock) as mock_svc,
@@ -136,9 +154,7 @@ class TestWorkflowNewEvents:
                 json={"todo_id": "todo_123", "todo_title": "Buy groceries"},
             )
         assert resp.status_code == 200
-        mock_capture.assert_called_once_with(
-            AnalyticsEvents.WORKFLOW_CREATED, {"from_todo": True}
-        )
+        mock_capture.assert_called_once_with(AnalyticsEvents.WORKFLOW_CREATED, {"from_todo": True})
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +175,19 @@ class TestDeviceRevoke:
             resp = await client.delete("/api/v1/device/dev-1")
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(UID, AnalyticsEvents.DEVICE_REVOKED)
+
+    async def test_pair_approve_captures_with_user_id(self, client: AsyncClient) -> None:
+        with (
+            patch(
+                "app.api.v1.endpoints.device.approve_pairing",
+                new_callable=AsyncMock,
+                return_value=("dev-1", "My Mac"),
+            ),
+            patch("app.api.v1.endpoints.device.capture_event") as mock_capture,
+        ):
+            resp = await client.post("/api/v1/device/pair/approve", json={"user_code": "AB12"})
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(UID, AnalyticsEvents.DEVICE_APPROVED)
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +327,15 @@ class TestSkillNewEvents:
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(AnalyticsEvents.SKILL_ENABLED)
 
+    async def test_enable_noop_captures_nothing(self, client: AsyncClient) -> None:
+        with (
+            patch(f"{_SKILLS}.enable_skill", new_callable=AsyncMock, return_value=False),
+            patch(_SK_CAPTURE) as mock_capture,
+        ):
+            resp = await client.patch(f"{SK}/sk_abc123/enable")
+        assert resp.status_code == 200
+        mock_capture.assert_not_called()
+
     async def test_disable_captures(self, client: AsyncClient) -> None:
         with (
             patch(f"{_SKILLS}.disable_skill", new_callable=AsyncMock, return_value=True),
@@ -306,6 +344,15 @@ class TestSkillNewEvents:
             resp = await client.patch(f"{SK}/sk_abc123/disable")
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(AnalyticsEvents.SKILL_DISABLED)
+
+    async def test_disable_noop_captures_nothing(self, client: AsyncClient) -> None:
+        with (
+            patch(f"{_SKILLS}.disable_skill", new_callable=AsyncMock, return_value=False),
+            patch(_SK_CAPTURE) as mock_capture,
+        ):
+            resp = await client.patch(f"{SK}/sk_abc123/disable")
+        assert resp.status_code == 200
+        mock_capture.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +446,6 @@ class TestFileNewEvents:
         mock_capture.assert_called_once_with(E.FILE_UPDATED)
 
     async def test_delete_captures(self, client: AsyncClient) -> None:
-        from app.models.files_models import FileDocument as _FD  # noqa: F401
         from app.schemas.file import FileDeletedResponse
         from app.services.analytics_service import AnalyticsEvents as E
 
@@ -428,8 +474,8 @@ class TestCalendarPrefs:
             patch("app.api.v1.endpoints.calendar.calendar_service", new_callable=AsyncMock) as svc,
             patch("app.api.v1.endpoints.calendar.capture_context_event") as mock_capture,
         ):
-            svc.update_user_calendar_preferences.return_value = (
-                CalendarPreferencesUpdateResponse(message="Preferences updated")
+            svc.update_user_calendar_preferences.return_value = CalendarPreferencesUpdateResponse(
+                message="Preferences updated"
             )
             resp = await client.put(
                 "/api/v1/calendar/preferences", json={"selected_calendars": ["primary"]}
@@ -455,9 +501,7 @@ class TestImageNewEvents:
         from app.models.image_models import ImageToTextResponse
 
         with (
-            patch(
-                "app.api.v1.endpoints.image.image_to_text_endpoint", new_callable=AsyncMock
-            ) as m,
+            patch("app.api.v1.endpoints.image.image_to_text_endpoint", new_callable=AsyncMock) as m,
             patch("app.api.v1.endpoints.image.capture_context_event") as mock_capture,
         ):
             m.return_value = ImageToTextResponse(response="A cat")
@@ -497,7 +541,9 @@ class TestMailNewEvents:
             patch(f"{MAIL}.capture_context_event") as mock_capture,
         ):
             m.return_value = [GmailMessageResource(id="m1"), GmailMessageResource(id="m2")]
-            resp = await client.post("/api/v1/gmail/mark-as-read", json={"message_ids": ["m1", "m2"]})
+            resp = await client.post(
+                "/api/v1/gmail/mark-as-read", json={"message_ids": ["m1", "m2"]}
+            )
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(
             AnalyticsEvents.EMAIL_MARKED_READ, {"message_count": 2}
@@ -602,8 +648,7 @@ NOTIF = "app.api.v1.endpoints.notification"
 
 
 def _notif_record():  # type: ignore[no-untyped-def]
-    from datetime import UTC as _UTC
-    from datetime import datetime as _dt
+    from datetime import UTC as _UTC, datetime as _dt
 
     from app.models.notification.notification_models import (
         NotificationContent,
@@ -694,9 +739,7 @@ class TestNotificationNewEvents:
 class TestApprovalNewEvents:
     async def test_decision_captures(self, client: AsyncClient) -> None:
         with (
-            patch(
-                "app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock
-            ),
+            patch("app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock),
             patch("app.api.v1.endpoints.approvals.capture_context_event") as mock_capture,
         ):
             resp = await client.post("/api/v1/approvals/a1/decision", json={"decision": "approve"})
@@ -789,8 +832,8 @@ _TODOS_CAPTURE = f"{TODOS}.capture_context_event"
 
 
 class TestTodoNewEvents:
-    async def test_bulk_move_captures(self, client: AsyncClient) -> None:
-        from app.models.todo_models import BulkOperationResponse
+    async def test_bulk_move_captures_moved_not_requested(self, client: AsyncClient) -> None:
+        from app.models.todo_models import BulkMoveRequest, BulkOperationResponse
 
         with (
             patch(f"{TODOS}.TodoService.bulk_move_todos", new_callable=AsyncMock) as m,
@@ -798,10 +841,27 @@ class TestTodoNewEvents:
         ):
             m.return_value = BulkOperationResponse(success=["t1"], total=1, message="ok")
             resp = await client.post(
-                "/api/v1/todos/bulk/move", json={"todo_ids": ["t1"], "project_id": "p1"}
+                "/api/v1/todos/bulk/move", json={"todo_ids": ["t1", "t2"], "project_id": "p1"}
             )
         assert resp.status_code == 200
+        m.assert_awaited_once_with(BulkMoveRequest(todo_ids=["t1", "t2"], project_id="p1"), UID)
         mock_capture.assert_called_once_with(AnalyticsEvents.TODO_UPDATED, {"bulk_count": 1})
+
+    async def test_bulk_move_value_error_maps_to_400(self, client: AsyncClient) -> None:
+        with (
+            patch(
+                f"{TODOS}.TodoService.bulk_move_todos",
+                new_callable=AsyncMock,
+                side_effect=ValueError("no such project"),
+            ),
+            patch(_TODOS_CAPTURE) as mock_capture,
+        ):
+            resp = await client.post(
+                "/api/v1/todos/bulk/move", json={"todo_ids": ["t1"], "project_id": "p1"}
+            )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "no such project"
+        mock_capture.assert_not_called()
 
     async def test_project_create_captures(self, client: AsyncClient) -> None:
         from app.models.todo_models import ProjectResponse
@@ -1004,7 +1064,7 @@ class TestCustomIntegrationNewEvents:
             patch(_CUSTOM_CAPTURE) as mock_capture,
         ):
             m.return_value = _custom_integration()
-            resp = await client.patch(f"/api/v1/integrations/custom/i1", json={"name": "R"})
+            resp = await client.patch("/api/v1/integrations/custom/i1", json={"name": "R"})
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(AnalyticsEvents.INTEGRATION_CUSTOM_UPDATED)
 
@@ -1061,3 +1121,58 @@ class TestInstructionsUpdate:
             )
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(AnalyticsEvents.INTEGRATION_INSTRUCTIONS_UPDATED)
+
+
+class TestPostHogIdentityBinding:
+    """The middleware must bind the request to the stable Mongo user id.
+
+    Every ``capture_context_event`` in this module sends no ``distinct_id`` by
+    design, so a middleware regression to an anonymous or wrong identity would
+    stay green in all of the above. These two tests pin the binding itself.
+    """
+
+    _MW = "app.api.v1.middleware.auth"
+
+    def _request(self, user: dict | None):  # type: ignore[no-untyped-def]
+        from starlette.requests import Request
+
+        req = Request({"type": "http", "headers": []})
+        req.state.user = user
+        return req
+
+    async def test_authenticated_request_identified_as_user_id(self) -> None:
+        from fastapi import Response as FastAPIResponse
+
+        from app.api.v1.middleware.auth import PostHogRequestContextMiddleware
+
+        async def call_next(_request):  # type: ignore[no-untyped-def]
+            return FastAPIResponse("ok")
+
+        with (
+            patch(f"{self._MW}.providers.is_available", return_value=True),
+            patch(f"{self._MW}.providers.get", return_value=MagicMock()),
+            patch(f"{self._MW}.identify_context") as mock_identify,
+            patch(f"{self._MW}.new_context"),
+        ):
+            mw = PostHogRequestContextMiddleware(app=MagicMock())
+            resp = await mw.dispatch(self._request({"user_id": UID}), call_next)
+
+        assert resp.status_code == 200
+        mock_identify.assert_called_once_with(UID)
+
+    async def test_anonymous_request_identifies_nothing(self) -> None:
+        from fastapi import Response as FastAPIResponse
+
+        from app.api.v1.middleware.auth import PostHogRequestContextMiddleware
+
+        async def call_next(_request):  # type: ignore[no-untyped-def]
+            return FastAPIResponse("ok")
+
+        with (
+            patch(f"{self._MW}.identify_context") as mock_identify,
+        ):
+            mw = PostHogRequestContextMiddleware(app=MagicMock())
+            resp = await mw.dispatch(self._request(None), call_next)
+
+        assert resp.status_code == 200
+        mock_identify.assert_not_called()

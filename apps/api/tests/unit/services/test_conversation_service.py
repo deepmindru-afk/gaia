@@ -345,6 +345,32 @@ class TestPinMessage:
         assert result.pinned is True
         assert "pinned successfully" in result.message
 
+    async def test_pin_captures_pinned_with_user_id(self, mock_repo, test_user):
+        mock_repo.get.return_value = _document(
+            messages=[{"type": "bot", "response": "Hello", "message_id": "msg_1"}]
+        )
+        mock_repo.set_message_pinned.return_value = True
+        with patch(
+            "app.services.conversation_service.capture_event",
+        ) as mock_capture:
+            await pin_message("conv_abc", "msg_1", True, test_user)
+        mock_capture.assert_called_once_with(
+            "user_123", AnalyticsEvents.CHAT_MESSAGE_PINNED
+        )
+
+    async def test_unpin_captures_unpinned_with_user_id(self, mock_repo, test_user):
+        mock_repo.get.return_value = _document(
+            messages=[{"type": "bot", "response": "Hello", "message_id": "msg_1"}]
+        )
+        mock_repo.set_message_pinned.return_value = True
+        with patch(
+            "app.services.conversation_service.capture_event",
+        ) as mock_capture:
+            await pin_message("conv_abc", "msg_1", False, test_user)
+        mock_capture.assert_called_once_with(
+            "user_123", AnalyticsEvents.CHAT_MESSAGE_UNPINNED
+        )
+
     async def test_raises_404_conversation_not_found(self, mock_repo, test_user):
         mock_repo.get.return_value = None
         with pytest.raises(HTTPException) as exc_info:

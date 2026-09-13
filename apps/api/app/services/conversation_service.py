@@ -293,9 +293,7 @@ async def pin_message(
 
     capture_event(
         user_id,
-        AnalyticsEvents.CHAT_MESSAGE_PINNED
-        if pinned
-        else AnalyticsEvents.CHAT_MESSAGE_UNPINNED,
+        AnalyticsEvents.CHAT_MESSAGE_PINNED if pinned else AnalyticsEvents.CHAT_MESSAGE_UNPINNED,
     )
     response_message = (
         f"Message with ID {message_id} pinned successfully"

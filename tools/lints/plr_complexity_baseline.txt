@@ -37,8 +37,6 @@ apps/api/app/agents/workspace/paths.py	PLR0911
 apps/api/app/api/v1/endpoints/bot.py	PLR0912
 apps/api/app/api/v1/endpoints/bot.py	PLR0915
 apps/api/app/api/v1/endpoints/integrations/config.py	PLR0912
-apps/api/app/api/v1/endpoints/mcp.py	PLR0912
-apps/api/app/api/v1/endpoints/mcp.py	PLR0915
 apps/api/app/api/v1/endpoints/oauth.py	PLR0911
 apps/api/app/api/v1/endpoints/platform_auth.py	PLR0911
 apps/api/app/api/v1/endpoints/platform_auth.py	PLR0912
