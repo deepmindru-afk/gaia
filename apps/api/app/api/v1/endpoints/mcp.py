@@ -177,14 +177,17 @@ async def _try_scope_retry_url(
         return None
 
 
-async def _clear_excluded_scopes_quietly(client: MCPClient, integration_id: str, when: str) -> None:
+async def _clear_excluded_scopes_quietly(
+    client: MCPClient, integration_id: str, phase: str
+) -> None:
     try:
         await client.token_store.clear_excluded_scopes(integration_id)
     except Exception as clear_err:
         log.warning(
-            f"{LogTag.MCP} Failed to clear excluded scopes{when}",
+            f"{LogTag.MCP} Failed to clear excluded scopes",
             integration_id=integration_id,
             error_type=type(clear_err).__name__,
+            phase=phase,
         )
 
 
@@ -242,7 +245,7 @@ async def mcp_oauth_callback(
             )
             if retry_url:
                 return RedirectResponse(url=retry_url)
-        await _clear_excluded_scopes_quietly(client, integration_id, "")
+        await _clear_excluded_scopes_quietly(client, integration_id, "provider_error")
 
         return RedirectResponse(
             url=_oauth_failed_url(
@@ -282,7 +285,7 @@ async def mcp_oauth_callback(
         # OAuth succeeded — clear any scope exclusions accumulated during retries.
         # Best-effort: a Redis hiccup must not turn a successful connect into an
         # error redirect (a stale exclusion entry expires on its own).
-        await _clear_excluded_scopes_quietly(client, integration_id, " after OAuth success")
+        await _clear_excluded_scopes_quietly(client, integration_id, "oauth_success")
 
         await invalidate_user_integration_caches(str(user_id))
 
