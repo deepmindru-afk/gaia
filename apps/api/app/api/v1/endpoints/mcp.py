@@ -150,7 +150,6 @@ def _map_provider_error_code(error: str) -> str:
         "unauthorized_client",
         "unsupported_response_type",
         "invalid_scope",
-        "server_error",
         "temporarily_unavailable",
     ]:
         return "authorization_failed"

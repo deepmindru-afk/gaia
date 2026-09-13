@@ -174,7 +174,22 @@ class TestDeviceRevoke:
         ):
             resp = await client.delete("/api/v1/device/dev-1")
         assert resp.status_code == 200
+        assert resp.json() == {"device_id": "dev-1", "status": "revoked"}
         mock_capture.assert_called_once_with(UID, AnalyticsEvents.DEVICE_REVOKED)
+
+    async def test_revoke_missing_is_404_without_capture(self, client: AsyncClient) -> None:
+        with (
+            patch(
+                "app.api.v1.endpoints.device.revoke_device",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("app.api.v1.endpoints.device.capture_event") as mock_capture,
+        ):
+            resp = await client.delete("/api/v1/device/dev-1")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Device not found"
+        mock_capture.assert_not_called()
 
     async def test_pair_approve_captures_with_user_id(self, client: AsyncClient) -> None:
         with (
@@ -353,6 +368,30 @@ class TestSkillNewEvents:
             resp = await client.patch(f"{SK}/sk_abc123/disable")
         assert resp.status_code == 200
         mock_capture.assert_not_called()
+
+    async def test_enable_stamps_success_outcome(self) -> None:
+        from app.api.v1.endpoints.skills import enable_skill_endpoint
+        from tests.helpers import captured_wide_event
+
+        with (
+            patch(f"{_SKILLS}.enable_skill", new_callable=AsyncMock, return_value=True),
+            patch(_SK_CAPTURE),
+        ):
+            async with captured_wide_event() as event:
+                await enable_skill_endpoint(skill_id="sk_1", user_id=UID)
+            assert event["outcome"] == "success"
+
+    async def test_disable_stamps_success_outcome(self) -> None:
+        from app.api.v1.endpoints.skills import disable_skill_endpoint
+        from tests.helpers import captured_wide_event
+
+        with (
+            patch(f"{_SKILLS}.disable_skill", new_callable=AsyncMock, return_value=True),
+            patch(_SK_CAPTURE),
+        ):
+            async with captured_wide_event() as event:
+                await disable_skill_endpoint(skill_id="sk_1", user_id=UID)
+            assert event["outcome"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -639,6 +678,106 @@ class TestMailNewEvents:
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(AnalyticsEvents.EMAIL_DRAFT_DELETED)
 
+    async def test_mark_unread_captures(self, client: AsyncClient) -> None:
+        from app.models.mail_models import GmailMessageResource
+
+        with (
+            patch(f"{MAIL}.mark_messages_as_unread", new_callable=AsyncMock) as m,
+            patch(f"{MAIL}.capture_context_event") as mock_capture,
+        ):
+            m.return_value = [GmailMessageResource(id="m1")]
+            resp = await client.post("/api/v1/gmail/mark-as-unread", json={"message_ids": ["m1"]})
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(
+            AnalyticsEvents.EMAIL_MARKED_UNREAD, {"message_count": 1}
+        )
+
+    async def test_unstar_captures(self, client: AsyncClient) -> None:
+        from app.models.mail_models import GmailMessageResource
+
+        with (
+            patch(f"{MAIL}.unstar_messages", new_callable=AsyncMock) as m,
+            patch(f"{MAIL}.capture_context_event") as mock_capture,
+        ):
+            m.return_value = [GmailMessageResource(id="m1")]
+            resp = await client.post("/api/v1/gmail/unstar", json={"message_ids": ["m1"]})
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(AnalyticsEvents.EMAIL_UNSTARRED, {"message_count": 1})
+
+    async def test_untrash_captures(self, client: AsyncClient) -> None:
+        with (
+            patch(f"{MAIL}.untrash_messages", new_callable=AsyncMock) as m,
+            patch(f"{MAIL}.capture_context_event") as mock_capture,
+        ):
+            m.return_value = [{"id": "m1"}]
+            resp = await client.post("/api/v1/gmail/untrash", json={"message_ids": ["m1"]})
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(AnalyticsEvents.EMAIL_UNTRASHED, {"message_count": 1})
+
+    async def test_archive_captures(self, client: AsyncClient) -> None:
+        from app.models.mail_models import GmailMessageResource
+
+        with (
+            patch(f"{MAIL}.archive_messages", new_callable=AsyncMock) as m,
+            patch(f"{MAIL}.capture_context_event") as mock_capture,
+        ):
+            m.return_value = [GmailMessageResource(id="m1")]
+            resp = await client.post("/api/v1/gmail/archive", json={"message_ids": ["m1"]})
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(AnalyticsEvents.EMAIL_ARCHIVED, {"message_count": 1})
+
+    async def test_move_to_inbox_captures(self, client: AsyncClient) -> None:
+        from app.models.mail_models import GmailMessageResource
+
+        with (
+            patch(f"{MAIL}.move_to_inbox", new_callable=AsyncMock) as m,
+            patch(f"{MAIL}.capture_context_event") as mock_capture,
+        ):
+            m.return_value = [GmailMessageResource(id="m1")]
+            resp = await client.post("/api/v1/gmail/move-to-inbox", json={"message_ids": ["m1"]})
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(
+            AnalyticsEvents.EMAIL_MOVED_TO_INBOX, {"message_count": 1}
+        )
+
+    async def test_update_label_captures(self, client: AsyncClient) -> None:
+        from app.models.mail_models import GmailToolResult
+
+        with (
+            patch(f"{MAIL}.update_label_service", new_callable=AsyncMock) as m,
+            patch(f"{MAIL}.capture_context_event") as mock_capture,
+        ):
+            m.return_value = GmailToolResult.model_validate({"id": "L1", "name": "Renamed"})
+            resp = await client.put("/api/v1/gmail/labels/L1", json={"name": "Renamed"})
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(AnalyticsEvents.EMAIL_LABEL_UPDATED)
+
+    async def test_delete_label_captures(self, client: AsyncClient) -> None:
+        with (
+            patch(f"{MAIL}.delete_label", new_callable=AsyncMock, return_value=True),
+            patch(f"{MAIL}.capture_context_event") as mock_capture,
+        ):
+            resp = await client.delete("/api/v1/gmail/labels/L1")
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(AnalyticsEvents.EMAIL_LABEL_DELETED)
+
+    async def test_remove_labels_captures(self, client: AsyncClient) -> None:
+        from app.models.mail_models import GmailMessageResource
+
+        with (
+            patch(f"{MAIL}.remove_labels", new_callable=AsyncMock) as m,
+            patch(f"{MAIL}.capture_context_event") as mock_capture,
+        ):
+            m.return_value = [GmailMessageResource(id="m1")]
+            resp = await client.post(
+                "/api/v1/gmail/messages/remove-label",
+                json={"message_ids": ["m1"], "label_ids": ["L1"]},
+            )
+        assert resp.status_code == 200
+        mock_capture.assert_called_once_with(
+            AnalyticsEvents.EMAIL_LABEL_REMOVED, {"message_count": 1}
+        )
+
 
 # ---------------------------------------------------------------------------
 # Notifications
@@ -793,9 +932,18 @@ class TestPlatformConnectInit:
 
 
 class TestMcpConnectionTested:
-    async def test_connected_captures(self, client: AsyncClient) -> None:
+    def _mocks(self, probe_result, **connect_kwargs):  # type: ignore[no-untyped-def]
         probe_client = AsyncMock()
-        probe_client.probe_connection.return_value = {"requires_auth": False}
+        probe_client.probe_connection.return_value = probe_result
+        for key, value in connect_kwargs.items():
+            setattr(probe_client, key, value)
+        return probe_client
+
+    def _resolve(self):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(mcp_config=SimpleNamespace(server_url="https://mcp.example.com"))
+
+    async def test_connected_captures(self, client: AsyncClient) -> None:
+        probe_client = self._mocks({"requires_auth": False})
         probe_client.connect.return_value = [{"name": "t"}]
         with (
             patch(
@@ -806,9 +954,34 @@ class TestMcpConnectionTested:
             patch(
                 "app.api.v1.endpoints.mcp.IntegrationResolver.resolve",
                 new_callable=AsyncMock,
-                return_value=SimpleNamespace(
-                    mcp_config=SimpleNamespace(server_url="https://mcp.example.com")
-                ),
+                return_value=self._resolve(),
+            ),
+            patch(
+                "app.api.v1.endpoints.mcp.invalidate_user_integration_caches",
+                new_callable=AsyncMock,
+            ),
+            patch("app.api.v1.endpoints.mcp.capture_context_event") as mock_capture,
+        ):
+            resp = await client.post("/api/v1/mcp/test/gh")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "connected"
+        mock_capture.assert_called_once_with(
+            AnalyticsEvents.MCP_CONNECTION_TESTED, {"status": "connected", "tools_count": 1}
+        )
+
+    async def test_connected_empty_tools_captures_zero(self, client: AsyncClient) -> None:
+        probe_client = self._mocks({"requires_auth": False})
+        probe_client.connect.return_value = []
+        with (
+            patch(
+                "app.api.v1.endpoints.mcp.get_mcp_client",
+                new_callable=AsyncMock,
+                return_value=probe_client,
+            ),
+            patch(
+                "app.api.v1.endpoints.mcp.IntegrationResolver.resolve",
+                new_callable=AsyncMock,
+                return_value=self._resolve(),
             ),
             patch(
                 "app.api.v1.endpoints.mcp.invalidate_user_integration_caches",
@@ -819,7 +992,76 @@ class TestMcpConnectionTested:
             resp = await client.post("/api/v1/mcp/test/gh")
         assert resp.status_code == 200
         mock_capture.assert_called_once_with(
-            AnalyticsEvents.MCP_CONNECTION_TESTED, {"status": "connected", "tools_count": 1}
+            AnalyticsEvents.MCP_CONNECTION_TESTED, {"status": "connected", "tools_count": 0}
+        )
+
+    async def test_probe_failure_captures_failed(self, client: AsyncClient) -> None:
+        probe_client = self._mocks({"error": "timeout"})
+        with (
+            patch(
+                "app.api.v1.endpoints.mcp.get_mcp_client",
+                new_callable=AsyncMock,
+                return_value=probe_client,
+            ),
+            patch(
+                "app.api.v1.endpoints.mcp.IntegrationResolver.resolve",
+                new_callable=AsyncMock,
+                return_value=self._resolve(),
+            ),
+            patch("app.api.v1.endpoints.mcp.capture_context_event") as mock_capture,
+        ):
+            resp = await client.post("/api/v1/mcp/test/gh")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "failed"
+        mock_capture.assert_called_once_with(
+            AnalyticsEvents.MCP_CONNECTION_TESTED, {"status": "failed"}
+        )
+
+    async def test_connect_failure_captures_failed(self, client: AsyncClient) -> None:
+        probe_client = self._mocks({"requires_auth": False})
+        probe_client.connect.side_effect = Exception("refused")
+        with (
+            patch(
+                "app.api.v1.endpoints.mcp.get_mcp_client",
+                new_callable=AsyncMock,
+                return_value=probe_client,
+            ),
+            patch(
+                "app.api.v1.endpoints.mcp.IntegrationResolver.resolve",
+                new_callable=AsyncMock,
+                return_value=self._resolve(),
+            ),
+            patch("app.api.v1.endpoints.mcp.capture_context_event") as mock_capture,
+        ):
+            resp = await client.post("/api/v1/mcp/test/gh")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "failed"
+        mock_capture.assert_called_once_with(
+            AnalyticsEvents.MCP_CONNECTION_TESTED, {"status": "failed"}
+        )
+
+    async def test_requires_oauth_captures(self, client: AsyncClient) -> None:
+        probe_client = self._mocks({"requires_auth": True, "auth_type": "oauth"})
+        probe_client.update_integration_auth_status.return_value = None
+        probe_client.build_oauth_auth_url.return_value = "https://auth.example/xyz"
+        with (
+            patch(
+                "app.api.v1.endpoints.mcp.get_mcp_client",
+                new_callable=AsyncMock,
+                return_value=probe_client,
+            ),
+            patch(
+                "app.api.v1.endpoints.mcp.IntegrationResolver.resolve",
+                new_callable=AsyncMock,
+                return_value=self._resolve(),
+            ),
+            patch("app.api.v1.endpoints.mcp.capture_context_event") as mock_capture,
+        ):
+            resp = await client.post("/api/v1/mcp/test/gh")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "requires_oauth"
+        mock_capture.assert_called_once_with(
+            AnalyticsEvents.MCP_CONNECTION_TESTED, {"status": "requires_oauth"}
         )
 
 
@@ -1176,3 +1418,138 @@ class TestPostHogIdentityBinding:
 
         assert resp.status_code == 200
         mock_identify.assert_not_called()
+
+
+class TestMcpOauthHelpers:
+    """Direct unit tests for the ``mcp_oauth_callback`` helpers extracted to
+    satisfy the PLR complexity ratchet — every branch and kwarg pinned."""
+
+    async def test_clear_success_awaits_store(self) -> None:
+        from app.api.v1.endpoints.mcp import _clear_excluded_scopes_quietly
+
+        client = MagicMock()
+        client.token_store.clear_excluded_scopes = AsyncMock()
+        with patch("app.api.v1.endpoints.mcp.log") as mock_log:
+            assert await _clear_excluded_scopes_quietly(client, "gh", "oauth_success") is None
+        client.token_store.clear_excluded_scopes.assert_awaited_once_with("gh")
+        mock_log.warning.assert_not_called()
+
+    async def test_clear_failure_warns_with_context_and_swallows(self) -> None:
+        from app.api.v1.endpoints.mcp import _clear_excluded_scopes_quietly
+        from app.constants.log_tags import LogTag
+
+        client = MagicMock()
+        client.token_store.clear_excluded_scopes = AsyncMock(side_effect=RuntimeError("redis down"))
+        with patch("app.api.v1.endpoints.mcp.log") as mock_log:
+            assert await _clear_excluded_scopes_quietly(client, "gh", "provider_error") is None
+        mock_log.warning.assert_called_once_with(
+            f"{LogTag.MCP} Failed to clear excluded scopes",
+            integration_id="gh",
+            error_type="RuntimeError",
+            phase="provider_error",
+        )
+
+    async def test_scope_retry_returns_url(self) -> None:
+        from app.api.v1.endpoints.mcp import _try_scope_retry_url
+
+        client = MagicMock()
+        client.build_scope_retry_url = AsyncMock(return_value="https://retry")
+        result = await _try_scope_retry_url(client, "gh", "bad scope", "https://cb", "/i")
+        assert result == "https://retry"
+        client.build_scope_retry_url.assert_awaited_once_with("gh", "bad scope", "https://cb", "/i")
+
+    async def test_scope_retry_failure_returns_none(self) -> None:
+        from app.api.v1.endpoints.mcp import _try_scope_retry_url
+        from app.constants.log_tags import LogTag
+
+        client = MagicMock()
+        client.build_scope_retry_url = AsyncMock(side_effect=Exception("redis down"))
+        with patch("app.api.v1.endpoints.mcp.log") as mock_log:
+            assert await _try_scope_retry_url(client, "gh", "bad scope", "https://cb", "/i") is None
+        mock_log.warning.assert_called_once_with(
+            f"{LogTag.MCP} Scope retry URL build failed",
+            integration_id="gh",
+            error_type="Exception",
+        )
+
+    def test_map_provider_error_code(self) -> None:
+        from app.api.v1.endpoints.mcp import _map_provider_error_code
+
+        assert _map_provider_error_code("server_error") == "oauth_server_error"
+        for code in [
+            "access_denied",
+            "invalid_request",
+            "unauthorized_client",
+            "unsupported_response_type",
+            "invalid_scope",
+            "temporarily_unavailable",
+        ]:
+            assert _map_provider_error_code(code) == code
+        assert _map_provider_error_code("something_new") == "authorization_failed"
+
+    def test_redirect_urls(self) -> None:
+        from app.api.v1.endpoints.mcp import _oauth_connected_url, _oauth_failed_url
+
+        assert (
+            _oauth_failed_url("https://app", "/i", "gh", "missing_code")
+            == "https://app/i?id=gh&status=failed&error=missing_code"
+        )
+        assert (
+            _oauth_connected_url("https://app", "/i", "gh", "a b")
+            == "https://app/i?id=gh&status=connected&name=a%20b"
+        )
+
+    async def test_invalid_scope_error_retries_to_retry_url(self, client: AsyncClient) -> None:
+        probe_client = AsyncMock()
+        probe_client.build_scope_retry_url.return_value = "https://retry-url"
+        with (
+            patch(
+                "app.api.v1.endpoints.mcp.get_mcp_client",
+                new_callable=AsyncMock,
+                return_value=probe_client,
+            ),
+            patch("app.api.v1.endpoints.mcp.capture_context_event"),
+        ):
+            resp = await client.get(
+                "/api/v1/mcp/oauth/callback",
+                params={"state": "tok:gh:/integrations", "error": "invalid_scope"},
+                follow_redirects=False,
+            )
+        assert resp.status_code in (302, 307)
+        assert resp.headers["location"] == "https://retry-url"
+
+    async def test_provider_error_clears_scopes_and_redirects_failed(
+        self, client: AsyncClient
+    ) -> None:
+        from app.constants.log_tags import LogTag
+
+        mcp_client = AsyncMock()
+        with (
+            patch(
+                "app.api.v1.endpoints.mcp.get_mcp_client",
+                new_callable=AsyncMock,
+                return_value=mcp_client,
+            ),
+            patch(
+                "app.api.v1.endpoints.mcp._clear_excluded_scopes_quietly",
+                new_callable=AsyncMock,
+            ) as mock_clear,
+            patch("app.api.v1.endpoints.mcp.log") as mock_log,
+            patch("app.api.v1.endpoints.mcp.capture_context_event"),
+        ):
+            resp = await client.get(
+                "/api/v1/mcp/oauth/callback",
+                params={"state": "tok:gh:/integrations", "error": "access_denied"},
+                follow_redirects=False,
+            )
+        assert resp.status_code in (302, 307)
+        assert resp.headers["location"].endswith(
+            "/integrations?id=gh&status=failed&error=access_denied"
+        )
+        mock_clear.assert_awaited_once_with(mcp_client, "gh", "provider_error")
+        mock_log.warning.assert_called_once_with(
+            f"{LogTag.MCP} OAuth error returned by provider",
+            integration_id="gh",
+            oauth_error="access_denied",
+            oauth_error_description=None,
+        )
