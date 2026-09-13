@@ -15,6 +15,11 @@ import { useReducer } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// HeroUI's ripple loads framer-motion features lazily and sets state after jsdom tears down.
+vi.mock("@heroui/ripple", () => ({
+  Ripple: () => null,
+  useRipple: () => ({ ripples: [], onPress: vi.fn(), onClear: vi.fn() }),
+}));
 
 import { QuestionsReply } from "@/features/onboarding/components/stages/Questions";
 import {
