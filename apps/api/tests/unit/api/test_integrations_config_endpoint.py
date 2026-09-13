@@ -208,7 +208,7 @@ def _error_body(integration_id: str, name: str, error: str) -> dict:
 
 @contextmanager
 def _current_user(test_app: FastAPI, user: dict) -> Iterator[None]:
-    """Serve ``user`` from ``get_current_user`` for the duration of the block."""
+    """Serve user from get_current_user for the duration of the block."""
     original = test_app.dependency_overrides.get(get_current_user)
     test_app.dependency_overrides[get_current_user] = lambda: user
     try:
@@ -277,8 +277,7 @@ class TestConnectIntegration:
         mock_log.set.assert_any_call(outcome="success")
 
     async def test_connect_custom_mcp_with_bearer_token(self, client: AsyncClient) -> None:
-        """A user-added OAuth MCP server: not a platform integration, and the
-        bearer token and redirect path travel through to the connect."""
+        """A user-added OAuth MCP server is not a platform one; bearer token and redirect path pass through."""
         resolved = _resolved(managed_by="mcp", source="custom", requires_auth=True)
         with (
             patch(

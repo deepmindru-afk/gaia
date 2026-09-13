@@ -663,9 +663,7 @@ class TestComposioCallback:
         route_log: MagicMock,
         client: AsyncClient,
     ):
-        """An account that cannot be resolved at all has no integration to return
-        to, so it lands on the generic page; a known integration whose config or
-        owner does not line up goes back where the user started."""
+        """Send an unresolvable account to the generic page, and a known integration's mismatch back home."""
         completed_connection.return_value = ConnectionRejected(reason=reason)
 
         response = await client.get(
