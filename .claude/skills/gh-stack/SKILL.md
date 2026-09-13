@@ -40,6 +40,8 @@ git config remote.pushDefault origin   # required if the repo has more than one 
 `gh stack` branches on whether **stdout is a TTY**. Piped, most commands error cleanly or print
 static text; under a PTY the same commands open a prompt or a full-screen TUI and block forever.
 Agent harnesses differ, so always pass the flags below instead of relying on that detection.
+One exception never errors cleanly: bare `gh stack submit` opens its full-screen editor even when
+piped and blocks forever (verified: had to be timeout-killed twice) — always pass `--auto`.
 
 **Multiple remotes:** never run `push`, `submit`, `sync`, `rebase`, or `link` without
 `--remote <name>` unless `remote.pushDefault` is configured. `checkout` and `trunk` have no
@@ -48,7 +50,8 @@ Agent harnesses differ, so always pass the flags below instead of relying on tha
 | Always run | Never run bare | Why |
 |---|---|---|
 | `gh stack view --json` | `gh stack view` | opens a TUI under a PTY |
-| `gh stack submit --auto` | `gh stack submit` | prompts for a title per new PR |
+| `gh stack submit --auto` | `gh stack submit` | opens the full-screen editor even when piped and blocks forever |
+| `gh stack add -Am "<msg>" <branch>` | `gh stack add -A <branch>` without `-m` | opens an editor and creates a stray branch outside the stack, breaking stack association (delete it, `checkout` the top, retry with `-m`) |
 | `gh stack merge <target> --yes` | `gh pr merge` | `gh pr merge` cannot merge a stack |
 | `gh stack init <branch>...` | `gh stack init` | prompts for branch names |
 | `gh stack add <branch>` | `gh stack add` | prompts for a name, and fails even when piped |
@@ -128,7 +131,7 @@ them, branch on exit codes instead.
 ```
 trunk           string
 currentBranch   string
-branches[]      name, head, base, isCurrent, isMerged, isQueued, needsRebase
+branches[]      name, base, isCurrent, isMerged, isQueued, needsRebase (+ head after push/submit, + pr once a PR exists)
 branches[].pr   number, url, state ("OPEN" | "MERGED" | "QUEUED"); absent when no PR exists
 ```
 
@@ -143,14 +146,14 @@ an ancestor of the branch.
 | 0 | Success | — |
 | 1 | Generic error | Read stderr |
 | 2 | Not in a stack | `gh stack init`, or `gh stack checkout <target>` |
-| 3 | Rebase conflict | Follow the Exit 3 recovery below |
+| 3 | Rebase conflict — but also checkout composition mismatch and stray `modify --continue` (read stderr first; only the conflict case wants `rebase --continue`) | Follow the Exit 3 recovery below |
 | 4 | GitHub API failure | Check `gh auth status`, retry |
 | 5 | Invalid arguments | Fix the invocation; see `<command> --help` |
-| 6 | Disambiguation required | Branch is in several stacks; check out a non-shared branch |
-| 7 | Rebase already in progress | `gh stack rebase --continue` or `--abort` |
-| 8 | Stack file locked | Another `gh stack` process is writing; retry after ~5s |
+| 6 | Disambiguation required | Branch is in several stacks; check out a non-shared branch (note: `sync` and a mid-rebase invocation report the same situation as exit 2 instead) |
+| 7 | Rebase already in progress | `gh stack rebase --continue` or `--abort` (unverified: a mid-conflict re-invocation while detached exits 2, not 7) |
+| 8 | Stack file locked | Another `gh stack` process is writing; retry after ~15s |
 | 9 | Stacked PRs unavailable | Not enabled on the repository; tell the user |
-| 10 | Modify recovery required | `gh stack modify --abort` |
+| 10 | Modify recovery required | `gh stack modify --abort` (a bare `--continue` with no session exits 3, not 10) |
 
 **Exit 3 recovery:**
 

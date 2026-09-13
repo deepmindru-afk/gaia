@@ -28,16 +28,22 @@ branch does not exist, it is created from the trunk; each later new branch is cr
 branch immediately before it. There is no separate adopt mode — existence decides. `--base`
 selects a non-default trunk.
 
-`init` also enables `git rerere`. Under a TTY the first run in a repo asks for confirmation; set
-`git config rerere.enabled true` beforehand to skip it.
+`init` also enables `git rerere` — but only under a TTY, where the first run in a repo asks
+for confirmation. Non-interactive runs write no rerere config at all (verified), so the
+`git config rerere.enabled true` setup step is what actually covers agents. Set it beforehand
+to skip the confirmation as well.
 
 ## add
 
-- **Must run from the top branch** of the stack (or the trunk when the stack is still empty).
-  Anywhere else it exits **5** with `can only add branches on top of the stack`. Run `gh stack top`
-  first.
+- **Must run from the top branch** of the stack. The trunk is also silently accepted even when
+  the stack is non-empty (verified: it creates a branch off the trunk but shows it at the top,
+  mis-parented and flagged for rebase). Any other branch exits **5** with
+  `can only add branches on top of the stack`. Run `gh stack top` first, every time.
 - **Uncommitted changes carry over.** Without `-Am`, `add` does not touch the working tree, so
   staged and unstaged changes follow you onto the new branch. Commit or stash first for a clean start.
+- **`-A`/`-u` without `-m` opens an editor even when piped** and creates a stray branch outside
+  any stack, leaving every stack command failing with exit 2. Delete the stray branch, check out
+  the top, and retry with `-m`.
 - **`add -Am` commits in place when the current branch has no commits yet** — for example
   immediately after `init` — instead of creating a branch. This is deliberate: the first layer
   usually needs its content before a second layer exists.
@@ -51,6 +57,11 @@ Pushes every active (non-merged, non-queued) branch in one multi-ref push with p
 **Not atomic.** Some branches may update while another is rejected. A rejection means that branch
 moved on the remote; fix that branch and rerun — rerunning is safe and skips what already landed.
 
+**Observed once: no rejection at all.** A concurrent remote-only commit on a stack branch was
+silently overwritten by `push` (exit 0). Until that protection is confirmed, treat `push` as
+clobber-capable: never commit to a stack branch from two clones, and prefer `sync` (fetch +
+rebase) before pushing.
+
 `push` never creates or updates pull requests. Use `submit` for that.
 
 ## submit
@@ -63,11 +74,16 @@ first non-merged ancestor, then links them into a Stack on GitHub.
 - **A fully merged stack cannot be extended.** When every PR in the current stack is already merged,
   `submit` forks the remaining unmerged branches into a **new** stack rooted at the trunk and creates
   it on GitHub, leaving the merged stack untouched.
-- **Title generation with `--auto`:** a branch with a single commit uses that commit's subject as
-  the title and its body as the PR body. A branch with multiple commits humanizes the branch name
-  (hyphens and underscores become spaces). When the repository has a pull request template, the
+- **Title generation with `--auto`:** a branch with a single commit on top of its parent layer
+  uses that commit's subject as the title and its body as the PR body. The count is relative to
+  the parent layer, not the trunk — a branch accidentally created off the trunk counts every
+  commit the parent does not have and gets a humanized branch name instead (hyphens and
+  underscores become spaces). When the repository has a pull request template, the
   template takes precedence for the body — it is used verbatim, including any raw placeholders,
-  instead of the commit body. There is no flag for a custom title or body; use
+  instead of the commit body. The template is read from GitHub's API at PR-creation time and
+  lags pushes by several minutes (verified: a template pushed seconds before `submit` was
+  missed; one present for several minutes was used) — after changing a template, wait a few minutes
+  before submitting. There is no flag for a custom title or body; use
   `gh pr edit` afterwards.
 - `--open` marks new *and existing* PRs ready for review; without it new PRs are drafts.
 - Requires stacked PRs to be enabled on the repository. If not, `submit` exits **9** when
@@ -139,9 +155,11 @@ Accepts a stack number, PR number, PR URL, or branch name.
 
 - A bare number resolves as a **stack number first**, then a PR number, then a branch name.
 - Stack numbers, PR numbers, and PR URLs fetch from GitHub, pull the branches down, and set the
-  stack up locally.
+  stack up locally. A PR that is not in a stack object yet (e.g. the only PR of a new effort)
+  exits **2** with `not part of a stack on GitHub` — use plain `git fetch`/`checkout` until a
+  second PR is submitted and the stack object exists.
 - If a local stack already exists over those branches with a different composition, `checkout`
-  cannot be forced past it. Run `gh stack unstack --local` first, then retry.
+  cannot be forced past it: it exits **3** printing both chains. Run `gh stack unstack --local` first, then retry.
 - `checkout` has no flags. It relies on `remote.pushDefault` when several remotes exist.
 
 ## unstack
@@ -155,6 +173,8 @@ Removes the stack **grouping** only. It never deletes pull requests or branches.
 - `--local` removes local tracking only and never contacts GitHub. Combining `--local` with a stack
   number that is not tracked locally is an error.
 - An unknown stack number exits **2**.
+- `unstack` can exit **0** while leaving everything in place (warning only), e.g. when merged PRs
+  pin the stack — verify with `view`/`checkout` instead of trusting the code.
 
 ## merge
 

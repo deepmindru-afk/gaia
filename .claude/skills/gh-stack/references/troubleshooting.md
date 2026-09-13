@@ -57,7 +57,8 @@ When non-interactive, `sync` prints both chains, changes nothing, and exits **0*
 `Sync aborted`. Success here does not mean the sync happened; check for that message, or re-run
 `gh stack view --json` and compare.
 
-Two resolution paths:
+Two resolution paths (a composition mismatch on `checkout` is the same situation: it exits **3**,
+not 0, printing both chains — do not answer it with `rebase --continue`):
 
 - **Keep the remote version.** Drop local tracking and pull the stack back down.
 
@@ -75,7 +76,8 @@ Two resolution paths:
 
 Neither path deletes pull requests or branches.
 Remote unstacking leaves PRs that are merging (auto-merge enabled) or are queued (in a merge queue)
-stacked. If needed, clear that state before retrying.
+stacked — and merged PRs pin a husk of the stack too (verified: the open PRs moved to a new stack
+while the merged ones kept the old stack number alive). If needed, clear that state before retrying.
 
 ## Restructuring a stack
 
@@ -85,6 +87,8 @@ There is no non-interactive reorder, rename, or removal. `add` run from the wron
 ```bash
 gh stack unstack                       # removes local tracking and the GitHub grouping
 # Drop branches and rewrite ancestry as needed. Keep branch names unchanged.
+# Never `git branch -D` a layer and move on: the deleted name stays in stack tracking and
+# shows up in `view` until the stack is rebuilt.
 gh stack init --base main branch-1 branch-2 branch-3
 gh stack submit --auto                 # re-link on GitHub
 ```
@@ -150,8 +154,9 @@ will not work on the result. Use `gh stack checkout <stack-number>` if you later
 ## Stack file is locked (exit 8)
 
 Another `gh stack` process holds the exclusive lock on `.git/gh-stack.lock`. The lock times out
-after about five seconds, so wait and retry. A persistent exit 8 means another process still holds
-the lock; identify and stop that process before retrying.
+after several seconds (about 12s observed once against a held lock, not 5), so wait and retry.
+A persistent exit 8 means another process still holds the lock; identify and stop that process
+before retrying. Note read-only commands such as `view` do not take the lock — only writes contend.
 
 ## An interrupted modify session (exit 10)
 
