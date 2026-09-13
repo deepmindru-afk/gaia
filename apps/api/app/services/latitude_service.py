@@ -3,6 +3,7 @@
 from latitude_telemetry import capture
 from latitude_telemetry.sdk.context import CaptureScope
 from latitude_telemetry.sdk.types import ContextOptions
+from opentelemetry import trace
 
 from app.config.settings import settings
 from app.constants.agents import COMMS_AGENT_NAME
@@ -42,11 +43,21 @@ def begin_turn(
         return None
 
 
-def end_turn(scope: CaptureScope | None, *, error: Exception | None = None) -> None:
+def end_turn(
+    scope: CaptureScope | None, *, error: Exception | None = None, cancelled: bool = False
+) -> None:
     """Close a Latitude capture scope. No-op when scope is None. Never raises."""
     if scope is None:
         return
     try:
+        # Cancelled is not a failure: end the span cleanly so it reads OK,
+        # with an attribute splitting user-stops from real successes. The
+        # current span is this capture (same task, children ended); the
+        # recording guard keeps a leaked child from being mistagged.
+        if cancelled and error is None:
+            current = trace.get_current_span()
+            if current.is_recording():
+                current.set_attribute("cancelled", True)
         capture.end(scope, error)
     except Exception as exc:
         log.warning(

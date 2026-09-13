@@ -1,6 +1,8 @@
 import os
 
 from latitude_telemetry import Latitude
+from latitude_telemetry.env import env as latitude_env
+from latitude_telemetry.env.env import get_exporter_url
 from openinference.instrumentation.langchain import LangChainInstrumentor
 
 from app.config.settings import settings
@@ -26,9 +28,14 @@ def init_latitude() -> bool:
     Latitude's own provider so spans ship to Latitude and nowhere else.
     No-op when LATITUDE_API_KEY is unset.
     """
-    # The SDK reads this at import time; settings is the source of truth when
-    # the process env does not already define it (e.g. local .env files).
-    endpoint = os.environ.setdefault("LATITUDE_TELEMETRY_URL", settings.LATITUDE_TELEMETRY_URL)
+    # Settings wins over process env, always: the SDK freezes EXPORTER_URL at
+    # import time (latitude_telemetry.env builds Env on import, before this
+    # runs), so assigning only when unset would silently keep pointing at
+    # Latitude Cloud while settings names the self-hosted ingest. Rebind the
+    # frozen value after assigning so both agree.
+    os.environ["LATITUDE_TELEMETRY_URL"] = settings.LATITUDE_TELEMETRY_URL
+    latitude_env.EXPORTER_URL = get_exporter_url()
+    endpoint = os.environ["LATITUDE_TELEMETRY_URL"]
 
     latitude = Latitude(
         api_key=settings.LATITUDE_API_KEY or "",

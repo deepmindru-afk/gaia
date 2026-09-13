@@ -392,6 +392,13 @@ async def call_agent_silent(
                 usage_metadata_callback=usage_metadata_callback,
                 trigger_context=trigger_context,
                 source=source,
+                # Seeded from this run's stream_id: no stable message id exists
+                # yet at this layer, so feedback re-derivation (which seeds
+                # from message_id) still can't reach silent traces — they stay
+                # findable via tags/session instead. Closing that last gap
+                # belongs to the delivery layer that mints the message id.
+                langfuse_trace_id=trace_id_for_message(stream_id),
+                langfuse_tags=["comms_agent", settings.ENV, "background"],
             ),
         )
 

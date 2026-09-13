@@ -1,11 +1,12 @@
 """One fan-out for turn telemetry across Agnost, Latitude, and Laminar.
 
 Both agent entry points (streaming chat, silent background) open the three
-vendor scopes together and close them with one shared outcome mapping, so a
-turn reads identically in every dashboard: cancelled counts as failure
+vendor scopes together and close them with one shared outcome, so a turn reads
+identically in every dashboard: user-cancelled stays separable from failure
 everywhere, errors carry the same exception, properties match.
 """
 
+from enum import StrEnum
 from typing import TypedDict
 
 from agnost import Interaction
@@ -16,8 +17,18 @@ from app.services import agnost_service, laminar_service, latitude_service
 from app.services.laminar_service import TurnScope
 
 
-class TurnCancelled(Exception):
-    """A user-cancelled turn, reported as failure to every vendor."""
+class TurnOutcome(StrEnum):
+    """Terminal outcome of a turn, mapped explicitly per vendor.
+
+    Cancelled is its own outcome, not a failure: a user hitting Stop and a
+    provider outage must read differently in every dashboard (and in Laminar
+    signals), or "is the model getting worse or are users just impatient?"
+    becomes unanswerable months from now.
+    """
+
+    SUCCESS = "success"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
 
 
 class TurnHandles(TypedDict):
@@ -55,6 +66,7 @@ def begin_turn_all(
             user_id=user_id,
             conversation_id=conversation_id,
             agent_name=COMMS_AGENT_NAME,
+            user_input=user_input,
             properties=props,
         ),
     }
@@ -70,14 +82,33 @@ def end_turn_all(
     """Close all three scopes with one outcome. None handles is a no-op. Never raises."""
     if handles is None:
         return
-    success = error is None and not cancelled
-    trace_error = error if error is not None else (TurnCancelled() if cancelled else None)
+    # An explicit error dominates: a turn that both errored and saw a cancel
+    # flag failed — the exception is what needs debugging.
+    outcome = (
+        TurnOutcome.FAILED
+        if error is not None
+        else TurnOutcome.CANCELLED
+        if cancelled
+        else TurnOutcome.SUCCESS
+    )
+    outcome_value = outcome.value
     properties: dict[str, str | bool | None] = {
-        "cancelled": cancelled,
+        "cancelled": outcome is TurnOutcome.CANCELLED,
         "has_error": error is not None,
+        "outcome": outcome_value,
     }
     agnost_service.end_turn(
-        handles["agnost"], output=output, success=success, properties=properties
+        handles["agnost"],
+        output=output,
+        success=outcome is TurnOutcome.SUCCESS,
+        properties=properties,
     )
-    latitude_service.end_turn(handles["latitude"], error=trace_error)
-    laminar_service.end_turn(handles["laminar"], error=trace_error)
+    latitude_service.end_turn(
+        handles["latitude"], error=error, cancelled=outcome is TurnOutcome.CANCELLED
+    )
+    laminar_service.end_turn(
+        handles["laminar"],
+        output=output,
+        error=error,
+        cancelled=outcome is TurnOutcome.CANCELLED,
+    )

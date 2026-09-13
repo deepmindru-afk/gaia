@@ -192,9 +192,12 @@ class TestTurnTelemetry:
 
         assert mock_agnost_end.call_args.kwargs["success"] is False
         assert mock_agnost_end.call_args.kwargs["properties"]["cancelled"] is True
-        lat_error = mock_lat_end.call_args.kwargs["error"]
-        assert type(lat_error).__name__ == "TurnCancelled"
-        assert mock_lam_end.call_args.kwargs["error"] is lat_error
+        assert mock_agnost_end.call_args.kwargs["properties"]["outcome"] == "cancelled"
+        # Cancelled is not a failure: no error reaches any trace backend.
+        assert mock_lat_end.call_args.kwargs["error"] is None
+        assert mock_lat_end.call_args.kwargs["cancelled"] is True
+        assert mock_lam_end.call_args.kwargs["error"] is None
+        assert mock_lam_end.call_args.kwargs["cancelled"] is True
 
     async def test_telemetry_explosion_never_breaks_the_turn(self, test_user, existing_conv_body):
         """Sabotage below the services: the real fan-out must still not break the turn."""
