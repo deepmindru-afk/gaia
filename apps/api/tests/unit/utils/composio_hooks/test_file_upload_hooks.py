@@ -35,7 +35,7 @@ HOOKS = "app.utils.composio_hooks.file_upload_hooks"
 
 @pytest.fixture(autouse=True)
 def _clean_swap_registry():
-    """The swap registry is module-level state; no test may inherit another's."""
+    """Reset the swap registry so no test inherits another's state."""
     file_upload_hooks._swapped_upload_params.clear()
     yield
     file_upload_hooks._swapped_upload_params.clear()

@@ -46,7 +46,7 @@ def _unwrap_optional(annotation: object) -> object:
 
 
 def _resolve(model: type[BaseModel], dotted_name: str) -> object:
-    """The annotation for dotted_name on model, or None if it does not exist."""
+    """Return the annotation for dotted_name on model, or None if it does not exist."""
     current: object = model
     for segment in dotted_name.split("."):
         if not (isinstance(current, type) and issubclass(current, BaseModel)):

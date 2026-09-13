@@ -326,12 +326,7 @@ class TestTheQueriesItSends:
         )
 
     async def test_it_asks_the_repository_about_the_conversation_it_was_given(self) -> None:
-        """The workflow guard is only a guard if it is asked about the right conversation.
-
-        Asked about anything else it answers "not a workflow" for a workflow, or
-        worse, "workflow" for a chat, and this function deletes that chat's
-        checkpoint threads.
-        """
+        """The workflow guard must be asked about the right conversation, or it can say "workflow" for a chat and delete that chat's threads."""
         checkpointer = _checkpointer()
         threads = {CONV: False, f"executor_{CONV}": False}
 

@@ -119,33 +119,12 @@ async def is_gated(
 
 
 async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_id: str) -> bool:
-    """Whether another call in this same AI message can pause the run.
+    """Return whether another call in this AI message can pause the run.
 
-    If one can, this call cannot simply run and be done with it. The sibling will
-    interrupt(), and LangGraph discards the writes of every task in that step and
-    replays them on resume — so a handler that ran before the pause runs a second time
-    (verified: one send became two). Two callers act on that:
-
-    * **auto mode** does not auto-approve, because a call it approved would run before
-      the pause and then again on the replay. Auto-approval therefore applies only when
-      a call is the turn's only pausing action; several destructive actions in one turn
-      are confirmed together, which is the behaviour worth having anyway.
-    * **an ungated call** remembers its result under its tool_call_id, so the replay
-      reuses it rather than repeating the work (gate._run_once_across_replays).
-
-    A sibling pauses in one of two ways. It is **gated**, and pauses at its own gate:
-    siblings arrive as bare tool-call dicts, so each one's tool object is resolved from
-    the registry, because classifying it must use the same description and MCP
-    destructiveHint its own gate will use. Classifying without them (a bare name, an
-    empty description) both under-detects the sibling — defeating the double-run guard
-    this exists for — and poisons the registry's name-keyed destructive flag, since an
-    unclassified tool's verdict is written back there for every later gate check to read.
-
-    Or it is **exempt but pausing** (HIL_PAUSING_TOOLS) — handoff bubbles up its
-    subagent's gate interrupt, wait_for_subagents interrupts for the parked-approval
-    batch. Neither is ever gated, so skipping them as exempt would leave exactly the
-    double-run this guard exists to prevent. Checked first, and by name alone, so the
-    common case costs no preference or registry lookup.
+    A pause replays the step, so a call that already ran runs twice (one send became two):
+    auto mode withholds auto-approval, and ungated calls reuse gate._run_once_across_replays.
+    HIL_PAUSING_TOOLS pause by name (checked first); gated siblings are classified with their
+    registry tool — a bare name under-detects and poisons the name-keyed destructive flag.
     """
     siblings = [
         call

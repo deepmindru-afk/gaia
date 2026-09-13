@@ -1,38 +1,15 @@
-"""The four headline toolkits driven through their real tool bodies.
+"""The four headline toolkits (gmail, googlecalendar, github, slack) through real tool bodies.
 
-test_composio_custom_tools.py proves *one* body reaches the provider. This
-file drives the toolkits a user actually notices when they break — gmail,
-googlecalendar, github, slack — and asserts the **shape** each tool returns,
-because that shape is what the model reads. A tool that hands back the raw
-provider payload instead of its curated view is a silent regression: nothing
-raises, the agent just starts hallucinating over 40x the tokens.
-
-Each toolkit reaches its provider through a different seam, and all three have
-to be stubbed or the call goes out over the network (plan §2.8):
-
-* **A — proxy** (gmail, most calendar tools): proxy_client._get_composio.
-  Everything above it is real — connected-account resolution, the toolkit →
-  auth-config mapping, parameter building, the non-2xx → AppError
-  translation. The fake client stands in for the Composio SDK, not for GAIA.
-* **B — hosted execute** (github, slack, calendar's gather-context):
-  execute_tool, patched **at each importing module**. Consumers do
-  from … import execute_tool, so patching context_utils.execute_tool
-  silently no-ops and the test hits the network while passing.
-* **C — dispatch**: CustomTool.__get_auth_credentials runs
-  connected_accounts.list before *every* invocation. Covered in depth in
-  test_composio_custom_tools.py; stubbed here so each test is offline.
-
-Calendar adds a fourth seam of its own: CUSTOM_GET_DAY_SUMMARY /
-CUSTOM_FETCH_EVENTS go through app.services.calendar_service, which
-reads the user's selected-calendar preferences out of Mongo. Those functions
-are patched on the calendar_service module (the tool holds a reference to
-the module, not to the function, so module-level patching binds correctly);
-get_calendar_metadata_map is deliberately left alone where it can run for
-real through seam A.
-
-Tools run inside a **real compiled LangGraph run** rather than a bare call, so
-get_config() (home timezone, session id) and get_stream_writer() (the
-email / calendar cards the chat UI renders) are the genuine articles.
+Asserts the shape each tool returns, because the model reads it: a raw provider payload
+instead of the curated view raises nothing and costs ~40x the tokens.
+Seams stubbed so nothing reaches the network (plan §2.8):
+A proxy (gmail, most calendar) — proxy_client._get_composio; everything above it is real.
+B hosted execute (github, slack, calendar gather-context) — execute_tool patched at EACH
+importing module; patching context_utils.execute_tool silently no-ops and hits the network.
+C dispatch — CustomTool.__get_auth_credentials' connected_accounts.list (in depth in
+test_composio_custom_tools.py). Calendar also patches calendar_service's preference reads on
+the module (the tool holds the module); get_calendar_metadata_map runs for real via A.
+Tools run in a real compiled LangGraph run, so get_config() and get_stream_writer() are genuine.
 """
 
 from __future__ import annotations

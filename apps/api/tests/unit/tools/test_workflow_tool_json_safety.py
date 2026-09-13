@@ -39,7 +39,7 @@ def _make_config() -> RunnableConfig:
 
 
 def _make_real_workflow() -> WorkflowWithIntegrations:
-    """A real model instance carrying every datetime the tools serialize."""
+    """Build a real model instance carrying every datetime the tools serialize."""
     return WorkflowWithIntegrations(
         user_id=FAKE_USER_ID,
         title="Daily digest",
@@ -61,7 +61,7 @@ def _make_real_workflow() -> WorkflowWithIntegrations:
 
 
 def _assert_json_safe(payload: object) -> None:
-    """The exact operation every consumer of these payloads performs."""
+    """Perform the exact operation every consumer of these payloads performs."""
     json.dumps(payload)
 
 
@@ -173,8 +173,7 @@ class TestWorkflowToolPayloadsAreJsonSafe:
         }
 
     async def test_create_directly_uses_prompt_not_description_as_instructions(self) -> None:
-        """create_workflow_directly builds the execution instructions from the
-        draft's prompt, falling back to its description only when absent."""
+        """create_workflow_directly builds the execution instructions from the draft's prompt, falling back to its description only when absent."""
         from app.services.workflow.subagent_output import FinalizedOutput
         from app.utils.workflow_utils import create_workflow_directly
 

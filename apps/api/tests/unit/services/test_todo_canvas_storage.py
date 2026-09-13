@@ -122,8 +122,7 @@ class TestAppendCanvas:
         assert mock_repo.update.await_args.kwargs["update"].canvas_content == "existing\nentry"
 
     async def test_round_trip_appends_accumulate(self, mock_repo, mock_sync):
-        """Two appends must produce one content string — the read-then-write
-        pattern concatenates instead of overwriting."""
+        """Two appends must produce one content string — the read-then-write pattern concatenates instead of overwriting."""
         canvas = "v1"
         mock_repo.update.return_value = _todo_doc()
 

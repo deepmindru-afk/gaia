@@ -292,7 +292,7 @@ class TestTraceId:
 
 
 def _emitted_event(mock_loguru: MagicMock) -> dict:
-    """The event the boundary actually emitted.
+    """Return the event the boundary actually emitted.
 
     Read this instead of log.get() after a boundary exits. A boundary
     restores the enclosing accumulator on exit, so once it has closed there is

@@ -1,96 +1,17 @@
 """Filesystem operation metrics — per-request latency aggregation.
 
-Why this exists
----------------
-Every chat turn fans out into a handful of FS-shaped operations: a new
-conversation creates session dirs (ensure_session_dirs), every coding tool
-call resolves into a sandbox commands.run round-trip, the artifact watcher
-does a list_artifacts, and so on. Each one is cheap on its own; together they
-quietly dominate end-to-end latency once the cache misses or the meta DB
-takes a coffee break.
+Per-op stats accumulate in a task-isolated ContextVar and ship once as the wide
+event's fs field (log.set(fs=flush_fs_metrics())), never one log line per FS call:
+fs: {"<op>": {count, total_ms, max_ms, errors, bytes?, last_error_type?}}.
+Op names are stable dashboard keys; FsOps is the source of truth.
 
-We need to see *where the milliseconds go* without N+1 emission of one log
-line per FS call. So this module accumulates per-op stats into a ContextVar
-for the lifetime of a request / wide_task, then ships a single structured
-fs={...} field on the canonical wide event at the end. LogQL can split
-on op name, count, total_ms, max_ms across users / hosts / time.
-
-Wire contract
--------------
-The wide event field is::
-
-    fs: {
-        "<op>": {
-            "count":    <int>,
-            "total_ms": <float>,
-            "max_ms":   <float>,
-            "errors":   <int>,
-            "bytes":    <int>,           # only when the op reports bytes
-            "last_error_type": <str>,    # only when at least one error fired
-        }
-    }
-
-Op names are stable, lowercased, snake_cased identifiers — keep them stable
-because dashboards will pivot on them. The list lives in FsOps below as
-the source of truth; adding a new op = add a constant here first.
-
-Prometheus export
------------------
-Every call to record_fs_op (and add_fs_bytes for byte volume) emits to
-the following Prometheus collectors, all registered on the default registry:
-
-- fs_op_duration_seconds (Histogram, labels operation, mode, status).
-  Standard latency view. mode carries the acquire-path label for
-  sbx_acquire and defaults to "none" elsewhere.
-- fs_op_bytes_total (Counter, label operation). Only incremented when
-  an op reports a non-zero byte count.
-- fs_op_total (Counter, labels operation, mode, status). Lifetime
-  count — never decays. Backs lifetime-totals dashboard panels.
-- fs_op_last_seen_unix_seconds (Gauge, label operation). Wall-clock
-  timestamp of the most recent observation. Drives "last seen N minutes ago"
-  columns.
-- fs_op_in_flight (Gauge, label operation). Maintained by fs_timer:
-  inc on enter, dec in finally. Exposes contention + stuck operations.
-- sandbox_pool_size (Gauge, labels kind, shard). Set by the sandbox
-  pool on add/remove via :func:set_sandbox_pool_size. kind is
-  "user" or "warm".
-
-Bash exit-code distribution lives in apps/api/app/agents/tools/coding/
-bash_tool.py as tool_bash_exit_code_total (Counter, label exit_code
-bucketed into 0, 1-126, 127, 128-254, 255, timeout).
-
-Label discipline: the labels above are the *complete* allowed set. Adding a
-label requires updating the matching OpenSpec capability (fs-metrics-
-prometheus for the original two, fs-metrics-coverage for the rest)
-because dashboards pivot on these names.
-
-The API process exposes everything via /metrics mounted by
-prometheus-fastapi-instrumentator. The ARQ worker re-registers the same
-collector instances on its custom registry inside
-apps/api/app/workers/metrics.py so the worker's /metrics endpoint
-mirrors the API.
-
-Grafana panels live in
-infra/docker/observability/grafana/provisioning/dashboards/fs-ops.json.
-
-Usage
------
-
-    from app.services.storage.metrics import fs_timer, FsOps
-
-    async with fs_timer(FsOps.LIST_ARTIFACTS, conv_id=conv):
-        return await _go()
-
-    # or, when the caller already has a duration:
-    record_fs_op(FsOps.WRITE_SESSION_FILE, duration_ms=4.2, byte_count=size)
-
-At the end of a wide_task, call::
-
-    log.set(fs=flush_fs_metrics())
-
-to attach the aggregate to the wide event. The aggregate ContextVar is
-isolated per task (same mechanism as shared.py.wide_events), so there is
-no cross-request leakage.
+record_fs_op / add_fs_bytes also export fs_op_duration_seconds and fs_op_total
+(operation, mode, status), fs_op_bytes_total, fs_op_last_seen_unix_seconds and
+fs_op_in_flight (operation), and sandbox_pool_size (kind: user|warm, shard). mode is
+the sbx_acquire path label, else "none". These labels are the complete allowed set —
+changing one means updating the fs-metrics-prometheus / fs-metrics-coverage OpenSpec
+capability. The worker mirrors the collectors in app/workers/metrics.py; panels live
+in the grafana fs-ops.json dashboard.
 """
 
 from __future__ import annotations

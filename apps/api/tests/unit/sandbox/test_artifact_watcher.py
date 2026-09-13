@@ -41,12 +41,11 @@ def fs_event(name: str, etype: str = "WRITE") -> SimpleNamespace:
 
 
 def fake_sandbox(**files: Any) -> AsyncSandbox:
-    """A duck-typed stand-in for e2b's AsyncSandbox.
+    """Build a duck-typed stand-in for e2b's AsyncSandbox.
 
-    The watcher only ever reaches through .files, so a namespace carrying the
-    methods under test is a complete double — constructing a real AsyncSandbox
-    would require a live E2B session. Stating that once here keeps the assumption
-    in one reviewable place instead of repeated at every construction site.
+    The watcher only reaches through .files, so a namespace carrying the
+    tested methods is a complete double — a real AsyncSandbox needs a live
+    E2B session.
     """
     return cast(AsyncSandbox, SimpleNamespace(files=SimpleNamespace(**files)))
 

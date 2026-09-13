@@ -1,37 +1,19 @@
 #!/usr/bin/env python3
 """Repair a user's memory store after the extraction/reconciliation fixes.
 
-The fixes change what gets written from now on. They do not touch what is
-already there, and what is already there is the problem:
+The fixes only change what's written from now on; existing rows are the
+problem: (1) EXTENDS wrote a child alongside its still-live parent — 329 live
+rows (36%) in production were EXTENDS children of a live parent, and this
+retires each covered parent into its child; (2) the extractor almost never
+set an expiry (19 of 1,028 rows), so stale state facts (counts, statuses)
+stay live — rows already tagged shelf_life='state' retire on age, older ones
+fall back to a phrase heuristic; (3) user.md/people.md/agenda.md, derived
+from the corrupted rows, get re-rendered once they're gone.
 
-- **Coexisting EXTENDS pairs.** EXTENDS used to write a child alongside its
-  still-live parent, so both versions of one subject-attribute stayed in
-  recall. In the production store 329 live rows (36%) were EXTENDS children of
-  a live parent. This retires each such parent into its child's chain.
-- **State rows that never expire.** The extractor almost never set an expiry
-  (19 of 1,028 rows), so counts, balances, connection statuses and deployment
-  states are still live months later. Rows already carrying
-  shelf_life='state' are retired past the window; older rows all read as
-  'durable' because the column post-dates them, so those fall back to a
-  phrase heuristic ("as of", "currently", "is failing", "disconnected",
-  "pending").
-- **Documents written from a corrupted draft.** user.md and people.md are
-  re-derived from every live durable fact once the rows above are gone, and
-  agenda.md is re-rendered from its rows.
-
-Usage::
-
-    cd apps/api
-    uv run python -m app.scripts.repair_memory_store --user <id>            # dry run
-    uv run python -m app.scripts.repair_memory_store --user <id> --apply    # commit
-
-Run --help for the flags: this docstring IS the parser's description, so a
-second copy of them here renders twice and drifts from the one argparse builds.
-
---retire-ids is the one that needs more than its one-liner: it forgets a
-memory id outright, for rows a human has read and judged wrong.
-
-Every mode prints the full plan first. Nothing is written without --apply.
+Usage: uv run python -m app.scripts.repair_memory_store --user <id> [--apply].
+Flags are on --help, not repeated here (this docstring IS the parser
+description). --retire-ids forgets a memory id outright for a row a human
+judged wrong; nothing writes without --apply.
 """
 
 from __future__ import annotations
@@ -55,22 +37,17 @@ from app.memory.consolidation import consolidate, render_agenda_document
 from app.memory.management import forget_memory
 from app.models.memory_db_models import MemoryRecord
 
-# Phrases that mark a sentence as a snapshot rather than a standing truth.
-# Word-bounded so "concurrency" is not read as "currently". Applied ONLY to
-# rows old enough that a snapshot is certainly stale, and only when the row
-# predates the shelf_life column.
+# Phrases marking a sentence as a snapshot, not a standing truth. Word-bounded
+# so "concurrency" isn't read as "currently"; applied only to rows old enough
+# to be certainly stale and predating the shelf_life column.
 _STATE_PHRASES = re.compile(
     r"\b(as of|currently|is failing|are failing|disconnected|not connected|pending)\b",
     re.IGNORECASE,
 )
 
-# The old reconciler wrote an EXTENDS link for "more detail on a related claim",
-# so a link only means "topically adjacent", not "same fact restated". Retiring
-# every linked parent deleted preferences whose child was vaguer than they were:
-# "avoid em dashes" lost to "fluff-free marketing copy". A parent is only retired
-# when the child actually covers it. Measured on the production store: of 216
-# linked parents, 26 pass at 0.8, and the 190 spared are plainly different facts
-# ("uses nasal spray" vs "dislikes its taste").
+# EXTENDS meant "related", not "same fact restated" — retiring every linked
+# parent lost real distinctions ("avoid em dashes" -> vaguer child). Measured:
+# of 216 linked parents, 26 pass at 0.8 containment; the 190 spared differ.
 _DEFAULT_EXTENDS_CONTAINMENT = 0.8
 
 # Filler that carries no subject, so it never counts toward coverage. Negation
@@ -154,7 +131,7 @@ def looks_like_state(content: str) -> bool:
 
 
 def _subject_tokens(content: str) -> set[str]:
-    """The words that carry the claim, lowercased, filler removed."""
+    """Return the words that carry the claim, lowercased, filler removed."""
     return {
         word
         for word in re.findall(r"[a-z0-9']+", content.lower())
@@ -277,12 +254,10 @@ async def _repair_user(user_id: str, args: argparse.Namespace) -> int:
 async def _run(args: argparse.Namespace) -> int:
     """Bootstrap the providers a script has no lifespan to build, then repair.
 
-    Mongo self-initialises on first collection access, but the memory store's
-    Postgres engine is a lazy provider, and outside the API process nobody has
-    registered it: every query raised Provider 'postgresql_engine' not found in
-    registry. Registration is bookkeeping only (no I/O); the engine itself is
-    built on first use and disposed here so the script exits without a warning
-    about an open pool.
+    Outside the API process nobody registers the memory store's lazy Postgres
+    engine, so queries fail with "Provider 'postgresql_engine' not found".
+    Registration is bookkeeping only; the engine builds on first use and is
+    disposed here so the script exits without an open-pool warning.
     """
     register_lazy_providers("main_app")
     try:

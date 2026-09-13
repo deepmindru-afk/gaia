@@ -42,11 +42,9 @@ export function TriggerAutocomplete({
   );
   const normalizedSelectedKey = selectedSchema?.slug ?? selectedTrigger;
 
-  // Keep the input text in sync with the selected trigger. Done as a
-  // render-time adjustment (React's recommended alternative to an effect):
-  // the snapshot captures every observable input of that sync — the selection
-  // and whether/what the schemas resolve it to — so the text is correct on the
-  // first paint instead of flashing a stale value.
+  // Keep the input text in sync with the selected trigger via a render-time
+  // adjustment (React's alternative to an effect): the key snapshots every
+  // observable input of that sync, so the text is correct on first paint, never stale.
   const displaySyncKey = `${selectedTrigger ?? ""}|${triggerSchemas !== undefined}|${selectedSchema?.name ?? ""}`;
   const [syncedDisplayKey, setSyncedDisplayKey] = useState(displaySyncKey);
   if (displaySyncKey !== syncedDisplayKey) {

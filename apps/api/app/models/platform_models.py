@@ -1,8 +1,3 @@
-"""Platform Models.
-
-Pydantic models for platform account linking and authentication.
-"""
-
 from datetime import datetime
 from typing import Annotated, TypedDict
 

@@ -78,10 +78,8 @@ def test_a_marker_that_was_never_written_reads_as_none(tmp_path: Path) -> None:
 
 
 def test_an_empty_marker_reads_as_an_empty_string_rather_than_none(tmp_path: Path) -> None:
-    # Load-bearing asymmetry with read_skills_marker: the connected-set signature
-    # for a user with zero connected integrations IS "". If this collapsed "" to
-    # None the staleness gate would never match, and every session bootstrap
-    # would re-materialize the whole catalog for every unconnected user.
+    # read_skills_marker's connected-set signature for zero integrations is "" — collapsing it to
+    # None would break the staleness gate and force a full catalog re-materialize for every unconnected user.
     marker = tmp_path / "connected.v"
     marker.write_text("", encoding="utf-8")
     assert read_text_or_none(marker) == ""

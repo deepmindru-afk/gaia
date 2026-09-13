@@ -165,10 +165,9 @@ class BulkEmailImportanceSummariesResponse(BaseModel):
     missing_message_ids: list[str]
 
 
-# Every Gmail message, label and draft payload below stays ``dict[str, Any]``:
-# Google owns those schemas and ``transform_gmail_message`` spreads the raw
-# Composio message before adding its derived keys, so the field set varies per
-# message. Only the envelopes the API builds itself are modelled here.
+# Gmail message/label/draft payloads below stay dict[str, Any]: Google owns
+# those schemas, and transform_gmail_message spreads the raw Composio message
+# before adding derived keys, so the field set varies. Only API-built envelopes are modelled.
 
 
 class GmailToolResult(BaseModel):

@@ -317,10 +317,9 @@ class TestShareSpreadsheet:
         assert result["shared"][0]["permission_id"] is None
         assert result["total_shared"] == 1
 
-    # BUG: the per-recipient `errors` list was built and then dropped from the
-    # response, so a partial failure reported `total_failed: 1` with no way to
-    # tell the user which address failed or why — and the tool's own docs
-    # promised an `errors` field.
+    # BUG: the per-recipient errors list was built and then dropped from the response, so a
+    # partial failure reported total_failed: 1 with no way to tell which address failed or why —
+    # despite the tool's own docs promising an errors field.
     def test_partial_failure_reports_which_recipient_failed_and_why(
         self, tools: Any, api: Any
     ) -> None:

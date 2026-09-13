@@ -313,8 +313,7 @@ class TestTokenOnlyCalls:
         assert await get_request_tokens(REQUEST) == 300
 
     async def test_cached_tokens_exceeding_input_clamp_at_zero_uncached(self) -> None:
-        """Malformed provider usage (cache_read > input) must not make the
-        counter go backwards — output still counts, uncached floors at 0."""
+        """Malformed usage (cache_read > input) must not go negative; uncached floors at 0."""
         await record_model_call_usage(
             USER,
             UsageDailyIncrement(cost=0.01, input_tokens=100, output_tokens=50, cached_tokens=500),
@@ -327,8 +326,7 @@ class TestTokenOnlyCalls:
     async def test_a_fully_cache_served_call_with_no_output_moves_nothing(
         self, rollup: AsyncMock
     ) -> None:
-        """Nothing fresh entered the tree, so the ceiling sees nothing — but the
-        call was still real work and must keep its durable booking."""
+        """A fully cache-served call is invisible to the ceiling but must still keep its durable booking."""
         await record_model_call_usage(
             USER,
             UsageDailyIncrement(cost=0.01, input_tokens=1000, cached_tokens=1000),
@@ -341,9 +339,7 @@ class TestTokenOnlyCalls:
         assert rollup.await_args.args[1].cached_tokens == 1000
 
     async def test_an_ordinary_multi_call_turn_stays_well_under_the_ceiling(self) -> None:
-        """The production shape that used to trip the wall: ~10 model calls per
-        turn, each re-sending a ~30k prompt of which ~25k is cached prefix.
-        Raw tokens cross 300k; the work is ~58k."""
+        """The production shape that used to trip the wall: ~10 calls resending a ~30k prompt, ~25k cached — raw crosses 300k, work is ~58k."""
         for _ in range(10):
             await record_model_call_usage(
                 USER,
@@ -358,9 +354,7 @@ class TestTokenOnlyCalls:
         assert await get_request_tokens(REQUEST) == 58_000
 
     async def test_a_failed_rollup_is_named_in_the_warning(self, rollup: AsyncMock) -> None:
-        """Fail-open is only safe if the failure is findable: the operation label
-        is what tells you the durable Mongo write dropped rather than the Redis
-        pipeline."""
+        """Fail-open is only safe if the operation label tells you the durable Mongo write dropped, not the Redis pipeline."""
         log.reset()
         rollup.side_effect = RuntimeError("mongo down")
 

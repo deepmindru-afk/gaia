@@ -60,8 +60,11 @@ class FirstQuestion(BaseModel):
 
 
 class _QuestionDraft(BaseModel):
-    """The model's output. The schema IS the check: structured output cannot hand
-    back the wrong number of chips, so nothing downstream second-guesses the words."""
+    """The model's output.
+
+    The schema IS the check: structured output cannot hand back the wrong number of
+    chips, so nothing downstream second-guesses the words.
+    """
 
     chips: list[str] = Field(
         min_length=4, max_length=4, description="Exactly 4 jobs, 2 to 4 words each."

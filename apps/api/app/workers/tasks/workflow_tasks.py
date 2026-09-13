@@ -789,16 +789,9 @@ async def _run_workflow(
         )
         return *await execute_workflow_as_chat(workflow, user, context), SHORTCUT_DISCARDED_SUMMARY
 
-    # A playbook the last run did not trust is not replayed again: the agent
-    # runs this fire with the heal brief carrying the recorded reason, and ends
-    # by rewriting the playbook or disabling it. Replaying it a second time
-    # only repeats the same wrong result, and the streak limit then deletes
-    # the playbook before any agent has seen why. An attempt is a heal run
-    # that completed and left the body still distrusted: it is counted after
-    # the agent returns and only against the revision it was healing, so a
-    # fire that never reached the agent (a DNS outage, a crashed worker) spends
-    # nothing, and a rewrite starts the new body at zero. Past the limit the
-    # playbook goes.
+    # A distrusted playbook isn't replayed — the agent heals it instead, then
+    # rewrites or disables it. An attempt only counts if the heal run actually
+    # completed; a crash or DNS outage before the agent runs costs nothing.
     lifecycle = PlaybookLifecycle.of(playbook)
     if needs_heal(lifecycle):
         if discard_reason(lifecycle) is DiscardReason.HEAL_ATTEMPTS_EXHAUSTED:

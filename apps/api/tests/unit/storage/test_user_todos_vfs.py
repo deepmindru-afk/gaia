@@ -112,10 +112,9 @@ def test_a_user_with_no_todos_still_gets_a_tree_saying_so(tmp_path: Path) -> Non
 def test_syncing_user_todos_does_not_resurrect_the_previous_releases_marker(
     tmp_path: Path,
 ) -> None:
-    # `/todos/` is the same path the prior release used, and the gaia-tasks
-    # materializer deletes that tree whenever `.gaia/todos.v` is present. This
-    # materializer must never write that marker or it would arm that deletion
-    # against its own output.
+    # /todos/ is the same path the prior release used, and the gaia-tasks materializer deletes
+    # that tree whenever .gaia/todos.v is present — this materializer must never write that
+    # marker or it would arm that deletion against its own output.
     materialize_user_todos(tmp_path, [todo(ID_A)], GUIDE)
 
     assert not (tmp_path / LEGACY_TODOS_MARKER).exists()

@@ -257,8 +257,7 @@ class TestSaturationBackpressure:
     async def test_503_exception_carries_exact_backoff_contract(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The 503's shape is a contract clients rely on: exact status, detail
-        text, and Retry-After header name/value."""
+        """The 503's shape is a contract clients rely on: exact status, detail text, and Retry-After header."""
         monkeypatch.setattr(server, "_slot_wait_seconds", 0.0)
         monkeypatch.setattr(server, "_inference_slots", asyncio.Semaphore(1))
         async with server._inference_slots:
@@ -280,14 +279,12 @@ class TestSaturationBackpressure:
 
 
 class TestClientRetryContract:
-    """Pinned here as well as in tests/unit/memory/test_embeddings.py: the
-    retry budget is what keeps memory saves alive through a sidecar blip."""
+    """Pinned here as well as in tests/unit/memory/test_embeddings.py: the retry budget keeps memory saves alive through a blip."""
 
     async def test_rerank_splits_and_preserves_scores(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Second home for the chunked-rerank contract so the mutation lane
-        attributes it from both covering files."""
+        """Second home for the chunked-rerank contract so the mutation lane attributes it from both covering files."""
         calls: list[dict] = []
 
         async def fake_post(path: str, payload: dict) -> dict:

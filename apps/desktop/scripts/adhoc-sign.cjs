@@ -1,12 +1,8 @@
 /**
- * electron-builder afterSign hook.
- *
- * When real code signing is disabled (local builds with
- * CSC_IDENTITY_AUTO_DISCOVERY=false), the packaged app keeps only the
- * Electron binary's linker signature with a broken bundle seal. macOS 26's
- * RunningBoard kills LaunchServices-launched apps with an invalid seal
- * ~12s after launch (Dock icon appears, then vanishes). Ad-hoc signing
- * restores a valid seal so local builds run from Finder.
+ * electron-builder afterSign hook: ad-hoc-signs local builds (real signing
+ * disabled via CSC_IDENTITY_AUTO_DISCOVERY=false leaves only Electron's broken
+ * linker seal). macOS 26's RunningBoard kills such apps ~12s after launch (Dock
+ * icon appears then vanishes); this restores a valid seal so they run from Finder.
  */
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");

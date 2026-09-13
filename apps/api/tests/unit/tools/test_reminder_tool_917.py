@@ -36,7 +36,7 @@ def _cfg() -> RunnableConfig:
 def _reminder_document(
     reminder_id: str = "rem-917", title: str = "Dentist check-up"
 ) -> ReminderDocument:
-    """A real document, not a mock — its model_dump() carries datetimes."""
+    """Build a real document, not a mock — its model_dump() carries datetimes."""
     return ReminderDocument(
         id=reminder_id,
         user_id=FAKE_USER_ID,
@@ -58,8 +58,7 @@ def _no_rate_limiting():
 
 
 def _assert_json_safe(payload: Any) -> None:
-    """A tool result crosses into a ToolMessage as text — it must survive
-    strict JSON encoding with no datetime objects and no Python reprs."""
+    """Assert a tool result survives strict JSON encoding with no datetime objects and no Python reprs, since it crosses into a ToolMessage as text."""
     json.dumps(payload)
     if isinstance(payload, dict):
         for value in payload.values():

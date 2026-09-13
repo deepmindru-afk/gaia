@@ -63,10 +63,8 @@ class TestValidateStartupRequirements:
             assert (API_ROOT / script).is_file(), f"error points at missing {script}"
 
     def test_remediation_script_still_resolves_its_app_imports(self) -> None:
-        # payment_setup.py imported PlanDB long after it was renamed to PlanDocument,
-        # so the command this error recommends died on ImportError and
-        # subscription_plans stayed empty — making the check fail forever. Nothing
-        # imports these scripts, so only running them surfaced the drift.
+        # Regression: payment_setup.py imported the since-renamed PlanDB, so the recommended
+        # command died on ImportError; nothing else imports these scripts to catch it.
         command = startup_validation.SEED_PLANS_COMMAND
         script = API_ROOT / re.search(r"scripts/[\w./-]+\.py", command).group()
         tree = ast.parse(script.read_text())

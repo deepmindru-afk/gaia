@@ -6,17 +6,13 @@ from typing import Any
 
 from shared.py.logging import configure_file_logging
 
-# Rotating log files for local development; a no-op under LOG_FORMAT=json,
-# where stdout NDJSON is shipped to Loki instead (see configure_file_logging).
-# Must be called before any app imports — provider_registration transitively
-# imports app.api.v1.middleware.__init__ → loggers.py, which calls
-# configure_file_logging("./logs") and sets _FILE_LOGGING_CONFIGURED=True,
-# making any subsequent call with a different path a no-op.
-# This process is the ARQ worker, not the API. GAIA_SERVICE_NAME must equal
-# its Promtail label so the in-event `service` field and {service="arq_worker"}
-# agree; setdefault so an explicit env var still wins.
+# This is the ARQ worker, not the API — GAIA_SERVICE_NAME must match its
+# Promtail label so {service="arq_worker"} agrees with the event field.
 os.environ.setdefault("GAIA_SERVICE_NAME", "arq_worker")
 
+# Rotating log files for local dev (no-op under LOG_FORMAT=json). Must run
+# before any app import: provider_registration calls this first with a
+# different path, and _FILE_LOGGING_CONFIGURED locks in whichever ran first.
 configure_file_logging("./logs/worker")
 
 from app.constants.log_tags import LogTag

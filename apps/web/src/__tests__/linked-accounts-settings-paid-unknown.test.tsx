@@ -14,11 +14,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let isPaid = false;
 let isUnknown = false;
 
-// HeroUI buttons animate a ripple through framer-motion on press; the
-// completion callback fires after this file's last test has torn jsdom down
-// and sets state against a missing `window` ("ReferenceError: window is not
-// defined", 7 unhandled errors on the CI box). The ripple is chrome, not
-// behaviour, so it is stubbed here.
+// HeroUI's ripple (framer-motion) fires its completion callback after this
+// file's jsdom teardown, throwing on the missing `window` (7 unhandled
+// errors on CI) — stubbed here since it's chrome, not behaviour.
 vi.mock("@heroui/ripple", () => ({
   Ripple: () => null,
   useRipple: () => ({ ripples: [], onPress: vi.fn(), onClear: vi.fn() }),
@@ -100,10 +98,9 @@ describe("LinkedAccountsSettings — iMessage (premium) gate vs. plan status unk
     render(<LinkedAccountsSettings />);
     const row = await findPlatformRow("iMessage");
 
-    // Before the fix, `subscriptionStatus?.is_subscribed` read as
-    // `undefined` in this exact window — falsy — so the badge showed and
-    // the connect attempt below would have opened the pricing modal for a
-    // possibly-paid user.
+    // Before the fix `subscriptionStatus?.is_subscribed` read `undefined`
+    // here — falsy — so the badge showed and connect opened the pricing
+    // modal for a possibly-paid user.
     expect(row.queryByText("Pro")).toBeNull();
     fireEvent.click(row.getByRole("button", { name: "Connect" }));
     expect(openUpgradeModal).not.toHaveBeenCalled();

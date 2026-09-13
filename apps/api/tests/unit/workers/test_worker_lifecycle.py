@@ -11,10 +11,8 @@ import pytest
 from app.workers.config.worker_settings import WorkerSettings
 from app.workers.lifecycle.shutdown import shutdown
 
-# ---------------------------------------------------------------------------
-# startup — imported lazily because the module has side-effects at import time
-# (calls configure_file_logging and setup_warnings)
-# ---------------------------------------------------------------------------
+# startup is imported lazily: the module has side effects at import time
+# (configure_file_logging, setup_warnings).
 
 
 class TestWorkerStartup:
@@ -194,7 +192,6 @@ class TestWorkerSettings:
         assert WorkerSettings.on_startup is None
 
     def test_on_shutdown_default_none(self):
-        """on_shutdown is None by default."""
         assert WorkerSettings.on_shutdown is None
 
     def test_max_jobs_is_positive_integer(self):
@@ -230,30 +227,14 @@ class TestWorkerSettings:
         assert len(WorkerSettings.health_check_key) > 0
 
     def test_health_check_key_is_per_worker(self):
-        """Each worker must own its liveness key, or the probe stops being liveness.
-
-        scripts/arq_healthcheck.py runs INSIDE each worker container and is
-        just EXISTS <key>. While the key was the global arq:health,
-        every worker wrote the same one, so a wedged worker's own probe was
-        satisfied by a sibling still refreshing it — measured: worker 1 dead,
-        worker 2 alive, worker 1's probe still HEALTHY. The container is never
-        restarted, it holds a replica slot doing nothing, and the queue backs up
-        with nothing to alert on. Correct at one worker; silently wrong at more.
-        """
+        """A shared health key lets one worker's dead probe read HEALTHY via a sibling still refreshing it."""
         assert WorkerSettings.health_check_key != "arq:health", (
             "a fleet-wide health key makes the probe report 'is ANY worker alive'"
         )
         assert socket.gethostname() in WorkerSettings.health_check_key
 
     def test_healthcheck_probe_reads_the_key_this_worker_writes(self):
-        """The probe cannot import app, so the two derivations must be pinned.
-
-        arq_healthcheck.py deliberately imports nothing from the app (it runs
-        outside the entrypoint with no Infisical credentials), so the key format
-        is duplicated on purpose. Nothing but this test stops the two sides from
-        drifting apart — and a drifted probe reads a key nobody writes, which
-        fails every container immediately.
-        """
+        """arq_healthcheck.py can't import app, so the key format is duplicated; drift fails every worker."""
         spec = importlib.util.spec_from_file_location(
             "arq_healthcheck", Path(__file__).resolve().parents[3] / "scripts/arq_healthcheck.py"
         )

@@ -51,14 +51,9 @@ TASK_TOTAL = Counter(
     registry=REGISTRY,
 )
 
-# Cross-register the FsOps collectors onto this worker registry so the worker
-# process's /metrics surface mirrors the API's. The same collector instances
-# are registered on both registries — observations from `record_fs_op` flow
-# into one underlying state and surface on both /metrics endpoints.
-#
-# The `tool_bash_exit_code_total` counter is NOT mirrored here — bash_tool is
-# only reachable from API request paths, not ARQ tasks, so it would always be
-# zero on the worker side.
+# Cross-registers the FsOps collectors so the worker's /metrics mirrors the
+# API's — same instances, so record_fs_op observations surface on both.
+# tool_bash_exit_code_total is NOT mirrored: bash_tool never runs from ARQ.
 for _collector in (
     _FS_OP_DURATION_SECONDS,
     _FS_OP_BYTES_TOTAL,

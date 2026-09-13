@@ -1,36 +1,16 @@
-"""Onboarding as the user actually experiences it: submit, connect Gmail, reset.
+"""Onboarding as the user experiences it: submit, connect Gmail, reset.
 
-The flow spans layers no other test crosses together — the HTTP endpoints, the
-onboarding service, the OAuth connect handler, the ARQ job slot, and the Gmail
-personalization DAG. The unit suites underneath fake every node at its own
-boundary, so orchestration is asserted in isolation and the seams between layers
-are asserted nowhere.
-
-The shape changed: submitting the form *is* completion. Nothing is queued, no
-todo is seeded and no conversation is created there. Everything the user gets —
-the inbox scan, memories, writing style, triage, social profiles, the holo card
-and the conversation that hands it over — is earned by connecting Gmail, exactly
-once per user. What that costs when it breaks is invisible: every stage emit is
-fire-and-forget, every node swallows its own failure, and the task returns a
-string rather than raising. A broken pipeline does not error, it just leaves a
-user with no card and no memories and nothing anywhere saying so. A pipeline
-that runs *twice* is worse — a second holo card and a second announcement
-conversation for a user who merely reconnected Gmail.
-
-**What is real here.** The HTTP endpoints, onboarding_service,
-handle_oauth_connection's Gmail branch, intelligence_job, the ARQ task
-wrapper, and the whole intelligence_service DAG including triage, writing
-style, the holo card and the seeded announcement. ARQ is real too: jobs are
-enqueued onto a real ArqRedis (backed by fakeredis), read back off the queue
-by run_queued_jobs exactly as the worker does, and aborts land in arq's real
-abort sorted set — so "the job is live" and "the job was aborted" are
-answered by arq, not by a mock.
-
-**What is doubled.** Only external I/O: the LLM, Gmail, Composio, notifications
-and the persistence layer. _UserStore stands in for Mongo and mirrors two
-conditional repository contracts — the onboarding: {$exists: false} gate and
-compare-and-clear on the job id — each of which is certified against real Mongo
-in tests/contracts/test_users_repository.py.
+Crosses layers no other test crosses together: endpoints, onboarding service, the OAuth
+connect handler, the ARQ job slot and the Gmail personalization DAG. Submitting the form is
+completion; everything else (inbox scan, memories, style, triage, profiles, holo card,
+announcement conversation) is earned by connecting Gmail, exactly once per user. Failure is
+silent (fire-and-forget emits, nodes swallow errors, the task returns a string), and a second
+run means a second card and announcement for a user who merely reconnected.
+Real: endpoints, onboarding_service, handle_oauth_connection's Gmail branch, intelligence_job,
+the ARQ wrapper, the whole intelligence_service DAG, and ARQ itself on fakeredis-backed
+ArqRedis (run_queued_jobs, real abort set). Doubled: LLM, Gmail, Composio, notifications and
+persistence — _UserStore mirrors the onboarding {$exists: false} gate and job-id
+compare-and-clear, both certified in tests/contracts/test_users_repository.py.
 """
 
 from __future__ import annotations

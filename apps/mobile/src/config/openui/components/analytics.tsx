@@ -1294,7 +1294,6 @@ export function GaugeChartView(props: z.infer<typeof gaugeChartSchema>) {
   const color = computeGaugeColor(pct, warning, danger);
   const variant = props.variant ?? "gauge";
 
-  // ---------- variant: "text" ----------
   if (variant === "text") {
     return (
       <Card>
@@ -1330,7 +1329,6 @@ export function GaugeChartView(props: z.infer<typeof gaugeChartSchema>) {
     );
   }
 
-  // ---------- variant: "stacked" ----------
   if (variant === "stacked") {
     const secondValue = props.secondValue ?? 0;
     const secondLabel = props.secondLabel ?? "Secondary";
@@ -1424,7 +1422,7 @@ export function GaugeChartView(props: z.infer<typeof gaugeChartSchema>) {
     );
   }
 
-  // ---------- variant: "gauge" (default) ----------
+  // variant: "gauge" (default)
   const render = (width: number) => {
     const cx = width / 2;
     // Arc thickness 16 per design contract.

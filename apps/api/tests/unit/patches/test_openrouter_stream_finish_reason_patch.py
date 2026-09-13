@@ -80,11 +80,7 @@ class TestFinishReasonPatch:
     def test_a_renamed_field_raises_instead_of_silently_patching_nothing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The SDK dropping or renaming the field must be loud.
-
-        Silently doing nothing would restore the original crash on the next
-        gateway that omits the field, with nothing pointing back here.
-        """
+        """Silently doing nothing would restore the original crash on the next gateway that omits the field."""
         monkeypatch.setattr(ChatStreamChoice, "model_fields", {}, raising=False)
 
         # The whole message, not a substring: it names the class whose field

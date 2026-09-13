@@ -1,20 +1,4 @@
-"""Unit tests for app.utils.mcp_oauth_utils module.
-
-Tests cover:
-- validate_https_url: HTTPS validation, HTTP rejection, localhost exceptions
-- is_localhost_url: localhost, loopback addresses, regular domains
-- validate_oauth_endpoints: all endpoints valid, one invalid raises error
-- extract_auth_challenge: 401 with WWW-Authenticate, non-401, timeout, connect error
-- find_protected_resource_metadata: found at first URL, found at second, not found
-- fetch_auth_server_metadata: OAuth discovery, OIDC fallback, full fallback
-- revoke_token: success, failure, timeout, client auth variants
-- validate_token_response: valid, missing access_token, wrong token_type
-- validate_pkce_support: S256 present, plain only, none
-- validate_jwt_issuer: valid JWT, non-JWT, mismatched issuer, decode error
-- parse_oauth_error_response: JSON, non-JSON, parse error
-- get_client_metadata_document_url: URL construction
-- introspect_token: success, failure, timeout
-- select_authorization_server: single, multiple
+"""Unit tests for app.utils.mcp_oauth_utils.
 
 The OAuth discovery functions take official mcp SDK models
 (OAuthMetadata / ProtectedResourceMetadata) rather than plain dicts,

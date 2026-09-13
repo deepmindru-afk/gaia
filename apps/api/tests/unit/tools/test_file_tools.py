@@ -20,7 +20,7 @@ MODULE = "app.agents.tools.file_tools"
 
 
 def _config() -> dict[str, Any]:
-    """The configurable as the executor actually sees it.
+    """Build the configurable as the executor actually sees it.
 
     The tool is bound to the executor, which runs on the derived
     executor_<conversation_id> thread — so thread_id names a conversation
@@ -124,11 +124,7 @@ class TestGetSimilarDocuments:
         collection.asimilarity_search_with_score.assert_not_called()
 
     async def test_file_id_outside_the_conversation_raises_with_the_valid_ids(self) -> None:
-        """An unknown id must fail loud, not read as "the file says nothing".
-
-        The agent is never shown a file's id, so a guessed filename lands here
-        every time; the error has to name the ids it could have used instead.
-        """
+        """An unknown file id must fail loud, naming the ids it could have used, since the agent is never shown a file's real id."""
         collection, get_client = _patch_collection([])
         with (
             patch(f"{MODULE}.ChromaClient.get_langchain_client", get_client),

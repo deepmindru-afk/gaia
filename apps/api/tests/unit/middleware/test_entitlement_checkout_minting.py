@@ -73,13 +73,7 @@ class TestGateDoesNotMintPerBlockedRequest:
     async def test_a_shell_load_of_402s_mints_no_checkout_sessions(
         self, gated_client: AsyncClient
     ) -> None:
-        """Three blocked startup calls must not become three Dodo sessions.
-
-        The paywall body carries no checkout link: the client mints one from
-        the allowlisted POST /api/v1/payments/checkout-session when the user
-        actually asks to subscribe. Dodo sessions are single-use, so minting one
-        the user never visits is pure waste at Dodo and in Mongo.
-        """
+        """Dodo sessions are single-use; the client mints one from POST /api/v1/payments/checkout-session on user intent, not here."""
         mint = AsyncMock(return_value=_checkout("https://checkout.dodo.test/abc"))
         with (
             patch(

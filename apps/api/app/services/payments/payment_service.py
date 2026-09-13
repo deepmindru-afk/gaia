@@ -430,28 +430,10 @@ class DodoPaymentService:
     ) -> SubscriptionDocument | None:
         """Resolve this user's recent checkout sessions against Dodo and record whichever was paid.
 
-        Covers the webhook-vs-redirect race (and a genuinely lost webhook): the
-        sessions recorded at checkout-creation time are the stable references
-        Dodo can answer for before a subscription row exists.
-
-        It scans, rather than trusting the newest session, because minting is
-        not rare — every paywall block hands the user a fresh checkout link, so
-        by the time they come back from paying, the session they paid is
-        routinely no longer the latest one. Reading only the latest asked Dodo
-        about a link nobody opened and told a paying user they had not paid,
-        and each further block buried the real session deeper. One failed
-        session does not end the scan for the same reason.
-
-        A scan that found nothing paid is cached for the result page's retry
-        window (CHECKOUT_SCAN_MISS_TTL): the web client verifies eight
-        times over about fifty seconds, and each verify re-asked Dodo about
-        every session. Only a conclusive miss is cached — a session Dodo could
-        not answer for, or a paid one whose subscription is not active yet, is
-        exactly what the next retry should ask about again.
-
-        The sessions name the purchase; they do not authorise it. Ownership and
-        the write itself are settled by _activate_verified_subscription,
-        the same way the subscription_id hint route settles them.
+        Covers the webhook-vs-redirect race. Scans every session, not the newest — each paywall
+        block mints a link, so the paid one is rarely latest; one failure doesn't end the scan.
+        Only a conclusive miss is cached, for CHECKOUT_SCAN_MISS_TTL (client retries 8x in ~50s).
+        Ownership and the write are settled by _activate_verified_subscription.
         """
         miss_key = f"{CHECKOUT_SCAN_MISS_CACHE_PREFIX}{user_id}"
         if await redis_cache.get(miss_key):

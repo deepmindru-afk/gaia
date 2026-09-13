@@ -115,11 +115,7 @@ def test_gather_context_tools_use_proxy(
 
 
 def test_google_meet_gather_context_swallows_calendar_failures() -> None:
-    """If the GOOGLEMEET account lacks calendar scope, the events fetch raises.
-
-    The tool must catch that and return an empty upcoming_meets list rather
-    than failing the whole gather_context call.
-    """
+    """If the GOOGLEMEET account lacks calendar scope, the events fetch raises and the tool must catch it, returning an empty upcoming_meets list rather than failing the whole gather_context call."""
     from app.agents.tools.integrations.google_meet_tool import (
         register_google_meet_custom_tools,
     )
@@ -318,8 +314,7 @@ def test_notion_markdown_survives_a_missing_results_key() -> None:
 
 
 def test_notion_markdown_survives_non_dict_title_data() -> None:
-    """Real Notion payloads are not guaranteed to be dicts — the defensive
-    isinstance branch must fall back to no title."""
+    """Real Notion payloads are not guaranteed to be dicts — the defensive isinstance branch must fall back to no title."""
     captured = _register_notion_with_blocks([], {"successful": True, "data": ["unexpected"]})
 
     result = captured["FETCH_PAGE_AS_MARKDOWN"](
@@ -357,8 +352,7 @@ def test_notion_markdown_first_title_block_wins() -> None:
 
 
 def test_notion_markdown_title_block_without_plain_text_stops_scan() -> None:
-    """A title-shaped block without plain_text yields an empty title and ends
-    the scan (break fires on the shape match, not on extracting text)."""
+    """A title-shaped block without plain_text yields an empty title and ends the scan (break fires on the shape match, not on extracting text)."""
     captured = _register_notion_with_blocks(
         [],
         {

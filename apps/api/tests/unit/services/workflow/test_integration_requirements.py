@@ -30,8 +30,7 @@ class TestConfirmDisconnected:
         assert [c.args for c in by_id.call_args_list] == [("gmail",), ("github",)]
 
     async def test_it_drops_an_integration_gaia_does_not_have(self) -> None:
-        """A hallucinated id must not pause anything: there is nothing for the
-        user to go and connect."""
+        """A hallucinated id must not pause anything: there is nothing for the user to go and connect."""
         with (
             patch(STATUS_TARGET, AsyncMock(return_value={})),
             patch(f"{MODULE}.get_integration_by_id", return_value=None),

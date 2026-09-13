@@ -26,7 +26,7 @@ _GREGORIAN_EPOCH = datetime(1582, 10, 15, tzinfo=UTC)
 
 
 def uuid6_aged(days_ago: float) -> str:
-    """A uuid6 whose embedded timestamp lies days_ago in the past."""
+    """Build a uuid6 whose embedded timestamp lies days_ago in the past."""
     ticks = int(
         (datetime.now(UTC) - timedelta(days=days_ago) - _GREGORIAN_EPOCH).total_seconds()
         * 10_000_000

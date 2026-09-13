@@ -43,16 +43,16 @@ def _quiet_log():
 
 @pytest.fixture(autouse=True)
 def _no_prior_record():
-    """The gate reads any existing record for this call before deciding. Default it to
-    "none yet" — the first-pass case — so each test states only what it is about; the
-    replay tests override it."""
+    """Default the prior-record read to "none yet" — the first-pass case.
+
+    Each test then states only what it is about; the replay tests override this.
+    """
     with patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=None)):
         yield
 
 
 class _Handler:
-    """Stands in for the real tool. Records whether the gate let it run — which is the
-    only thing any of these tests actually cares about."""
+    """Stands in for the real tool, recording only whether the gate let it run."""
 
     def __init__(self) -> None:
         self.ran = False
@@ -302,10 +302,12 @@ class TestDeclineMemory:
 
 
 class TestWhatTheIntentJudgeIsAskedAbout:
-    """The judge rules on the call it is handed. A name, description, arguments or
-    summary that arrives blank means it ruled on a different action than the one
-    about to run — and an auto-approval on that ruling is the tool running
-    unattended on evidence nobody checked."""
+    """The judge rules on the call it is handed.
+
+    A blank name, description, arguments or summary means it ruled on a different action
+    than the one about to run — auto-approving that ruling runs the tool unattended on
+    evidence nobody checked.
+    """
 
     async def test_the_whole_pending_call_reaches_the_judge(self) -> None:
         request = make_request(

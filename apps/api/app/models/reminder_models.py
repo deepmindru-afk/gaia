@@ -421,10 +421,9 @@ class ReminderDocument(ReminderModel, MongoDocument):
     (from MongoDocument) tolerates legacy stray fields.
     """
 
-    # Resolve the ``ReminderModel.id`` (``str | None``, alias ``_id``) vs
-    # ``MongoDocument.id`` (``str``) diamond: the repository stringifies the
-    # ObjectId ``_id`` into ``id`` on every read, so a loaded document always
-    # carries a non-optional id.
+    # Resolve the ReminderModel.id (str | None, alias _id) vs MongoDocument.id
+    # (str) diamond: the repository stringifies ObjectId _id into id on every
+    # read, so a loaded document always carries a non-optional id.
     id: str = ""
 
 

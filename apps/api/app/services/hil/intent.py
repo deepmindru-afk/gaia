@@ -82,9 +82,11 @@ class IntentDecision:
 
 
 class _Verdict(BaseModel):
-    """Field order is generation order: the model commits to its evidence before it rules,
-    so the verdict is conditioned on the findings rather than rationalising a token it has
-    already emitted."""
+    """Field order is generation order.
+
+    The model commits to its evidence before it rules, so the verdict is conditioned on
+    the findings rather than rationalising a token it has already emitted.
+    """
 
     authorized_scope: str = Field(
         default="",

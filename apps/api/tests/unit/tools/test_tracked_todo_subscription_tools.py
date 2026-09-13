@@ -419,8 +419,7 @@ class TestSubscriptionsAreVisibleOnTheTodo:
 
 
 class TestFormatSubscriptionLines:
-    """The exact watch line: the join word encodes AND vs OR semantics, and the
-    paused marker tells the user their watch is dead — both must be verbatim."""
+    """The exact watch line: the join word encodes AND vs OR semantics, and the paused marker tells the user their watch is dead — both must be verbatim."""
 
     @staticmethod
     def _two_conditions() -> list[SubscriptionCondition]:

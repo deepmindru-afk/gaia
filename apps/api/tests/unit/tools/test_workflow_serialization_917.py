@@ -40,7 +40,7 @@ def _cfg() -> RunnableConfig:
 
 
 def _workflow() -> Workflow:
-    """A real document — its python-mode dump carries native datetimes."""
+    """Build a real document — its python-mode dump carries native datetimes."""
     return Workflow(
         user_id=FAKE_USER_ID,
         title="Morning digest",

@@ -111,17 +111,14 @@ class HILApprovalRecord(MongoDocument):
     # Stamped when the resume run is dispatched; a decided record without it is
     # a crashed resume the sweep re-dispatches.
     resumed_at: datetime | None = None
-    # Set only when a *detached background subagent* parked on this approval. The
-    # subagent's graph is checkpointed under this deterministic thread id, so the
-    # executor's wait_for_subagents join can rediscover and resume it after the
-    # executor's own pause — durable state, never the in-process session. ``None`` for
-    # every other approval (interactive tool calls, blocking handoffs).
+    # Set only when a detached background subagent parked here: durable state
+    # (never the in-process session) so wait_for_subagents can rediscover and
+    # resume it via this thread id after the executor's own pause. None otherwise.
     subagent_thread_id: str | None = None
     subagent_agent_name: str | None = None
-    # Stamped by the join once the parked subagent has been resumed and its result
-    # collected. Distinct from ``resumed_at`` (which records that a decision dispatched
-    # the *executor*): a batch decision wakes the executor once, then each parked
-    # subagent is collected individually across join rounds.
+    # Stamped by the join once this parked subagent is resumed and collected.
+    # Distinct from resumed_at (records dispatching the executor): one batch
+    # decision wakes the executor once, but each subagent is collected separately.
     subagent_collected_at: datetime | None = None
 
 
@@ -135,10 +132,9 @@ class HILApprovalUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Typed on the write side only. set_resume_item is the sole writer and takes
-    # an ExecutorRunItem, so every write is controlled. HILApprovalRecord keeps
-    # `dict[str, Any]` on the read side deliberately — narrowing a persisted
-    # field would start rejecting rows written before this type existed.
+    # Typed on the write side only — set_resume_item is the sole writer, taking
+    # an ExecutorRunItem. The read side (HILApprovalRecord) stays dict[str, Any]
+    # deliberately: narrowing it would reject rows written before this type existed.
     resume_item: ExecutorRunItem | None = None
     resumed_at: datetime | None = None
     subagent_thread_id: str | None = None

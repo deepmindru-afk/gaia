@@ -66,7 +66,7 @@ def _chunk(content: str, *, provider: str | None, finish: str | None = None) -> 
 
 
 def _turn(*, provider: str | None) -> list[str]:
-    """A three-chunk answer, with provider repeated on every chunk as the wire does."""
+    """Build a three-chunk answer, with provider repeated on every chunk as the wire does."""
     return [
         _sse(_chunk("he", provider=provider)),
         _sse(_chunk("ll", provider=provider)),
@@ -119,11 +119,11 @@ class TestSDKKeepsTheField:
 
 
 def _throwaway_model(name: str) -> type[SDKBaseModel]:
-    """A disposable stand-in for an SDK response model.
+    """Build a disposable stand-in for an SDK response model.
 
-    The declaration logic is exercised against these rather than against the real
-    ChatResult/ChatStreamChunk, which the patch has already modified at import
-    and whose rebuilt validators would outlive any monkeypatch of model_fields.
+    Used instead of the real ChatResult/ChatStreamChunk, which the patch has
+    already modified at import, whose rebuilt validators would outlive any
+    monkeypatch of model_fields.
     """
     return type(name, (SDKBaseModel,), {"__annotations__": {"model": str}})
 
@@ -209,8 +209,7 @@ class TestWiring:
         assert chat_models._convert_chunk_to_message_chunk is _patch._convert_chunk_to_message_chunk
 
     def test_apply_is_idempotent(self) -> None:
-        """It runs once at import and again on every reload; a second call must
-        not trip the stale-patch guard on the field it declared itself."""
+        """Runs once at import and again on every reload; a second call must not trip the stale-patch guard on its own field."""
         _patch.apply()
         _patch.apply()
         assert SDKChatResult.model_fields["provider"] is _patch._INJECTED_FIELD
@@ -226,8 +225,7 @@ class TestWiring:
         assert ChatOpenRouter._astream is _patch._astream
 
     def test_wrappers_delegate_to_the_captured_originals(self) -> None:
-        """The originals must be the library's, not our own wrappers — a
-        self-referential capture would recurse forever on the first call."""
+        """The originals must be the library's, not our own wrappers — a self-referential capture would recurse forever on the first call."""
         assert _patch._ORIGINAL_CREATE_CHAT_RESULT is not _patch._create_chat_result
         assert _patch._ORIGINAL_CONVERT_CHUNK is not _patch._convert_chunk_to_message_chunk
 
@@ -272,8 +270,7 @@ class TestNonStreaming:
         )
 
     def test_the_model_name_falls_back_to_the_client(self) -> None:
-        """A payload with no model makes the original read self.model_name —
-        so the wrapper has to forward the real instance, not drop it."""
+        """A payload with no model makes the original read self.model_name, so the wrapper must forward the real instance, not drop it."""
         llm = _client("http://127.0.0.1:1/v1")
         payload = _sdk_result(provider="Baidu").model_dump(by_alias=True)
         del payload["model"]
@@ -284,8 +281,7 @@ class TestNonStreaming:
         assert result.llm_output["model_name"] == MODEL
 
     def test_an_object_without_the_field_is_treated_as_absent(self) -> None:
-        """A response model that never declared provider must read as "no name",
-        not raise."""
+        """A response model that never declared provider must read as "no name", not raise."""
         llm = _client("http://127.0.0.1:1/v1")
         payload = _sdk_result(provider=None).model_dump(by_alias=True)
 
@@ -361,10 +357,7 @@ class TestFinishReasonIsNotDoubled:
         assert "finish_reason" not in chunk.message.response_metadata
 
     def test_a_key_present_only_in_generation_info_is_stripped_safely(self) -> None:
-        """finish_reason lives in generation_info and is only mirrored onto
-        response_metadata by the streaming builder — so a later chunk can carry
-        it in one place and not the other. Popping without a default would raise
-        on exactly that chunk and kill the stream."""
+        """A later chunk can carry finish_reason in generation_info alone; popping without a default would raise and kill the stream."""
         chunk = ChatGenerationChunk(
             message=AIMessageChunk(content=""), generation_info={"finish_reason": "stop"}
         )
@@ -379,8 +372,7 @@ class TestFinishReasonIsNotDoubled:
         assert chunk.message.response_metadata["finish_reason"] == "stop"
 
     def test_a_two_finish_chunk_stream_merges_to_one_value(self) -> None:
-        """The end-to-end shape of the live defect: a reasoning finish followed
-        by a content finish must merge to "stop", never "stopstop"."""
+        """The end-to-end shape of the live defect: a reasoning finish followed by a content finish must merge to "stop", never "stopstop"."""
         turn = [
             _sse(_chunk("he", provider=UPSTREAM)),
             _sse(_chunk("ll", provider=UPSTREAM, finish="stop")),
@@ -397,8 +389,7 @@ class TestFinishReasonIsNotDoubled:
 
 class TestStreaming:
     def test_merged_message_reports_the_upstream_exactly_once(self) -> None:
-        """The merge_dicts trap: provider arrives on every chunk, so an
-        unguarded merge would report "StreamLakeStreamLakeStreamLake"."""
+        """The merge_dicts trap: provider arrives on every chunk, so an unguarded merge would report "StreamLakeStreamLakeStreamLake"."""
         with _ScriptedWire(_turn(provider=UPSTREAM)) as wire:
             merged = None
             for chunk in _client(wire.base_url).stream("hi"):
@@ -407,8 +398,7 @@ class TestStreaming:
         assert merged.response_metadata[PROVIDER_NAME_METADATA_KEY] == UPSTREAM
 
     def test_exactly_one_chunk_carries_the_upstream(self) -> None:
-        """OpenRouter repeats provider on all three scripted chunks; only the
-        first may come out carrying it, or the merge concatenates the repeats."""
+        """OpenRouter repeats provider on all three scripted chunks; only the first may carry it, or the merge concatenates the repeats."""
         with _ScriptedWire(_turn(provider=UPSTREAM)) as wire:
             metadata = [c.response_metadata for c in _client(wire.base_url).stream("hi")]
         stamped = [m for m in metadata if PROVIDER_NAME_METADATA_KEY in m]
@@ -416,9 +406,7 @@ class TestStreaming:
         assert stamped[0][PROVIDER_NAME_METADATA_KEY] == UPSTREAM
 
     def test_a_second_finish_event_does_not_double_the_name(self) -> None:
-        """Live reasoning streams carry TWO finish events (reasoning block, then
-        content), so "the finish chunk" is not a unique slot — measured, not
-        hypothetical. First-one-wins is what holds regardless."""
+        """Live reasoning streams carry TWO finish events (reasoning, then content), so "the finish chunk" is not a unique slot."""
         turn = [
             _sse(_chunk("think", provider=UPSTREAM, finish="stop")),
             _sse(_chunk("answer", provider=UPSTREAM, finish="stop")),
@@ -459,8 +447,7 @@ class TestStreaming:
         assert merged.response_metadata[PROVIDER_NAME_METADATA_KEY] == UPSTREAM
 
     def test_a_delta_without_a_role_still_gets_the_name(self) -> None:
-        """Continuation deltas carry no role, so the chunk class comes from
-        default_class — which the wrapper must keep passing through."""
+        """Continuation deltas carry no role, so the chunk class comes from default_class, which the wrapper must keep passing through."""
         chunk = _chunk("x", provider=UPSTREAM, finish="stop")
         del chunk["choices"][0]["delta"]["role"]
 

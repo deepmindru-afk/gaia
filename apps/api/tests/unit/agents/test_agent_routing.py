@@ -28,7 +28,7 @@ from tests.helpers import BindableToolsFakeModel
 def _build_minimal_registry():
     @tool
     def dummy_tool(query: str) -> str:
-        """A dummy tool for testing."""
+        """Echo the query back for routing tests."""
         return f"result: {query}"
 
     return {"dummy_tool": dummy_tool}

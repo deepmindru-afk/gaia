@@ -135,8 +135,7 @@ class TestSearchMessagesRegexEscaping:
     async def test_query_is_regex_escaped_before_reaching_repositories(
         self, mock_conversation_repo, mock_note_repo, mock_get_context_window
     ):
-        """A metacharacter-laden query must reach both repositories as an escaped
-        literal — never the raw pattern (ReDoS / regex-injection hardening)."""
+        """A metacharacter-laden query must reach both repositories as an escaped literal, never the raw pattern."""
         mock_conversation_repo.search.return_value = ConversationSearchResults()
         mock_note_repo.search_by_plaintext.return_value = []
 

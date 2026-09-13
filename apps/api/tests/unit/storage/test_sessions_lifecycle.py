@@ -141,10 +141,9 @@ async def test_another_users_sessions_are_never_listed(mount: Path) -> None:
     hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory permissions"
 )
 async def test_an_unreadable_sessions_directory_surfaces_the_os_error(mount: Path) -> None:
-    # Pins the contract the watcher sees: unlike sessions_root_inode (which
-    # swallows OSError), this call propagates. Adding a blanket except here
-    # would turn a broken mount into "the user has no conversations" and the
-    # watcher would silently forget every session it was tracking.
+    # Unlike sessions_root_inode (which swallows OSError), this call must
+    # propagate: a blanket except would turn a broken mount into "no
+    # conversations" and the watcher would forget every session it tracked.
     d = sessions_dir(mount)
     make_session(mount, CONV)
     d.chmod(0o000)

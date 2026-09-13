@@ -1,27 +1,16 @@
 """E2E: subscribing a tracked todo to a trigger, through a real compiled graph.
 
-WHAT THIS TESTS (REAL GAIA CODE):
-- list_trigger_fields / subscribe_todo_to_trigger from
-  app.agents.tools.tracked_todo_tools — the real tools, bound into a real
-  compiled agent graph.
-- The real matchable-fields catalog and the real deterministic validator: the
-  model writes a camelCased field name, and the repair path resolves it without
-  any second LLM call.
-- create_agent from app.override.langgraph_bigtool.create_agent compiles
-  the graph; the real pre-model hooks run.
+Covers real GAIA code: list_trigger_fields/subscribe_todo_to_trigger bound
+into a real compiled agent graph via create_agent, the real pre-model hooks,
+and the real matchable-fields catalog with its deterministic validator — a
+model-written camelCased field name is repaired without a second LLM call.
 
-The point of driving it here rather than calling the tool directly is the loop:
-a rejection has to be something the *next model turn* can act on. A unit test can
-assert the error text; only running the loop shows the model gets a second turn
-with the catalog in front of it.
+Driving it through the loop (not calling the tool directly) matters because a
+rejection has to be something the *next model turn* can act on — only the loop
+shows the model gets a second turn with the catalog in front of it.
 
-Mock surfaces:
-- LLM: BindableToolsFakeModel (scripted tool calls)
-- Composio registration + Mongo: mocked at the service seam
-- Store: InMemoryStore, Checkpointer: MemorySaver
-
-DELETE app/services/triggers/matchable_fields.py → these tests FAIL.
-DELETE the validator's mechanical repair → the typo test FAILS.
+Mocked: the LLM, Composio/Mongo (service seam), store and checkpointer.
+Deleting matchable_fields.py or the validator's repair fails these tests.
 """
 
 from unittest.mock import AsyncMock, patch

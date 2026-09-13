@@ -51,10 +51,9 @@ class TestRunOnCapturedLoop:
         assert result == "ok"
 
     async def test_awaits_a_loop_bound_future_without_cross_loop_error(self) -> None:
-        # A Future bound to THIS loop. The old bridge (asyncio.run in a worker
-        # thread) drives a fresh loop and raises "attached to a different loop"
-        # here — the exact calendar failure. Dispatching onto the captured loop
-        # resolves the future on the loop that owns it.
+        # The old bridge (asyncio.run in a worker thread) raised "attached to a
+        # different loop" here — the exact calendar failure. Dispatching onto
+        # the captured loop resolves the future on the loop that owns it.
         capture_running_loop()
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[str] = loop.create_future()

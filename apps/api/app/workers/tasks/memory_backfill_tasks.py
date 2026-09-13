@@ -125,10 +125,9 @@ async def backfill_user_memories(ctx: dict[str, Any], user_id: str) -> str:  # n
         processed += 1
 
     if processed:
-        # Each retain only *scheduled* a debounced (120s) core-document
-        # consolidation. Cancel it and run one pass inline so the memory is
-        # genuinely ready when we notify — and so the result survives a
-        # worker restart that would otherwise drop the debounced pass.
+        # Each retain only scheduled a debounced (120s) consolidation; cancel it
+        # and run inline so memory is ready before notify, and the result
+        # survives a worker restart that would otherwise drop the debounced pass.
         await cancel_consolidation(user_id)
         last_day = max(_conversation_date(doc).date() for doc in docs)
         await memory_engine.summarize_episode(user_id, last_day)

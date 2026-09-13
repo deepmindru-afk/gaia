@@ -10,7 +10,6 @@ from app.models.calendar_models import (
     BatchEventDeleteRequest,
     BatchEventUpdateRequest,
     CalendarEventsQueryRequest,
-    # CalendarEventToolRequest,  # Unwired as of 2026-06; see calendar_models.py
     CalendarPreferencesUpdateRequest,
     CreateEventInput,
     DeleteEventInput,

@@ -32,7 +32,7 @@ def _thread_config() -> dict:
 def _build_minimal_registry():
     @tool
     def dummy_tool(query: str) -> str:
-        """A dummy tool used only by routing tests."""
+        """Echo the query back for routing tests."""
         return f"result for: {query}"
 
     return {"dummy_tool": dummy_tool}

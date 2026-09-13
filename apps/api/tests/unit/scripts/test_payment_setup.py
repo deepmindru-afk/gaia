@@ -25,7 +25,7 @@ from scripts.payment_setup import (
 
 
 def _stored_document(plan, **overrides):
-    """The catalogue plan as Mongo would hand it back, with an older timestamp."""
+    """Build the catalogue plan as Mongo would hand it back, with an older timestamp."""
     stored = {
         "_id": "plan-id",
         **catalogue_fields(plan),
@@ -108,8 +108,7 @@ def test_catalogue_has_no_free_plan() -> None:
 
 
 async def test_deactivate_free_plan_marks_an_existing_active_free_row_inactive() -> None:
-    """A Free row left over from before the paid-only cutover is turned off,
-    not deleted — so the historical record survives."""
+    """A leftover Free row is turned off, not deleted, so the historical record survives."""
     collection = AsyncMock()
     collection.find_one.return_value = {"_id": "free-id", "name": "Free", "is_active": True}
 
@@ -132,8 +131,7 @@ async def test_deactivate_free_plan_dry_run_writes_nothing() -> None:
 
 
 async def test_deactivate_free_plan_is_a_noop_when_no_active_free_row_exists() -> None:
-    """Idempotent: a second run (or a catalogue that never had Free) does
-    nothing rather than erroring."""
+    """Idempotent: a second run, or a catalogue that never had Free, does nothing rather than erroring."""
     collection = AsyncMock()
     collection.find_one.return_value = None
 

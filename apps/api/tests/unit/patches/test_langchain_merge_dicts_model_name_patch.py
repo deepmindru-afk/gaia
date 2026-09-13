@@ -166,9 +166,7 @@ class TestApply:
 
 
 class TestUpstreamParity:
-    """The patch is a verbatim copy of upstream plus one entry in the idempotent
-    set. Anything else that diverges is drift — either an editing slip in the
-    copy, or an upstream change the copy has not tracked."""
+    """The patch is a verbatim copy of upstream plus one idempotent-set entry; anything else that diverges is drift."""
 
     @pytest.mark.parametrize(
         ("left", "right"),

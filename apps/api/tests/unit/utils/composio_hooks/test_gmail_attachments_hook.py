@@ -41,7 +41,7 @@ SHARED = "app.utils.composio_hooks.file_upload_hooks"
 
 @pytest.fixture(autouse=True)
 def _no_held_card():
-    """The held draft card is context state; no test may inherit another's."""
+    """Reset the held draft card so no test inherits another's state."""
     _pending_draft_card.set(None)
     yield
     _pending_draft_card.set(None)
@@ -193,8 +193,7 @@ class TestStrictGmailResolution:
 
 class TestBeforeHookPropagatesAbort:
     def test_before_hook_does_not_swallow_abort(self):
-        """The whole before-hook is wrapped in try/except; attachment failures must
-        still propagate (the tool must NOT run without the requested file)."""
+        """Attachment failures must propagate past the hook's try/except, not run the tool without the file."""
         params = {
             "arguments": {
                 "subject": "s",

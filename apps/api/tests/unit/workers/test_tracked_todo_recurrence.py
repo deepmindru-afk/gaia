@@ -31,11 +31,7 @@ KOLKATA = ZoneInfo("Asia/Kolkata")
 
 class TestComputeNextRun:
     def test_offset_form_tz_does_not_crash_and_is_correct(self):
-        """The regression: a stored ±HH:MM offset must resolve, not fall back.
-
-        9 AM in IST (+05:30) is 03:30 UTC. Before the fix this raised inside
-        ZoneInfo("+05:30") and silently fell back to UTC (returning 09:00 UTC).
-        """
+        """Regression: a stored +05:30 offset must resolve 9 AM IST to 03:30 UTC, not silently fall back to UTC."""
         next_run = _compute_next_run("0 9 * * *", "+05:30")
         assert next_run is not None
         assert next_run.tzinfo is not None
@@ -66,11 +62,7 @@ class TestComputeNextRun:
         assert before + timedelta(hours=1) <= next_run <= after + timedelta(hours=1)
 
     def test_anchored_daily_preserves_local_time_of_day(self):
-        """An anchored 'daily' keeps the anchor's local wall-clock (08:00 IST).
-
-        The anchor is in the past; the result must be strictly in the future yet
-        still read as 08:00 when converted back to Asia/Kolkata.
-        """
+        """A past 08:00 IST anchor must recur strictly in the future, still reading as 08:00 in Asia/Kolkata."""
         anchor = datetime.now(KOLKATA).replace(
             hour=8, minute=0, second=0, microsecond=0
         ) - timedelta(days=3)

@@ -42,8 +42,7 @@ def _artifact_message(conversation_id: str, path: str) -> dict[str, str]:
 
 class TestConsumeSurvivesOneBadEvent:
     async def test_bad_event_is_logged_and_the_loop_continues(self) -> None:
-        """One event whose handling raises must not stop the next event from
-        being handled — the whole point of the per-event try/except."""
+        """One event whose handling raises must not stop the next event from being handled."""
         forwarder = _forwarder()
         pubsub = _FakePubSub(
             [
@@ -68,8 +67,7 @@ class TestConsumeSurvivesOneBadEvent:
 
 class TestPersistEntryIsBestEffort:
     async def test_repository_failure_is_logged_not_raised(self) -> None:
-        """A Mongo write failure on the reload-durability path must not
-        propagate — the live stream already delivered the card to the user."""
+        """A Mongo write failure here must not propagate — the live stream already delivered the card."""
         forwarder = _forwarder(bot_message_id="bot-msg-1")
         entry = build_artifact_ref_entry("conv-1", "report.pdf", "upsert")
 
@@ -85,8 +83,7 @@ class TestPersistEntryIsBestEffort:
 
 class TestWarmCacheIsBestEffort:
     async def test_resolve_session_path_failure_is_logged_not_raised(self) -> None:
-        """A missing mount / deleted file during cache warm must degrade to a
-        cold read later, never fail the turn."""
+        """A missing mount or deleted file during cache warm must degrade to a cold read later, never fail the turn."""
         forwarder = _forwarder()
 
         with (

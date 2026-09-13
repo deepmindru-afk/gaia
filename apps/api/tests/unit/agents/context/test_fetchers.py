@@ -263,7 +263,7 @@ class TestConnectedIntegrationsManifest:
     async def test_a_row_names_what_the_connection_is_for(
         self, no_tools_by_default: AsyncMock
     ) -> None:
-        """ "GitHub (github)" tells the model nothing it can act on — the tool count and sample turn it into something actionable."""
+        """The row GitHub (github) tells the model nothing it can act on — the tool count and sample turn it into something actionable."""
         no_tools_by_default.return_value = [
             _tool("GITHUB_CREATE_AN_ISSUE"),
             _tool("GITHUB_LIST_PULL_REQUESTS"),

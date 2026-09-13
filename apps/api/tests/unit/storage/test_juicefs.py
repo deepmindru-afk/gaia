@@ -65,7 +65,7 @@ def mount_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def mount(mount_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A real tmpdir that also passes the mountpoint check.
+    """Provide a real tmpdir that also passes the mountpoint check.
 
     Path.is_mount() is False for any tmpdir, so without this every helper
     would raise JuiceFSUnavailable and every "rejects a bad path" assertion
@@ -77,7 +77,7 @@ def mount(mount_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def outside(tmp_path: Path) -> Path:
-    """A directory outside the mount — the target every escape test aims at."""
+    """Create a directory outside the mount — the target every escape test aims at."""
     d = tmp_path / "outside"
     d.mkdir()
     (d / "secret.txt").write_text("victim data")

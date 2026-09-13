@@ -285,10 +285,9 @@ const getWeatherTheme = (weatherData: WeatherData): WeatherTheme | null => {
 export const WeatherCard: React.FC<WeatherCardProps> = ({ weatherData }) => {
   const [useFahrenheit, setUseFahrenheit] = useState(false);
 
-  // One analytics ping per mounted card, describing the payload the card was
-  // created with. The snapshot ref keeps it fire-once — depending on
-  // `weatherData` directly would re-report whenever the parent hands down a
-  // re-parsed object.
+  // One analytics ping per mounted card, describing the payload it was created
+  // with. The snapshot ref keeps it fire-once — depending on `weatherData`
+  // directly would re-report whenever the parent hands down a re-parsed object.
   const initialWeatherDataRef = useRef(weatherData);
   useEffect(() => {
     trackEvent(ANALYTICS_EVENTS.WEATHER_QUERIED, {

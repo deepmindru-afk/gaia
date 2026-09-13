@@ -1,79 +1,18 @@
 """Live, opt-in proof that GAIA detects and recovers from a dead Composio connection.
 
-Nothing here is patched. Every test talks to the real Composio API with a real
-key, runs real tool executions against a real third-party account, and asserts
-against the real user_integrations document in Mongo. That is the entire
-point of this tier: the 1810 classifier, the expiry transition and the webhook
-route can all pass a mocked test while being wrong about what Composio actually
-sends.
-
-What each test costs
---------------------
-- test_l1_...  — one connected_accounts.link() call (creates a pending
-  ca_* account at Composio) plus one HTTP GET of the Connect Link. Deletes
-  the pending account again. Non-destructive.
-- test_l5_...  — one real tool execution on the healthy account. Costs
-  whatever that tool costs at the provider. Non-destructive. **Run this first**:
-  it is the false-positive guard and it needs a live, healthy connection.
-- test_l2_...  — **DESTRUCTIVE.** Revokes the user's connected account at
-  Composio, then executes a tool against the corpse. The OAuth grant is gone
-  afterwards; it deletes the revoked account so the account list stays clean,
-  but only a human completing OAuth again (test_l4_...) restores service.
-- test_l3_...  — **DESTRUCTIVE**, same revocation, and additionally needs a
-  publicly reachable GAIA API so Composio can deliver the webhook.
-- test_l4_...  — **INTERACTIVE.** Prints a Connect Link and waits for a
-  human to complete OAuth in a browser. Run pytest with -s or you will not
-  see the link.
-
-Manual setup
-------------
-1. COMPOSIO_KEY — the live key. Declared in tests/composio/conftest.py
-   via HERMETIC_ALLOW_KEYS so the root hermetic fence does not blank it.
-   Without it every test here skips.
-2. USE_REAL_SERVICES=1 — the root conftest replaces the Mongo client with a
-   MagicMock unless this is set, so every Mongo assertion below would be
-   asserting against a mock. L2–L5 skip without it. Mongo and Redis must be the
-   same instances the GAIA API/worker use.
-3. COMPOSIO_LIVE_USER_ID — the GAIA user id. It is also the Composio
-   user_id: connect_account() passes the GAIA id straight through and
-   the OAuth callback reads the GAIA id back off the connected account.
-4. COMPOSIO_LIVE_INTEGRATION_ID — a Composio-managed integration id from
-   app/config/oauth_config.py (e.g. gmail), already connected for that
-   user, i.e. user_integrations says connected.
-5. COMPOSIO_LIVE_TOOL_SLUG (+ optional COMPOSIO_LIVE_TOOL_ARGS as a JSON
-   object) — a cheap, READ-ONLY tool on that toolkit, e.g.
-   COMPOSIO_LIVE_TOOL_SLUG=GMAIL_FETCH_EMAILS
-   COMPOSIO_LIVE_TOOL_ARGS='{"max_results": 1}'. Needed by L2 and L5.
-6. COMPOSIO_LIVE_REVOKE=tool (L2) or COMPOSIO_LIVE_REVOKE=webhook (L3).
-   One revocation is available per reconnect, so these are mutually exclusive by
-   construction — and because pytest-randomly shuffles test order, the
-   exclusivity has to live in the gates rather than in file order. L5 refuses to
-   run in any invocation where a destructive or interactive knob is set.
-7. COMPOSIO_LIVE_RECONNECT=1 (L4) — plus a running GAIA API sharing this
-   Redis (the OAuth state token) and this Mongo, reachable at settings.HOST
-   from the browser that completes the consent.
-8. L3 only: the GAIA API must be reachable from the public internet (a tunnel),
-   a Composio webhook subscription must point at
-   <public-host>/api/v1/webhook/composio, and COMPOSIO_WEBHOOK_SECRET
-   must match — otherwise the signature check rejects the delivery.
-
-Suggested sequence, one invocation each (order matters, the runner shuffles)::
-
-    pytest tests/composio/test_connection_expiry_live.py -m composio -k "l1 or l5"
-    COMPOSIO_LIVE_REVOKE=tool pytest ... -m composio -k l2
-    COMPOSIO_LIVE_RECONNECT=1 pytest ... -m composio -k l4 -s
-    COMPOSIO_LIVE_REVOKE=webhook pytest ... -m composio -k l3
-    COMPOSIO_LIVE_RECONNECT=1 pytest ... -m composio -k l4 -s
-
-What these tests do NOT exercise
---------------------------------
-Tool calls run through a minimal single-node StateGraph rather than through
-the executor agent. That is a real LangGraph runtime — verified to give the tool
-a working get_stream_writer() and to propagate metadata.user_id, the two
-things _handle_dead_connected_account depends on — but it does not exercise
-tool selection, the executor's own hooks, or the SSE bridge that carries the
-connect card to a browser. L4 drives the real OAuth callback end to end; L3
-drives the real webhook endpoint end to end.
+Nothing is patched: real Composio API, real third-party account, real user_integrations in Mongo.
+l1 creates then deletes a pending account; l5 runs one read-only tool (false-positive guard, run
+first, needs a healthy connection); l2 (tool) and l3 (webhook) are DESTRUCTIVE revocations; l4 is
+INTERACTIVE OAuth (run with -s). Needs COMPOSIO_KEY, USE_REAL_SERVICES=1 (else Mongo is a
+MagicMock; Mongo/Redis must be the API's), COMPOSIO_LIVE_USER_ID, COMPOSIO_LIVE_INTEGRATION_ID
+(already connected) and COMPOSIO_LIVE_TOOL_SLUG[/_ARGS] (read-only). COMPOSIO_LIVE_REVOKE=tool|webhook
+and COMPOSIO_LIVE_RECONNECT=1 arm l2/l3/l4. One revocation per reconnect and pytest-randomly
+shuffles, so exclusivity lives in the gates; l5 refuses to run with any knob set. l3 needs a public
+GAIA API, a Composio webhook to /api/v1/webhook/composio and a matching COMPOSIO_WEBHOOK_SECRET;
+l4 needs a GAIA API sharing this Redis/Mongo at settings.HOST. One invocation each, in order:
+-k "l1 or l5"; REVOKE=tool -k l2; RECONNECT=1 -k l4 -s; REVOKE=webhook -k l3; RECONNECT=1 -k l4 -s.
+Tools run in a one-node StateGraph, not the executor: tool selection, executor hooks and the SSE
+bridge are not exercised.
 """
 
 from __future__ import annotations

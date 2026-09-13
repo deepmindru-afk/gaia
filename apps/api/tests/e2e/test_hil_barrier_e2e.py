@@ -1,27 +1,17 @@
 """E2E tests: the HIL coalesced approval barrier, end to end on live infra.
 
-Real PostgreSQL (the LangGraph checkpointer, so the interrupt and the node replay
-are genuine), real MongoDB (approval records, user preferences), real Redis (the
-background-results bucket, the resume slot, stream publish). Two subagent graphs
-guard a destructive side effect with the REAL gate; the REAL wait_for_subagents
-barrier collects them; the REAL resolution layer applies the decisions.
+Real Postgres (checkpointer), MongoDB (approvals/preferences) and Redis
+(results bucket, resume slot, stream publish) back two subagent graphs behind
+the real gate; the real wait_for_subagents barrier collects them and the real
+resolution layer applies the decisions.
 
-What is substituted, and why — each needs infra unrelated to the barrier itself:
+Substituted (infra unrelated to the barrier itself): handoff_tools's
+name->graph lookup, gate's cosmetic card label, and resolution's re-dispatch
+target — its resume Command is still driven into the real executor graph, only
+the agent it would wake is stood in for.
 
-* handoff_tools._resolve_subagent — name → graph lookup (OAuth/provider registry).
-* gate._integration_name_for — the cosmetic card label (ChromaDB tool registry).
-* resolution.prepare_run_from_item / run_executor_background — the re-dispatch
-  target is the full executor agent (LLM + tool registry). The resume Command is
-  captured and driven into the executor graph directly, so the dispatch decision is
-  still the real one; only the agent it would wake is stood in for.
-
-Everything else is production code: the gate, policy resolution, the approval
-records, checkpoint/interrupt, the barrier loop, the resume slot, the results
-bucket, and exactly-once collection.
-
-The journey is one causal chain — nothing can be approved before both subagents
-park — so it is one test, in the shape of test_device_bridge_e2e's lifecycle
-test rather than split into steps that would each have to re-run the setup.
+One test, not steps: nothing can be approved before both subagents park, so
+this is one causal chain (shaped like test_device_bridge_e2e's lifecycle test).
 """
 
 from __future__ import annotations

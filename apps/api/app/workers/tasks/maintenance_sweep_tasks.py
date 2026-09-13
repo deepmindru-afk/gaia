@@ -34,13 +34,9 @@ DORMANT_DAYS = 5
 WAITING_LABEL_MAX_DAYS = 8
 MAX_HEALTH_CHECKS_PER_USER = 10  # Max agent health-check calls per user per sweep
 
-# A health-check prompt is carried by MessageRequestWithHistory, whose `message`
-# field pydantic caps at MAX_MESSAGE_LENGTH. One user's oversized canvas raised
-# ValidationError there and aborted the whole cron mid-sweep, so the canvas gets
-# its own budget derived from that cap: a literal here could drift out of sync
-# with the model silently. Two fifths leaves 30k characters of headroom, orders
-# of magnitude more than the few hundred the prompt scaffolding and trim marker
-# ever need.
+# A canvas over MAX_MESSAGE_LENGTH raised ValidationError and aborted the whole
+# cron mid-sweep; this budget derives from that cap (never a literal, to avoid
+# drift) — two fifths leaves 30k chars, far more than the scaffolding needs.
 HEALTH_CHECK_CANVAS_MAX_CHARS = MAX_MESSAGE_LENGTH * 2 // 5
 
 # Escalating backoff between repeat notifications for the same todo: notify, then
@@ -246,10 +242,9 @@ async def _process_dormant(
         try:
             result = await _health_check_dormant(todo, pool)
         except Exception as exc:
-            # One todo must never abort the sweep for every other user: an
-            # oversized canvas once raised here and the digest never went out.
-            # The todo keeps its cooldown-free state and is retried next sweep
-            # rather than being digested on the strength of a check that failed.
+            # One todo must never abort the sweep for others (an oversized canvas
+            # once did). It keeps its cooldown-free state and retries next sweep
+            # rather than being digested on a check that failed.
             log.error(
                 "maintenance_sweep.dormant_health_check_error",
                 todo_id=todo.id,
@@ -294,15 +289,11 @@ def _has_upcoming_schedule(todo: TodoDocument, now: datetime) -> bool:
 
 
 def _is_dormant(todo: TodoDocument, now: datetime) -> bool:
-    """
-    Return True if the todo has been idle for more than DORMANT_DAYS.
+    """Return True if the todo has been idle for more than DORMANT_DAYS.
 
-    A todo is dormant when:
-    - updated_at is more than DORMANT_DAYS ago
-    - no upcoming schedule
-    - no blocking label: UNLESS the blocking label has been there
-      for more than WAITING_LABEL_MAX_DAYS days (at which point it
-      is considered stuck and should surface)
+    Also requires no upcoming schedule and no blocking label — unless that
+    label has sat past WAITING_LABEL_MAX_DAYS, at which point it's stuck and
+    should surface anyway.
     """
     updated_at = todo.updated_at
     if not updated_at:
@@ -558,11 +549,9 @@ async def _read_canvas(todo: TodoDocument) -> str:
 def _bounded_canvas(canvas: str) -> str:
     """Trim an oversized canvas to its head and tail, within HEALTH_CHECK_CANVAS_MAX_CHARS.
 
-    A canvas is sectioned markdown: Key Details and Current State sit
-    near the top and are patched in place, while activity-log and timeline
-    entries are appended to the bottom. Both ends carry what a health check
-    needs, so the middle is what gets dropped, behind a marker that keeps the
-    agent from reading the cut as a gap in the todo's history.
+    Key Details/Current State sit near the top; activity-log/timeline entries
+    append at the bottom — both ends carry what a health check needs, so the
+    middle is dropped behind a marker so the agent doesn't read it as a gap.
     """
     if len(canvas) <= HEALTH_CHECK_CANVAS_MAX_CHARS:
         return canvas
@@ -685,12 +674,9 @@ async def _set_cooldown(pool: ArqRedis, todo_id: str, days: int) -> None:
 async def _register_notification(pool: ArqRedis, todo_id: str) -> bool:
     """Advance a todo's escalating notification backoff.
 
-    Returns True if a notification should be sent now and sets the next cooldown
-    from NOTIFICATION_BACKOFF_DAYS. Returns False once the schedule is
-    exhausted: the todo is muted for NOTIFICATION_MUTE_DAYS and the caller
-    must not send. The strike counter outlives each cooldown so the escalation
-    level survives between notifications, resetting only after STRIKE_TTL_DAYS
-    of silence.
+    True to send now, setting the next cooldown from NOTIFICATION_BACKOFF_DAYS;
+    False once exhausted, muting for NOTIFICATION_MUTE_DAYS. The strike counter
+    outlives each cooldown, resetting only after STRIKE_TTL_DAYS of silence.
     """
     strike_key = _strike_key(todo_id)
     # pool.get() is typed Any (redis-py stub); it returns str | bytes | None

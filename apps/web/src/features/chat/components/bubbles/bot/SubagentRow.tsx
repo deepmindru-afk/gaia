@@ -67,10 +67,9 @@ function ApprovalOutcomeChip({ status }: Readonly<{ status: ApprovalStatus }>) {
 
 // ── Top-level tool call row ─────────────────────────────────────────────────
 
-// A `read` of a markdown file returns line-numbered text (`    12\t# Heading`),
-// whose number+tab prefix stops the content from parsing as markdown. For the
-// display card, strip that prefix so skill files (SKILL.md) and other .md reads
-// render as real markdown. The agent still receives the numbered version.
+// A markdown read returns line-numbered text (`    12\t# Heading`), whose
+// prefix stops it parsing as markdown — stripped here for display so
+// SKILL.md etc. render properly; the agent still gets the numbered version.
 const MARKDOWN_READ_PATH = /\.(md|markdown|mdx)$/i;
 function displayToolOutput(call: ToolCallEntry): unknown {
   const { output, inputs } = call;
@@ -152,11 +151,9 @@ function ToolCallRow({
           )
           .join(" ")
       : "");
-  // `show_category === false` means the backend sent a custom/curated label as
-  // the primary. In that case the primary already reads naturally, so the
-  // secondary shows the raw tool name (with underscores, untrimmed) for
-  // transparency. Otherwise the primary IS the tool name, so the secondary shows
-  // the integration/category (the original behaviour).
+  // `show_category === false`: backend sent a custom/curated primary label,
+  // so secondary shows the raw tool name for transparency. Otherwise primary
+  // IS the tool name, so secondary shows the integration/category.
   const hasCustomLabel = call.show_category === false;
   const secondaryLabel = hasCustomLabel
     ? call.tool_name.toLowerCase()
@@ -275,10 +272,9 @@ function ToolCallRow({
   );
 }
 
-// ── Model thinking row ──────────────────────────────────────────────────────
-// A step where the model reasoned (a ToolCallEntry carrying `reasoning`). Mirrors
-// ToolCallRow's layout (icon column + connector + collapsible body) so thinking
-// sits naturally between tool steps at both the root and subagent levels.
+// A step where the model reasoned (ToolCallEntry carrying `reasoning`).
+// Mirrors ToolCallRow's layout (icon, connector, collapsible body) so
+// thinking sits naturally between tool steps at root and subagent levels.
 
 function ThinkingStepRow({
   reasoning,
@@ -409,9 +405,8 @@ export function SubagentRow({
     (tc) => tc.tool_name !== "spawn_subagent",
   );
   // One stable React key per step — derived from stream-stable structure
-  // (tool_call_id, else a slot anchored to the nearest preceding identified
-  // sibling), never payload content, so a growing reasoning delta keeps its
-  // row's `expanded` state across stream frames.
+  // (tool_call_id, else a slot anchored to the nearest identified sibling),
+  // never payload, so a growing reasoning delta keeps its `expanded` state.
   const stepKeys = deriveStepKeys(group.subagent_id, visibleSteps);
   // One of this subagent's steps is blocked on approval — the header shows the
   // amber marker instead of the neutral spinner so the pause reads as

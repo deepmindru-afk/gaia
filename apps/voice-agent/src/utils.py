@@ -30,7 +30,7 @@ def sanitize_for_tts(piece: str) -> str:
 
 
 def has_open_tag_at_tail(s: str) -> bool:
-    """True when the string ends inside an open tag (last < is later than last >)."""
+    """Return True when the string ends inside an open tag (last < is later than last >)."""
     last_open = s.rfind("<")
     if last_open == -1:
         return False
@@ -38,7 +38,7 @@ def has_open_tag_at_tail(s: str) -> bool:
 
 
 def has_open_openui_fence_at_tail(s: str) -> bool:
-    """True when the buffer contains a ':::openui' that has no closing ':::' after it."""
+    """Return True when the buffer has an open ':::openui' fence with no closing ':::'."""
     return OPEN_OPENUI_FENCE_TAIL_RE.search(s) is not None
 
 

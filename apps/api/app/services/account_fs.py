@@ -100,10 +100,8 @@ schedule_account_sync = make_scheduler(sync_account_files, log_name="account_vfs
 
 
 # --- source builders --------------------------------------------------------
-#
-# Each body builder returns the serialized JSON for its file, or None when the
-# source has nothing to say yet. A raised error skips that group for the pass
-# (logged in _safe_body) without touching the other files.
+# Each builder returns JSON or None (nothing to report); a raised error skips
+# just that group this pass (logged in _safe_body).
 
 
 async def _safe_body(

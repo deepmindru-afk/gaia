@@ -1,20 +1,17 @@
 """Service tests: a gated tool inside spawn_subagent, end to end on live infra.
 
 A gated call inside a spawn used to fail closed — refused with the unpausable
-denial and the user never asked. These drive the real production path against real
-Postgres (so the interrupt, the checkpoint and the node replay are genuine), real
-MongoDB (approval records, preferences) and real Redis.
+denial and the user never asked. Drives the real path against real Postgres
+(genuine interrupt/checkpoint/replay), MongoDB (approvals/preferences) and Redis.
 
-Real: the compiled spawn graph (spawn_agent._build_spawn_graph), the real
-SubagentMiddleware._run_spawn/_drive, the real middleware stack, and the
-real HIL gate. Substituted, and only these: the LLM (deterministic, message-driven
-so a replay behaves identically) and the gated tool's side effect (a counter,
-because "it happened exactly once" is the claim under test).
+Real: the compiled spawn graph, SubagentMiddleware._run_spawn/_drive, the
+middleware stack, the HIL gate. Substituted, only: the LLM (deterministic, so
+a replay behaves identically) and the gated tool's side effect (a counter,
+since "exactly once" is the claim under test).
 
 The sibling-replay case here is the live counterpart of
-tests/integration/agents/test_spawn_sibling_replay.py: that one proves the
-recovery against an in-memory saver with a hand-made pause, this one proves it
-with the real gate and a real Postgres checkpoint.
+test_spawn_sibling_replay.py — that proves recovery with an in-memory saver
+and hand-made pause; this proves it with the real gate and Postgres checkpoint.
 """
 
 from __future__ import annotations

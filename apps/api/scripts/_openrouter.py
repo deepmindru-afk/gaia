@@ -31,9 +31,10 @@ class GenerationRecord(BaseModel):
 
 
 class _Lookup(BaseModel):
-    """A generation lookup outcome. ``resolved`` False means the answer is
-    still unknown (network/5xx exhausted) and must NOT be cached — a 404 is a
-    resolved ``None``, because OpenRouter will never know that id again."""
+    """Generation lookup outcome; resolved=False (network/5xx exhausted) must not be cached.
+
+    A 404 is resolved with record None: OpenRouter will never know that id again.
+    """
 
     resolved: bool
     record: GenerationRecord | None = None

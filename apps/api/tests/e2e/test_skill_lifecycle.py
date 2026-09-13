@@ -1,36 +1,15 @@
-"""The user-installed skill lifecycle, end to end: install → listed → disable → uninstall.
+"""Skill lifecycle end to end: install -> listed -> disable -> uninstall.
 
-A user skill is only real if four independent things agree: the body lands on
-JuiceFS at the path the prompt will advertise, MongoDB holds the metadata, the
-Redis caches in front of both get invalidated on every write, and the listing the
-agent is handed reflects all of it. Each of those lives in a different module and
-nothing else in the repo checks they line up.
-
-The invalidation is the load-bearing one, and it has already been wrong once —
-registry._SKILLS_INVALIDATION_PATTERNS carries a comment saying the glob must
-track the v2: prefix in SKILLS_TEXT_CACHE_KEY, because without it the glob
-matches nothing and a disabled skill keeps being advertised to the agent for the
-full 12h TTL. Nothing failed when that happened: the write "succeeded", the Redis
-DEL matched zero keys, and the agent kept firing a skill the user had turned off.
-So these tests run the real @CacheInvalidator/@Cacheable decorators
-against a cache that implements Redis' glob semantics, and read the result back
-through get_available_skills_text — the same function that builds the prompt.
-
-What is real: the installer, the registry (decorators included), the parser and
-validator, the discovery/formatting layer, and the filesystem — the mount root is
-a real tmp_path (the test_juicefs.py recipe), so write_skill_file and
-delete_user_skill do real I/O.
-
-What is doubled: MongoDB (an in-memory repository mirroring SkillsRepository's
-query semantics — those semantics themselves are pinned against real Mongo in
-tests/contracts/test_skills_repository.py, so nothing here re-asserts them)
-and Redis (an in-memory store whose delete globs exactly like delete_cache
-→ delete_cache_by_pattern). GitHub is respx-mocked.
-
-Builtin skills are covered by test_builtin_skills.py and
-test_skills_reach_the_agent.py; the executor listing contains them here too,
-so every assertion is on membership of a specific user skill, never on the whole
-string.
+Four things must agree — JuiceFS body, Mongo metadata, invalidated Redis
+caches, and the agent's listing — each in a different module, unchecked
+elsewhere. Invalidation broke once: _SKILLS_INVALIDATION_PATTERNS's glob must
+track SKILLS_TEXT_CACHE_KEY's v2: prefix or it matches nothing — the write
+"succeeds", DEL matches zero keys, and a disabled skill fires for the full
+12h TTL with no error. Real: installer, registry, parser/validator, discovery,
+filesystem (real tmp_path mount). Doubled: Mongo (in-memory, mirrors
+SkillsRepository, pinned in test_skills_repository.py), Redis (in-memory,
+real delete_cache_by_pattern globbing), GitHub (respx). Assertions always
+target one user skill, never the whole listing string.
 """
 
 from __future__ import annotations
@@ -515,16 +494,7 @@ class TestUpdate:
         assert stored.target == EXECUTOR
 
     async def test_re_saving_a_skill_with_its_current_target_is_not_a_clash(self, stack):
-        """Every edit through the UI re-sends the current target, so a re-save
-        must not collide with the skill itself.
-
-        Two guards each prevent this independently — the target-changed gate
-        skips the lookup, and the exclude-self term discards the only row it
-        could find — so this test survives either one being removed on its own,
-        and only goes red when both are. Given the gate, the exclude-self term
-        is in fact unreachable: any row the lookup returns has the *new* target,
-        which the gate has already established is not the skill's own.
-        """
+        """Two independent guards (a target-changed gate, an exclude-self term) each prevent a re-save colliding with itself; this only goes red if both are removed."""
         skill = await _install()
 
         updated = await update_skill_inline(USER, skill.id, target=EXECUTOR)
@@ -546,15 +516,7 @@ class TestUpdate:
         assert stored.description == "Summarise the quarterly numbers."
 
     async def test_editing_another_users_skill_does_nothing(self, stack):
-        """Ownership is scoped at the lookup, and it is the *caller's* id that
-        goes into it — not the id stored on the skill.
-
-        The owner-succeeds half is what makes this falsifiable. Whether a given
-        id is refused is decided inside the repository, which is doubled here
-        (and pinned against real Mongo in tests/contracts/test_skills_repository),
-        so the negative alone is satisfied by a lookup that returns None for
-        everybody — including one whose arguments have simply been swapped.
-        """
+        """The owner-succeeds half makes this falsifiable — the negative alone would also pass a lookup that returns None for everybody, args swapped or not."""
         mount, _, _ = stack
         skill = await _install()
 

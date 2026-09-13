@@ -1,23 +1,15 @@
 """E2E test: manage_system_prompts_node deduplicates system prompts in multi-turn graphs.
 
-WHAT THIS TESTS (REAL GAIA CODE):
-- manage_system_prompts_node from app.agents.core.nodes.manage_system_prompts
-  is wired as a real pre-model hook via create_agent from
-  app.override.langgraph_bigtool.create_agent.
-- In a multi-turn graph, only the LATEST non-memory SystemMessage is kept;
-  older non-memory system prompts are removed.
-- Memory-marked SystemMessages (additional_kwargs={"memory_message": True})
-  are preserved across turns regardless of position.
-- filter_messages_node (also a real GAIA node) runs before
-  manage_system_prompts_node in the hook chain.
+Covers real GAIA code: manage_system_prompts_node wired as a real pre-model
+hook via create_agent; in a multi-turn graph only the latest non-memory
+SystemMessage is kept, older ones removed, while memory-marked SystemMessages
+(additional_kwargs={"memory_message": True}) survive regardless of position;
+filter_messages_node runs before it in the hook chain.
 
-Mock surfaces:
-- LLM: FakeMessagesListChatModel
-- Store: InMemoryStore (no ChromaDB)
-- Checkpointer: MemorySaver (no PostgreSQL)
+Mocked: the LLM (FakeMessagesListChatModel), store (InMemoryStore, no
+ChromaDB) and checkpointer (MemorySaver, no PostgreSQL).
 
-DELETE app/agents/core/nodes/manage_system_prompts.py → these tests FAIL.
-DELETE app/override/langgraph_bigtool/create_agent.py → these tests FAIL.
+Deleting manage_system_prompts.py or create_agent.py fails these tests.
 """
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage

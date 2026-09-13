@@ -28,17 +28,17 @@ def sse_frame(data: Mapping[str, Any]) -> str:
 
 
 def session_token_frame(session_token: str) -> str:
-    """The first frame of every stream: the short-lived bot session token."""
+    """Return the first frame of every stream: the short-lived bot session token."""
     return sse_frame({"session_token": session_token})
 
 
 def comment_keepalive_frame() -> str:
-    """The SSE comment that opens the connection and keeps proxies awake."""
+    """Return the SSE comment that opens the connection and keeps proxies awake."""
     return _COMMENT_KEEPALIVE
 
 
 def keepalive_frame() -> str:
-    """A forwarded keepalive, so bot clients reset their inactivity timers."""
+    """Return a forwarded keepalive, so bot clients reset their inactivity timers."""
     return sse_frame({"keepalive": True})
 
 
@@ -53,25 +53,25 @@ def notice_frame(notice_text: str) -> str:
 
 
 def approval_frame(approval_payload: Mapping[str, Any]) -> str:
-    """A HIL approval card, rendered by the bot client as an out-of-band prompt."""
+    """Return a HIL approval card, rendered by the bot client as an out-of-band prompt."""
     return sse_frame({"approval": approval_payload})
 
 
 def message_boundary_frame(boundary: object) -> str:
-    """An assistant message ended — the client closes (or retracts) its bubble."""
+    """Signal that an assistant message ended — the client closes (or retracts) its bubble."""
     return sse_frame({"message_boundary": boundary})
 
 
 def error_frame(error_code: str) -> str:
-    """A terminal error. The code is the contract the bot adapters switch on."""
+    """Return a terminal error frame; the code is the contract the bot adapters switch on."""
     return sse_frame({"error": error_code})
 
 
 def done_frame(conversation_id: str) -> str:
-    """The terminal success frame, naming the conversation the turn landed in."""
+    """Return the terminal success frame, naming the conversation the turn landed in."""
     return sse_frame({"done": True, "conversation_id": conversation_id})
 
 
 def stream_error_frame() -> str:
-    """The generic failure told to the bot when the Redis subscription breaks."""
+    """Return the generic failure told to the bot when the Redis subscription breaks."""
     return error_frame("Stream error occurred")

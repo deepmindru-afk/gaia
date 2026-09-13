@@ -31,7 +31,7 @@ from shared.py.wide_events import FileContext
 
 
 def _file_doc(**overrides: object) -> FileDocument:
-    """A stored file document as the repository returns it."""
+    """Build a stored file document as the repository returns it."""
     data: dict[str, object] = {
         "id": "0" * 24,
         "file_id": "f-1",
@@ -252,9 +252,7 @@ class TestFileServiceUpload:
         mock_chroma_client,
         mock_sandbox_mirror,
     ):
-        """`_log_upload_context` is pinned on its own below, but nothing proved
-        upload() hands it the real conversation id — dropping it there degrades
-        every upload's wide event to "" and no other assertion notices."""
+        """upload() must hand _log_upload_context the real conversation id, or every upload's wide event silently degrades to ""."""
         mock_cloudinary_upload.return_value = {
             "secure_url": "https://res.cloudinary.com/test/uploaded.pdf"
         }
@@ -698,8 +696,7 @@ class TestReindexFile:
         )
 
     async def test_chroma_client_init_fails_still_calls_index(self):
-        """When the client is unavailable, delete_from_index swallows its error
-        and index_file is still attempted."""
+        """When the Chroma client is unavailable, delete_from_index swallows its error and index_file still runs."""
         with (
             patch(
                 "app.services.files.store.ChromaClient.get_langchain_client",
@@ -889,8 +886,7 @@ class TestFileServiceUpdate:
 
     @patch(PATCH_DELETE_CACHE, new_callable=AsyncMock)
     async def test_ignores_non_allowlisted_fields(self, mock_del_cache, mock_file_repo):
-        """Only filename/description may be written — protected fields in the
-        payload must never reach the update model (mass-assignment guard)."""
+        """Only filename/description may be written; protected payload fields must never reach the update model (mass-assignment guard)."""
         mock_file_repo.get_by_file_id = AsyncMock(return_value=_file_doc(filename="old.pdf"))
         mock_file_repo.apply_metadata_update = AsyncMock(return_value=_file_doc())
 

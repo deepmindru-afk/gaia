@@ -173,8 +173,7 @@ class TestCandidateLiveness:
         llm.assert_awaited_once()
 
     async def test_candidate_expiring_exactly_now_is_already_dead(self) -> None:
-        """forget_after == now is the deletion boundary: at the very instant a
-        memory expires it must stop absorbing restatements."""
+        """forget_after == now is the deletion boundary; expiry must stop absorbing restatements at once."""
         fact = make_fact()
         row = make_row(content=fact.content, forget_after=NOW)
 
@@ -197,9 +196,7 @@ class TestCandidateLiveness:
     async def test_a_dead_first_neighbor_does_not_mask_a_live_duplicate(
         self, dead_row: MemoryRecord
     ) -> None:
-        """Skipping a dead neighbor must move on to the NEXT neighbor, not end
-        the scan: a live exact duplicate ranked behind a dead row still has to
-        collapse to DUPLICATE, or the store grows a copy per restatement."""
+        """Skipping a dead neighbor must continue the scan so a live duplicate behind it still collapses."""
         fact = make_fact()
         live = make_row(content=fact.content)
         llm = AsyncMock(return_value=ReconcileBatchResult())
@@ -224,8 +221,7 @@ class TestCandidateLiveness:
         llm.assert_not_awaited()
 
     async def test_a_dead_shortcut_new_does_not_stop_reconciliation_of_later_facts(self) -> None:
-        """The all-neighbors-dead NEW shortcut settles ONE fact; the facts
-        after it must still get their own verdicts."""
+        """The all-neighbors-dead NEW shortcut settles one fact only; later facts still get their own verdicts."""
         first, second = make_fact("sam plays chess"), make_fact("sam likes green tea")
         dead = make_row(content=first.content, is_forgotten=True)
         live = make_row(content=second.content)

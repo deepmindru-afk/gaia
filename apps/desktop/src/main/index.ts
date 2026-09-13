@@ -142,13 +142,11 @@ if (!gotTheLock) {
 
     electronApp.setAppUserModelId("io.heygaia.desktop");
 
-    // STEP 1 — Splash screen (first thing the user sees), with the
-    // persisted custom Dock icon applied before anything else renders
-    // so the Dock is correct from the very first frame.
+    // Apply the persisted custom Dock icon before anything else renders, so the
+    // Dock is correct from the very first frame.
     createSplashWindow();
     applyPersistedAppIcon();
 
-    // STEP 2 — Non-blocking setup
     if (isProduction) {
       setupAutoUpdater();
       checkForUpdatesAfterDelay();
@@ -166,7 +164,7 @@ if (!gotTheLock) {
 
     fixSessionCookies();
 
-    // STEP 3 — Server + window creation in PARALLEL
+    // Server start and window creation run in parallel.
     if (isProduction) {
       startNextServer()
         .then(() => {
@@ -185,7 +183,7 @@ if (!gotTheLock) {
     // toggling is a guarded no-op until createBackgroundSurfaces() runs.
     registerPopupShortcut();
 
-    // STEP 4 — Fallback timeout (10 s covers server + load + hydration)
+    // 10s fallback covers server start + load + hydration.
     setTimeout(() => {
       if (isSplashAlive()) {
         console.log("[Main] Fallback: showing main window after timeout");
@@ -195,11 +193,9 @@ if (!gotTheLock) {
       createBackgroundSurfaces();
     }, FALLBACK_SHOW_TIMEOUT_MS);
 
-    // macOS: Dock icon clicked. The hidden background surfaces (popup,
-    // wake listener) always exist, so "no windows left" never happens —
-    // act on the main window itself: refocus it when shown, re-create it
-    // when closed, and leave it alone while it is still booting behind
-    // the splash.
+    // Dock icon clicked. Hidden background surfaces always exist, so "no windows
+    // left" never happens; act on the main window: refocus if shown, leave alone
+    // while still booting behind the splash.
     app.on("activate", () => {
       const win = getMainWindow();
       if (win && !win.isDestroyed()) {

@@ -23,10 +23,7 @@ from app.models.workflow_models import (
     WorkflowStep,
 )
 
-# ---------------------------------------------------------------------------
 # Direct imports from the modules under test.
-# Deleting any of these source files will cause ImportError here.
-# ---------------------------------------------------------------------------
 from app.services.workflow.execution_service import (
     complete_execution,
     create_execution,

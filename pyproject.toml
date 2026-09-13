@@ -372,9 +372,9 @@ unfixable = [
 # shape rules must not rewrite what a client or the model reads.
 # tools/lints/docstring_slop.py skips the same docstrings by decorator/base.
 "apps/api/app/api/v1/endpoints/**" = ["D", "DOC"]
-"apps/api/app/agents/tools/**" = ["D", "DOC"]
-"apps/api/app/models/**" = ["D", "DOC"]
-"apps/api/app/schemas/**" = ["D", "DOC"]
+"apps/api/app/agents/tools/**" = ["D", "DOC"]  # @tool docstrings are the model-facing tool descriptions
+"apps/api/app/models/**" = ["D", "DOC"]  # pydantic model docstrings are OpenAPI schema descriptions
+"apps/api/app/schemas/**" = ["D", "DOC"]  # response schema docstrings are OpenAPI schema descriptions
 "apps/api/app/agents/tools/todo_tool.py" = ["PLR0913"]  # @tool args are the model-facing tool schema, not reducible complexity (same as tracked_todo_tools.py below)
 "apps/api/app/agents/tools/tracked_todo_tools.py" = ["PLR0913"]  # @tool args are the model-facing tool schema, not reducible complexity; PLR0911/0912 stay enforced (update_tracked_todo was refactored to satisfy them)
 "apps/api/app/db/repositories/base.py" = ["PLR0913"]  # _apply_raw_update is the one raw-Mongo seam every repository routes through; its seven knobs (filter, update, scope, extra_filter, return_document, array_filters, upsert) are the operator surface, used at 76 call sites. The paid-only gate only adds a cache eviction on a write miss here.

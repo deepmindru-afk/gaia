@@ -45,7 +45,7 @@ META = "postgres://gaia:secret@meta.example.com:5432/jfs"
 
 
 def _init_juicefs_mount() -> Any:
-    """The real provider coroutine, unwrapped from @lazy_provider's closure.
+    """Return the real provider coroutine, unwrapped from @lazy_provider's closure.
 
     lazy_provider replaces the module attribute with a zero-arg registration
     function; the coroutine we need is the func free variable it closed over.
@@ -157,7 +157,7 @@ def runs(monkeypatch: pytest.MonkeyPatch) -> RunRecorder:
 
 @pytest.fixture
 def cfg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """A fully-configured bootstrap rooted in tmp_path. Returns the mount path."""
+    """Configure a bootstrap rooted in tmp_path and return the mount path."""
     mount = tmp_path / "mnt" / "jfs"
     for name, value in (
         ("R2_ACCOUNT_ID", "acct123"),
@@ -179,8 +179,7 @@ def cfg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _clean_thread_state() -> Iterator[None]:
-    """The bootstrap thread handle is module state; leaking it across tests
-    would make the "spawns exactly one thread" assertions depend on ordering."""
+    """Reset the module-global bootstrap thread handle so "spawns exactly one thread" assertions don't depend on test order."""
     bootstrap._bootstrap_thread = None
     yield
     thread = bootstrap._bootstrap_thread
@@ -983,10 +982,8 @@ async def test_an_unresponsive_mount_probe_still_starts_the_bootstrap(
     monkeypatch.setattr(bootstrap, "_MOUNT_PROBE_TIMEOUT_SECONDS", 0.05)
 
     def wedged(_path: Path) -> bool:
-        # Block LONGER than the probe timeout (0.05s, set above) so the
-        # wait_for fires while this thread is still wedged — simulating a
-        # stat that never returns. 0.5s is enough; the loop joins this
-        # thread at close, so a long sleep is pure teardown cost.
+        # Block longer than the probe timeout (0.05s, set above) so wait_for fires
+        # while this thread is still wedged, simulating a stat that never returns.
         real_time.sleep(0.5)
         return True
 

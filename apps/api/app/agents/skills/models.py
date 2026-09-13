@@ -193,8 +193,7 @@ class Skill(MongoDocument, ResponseModel):
 
 
 class SkillUpdate(BaseModel):
-    """Editable fields of a stored skill (metadata patch). ``updated_at`` is
-    stamped by the repository, not passed here."""
+    """Editable fields of a stored skill; the repository stamps updated_at."""
 
     model_config = ConfigDict(extra="forbid")
 

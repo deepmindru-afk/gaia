@@ -599,7 +599,7 @@ class WideEventLogger:
     # --- Primary API ---
 
     def _state(self) -> _EventState:
-        """The current accumulator; a throwaway when no boundary is active.
+        """Return the current accumulator; a throwaway when no boundary is active.
 
         Deliberately does NOT bind the throwaway into the context: a lazily
         bound ambient state gets inherited by every task spawned from that
@@ -849,7 +849,7 @@ async def _wide_event_boundary(
 
 
 def current_workflow_execution_id() -> str | None:
-    """The workflow execution the code in flight belongs to, if any.
+    """Return the workflow execution the code in flight belongs to, if any.
 
     The workflow task stamps workflow.execution_id on its boundary and
     nothing else carries it — it is not in config.configurable. Anything

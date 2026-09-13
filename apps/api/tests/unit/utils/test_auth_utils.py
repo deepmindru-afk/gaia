@@ -263,11 +263,7 @@ class TestAuthenticateWorkosSession:
     # -- Refresh result has no __dict__ ------------------------------------
 
     async def test_refresh_result_no_dict_returns_empty(self) -> None:
-        """When refresh result has no __dict__ (hasattr returns False), return ({}, None).
-
-        Python objects inherently have __dict__, so we patch builtins.hasattr
-        to return False specifically for the refresh_result object.
-        """
+        """Patches builtins.hasattr to fake a missing __dict__, since real objects always have one."""
         auth_response = _make_auth_response(authenticated=False)
         refresh_result = MagicMock()
         refresh_result.authenticated = True

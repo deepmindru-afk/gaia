@@ -29,11 +29,9 @@ OAUTH = "app.services.oauth.oauth_service"
 JFS = "app.services.storage.juicefs"
 
 
-# ---------------------------------------------------------------------------
-# _is_mounted — must require a REAL mountpoint, not just an existing dir.
-# Guards the gap where a never-converged mount over a pre-created /mnt/jfs dir
-# would silently route writes to the container's local disk.
-# ---------------------------------------------------------------------------
+# _is_mounted must require a REAL mountpoint, not just an existing dir — a
+# never-converged mount over a pre-created /mnt/jfs would silently route
+# writes to local disk.
 
 
 def test_is_mounted_rejects_plain_existing_dir(tmp_path):

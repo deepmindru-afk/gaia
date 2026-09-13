@@ -102,10 +102,9 @@ class Integration(MongoDocument):
     mcp_config: MCPConfig | None = None
     composio_config: ComposioConfigDoc | None = None
 
-    # Legacy top-level auth mirror. mcp_config is authoritative; these duplicate
-    # its auth flags at the document root for older documents. IntegrationResolver
-    # reconciles them against mcp_config (and self-heals drift). Defaults match the
-    # historical ``.get("requires_auth", False)`` / ``.get("auth_type", "none")`` reads.
+    # Legacy top-level auth mirror: mcp_config is authoritative, these duplicate
+    # its flags for older documents (IntegrationResolver reconciles and self-heals
+    # drift). Defaults match the historical .get("requires_auth"/"auth_type") reads.
     requires_auth: bool = False
     auth_type: AuthType | None = None
 

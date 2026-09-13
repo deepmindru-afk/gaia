@@ -196,12 +196,9 @@ class TriggerSubscription(BaseModel):
     def _persist_defaults(self) -> "TriggerSubscription":
         """Mark every field as explicitly set, so a stored subscription is whole.
 
-        Todo updates serialize with model_dump(exclude_unset=True), which
-        recurses: a nested field left at its default is dropped before it reaches
-        Mongo. That silently stored subscriptions with no id, no status
-        and no created_at — and dispatch matches on status, so every one
-        of them was unfindable and the watch never fired. Nothing failed; the
-        subscription simply did not exist as far as the query was concerned.
+        model_dump(exclude_unset=True) recurses, dropping a nested field left at
+        default — silently stored subscriptions with no id/status/created_at,
+        unfindable by dispatch's status match, so the watch never fired.
         """
         self.__pydantic_fields_set__.update(type(self).model_fields.keys())
         return self

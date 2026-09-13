@@ -1,10 +1,7 @@
-"""
-Audio transcription service.
+"""Convert short-form voice notes to text via OpenAI Whisper for bot adapters.
 
-Wraps OpenAI Whisper for short-form audio → text conversion used by bot
-adapters that receive voice notes (WhatsApp, Telegram, etc.). Provider-
-agnostic on the surface so the underlying model can swap without changing
-callers.
+Provider-agnostic on the surface so the underlying model can swap without
+changing callers.
 """
 
 from __future__ import annotations
