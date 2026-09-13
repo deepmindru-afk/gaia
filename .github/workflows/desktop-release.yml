@@ -123,6 +123,10 @@ jobs:
             apps/desktop/release/**/*.deb
             apps/desktop/release/**/*.rpm
             apps/desktop/release/**/latest*.yml
+            # electron-builder leaves unpacked dirs (win-unpacked/, mac/, …)
+            # next to the installers — their inner files (e.g. a second
+            # GAIA.exe, resources/elevate.exe) must not become release assets.
+            "!apps/desktop/release/**/*-unpacked/**"
 
   # Attach every platform's installers to the release in ONE job — a single
   # writer, so no concurrent update-release/make-latest collisions, and `gh`
@@ -170,19 +174,23 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
-          mapfile -t FILES < <(find installers -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name 'latest*.yml' \) | sort)
+          # Top-level installer files only — belt-and-braces alongside the
+          # *-unpacked exclusion on the artifact globs above.
+          mapfile -t FILES < <(find installers -type f -not -path '*-unpacked/*' \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name 'latest*.yml' \) | sort)
           [ "${#FILES[@]}" -gt 0 ] || { echo "::error::No installer files downloaded — nothing to publish"; exit 1; }
           printf 'Attaching %s\n' "${FILES[@]}"
+          # --repo: this job does not check out the repo, so gh cannot
+          # discover it via git and fails with "not a git repository".
           # --clobber makes re-runs idempotent (a partial first attempt's
           # assets are replaced instead of failing the whole publish).
-          gh release upload "$TAG" --clobber "${FILES[@]}"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${FILES[@]}"
           # Mark Latest only when this IS the newest desktop release — a
           # backfill for an older tag must not steal Latest from a newer one
           # (electron-updater resolves /releases/latest).
           NEWEST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName \
             | jq -r '[.[] | select(.tagName | startswith("desktop-v"))][0].tagName // empty')
           if [ "$TAG" = "$NEWEST" ]; then
-            gh release edit "$TAG" --latest
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest
           else
             echo "::notice::Not marking $TAG as Latest — newest desktop release is $NEWEST"
           fi
