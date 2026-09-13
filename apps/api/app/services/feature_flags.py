@@ -37,8 +37,8 @@ class FeatureFlag(StrEnum):
     """PostHog flag keys GAIA evaluates. The member name is the code handle;
     the value is the flag key in the PostHog dashboard."""
 
-    COMMS_OPENUI = "comms-openui"
-    INTEGRATION_ACTIVATION = "integration-activation"
+    COMMS_OPENUI = "COMMS_OPENUI"
+    INTEGRATION_ACTIVATION = "INTEGRATION_ACTIVATION"
 
 
 # Human description per flag, kept next to the key so the dashboard setup and

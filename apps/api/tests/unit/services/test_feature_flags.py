@@ -57,7 +57,7 @@ class TestLiveEvaluation:
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
         assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
         assert mock_client.get_feature_flag.call_count == 2
-        mock_client.get_feature_flag.assert_called_with("comms-openui", "u1")
+        mock_client.get_feature_flag.assert_called_with("COMMS_OPENUI", "u1")
 
     async def test_false_disables(
         self, mock_client: MagicMock, evaluated: MagicMock
@@ -107,10 +107,10 @@ class TestEvaluationEvent:
         call = evaluated.call_args
         assert call.args[0] == "u1"
         assert call.args[1] == AnalyticsEvents.FEATURE_FLAG_EVALUATED
-        assert call.args[2]["flag"] == "comms-openui"
+        assert call.args[2]["flag"] == "COMMS_OPENUI"
         assert call.args[2]["enabled"] is True
         assert call.args[2]["fallback_reason"] == "flag_unevaluated"
-        assert call.kwargs["dedupe_key"].startswith("feature-flag-evaluated:comms-openui:u1:")
+        assert call.kwargs["dedupe_key"].startswith("feature-flag-evaluated:COMMS_OPENUI:u1:")
 
     async def test_fail_open_names_the_reason(
         self, mock_client: MagicMock, evaluated: MagicMock
@@ -145,7 +145,7 @@ class TestFlags:
     ) -> None:
         mock_client.get_feature_flag.return_value = False
         assert await is_comms_openui_enabled("u1") is False
-        mock_client.get_feature_flag.assert_called_once_with("comms-openui", "u1")
+        mock_client.get_feature_flag.assert_called_once_with("COMMS_OPENUI", "u1")
 
     async def test_is_integration_activation_enabled_defaults_off(
         self, no_client: None
@@ -157,14 +157,14 @@ class TestFlags:
     ) -> None:
         mock_client.get_feature_flag.return_value = True
         assert await is_integration_activation_enabled("u1") is True
-        mock_client.get_feature_flag.assert_called_once_with("integration-activation", "u1")
+        mock_client.get_feature_flag.assert_called_once_with("INTEGRATION_ACTIVATION", "u1")
 
     def test_feature_flag_evaluated_event_name(self) -> None:
         assert AnalyticsEvents.FEATURE_FLAG_EVALUATED == "feature_flag:evaluated"
 
     def test_flag_keys_match_dashboard(self) -> None:
-        assert FeatureFlag.COMMS_OPENUI == "comms-openui"
-        assert FeatureFlag.INTEGRATION_ACTIVATION == "integration-activation"
+        assert FeatureFlag.COMMS_OPENUI == "COMMS_OPENUI"
+        assert FeatureFlag.INTEGRATION_ACTIVATION == "INTEGRATION_ACTIVATION"
 
 
 class TestExplicitDefaultIsFallbackOnly:
@@ -385,7 +385,7 @@ class TestLogContract:
             assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
             mock_log.warning.assert_called_once_with(
                 "Feature flag evaluation failed, falling back to default",
-                flag="comms-openui",
+                flag="COMMS_OPENUI",
                 error="posthog down",
                 error_type="TimeoutError",
             )
@@ -396,7 +396,7 @@ class TestLogContract:
         mock_client.get_feature_flag.return_value = True
         with patch("app.services.feature_flags.log") as mock_log:
             assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
-            mock_log.set.assert_called_once_with(flags={"comms-openui": True})
+            mock_log.set.assert_called_once_with(flags={"COMMS_OPENUI": True})
 
     async def test_tracking_failure_logs_debug_with_cause(
         self, mock_client: MagicMock, evaluated: MagicMock
@@ -407,7 +407,7 @@ class TestLogContract:
             assert await is_enabled(FeatureFlag.COMMS_OPENUI, "u1") is True
             mock_log.debug.assert_called_once_with(
                 "Feature flag evaluation event skipped",
-                flag="comms-openui",
+                flag="COMMS_OPENUI",
                 error="telemetry down",
                 error_type="RuntimeError",
             )
