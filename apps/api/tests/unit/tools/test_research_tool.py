@@ -10,10 +10,16 @@ Covers:
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from app.constants.log_tags import LogTag
+from app.constants.search import (
+    CRAWL4AI_PAGE_TIMEOUT_MS,
+    DEEP_RESEARCH_CRAWL4AI_BATCH_TIMEOUT_SECONDS,
+    DEEP_RESEARCH_CRAWL4AI_SEMAPHORE_COUNT,
+)
 from app.utils.research_utils import RankedUrl
 from app.utils.search.models import ResearchSearchResult, SearchResultItem
 
@@ -44,8 +50,8 @@ def _patch_stream_writer():
 
 @pytest.fixture(autouse=True)
 def _patch_log():
-    with patch(f"{MODULE}.log"):
-        yield
+    with patch(f"{MODULE}.log") as mock_log:
+        yield mock_log
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +165,7 @@ class TestDeepResearch:
         mock_ddg: AsyncMock,
         mock_decompose: AsyncMock,
         mock_set_cache: AsyncMock,
-        _mock_cache: AsyncMock,
+        mock_get_cache: AsyncMock,
         _mock_cache_key: MagicMock,
         _mock_uid: MagicMock,
         _patch_stream_writer: MagicMock,
@@ -221,6 +227,30 @@ class TestDeepResearch:
         ]
         assert "Found 2 unique sources, fetching full content..." in progress
         mock_set_cache.assert_awaited_once()
+        mock_get_cache.assert_awaited_once_with("cache:key")
+        assert [s["content"] for s in result["sources"]] == ["Full page content"] * 2
+        # The research-queries card renders found_urls; the fetch bar counts off
+        # each source against the ranked total.
+        _patch_stream_writer.assert_any_call(
+            {
+                "progress": "Found 2 unique sources, fetching full content...",
+                "found_urls": ["https://example.com", "https://example2.com"],
+            }
+        )
+        for frame in (
+            "Fetching sources...",
+            "Fetched source 1/2...",
+            "Fetched source 2/2...",
+        ):
+            _patch_stream_writer.assert_any_call({"progress": frame})
+        mock_batch_crawl4ai.assert_awaited_once_with(
+            ["https://example.com", "https://example2.com"],
+            page_timeout_ms=CRAWL4AI_PAGE_TIMEOUT_MS,
+            total_timeout_seconds=DEEP_RESEARCH_CRAWL4AI_BATCH_TIMEOUT_SECONDS,
+            semaphore_count=DEEP_RESEARCH_CRAWL4AI_SEMAPHORE_COUNT,
+            context_name="crawl4ai",
+            content_query="AI trends",
+        )
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
@@ -246,6 +276,7 @@ class TestDeepResearch:
         _mock_cache: AsyncMock,
         _mock_cache_key: MagicMock,
         _mock_uid: MagicMock,
+        _patch_stream_writer: MagicMock,
     ) -> None:
         mock_decompose.return_value = ["sub-q1"]
         mock_ddg.return_value = ResearchSearchResult(
@@ -265,6 +296,8 @@ class TestDeepResearch:
         )
         assert result["error"] is None
         assert result["sources"][0]["content"] == "httpx content"
+        mock_httpx.assert_awaited_once_with("https://a.com")
+        _patch_stream_writer.assert_any_call({"progress": "Fetched source 1/1..."})
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
@@ -283,6 +316,13 @@ class TestDeepResearch:
         new_callable=AsyncMock,
         side_effect=Exception("fail"),
     )
+    @pytest.mark.parametrize(
+        ("crawl_errors", "expected_fetch_error"),
+        [
+            ({"https://a.com": "fail"}, "crawl4ai: fail; httpx: fail"),
+            ({}, "crawl4ai: returned no content; httpx: fail"),
+        ],
+    )
     async def test_all_fetchers_fail_uses_snippet(
         self,
         mock_httpx: AsyncMock,
@@ -294,6 +334,9 @@ class TestDeepResearch:
         _mock_cache: AsyncMock,
         _mock_cache_key: MagicMock,
         _mock_uid: MagicMock,
+        _patch_log: MagicMock,
+        crawl_errors: dict[str, str],
+        expected_fetch_error: str,
     ) -> None:
         mock_decompose.return_value = ["sub-q1"]
         mock_ddg.return_value = ResearchSearchResult(
@@ -308,7 +351,7 @@ class TestDeepResearch:
                 appearances=1,
             )
         ]
-        mock_batch_crawl4ai.return_value = ({}, {"https://a.com": "fail"})
+        mock_batch_crawl4ai.return_value = ({}, crawl_errors)
 
         from app.agents.tools.research_tool import deep_research
 
@@ -319,6 +362,10 @@ class TestDeepResearch:
         assert result["error"] is None
         assert "Snippet only" in result["sources"][0]["content"]
         assert result["sources"][0]["fetch_error"] is not None
+        assert result["sources"][0]["fetch_error"] == expected_fetch_error
+        _patch_log.warning.assert_called_once_with(
+            f"{LogTag.TOOL} All fetchers failed, using search snippet", url="https://a.com"
+        )
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
@@ -485,3 +532,54 @@ class TestDeepResearch:
         assert found, (
             f"Expected '1/3 searches returned results' in progress calls: {progress_calls}"
         )
+        assert {"progress": "Running 3 parallel searches..."} in progress_calls
+        assert {
+            "progress": "1/3 searches returned results (1 total URLs before deduplication)"
+        } in progress_calls
+        assert mock_ddg.await_args_list == [
+            call("q1", count=5),
+            call("q2", count=5),
+            call("q3", count=5),
+        ]
+
+    @pytest.mark.asyncio
+    @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
+    @patch(f"{MODULE}.build_research_cache_key", return_value="cache:key")
+    @patch(f"{MODULE}.get_cache", new_callable=AsyncMock, return_value=None)
+    @patch(f"{MODULE}.set_cache", new_callable=AsyncMock)
+    @patch(f"{MODULE}.decompose_research_queries", new_callable=AsyncMock)
+    @patch(f"{MODULE}.search_for_research", new_callable=AsyncMock)
+    @patch(f"{MODULE}.rank_and_deduplicate_urls")
+    @patch(f"{MODULE}.batch_fetch_with_crawl4ai", new_callable=AsyncMock)
+    @patch(f"{MODULE}.fetch_with_httpx", new_callable=AsyncMock, side_effect=Exception("fail"))
+    async def test_snippet_fallback_counts_toward_fetch_progress(
+        self,
+        _mock_httpx: AsyncMock,
+        mock_batch_crawl4ai: AsyncMock,
+        mock_rank: MagicMock,
+        mock_ddg: AsyncMock,
+        mock_decompose: AsyncMock,
+        _mock_set_cache: AsyncMock,
+        _mock_cache: AsyncMock,
+        _mock_cache_key: MagicMock,
+        _mock_uid: MagicMock,
+        _patch_stream_writer: MagicMock,
+    ) -> None:
+        mock_decompose.return_value = ["q1"]
+        mock_ddg.return_value = ResearchSearchResult(
+            results=[SearchResultItem(url="https://a.com")]
+        )
+        mock_rank.return_value = [
+            RankedUrl(url="https://a.com", title="", snippet="s", score=1.0, appearances=1),
+            RankedUrl(url="https://b.com", title="", snippet="s", score=1.0, appearances=1),
+        ]
+        mock_batch_crawl4ai.return_value = ({"https://b.com": "content"}, {})
+
+        from app.agents.tools.research_tool import deep_research
+
+        await deep_research.ainvoke(
+            {"query": "test", "scope": "", "depth": 1, "focus_areas": None},
+            config=_make_config(),
+        )
+
+        _patch_stream_writer.assert_any_call({"progress": "Fetched source 2/2..."})

@@ -207,7 +207,7 @@ class TestSearchBySimilarity:
                 "app.utils.embedding_utils.note_repository.find_by_ids",
                 new_callable=AsyncMock,
                 return_value=[note_doc],
-            ),
+            ) as find_by_ids,
             patch("app.utils.embedding_utils.log"),
         ):
             results = await search_by_similarity(
@@ -217,6 +217,7 @@ class TestSearchBySimilarity:
                 fetch_mongo_details=True,
             )
 
+        find_by_ids.assert_awaited_once_with("user1", [note_id])
         assert len(results) == 1
         assert results[0].id == note_id
         assert results[0].created_at == created.isoformat()

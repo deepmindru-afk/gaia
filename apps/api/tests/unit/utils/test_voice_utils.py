@@ -74,3 +74,17 @@ class TestMapAccountVoice:
         assert option.language == "English"
         assert option.description == "Account voice"
         assert option.languages == ["English"]
+
+    def test_underscored_labels_render_as_spaced_titles(self) -> None:
+        descriptive = _map_account_voice(
+            ElevenLabsAccountVoice(
+                voice_id="acct-3", name="Plain", labels={"descriptive": "soft_spoken"}
+            )
+        )
+        use_case = _map_account_voice(
+            ElevenLabsAccountVoice(
+                voice_id="acct-4", name="Plain", labels={"use_case": "social_media"}
+            )
+        )
+        assert descriptive.description == "Soft Spoken"
+        assert use_case.description == "Social Media"
