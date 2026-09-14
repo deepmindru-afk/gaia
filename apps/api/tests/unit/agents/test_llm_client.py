@@ -66,7 +66,6 @@ from app.constants.llm import (
     DEFAULT_GEMINI_MODEL_NAME,
     DEFAULT_MODEL_NAME,
     HELPER_MAX_OUTPUT_TOKENS,
-    LLM_LABEL_METADATA_KEY,
     OPENROUTER_APP_CATEGORIES,
     OPENROUTER_APP_TITLE,
     OPENROUTER_DEV_APP_TITLE,
@@ -2058,7 +2057,7 @@ class TestFallbackRunCarriesTheCallLabel:
         )
 
         assert result.content == "from-fallback"
-        assert seen["metadata"][LLM_LABEL_METADATA_KEY] == "memory_extraction"
+        assert seen.get("metadata", {}).get("llm_label") == "memory_extraction"
         assert seen["configurable"] == {"provider": "gemini"}
 
     @pytest.mark.regression
@@ -2096,9 +2095,9 @@ class TestFallbackRunCarriesTheCallLabel:
         )
 
         assert result.content == "from-fallback"
-        assert primary_seen["metadata"][LLM_LABEL_METADATA_KEY] == "memory_extraction"
+        assert primary_seen.get("metadata", {}).get("llm_label") == "memory_extraction"
         assert primary_seen["configurable"] == {"user_id": "u1"}
-        assert fallback_seen["metadata"][LLM_LABEL_METADATA_KEY] == "memory_extraction"
+        assert fallback_seen.get("metadata", {}).get("llm_label") == "memory_extraction"
         assert fallback_seen["configurable"] == {"provider": "gemini"}
 
 
