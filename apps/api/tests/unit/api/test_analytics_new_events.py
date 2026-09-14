@@ -9,14 +9,22 @@ for identity — covered by ``TestPostHogIdentityBinding`` below, which pins
 the middleware binding itself rather than re-asserting it per endpoint.
 """
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import Response
 from httpx import AsyncClient
 import pytest
+from starlette.requests import Request
 
+from app.agents.skills.models import Skill
+from app.models.integration_models import Integration
+from app.models.notification.notification_models import NotificationRecord
+from app.models.todo_models import TodoDocument
+from app.models.workflow_models import Workflow
 from app.services.analytics_service import AnalyticsEvents
 
 pytestmark = pytest.mark.unit
@@ -39,9 +47,7 @@ _WF_REPO = "app.api.v1.endpoints.workflows.workflow_repository"
 _WF_CAPTURE = "app.api.v1.endpoints.workflows.capture_context_event"
 
 
-def _make_workflow(**overrides):  # type: ignore[no-untyped-def]
-    from app.models.workflow_models import Workflow
-
+def _make_workflow(**overrides: object) -> Workflow:
     base: dict = {
         "id": "wf_abc123",
         "user_id": UID,
@@ -304,9 +310,7 @@ _SKILLS = "app.api.v1.endpoints.skills"
 _SK_CAPTURE = f"{_SKILLS}.capture_context_event"
 
 
-def _make_skill():  # type: ignore[no-untyped-def]
-    from app.agents.skills.models import Skill
-
+def _make_skill() -> Skill:
     return Skill(
         id="sk_abc123",
         user_id=UID,
@@ -453,7 +457,7 @@ class TestMemoryNewEvents:
 
 
 class TestFileNewEvents:
-    def _doc(self, **overrides):  # type: ignore[no-untyped-def]
+    def _doc(self, **overrides: object) -> TodoDocument:
         from app.models.files_models import FileDocument
 
         data: dict = {
@@ -561,7 +565,7 @@ MAIL = "app.api.v1.endpoints.mail"
 
 
 @pytest.fixture
-def _gmail_bypass():  # type: ignore[no-untyped-def]
+def _gmail_bypass() -> Iterator[None]:
     with patch(
         "app.api.v1.dependencies.google_scope_dependencies.check_integration_status",
         new_callable=AsyncMock,
@@ -786,7 +790,7 @@ class TestMailNewEvents:
 NOTIF = "app.api.v1.endpoints.notification"
 
 
-def _notif_record():  # type: ignore[no-untyped-def]
+def _notif_record() -> NotificationRecord:
     from datetime import UTC as _UTC, datetime as _dt
 
     from app.models.notification.notification_models import (
@@ -932,14 +936,14 @@ class TestPlatformConnectInit:
 
 
 class TestMcpConnectionTested:
-    def _mocks(self, probe_result, **connect_kwargs):  # type: ignore[no-untyped-def]
+    def _mocks(self, probe_result: object, **connect_kwargs: object) -> AsyncMock:
         probe_client = AsyncMock()
         probe_client.probe_connection.return_value = probe_result
         for key, value in connect_kwargs.items():
             setattr(probe_client, key, value)
         return probe_client
 
-    def _resolve(self):  # type: ignore[no-untyped-def]
+    def _resolve(self) -> SimpleNamespace:
         return SimpleNamespace(mcp_config=SimpleNamespace(server_url="https://mcp.example.com"))
 
     async def test_connected_captures(self, client: AsyncClient) -> None:
@@ -1196,7 +1200,7 @@ class TestTodoNewEvents:
         assert resp.json()["detail"] == "Project not found"
         mock_capture.assert_not_called()
 
-    def _doc(self, **overrides):  # type: ignore[no-untyped-def]
+    def _doc(self, **overrides: object) -> TodoDocument:
         from app.models.todo_models import SubTask, TodoDocument
 
         base: dict = {
@@ -1324,9 +1328,7 @@ USERINT = "app.api.v1.endpoints.integrations.user"
 _USERINT_CAPTURE = f"{USERINT}.capture_context_event"
 
 
-def _custom_integration():  # type: ignore[no-untyped-def]
-    from app.models.integration_models import Integration
-
+def _custom_integration() -> Integration:
     return Integration.model_validate(
         {
             "integration_id": "i1",
@@ -1421,7 +1423,7 @@ class TestPostHogIdentityBinding:
 
     _MW = "app.api.v1.middleware.auth"
 
-    def _request(self, user: dict | None):  # type: ignore[no-untyped-def]
+    def _request(self, user: dict[str, object] | None) -> Request:
         from starlette.requests import Request
 
         req = Request({"type": "http", "headers": []})
@@ -1433,7 +1435,7 @@ class TestPostHogIdentityBinding:
 
         from app.api.v1.middleware.auth import PostHogRequestContextMiddleware
 
-        async def call_next(_request):  # type: ignore[no-untyped-def]
+        async def call_next(_request: Request) -> Response:
             return FastAPIResponse("ok")
 
         with (
@@ -1453,7 +1455,7 @@ class TestPostHogIdentityBinding:
 
         from app.api.v1.middleware.auth import PostHogRequestContextMiddleware
 
-        async def call_next(_request):  # type: ignore[no-untyped-def]
+        async def call_next(_request: Request) -> Response:
             return FastAPIResponse("ok")
 
         with (
