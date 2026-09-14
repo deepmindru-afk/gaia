@@ -204,7 +204,7 @@ async def recall_declined_call(
     if not raw:
         return None
     # Correct by construction: the only writer is ``remember_declined_call`` above.
-    record = cast(DeclinedCallRecord, raw)
+    record: DeclinedCallRecord = cast(DeclinedCallRecord, raw)
     return ApprovalOutcome(status=HILApprovalStatus.DENIED, feedback=record.get("feedback"))
 
 

@@ -904,7 +904,7 @@ async def handoff(
         background: If True, run non-blocking and return immediately
     """
     try:
-        configurable = agent_configurable(config)
+        configurable: AgentConfigurable = agent_configurable(config)
         user_id = configurable.get("user_id")
 
         # Fallback: try to get user_id from metadata if not in configurable

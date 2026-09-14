@@ -557,7 +557,7 @@ def _run_create_issue_relation(
         user_id,
         LinearIssueRelationCreateData,
     ).issue_relation_create
-    if not create_result.success:
+    if not create_result.success or create_result.issue_relation is None:
         raise RuntimeError("Failed to create relation")
 
     return {

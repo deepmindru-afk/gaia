@@ -698,6 +698,7 @@ async def _reconcile_approval_statuses(entries: list[ToolDataEntry]) -> list[Too
     hil_approvals record is the single source of truth; read it.
     """
     reconciled: list[ToolDataEntry] = []
+    entry: ToolDataEntry
     for entry in entries:
         approval_id = _approval_id(entry)
         data = entry.get("data")

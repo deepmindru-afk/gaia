@@ -94,3 +94,24 @@ def test_a_read_on_a_name_annotated_with_a_typeddict_is_not_a_guess(
         "    g = result['ok']['x'] if False else None\n"
     )
     assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [12, 13]
+
+
+def test_a_typeddict_binding_reaches_closures_but_not_rebindings_or_other_scopes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("check_typed_boundaries.REPO_ROOT", tmp_path)
+    source = (
+        "from typing import TypedDict\n"
+        "class Probe(TypedDict):\n"
+        "    ok: bool\n"
+        "def typed(payload: Probe) -> None:\n"
+        "    a = payload['ok']\n"
+        "    def closure():\n"
+        "        return payload['ok']\n"
+        "    def nested(payload):\n"
+        "        return payload['ok']\n"
+        "def untyped(payload):\n"
+        "    return payload['ok']\n"
+        "payload['ok']\n"
+    )
+    assert _rule_lines(tmp_path, source)[STRING_KEY_READ] == [9, 11, 12]

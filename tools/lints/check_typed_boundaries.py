@@ -198,10 +198,51 @@ def _names_typeddict(annotation: ast.expr, typeddicts: set[str]) -> bool:
     return any(_base_name(node) in typeddicts for node in ast.walk(annotation))
 
 
-def _typeddict_bound_names(scope: ast.AST, typeddicts: set[str]) -> set[str]:
-    """Names annotated with a TypedDict inside ``scope`` (parameters and annotated assignments)."""
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+def _own_scope_nodes(scope: ast.AST) -> list[ast.AST]:
+    """Nodes lexically in ``scope``, stopping at nested functions (their own scopes)."""
+    nodes: list[ast.AST] = []
+    if isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+        pending: list[ast.AST] = [scope.args, *scope.body]
+    elif isinstance(scope, ast.Lambda):
+        pending = [scope.args, scope.body]
+    else:
+        pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        nodes.append(node)
+        if not isinstance(node, _SCOPES):
+            pending.extend(ast.iter_child_nodes(node))
+    return nodes
+
+
+def _rebound_names(nodes: list[ast.AST]) -> set[str]:
+    return {node.arg for node in nodes if isinstance(node, ast.arg)} | {
+        node.id for node in nodes if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+
+
+def _typed_receivers(scope: ast.AST, typeddicts: set[str], inherited: set[str]) -> set[int]:
+    """Ids of reads on TypedDict-bound names, each name resolved to its innermost binding scope."""
+    nodes = _own_scope_nodes(scope)
+    bound = (inherited - _rebound_names(nodes)) | _typeddict_bound_names(nodes, typeddicts)
+    found: set[int] = set()
+    for node in nodes:
+        if isinstance(node, _SCOPES):
+            found |= _typed_receivers(node, typeddicts, bound)
+            continue
+        receiver = _receiver(node)
+        if isinstance(receiver, ast.Name) and receiver.id in bound:
+            found.add(id(node))
+    return found
+
+
+def _typeddict_bound_names(nodes: list[ast.AST], typeddicts: set[str]) -> set[str]:
+    """Names annotated with a TypedDict among ``nodes`` (parameters and annotated assignments)."""
     bound: set[str] = set()
-    for node in ast.walk(scope):
+    for node in nodes:
         if isinstance(node, ast.arg) and node.annotation is not None:
             if _names_typeddict(node.annotation, typeddicts):
                 bound.add(node.arg)
@@ -224,17 +265,7 @@ def _receiver(node: ast.AST) -> ast.expr | None:
 
 def _string_key_reads(tree: ast.AST, typeddicts: set[str]) -> list[int]:
     decorators = _decorator_ids(tree)
-    scopes = [
-        tree,
-        *(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)),
-    ]
-    typed_receivers: set[int] = set()
-    for scope in scopes:
-        bound = _typeddict_bound_names(scope, typeddicts)
-        for node in ast.walk(scope):
-            receiver = _receiver(node)
-            if isinstance(receiver, ast.Name) and receiver.id in bound:
-                typed_receivers.add(id(node))
+    typed_receivers = _typed_receivers(tree, typeddicts, set())
     return [
         node.lineno
         for node in ast.walk(tree)

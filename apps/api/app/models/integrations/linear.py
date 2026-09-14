@@ -444,7 +444,7 @@ class LinearIssueRelationRef(LinearNode):
 
 class LinearIssueRelationPayload(LinearNode):
     success: bool
-    issue_relation: LinearIssueRelationRef
+    issue_relation: LinearIssueRelationRef | None = None
 
 
 class LinearIssueBatchPayload(LinearNode):

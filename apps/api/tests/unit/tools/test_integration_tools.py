@@ -821,6 +821,20 @@ class TestLinearCreateIssueRelation:
                 AUTH_CREDS,
             )
 
+    def test_create_relation_failure_without_a_relation_raises_the_domain_error(
+        self, tools, proxy
+    ) -> None:
+        _answers(proxy, {"issueRelationCreate": {"success": False, "issueRelation": None}})
+
+        with pytest.raises(RuntimeError, match="Failed to create relation"):
+            tools["CUSTOM_CREATE_ISSUE_RELATION"](
+                CreateIssueRelationInput(
+                    issue_id="i1", related_issue_id="i2", relation_type="blocks"
+                ),
+                EXECUTE_REQUEST,
+                AUTH_CREDS,
+            )
+
 
 # =============================================================================
 # CUSTOM_GET_ISSUE_ACTIVITY
