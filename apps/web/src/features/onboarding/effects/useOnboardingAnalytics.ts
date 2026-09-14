@@ -4,9 +4,8 @@ import { useEffect, useRef } from "react";
 
 import {
   ANALYTICS_EVENTS,
+  setUserProperties,
   trackEvent,
-  trackOnboardingComplete,
-  trackOnboardingStep,
 } from "@/lib/analytics";
 
 import { FIELD_NAMES, questions } from "../constants";
@@ -42,21 +41,15 @@ export function useOnboardingAnalytics(state: OnboardingState): void {
     const q = questions[answeredIndex];
     const value = state.responses[q.fieldName];
     if (value == null) return;
-
-    // Never send `response_value` — onboarding responses are user-authored
-    // free text (name, profession, goals). Track only the question answered.
-    trackOnboardingStep(answeredIndex + 1, q.fieldName, {
-      question_id: q.id,
-    });
   }, [state.questionIndex, state.responses]);
 
   useEffect(() => {
     if (completedRef.current) return;
     if (!state.server?.first_message_conversation_id) return;
     completedRef.current = true;
-    trackOnboardingComplete({
+    setUserProperties({
+      onboarding_completed: true,
       profession: state.responses[FIELD_NAMES.PROFESSION],
-      totalSteps: questions.length + 1,
     });
   }, [state.server?.first_message_conversation_id, state.responses]);
 }

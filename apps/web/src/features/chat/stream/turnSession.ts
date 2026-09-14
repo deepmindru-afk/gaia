@@ -15,7 +15,6 @@ import {
 } from "@/features/chat/api/chatApi";
 import { relayDesktopToolRequest } from "@/features/chat/utils/desktopToolBridge";
 import { loadingLabelForEvent } from "@/features/chat/utils/loadingHints";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import { db, type IConversation, type IMessage } from "@/lib/db/chatDb";
 import { streamLog, streamLogError } from "@/lib/streamLogger";
 import { toast } from "@/lib/toast";
@@ -139,11 +138,6 @@ export class TurnSession {
       // Carried so an on-disk recording is self-describing: the reader can see
       // which prompt produced the frames that follow.
       detail: { prompt: this.inputText },
-    });
-
-    trackEvent(ANALYTICS_EVENTS.CHAT_STARTED, {
-      conversation_id: this.conversationId,
-      is_new_conversation: this.isNewConversation,
     });
 
     this.stallWatchdog.arm();
