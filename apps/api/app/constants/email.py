@@ -123,6 +123,9 @@ SIGNUP_EMAIL_TASK = "deliver_signup_emails"
 # One ARQ job per user. Signup's own enqueue and the recovery sweep derive the
 # same id, so a duplicate enqueue dedups to a no-op instead of a second send.
 SIGNUP_EMAIL_JOB_ID_TEMPLATE = "signupmail:{user_id}"
+# Resend drops a repeat send under this key for 24h, so a welcome email the
+# provider accepted but whose stamp write failed is not re-mailed by the hourly sweep.
+WELCOME_EMAIL_IDEMPOTENCY_KEY_TEMPLATE = "welcome-email:{user_id}"
 # Bound on signup's Redis handoff. A lost enqueue is recovered by the sweep, so a
 # stalled Redis must cost the signup this long at most, not the OAuth callback.
 SIGNUP_EMAIL_ENQUEUE_TIMEOUT_SECONDS = 5

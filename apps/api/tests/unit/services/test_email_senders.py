@@ -49,6 +49,14 @@ class TestSendWelcomeEmail:
         assert message.subject == "From the founder of GAIA, personally"
         assert message.html == "<h1>Welcome</h1>"
 
+    @patch(f"{SENDERS}.send_email")
+    @patch(f"{SENDERS}.render_email_template", return_value="<h1>Welcome</h1>")
+    async def test_carries_a_per_user_idempotency_key(self, mock_render, mock_send):
+        """A sweep re-run after an unstamped send reuses the key; a changed key would re-mail."""
+        await send_welcome_email("user@example.com", "Alice", user_id=SENDER_USER_ID)
+
+        assert mock_send.call_args[0][0].idempotency_key == f"welcome-email:{SENDER_USER_ID}"
+
     @patch(f"{SENDERS}.send_email", side_effect=RuntimeError("API error"))
     @patch(f"{SENDERS}.render_email_template", return_value="<h1>ok</h1>")
     async def test_propagates_send_exception(self, mock_render, mock_send):

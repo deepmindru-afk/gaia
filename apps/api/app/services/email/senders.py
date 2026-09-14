@@ -11,6 +11,7 @@ from app.constants.email import (
     FOUNDER_SENDER,
     SUPPORT_SENDER,
     TWITTER_URL,
+    WELCOME_EMAIL_IDEMPOTENCY_KEY_TEMPLATE,
     WHATSAPP_URL,
 )
 from app.constants.log_tags import LogTag
@@ -173,6 +174,7 @@ async def send_welcome_email(
                 subject="From the founder of GAIA, personally",
                 html=html_content,
                 reply_to=CONTACT_EMAIL,
+                idempotency_key=WELCOME_EMAIL_IDEMPOTENCY_KEY_TEMPLATE.format(user_id=user_id),
             )
         )
         log.info(f"{LogTag.MAIL} Welcome email sent to", user={"id": user_id})
