@@ -50,14 +50,7 @@ class TestHilApprovalRepository:
 
     async def test_a_replay_never_resets_a_decided_record(self, repo):
         await repo.create_if_absent(_record("a1"))
-        await repo.mark_decided(
-            "a1",
-            "approved",
-            feedback=None,
-            scope="once",
-            decided_by="u1",
-            decided_at=datetime.now(UTC),
-        )
+        await repo.mark_decided("a1", "approved", feedback=None, scope="once", decided_by="u1")
 
         await repo.create_if_absent(_record("a1"))
 
@@ -68,20 +61,10 @@ class TestHilApprovalRepository:
         await repo.create_if_absent(_record("a1"))
 
         first = await repo.mark_decided(
-            "a1",
-            "approved",
-            feedback=None,
-            scope="once",
-            decided_by="u1",
-            decided_at=datetime.now(UTC),
+            "a1", "approved", feedback=None, scope="once", decided_by="u1"
         )
         second = await repo.mark_decided(
-            "a1",
-            "denied",
-            feedback="no",
-            scope="once",
-            decided_by="u1",
-            decided_at=datetime.now(UTC),
+            "a1", "denied", feedback="no", scope="once", decided_by="u1"
         )
 
         assert first is True
@@ -92,12 +75,7 @@ class TestHilApprovalRepository:
     async def test_mark_decided_on_a_missing_record_is_false(self, repo):
         assert (
             await repo.mark_decided(
-                "ghost",
-                "approved",
-                feedback=None,
-                scope="once",
-                decided_by=None,
-                decided_at=datetime.now(UTC),
+                "ghost", "approved", feedback=None, scope="once", decided_by=None
             )
             is False
         )
@@ -157,14 +135,7 @@ class TestHilApprovalRepository:
         await repo.create_if_absent(_record("expired", expires_at=past))
         await repo.create_if_absent(_record("live"))
         await repo.create_if_absent(_record("decided", expires_at=past))
-        await repo.mark_decided(
-            "decided",
-            "approved",
-            feedback=None,
-            scope="once",
-            decided_by=None,
-            decided_at=datetime.now(UTC),
-        )
+        await repo.mark_decided("decided", "approved", feedback=None, scope="once", decided_by=None)
 
         expired = await repo.list_expired_pending()
 
@@ -174,12 +145,7 @@ class TestHilApprovalRepository:
         for approval_id in ("crashed", "dispatched", "fresh", "contextless"):
             await repo.create_if_absent(_record(approval_id))
             await repo.mark_decided(
-                approval_id,
-                "approved",
-                feedback=None,
-                scope="once",
-                decided_by=None,
-                decided_at=datetime.now(UTC),
+                approval_id, "approved", feedback=None, scope="once", decided_by=None
             )
         # Backdate every decision past the grace window, then differentiate.
         for approval_id in ("crashed", "dispatched", "contextless"):
@@ -206,14 +172,7 @@ class TestHilApprovalRepository:
         await repo.create_if_absent(_record("new"))
         await repo.create_if_absent(_record("other", conversation_id="conv-2"))
         await repo.create_if_absent(_record("done"))
-        await repo.mark_decided(
-            "done",
-            "denied",
-            feedback=None,
-            scope="once",
-            decided_by=None,
-            decided_at=datetime.now(UTC),
-        )
+        await repo.mark_decided("done", "denied", feedback=None, scope="once", decided_by=None)
 
         pending = await repo.list_pending_for_conversation("conv-1")
 
@@ -240,12 +199,7 @@ class TestAutoApprovalRecords:
 
         assert (
             await repo.mark_decided(
-                "auto-1",
-                "approved",
-                feedback=None,
-                scope="once",
-                decided_by="u1",
-                decided_at=datetime.now(UTC),
+                "auto-1", "approved", feedback=None, scope="once", decided_by="u1"
             )
             is False
         )

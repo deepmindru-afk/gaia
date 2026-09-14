@@ -323,6 +323,34 @@ def _bot_data_payload(chunk: str) -> str | None:
     return chunk[len("data: ") :].strip()
 
 
+async def _translate_bot_stream_chunk(
+    chunk: str, user_id: str, conversation_id: str
+) -> tuple[str | None, bool]:
+    """Translate one raw wire chunk into a bot frame and whether the stream ends.
+
+    Forwarded keepalives pass through verbatim; ``[DONE]`` becomes the bot's
+    terminal frame; a malformed data frame is logged and dropped rather than
+    aborting the stream.
+    """
+    if chunk.startswith(":"):
+        return chunk, False
+    raw = _bot_data_payload(chunk)
+    if raw is None:
+        return None, False
+    if raw == "[DONE]":
+        payload = json.dumps({"done": True, "conversation_id": conversation_id})
+        return f"data: {payload}\n\n", True
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        log.warning(
+            f"{LogTag.API} Bot stream: dropped a malformed SSE chunk",
+            error_type=type(exc).__name__,
+        )
+        return None, False
+    return await _translate_bot_data_chunk(data, user_id)
+
+
 async def _translate_bot_data_chunk(data: dict[str, Any], user_id: str) -> tuple[str | None, bool]:
     """Translate one decoded SSE data frame into a bot frame.
 
@@ -564,31 +592,11 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
                             stream_id=stream_id,
                         )
                         break
-                    # Forward keepalive comments directly
-                    if chunk.startswith(":"):
-                        yield chunk
-                        continue
-
-                    raw = _bot_data_payload(chunk)
-                    if raw is None:
-                        continue
-                    if raw == "[DONE]":
-                        yield f"data: {json.dumps({'done': True, 'conversation_id': conversation_id})}\n\n"
-                        return
-
-                    try:
-                        data = json.loads(raw)
-                        frame, done = await _translate_bot_data_chunk(data, user_id)
-                        if frame is not None:
-                            yield frame
-                        if done:
-                            break
-                    except json.JSONDecodeError as exc:
-                        log.warning(
-                            f"{LogTag.API} Bot stream: dropped a malformed SSE chunk",
-                            error_type=type(exc).__name__,
-                        )
-                        continue
+                    frame, stop = await _translate_bot_stream_chunk(chunk, user_id, conversation_id)
+                    if frame is not None:
+                        yield frame
+                    if stop:
+                        break
             except GeneratorExit:
                 delivery_status = "abandoned"
                 raise

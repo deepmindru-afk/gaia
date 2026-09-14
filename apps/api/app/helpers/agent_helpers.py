@@ -1311,6 +1311,30 @@ def _parse_stream_event(event: tuple[Any, ...]) -> tuple[str, Any] | None:
     return None
 
 
+async def _frames_for_stream_event(
+    event: tuple[Any, ...],
+    state: _StreamAccumulators,
+    is_comms: bool,
+    stream_id: str | None,
+    user_id: str | None,
+) -> AsyncGenerator[str, None]:
+    """Yield the SSE frames one langgraph stream event produces."""
+    parsed = _parse_stream_event(event)
+    if parsed is None:
+        return
+    stream_mode, payload = parsed
+    if stream_mode == "updates":
+        frames = _stream_updates(payload, state, is_comms, user_id)
+    elif stream_mode == "messages":
+        frames = _stream_messages(payload, state, is_comms, stream_id, user_id)
+    elif stream_mode == "custom":
+        frames = _stream_custom(payload, state, user_id)
+    else:
+        return
+    async for frame in frames:
+        yield frame
+
+
 async def execute_graph_streaming(
     graph: CompiledAgentGraph,
     initial_state: dict[str, Any],
@@ -1365,21 +1389,9 @@ async def execute_graph_streaming(
                 if stream_id and await stream_manager.is_cancelled(stream_id):
                     cancelled = True
                     break
-
-                parsed = _parse_stream_event(event)
-                if parsed is None:
-                    continue
-                stream_mode, payload = parsed
-
-                if stream_mode == "updates":
-                    frames = _stream_updates(payload, state, is_comms, user_id)
-                elif stream_mode == "messages":
-                    frames = _stream_messages(payload, state, is_comms, stream_id, user_id)
-                elif stream_mode == "custom":
-                    frames = _stream_custom(payload, state, user_id)
-                else:
-                    continue
-                async for frame in frames:
+                async for frame in _frames_for_stream_event(
+                    event, state, is_comms, stream_id, user_id
+                ):
                     yield frame
         except GeneratorExit:
             # Abandoned mid-stream without cancellation (server shutdown path):

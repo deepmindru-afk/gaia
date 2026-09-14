@@ -151,16 +151,6 @@ _TOOL_CALL_SECONDS = _register_once(
     ),
 )
 
-_TOOL_RETRIEVAL_SECONDS = _register_once(
-    "tool_retrieval_seconds",
-    lambda: Histogram(
-        name="tool_retrieval_seconds",
-        documentation="Tool retrieval fan-out duration in seconds",
-        labelnames=("status",),
-        buckets=_TTFT_BUCKETS,
-    ),
-)
-
 _SUBAGENT_RUN_SECONDS = _register_once(
     "subagent_run_seconds",
     lambda: Histogram(
@@ -307,7 +297,6 @@ ALL_COLLECTORS: Final[tuple[Histogram | Counter, ...]] = (
     _EXECUTOR_ACTIVE_SECONDS,
     _EXECUTOR_E2E_SECONDS,
     _TOOL_CALL_SECONDS,
-    _TOOL_RETRIEVAL_SECONDS,
     _SUBAGENT_RUN_SECONDS,
     _HIL_USER_WAIT_SECONDS,
     _HIL_DISPATCH_LAG_SECONDS,
@@ -448,10 +437,6 @@ def observe_tool_call(seconds: float, *, tool_name: str, status: str) -> None:
     _inc(_TOOL_CALL_TOTAL, tool_name=tool_name, status=status)
 
 
-def observe_tool_retrieval(seconds: float, *, status: str) -> None:
-    _observe(_TOOL_RETRIEVAL_SECONDS, seconds, status=status)
-
-
 def observe_subagent_run(seconds: float, *, subagent_id: str, status: str) -> None:
     _observe(_SUBAGENT_RUN_SECONDS, seconds, subagent_id=subagent_id, status=status)
 
@@ -512,7 +497,6 @@ __all__ = [
     "observe_sse_delivery",
     "observe_subagent_run",
     "observe_tool_call",
-    "observe_tool_retrieval",
     "observe_transport_redis_publish",
     "span",
 ]

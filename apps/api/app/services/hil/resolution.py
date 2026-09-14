@@ -211,7 +211,6 @@ async def cancel_conversation_approvals(conversation_id: str, user_id: str) -> l
             feedback=CANCELLED_FEEDBACK,
             scope="once",
             decided_by=user_id,
-            decided_at=datetime.now(UTC),
         ):
             continue
         await clear_resume_item(record.approval_id)
@@ -251,7 +250,6 @@ async def _resolve_or_close(
             feedback=feedback,
             scope="once",
             decided_by=None,
-            decided_at=datetime.now(UTC),
         )
         return
     await _resolve_record(record, user_id=user_id, kind=kind, feedback=feedback)
@@ -302,7 +300,6 @@ async def _resolve_record(
         feedback=feedback,
         scope=scope,
         decided_by=decided_by,
-        decided_at=decided_at,
     )
     if not transitioned:
         # Someone (or the sweep) already decided this one. Do not resume twice.

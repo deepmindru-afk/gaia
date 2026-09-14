@@ -542,54 +542,6 @@ class TestGetRetrieveToolsFunction:
 
 class TestRetrieveToolsBinding:
     @pytest.mark.asyncio
-    async def test_discovery_fanout_emits_latency_span(self):
-        """The Chroma fan-out gather is timed — the retrieval half of "why is
-        the executor slow before its first tool runs"."""
-        from prometheus_client import REGISTRY
-
-        from app.agents.tools.core.retrieval import get_retrieve_tools_function
-
-        async def _empty_search() -> list:
-            return []
-
-        fn = get_retrieve_tools_function(include_subagents=False)
-        store = MagicMock()
-        config: dict = {"configurable": {"user_id": "u1"}}
-        mock_registry = MagicMock()
-        mock_registry.get_tool_names.return_value = ["TOOL_A"]
-        before = (
-            REGISTRY.get_sample_value("tool_retrieval_seconds_count", {"status": "success"}) or 0.0
-        )
-
-        with (
-            patch(
-                "app.agents.tools.core.retrieval.get_tool_registry",
-                new_callable=AsyncMock,
-                return_value=mock_registry,
-            ),
-            patch(
-                "app.agents.tools.core.retrieval._get_user_context",
-                new_callable=AsyncMock,
-                return_value=(set(), [], []),
-            ),
-            patch(
-                "app.agents.tools.core.retrieval._build_search_tasks",
-                return_value=[_empty_search()],
-            ),
-            patch(
-                "app.agents.tools.core.retrieval._user_mcp_tool_names",
-                new_callable=AsyncMock,
-                return_value=set(),
-            ),
-        ):
-            await fn(store=store, config=config, query="do things", exact_tool_names=[])
-
-        assert (
-            REGISTRY.get_sample_value("tool_retrieval_seconds_count", {"status": "success"})
-            == before + 1
-        )
-
-    @pytest.mark.asyncio
     async def test_binding_mode_stamps_the_wide_event(self):
         """The binding counts are how an operator tells 'model asked for the
         wrong names' from 'registry lost tools' in production events."""
