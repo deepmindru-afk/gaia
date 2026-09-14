@@ -781,9 +781,7 @@ class TestTerminalRunMetrics:
     """The terminal labels and the e2e boundary. A run's end status drives alerts
     and SLOs, so the exact literal on the collector is the contract."""
 
-    async def test_error_run_records_error_status_and_a_zero_e2e_sample(
-        self, boundaries
-    ) -> None:
+    async def test_error_run_records_error_status_and_a_zero_e2e_sample(self, boundaries) -> None:
         """An error run is labelled ``error`` (not the mixed-case literal), and a
         dispatch stamp equal to the finalize instant is a real 0.0 sample — the
         ``>=`` boundary, not the strict ``>`` that would drop it."""
@@ -800,9 +798,12 @@ class TestTerminalRunMetrics:
         ):
             await er._finalize_executor_run(run, TASK, "the model call failed", "error")
 
-        assert _count("executor_e2e_seconds", {"status": "error", "queued": "true"}) == e2e_before + 1
         assert (
-            _counter("executor_run_total", {"status": "error", "queued": "true"}) == error_before + 1
+            _count("executor_e2e_seconds", {"status": "error", "queued": "true"}) == e2e_before + 1
+        )
+        assert (
+            _counter("executor_run_total", {"status": "error", "queued": "true"})
+            == error_before + 1
         )
         assert (
             _counter("executor_run_total", {"status": "success", "queued": "true"})
@@ -850,9 +851,7 @@ class TestFinalizePausedRun:
     async def test_it_extends_the_lock_signals_done_and_counts_paused(self) -> None:
         run, extend, signal, close, total, mock_log = await self._pause(queued=True)
 
-        extend.assert_awaited_once_with(
-            "conv-1", "s1", "task-1", HIL_PAUSED_LOCK_TTL_SECONDS
-        )
+        extend.assert_awaited_once_with("conv-1", "s1", "task-1", HIL_PAUSED_LOCK_TTL_SECONDS)
         signal.assert_called_once_with("s1")
         close.assert_awaited_once_with(run, was_cancelled=False)
         total.assert_called_once_with(status="paused", queued=True)
