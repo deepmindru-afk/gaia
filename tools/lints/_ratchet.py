@@ -119,7 +119,7 @@ def _touched_debt(baseline: Baseline, touched: set[str], current: Current) -> se
 def _remediation(
     baseline: Path, *, is_new: bool, deferral: Deferral | None, fix_new: str
 ) -> tuple[str, str]:
-    """The label and fix text for one failure, by how it came to fail."""
+    """Return the label and fix text for one failure, by how it came to fail."""
     relative = baseline.relative_to(REPO_ROOT).as_posix()
     if is_new:
         return "new", (

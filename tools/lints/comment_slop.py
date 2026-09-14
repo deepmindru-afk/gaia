@@ -139,6 +139,7 @@ def _check_file(path: Path) -> list[Violation]:
 
 
 def check(files: list[Path]) -> list[Violation]:
+    """Return comment-content violations across ``files``."""
     violations: list[Violation] = []
     for path in files:
         violations.extend(_check_file(path))

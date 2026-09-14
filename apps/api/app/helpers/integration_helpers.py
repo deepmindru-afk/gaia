@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 from app.helpers.slug_helpers import generate_integration_slug
 from app.models.integration_models import IntegrationWithCreator
@@ -27,6 +28,36 @@ SEARCH_STOPWORDS = {
     "on",
     "my",
 }
+
+
+def normalize_server_url(url: str) -> str:
+    """Canonicalize an MCP server URL for duplicate detection.
+
+    Lowercases the scheme and host, drops the fragment, and strips a trailing
+    slash. Path and query case are preserved — some MCP servers use
+    case-sensitive paths, so touching them would break the connection.
+    """
+    parts = urlsplit(url.strip())
+    return urlunsplit(
+        (parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, "")
+    )
+
+
+def dedup_server_url_key(url: str | None) -> str | None:
+    """Return a normalized dedup key for a custom MCP server URL, or None when unusable.
+
+    None (rather than raising) means "no dedup protection": the caller still
+    persists and connects with the original URL, which fails loudly on its own
+    if the URL is genuinely bad. Empty keys are also None — a blank key would
+    collide across every unusable URL under the per-creator unique index.
+    """
+    if not url or not url.strip():
+        return None
+    try:
+        key = normalize_server_url(url)
+    except ValueError:
+        return None
+    return key or None
 
 
 def build_search_patterns(query: str) -> list[str]:

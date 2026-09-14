@@ -186,6 +186,7 @@ jobs:
       has_python: ${{ steps.detect.outputs.has_python }}
       has_typescript: ${{ steps.detect.outputs.has_typescript }}
       has_alert_rules: ${{ steps.detect.outputs.has_alert_rules }}
+      has_js_sources: ${{ steps.detect.outputs.has_js_sources }}
       python_projects: ${{ steps.detect.outputs.python_projects }}
       typescript_projects: ${{ steps.detect.outputs.typescript_projects }}
       # The branch every lane below diffs against. Resolved here, once, because
@@ -217,6 +218,8 @@ jobs:
 
       - name: Detect affected projects
         id: detect
+        env:
+          GAIA_PR_BASE: ${{ steps.base.outputs.base_ref }}
         run: |
           set -euo pipefail
           normalize() { tr -d '[]"' | tr -s ' \n' ',' | sed 's/^,//; s/,$//'; }
@@ -249,6 +252,10 @@ jobs:
           echo "has_python=$([[ -n "$PY" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "has_typescript=$([[ -n "$TS" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "has_alert_rules=$ALERTS" >> "$GITHUB_OUTPUT"
+          # Extension-scoped, not tag-scoped: a .mjs under scripts/ or the Python
+          # API belongs to no scope:typescript project but still carries comments.
+          JS=$(bash scripts/ci/changes.sh files ts tsx js jsx mjs cjs)
+          echo "has_js_sources=$([[ -n "$JS" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "python: ${PY:-none} | typescript: ${TS:-none} | alert-rules: $ALERTS"
           echo "Affected Python: $PY"
           echo "Affected TypeScript: $TS"
@@ -561,7 +568,7 @@ jobs:
   doc-comments:
     name: Doc comments state the contract (no narration, restating, banners)
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
-    if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.has_js_sources == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
     # The base every scoped step in this job diffs against. Job-level because a
     # workflow-level `env:` cannot read `needs`, and every step here that calls

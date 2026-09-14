@@ -72,6 +72,7 @@ def _crash_location(exc: Exception) -> str:
 
 
 def main(argv: list[str]) -> int:
+    """Run every rule over the given paths; return non-zero on any violation or crash."""
     paths = [Path(a) for a in argv] or [Path("apps/api/app"), Path("apps/api/tests")]
     files = iter_python_files(paths)
     # A rule that sets INCLUDES_TESTS governs the test tree too (the

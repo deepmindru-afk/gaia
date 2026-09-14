@@ -106,13 +106,14 @@ async def build_executor_graph(
                 "plan_tasks",
                 "update_tasks",
                 "read",
+                "write",
+                "edit",
                 "bash",
                 "deep_research",
                 "wait_for_subagents",
                 "read_manual",
                 "create_tracked_todo",
                 "update_tracked_todo",
-                "update_tracked_todo_canvas",
                 "complete_tracked_todo",
                 "search_todo_context",
                 "list_tracked_todos",
@@ -127,6 +128,13 @@ async def build_executor_graph(
                 "decline_playbook",
                 "read_playbook",
                 "disable_playbook",
+                # Same rule as playbook tools: not in the retrieval index, so
+                # retrieve_tools once improvised a nonexistent `gaia bridge approve`.
+                # approve_device_pairing stays gated regardless of binding.
+                "add_device",
+                "approve_device_pairing",
+                "list_devices",
+                "run_on_device",
             ],
         ),
         hooks_config=HookConfig(

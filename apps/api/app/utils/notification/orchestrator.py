@@ -16,7 +16,7 @@ from app.models.notification.notification_models import (
     NotificationActionView,
     NotificationChannelView,
     NotificationContentView,
-    NotificationQuery,
+    NotificationListFilters,
     NotificationRecord,
     NotificationRequest,
     NotificationStatus,
@@ -349,6 +349,26 @@ class NotificationOrchestrator:
 
         return updated_notification
 
+    async def mark_all_read(self, user_id: str, channel_type: str | None = None) -> int:
+        """Mark every delivered notification for a user as read in one write.
+
+        Unlike bulk_actions, this does not require the caller to already know
+        every notification ID — it operates server-side on all matching
+        notifications, including any not yet loaded into a client's paginated view.
+        """
+        log.info(
+            f"{LogTag.NOTIFICATION} Marking all notifications as read for user",
+            user_id=user_id,
+            channel_type=channel_type,
+        )
+        updated_count = await self.storage.mark_all_read(user_id, channel_type=channel_type)
+
+        await websocket_manager.broadcast_to_user(
+            user_id, {"type": "notification.all_read", "channel_type": channel_type}
+        )
+
+        return updated_count
+
     async def archive_notification(self, notification_id: str, user_id: str) -> bool:
         notification = await self.storage.get_notification(notification_id, user_id)
         if not notification:
@@ -372,13 +392,13 @@ class NotificationOrchestrator:
 
     # NOTIFICATION RETRIEVAL & QUERIES
     async def get_user_notifications(
-        self, user_id: str, query: NotificationQuery | None = None
+        self,
+        user_id: str,
+        *,
+        filters: NotificationListFilters | None = None,
     ) -> list[NotificationView]:
-        """Return a user's notifications, filtered and paged by query."""
-        q = query or NotificationQuery()
-        notifications = await self.storage.get_user_notifications(
-            user_id, q.status, q.limit, q.offset, q.channel_type, q.notification_type, q.source
-        )
+        """Get a user's notifications with optional filtering and pagination."""
+        notifications = await self.storage.get_user_notifications(user_id, filters=filters)
         return [self._serialize_notification(n) for n in notifications]
 
     async def get_notification(self, notification_id: str, user_id: str) -> NotificationView | None:

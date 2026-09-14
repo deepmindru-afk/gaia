@@ -4197,6 +4197,25 @@
         "title": "DeleteMemoryResponse",
         "type": "object"
       },
+      "DeregisterServerResponse": {
+        "description": "Result of the daemon deregistering one of its MCP servers.",
+        "properties": {
+          "removed": {
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "server_key": {
+            "title": "Server Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_key",
+          "removed"
+        ],
+        "title": "DeregisterServerResponse",
+        "type": "object"
+      },
       "DesktopReleaseAsset": {
         "description": "One downloadable binary attached to a desktop release.",
         "properties": {
@@ -4495,6 +4514,11 @@
           },
           "integration_id": {
             "title": "Integration Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "stdio",
+            "title": "Kind",
             "type": "string"
           },
           "server_key": {
@@ -7879,6 +7903,20 @@
         "title": "MCPProxyToolCallResponse",
         "type": "object"
       },
+      "MarkAllReadSummary": {
+        "description": "Outcome of marking every delivered notification for a user as read.",
+        "properties": {
+          "updated_count": {
+            "title": "Updated Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated_count"
+        ],
+        "title": "MarkAllReadSummary",
+        "type": "object"
+      },
       "MarkAsReadResponse": {
         "properties": {
           "count": {
@@ -10436,6 +10474,34 @@
         "title": "NotificationResponse[BulkActionSummary]",
         "type": "object"
       },
+      "NotificationResponse_MarkAllReadSummary_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarkAllReadSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "NotificationResponse[MarkAllReadSummary]",
+        "type": "object"
+      },
       "NotificationResponse_NotificationRecord_": {
         "properties": {
           "data": {
@@ -12932,6 +12998,16 @@
             "title": "Display Name",
             "type": "string"
           },
+          "kind": {
+            "default": "stdio",
+            "enum": [
+              "stdio",
+              "url",
+              "filesystem"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "server_key": {
             "maxLength": 120,
             "minLength": 1,
@@ -13570,6 +13646,73 @@
           "steps"
         ],
         "title": "SelectedWorkflowData",
+        "type": "object"
+      },
+      "SelfPairRequest": {
+        "description": "An authenticated host pairs itself as a device in one call (no user_code).\n\nRequiring a JSON body is load-bearing: it forces a CORS preflight the\nallowlist rejects, which is the CSRF control for this cookie-authenticated\nroute. Do not relax it to a GET or an empty body.",
+        "properties": {
+          "client": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Client",
+            "type": "string"
+          },
+          "daemon_version": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daemon Version"
+          },
+          "name": {
+            "description": "Human label for this device",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "platform": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Platform",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "platform",
+          "client"
+        ],
+        "title": "SelfPairRequest",
+        "type": "object"
+      },
+      "SelfPairResponse": {
+        "description": "Result of a one-call self-pair: the device plus its refresh credential.\n\nMirrors the approve response but also returns ``refresh_token`` inline, since\nthe caller that pairs is the same host that stores the credential.",
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "refresh_token",
+          "name"
+        ],
+        "title": "SelfPairResponse",
         "type": "object"
       },
       "SendDraftResponse": {
@@ -15244,15 +15387,20 @@
         "type": "string"
       },
       "TodoCanvasResponse": {
-        "description": "A tracked todo's canvas markdown. Empty string when the todo has no canvas.",
+        "description": "A tracked todo's notes: canvas.md and activity.md. Empty strings when unset.",
         "properties": {
+          "activity": {
+            "title": "Activity",
+            "type": "string"
+          },
           "content": {
             "title": "Content",
             "type": "string"
           }
         },
         "required": [
-          "content"
+          "content",
+          "activity"
         ],
         "title": "TodoCanvasResponse",
         "type": "object"
@@ -15506,7 +15654,7 @@
                 "type": "null"
               }
             ],
-            "description": "VFS directory for tracked todos (canvas.md + log.md)",
+            "description": "VFS directory for tracked todos (canvas.md, activity.md, log.md)",
             "title": "Vfs Path"
           },
           "workflow_id": {
@@ -15721,7 +15869,7 @@
                 "type": "null"
               }
             ],
-            "description": "VFS directory for tracked todos (canvas.md + log.md)",
+            "description": "VFS directory for tracked todos (canvas.md, activity.md, log.md)",
             "title": "Vfs Path"
           },
           "workflow_categories": {
@@ -22527,6 +22675,68 @@
         ]
       }
     },
+    "/api/v1/device/self-pair": {
+      "post": {
+        "description": "Pair the authenticated host as its own device in one call (no user_code).\n\nA UX collapse of start\u2192approve\u2192poll for a host that already holds the user's\nsession (the desktop app). The JSON body is the CSRF control \u2014 it forces a\nCORS preflight the allowlist rejects.",
+        "operationId": "device_bridge_self_pair",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelfPairRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfPairResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Self Pair",
+        "tags": [
+          "Device Bridge"
+        ]
+      }
+    },
     "/api/v1/device/servers": {
       "post": {
         "description": "Register (or re-register) one MCP server the device exposes; authed by the device JWT.",
@@ -22596,6 +22806,79 @@
           }
         },
         "summary": "Register Server",
+        "tags": [
+          "Device Bridge"
+        ]
+      }
+    },
+    "/api/v1/device/servers/{server_key}": {
+      "delete": {
+        "description": "Remove one MCP server the device no longer exposes; authed by the device JWT.\n\nThe daemon calls this right after dropping the server from its local config,\nso it does not need to be told to remove it again (notify_device=False).",
+        "operationId": "device_bridge_deregister_server",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_key",
+            "required": true,
+            "schema": {
+              "title": "Server Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeregisterServerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Deregister Server",
         "tags": [
           "Device Bridge"
         ]
@@ -28554,6 +28837,78 @@
         ]
       }
     },
+    "/api/v1/notifications/mark-all-read": {
+      "post": {
+        "description": "Mark every delivered notification for the user as read, server-side.\n\nOperates on every matching notification, not just the ones the caller has\ncurrently loaded \u2014 this is what lets \"mark all as read\" cover notifications\nbeyond the first page a paginated client has fetched.",
+        "operationId": "notification_mark_all_read",
+        "parameters": [
+          {
+            "description": "Only mark notifications on this channel",
+            "in": "query",
+            "name": "channel_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only mark notifications on this channel",
+              "title": "Channel Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationResponse_MarkAllReadSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Client Error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Server Error"
+          }
+        },
+        "summary": "Mark All Read",
+        "tags": [
+          "Notification"
+        ]
+      }
+    },
     "/api/v1/notifications/preferences/channels": {
       "get": {
         "description": "Get user's notification channel preferences.",
@@ -33747,7 +34102,6 @@
         "operationId": "todos_list_todos",
         "parameters": [
           {
-            "description": "Search query",
             "in": "query",
             "name": "q",
             "required": false,
@@ -33760,19 +34114,16 @@
                   "type": "null"
                 }
               ],
-              "description": "Search query",
               "title": "Q"
             }
           },
           {
-            "description": "Search mode: text, semantic, or hybrid",
             "in": "query",
             "name": "mode",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/SearchMode",
-              "default": "hybrid",
-              "description": "Search mode: text, semantic, or hybrid"
+              "default": "hybrid"
             }
           },
           {
@@ -33857,26 +34208,6 @@
           },
           {
             "in": "query",
-            "name": "labels",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Labels"
-            }
-          },
-          {
-            "description": "Due date after this date",
-            "in": "query",
             "name": "due_after",
             "required": false,
             "schema": {
@@ -33889,12 +34220,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Due date after this date",
               "title": "Due After"
             }
           },
           {
-            "description": "Due date before this date",
             "in": "query",
             "name": "due_before",
             "required": false,
@@ -33908,30 +34237,25 @@
                   "type": "null"
                 }
               ],
-              "description": "Due date before this date",
               "title": "Due Before"
             }
           },
           {
-            "description": "Only todos due today",
             "in": "query",
             "name": "due_today",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Only todos due today",
               "title": "Due Today",
               "type": "boolean"
             }
           },
           {
-            "description": "Only todos due this week",
             "in": "query",
             "name": "due_this_week",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Only todos due this week",
               "title": "Due This Week",
               "type": "boolean"
             }
@@ -33961,18 +34285,36 @@
             }
           },
           {
-            "description": "Include statistics in response",
             "in": "query",
             "name": "include_stats",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Include statistics in response",
               "title": "Include Stats",
               "type": "boolean"
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Labels"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -34649,7 +34991,7 @@
     },
     "/api/v1/todos/{todo_id}/canvas": {
       "get": {
-        "description": "Return the canvas markdown for a tracked todo.",
+        "description": "Return a tracked todo's notes: canvas.md and activity.md.",
         "operationId": "todos_get_todo_canvas",
         "parameters": [
           {

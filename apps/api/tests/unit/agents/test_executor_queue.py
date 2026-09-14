@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.agents.core.background import executor_queue as eq, session as sess
+from app.agents.core.background import executor_queue as eq
 from app.agents.core.background.executor_queue import (
     LockState,
     build_lock_value,
@@ -29,13 +29,6 @@ from app.agents.core.background.session import RunIdentity, RunKind, get_session
 from app.constants.cache import EXECUTOR_BUSY_TTL, EXECUTOR_QUEUE_TTL
 from app.models.agent_models import AgentConfigurable
 from app.models.user_models import AuthenticatedUser
-
-
-@pytest.fixture(autouse=True)
-def _clean_registry():
-    sess._sessions.clear()
-    yield
-    sess._sessions.clear()
 
 
 def _queue_item(**overrides) -> str:

@@ -14,14 +14,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let isPaid = false;
 let isUnknown = false;
 
-// HeroUI's ripple (framer-motion) fires its completion callback after this
-// file's jsdom teardown, throwing on the missing `window` (7 unhandled
-// errors on CI) — stubbed here since it's chrome, not behaviour.
-vi.mock("@heroui/ripple", () => ({
-  Ripple: () => null,
-  useRipple: () => ({ ripples: [], onPress: vi.fn(), onClear: vi.fn() }),
-}));
-
 vi.mock("@/features/pricing/hooks/useIsPaid", () => ({
   useIsPaid: () => ({ isPaid, isUnknown }),
 }));

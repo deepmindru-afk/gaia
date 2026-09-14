@@ -479,7 +479,13 @@ class ToolRegistry:
         self._add_category(
             "integrations",
             tools=integration_tool.tools,
-            risk=CategoryRisk(destructive_tools={"connect_integration"}),
+            risk=CategoryRisk(
+                destructive_tools={"connect_integration"},
+                # add_custom_mcp_server: untrusted, LLM-resolved MCP server. approve_device_pairing:
+                # links a device to the account. Both always confirm with the user in every
+                # HIL mode (see hil/policy).
+                always_gate_tools={"add_custom_mcp_server", "approve_device_pairing"},
+            ),
         )
         self._add_category(
             "integration_instructions",

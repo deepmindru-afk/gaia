@@ -11,7 +11,7 @@ from app.models.notification.notification_models import (
     BulkActions,
     ChannelConfig,
     NotificationContent,
-    NotificationQuery,
+    NotificationListFilters,
     NotificationRequest,
     NotificationSourceEnum,
     NotificationStatus,
@@ -115,7 +115,7 @@ async def get_notifications(
         # Get notifications with all filters
         notifications = await notification_service.get_user_notifications(
             user_id,
-            NotificationQuery(
+            filters=NotificationListFilters(
                 status=status,
                 notification_type=notification_type,
                 source=source,
@@ -160,7 +160,8 @@ async def search_notifications(
 
         # Get notifications for searching
         notifications = await notification_service.get_user_notifications(
-            user_id, NotificationQuery(status=status, limit=100)
+            user_id,
+            filters=NotificationListFilters(status=status, limit=100),
         )
 
         # Simple text search

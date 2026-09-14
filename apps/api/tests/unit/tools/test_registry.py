@@ -811,7 +811,28 @@ class TestInitializedCategoryContract:
             "suggest_integrations": False,
             "connect_integration": True,
             "check_integrations_status": False,
+            # Force-gated (always_gate), not destructive — see the always_gate test.
+            "add_custom_mcp_server": False,
+            # Read-only device catalog lookup.
+            "list_devices": False,
+            # Emits the onboarding card; no mutation.
+            "add_device": False,
+            # Force-gated (always_gate), not destructive — surfaces the approve link.
+            "approve_device_pairing": False,
+            # Deliberately NEITHER destructive NOR always_gate: pairing the device IS
+            # the grant. RCE surface with no HIL stop — gate expected to be added back
+            # before this ships to production.
+            "run_on_device": False,
         }
+
+    def test_integrations_always_gate_set_is_exactly_the_two_forced_tools(
+        self, registry: ToolRegistry
+    ) -> None:
+        """Dropping either forced tool silently removes the human gate on a security-sensitive action."""
+        gated = {
+            tool.name for tool in registry._categories["integrations"].tools if tool.always_gate
+        }
+        assert gated == {"add_custom_mcp_server", "approve_device_pairing"}
 
 
 @pytest.mark.unit

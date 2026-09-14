@@ -35,6 +35,7 @@ class CanvasIndexMetadata(BaseModel):
     completed: bool = False
     labels: str | None = None
     completed_at: str | None = None
+    revision: str | None = None
 
 
 class _StoredCanvasRows(BaseModel):
@@ -61,6 +62,7 @@ async def store_canvas_embedding(
     user_id: str,
     title: str = "",
     labels: list[str] | None = None,
+    revision: str | None = None,
 ) -> bool:
     """Index canvas content in ChromaDB for semantic search."""
     try:
@@ -75,6 +77,7 @@ async def store_canvas_embedding(
             updated_at=datetime.now(UTC).isoformat(),
             completed=False,
             labels=", ".join(labels) if labels else None,
+            revision=revision,
         )
 
         await chroma_collection.aadd_texts(
@@ -100,10 +103,14 @@ async def update_canvas_embedding(
     user_id: str,
     title: str = "",
     labels: list[str] | None = None,
+    revision: str | None = None,
 ) -> bool:
     """Re-index canvas content after update, preserving completed status."""
     # Preserve completed metadata before deleting the old embedding
     was_completed = False
+    # Only read via `is not None` then a string `>=`; a failed read yields "" and
+    # "" >= any real revision is False, so the same branch is taken as with None.
+    stored_revision: str | None = None  # pragma: no mutate — None and "" are equivalent here
     try:
         raw_client = await ChromaClient.get_client()
         collection = await raw_client.get_collection(COLLECTION_NAME)
@@ -111,11 +118,17 @@ async def update_canvas_embedding(
         metadatas = _StoredCanvasRows.model_validate(existing).metadatas if existing else None
         if metadatas and metadatas[0]:
             was_completed = metadatas[0].completed
+            stored_revision = metadatas[0].revision
     except Exception as e:
         log.debug("canvas.preserve_completed_metadata_failed", todo_id=todo_id, error=str(e))
 
+    if revision is not None and stored_revision is not None and stored_revision >= revision:
+        return True
+
     await delete_canvas_embedding(todo_id)
-    result = await store_canvas_embedding(todo_id, canvas_content, user_id, title, labels)
+    result = await store_canvas_embedding(
+        todo_id, canvas_content, user_id, title, labels, revision=revision
+    )
 
     # Restore completed status if the todo was previously completed
     if result and was_completed:

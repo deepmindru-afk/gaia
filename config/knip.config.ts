@@ -326,13 +326,13 @@ const config: KnipConfig = {
 
     // ── Desktop App ──────────────────────────────────────────────────
     "apps/desktop": {
-      // adhoc-sign.cjs is the electron-builder `afterSign` hook
+      // mac-sign.cjs is the electron-builder `afterSign` hook
       // (electron-builder.yml), invoked by the packager — not imported as a
       // module, so knip can't trace it.
       entry: [
         "electron.vite.config.ts",
         "src/**/*.{ts,tsx}",
-        "scripts/adhoc-sign.cjs",
+        "scripts/mac-sign.cjs",
       ],
       ignoreDependencies: [
         "wait-on",
@@ -340,6 +340,13 @@ const config: KnipConfig = {
         // electron-builder should pack into the asar (declaring it breaks packaging: libs/shared/ts
         // is outside apps/desktop). Same handling as apps/web and apps/mobile.
         "@gaia/shared",
+        // bridge-core (bundled from @gaia/shared source via the vite alias) imports
+        // these; externalizeDepsPlugin keeps them external for electron-builder to
+        // pack into the asar — no src file imports them directly, so knip can't trace them.
+        "@modelcontextprotocol/sdk",
+        "ws",
+        "zod",
+        "@types/ws",
       ],
       // An execFile() argument, not a module: app-icon.ts hardcodes the absolute, SIP-protected
       // macOS binary path so it's never resolved via $PATH. knip probes the filesystem, so it
@@ -409,8 +416,16 @@ const config: KnipConfig = {
         "!src/**/*.test.{ts,tsx}",
         "!**/__tests__/**",
       ],
-      // Peer type package for react-dom (pulled in transitively by Ink/React).
-      ignoreDependencies: ["@types/react-dom"],
+      // Peer type package for react-dom (pulled in transitively by Ink/React). The
+      // bridge-core source is inlined by the esbuild alias plugin with `packages:
+      // "external"`, so the published CLI needs these in its own node_modules though nothing imports them directly.
+      ignoreDependencies: [
+        "@types/react-dom",
+        "@modelcontextprotocol/sdk",
+        "ws",
+        "zod",
+        "@types/ws",
+      ],
     },
 
     // ── Shared TS Library ────────────────────────────────────────────

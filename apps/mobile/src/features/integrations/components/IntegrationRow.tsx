@@ -29,12 +29,6 @@ export function IntegrationRow({
 }: IntegrationRowProps) {
   const { fontSize, spacing } = useResponsive();
 
-  const state = integrationConnectionState(integration.status);
-  const isConnected = state === "connected";
-  const isExpired = state === "expired";
-  const isAvailable =
-    integration.source === "custom" || integration.available !== false;
-
   return (
     <PressableFeedback
       onPress={() => onPressRow(integration)}
@@ -73,36 +67,86 @@ export function IntegrationRow({
       </View>
 
       <View style={{ alignItems: "flex-end" }}>
-        {isPending ? (
-          <IntegrationStatusPill status={integration.status} isPending />
-        ) : isConnected ? (
-          <IntegrationStatusPill status={integration.status} />
-        ) : (isAvailable || isExpired) && state !== "pending" ? (
-          <Pressable
-            onPress={() => onPressConnect(integration)}
-            hitSlop={6}
-            className={
-              isExpired
-                ? "rounded-full bg-amber-500/15 px-3 py-1.5 active:bg-amber-500/25"
-                : "rounded-full bg-primary/15 px-3 py-1.5 active:bg-primary/25"
-            }
-            accessibilityRole="button"
-            accessibilityLabel={`${CONNECT_ACTION_LABEL[state]} ${integration.name}`}
-          >
-            <Text
-              className={
-                isExpired
-                  ? "text-amber-500 text-[13px] font-semibold"
-                  : "text-primary text-[13px] font-semibold"
-              }
-            >
-              {CONNECT_ACTION_LABEL[state]}
-            </Text>
-          </Pressable>
-        ) : state === "pending" ? (
-          <IntegrationStatusPill status="created" />
-        ) : null}
+        <IntegrationRowAction
+          integration={integration}
+          isPending={isPending}
+          onPressConnect={onPressConnect}
+        />
       </View>
     </PressableFeedback>
   );
+}
+
+type RowActionKind = "pending" | "connected" | "connect" | "awaiting" | "none";
+
+function resolveRowAction(
+  integration: Integration,
+  isPending: boolean,
+): RowActionKind {
+  const state = integrationConnectionState(integration.status);
+  if (isPending) return "pending";
+  if (state === "connected") return "connected";
+  if (state === "pending") return "awaiting";
+  const isAvailable =
+    integration.source === "custom" || integration.available !== false;
+  if (isAvailable || state === "expired") return "connect";
+  return "none";
+}
+
+function ConnectButton({
+  integration,
+  onPressConnect,
+}: {
+  integration: Integration;
+  onPressConnect: (integration: Integration) => void;
+}) {
+  const state = integrationConnectionState(integration.status);
+  const isExpired = state === "expired";
+  return (
+    <Pressable
+      onPress={() => onPressConnect(integration)}
+      hitSlop={6}
+      className={
+        isExpired
+          ? "rounded-full bg-amber-500/15 px-3 py-1.5 active:bg-amber-500/25"
+          : "rounded-full bg-primary/15 px-3 py-1.5 active:bg-primary/25"
+      }
+      accessibilityRole="button"
+      accessibilityLabel={`${CONNECT_ACTION_LABEL[state]} ${integration.name}`}
+    >
+      <Text
+        className={
+          isExpired
+            ? "text-amber-500 text-[13px] font-semibold"
+            : "text-primary text-[13px] font-semibold"
+        }
+      >
+        {CONNECT_ACTION_LABEL[state]}
+      </Text>
+    </Pressable>
+  );
+}
+
+function IntegrationRowAction({
+  integration,
+  isPending,
+  onPressConnect,
+}: Pick<IntegrationRowProps, "integration" | "isPending" | "onPressConnect">) {
+  const kind = resolveRowAction(integration, isPending);
+  if (kind === "pending") {
+    return <IntegrationStatusPill status={integration.status} isPending />;
+  }
+  if (kind === "connected") {
+    return <IntegrationStatusPill status={integration.status} />;
+  }
+  if (kind === "awaiting") return <IntegrationStatusPill status="created" />;
+  if (kind === "connect") {
+    return (
+      <ConnectButton
+        integration={integration}
+        onPressConnect={onPressConnect}
+      />
+    );
+  }
+  return null;
 }

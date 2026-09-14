@@ -469,6 +469,60 @@ def _docstring_codes(tmp_path: Path, rel: str, src: str) -> list[str]:
     return sorted(v.detail.split(":")[0] for v in violations)
 
 
+def _same_named_bases(tmp_path: Path) -> list[Path]:
+    # memory_db_models.MemoryDocument is SQLAlchemy; memory_models.MemoryDocument is Pydantic.
+    return [
+        _write(
+            tmp_path, "app/models/memory_db_models.py", "class MemoryDocument(Base):\n    pass\n"
+        ),
+        _write(
+            tmp_path, "app/models/memory_models.py", "class MemoryDocument(BaseModel):\n    pass\n"
+        ),
+    ]
+
+
+def test_a_subclass_of_a_non_runtime_twin_is_still_checked(tmp_path: Path) -> None:
+    row = _write(
+        tmp_path,
+        "app/models/rows.py",
+        "from app.models.memory_db_models import MemoryDocument\n\n\n"
+        'class Row(MemoryDocument):\n    """Row with ``markup``."""\n',
+    )
+    violations = docstring_slop.check([*_same_named_bases(tmp_path), row])
+    assert sorted(v.detail.split(":")[0] for v in violations) == ["DS2", "DS3"]
+
+
+def test_a_subclass_of_the_runtime_twin_stays_exempt(tmp_path: Path) -> None:
+    view = _write(
+        tmp_path,
+        "app/models/views.py",
+        "from app.models.memory_models import MemoryDocument\n\n\n"
+        'class View(MemoryDocument):\n    """View with ``markup``."""\n',
+    )
+    assert docstring_slop.check([*_same_named_bases(tmp_path), view]) == []
+
+
+def test_a_base_named_through_its_module_resolves_to_that_module(tmp_path: Path) -> None:
+    view = _write(
+        tmp_path,
+        "app/models/views.py",
+        "from app.models import memory_models\n\n\n"
+        'class View(memory_models.MemoryDocument):\n    """View with ``markup``."""\n',
+    )
+    assert docstring_slop.check([*_same_named_bases(tmp_path), view]) == []
+
+
+def test_a_base_named_through_an_aliased_module_import_is_still_checked(tmp_path: Path) -> None:
+    row = _write(
+        tmp_path,
+        "app/models/rows.py",
+        "import app.models.memory_db_models as db_models\n\n\n"
+        'class Row(db_models.MemoryDocument):\n    """Row with ``markup``."""\n',
+    )
+    violations = docstring_slop.check([*_same_named_bases(tmp_path), row])
+    assert sorted(v.detail.split(":")[0] for v in violations) == ["DS2", "DS3"]
+
+
 def test_docstring_over_the_function_cap_is_ds1(tmp_path: Path) -> None:
     body = "\n".join(f"    line {i}." for i in range(7))
     src = f'def f():\n    """Summary.\n\n{body}\n    """\n'
@@ -544,6 +598,19 @@ def test_bare_mock_patch_is_not_a_route_decorator(tmp_path: Path) -> None:
     # `@patch(...)` is unittest.mock; only `@router.patch(...)` is a route.
     src = '@patch("x.y")\ndef test_x(m):\n    """Summary.\n\n    More.\n    """\n'
     assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == ["DS4"]
+
+
+def test_indirect_pydantic_subclass_docstring_is_never_checked(tmp_path: Path) -> None:
+    # CamelModel lives in another file; its subclasses are schema descriptions too.
+    base = _write(tmp_path, "app/models/base.py", "class CamelModel(BaseModel):\n    pass\n")
+    body = "\n".join(f"    line {i} with ``markup``." for i in range(14))
+    model = _write(
+        tmp_path,
+        "app/models/x.py",
+        "from app.models.base import CamelModel\n\n\n"
+        f'class M(CamelModel):\n    """Summary.\n\n{body}\n    """\n',
+    )
+    assert docstring_slop.check([base, model]) == []
 
 
 def test_pydantic_model_docstring_is_never_checked(tmp_path: Path) -> None:

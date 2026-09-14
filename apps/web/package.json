@@ -1,7 +1,7 @@
 {
   "name": "gaia",
   "description": "Frontend Website of GAIA - The personal AI assistant",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "private": true,
   "homepage": "https://github.com/theexperiencecompany/gaia",
   "bugs": {
@@ -218,7 +218,8 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.7",
+    "@biomejs/biome": "^2.5.7",
+    "@heroui/dom-animation": "2.1.10",
     "@next/bundle-analyzer": "^16.3.0",
     "@playwright/test": "^1.62.1",
     "@types/node": "^24.13.3",

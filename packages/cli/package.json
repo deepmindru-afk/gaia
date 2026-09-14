@@ -1,14 +1,14 @@
 {
   "name": "@heygaia/cli",
   "description": "CLI tool for setting up and managing GAIA",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "files": [
     "dist",
     "README.md"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --packages=external --outfile=dist/index.js --minify && chmod +x dist/index.js",
+    "build": "node esbuild.config.mjs && chmod +x dist/index.js",
     "check": "biome check src",
     "dev": "tsx watch src/index.ts",
     "fix": "biome check --write src",

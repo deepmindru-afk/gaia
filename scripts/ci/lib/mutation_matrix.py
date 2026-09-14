@@ -19,14 +19,12 @@ from __future__ import annotations
 import ast
 from collections.abc import Sequence
 from functools import cache
-import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
-import tokenize
 
 APP_DIR = Path("apps/api/app")
 TESTS_DIR = Path("apps/api/tests")
@@ -96,30 +94,35 @@ def _merge_base() -> str:
     return ""
 
 
-def _tokens_without_comments(source: str) -> list[tuple[int, str]] | None:
-    """Return ``source``'s tokens without COMMENT and NL, or None if it fails to tokenize.
+def _code_without_docs(source: str) -> str | None:
+    """Return ``source``'s AST dump with docstrings removed, or None if it fails to parse.
 
-    NL goes too: leaving it would make a deleted comment-only line look like a
-    structural change, so both a trailing ``# noqa`` and a whole-line comment
-    compare equal.
+    Comments never reach the AST and mutmut skips triple-quoted strings, so two
+    sources with equal dumps differ only in text that cannot produce a mutant.
     """
-    tokens: list[tuple[int, str]] = []
     try:
-        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
-            if tok.type in (tokenize.COMMENT, tokenize.NL, tokenize.ENCODING):
-                continue
-            tokens.append((tok.type, tok.string))
-    except (tokenize.TokenError, IndentationError, SyntaxError):
+        tree = ast.parse(source)
+    except SyntaxError:
         return None
-    return tokens
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                del body[0]
+    return ast.dump(tree)
 
 
 def _is_comment_only_change(module_path: str, merge_base: str) -> bool:
-    """Return True when ``module_path``'s diff against ``merge_base`` changes only comments.
+    """Return True when ``module_path``'s diff against ``merge_base`` changes only comments or docstrings.
 
-    Such a diff has zero mutants, so no test file is required. Compared by
-    token stream, not line prefix: deleting a trailing ``# noqa`` leaves a
-    changed line that does not start with ``#``.
+    Such a diff has zero mutants, so no test file is required. Compared by AST,
+    not line prefix: deleting a trailing ``# noqa`` leaves a changed line that
+    does not start with ``#``.
     """
     try:
         old_source = subprocess.check_output(
@@ -132,11 +135,11 @@ def _is_comment_only_change(module_path: str, merge_base: str) -> bool:
     new_full_path = Path(module_path)
     if not new_full_path.exists():
         return False  # deleted file — not comment-only
-    old_tokens = _tokens_without_comments(old_source)
-    new_tokens = _tokens_without_comments(new_full_path.read_text())
-    if old_tokens is None or new_tokens is None:
+    old_code = _code_without_docs(old_source)
+    new_code = _code_without_docs(new_full_path.read_text())
+    if old_code is None or new_code is None:
         return False  # unparseable on either side — don't guess, enforce normally
-    return old_tokens == new_tokens
+    return old_code == new_code
 
 
 @cache
@@ -381,7 +384,7 @@ def main() -> int:
         if merge_base and _is_comment_only_change(module, merge_base):
             print(
                 f"::notice::mutation gate: {rel}'s diff vs {merge_base[:12]} is "
-                "comment-only (no mutable code changed) — skipping",
+                "comment/docstring-only (no mutable code changed) — skipping",
                 file=sys.stderr,
             )
             continue

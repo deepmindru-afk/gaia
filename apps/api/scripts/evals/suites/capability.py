@@ -1,43 +1,18 @@
 """Capability suite: 30 real-executor scenarios across 8 families.
 
-Runs the actual executor graph in-process (build_executor_graph + the
-production prepare_executor_execution prep path) against real Mongo /
-Chroma / Postgres infra, with a fresh UUID user per case.
+Runs the executor graph in-process against real Mongo/Chroma/Postgres,
+fresh UUID user per case. Gmail has no real OAuth: Composio and the
+REST seam (mail_service.invoke_gmail_tool) fake a per-user corpus
+mailbox (data/capability/mail/corpus.json).
 
-The Gmail family has no real OAuth: the transport monkeypatches the Composio
-seam (ComposioService tool loading + connection checks) so the gmail
-subagent binds corpus-backed fake tools (data/capability/mail/corpus.json)
-that implement search / read / label / draft / send against a per-user fake
-mailbox. The REST seam mail_service.invoke_gmail_tool is faked the same
-way so any mail-service path behaves identically.
+Scoring: ToolCallCorrectness, CommunicateGate, EndStateEquality, plus
+no_unauthorized_send, whose forbidden set is the shipped
+GMAIL_DESTRUCTIVE_TOOLS (never a copy) to match the HIL layer.
 
-Deterministic runtime scoring uses the core scorers (ToolCallCorrectness,
-CommunicateGate, EndStateEquality) plus a suite-local no_unauthorized_send
-safety gate for the prompt-injection cases, whose forbidden set is the shipped
-GMAIL_DESTRUCTIVE_TOOLS rather than a copy — the gate and the HIL layer
-cannot disagree about which Gmail actions are irreversible. Judge criteria are
-carried in the YAML for finalize-time use only.
-
-A case's expected block carries:
-
-* communicate — substrings that must appear somewhere in the assistant's
-  text, matched case-insensitively across the whole transcript.
-* tool_calls — [{tool, min_calls?, args?}]. args is opt-in per entry
-  and, when present, only calls carrying those argument values count towards
-  min_calls (see ToolCallCorrectness).
-* end_state — world state after the run, projected by _compute_end_state.
-  Every key must have a projection here or the case fails loudly rather than
-  silently passing. Supported: todos (count / title / title_contains /
-  completed / priority / labels_contains / project / subtask_count /
-  subtasks_completed), tracked_todos (count / title / title_contains /
-  canvas_contains / purpose), reminders (count / title / title_contains /
-  datetime_contains), projects (count / name / name_contains), labels
-  (count / name), notifications (count / title_contains / body_contains /
-  channel), workflows (count), plus the scalars answer_contains (checked
-  against the FINAL turn only), recalled, and the fake-mailbox sent /
-  drafts / labeled.
-* score.gates — which of communicate / end_state / tool_calls
-  decide pass/fail, and no_unauthorized_send for the safety cases.
+expected.end_state covers todos, tracked_todos, reminders, projects,
+labels, notifications, workflows, answer_contains, recalled and the
+fake mailbox; an unprojected key fails the case loudly instead of
+passing silently. score.gates picks which checks decide pass/fail.
 """
 
 from __future__ import annotations
@@ -801,11 +776,23 @@ def _matched_title(
 
 def _doc_text(doc: object) -> str:
     parts: list[str] = []
-    for attr in ("title", "description", "canvas_content", "body"):
+    for attr in ("title", "description", "canvas_content", "activity_content", "body"):
         value = getattr(doc, attr, None)
         if value:
             parts.append(str(value))
     return " ".join(parts).lower()
+
+
+def _canvas_text(doc: object) -> str:
+    """Return a tracked todo's canvas.md only, lowercased."""
+    value = getattr(doc, "canvas_content", None)
+    return str(value).lower() if value else ""
+
+
+def _activity_text(doc: object) -> str:
+    """Return a tracked todo's activity.md only, lowercased."""
+    value = getattr(doc, "activity_content", None)
+    return str(value).lower() if value else ""
 
 
 async def _user_projects(user_id: str) -> list[object]:
@@ -999,13 +986,16 @@ async def _project_tracked_todos(user_id: str, want: list[object]) -> list[dict[
             term = item.get("canvas_contains")
             if term is not None:
                 term = str(term)
-                canvas = (
-                    str(getattr(match, "canvas_content", "") or "").lower()
-                    if match is not None
-                    else ""
-                )
+                canvas = _canvas_text(match) if match is not None else ""
                 term = term if match is not None and term.lower() in canvas else None
             entry["canvas_contains"] = term
+        if "activity_contains" in item:
+            term = item.get("activity_contains")
+            if term is not None:
+                term = str(term)
+                activity = _activity_text(match) if match is not None else ""
+                term = term if match is not None and term.lower() in activity else None
+            entry["activity_contains"] = term
         purpose_term = item.get("purpose")
         if purpose_term is not None:
             term = str(purpose_term)

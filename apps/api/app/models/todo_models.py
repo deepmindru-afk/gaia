@@ -55,7 +55,7 @@ class TodoBase(BaseModel):
     workflow_id: str | None = Field(default=None, description="ID of the associated workflow")
     vfs_path: str | None = Field(
         default=None,
-        description="VFS directory for tracked todos (canvas.md + log.md)",
+        description="VFS directory for tracked todos (canvas.md, activity.md, log.md)",
     )
     scheduled_at: datetime | None = Field(
         default=None,
@@ -238,9 +238,10 @@ class TodoListResponse(ResponseModel):
 
 
 class TodoCanvasResponse(BaseModel):
-    """A tracked todo's canvas markdown. Empty string when the todo has no canvas."""
+    """A tracked todo's notes: canvas.md and activity.md. Empty strings when unset."""
 
     content: str
+    activity: str
 
 
 # Search
@@ -267,7 +268,7 @@ class TodoSearchParams(BaseModel):
 
 
 class TodoListParams(BaseModel):
-    """The query string of ``GET /todos``."""
+    """The query string of GET /todos, bound with Depends() so each field is its own param."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -417,8 +418,9 @@ class TodoDocument(UserScopedDocument):
     expires_at: datetime | None = None
     references: list[str] = Field(default_factory=list)
     completed_at: datetime | None = None
-    # Canvas + log bodies for tracked todos live on the document itself.
+    # Canvas + activity + log bodies for tracked todos live on the document itself.
     canvas_content: str | None = None
+    activity_content: str | None = None
     log_content: str | None = None
     trigger_subscriptions: list[TriggerSubscription] = Field(default_factory=list)
     # Sender of the email an onboarding-seeded todo was extracted from.
@@ -454,6 +456,7 @@ class TodoUpdate(BaseModel):
     references: list[str] | None = None
     completed_at: datetime | None = None
     canvas_content: str | None = None
+    activity_content: str | None = None
     log_content: str | None = None
     source_conversation_id: str | None = None
     trigger_subscriptions: list[TriggerSubscription] | None = None
