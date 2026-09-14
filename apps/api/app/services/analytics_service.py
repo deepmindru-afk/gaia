@@ -62,6 +62,10 @@ class AnalyticsEvents(StrEnum):
     CONVERSATION_DELETED = "chat:conversation_deleted"
     CHAT_MESSAGE_COMPLETED = "chat:message_completed"
     CHAT_MESSAGE_CANCELLED = "chat:message_cancelled"
+    # How comms resolved a background executor update: delivered it as a message,
+    # a one-emoji react, or stayed silent. Property `outcome` in reply/react/silence
+    # (plus `emoji` on a react). Outcome + emoji only, never the text.
+    CHAT_BACKGROUND_UPDATE_RESOLVED = "chat:background_update_resolved"
     # A comms reply scored dirty against the AI-ism detectors and was
     # rewritten before delivery. Counts only — never the text.
     CHAT_STYLE_GUARD_REGENERATED = "chat:style_guard_regenerated"

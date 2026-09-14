@@ -22,6 +22,7 @@ from app.agents.llm.lane import AgentRole
 from app.agents.prompts.comms_prompts import (
     INTERACTIVE_DELIVERY_NOTE,
     PLATFORM_DELIVERY_NOTE,
+    SILENCE_REACT_NOTE,
 )
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.general import NEW_MESSAGE_BREAKER
@@ -64,7 +65,9 @@ class TestNarrateExecutorResult:
         assert isinstance(message, HumanMessage)
         assert message.name == "background_executor"
         assert message.content == (
-            INTERACTIVE_DELIVERY_NOTE + wrap_agent_payload(AgentTag.EXECUTOR_RESULT, RESULT_TEXT)
+            INTERACTIVE_DELIVERY_NOTE
+            + SILENCE_REACT_NOTE
+            + wrap_agent_payload(AgentTag.EXECUTOR_RESULT, RESULT_TEXT)
         )
         config = silent.await_args.args[2]
         assert config["configurable"]["conversation_id"] == CONVERSATION_ID
@@ -106,7 +109,9 @@ class TestNarrateExecutorResult:
 
         initial = silent.await_args.args[1]
         assert initial["messages"][0].content == (
-            INTERACTIVE_DELIVERY_NOTE + wrap_agent_payload(AgentTag.EXECUTOR_ERROR, "boom")
+            INTERACTIVE_DELIVERY_NOTE
+            + SILENCE_REACT_NOTE
+            + wrap_agent_payload(AgentTag.EXECUTOR_ERROR, "boom")
         )
 
     async def test_workflow_delivery_prepends_the_platform_delivery_note(self) -> None:
@@ -146,6 +151,7 @@ class TestNarrateExecutorResult:
         assert content == (
             CARD_NOTE
             + INTERACTIVE_DELIVERY_NOTE
+            + SILENCE_REACT_NOTE
             + wrap_agent_payload(AgentTag.EXECUTOR_RESULT, RESULT_TEXT)
         )
 

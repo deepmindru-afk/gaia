@@ -40,13 +40,16 @@ from app.agents.core.background.session import ExecutorRun
 from app.agents.core.background.workflow_platform_delivery import (
     deliver_result_to_platforms,
 )
+from app.agents.core.comms_directive import interpret_comms_output
 from app.agents.core.nodes.follow_up_actions_node import generate_follow_up_actions
+from app.constants.comms import CommsDirectiveKind
 from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
 from app.constants.log_tags import LogTag
 from app.core.websocket_manager import websocket_manager
 from app.db.repositories.conversations import conversation_repository
 from app.models.chat_models import (
     ConversationSource,
+    MessageKind,
     MessageModel,
     ToolDataEntry,
     UpdateMessagesRequest,
@@ -54,6 +57,7 @@ from app.models.chat_models import (
 from app.models.hil_models import HILApprovalStatus
 from app.models.message_models import ReplyToMessageData
 from app.models.user_models import AuthenticatedUser
+from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.conversation_service import update_messages
 from app.services.hil.approvals_store import get_approval
 from app.services.platform_message_service import deliver_message_to_platform, is_bot_platform
@@ -273,6 +277,31 @@ async def _narrate_and_deliver(
 
     notification_text = await _narrate_result(run, result_text, result_type, returned_note)
 
+    # Comms may judge a background update not worth a full message and answer with a
+    # control line instead: SILENCE (deliver nothing) or REACT (a one-emoji ack). One
+    # event records the outcome for every update; the emoji, never the reason/text.
+    directive = interpret_comms_output(notification_text)
+    resolution_props: dict[str, Any] = {"outcome": directive.kind.value}
+    if directive.kind is CommsDirectiveKind.REACT:
+        resolution_props["emoji"] = directive.payload
+    capture_event(
+        user_id,
+        AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED,
+        resolution_props,
+        dedupe_key=f"chat_background_update_resolved:{run.task_id or run.conversation_id}",
+    )
+
+    message_kind = MessageKind.TEXT
+    if directive.kind is CommsDirectiveKind.SILENCE:
+        log.set(comms_delivery="silenced", silence_reason=directive.payload)
+        return None, None
+    if directive.kind is CommsDirectiveKind.REACT:
+        log.set(comms_delivery="reacted")
+        notification_text = directive.payload
+        message_kind = MessageKind.EMOJI_ACK
+    else:
+        log.set(comms_delivery="message")
+
     # A HIL-resumed run reconciles onto the ORIGINAL live turn's message
     # (``run.bot_message_id``, see ``_record_pause``) instead of minting a
     # rival one. Otherwise queued runs share an id with the live placeholder
@@ -284,7 +313,9 @@ async def _narrate_and_deliver(
     # into a queue item. On presence alone every live run would take the
     # merge path and race the comms stream's own save.
     is_hil_resume = run.is_queued and bool(run.bot_message_id)
-    bot_message = _build_bot_message(run, notification_text, tool_data, is_hil_resume=is_hil_resume)
+    bot_message = _build_bot_message(
+        run, notification_text, tool_data, is_hil_resume=is_hil_resume, kind=message_kind
+    )
 
     show_reply_quote, user_msg_content = await _attach_reply_quote(
         run, bot_message, is_hil_resume=is_hil_resume
@@ -431,12 +462,14 @@ def _build_bot_message(
     tool_data: list[ToolDataEntry] | None,
     *,
     is_hil_resume: bool,
+    kind: MessageKind = MessageKind.TEXT,
 ) -> MessageModel:
     """The bot message this run's result is saved and delivered as."""
     bot_message = MessageModel(
         type="bot",
         response=notification_text,
         date=datetime.now(UTC).isoformat(),
+        kind=kind,
     )
     bot_message.message_id = (
         (run.bot_message_id if is_hil_resume else None)

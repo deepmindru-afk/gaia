@@ -5,6 +5,7 @@ Executor agent handles task execution with full tool access.
 """
 
 from app.constants.agents import AgentTag, wrap_agent_payload
+from app.constants.comms import REACT_KEYWORD, SILENCE_KEYWORD
 from app.constants.general import NEW_MESSAGE_BREAKER
 
 # The one prompt line allowed to contain the literal tells the prompt bans:
@@ -721,4 +722,19 @@ INTERACTIVE_DELIVERY_NOTE = wrap_agent_payload(
     AgentTag.DELIVERY_INSTRUCTIONS,
     f"Split your reply per the bubble rules: conversational beats separated with "
     f"{NEW_MESSAGE_BREAKER}, any structured data or list kept whole in one bubble.",
+)
+
+# Lets comms skip a full message when a background executor update is not worth the
+# user's attention. Scoped to this narration turn only (never the live prompt), so
+# a stray directive can never leak into a normal chat reply. The parser and this
+# note share SILENCE_KEYWORD/REACT_KEYWORD so they can't drift.
+SILENCE_REACT_NOTE = wrap_agent_payload(
+    AgentTag.DELIVERY_INSTRUCTIONS,
+    f"If this background update is not worth a message to the user (a routine or "
+    f"no-op result, nothing they asked for and nothing they need to act on or would "
+    f"care to read), reply with exactly one line and nothing else: "
+    f"'{SILENCE_KEYWORD}: <brief reason>'. If a small acknowledgment is enough, reply "
+    f"with exactly one line: '{REACT_KEYWORD}: <one emoji>'. NEVER use {SILENCE_KEYWORD} "
+    f"for something the user asked for, or that created, sent, deleted, booked, or "
+    f"changed their data: report those in full. When unsure, reply normally.",
 )

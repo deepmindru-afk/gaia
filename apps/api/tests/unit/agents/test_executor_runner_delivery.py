@@ -2157,3 +2157,64 @@ class TestRunBoundaryCarriesWorkflowExecution:
             await er.run_executor_background(run, "do things", {"user_id": "user-1"})
 
         assert seen["workflow"] is None
+
+
+class TestCommsDirectiveDelivery:
+    """Comms can answer a not-mention-worthy background update with a control line:
+    SILENCE (deliver nothing) or REACT (a one-emoji acknowledgment)."""
+
+    async def test_silence_delivers_nothing_on_any_surface(self) -> None:
+        with patch.object(rd, "capture_event") as capture:
+            save, platform, ws = await _deliver(
+                ConversationSource.WHATSAPP, comms_text="SILENCE: routine calendar refresh"
+            )
+        save.assert_not_awaited()
+        platform.assert_not_awaited()
+        ws.assert_not_awaited()
+        # Attributed to the run's owner, or the funnel joins nobody. One resolution
+        # event per update, tagged with the outcome; the reason text never leaves.
+        capture.assert_called_once()
+        assert capture.call_args.args[0] == "user-1"
+        assert capture.call_args.args[1] == rd.AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED
+        assert capture.call_args.args[2] == {"outcome": "silence"}
+
+    async def test_silence_on_web_broadcasts_nothing(self) -> None:
+        save, platform, ws = await _deliver(
+            ConversationSource.WEB, comms_text="SILENCE: nothing new"
+        )
+        save.assert_not_awaited()
+        ws.assert_not_awaited()
+        platform.assert_not_awaited()
+
+    async def test_react_delivers_the_emoji_as_the_message_on_a_bot(self) -> None:
+        with patch.object(rd, "capture_event") as capture:
+            save, platform, _ws = await _deliver(
+                ConversationSource.WHATSAPP, comms_text="REACT: 👍"
+            )
+        platform.assert_awaited_once()
+        assert platform.await_args.args[2] == "👍"
+        capture.assert_called_once()
+        assert capture.call_args.args[0] == "user-1"
+        assert capture.call_args.args[1] == rd.AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED
+        assert capture.call_args.args[2] == {"outcome": "react", "emoji": "👍"}
+        # The ack intent is recorded on the persisted message, not left to be
+        # reverse-engineered from the body being emoji-only.
+        assert save.await_args.args[0].messages[0].kind is rd.MessageKind.EMOJI_ACK
+
+    async def test_react_delivers_the_emoji_over_websocket_on_web(self) -> None:
+        save, _platform, ws = await _deliver(ConversationSource.WEB, comms_text="REACT: ✅")
+        ws.assert_awaited_once()
+        assert ws.await_args.args[1]["message"]["response"] == "✅"
+        assert save.await_args.args[0].messages[0].kind is rd.MessageKind.EMOJI_ACK
+
+    async def test_ordinary_text_still_delivers_normally(self) -> None:
+        with patch.object(rd, "capture_event") as capture:
+            save, platform, _ws = await _deliver(
+                ConversationSource.WHATSAPP, comms_text="Booked your 9am flight."
+            )
+        assert platform.await_args.args[2] == "Booked your 9am flight."
+        # The baseline outcome is captured too, so silence/react rates have a
+        # denominator; an ordinary message stays MessageKind.TEXT.
+        assert capture.call_args.args[1] == rd.AnalyticsEvents.CHAT_BACKGROUND_UPDATE_RESOLVED
+        assert capture.call_args.args[2] == {"outcome": "reply"}
+        assert save.await_args.args[0].messages[0].kind is rd.MessageKind.TEXT

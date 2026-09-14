@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, NotRequired, Union
 
 from pydantic import BaseModel
@@ -89,11 +89,21 @@ tool_fields = [
 ]
 
 
+class MessageKind(StrEnum):
+    """What a bot message IS beyond its text, set when comms' intent is known at
+    creation and would otherwise be unrecoverable from the body alone (a deliberate
+    one-emoji acknowledgement reads identically to a coincidental one-emoji reply)."""
+
+    TEXT = "text"
+    EMOJI_ACK = "emoji_ack"  # comms acknowledged a background update with a single emoji
+
+
 class MessageModel(BaseModel):
     """A single chat message with its content, attachments and tool data."""
 
     type: str
     response: str
+    kind: MessageKind = MessageKind.TEXT
     date: str | None = None
     image_data: ImageData | None = None
     disclaimer: str | None = None

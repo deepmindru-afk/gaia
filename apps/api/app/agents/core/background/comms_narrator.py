@@ -11,7 +11,11 @@ from langchain_core.messages import AIMessage, HumanMessage
 from app.agents.context.slots import BACKGROUND_EXECUTOR_NAME
 from app.agents.core.graph_manager import GraphManager, GraphUnavailableError
 from app.agents.llm.lane import AgentRole
-from app.agents.prompts.comms_prompts import INTERACTIVE_DELIVERY_NOTE, PLATFORM_DELIVERY_NOTE
+from app.agents.prompts.comms_prompts import (
+    INTERACTIVE_DELIVERY_NOTE,
+    PLATFORM_DELIVERY_NOTE,
+    SILENCE_REACT_NOTE,
+)
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.log_tags import LogTag
 from app.helpers.agent_helpers import (
@@ -55,7 +59,7 @@ async def narrate_executor_result(
         # Interactive chat: prepend the "already shown as a card" note (if any)
         # so comms doesn't re-narrate data the frontend rendered natively, plus
         # the bubble-split instruction at the seam where the reply is written.
-        content = f"{returned_note}{INTERACTIVE_DELIVERY_NOTE}{result_block}"
+        content = f"{returned_note}{INTERACTIVE_DELIVERY_NOTE}{SILENCE_REACT_NOTE}{result_block}"
     try:
         comms_graph = await GraphManager.get_graph("comms_agent")
     except GraphUnavailableError as e:

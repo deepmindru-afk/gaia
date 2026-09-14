@@ -9,6 +9,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_config
 
 from app.constants.agents import AgentTag
+from app.constants.comms import CommsDirectiveKind
 
 #: One entry of an agent's middleware stack.
 #:
@@ -297,6 +298,15 @@ class InboxDrain:
 
     def __bool__(self) -> bool:
         return bool(self.inject or self.retire)
+
+
+@dataclass(frozen=True, slots=True)
+class CommsDirective:
+    """A parsed comms narration outcome. ``payload`` is the reply text, the silence
+    reason, or the emoji, depending on ``kind``."""
+
+    kind: CommsDirectiveKind
+    payload: str
 
 
 @dataclass(frozen=True, slots=True)
