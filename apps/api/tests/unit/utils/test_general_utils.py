@@ -1,6 +1,7 @@
 """Unit tests for general utility functions."""
 
 import base64
+import re
 from typing import Any
 from unittest.mock import mock_open, patch
 
@@ -169,8 +170,7 @@ class TestTransformGmailMessage:
             "messageTimestamp": "2024-06-15T14:30:00Z",
         }
         result = transform_gmail_message(msg).model_dump(by_alias=True)
-        assert "2024-06-15" in result["time"]
-        assert "14:30" in result["time"]
+        assert result["time"] == "2024-06-15 14:30"
 
     def test_composio_format_messageTimestamp_unparseable_returned_raw(self) -> None:
         msg: dict[str, Any] = {
@@ -239,6 +239,8 @@ class TestTransformGmailMessage:
         result = transform_gmail_message(msg).model_dump(by_alias=True)
         # Should produce a formatted datetime string
         assert "2024" in result["time"]
+        # Rendered in the server's local zone, so pin the shape, not the hour.
+        assert re.fullmatch(r"2024-01-1[45] \d{2}:\d{2}", result["time"])
 
     def test_gmail_api_format_invalid_internalDate_returns_string(self) -> None:
         msg: dict[str, Any] = {
@@ -640,8 +642,9 @@ class TestDecodeMessageBody:
         # The function replaces - with + and _ with / before decoding.
         # urlsafe_b64encode uses - and _ already, so this tests the
         # replace logic is correct (double-replace shouldn't corrupt).
-        text = "Test with special chars: +/="
+        text = "Test with special chars: +/= ???~~~"
         encoded = base64.urlsafe_b64encode(text.encode()).decode()
+        assert "_" in encoded and "-" in encoded  # both url-safe digits are exercised
         msg: dict[str, Any] = {
             "payload": {
                 "body": {"data": encoded},
@@ -649,6 +652,12 @@ class TestDecodeMessageBody:
         }
         result = decode_message_body(GmailApiMessage.model_validate(msg))
         assert result == text
+
+    def test_invalid_utf8_bytes_are_dropped_not_raised(self) -> None:
+        encoded = base64.urlsafe_b64encode(b"ok\xffdone").decode()
+        msg: dict[str, Any] = {"payload": {"body": {"data": encoded}}}
+        result = decode_message_body(GmailApiMessage.model_validate(msg))
+        assert result == "okdone"
 
     def test_handles_utf8_content(self) -> None:
         text = "Bonjour le monde! Schone Grusse! \u3053\u3093\u306b\u3061\u306f"

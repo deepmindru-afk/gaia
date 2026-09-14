@@ -204,7 +204,8 @@ def _select_best_icon(icons: list[IconCandidate]) -> str | None:
         return None
 
     format_priority: dict[IconFormat, int] = {"png": 0, "ico": 1, "other": 2, "svg": 3}
-    icons.sort(key=lambda x: (format_priority.get(x.format, 2), -x.size))
+    # format is a Literal of the dict's keys: default unreachable
+    icons.sort(key=lambda x: (format_priority.get(x.format, 2), -x.size))  # pragma: no mutate
     return icons[0].href
 
 

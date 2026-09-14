@@ -144,14 +144,18 @@ class TestCompleteOnboarding:
 
     async def test_complete_onboarding_stores_the_callers_own_answers(self, client: AsyncClient):
         """The submission is written for this user, carrying this body's answers — a dropped user id or payload would still report success to the client."""
-        with patch(
-            _COMPLETE_ONBOARDING,
-            new_callable=AsyncMock,
-            return_value={"user_id": FAKE_USER_ID},
-        ) as mock_complete:
+        with (
+            patch(
+                _COMPLETE_ONBOARDING,
+                new_callable=AsyncMock,
+                return_value={"user_id": FAKE_USER_ID},
+            ) as mock_complete,
+            patch("app.api.v1.endpoints.onboarding.log") as log,
+        ):
             response = await client.post(BASE_URL, json=_make_onboarding_request())
 
         assert response.status_code == 200
+        assert log.set.call_args_list[0].kwargs["user"] == {"id": FAKE_USER_ID}
         user_id, submitted = mock_complete.await_args.args
         assert user_id == FAKE_USER_ID
         assert submitted.profession == "Developer"
@@ -337,13 +341,21 @@ class TestGetOnboardingStatus:
     # field is `completed`, which is what mobile reads.
     async def test_get_status_returns_200(self, client: AsyncClient):
         mock_status = _status(completed=True, phase="completed")
-        with patch(_GET_STATUS, new_callable=AsyncMock, return_value=mock_status):
+        with (
+            patch(_GET_STATUS, new_callable=AsyncMock, return_value=mock_status) as get_status,
+            patch("app.api.v1.endpoints.onboarding.log") as log,
+        ):
             response = await client.get(STATUS_URL)
 
         assert response.status_code == 200
         data = response.json()
         assert data["completed"] is True
         assert data["phase"] == "completed"
+        get_status.assert_awaited_once_with(FAKE_USER_ID)
+        assert log.set.call_args_list == [
+            call(user={"id": FAKE_USER_ID}, onboarding={"operation": "get_status"}),
+            call(onboarding={"operation": "get_status", "is_complete": True}),
+        ]
 
     async def test_get_status_incomplete_user(self, client: AsyncClient):
         mock_status = _status(completed=False, phase="initial")
@@ -429,6 +441,7 @@ class TestUpdatePreferences:
                 return_value={"user_id": "507f1f77bcf86cd799439011"},
             ) as mock_update,
             patch("app.api.v1.endpoints.onboarding.schedule_account_sync") as mock_schedule_sync,
+            patch("app.api.v1.endpoints.onboarding.log") as log,
         ):
             response = await client.patch(
                 PREFERENCES_URL,
@@ -445,6 +458,12 @@ class TestUpdatePreferences:
         assert data["message"] == "Preferences updated successfully"
         mock_schedule_sync.assert_called_once_with(FAKE_USER_ID)
         assert mock_update.await_count == 1
+        written_for, written = mock_update.await_args.args
+        assert written_for == FAKE_USER_ID
+        assert written.profession == "Engineer"
+        log.set.assert_called_once_with(
+            user={"id": FAKE_USER_ID}, onboarding={"operation": "update_personality"}
+        )
 
     async def test_update_preferences_captures_settings_changed(self, client: AsyncClient):
         with (
@@ -889,6 +908,65 @@ class TestGetPersonalizationPins:
         assert response.status_code == 200
         assert response.json()["user_bio"] == "Setting up your profile..."
         mock_composio.check_connection_status.assert_awaited_once_with(["gmail"], uid)
+
+    @pytest.mark.parametrize(
+        ("connections", "expected_bio"),
+        [
+            ({"gmail": True}, "Processing your insights... Please check back in a moment."),
+            ({}, "Setting up your profile..."),
+        ],
+    )
+    async def test_pending_bio_promises_a_bio_only_when_gmail_is_connected(
+        self, client: AsyncClient, connections: dict[str, bool], expected_bio: str
+    ):
+        """A connected gmail means extraction is coming; no gmail entry at all means it is not."""
+        mock_composio = MagicMock()
+        mock_composio.check_connection_status = AsyncMock(return_value=connections)
+        with (
+            patch(_GET_USER, new_callable=AsyncMock, return_value=_make_user_doc(onboarding={})),
+            patch(_COUNT_BEFORE, new_callable=AsyncMock, return_value=0),
+            patch(_COMPOSIO_SERVICE, return_value=mock_composio),
+        ):
+            response = await client.get(PERSONALIZATION_URL)
+
+        assert response.status_code == 200
+        assert response.json()["user_bio"] == expected_bio
+
+    async def _writing_style(self, client: AsyncClient, writing_style: dict) -> object:
+        user_doc = _make_user_doc(
+            onboarding={"bio_status": "completed", "writing_style": writing_style}
+        )
+        with (
+            patch(_GET_USER, new_callable=AsyncMock, return_value=user_doc),
+            patch(_COUNT_BEFORE, new_callable=AsyncMock, return_value=0),
+        ):
+            response = await client.get(PERSONALIZATION_URL)
+        assert response.status_code == 200
+        return response.json()["writing_style"]
+
+    async def test_writing_style_example_blocks_drop_blank_paragraphs(self, client: AsyncClient):
+        example = {"greeting": "Hi,", "body": ["First.", "   ", "Second."], "signoff": "Best"}
+        style = await self._writing_style(client, {"summary": "Warm.", "example": example})
+        assert style == {
+            "style_summary": "Warm.",
+            "example": {
+                "greeting": "Hi,",
+                "body": ["First.", "Second."],
+                "signoff": "Best",
+                "name": "",
+            },
+        }
+
+    async def test_legacy_string_example_becomes_a_single_paragraph(self, client: AsyncClient):
+        style = await self._writing_style(client, {"summary": "Warm.", "example": "  Hello.  "})
+        assert style == {
+            "style_summary": "Warm.",
+            "example": {"greeting": "", "body": ["Hello."], "signoff": "", "name": ""},
+        }
+
+    async def test_writing_style_without_a_summary_is_not_surfaced(self, client: AsyncClient):
+        style = await self._writing_style(client, {"summary": "", "example": "Hello."})
+        assert style is None
 
 
 class TestGetPersonalizationFullShape:
