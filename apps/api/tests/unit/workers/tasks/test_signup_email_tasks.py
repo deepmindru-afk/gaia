@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.constants.email import SignupDelivery
+from app.constants.email import WELCOME_EMAIL_RESEND_WINDOW, SignupDelivery
 from app.constants.log_tags import LogTag
 from app.models.user_models import UserDocument
 from app.services.email.signup_delivery import enqueue_signup_emails, signup_email_job_id
@@ -176,6 +176,20 @@ class TestDeliverSignupEmails:
         mock_send_welcome_email.assert_not_awaited()
         mock_add_marketing_contact.assert_awaited_once_with("bob@test.com", "Bob", user_id=USER_ID)
         assert event["welcome_email_abandoned"] is True
+
+    async def test_a_welcome_email_exactly_at_the_window_edge_still_goes_out(
+        self, mock_stamp, mock_send_welcome_email, mock_add_marketing_contact
+    ):
+        now = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
+        edge = _user(created_at=now - WELCOME_EMAIL_RESEND_WINDOW)
+        with (
+            patch(f"{MODULE}.user_repository.get", AsyncMock(return_value=edge)),
+            patch(f"{MODULE}.datetime") as mock_datetime,
+        ):
+            mock_datetime.now.return_value = now
+            await deliver_signup_emails({}, USER_ID)
+
+        mock_send_welcome_email.assert_awaited_once_with("bob@test.com", "Bob", user_id=USER_ID)
 
     async def test_a_fully_delivered_signup_does_no_work_at_all(
         self, mock_stamp, mock_send_welcome_email, mock_add_marketing_contact
