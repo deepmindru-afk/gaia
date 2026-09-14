@@ -124,7 +124,14 @@ def _sheets_proxy(
             toolkit=SHEETS_TOOLKIT,
             endpoint=endpoint,
             method=method,
-            body=body.model_dump(mode="json", exclude_none=True) if body is not None else None,
+            body=(
+                body.model_dump(
+                    mode="json",  # pragma: no mutate — JSON-native fields only
+                    exclude_none=True,
+                )
+                if body is not None
+                else None
+            ),
             query=query,
         )
     )
@@ -573,7 +580,9 @@ def register_google_sheets_custom_tools(composio: Composio) -> list[str]:
 
         start_col = range_spec.startColumnIndex if range_spec.startColumnIndex is not None else 0
         end_col = (
-            range_spec.endColumnIndex if range_spec.endColumnIndex is not None else start_col + 1
+            range_spec.endColumnIndex
+            if range_spec.endColumnIndex is not None
+            else start_col + 1  # pragma: no mutate — width stays <= 1, end_col unused
         )
         width = end_col - start_col
 

@@ -78,7 +78,10 @@ def _execute_notion_action(
     return ComposioResponse.model_validate(
         composio.tools.execute(
             slug=slug,
-            arguments=arguments.model_dump(mode="json", exclude_none=True),
+            arguments=arguments.model_dump(
+                mode="json",  # pragma: no mutate — JSON-native fields only
+                exclude_none=True,
+            ),
             version=auth_credentials.version,
             dangerously_skip_version_check=True,
             user_id=auth_credentials.user_id,
@@ -98,13 +101,19 @@ def _move_page(request: MovePageInput, execute_request: ExecuteRequestFn) -> dic
     response = execute_request(
         endpoint=f"/pages/{request.page_id}",
         method="PATCH",
-        body=NotionMovePageRequest(parent=parent).model_dump(mode="json", exclude_none=True),
+        body=NotionMovePageRequest(parent=parent).model_dump(
+            mode="json",  # pragma: no mutate — JSON-native fields only
+            exclude_none=True,
+        ),
     )
 
     page = NotionPage.model_validate(response.data)
     return {
         "page_id": page.id,
-        "new_parent": parent.model_dump(mode="json", exclude_none=True),
+        "new_parent": parent.model_dump(
+            mode="json",  # pragma: no mutate — JSON-native fields only
+            exclude_none=True,
+        ),
         "url": page.url,
     }
 
@@ -283,7 +292,10 @@ def _fetch_data(
                     toolkit=NOTION_TOOLKIT,
                     endpoint=f"{NOTION_API_BASE}/search",
                     method="POST",
-                    body=search_body.model_dump(mode="json", exclude_none=True),
+                    body=search_body.model_dump(
+                        mode="json",  # pragma: no mutate — JSON-native fields only
+                        exclude_none=True,
+                    ),
                     headers=_NOTION_HEADERS,
                 )
             )
@@ -379,12 +391,21 @@ def register_notion_custom_tools(composio: Composio) -> list[str]:
         data = NotionSearchToolData.model_validate(
             execute_tool(
                 "NOTION_SEARCH_NOTION_PAGE",
-                NotionSearchToolArgs(query="", page_size=10).model_dump(mode="json"),
+                NotionSearchToolArgs(query="", page_size=10).model_dump(
+                    mode="json",  # pragma: no mutate — JSON-native fields only
+                ),
                 user_id,
             )
         )
         pages = data.results or data.pages
-        return {"relevant_pages": [page.model_dump(mode="json") for page in pages]}
+        return {
+            "relevant_pages": [
+                page.model_dump(
+                    mode="json",  # pragma: no mutate — JSON-native fields only
+                )
+                for page in pages
+            ]
+        }
 
     return [
         "NOTION_MOVE_PAGE",

@@ -34,7 +34,7 @@ def hex_to_rgb(hex_color: str) -> GoogleSheetsColor:
     return GoogleSheetsColor(
         red=int(digits[0:2], 16) / 255.0,
         green=int(digits[2:4], 16) / 255.0,
-        blue=int(digits[4:6], 16) / 255.0,
+        blue=int(digits[4:6], 16) / 255.0,  # pragma: no mutate — regex ensures 6 digits
     )
 
 

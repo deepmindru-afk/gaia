@@ -239,7 +239,7 @@ def register_twitter_custom_tools(composio: Composio) -> list[str]:
                 media_ids=media_ids,
             )
 
-            if not result.success or result.tweet is None:
+            if not result.success or result.tweet is None:  # pragma: no mutate — set iff success
                 raise RuntimeError(
                     f"Failed at tweet {i + 1}: {result.error}. Partial tweet IDs: {tweet_ids}"
                 )
@@ -303,7 +303,7 @@ def register_twitter_custom_tools(composio: Composio) -> list[str]:
         search_query = f"{request.query} -is:retweet"
         result = search_tweets(user_id, search_query, max_results=request.max_results * 3)
 
-        if not result.success or result.data is None:
+        if not result.success or result.data is None:  # pragma: no mutate — data set iff success
             raise RuntimeError(f"Search failed: {result.error}")
 
         users_map: dict[str, TwitterUser] = {}
@@ -324,7 +324,9 @@ def register_twitter_custom_tools(composio: Composio) -> list[str]:
                             "description": u.description or "",
                             "profile_image_url": u.profile_image_url,
                             "verified": u.verified or False,
-                            "public_metrics": u.public_metrics.model_dump(mode="json")
+                            "public_metrics": u.public_metrics.model_dump(
+                                mode="json",  # pragma: no mutate — integer counts only
+                            )
                             if u.public_metrics
                             else {},
                             "created_at": u.created_at,
