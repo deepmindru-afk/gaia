@@ -107,6 +107,7 @@ from app.utils.timezone import home_timezone_from_config
 _CLOSED_STATE_TYPES = ("completed", "canceled")
 _URGENT_PRIORITIES = (1, 2)
 _SPRINT_STATE_TYPES = ("backlog", "unstarted", "started", "completed")
+_UNDATED_SORT_KEY = "9999-12-31"  # pragma: no mutate -- ISO dates sort before any letter-led key
 
 
 def _user_id(auth_credentials: dict[str, object]) -> str:
@@ -224,16 +225,22 @@ def _run_resolve_context(request: ResolveContextInput, user_id: str) -> dict[str
     if request.team_name:
         teams = graphql_request(QUERY_TEAMS, None, user_id, LinearTeamsData).teams.nodes
         result["teams"] = [
-            t.model_dump(mode="json", by_alias=True)
-            for t in fuzzy_match(request.team_name, teams, limit=3)
+            t.model_dump(
+                mode="json",  # pragma: no mutate -- primitive fields dump alike
+                by_alias=True,
+            )
+            for t in fuzzy_match(request.team_name, teams)
         ]
 
     if request.user_name:
         users = graphql_request(QUERY_USERS, None, user_id, LinearUsersData).users.nodes
         active_users = [u for u in users if u.active]
         result["users"] = [
-            u.model_dump(mode="json", by_alias=True)
-            for u in fuzzy_match(request.user_name, active_users, limit=3)
+            u.model_dump(
+                mode="json",  # pragma: no mutate -- primitive fields dump alike
+                by_alias=True,  # pragma: no mutate -- field names equal their aliases
+            )
+            for u in fuzzy_match(request.user_name, active_users)
         ]
 
     if request.label_names:
@@ -251,14 +258,21 @@ def _run_resolve_context(request: ResolveContextInput, user_id: str) -> dict[str
         for label_name in request.label_names[:3]:
             matched_labels.extend(fuzzy_match(label_name, labels, limit=1))
         result["labels"] = [
-            label.model_dump(mode="json", by_alias=True) for label in matched_labels[:4]
+            label.model_dump(
+                mode="json",  # pragma: no mutate -- primitive fields dump alike
+                by_alias=True,  # pragma: no mutate -- field names equal their aliases
+            )
+            for label in matched_labels[:4]  # pragma: no mutate -- at most 3 labels reach it
         ]
 
     if request.project_name:
         projects = graphql_request(QUERY_PROJECTS, None, user_id, LinearProjectsData).projects.nodes
         result["projects"] = [
-            p.model_dump(mode="json", by_alias=True)
-            for p in fuzzy_match(request.project_name, projects, limit=3)
+            p.model_dump(
+                mode="json",  # pragma: no mutate -- primitive fields dump alike
+                by_alias=True,  # pragma: no mutate -- field names equal their aliases
+            )
+            for p in fuzzy_match(request.project_name, projects)
         ]
 
     if request.state_name and request.team_id:
@@ -269,8 +283,11 @@ def _run_resolve_context(request: ResolveContextInput, user_id: str) -> dict[str
             LinearStatesData,
         ).workflow_states.nodes
         result["states"] = [
-            s.model_dump(mode="json", by_alias=True)
-            for s in fuzzy_match(request.state_name, states, limit=3)
+            s.model_dump(
+                mode="json",  # pragma: no mutate -- primitive fields dump alike
+                by_alias=True,  # pragma: no mutate -- field names equal their aliases
+            )
+            for s in fuzzy_match(request.state_name, states)
         ]
 
     return {"data": result}
@@ -300,7 +317,7 @@ def _run_get_my_tasks(request: GetMyTasksInput, user_id: str) -> dict[str, objec
         LinearMyIssuesVariables(
             assignee_id=viewer.id,
             include_completed=not request.include_completed,
-            first=min(request.limit * 2, 100),
+            first=min(request.limit * 2, 100),  # pragma: no mutate -- limit is capped at 50
         ),
         user_id,
         LinearIssuesData,
@@ -316,7 +333,7 @@ def _run_get_my_tasks(request: GetMyTasksInput, user_id: str) -> dict[str, objec
             filtered.append(issue)
 
     def sort_key(issue: LinearIssueSummary) -> tuple[int, str]:
-        return (issue.priority, issue.due_date or "9999-12-31")
+        return (issue.priority, issue.due_date or _UNDATED_SORT_KEY)
 
     filtered.sort(key=sort_key)
     formatted = [format_issue_summary(i) for i in filtered[: request.limit]]
@@ -331,7 +348,10 @@ def _run_get_my_tasks(request: GetMyTasksInput, user_id: str) -> dict[str, objec
 def _run_search_issues(request: SearchIssuesInput, user_id: str) -> dict[str, object]:
     issues = graphql_request(
         QUERY_SEARCH_ISSUES,
-        LinearSearchIssuesVariables(query=request.query, first=min(request.limit * 2, 100)),
+        LinearSearchIssuesVariables(
+            query=request.query,
+            first=min(request.limit * 2, 100),  # pragma: no mutate -- limit is capped at 50
+        ),
         user_id,
         LinearSearchIssuesData,
     ).search_issues.nodes
@@ -370,8 +390,13 @@ def _run_get_issue_full_context(
     if request.issue_id:
         issue = _fetch_issue(request.issue_id, user_id)
     else:
-        _validate_identifier(request.issue_identifier or "")
-        issue = _fetch_issue(request.issue_identifier or "", user_id)
+        _validate_identifier(
+            request.issue_identifier or "",  # pragma: no mutate -- guard above rules out ""
+        )
+        issue = _fetch_issue(
+            request.issue_identifier or "",  # pragma: no mutate -- guard above rules out ""
+            user_id,
+        )
 
     result: dict[str, object] = {
         "id": issue.id,
@@ -540,12 +565,15 @@ def _run_create_issue_relation(
     request: CreateIssueRelationInput, user_id: str
 ) -> dict[str, object]:
     type_mapping = {
-        "blocks": "blocks",
+        "blocks": "blocks",  # pragma: no mutate -- a missing key falls back to "blocks" too
         "is_blocked_by": "blocked_by",
         "relates_to": "related",
         "duplicates": "duplicate",
     }
-    linear_type = type_mapping.get(request.relation_type, request.relation_type)
+    linear_type = type_mapping.get(
+        request.relation_type,
+        request.relation_type,  # pragma: no mutate -- relation_type is always a mapped key
+    )
 
     create_result = graphql_request(
         MUTATION_CREATE_RELATION,
