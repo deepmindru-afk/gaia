@@ -22,6 +22,7 @@ from typing import Any
 from app.constants.email import (
     SIGNUP_EMAIL_SWEEP_LOOKBACK_DAYS,
     SIGNUP_EMAIL_SWEEP_MAX_USERS_PER_RUN,
+    WELCOME_EMAIL_RESEND_WINDOW,
     SignupDelivery,
 )
 from app.constants.log_tags import LogTag
@@ -88,7 +89,13 @@ async def deliver_signup_emails(_ctx: dict[str, Any], user_id: str) -> str:
 
     deliveries: list[Coroutine[Any, Any, None]] = []
     if user.welcome_email_sent_at is None:
-        deliveries.append(_send_welcome(user_id, user.email, user.name))
+        if (
+            user.created_at is None
+            or datetime.now(UTC) - user.created_at > WELCOME_EMAIL_RESEND_WINDOW
+        ):
+            log.set(welcome_email_abandoned=True)
+        else:
+            deliveries.append(_send_welcome(user_id, user.email, user.name))
     if user.marketing_contact_added_at is None:
         deliveries.append(_add_contact(user_id, user.email, user.name))
     if not deliveries:
