@@ -26,10 +26,11 @@ No allowlist and no ``noqa`` — the cleanup that introduced this rule brought
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from functools import cache
 from pathlib import Path
 import re
+from typing import NamedTuple
 
 from _common import Violation
 
@@ -140,48 +141,97 @@ def _is_runtime_decorator(decorator: ast.expr) -> bool:
     return isinstance(target, ast.Name) and target.id in _RUNTIME_DECORATORS
 
 
-def _class_bases(path: Path) -> dict[str, set[str]]:
+class _Module(NamedTuple):
+    classes: dict[str, list[str]]
+    imports: dict[str, tuple[str, str]]
+
+
+#: Answers "is this base name, as written in this module, a runtime base?".
+RuntimeBase = Callable[[str, str], bool]
+
+
+def _module_name(path: Path) -> str:
+    parts = path.with_suffix("").parts
+    start = len(parts) - 1 - parts[::-1].index("app") if "app" in parts else len(parts) - 1
+    return ".".join(parts[start:])
+
+
+def _scan(path: Path) -> _Module:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return {
-        node.name: {_last_name(base) for base in node.bases}
+    classes = {
+        node.name: [_last_name(base) for base in node.bases]
         for node in ast.walk(tree)
         if isinstance(node, ast.ClassDef)
     }
+    imports = {
+        alias.asname or alias.name: (node.module, alias.name)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+        for alias in node.names
+    }
+    return _Module(classes, imports)
 
 
 @cache
-def _app_class_bases() -> dict[str, set[str]]:
-    """Return class name -> base names across the app, so a single-file run sees indirect bases."""
-    bases: dict[str, set[str]] = {}
-    for path in sorted(_APP_ROOT.rglob("*.py")) if _APP_ROOT.is_dir() else ():
-        for name, names in _class_bases(path).items():
-            bases.setdefault(name, set()).update(names)
-    return bases
+def _app_modules() -> dict[str, _Module]:
+    """Return every app module's classes and imports, so a single-file run sees indirect bases."""
+    paths = sorted(_APP_ROOT.rglob("*.py")) if _APP_ROOT.is_dir() else []
+    return {_module_name(path): _scan(path) for path in paths}
 
 
-def _runtime_classes(files: list[Path]) -> frozenset[str]:
-    """Return every class name that reaches a runtime base, directly or through another class.
+def _runtime_base_resolver(files: list[Path]) -> RuntimeBase:
+    """Resolve each base through its own module's classes and imports, then walk its chain.
 
-    Matched by bare name, so two unrelated classes sharing a name are both exempt.
+    A bare name falls back to the one repo class of that name, and to nothing when two share it.
     """
-    bases = {name: set(names) for name, names in _app_class_bases().items()}
-    for path in files:
-        for name, names in _class_bases(path).items():
-            bases.setdefault(name, set()).update(names)
-    runtime = set(_RUNTIME_BASES)
-    grew = True
-    while grew:
-        reached = {name for name, names in bases.items() if names & runtime}
-        grew = not reached <= runtime
-        runtime |= reached
-    return frozenset(runtime)
+    modules = {**_app_modules(), **{_module_name(path): _scan(path) for path in files}}
+    owners: dict[str, list[str]] = {}
+    for module, scanned in modules.items():
+        for name in scanned.classes:
+            owners.setdefault(name, []).append(module)
+    memo: dict[tuple[str, str], bool] = {}
+
+    def resolve(module: str, name: str) -> tuple[str, str] | None:
+        scanned = modules.get(module)
+        if scanned and name in scanned.classes:
+            return module, name
+        if scanned and name in scanned.imports:
+            source_module, source_name = scanned.imports[name]
+            source = modules.get(source_module)
+            return (
+                (source_module, source_name) if source and source_name in source.classes else None
+            )
+        defined_in = owners.get(name, [])
+        return (defined_in[0], name) if len(defined_in) == 1 else None
+
+    def is_runtime_base(
+        module: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
+    ) -> bool:
+        target = resolve(module, name)
+        if target is None:
+            scanned = modules.get(module)
+            original = scanned.imports[name][1] if scanned and name in scanned.imports else name
+            return original in _RUNTIME_BASES
+        if target in memo:
+            return memo[target]
+        if target in seen:
+            return False
+        target_module, target_name = target
+        reached = any(
+            is_runtime_base(target_module, base, seen | {target})
+            for base in modules[target_module].classes[target_name]
+        )
+        memo[target] = reached
+        return reached
+
+    return is_runtime_base
 
 
-def _is_runtime_docstring(node: Documented, runtime_classes: frozenset[str]) -> bool:
+def _is_runtime_docstring(node: Documented, module: str, runtime_base: RuntimeBase) -> bool:
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return any(_is_runtime_decorator(d) for d in node.decorator_list)
     if isinstance(node, ast.ClassDef):
-        return any(_last_name(b) in runtime_classes for b in node.bases)
+        return any(runtime_base(module, _last_name(b)) for b in node.bases)
     return False
 
 
@@ -279,10 +329,10 @@ def _restatement_findings(doc: str, name: str) -> list[Finding]:
 
 
 def _check_node(
-    path: Path, node: Documented, is_test_file: bool, runtime_classes: frozenset[str]
+    path: Path, node: Documented, is_test_file: bool, runtime_base: RuntimeBase
 ) -> list[Violation]:
     doc = ast.get_docstring(node, clean=True)
-    if not doc or _is_runtime_docstring(node, runtime_classes):
+    if not doc or _is_runtime_docstring(node, _module_name(path), runtime_base):
         return []
     line = 1 if isinstance(node, ast.Module) else node.body[0].lineno
     name = getattr(node, "name", path.stem)
@@ -295,12 +345,12 @@ def _check_node(
 
 def check(files: list[Path]) -> list[Violation]:
     """Return docstring-content violations across ``files``."""
-    runtime_classes = _runtime_classes(files)
+    runtime_base = _runtime_base_resolver(files)
     violations: list[Violation] = []
     for path in files:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         is_test_file = "tests" in path.parts or path.name.startswith("test_")
         for node in ast.walk(tree):
             if isinstance(node, Documented):
-                violations.extend(_check_node(path, node, is_test_file, runtime_classes))
+                violations.extend(_check_node(path, node, is_test_file, runtime_base))
     return violations
