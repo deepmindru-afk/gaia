@@ -18,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from app.config.rate_limits import RateLimitConfig
+from app.db.postgresql import LANGGRAPH_SETUP_LOCK_ID
 from shared.py.wide_events import log, log_context
 
 
@@ -366,12 +367,6 @@ async def captured_wide_event(operation: str = "test") -> AsyncIterator[dict[str
     """
     async with log_context(operation):
         yield log.get()
-
-
-# Two xdist workers racing langgraph's checkpointer setup() hit a pg_type
-# unique-constraint race (run 33182536377); this advisory lock id is
-# arbitrary and distinct from the memory suite's schema lock (743_001_993).
-LANGGRAPH_SETUP_LOCK_ID = 743_001_994
 
 
 @asynccontextmanager
