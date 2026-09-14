@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator, Iterator
 import contextlib
 from datetime import datetime
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from prometheus_client import REGISTRY
@@ -792,6 +793,45 @@ class TestRunChatStreamBackground:
             )
 
         sm.cleanup.assert_called_once_with("stream_6")
+
+    async def test_stop_during_executor_wait_is_a_cancelled_turn(
+        self, test_user, existing_conv_body
+    ):
+        """Comms has already acked when the user presses stop while the turn waits
+        on the executor. The consume loop's cancel check is long past, so the
+        wait itself must notice — otherwise the turn is counted as completed."""
+        labels = {"source": "web", "delegated": "false", "status": "cancelled"}
+        before = REGISTRY.get_sample_value("chat_turn_total", labels) or 0.0
+        sm = _make_stream_manager_mock()
+
+        async def _cancel_lands_during_wait(*_args: Any, **_kwargs: Any) -> bool:
+            sm.is_cancelled.return_value = True
+            return True
+
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_done_only_stream()),
+            ),
+            patch(
+                "app.services.chat.stream.await_executor_done",
+                new=AsyncMock(side_effect=_cancel_lands_during_wait),
+            ),
+            patch("app.services.chat.stream.save_conversation_async", new=AsyncMock()),
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+            patch("app.services.chat.stream.capture_event") as mock_capture,
+        ):
+            await run_chat_stream_background(
+                stream_id="stream_cancel_in_wait",
+                body=existing_conv_body,
+                user=test_user,
+                conversation_id="conv_existing_123",
+                source="web",
+            )
+
+        assert REGISTRY.get_sample_value("chat_turn_total", labels) == before + 1
+        assert mock_capture.call_args.args[1] == AnalyticsEvents.CHAT_MESSAGE_CANCELLED
 
     async def test_failed_turn_is_observed_with_error_status(self, test_user, existing_conv_body):
         """A turn that raises is exactly the slow/broken one the SLOs exist for: it

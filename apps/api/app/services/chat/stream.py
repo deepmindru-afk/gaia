@@ -297,6 +297,9 @@ async def _run_chat_stream(
         # while we wait for the executor below.
         await _persist_turn(stream_id, body, user, conversation_id, state)
         await _attach_executor_tool_data(stream_id, body, user, conversation_id, state)
+        # A stop pressed during the executor wait arrives after the consume
+        # loop's check: re-read it here or the turn closes as completed.
+        await _note_cancellation(stream_id, state)
 
         await _finalize_description(description_task, stream_id)
         await stream_manager.publish_chunk(
@@ -611,9 +614,7 @@ async def _consume_agent_stream(
         # that generator mid-suspend and race the record away — note the flag
         # for bookkeeping and keep consuming; the driver ends the stream with
         # a `cancelled` nostream marker within one graph event.
-        if not state.is_cancelled and await stream_manager.is_cancelled(stream_id):
-            state.is_cancelled = True
-            log.info(f"{LogTag.CHAT} Stream cancelled by user", stream_id=stream_id)
+        await _note_cancellation(stream_id, state)
 
         # Skip [DONE] marker — we send it after description generation.
         if chunk == "data: [DONE]\n\n":
@@ -675,6 +676,13 @@ def _parse_complete_message(chunk: str) -> tuple[str, bool]:
         message = strip_partial_message_break(str(nostream_json.get("complete_message", "")))
         return message, bool(nostream_json.get("cancelled", False))
     return "", False
+
+
+async def _note_cancellation(stream_id: str, state: _StreamState) -> None:
+    """Record a user stop on ``state`` once, from the stream's cancel flag."""
+    if not state.is_cancelled and await stream_manager.is_cancelled(stream_id):
+        state.is_cancelled = True
+        log.info(f"{LogTag.CHAT} Stream cancelled by user", stream_id=stream_id)
 
 
 def _stamp_turn_latencies(state: _StreamState) -> None:

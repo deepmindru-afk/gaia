@@ -15,6 +15,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGenerationChunk, GenerationChunk, LLMResult
 
+from app.constants.llm import LLM_LABEL_METADATA_KEY
 from app.services.latency_metrics import observe_llm_ttft
 
 
@@ -27,9 +28,8 @@ class LLMTtftCallback(BaseCallbackHandler):
     own sample.
     """
 
-    def __init__(self, agent: str) -> None:
-        self._agent = agent
-        self._starts: dict[str, tuple[float, str, str]] = {}
+    def __init__(self) -> None:
+        self._starts: dict[str, tuple[float, str, str, str]] = {}
         self._observed: set[str] = set()
 
     def on_chat_model_start(
@@ -48,6 +48,9 @@ class LLMTtftCallback(BaseCallbackHandler):
             time.perf_counter(),
             str(meta.get("lane_model") or "unknown"),
             str(meta.get("lane_provider") or "unknown"),
+            # The CALL's label (stamped by ainvoke_llm), not the run's agent: one
+            # turn's callback list also carries its title/follow-up/memory calls.
+            str(meta.get(LLM_LABEL_METADATA_KEY) or "unknown"),
         )
 
     def on_llm_new_token(
@@ -64,9 +67,9 @@ class LLMTtftCallback(BaseCallbackHandler):
         entry = self._starts.pop(key, None)
         if entry is None or key in self._observed:
             return
-        start, model, lane = entry
+        start, model, lane, agent = entry
         self._observed.add(key)
-        observe_llm_ttft(time.perf_counter() - start, model=model, lane=lane, agent=self._agent)
+        observe_llm_ttft(time.perf_counter() - start, model=model, lane=lane, agent=agent)
 
     def on_llm_end(
         self,

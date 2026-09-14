@@ -209,7 +209,7 @@ def _build_agent_callbacks(
         callbacks.append(usage_metadata_callback)
 
     # True provider first-token latency for every tier on this run.
-    callbacks.append(LLMTtftCallback(agent=agent_name))
+    callbacks.append(LLMTtftCallback())
 
     return callbacks
 

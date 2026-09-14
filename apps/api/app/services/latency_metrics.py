@@ -291,6 +291,39 @@ def _bool_label(value: bool | str) -> str:
     return value if isinstance(value, str) else ("true" if value else "false")
 
 
+# Every collector this module owns. The ARQ worker mirrors these onto its own
+# registry (app/workers/metrics.py) so samples emitted inside worker-run paths —
+# the HIL sweep, re-dispatched and workflow-triggered executor runs — are served
+# rather than landing on a default registry nothing scrapes.
+ALL_COLLECTORS: Final[tuple[Histogram | Counter, ...]] = (
+    _CHAT_TTFT_SECONDS,
+    _CHAT_E2E_ACK_SECONDS,
+    _CHAT_E2E_FULL_SECONDS,
+    _LLM_TTFT_SECONDS,
+    _COMMS_GRAPH_SECONDS,
+    _CONTEXT_ASSEMBLE_SECONDS,
+    _EXECUTOR_QUEUE_WAIT_SECONDS,
+    _EXECUTOR_TTFT_SECONDS,
+    _EXECUTOR_ACTIVE_SECONDS,
+    _EXECUTOR_E2E_SECONDS,
+    _TOOL_CALL_SECONDS,
+    _TOOL_RETRIEVAL_SECONDS,
+    _SUBAGENT_RUN_SECONDS,
+    _HIL_USER_WAIT_SECONDS,
+    _HIL_DISPATCH_LAG_SECONDS,
+    _DELIVERY_NARRATION_SECONDS,
+    _DELIVERY_PERSIST_SECONDS,
+    _TRANSPORT_REDIS_PUBLISH_SECONDS,
+    _SSE_DELIVERY_SECONDS,
+    _LLM_CALL_SECONDS,
+    _GRAPH_NODE_SECONDS,
+    _CHAT_TURN_TOTAL,
+    _EXECUTOR_RUN_TOTAL,
+    _TOOL_CALL_TOTAL,
+    _HIL_PAUSE_TOTAL,
+)
+
+
 def _observe(histogram: Histogram, amount: float, **labels: str) -> None:
     try:
         if labels:
@@ -457,6 +490,7 @@ def observe_graph_node(seconds: float, *, node: str, agent: str) -> None:
 
 
 __all__ = [
+    "ALL_COLLECTORS",
     "observe_chat_e2e_ack",
     "observe_chat_e2e_full",
     "observe_chat_ttft",
