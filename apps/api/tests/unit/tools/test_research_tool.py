@@ -572,8 +572,13 @@ class TestDeepResearch:
         mock_rank.return_value = [
             RankedUrl(url="https://a.com", title="", snippet="s", score=1.0, appearances=1),
             RankedUrl(url="https://b.com", title="", snippet="s", score=1.0, appearances=1),
+            RankedUrl(url="https://c.com", title="", snippet="s", score=1.0, appearances=1),
         ]
-        mock_batch_crawl4ai.return_value = ({"https://b.com": "content"}, {})
+        # a and c fetch; b falls back to its snippet between them.
+        mock_batch_crawl4ai.return_value = (
+            {"https://a.com": "content", "https://c.com": "content"},
+            {},
+        )
 
         from app.agents.tools.research_tool import deep_research
 
@@ -582,4 +587,4 @@ class TestDeepResearch:
             config=_make_config(),
         )
 
-        _patch_stream_writer.assert_any_call({"progress": "Fetched source 2/2..."})
+        _patch_stream_writer.assert_any_call({"progress": "Fetched source 3/3..."})
