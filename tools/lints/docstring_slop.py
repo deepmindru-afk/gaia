@@ -124,11 +124,13 @@ def _words(text: str) -> set[str]:
     return {w for w in re.split(r"[^a-z0-9]+", text.lower()) if w and w not in _FILLER}
 
 
-def _last_name(node: ast.expr) -> str:
-    if isinstance(node, ast.Call):
-        node = node.func
+def _base_ref(node: ast.expr) -> str:
+    """Return a base class as written, dotted (``memory_models.MemoryDocument``), or empty."""
+    if isinstance(node, ast.Call | ast.Subscript):
+        node = node.func if isinstance(node, ast.Call) else node.value
     if isinstance(node, ast.Attribute):
-        return node.attr
+        qualifier = _base_ref(node.value)
+        return f"{qualifier}.{node.attr}" if qualifier else node.attr
     if isinstance(node, ast.Name):
         return node.id
     return ""
@@ -143,10 +145,13 @@ def _is_runtime_decorator(decorator: ast.expr) -> bool:
 
 class _Module(NamedTuple):
     classes: dict[str, list[str]]
+    #: ``from x import y [as z]`` -> {z or y: (x, y)}; y may be a class or a submodule.
     imports: dict[str, tuple[str, str]]
+    #: ``import a.b [as c]`` -> {c: "a.b"}, or {"a": "a"} without an alias.
+    module_aliases: dict[str, str]
 
 
-#: Answers "is this base name, as written in this module, a runtime base?".
+#: Answers "is this base, as written in this module, a runtime base?".
 RuntimeBase = Callable[[str, str], bool]
 
 
@@ -159,7 +164,7 @@ def _module_name(path: Path) -> str:
 def _scan(path: Path) -> _Module:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     classes = {
-        node.name: [_last_name(base) for base in node.bases]
+        node.name: [_base_ref(base) for base in node.bases]
         for node in ast.walk(tree)
         if isinstance(node, ast.ClassDef)
     }
@@ -169,7 +174,15 @@ def _scan(path: Path) -> _Module:
         if isinstance(node, ast.ImportFrom) and node.module
         for alias in node.names
     }
-    return _Module(classes, imports)
+    module_aliases = {
+        alias.asname or alias.name.partition(".")[0]: alias.name
+        if alias.asname
+        else alias.name.partition(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    return _Module(classes, imports, module_aliases)
 
 
 @cache
@@ -191,7 +204,25 @@ def _runtime_base_resolver(files: list[Path]) -> RuntimeBase:
             owners.setdefault(name, []).append(module)
     memo: dict[tuple[str, str], bool] = {}
 
-    def resolve(module: str, name: str) -> tuple[str, str] | None:
+    def module_path(module: str, qualifier: str) -> str | None:
+        scanned = modules.get(module)
+        head, _, rest = qualifier.partition(".")
+        if scanned is None:
+            return None
+        if head in scanned.module_aliases:
+            base = scanned.module_aliases[head]
+        elif head in scanned.imports:
+            base = ".".join(scanned.imports[head])
+        else:
+            return None
+        return f"{base}.{rest}" if rest else base
+
+    def resolve(module: str, ref: str) -> tuple[str, str] | None:
+        qualifier, _, name = ref.rpartition(".")
+        if qualifier:
+            target_module = module_path(module, qualifier)
+            source = modules.get(target_module) if target_module else None
+            return (target_module, name) if source and name in source.classes else None
         scanned = modules.get(module)
         if scanned and name in scanned.classes:
             return module, name
@@ -205,13 +236,15 @@ def _runtime_base_resolver(files: list[Path]) -> RuntimeBase:
         return (defined_in[0], name) if len(defined_in) == 1 else None
 
     def is_runtime_base(
-        module: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
+        module: str, ref: str, seen: frozenset[tuple[str, str]] = frozenset()
     ) -> bool:
-        target = resolve(module, name)
+        target = resolve(module, ref)
         if target is None:
             scanned = modules.get(module)
-            original = scanned.imports[name][1] if scanned and name in scanned.imports else name
-            return original in _RUNTIME_BASES
+            name = ref.rpartition(".")[2]
+            if "." not in ref and scanned and name in scanned.imports:
+                name = scanned.imports[name][1]
+            return name in _RUNTIME_BASES
         if target in memo:
             return memo[target]
         if target in seen:
@@ -231,7 +264,7 @@ def _is_runtime_docstring(node: Documented, module: str, runtime_base: RuntimeBa
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return any(_is_runtime_decorator(d) for d in node.decorator_list)
     if isinstance(node, ast.ClassDef):
-        return any(runtime_base(module, _last_name(b)) for b in node.bases)
+        return any(runtime_base(module, _base_ref(b)) for b in node.bases)
     return False
 
 

@@ -502,6 +502,27 @@ def test_a_subclass_of_the_runtime_twin_stays_exempt(tmp_path: Path) -> None:
     assert docstring_slop.check([*_same_named_bases(tmp_path), view]) == []
 
 
+def test_a_base_named_through_its_module_resolves_to_that_module(tmp_path: Path) -> None:
+    view = _write(
+        tmp_path,
+        "app/models/views.py",
+        "from app.models import memory_models\n\n\n"
+        'class View(memory_models.MemoryDocument):\n    """View with ``markup``."""\n',
+    )
+    assert docstring_slop.check([*_same_named_bases(tmp_path), view]) == []
+
+
+def test_a_base_named_through_an_aliased_module_import_is_still_checked(tmp_path: Path) -> None:
+    row = _write(
+        tmp_path,
+        "app/models/rows.py",
+        "import app.models.memory_db_models as db_models\n\n\n"
+        'class Row(db_models.MemoryDocument):\n    """Row with ``markup``."""\n',
+    )
+    violations = docstring_slop.check([*_same_named_bases(tmp_path), row])
+    assert sorted(v.detail.split(":")[0] for v in violations) == ["DS2", "DS3"]
+
+
 def test_docstring_over_the_function_cap_is_ds1(tmp_path: Path) -> None:
     body = "\n".join(f"    line {i}." for i in range(7))
     src = f'def f():\n    """Summary.\n\n{body}\n    """\n'
