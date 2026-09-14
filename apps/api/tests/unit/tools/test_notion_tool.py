@@ -482,7 +482,7 @@ def test_fetch_data_filters_on_the_singular_notion_object_name(
 
 
 def _composio_returning(result: dict[str, Any]) -> MagicMock:
-    """Composio's ``ToolExecutionResponse`` always carries ``data`` (``{}`` on failure)."""
+    """Composio's ToolExecutionResponse always carries data ({} on failure)."""
     composio = MagicMock()
     composio.tools.execute.return_value = {"data": {}, **result}
     return composio

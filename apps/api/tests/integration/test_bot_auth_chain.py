@@ -64,7 +64,7 @@ def _bot_settings():
 
 @pytest.fixture
 def mock_platform_lookup():
-    """Mock the platform-id user lookup under ``resolve_bot_user``."""
+    """Mock the platform-id user lookup under resolve_bot_user."""
     with patch.object(
         user_repository,
         "get_by_platform_id",

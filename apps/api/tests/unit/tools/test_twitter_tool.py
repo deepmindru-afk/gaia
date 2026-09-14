@@ -34,7 +34,7 @@ _ME_ID = {"data": {"id": "me", "name": "Me", "username": "me"}}
 
 
 def _created(tweet_id: str) -> dict[str, Any]:
-    """``POST /2/tweets`` answer: X always echoes ``id`` and ``text``."""
+    """POST /2/tweets answer: X always echoes id and text."""
     return {"data": {"id": tweet_id, "text": "posted"}}
 
 
@@ -164,7 +164,7 @@ class TestGatherContext:
         assert out["recent_tweets"] == []
 
     def test_empty_profile_body_fails_loudly(self, tools) -> None:
-        """``/users/me`` without ``data`` is a provider fault, not an empty snapshot."""
+        """/users/me without data is a provider fault, not an empty snapshot."""
         with patch(f"{MODULE}.proxy_request_sync", return_value={}) as proxy:
             with pytest.raises(ValidationError):
                 tools["CUSTOM_GATHER_CONTEXT"](GatherContextInput(), EXECUTE_REQUEST, AUTH)

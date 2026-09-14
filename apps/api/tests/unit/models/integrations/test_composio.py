@@ -1,4 +1,4 @@
-"""Unit tests for the Composio custom-tool ``auth_credentials`` model."""
+"""Unit tests for the Composio custom-tool auth_credentials model."""
 
 import pytest
 

@@ -136,7 +136,7 @@ def test_returns_profile_and_truncated_recent_media(tool) -> None:
 
 
 def test_empty_profile_body_fails_loudly(tool) -> None:
-    """A ``/me`` body that is not a profile is a provider fault, not an empty snapshot."""
+    """A /me body that is not a profile is a provider fault, not an empty snapshot."""
     with patch(f"{MODULE}.proxy_request_sync", return_value=None):
         with pytest.raises(ValidationError):
             tool(GatherContextInput(), EXECUTE_REQUEST, AUTH)

@@ -579,7 +579,7 @@ def test_create_toc_combines_fetch_extract_and_insert_into_one_response(
 
 
 def test_create_toc_end_to_end_on_a_documents_get_payload() -> None:
-    """The real extract + generate path on a ``documents.get``-shaped fixture."""
+    """The real extract + generate path on a documents.get-shaped fixture."""
     document = {
         "documentId": "doc-6",
         "title": "Report",

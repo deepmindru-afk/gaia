@@ -1,4 +1,4 @@
-"""Unit tests for ``app.api.v1.middleware.agent_auth`` — the agent JWT round trip."""
+"""Unit tests for app.api.v1.middleware.agent_auth — the agent JWT round trip."""
 
 from datetime import UTC, datetime, timedelta
 

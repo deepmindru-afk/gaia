@@ -136,7 +136,7 @@ class TestInAppChannelAdapter:
         assert content.metadata == {"key": "value"}
 
     async def test_transform_wire_frame(self) -> None:
-        """The dumped payload is exactly the ``notification.new`` frame body."""
+        """The dumped payload is exactly the notification.new frame body."""
         action = _make_redirect_action(label="View", url="/todos/1")
         action.id = "act-1"
         request = _make_request(title="Hello", body="World", actions=[action])

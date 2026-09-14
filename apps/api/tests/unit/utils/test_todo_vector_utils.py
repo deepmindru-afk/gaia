@@ -29,7 +29,7 @@ NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
 def _make_todo_data(**overrides: Any) -> TodoDocument:
-    """Build a realistic ``TodoDocument``, merging *overrides* on top of defaults."""
+    """Build a realistic TodoDocument, merging *overrides* on top of defaults."""
     base: dict[str, Any] = {
         "user_id": USER_ID,
         "title": "Buy groceries",
