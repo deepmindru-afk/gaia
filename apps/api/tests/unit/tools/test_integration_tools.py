@@ -22,6 +22,7 @@ from app.models.linear_models import (
     BulkUpdateIssuesInput,
     CreateIssueInput,
     CreateIssueRelationInput,
+    CreateIssueSubItem,
     CreateSubIssuesInput,
     GetActiveSprintInput,
     GetIssueActivityInput,
@@ -35,15 +36,27 @@ from app.models.linear_models import (
 )
 from app.utils.linear_utils import (
     MUTATION_CREATE_ISSUE,
+    MUTATION_CREATE_RELATION,
     MUTATION_UPDATE_ISSUES,
+    QUERY_ACTIVE_CYCLES,
     QUERY_ISSUE_BY_ID,
+    QUERY_ISSUE_HISTORY,
     QUERY_LABELS,
     QUERY_LABELS_ALL,
+    QUERY_MY_ISSUES,
+    QUERY_NOTIFICATIONS,
+    QUERY_PROJECTS,
+    QUERY_SEARCH_ISSUES,
+    QUERY_STATES,
+    QUERY_TEAMS,
+    QUERY_USERS,
+    QUERY_VIEWER,
 )
 
 LINEAR_MODULE = "app.agents.tools.integrations.linear_tool"
 PROXY = "app.utils.linear_utils.proxy_request_sync"
-AUTH_CREDS: dict[str, Any] = {"user_id": "user-123", "version": "v1"}
+USER_ID = "user-123"
+AUTH_CREDS: dict[str, Any] = {"user_id": USER_ID, "version": "v1"}
 EXECUTE_REQUEST = MagicMock()
 
 
@@ -81,6 +94,11 @@ def _answers(proxy: MagicMock, *datas: dict[str, Any]) -> None:
 
 def _bodies(proxy: MagicMock) -> list[dict[str, Any]]:
     return [c.args[0].body for c in proxy.call_args_list]
+
+
+def _operations(proxy: MagicMock) -> list[tuple[str, str]]:
+    """(user the call is attributed to, GraphQL document) for every proxied call, in order."""
+    return [(c.args[0].user_id, c.args[0].body["query"]) for c in proxy.call_args_list]
 
 
 VIEWER = {
@@ -171,7 +189,7 @@ class TestLinearResolveContext:
         assert result == {
             "data": {"current_user": {"id": "u1", "name": "Alice", "email": "a@b.com"}}
         }
-        assert proxy.call_count == 1
+        assert _operations(proxy) == [(USER_ID, QUERY_VIEWER)]
 
     def test_resolve_context_with_team_name(self, tools, proxy) -> None:
         eng = {**TEAM, "activeCycle": {"id": "c1", "name": "Sprint 5", "progress": 0.5}}
@@ -192,6 +210,7 @@ class TestLinearResolveContext:
             # "eng" is within SequenceMatcher's 0.4 threshold of "design".
             {"id": "t2", "name": "Design", "key": "DES", "activeCycle": None},
         ]
+        assert _operations(proxy) == [(USER_ID, QUERY_VIEWER), (USER_ID, QUERY_TEAMS)]
 
     def test_resolve_context_with_user_name(self, tools, proxy) -> None:
         _answers(
@@ -202,6 +221,7 @@ class TestLinearResolveContext:
                     "nodes": [
                         {"id": "u2", "name": "Bob", "email": "b@b.com", "active": True},
                         {"id": "u3", "name": "Bobby", "email": "c@b.com", "active": False},
+                        {"id": "u4", "name": "Zed", "email": "z@b.com", "active": True},
                     ]
                 }
             },
@@ -213,6 +233,59 @@ class TestLinearResolveContext:
 
         assert result["data"]["users"] == [
             {"id": "u2", "name": "Bob", "email": "b@b.com", "active": True}
+        ]
+        assert _operations(proxy) == [(USER_ID, QUERY_VIEWER), (USER_ID, QUERY_USERS)]
+
+    @pytest.mark.parametrize(
+        ("request_fields", "data_key", "extra_fields", "result_key"),
+        [
+            ({"team_name": "eng"}, "teams", {"key": "ENG"}, "teams"),
+            ({"user_name": "eng"}, "users", {"email": "e@b.com", "active": True}, "users"),
+            (
+                {"project_name": "eng"},
+                "projects",
+                {"state": "started", "progress": 0.1},
+                "projects",
+            ),
+            (
+                {"state_name": "eng", "team_id": "t1"},
+                "workflowStates",
+                {"type": "started", "position": 1.0},
+                "states",
+            ),
+        ],
+    )
+    def test_resolve_context_returns_at_most_three_matches_per_lookup(
+        self, tools, proxy, request_fields, data_key, extra_fields, result_key
+    ) -> None:
+        nodes = [{"id": f"n{i}", "name": f"Eng {i}", **extra_fields} for i in range(4)]
+        _answers(proxy, VIEWER, {data_key: {"nodes": nodes}})
+
+        result = tools["CUSTOM_RESOLVE_CONTEXT"](
+            ResolveContextInput(**request_fields), EXECUTE_REQUEST, AUTH_CREDS
+        )
+
+        assert [node["id"] for node in result["data"][result_key]] == ["n0", "n1", "n2"]
+
+    def test_resolve_context_matches_one_label_per_name_for_the_first_three_names(
+        self, tools, proxy
+    ) -> None:
+        labels = [
+            {"id": f"l-{name.lower()}", "name": name, "color": "#fff"}
+            for name in ("Bug", "Bugfix", "Feature", "Docs", "Perf")
+        ]
+        _answers(proxy, VIEWER, {"issueLabels": {"nodes": labels}})
+
+        result = tools["CUSTOM_RESOLVE_CONTEXT"](
+            ResolveContextInput(label_names=["bug", "feat", "docs", "perf"]),
+            EXECUTE_REQUEST,
+            AUTH_CREDS,
+        )
+
+        assert [label["id"] for label in result["data"]["labels"]] == [
+            "l-bug",
+            "l-feature",
+            "l-docs",
         ]
 
     def test_resolve_context_labels_with_team_id(self, tools, proxy) -> None:
@@ -228,6 +301,7 @@ class TestLinearResolveContext:
 
         assert result["data"]["labels"] == [{"id": "l1", "name": "Bug", "color": "#f00"}]
         assert _bodies(proxy)[1] == {"query": QUERY_LABELS, "variables": {"teamId": "t1"}}
+        assert _operations(proxy)[1] == (USER_ID, QUERY_LABELS)
 
     def test_resolve_context_labels_without_team_id(self, tools, proxy) -> None:
         _answers(
@@ -249,6 +323,7 @@ class TestLinearResolveContext:
 
         assert [label["id"] for label in result["data"]["labels"]] == ["l1", "l2"]
         assert _bodies(proxy)[1] == {"query": QUERY_LABELS_ALL}
+        assert _operations(proxy)[1] == (USER_ID, QUERY_LABELS_ALL)
 
     def test_resolve_context_with_project_name(self, tools, proxy) -> None:
         _answers(
@@ -256,7 +331,10 @@ class TestLinearResolveContext:
             VIEWER,
             {
                 "projects": {
-                    "nodes": [{"id": "p1", "name": "GAIA", "state": "started", "progress": 0.2}]
+                    "nodes": [
+                        {"id": "p1", "name": "GAIA", "state": "started", "progress": 0.2},
+                        {"id": "p2", "name": "Zulu", "state": "started", "progress": 0.9},
+                    ]
                 }
             },
         )
@@ -268,6 +346,7 @@ class TestLinearResolveContext:
         assert result["data"]["projects"] == [
             {"id": "p1", "name": "GAIA", "state": "started", "progress": 0.2}
         ]
+        assert _operations(proxy) == [(USER_ID, QUERY_VIEWER), (USER_ID, QUERY_PROJECTS)]
 
     def test_resolve_context_with_state_and_team(self, tools, proxy) -> None:
         _answers(
@@ -276,7 +355,8 @@ class TestLinearResolveContext:
             {
                 "workflowStates": {
                     "nodes": [
-                        {"id": "s1", "name": "In Progress", "type": "started", "position": 2.0}
+                        {"id": "s1", "name": "In Progress", "type": "started", "position": 2.0},
+                        {"id": "s2", "name": "Xyz", "type": "backlog", "position": 0.0},
                     ]
                 }
             },
@@ -289,6 +369,8 @@ class TestLinearResolveContext:
         assert result["data"]["states"] == [
             {"id": "s1", "name": "In Progress", "type": "started", "position": 2.0}
         ]
+        assert _bodies(proxy)[1] == {"query": QUERY_STATES, "variables": {"teamId": "t1"}}
+        assert _operations(proxy)[1] == (USER_ID, QUERY_STATES)
 
 
 # =============================================================================
@@ -330,6 +412,22 @@ class TestLinearGetMyTasks:
             "includeCompleted": True,
             "first": 20,
         }
+        assert _operations(proxy) == [(USER_ID, QUERY_VIEWER), (USER_ID, QUERY_MY_ISSUES)]
+
+    def test_get_my_tasks_sorts_by_priority_then_due_date_with_undated_last(
+        self, tools, proxy
+    ) -> None:
+        result = self._run(
+            tools,
+            proxy,
+            GetMyTasksInput(filter="all"),
+            _summary("undated", priority=2),
+            _summary("february", priority=2, dueDate="2024-02-01"),
+            _summary("january", priority=2, dueDate="2024-01-01"),
+            _summary("urgent", priority=1),
+        )
+
+        assert [i["id"] for i in result["issues"]] == ["urgent", "january", "february", "undated"]
 
     def test_get_my_tasks_no_viewer(self, tools, proxy) -> None:
         """Linear's schema makes viewer non-null: a body without it is a provider fault."""
@@ -350,12 +448,14 @@ class TestLinearGetMyTasks:
 
     def test_get_my_tasks_overdue_filter(self, tools, proxy) -> None:
         yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
+        today = datetime.now().date().isoformat()
         result = self._run(
             tools,
             proxy,
             GetMyTasksInput(filter="overdue"),
             _summary("1", dueDate=yesterday),
             _summary("2"),
+            _summary("3", dueDate=today),
         )
         assert [i["id"] for i in result["issues"]] == ["1"]
 
@@ -381,16 +481,20 @@ class TestLinearGetMyTasks:
         assert [i["id"] for i in result["issues"]] == ["1"]
 
     def test_get_my_tasks_this_week_filter(self, tools, proxy) -> None:
-        tomorrow = (datetime.now().date() + timedelta(days=1)).isoformat()
-        far = (datetime.now().date() + timedelta(days=30)).isoformat()
+        def in_days(days: int) -> str:
+            return (datetime.now().date() + timedelta(days=days)).isoformat()
+
         result = self._run(
             tools,
             proxy,
             GetMyTasksInput(filter="this_week"),
-            _summary("1", dueDate=tomorrow),
-            _summary("2", dueDate=far),
+            _summary("1", dueDate=in_days(1)),
+            _summary("2", dueDate=in_days(30)),
+            _summary("today", dueDate=in_days(0)),
+            _summary("week_end", dueDate=in_days(7)),
+            _summary("past_week_end", dueDate=in_days(8)),
         )
-        assert [i["id"] for i in result["issues"]] == ["1"]
+        assert [i["id"] for i in result["issues"]] == ["today", "1", "week_end"]
 
 
 # =============================================================================
@@ -413,15 +517,17 @@ class TestLinearSearchIssues:
         assert result["query"] == "bug"
         assert result["count"] == 1
         assert _bodies(proxy)[0]["variables"] == {"query": "bug", "first": 40}
+        assert _operations(proxy) == [(USER_ID, QUERY_SEARCH_ISSUES)]
 
+    # Each filter test lists a rejected issue before a kept one: a rejection must skip, not stop.
     def test_search_issues_with_team_filter(self, tools, proxy) -> None:
         other = {"id": "t2", "key": "DES", "name": "Design"}
         result = self._run(
             tools,
             proxy,
             SearchIssuesInput(query="test", team_id="t1"),
-            _search_node("1"),
             _search_node("2", team=other),
+            _search_node("1"),
         )
         assert [i["id"] for i in result["issues"]] == ["1"]
 
@@ -430,8 +536,8 @@ class TestLinearSearchIssues:
             tools,
             proxy,
             SearchIssuesInput(query="test", state_filter="completed"),
-            _search_node("1", state={"id": "s9", "name": "Done", "type": "completed"}),
             _search_node("2"),
+            _search_node("1", state={"id": "s9", "name": "Done", "type": "completed"}),
         )
         assert [i["id"] for i in result["issues"]] == ["1"]
 
@@ -440,9 +546,9 @@ class TestLinearSearchIssues:
             tools,
             proxy,
             SearchIssuesInput(query="test", assignee_id="u1"),
-            _search_node("1", assignee={"id": "u1", "name": "Alice"}),
             _search_node("2", assignee={"id": "u2", "name": "Bob"}),
             _search_node("3"),
+            _search_node("1", assignee={"id": "u1", "name": "Alice"}),
         )
         assert [i["id"] for i in result["issues"]] == ["1"]
 
@@ -451,8 +557,8 @@ class TestLinearSearchIssues:
             tools,
             proxy,
             SearchIssuesInput(query="test", priority_filter="urgent"),
-            _search_node("1", priority=1),
             _search_node("2", priority=3),
+            _search_node("1", priority=1),
         )
         assert [i["id"] for i in result["issues"]] == ["1"]
 
@@ -461,10 +567,12 @@ class TestLinearSearchIssues:
             tools,
             proxy,
             SearchIssuesInput(query="test", created_after="2024-03-01"),
-            _search_node("1", createdAt="2024-06-01"),
             _search_node("2", createdAt="2024-01-01"),
+            _search_node("undated", createdAt=None),
+            _search_node("1", createdAt="2024-06-01"),
+            _search_node("same_day", createdAt="2024-03-01"),
         )
-        assert [i["id"] for i in result["issues"]] == ["1"]
+        assert [i["id"] for i in result["issues"]] == ["1", "same_day"]
 
 
 # =============================================================================
@@ -498,6 +606,7 @@ class TestLinearGetIssueFullContext:
             }
         }
         assert _bodies(proxy) == [{"query": QUERY_ISSUE_BY_ID, "variables": {"id": "i1"}}]
+        assert _operations(proxy) == [(USER_ID, QUERY_ISSUE_BY_ID)]
 
     def test_get_issue_by_identifier(self, tools, proxy) -> None:
         _answers(proxy, {"issue": _full_issue(identifier="ENG-123")})
@@ -508,9 +617,10 @@ class TestLinearGetIssueFullContext:
 
         assert result["issue"]["identifier"] == "ENG-123"
         assert _bodies(proxy)[0]["variables"] == {"id": "ENG-123"}
+        assert _operations(proxy) == [(USER_ID, QUERY_ISSUE_BY_ID)]
 
     def test_get_issue_no_id_or_identifier(self, tools) -> None:
-        with pytest.raises(ValueError, match="Provide either"):
+        with pytest.raises(ValueError, match=r"^Provide either issue_id or issue_identifier$"):
             tools["CUSTOM_GET_ISSUE_FULL_CONTEXT"](
                 GetIssueFullContextInput(), EXECUTE_REQUEST, AUTH_CREDS
             )
@@ -669,14 +779,71 @@ class TestLinearCreateIssue:
                 "variables": {"input": {"teamId": "t1", "title": "New Bug", "priority": 0}},
             }
         ]
+        assert _operations(proxy) == [(USER_ID, MUTATION_CREATE_ISSUE)]
 
     def test_create_issue_failure(self, tools, proxy) -> None:
         _answers(proxy, {"issueCreate": {"success": False, "issue": None}})
 
-        with pytest.raises(RuntimeError, match="Failed to create issue"):
+        with pytest.raises(RuntimeError, match=r"^Failed to create issue$"):
             tools["CUSTOM_CREATE_ISSUE"](
                 CreateIssueInput(team_id="t1", title="Fail"), EXECUTE_REQUEST, AUTH_CREDS
             )
+
+    def test_create_issue_reported_unsuccessful_raises_even_when_an_issue_is_returned(
+        self, tools, proxy
+    ) -> None:
+        _answers(proxy, {"issueCreate": {**_created("1", "Fail")["issueCreate"], "success": False}})
+
+        with pytest.raises(RuntimeError, match=r"^Failed to create issue$"):
+            tools["CUSTOM_CREATE_ISSUE"](
+                CreateIssueInput(team_id="t1", title="Fail"), EXECUTE_REQUEST, AUTH_CREDS
+            )
+
+    def test_create_issue_creates_sub_issues_under_it_and_reports_the_failed_ones(
+        self, tools, proxy
+    ) -> None:
+        unsuccessful = {"issueCreate": {**_created("3", "Sub B")["issueCreate"], "success": False}}
+        _answers(proxy, _created("1", "Parent"), _created("2", "Sub A"), unsuccessful)
+
+        result = tools["CUSTOM_CREATE_ISSUE"](
+            CreateIssueInput(
+                team_id="t1",
+                title="Parent",
+                sub_issues=[
+                    CreateIssueSubItem(
+                        title="Sub A", description="Details", assignee_id="u2", priority=2
+                    ),
+                    CreateIssueSubItem(title="Sub B"),
+                ],
+            ),
+            EXECUTE_REQUEST,
+            AUTH_CREDS,
+        )
+
+        assert result == {
+            "issue": {
+                "id": "1",
+                "identifier": "ENG-1",
+                "title": "Parent",
+                "url": "https://linear.app/eng-1",
+            },
+            "sub_issues": [{"id": "2", "identifier": "ENG-2", "title": "Sub A"}],
+            "sub_issue_errors": [{"title": "Sub B", "error": "Failed to create"}],
+        }
+        assert [body["variables"] for body in _bodies(proxy)[1:]] == [
+            {
+                "input": {
+                    "teamId": "t1",
+                    "title": "Sub A",
+                    "parentId": "1",
+                    "description": "Details",
+                    "assigneeId": "u2",
+                    "priority": 2,
+                }
+            },
+            {"input": {"teamId": "t1", "title": "Sub B", "parentId": "1"}},
+        ]
+        assert _operations(proxy) == [(USER_ID, MUTATION_CREATE_ISSUE)] * 3
 
     def test_create_issue_with_all_fields(self, tools, proxy) -> None:
         _answers(proxy, _created("1", "Full"))
@@ -744,6 +911,11 @@ class TestLinearCreateSubIssues:
         assert _bodies(proxy)[1]["variables"] == {
             "input": {"teamId": "t1", "title": "Sub 1", "parentId": "parent-1", "priority": 2}
         }
+        assert _operations(proxy) == [
+            (USER_ID, QUERY_ISSUE_BY_ID),
+            (USER_ID, MUTATION_CREATE_ISSUE),
+            (USER_ID, MUTATION_CREATE_ISSUE),
+        ]
 
     def test_create_sub_issues_by_parent_identifier_fetches_it_by_identifier(
         self, tools, proxy
@@ -763,9 +935,29 @@ class TestLinearCreateSubIssues:
         assert _bodies(proxy)[1]["variables"]["input"]["parentId"] == "parent-1"
 
     def test_create_sub_issues_no_parent(self, tools, proxy) -> None:
-        with pytest.raises(ValueError, match="Could not resolve parent"):
+        with pytest.raises(ValueError, match=r"^Could not resolve parent issue$"):
             tools["CUSTOM_CREATE_SUB_ISSUES"](
                 CreateSubIssuesInput(sub_issues=[SubIssueItem(title="Sub 1")]),
+                EXECUTE_REQUEST,
+                AUTH_CREDS,
+            )
+        proxy.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("parent_identifier", "message"),
+        [
+            ("ENG", r"^Invalid parent identifier: ENG$"),
+            ("ENG-abc", r"^Invalid issue number in: ENG-abc$"),
+        ],
+    )
+    def test_create_sub_issues_rejects_a_malformed_parent_identifier(
+        self, tools, proxy, parent_identifier, message
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            tools["CUSTOM_CREATE_SUB_ISSUES"](
+                CreateSubIssuesInput(
+                    parent_identifier=parent_identifier, sub_issues=[SubIssueItem(title="Sub 1")]
+                ),
                 EXECUTE_REQUEST,
                 AUTH_CREDS,
             )
@@ -800,6 +992,35 @@ class TestLinearCreateIssueRelation:
             "relatedIssueId": "i2",
             "type": "blocked_by",
         }
+        assert _operations(proxy) == [(USER_ID, MUTATION_CREATE_RELATION)]
+
+    @pytest.mark.parametrize(
+        ("relation_type", "linear_type"),
+        [("blocks", "blocks"), ("relates_to", "related"), ("duplicates", "duplicate")],
+    )
+    def test_create_relation_sends_linears_name_for_the_relation_type(
+        self, tools, proxy, relation_type, linear_type
+    ) -> None:
+        _answers(
+            proxy,
+            {
+                "issueRelationCreate": {
+                    "success": True,
+                    "issueRelation": {"id": "r1", "type": linear_type},
+                }
+            },
+        )
+
+        result = tools["CUSTOM_CREATE_ISSUE_RELATION"](
+            CreateIssueRelationInput(
+                issue_id="i1", related_issue_id="i2", relation_type=relation_type
+            ),
+            EXECUTE_REQUEST,
+            AUTH_CREDS,
+        )
+
+        assert result["relation"]["type"] == relation_type
+        assert _bodies(proxy)[0]["variables"]["type"] == linear_type
 
     def test_create_relation_failure(self, tools, proxy) -> None:
         _answers(
@@ -812,7 +1033,7 @@ class TestLinearCreateIssueRelation:
             },
         )
 
-        with pytest.raises(RuntimeError, match="Failed to create relation"):
+        with pytest.raises(RuntimeError, match=r"^Failed to create relation$"):
             tools["CUSTOM_CREATE_ISSUE_RELATION"](
                 CreateIssueRelationInput(
                     issue_id="i1", related_issue_id="i2", relation_type="blocks"
@@ -826,7 +1047,7 @@ class TestLinearCreateIssueRelation:
     ) -> None:
         _answers(proxy, {"issueRelationCreate": {"success": False, "issueRelation": None}})
 
-        with pytest.raises(RuntimeError, match="Failed to create relation"):
+        with pytest.raises(RuntimeError, match=r"^Failed to create relation$"):
             tools["CUSTOM_CREATE_ISSUE_RELATION"](
                 CreateIssueRelationInput(
                     issue_id="i1", related_issue_id="i2", relation_type="blocks"
@@ -873,6 +1094,7 @@ class TestLinearGetIssueActivity:
             ],
         }
         assert _bodies(proxy)[0]["variables"] == {"issueId": "i1", "first": 10}
+        assert _operations(proxy) == [(USER_ID, QUERY_ISSUE_HISTORY)]
 
     def test_get_activity_by_identifier(self, tools, proxy) -> None:
         _answers(proxy, {"issue": _full_issue(id="i9")}, {"issue": {"history": {"nodes": []}}})
@@ -883,13 +1105,34 @@ class TestLinearGetIssueActivity:
 
         assert result == {"issue": "ENG-123", "activity_count": 0, "activities": []}
         assert _bodies(proxy)[1]["variables"]["issueId"] == "i9"
+        assert _operations(proxy) == [(USER_ID, QUERY_ISSUE_BY_ID), (USER_ID, QUERY_ISSUE_HISTORY)]
+
+    def test_get_activity_state_set_without_a_previous_state(self, tools, proxy) -> None:
+        result = self._run(
+            tools, proxy, _history(toState={"id": "s9", "name": "Done", "type": "completed"})
+        )
+
+        assert result["activities"] == [
+            {
+                "timestamp": "2024-01-01",
+                "actor": "Alice",
+                "change_type": "state",
+                "from": None,
+                "to": "Done",
+            }
+        ]
 
     def test_get_activity_no_issue(self, tools) -> None:
-        with pytest.raises(ValueError, match="Could not resolve issue"):
+        with pytest.raises(ValueError, match=r"^Could not resolve issue$"):
             tools["CUSTOM_GET_ISSUE_ACTIVITY"](GetIssueActivityInput(), EXECUTE_REQUEST, AUTH_CREDS)
 
     def test_get_activity_priority_change(self, tools, proxy) -> None:
-        result = self._run(tools, proxy, _history(actor=None, fromPriority=0, toPriority=1))
+        result = self._run(
+            tools,
+            proxy,
+            _history(actor=None, fromPriority=0, toPriority=1),
+            _history(id="h2", fromPriority=3, toPriority=None),
+        )
 
         assert result["activities"] == [
             {
@@ -898,11 +1141,23 @@ class TestLinearGetIssueActivity:
                 "change_type": "priority",
                 "from": "none",
                 "to": "urgent",
-            }
+            },
+            {
+                "timestamp": "2024-01-01",
+                "actor": "Alice",
+                "change_type": "priority",
+                "from": "medium",
+                "to": "none",
+            },
         ]
 
     def test_get_activity_assignee_change(self, tools, proxy) -> None:
-        result = self._run(tools, proxy, _history(toAssignee={"id": "u2", "name": "Bob"}))
+        result = self._run(
+            tools,
+            proxy,
+            _history(toAssignee={"id": "u2", "name": "Bob"}),
+            _history(id="h2", fromAssignee={"id": "u1", "name": "Alice"}),
+        )
 
         assert result["activities"] == [
             {
@@ -911,7 +1166,14 @@ class TestLinearGetIssueActivity:
                 "change_type": "assignee",
                 "from": None,
                 "to": "Bob",
-            }
+            },
+            {
+                "timestamp": "2024-01-01",
+                "actor": "Alice",
+                "change_type": "assignee",
+                "from": "Alice",
+                "to": None,
+            },
         ]
 
     def test_get_activity_labels_added(self, tools, proxy) -> None:
@@ -1009,6 +1271,44 @@ class TestLinearGetActiveSprint:
                 }
             ],
         }
+        assert _operations(proxy) == [(USER_ID, QUERY_ACTIVE_CYCLES)]
+
+    def test_get_active_sprint_counts_every_issue_but_lists_at_most_the_limit_per_state(
+        self, tools, proxy
+    ) -> None:
+        def issue(issue_id: str, state: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "id": issue_id,
+                "identifier": f"ENG-{issue_id}",
+                "title": issue_id,
+                "state": state,
+                "priority": 0,
+                "assignee": None,
+            }
+
+        started = {"name": "In Progress", "type": "started"}
+        cycle = _cycle(
+            "c1",
+            TEAM,
+            issue("a", started),
+            issue("b", started),
+            issue("untyped", {"name": "Todo"}),
+        )
+        _answers(proxy, {"cycles": {"nodes": [{**cycle, "progress": 0.12345}]}})
+
+        sprint = tools["CUSTOM_GET_ACTIVE_SPRINT"](
+            GetActiveSprintInput(issues_per_state_limit=1), EXECUTE_REQUEST, AUTH_CREDS
+        )["sprints"][0]
+
+        assert sprint["progress"] == 12.3
+        assert sprint["issues_by_state"] == {
+            "backlog": 0,
+            "unstarted": 1,
+            "started": 2,
+            "completed": 0,
+        }
+        assert [line["identifier"] for line in sprint["in_progress"]] == ["ENG-a"]
+        assert [line["identifier"] for line in sprint["todo"]] == ["ENG-untyped"]
 
     def test_get_active_sprint_filtered_by_team(self, tools, proxy) -> None:
         design = {"id": "t2", "key": "DES", "name": "Design"}
@@ -1063,15 +1363,40 @@ class TestLinearBulkUpdateIssues:
                 },
             }
         ]
+        assert _operations(proxy) == [(USER_ID, MUTATION_UPDATE_ISSUES)]
+
+    def test_bulk_update_sends_every_requested_field(self, tools, proxy) -> None:
+        _answers(proxy, {"issueBatchUpdate": {"success": True, "issues": []}})
+
+        tools["CUSTOM_BULK_UPDATE_ISSUES"](
+            BulkUpdateIssuesInput(
+                issue_ids=["i1"],
+                priority=2,
+                assignee_id="u2",
+                cycle_id="c1",
+                project_id="p1",
+                labels_to_add=["l1"],
+            ),
+            EXECUTE_REQUEST,
+            AUTH_CREDS,
+        )
+
+        assert _bodies(proxy)[0]["variables"]["input"] == {
+            "priority": 2,
+            "assigneeId": "u2",
+            "cycleId": "c1",
+            "projectId": "p1",
+            "labelIds": ["l1"],
+        }
 
     def test_bulk_update_no_ids(self, tools) -> None:
-        with pytest.raises(ValueError, match="No issue IDs"):
+        with pytest.raises(ValueError, match=r"^No issue IDs provided$"):
             tools["CUSTOM_BULK_UPDATE_ISSUES"](
                 BulkUpdateIssuesInput(issue_ids=[], state_id="s1"), EXECUTE_REQUEST, AUTH_CREDS
             )
 
     def test_bulk_update_no_updates(self, tools) -> None:
-        with pytest.raises(ValueError, match="No updates specified"):
+        with pytest.raises(ValueError, match=r"^No updates specified$"):
             tools["CUSTOM_BULK_UPDATE_ISSUES"](
                 BulkUpdateIssuesInput(issue_ids=["i1"]), EXECUTE_REQUEST, AUTH_CREDS
             )
@@ -1079,7 +1404,7 @@ class TestLinearBulkUpdateIssues:
     def test_bulk_update_failure(self, tools, proxy) -> None:
         _answers(proxy, {"issueBatchUpdate": {"success": False, "issues": []}})
 
-        with pytest.raises(RuntimeError, match="Batch update failed"):
+        with pytest.raises(RuntimeError, match=r"^Batch update failed$"):
             tools["CUSTOM_BULK_UPDATE_ISSUES"](
                 BulkUpdateIssuesInput(issue_ids=["i1"], state_id="s1"), EXECUTE_REQUEST, AUTH_CREDS
             )
@@ -1114,11 +1439,16 @@ _NOTIFICATIONS = {
 
 class TestLinearGetNotifications:
     def test_get_notifications_unread(self, tools, proxy) -> None:
-        _answers(proxy, _NOTIFICATIONS)
+        # The read notification comes first: skipping it must not stop the scan.
+        read_first = list(reversed(_NOTIFICATIONS["notifications"]["nodes"]))
+        _answers(proxy, {"notifications": {"nodes": read_first}})
 
         result = tools["CUSTOM_GET_NOTIFICATIONS"](
-            GetNotificationsInput(include_read=False), EXECUTE_REQUEST, AUTH_CREDS
+            GetNotificationsInput(include_read=False, limit=5), EXECUTE_REQUEST, AUTH_CREDS
         )
+
+        assert _bodies(proxy) == [{"query": QUERY_NOTIFICATIONS, "variables": {"first": 5}}]
+        assert _operations(proxy) == [(USER_ID, QUERY_NOTIFICATIONS)]
 
         assert result == {
             "count": 1,
@@ -1167,7 +1497,10 @@ class TestLinearGetWorkspaceContext:
             {
                 "teams": {
                     "nodes": [
-                        {**TEAM, "activeCycle": {"id": "c1", "name": "Sprint 5", "progress": 0.5}},
+                        {
+                            **TEAM,
+                            "activeCycle": {"id": "c1", "name": "Sprint 5", "progress": 0.12345},
+                        },
                         {"id": "t2", "key": "DES", "name": "Design", "activeCycle": None},
                     ]
                 }
@@ -1175,13 +1508,15 @@ class TestLinearGetWorkspaceContext:
             {
                 "issues": {
                     "nodes": [
-                        _summary("1", priority=1, dueDate=yesterday, slaBreachesAt="2024-01-01"),
                         _summary(
                             "2",
                             priority=1,
                             dueDate=yesterday,
                             state={"id": "s9", "name": "Done", "type": "completed"},
                         ),
+                        _summary("1", priority=1, dueDate=yesterday, slaBreachesAt="2024-01-01"),
+                        _summary("undated"),
+                        _summary("due_today", dueDate=local_today.isoformat()),
                     ]
                 }
             },
@@ -1204,7 +1539,7 @@ class TestLinearGetWorkspaceContext:
                 "name": "Eng",
                 "key": "ENG",
                 "active_cycle": "Sprint 5",
-                "cycle_progress": 50.0,
+                "cycle_progress": 12.3,
             },
             {
                 "id": "t2",
@@ -1214,27 +1549,70 @@ class TestLinearGetWorkspaceContext:
                 "cycle_progress": None,
             },
         ]
-        assert [[i["id"] for i in v] for v in result["urgent_items"].values()] == [
-            ["1"],
-            ["1"],
-            ["1"],
-        ]
+        assert {key: [i["id"] for i in items] for key, items in result["urgent_items"].items()} == {
+            "overdue": ["1"],
+            "high_priority": ["1"],
+            "sla_at_risk": ["1"],
+        }
         assert _bodies(proxy)[2]["variables"] == {
             "assigneeId": "u1",
             "includeCompleted": True,
             "first": 50,
         }
+        assert _operations(proxy) == [
+            (USER_ID, QUERY_VIEWER),
+            (USER_ID, QUERY_TEAMS),
+            (USER_ID, QUERY_MY_ISSUES),
+        ]
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "request_model", "expected_sizes"),
+    [
+        (
+            "CUSTOM_GET_WORKSPACE_CONTEXT",
+            GetWorkspaceContextInput(),
+            {"overdue": 5, "high_priority": 5, "sla_at_risk": 3},
+        ),
+        ("CUSTOM_GATHER_CONTEXT", GatherContextInput(), {"overdue": 5, "high_priority": 5}),
+    ],
+)
+def test_context_snapshots_cap_each_urgent_list(
+    tools, proxy, tool_name, request_model, expected_sizes
+) -> None:
+    local_today = datetime.now().date()
+    yesterday = (local_today - timedelta(days=1)).isoformat()
+    urgent = [
+        _summary(str(i), priority=1, dueDate=yesterday, slaBreachesAt="2024-01-01")
+        for i in range(6)
+    ]
+    _answers(proxy, VIEWER, {"teams": {"nodes": [TEAM]}}, {"issues": {"nodes": urgent}})
+
+    with patch(f"{LINEAR_MODULE}._user_local_today", return_value=local_today):
+        result = tools[tool_name](request_model, EXECUTE_REQUEST, AUTH_CREDS)
+
+    assert {key: len(items) for key, items in result["urgent_items"].items()} == expected_sizes
 
 
 class TestLinearGatherContext:
     def test_gather_context(self, tools, proxy) -> None:
         local_today = datetime.now().date()
         yesterday = (local_today - timedelta(days=1)).isoformat()
+        completed = {"id": "s9", "name": "Done", "type": "completed"}
         _answers(
             proxy,
             VIEWER,
             {"teams": {"nodes": [{**TEAM, "activeCycle": None}]}},
-            {"issues": {"nodes": [_summary("1", dueDate=yesterday), _summary("2", priority=2)]}},
+            {
+                "issues": {
+                    "nodes": [
+                        _summary("done", priority=1, dueDate=yesterday, state=completed),
+                        _summary("1", dueDate=yesterday),
+                        _summary("2", priority=2),
+                        _summary("due_today", dueDate=local_today.isoformat()),
+                    ]
+                }
+            },
         )
 
         with patch(f"{LINEAR_MODULE}._user_local_today", return_value=local_today):
@@ -1246,3 +1624,13 @@ class TestLinearGatherContext:
         assert result["teams"] == [{"id": "t1", "name": "Eng", "key": "ENG"}]
         assert [i["id"] for i in result["urgent_items"]["overdue"]] == ["1"]
         assert [i["id"] for i in result["urgent_items"]["high_priority"]] == ["2"]
+        assert _bodies(proxy)[2]["variables"] == {
+            "assigneeId": "u1",
+            "includeCompleted": True,
+            "first": 50,
+        }
+        assert _operations(proxy) == [
+            (USER_ID, QUERY_VIEWER),
+            (USER_ID, QUERY_TEAMS),
+            (USER_ID, QUERY_MY_ISSUES),
+        ]
