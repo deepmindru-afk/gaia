@@ -12,6 +12,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from prometheus_client import REGISTRY
 import pytest
 
 from app.agents.context.assemble import AssembledContext
@@ -1588,3 +1589,87 @@ class TestReasoningStreamsPerDeltaButPersistsPerBlock:
             writer({"reasoning": {"content": " more", "subagent_id": "sub-2"}})
 
             assert _collected_reasoning(session) == ["alpha ", "beta more"]
+
+
+# ---------------------------------------------------------------------------
+# latency: one active span per segment
+# ---------------------------------------------------------------------------
+
+
+def _subagent_count(subagent_id: str, status: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "subagent_run_seconds_count", {"subagent_id": subagent_id, "status": status}
+        )
+        or 0.0
+    )
+
+
+class TestSubagentRunLatency:
+    @pytest.mark.asyncio
+    async def test_finished_segment_observes_success_span(self):
+        async def _fake_astream(*args, **kwargs):
+            yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph)
+        before = _subagent_count("lat-sub", "success")
+
+        with patch("app.agents.core.subagents.subagent_runner.log"):
+            outcome = await execute_subagent_stream(
+                ctx, stream_writer=MagicMock(), subagent_id="lat-sub"
+            )
+
+        assert outcome.text
+        assert not outcome.paused
+        assert _subagent_count("lat-sub", "success") == before + 1
+
+    @pytest.mark.asyncio
+    async def test_paused_segment_observes_paused_span_not_success(self):
+        from app.agents.core.subagents.subagent_runner import SubagentOutcome
+
+        async def _fake_astream(*args, **kwargs):
+            yield ("updates", {"agent": {"messages": []}})
+            if False:
+                yield ("updates", {})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph)
+        paused_before = _subagent_count("lat-sub-paused", "paused")
+        success_before = _subagent_count("lat-sub-paused", "success")
+
+        with (
+            patch("app.agents.core.subagents.subagent_runner.log"),
+            patch(
+                "app.agents.core.subagents.subagent_runner._finalize_run",
+                return_value=SubagentOutcome(text="", interrupt={"approval_id": "a1"}),
+            ),
+        ):
+            outcome = await execute_subagent_stream(
+                ctx, stream_writer=MagicMock(), subagent_id="lat-sub-paused"
+            )
+
+        assert outcome.paused
+        assert _subagent_count("lat-sub-paused", "paused") == paused_before + 1
+        assert _subagent_count("lat-sub-paused", "success") == success_before
+
+    @pytest.mark.asyncio
+    async def test_failed_segment_observes_error_span(self):
+        async def _fake_astream(*args, **kwargs):
+            raise RuntimeError("graph exploded")
+            yield ("updates", {})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph)
+        before = _subagent_count("lat-sub-err", "error")
+
+        with (
+            patch("app.agents.core.subagents.subagent_runner.log"),
+            pytest.raises(RuntimeError, match="graph exploded"),
+        ):
+            await execute_subagent_stream(ctx, stream_writer=MagicMock(), subagent_id="lat-sub-err")
+
+        assert _subagent_count("lat-sub-err", "error") == before + 1
