@@ -37,3 +37,16 @@ def test_llm_call_and_graph_node_observe():
         )
         == 1.0
     )
+
+
+def test_labelless_histograms_observe_directly():
+    """Collectors with no label names take observations without .labels()."""
+    from prometheus_client import REGISTRY
+
+    from app.services import latency_metrics as m
+
+    before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+    m.observe_hil_user_wait(1.0)
+    m.observe_hil_dispatch_lag(0.5)
+    m.observe_transport_redis_publish(0.01)
+    assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == before + 1

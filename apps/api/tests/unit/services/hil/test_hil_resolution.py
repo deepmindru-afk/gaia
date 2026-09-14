@@ -8,10 +8,12 @@ An approval decision moves money, sends mail, deletes things. The attacks:
 """
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
+from prometheus_client import REGISTRY
 import pytest
 
 from app.schemas.hil_schemas import BatchDecisionOutcome
@@ -585,3 +587,43 @@ class TestCancelledRunApprovals:
         ):
             assert await cancel_conversation_approvals(CONVERSATION_ID, USER_ID) == []
         assert decided.await_count == 0
+
+
+class TestHILWaitBenchmarks:
+    """Dispatch measures what the user waited and what the system added."""
+
+    async def test_dispatch_measures_user_wait_and_dispatch_lag(self, resume: Any) -> None:
+        now = datetime.now(UTC)
+        record = make_record(created_at=now - timedelta(seconds=30), decided_at=now)
+        wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        wait_sum_before = REGISTRY.get_sample_value("hil_user_wait_seconds_sum", {}) or 0.0
+        lag_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) or 0.0
+        lag_sum_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_sum", {}) or 0.0
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+        assert resume.runner.call_count == 1
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
+        user_wait = REGISTRY.get_sample_value("hil_user_wait_seconds_sum", {}) - wait_sum_before
+        assert 25.0 <= user_wait <= 35.0
+        assert REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) == lag_before + 1
+        dispatch_lag = (
+            REGISTRY.get_sample_value("hil_dispatch_lag_seconds_sum", {}) - lag_sum_before
+        )
+        assert 0.0 <= dispatch_lag <= 10.0
+
+    async def test_skipped_dispatch_measures_nothing(self, resume: Any) -> None:
+        resume.claim.return_value = False
+        record = make_record()
+        wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+        assert resume.runner.call_count == 0
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before

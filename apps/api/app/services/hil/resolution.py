@@ -16,6 +16,7 @@ Two guarantees:
 """
 
 import asyncio
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any, Literal, cast
 
@@ -43,6 +44,7 @@ from app.services.hil.approvals_store import (
     mark_resumed,
 )
 from app.services.hil.resume_slot import claim_resume_dispatch, release_resume_dispatch
+from app.services.latency_metrics import observe_hil_dispatch_lag, observe_hil_user_wait
 from app.utils.errors import AppError
 from shared.py.wide_events import log
 
@@ -377,7 +379,29 @@ async def _dispatch_resume(
     _resume_tasks.add(task)
     task.add_done_callback(_resume_tasks.discard)
     await mark_resumed(record.approval_id)
+    _observe_hil_wait(record)
     log.info(f"{LogTag.HIL} Resumed paused executor run", approval_id=record.approval_id)
+
+
+def _observe_hil_wait(record: HILApprovalRecord) -> None:
+    """Split a dispatch's pause into user wait and system dispatch lag.
+
+    ``user_wait`` (created → decided) is the human; ``dispatch_lag``
+    (decided → now) is us. Missing or mixed-timezone stamps degrade to
+    missing spans, never zero-filled or raised.
+    """
+    try:
+        if record.decided_at is None:
+            return
+        user_wait = (record.decided_at - record.created_at).total_seconds()
+        dispatch_lag = (datetime.now(UTC) - record.decided_at).total_seconds()
+    except TypeError:
+        return
+    if user_wait >= 0.0:
+        observe_hil_user_wait(user_wait)
+    if dispatch_lag >= 0.0:
+        observe_hil_dispatch_lag(dispatch_lag)
+    log.set(hil={"user_wait_s": round(user_wait, 2), "dispatch_lag_s": round(dispatch_lag, 2)})
 
 
 async def sweep_approvals() -> dict[str, int]:

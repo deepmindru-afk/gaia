@@ -294,7 +294,12 @@ def _bool_label(value: bool | str) -> str:
 
 def _observe(histogram: Histogram, amount: float, **labels: str) -> None:
     try:
-        histogram.labels(**labels).observe(amount)
+        if labels:
+            histogram.labels(**labels).observe(amount)
+        else:
+            # A collector with no label names takes observations directly;
+            # .labels() on it raises.
+            histogram.observe(amount)
     except Exception as e:
         log.warning(
             "[metrics] latency observe failed",
