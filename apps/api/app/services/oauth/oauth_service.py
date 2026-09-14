@@ -1,8 +1,10 @@
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import BackgroundTasks, HTTPException
 
 from app.constants.auth import LOGIN_METHOD_WORKOS
+from app.constants.email import SIGNUP_EMAIL_ENQUEUE_TIMEOUT_SECONDS
 from app.constants.integrations import (
     GMAIL_INTEGRATION_ID,
     GOOGLE_CALENDAR_INTEGRATION_ID,
@@ -92,10 +94,12 @@ async def _run_signup_side_effects(user_id: str, email: str, signup_name: str) -
     # because nothing drains those on shutdown — a restart mid-send dropped both
     # deliveries without a trace. Queued, the job outlives this process — and
     # losing even this enqueue is survivable, because the user's row carries no
-    # delivery stamps and the hourly recovery sweep finishes it later.
+    # delivery stamps and the hourly recovery sweep finishes it later. That is also
+    # why the handoff is bounded: a stalled Redis must not hold the OAuth callback.
     try:
-        pool = await RedisPoolManager.get_pool()
-        await enqueue_signup_emails(pool, user_id)
+        async with asyncio.timeout(SIGNUP_EMAIL_ENQUEUE_TIMEOUT_SECONDS):
+            pool = await RedisPoolManager.get_pool()
+            await enqueue_signup_emails(pool, user_id)
         log.info(f"{LogTag.OAUTH} Queued signup email delivery", user={"id": user_id})
     except Exception as e:
         log.error(
