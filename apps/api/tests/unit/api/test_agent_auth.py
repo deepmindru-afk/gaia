@@ -37,6 +37,10 @@ class TestVerifyAgentToken:
         assert verify_agent_token(forged) is None
         assert verify_agent_token("not-a-jwt") is None
 
+    def test_a_token_signed_with_another_algorithm_is_rejected(self) -> None:
+        other_alg = jwt.encode({"sub": "u-1", "role": "agent"}, AGENT_SECRET, algorithm="HS512")
+        assert verify_agent_token(other_alg) is None
+
     def test_an_expired_token_is_rejected(self) -> None:
         expired = datetime.now(UTC) - timedelta(minutes=1)
         assert verify_agent_token(_encode({"sub": "u-1", "role": "agent", "exp": expired})) is None

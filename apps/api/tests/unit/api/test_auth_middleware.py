@@ -21,8 +21,9 @@ from app.api.v1.middleware.auth import (
     WorkOSAuthMiddleware,
     get_current_user,
 )
-from app.constants.auth import DEV_USER_MISSING_HINT
+from app.constants.auth import DEV_USER_HEADER, DEV_USER_MISSING_HINT
 from app.constants.error_codes import NOT_AUTHENTICATED
+from app.core.request_context import get_authenticated_user
 from app.models.user_models import AuthenticatedUser, UserDocument
 from tests.helpers import captured_wide_event
 
@@ -569,6 +570,22 @@ class TestAuthenticateSession:
         assert result_user == user_info
         mock_touch.assert_awaited_once_with("a@b.com")
 
+    async def test_a_user_without_an_email_touches_last_active_with_an_empty_key(self) -> None:
+        middleware = WorkOSAuthMiddleware(app=MagicMock(), workos_client=MagicMock())
+        with (
+            patch(
+                "app.api.v1.middleware.auth.authenticate_workos_session",
+                new_callable=AsyncMock,
+                return_value=(AuthenticatedUser(user_id="u1"), None),
+            ),
+            patch(
+                "app.api.v1.middleware.auth.user_repository.touch_last_active",
+                new_callable=AsyncMock,
+            ) as mock_touch,
+        ):
+            await middleware._authenticate_session("tok")
+        mock_touch.assert_awaited_once_with("")
+
 
 # PostHogRequestContextMiddleware is the identity every authenticated capture
 # inherits; a wrong or missing id lands events on the wrong profile and
@@ -736,3 +753,56 @@ class TestDevBypassWithoutAMongoUser:
             "message": f"No GAIA user exists for 'ghost@example.com' — {DEV_USER_MISSING_HINT}",
             "code": NOT_AUTHENTICATED,
         }
+
+
+class TestDevBypassWithAMongoUser:
+    """The bypass resolves the requested user and hands the route a dev-bypass context."""
+
+    _USER = UserDocument.model_validate(
+        {"id": "507f1f77bcf86cd799439011", "email": "alice@example.com", "name": "Alice"}
+    )
+
+    @pytest.fixture(autouse=True)
+    def _bypass_on(self, monkeypatch) -> None:
+        from app.config.settings import settings
+
+        monkeypatch.setattr(settings, "ENV", "development")
+        monkeypatch.setattr(settings, "DEV_AUTH_BYPASS_EMAIL", "dev@example.com")
+
+    def test_the_impersonated_user_is_looked_up_and_marked_dev_bypass(self) -> None:
+        app = _build_test_app()
+        with patch(
+            "app.utils.auth_utils.user_repository.get_by_email",
+            new_callable=AsyncMock,
+            return_value=self._USER,
+        ) as get_by_email:
+            resp = TestClient(app).get(
+                "/api/v1/protected", headers={DEV_USER_HEADER: "alice@example.com"}
+            )
+
+        assert get_by_email.call_args.args == ("alice@example.com",)
+        user = resp.json()["user"]
+        assert resp.json()["authenticated"] is True
+        assert (user["user_id"], user["email"]) == ("507f1f77bcf86cd799439011", "alice@example.com")
+        assert (user["auth_provider"], user["dev_bypass"], user["impersonated"]) == (
+            "workos",
+            True,
+            False,
+        )
+
+    def test_the_bypass_user_is_published_to_the_request_context(self) -> None:
+        app = _build_test_app()
+
+        @app.get("/api/v1/whoami")
+        async def whoami() -> dict:
+            user = get_authenticated_user()
+            return {"user_id": user.user_id if user else None}
+
+        with patch(
+            "app.utils.auth_utils.user_repository.get_by_email",
+            new_callable=AsyncMock,
+            return_value=self._USER,
+        ):
+            resp = TestClient(app).get("/api/v1/whoami")
+
+        assert resp.json() == {"user_id": "507f1f77bcf86cd799439011"}

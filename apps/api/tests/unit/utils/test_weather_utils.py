@@ -1,5 +1,7 @@
 """Comprehensive unit tests for app.utils.weather_utils."""
 
+import datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -409,10 +411,28 @@ class TestGetLocationData:
             new_callable=AsyncMock,
             return_value=geocode_result,
         ):
-            result = await get_location_data(location_name="Tunbridge Wells")
+            result = await get_location_data(location_name="TN1")
 
-        # city extracted from display_name split
+        # city extracted from display_name split, not the query the user typed
         assert result.city == "Tunbridge Wells"
+
+    async def test_geocoded_city_wins_over_the_display_name(self) -> None:
+        geocode_result = GeocodedLocation(
+            lat=51.5,
+            lon=-0.13,
+            city="Westminster",
+            country="UK",
+            region="England",
+            display_name="London, England, UK",
+        )
+        with patch(
+            "app.utils.weather_utils.geocode_location",
+            new_callable=AsyncMock,
+            return_value=geocode_result,
+        ):
+            result = await get_location_data(location_name="SW1A")
+
+        assert result.city == "Westminster"
 
     async def test_location_name_missing_city_and_display_name(self) -> None:
         geocode_result = GeocodedLocation(
@@ -461,6 +481,24 @@ class TestGetLocationData:
             region="California",
             cache_key="weather:ip:8.8.8.8",
         )
+
+    @pytest.mark.parametrize(
+        "ip_response",
+        [
+            {"status": "fail", "lat": 1.0, "lon": 2.0},
+            {"status": "success", "lat": None, "lon": 2.0},
+            {"status": "success", "lat": 1.0, "lon": None},
+        ],
+    )
+    async def test_ip_lookup_needs_success_and_both_coordinates(
+        self, ip_response: dict[str, Any]
+    ) -> None:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=_mock_httpx_response(ip_response))
+
+        with patch("app.utils.weather_utils.http_async_client", mock_client):
+            with pytest.raises(Exception, match="Failed to get location from IP address"):
+                await get_location_data(ip_address="8.8.8.8")
 
     async def test_with_ip_address_failed_status(self) -> None:
         ip_response = {"status": "fail", "message": "invalid query"}
@@ -609,6 +647,24 @@ class TestPrepareWeatherData:
         assert "sunset" in result["sys"]
         # sunset should be ~12 hours after sunrise
         assert result["sys"]["sunset"] > result["sys"]["sunrise"]
+
+    async def test_minimal_sys_sunrise_is_now_and_sunset_twelve_hours_later(self) -> None:
+        frozen = datetime.datetime(2024, 1, 15, 6, 0, tzinfo=datetime.UTC)
+
+        class _FrozenDateTime(datetime.datetime):
+            @classmethod
+            def now(cls, tz: datetime.tzinfo | None = None) -> datetime.datetime:  # type: ignore[override]  # mirrors datetime.now's optional-tz signature
+                return frozen
+
+        clock = SimpleNamespace(datetime=_FrozenDateTime, UTC=datetime.UTC)
+        with patch("app.utils.weather_utils.datetime", clock):
+            result = await self._call(
+                _resolved("Tokyo", "JP", "Kanto"),
+                current_weather=_make_current_weather(include_sys=False),
+            )
+
+        now_ts = int(frozen.timestamp())
+        assert (result["sys"]["sunrise"], result["sys"]["sunset"]) == (now_ts, now_ts + 43200)
 
     async def test_no_sys_field_no_country_defaults_empty(self) -> None:
         current = _make_current_weather(include_sys=False)
