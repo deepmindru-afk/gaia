@@ -89,8 +89,8 @@ export class TurnSession {
   private flushHandle: number | null = null;
   private lastPartialPersistAt = 0;
   private closeHandled = false;
-  /** Client-side cross-check clock (performance.now). Server timing is the
-   *  SLO; these deltas only validate it from the user's perspective. */
+  /** Client cross-check clock. Server timing is the SLO; these deltas only
+   *  validate it from the user's side. */
   private sendStartMs = 0;
   private sawFirstFrame = false;
   /** Approval ids currently pending a user decision. The turn is "awaiting
@@ -137,8 +137,7 @@ export class TurnSession {
   async start(): Promise<void> {
     const store = useStreamStore.getState();
     store.startSession(this.key, this.inputText);
-    // Cross-check clock for turn:close/first-frame deltas. On a re-attach this
-    // measures reattach-to-first-replayed-frame, not the original send.
+    // Re-attach measures reattach-to-first-replayed-frame, not the send.
     this.sendStartMs = performance.now();
     streamLog("lifecycle", "turn:start", {
       turnKey: this.key,
@@ -275,6 +274,8 @@ export class TurnSession {
     // Any frame — keepalives included — proves the connection is still alive.
     this.stallWatchdog.kick();
     if (!event.data) return undefined; // SSE comments dispatch empty events
+    // First raw frame (usually init), which precedes server first-*text* TTFT
+    // by the whole LLM latency — compare trends, never absolutes.
     if (!this.sawFirstFrame) {
       this.sawFirstFrame = true;
       streamLog("sse", "first-frame", {

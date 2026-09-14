@@ -501,10 +501,11 @@ async def execute_subagent_stream(
             # finished task — an empty outcome says "nothing to deliver" outright.
             return SubagentOutcome(text="")
 
-    # One span per segment: the initial run plus each resume replay. A pause
-    # ends its segment here — the user wait that follows is HIL wait, measured
-    # separately, never subagent active time.
-    label = subagent_id or ctx.agent_name or "unknown"
+    # One span per segment; a pause ends its segment here, and the user wait
+    # that follows is HIL wait, never subagent active time. The label is the
+    # registry integration id — subagent_id is the per-call row uuid, which
+    # would mint unbounded series.
+    label = ctx.integration_id or ctx.agent_name or "unknown"
     cancelled = False
     segment_start = time.perf_counter()
     try:
@@ -541,6 +542,11 @@ async def execute_subagent_stream(
             # langgraph's own overload return type does not express.
             stream_mode, payload = cast(tuple[str, Any], event)
             await _consume_stream_event(run, stream_mode, payload)
+    except GeneratorExit:
+        observe_subagent_run(
+            time.perf_counter() - segment_start, subagent_id=label, status="abandoned"
+        )
+        raise
     except Exception:
         observe_subagent_run(time.perf_counter() - segment_start, subagent_id=label, status="error")
         raise

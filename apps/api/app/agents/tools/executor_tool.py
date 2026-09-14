@@ -215,8 +215,7 @@ async def _dispatch_executor(
     stream_id = configurable.get("stream_id")
     user_message_id = configurable.get("user_message_id")
     bot_message_id = configurable.get("bot_message_id")
-    # Dispatch stamp every later latency derives from: queue wait at run
-    # start, E2E at finalize. A monotonic clock — never logged, only differenced.
+    # Dispatch stamp every later latency derives from; monotonic, never logged.
     t_dispatch = time.perf_counter()
 
     lock_key = f"{EXECUTOR_BUSY_PREFIX}{conversation_id}"

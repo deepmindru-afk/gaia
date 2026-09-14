@@ -1,15 +1,13 @@
-"""Turn latency histograms — one benchmark surface for the full chat flow.
+"""Turn latency histograms — the benchmark source of truth (p50/p95/p99, alerts).
 
-Prometheus is the benchmark source of truth (p50/p95/p99, alerts); PostHog
-carries the same timings as event props for segmentation; wide events carry
-per-turn fields for Loki deep-dives. This module owns the Prometheus half.
+PostHog carries the same timings as event props for segmentation; wide events
+carry per-turn fields for Loki deep-dives.
 
-Label discipline: low-cardinality labels only
-(``source, voice_mode, delegated, queued, status, stage, tool_name,
-subagent_id, model, lane, agent, node, op``). Never user/conversation/stream/task
-ids on collectors — those go on ``log.set()`` + PostHog props. ``tool_name``
-is only safe for built-in tools; MCP-proxied or dynamically registered calls
-collapse to ``tool_name="mcp"`` and keep the real name on the wide event.
+Label discipline: low-cardinality labels only. Never user/conversation/stream/
+task ids on collectors — those go on ``log.set()`` + PostHog props.
+``tool_name`` is only safe for built-in tools; MCP-proxied or dynamically
+registered calls collapse to ``tool_name="mcp"``. Same rule for
+``subagent_id``: the registry integration id, never the per-call row uuid.
 """
 
 from __future__ import annotations
@@ -297,9 +295,7 @@ def _observe(histogram: Histogram, amount: float, **labels: str) -> None:
         if labels:
             histogram.labels(**labels).observe(amount)
         else:
-            # A collector with no label names takes observations directly;
-            # .labels() on it raises.
-            histogram.observe(amount)
+            histogram.observe(amount)  # .labels() raises on a labelless collector
     except Exception as e:
         log.warning(
             "[metrics] latency observe failed",

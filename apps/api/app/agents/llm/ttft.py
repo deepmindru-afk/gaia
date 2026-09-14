@@ -19,7 +19,7 @@ from app.services.latency_metrics import observe_llm_ttft
 
 
 class LLMTtftCallback(BaseCallbackHandler):
-    """Stamp model start per run; observe on that run's first token.
+    """True provider time-to-first-token, measured per streaming LLM call.
 
     Non-streaming calls emit no sample — their ``duration_ms`` already
     exists, and substituting full duration for TTFT would poison the
@@ -46,8 +46,8 @@ class LLMTtftCallback(BaseCallbackHandler):
         meta = metadata or {}
         self._starts[str(run_id)] = (
             time.perf_counter(),
-            str(meta.get("lane_model", "unknown")),
-            str(meta.get("lane_provider", "unknown")),
+            str(meta.get("lane_model") or "unknown"),
+            str(meta.get("lane_provider") or "unknown"),
         )
 
     def on_llm_new_token(

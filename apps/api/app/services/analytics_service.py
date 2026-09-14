@@ -63,7 +63,9 @@ class AnalyticsEvents(StrEnum):
     # Terminal turn event. Latency props (all ms, measured server-side):
     # ttft_ms (first response text; absent when no text streamed), e2e_ack_ms
     # (comms ack), e2e_full_ms (stream DONE after executor wait), delegated,
-    # queued, queue_wait_ms, executor_ttft_ms, executor_active_ms, hil_wait_ms.
+    # queued. Executor-leg timings (queue_wait_ms, executor_ttft_ms,
+    # executor_active_ms) ride on agent:run_completed, and HIL waits on the
+    # wide event — not here.
     CHAT_MESSAGE_COMPLETED = "chat:message_completed"
     CHAT_MESSAGE_CANCELLED = "chat:message_cancelled"
     # A comms reply scored dirty against the AI-ism detectors and was

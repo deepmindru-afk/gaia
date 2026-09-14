@@ -83,8 +83,6 @@ async def _render_section(section: Section, ctx: SectionContext) -> tuple[str, s
         try:
             return section.id, await section.fetch(ctx)
         finally:
-            # One span per section (1:1 with its fetcher) — the per-fetcher
-            # breakdown for context-assembly benchmarking.
             observe_context_assemble(elapsed(), stage=f"section:{section.id}")
 
 

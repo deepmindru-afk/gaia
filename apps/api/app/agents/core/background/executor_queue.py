@@ -77,8 +77,7 @@ class ExecutorRunItem(TypedDict, total=False):
     #: item is the only thing that can carry it across. Read back into
     #: ``ExecutorRun`` so the resumed run's model calls stay attributable.
     workflow_execution_id: str | None
-    #: Dispatch stamp from ``RunIdentity`` — the popped run's queue wait is
-    #: measured from this. Absent on items written before the stamp existed.
+    #: Dispatch stamp from ``RunIdentity``; absent on pre-stamp items.
     t_dispatch_perf: float | None
 
 

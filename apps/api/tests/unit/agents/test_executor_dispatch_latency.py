@@ -252,3 +252,21 @@ class TestExecutorRunLatency:
         props = completed[0].args[2]
         assert "queue_wait_ms" not in props
         assert "executor_ttft_ms" not in props
+
+    async def test_mixed_epoch_dispatch_stamp_measures_nothing(self) -> None:
+        """A queued run that survived a restart carries a stamp from another
+        monotonic epoch — its deltas are garbage and must not reach Prometheus
+        or PostHog."""
+        stream_id = "exec-restarted"
+        run = _run(stream_id, t_dispatch_perf=time.perf_counter() + 3600.0)
+        e2e_before = _count("executor_e2e_seconds", {"status": "success", "queued": "false"})
+        mock_capture = await self._background(run)
+        assert (
+            _count("executor_e2e_seconds", {"status": "success", "queued": "false"})
+            == e2e_before
+        )
+        completed = [
+            call for call in mock_capture.call_args_list if call.args[1] == "agent:run_completed"
+        ]
+        assert len(completed) == 1
+        assert "queue_wait_ms" not in completed[0].args[2]

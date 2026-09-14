@@ -386,9 +386,7 @@ async def _dispatch_resume(
 def _observe_hil_wait(record: HILApprovalRecord) -> None:
     """Split a dispatch's pause into user wait and system dispatch lag.
 
-    ``user_wait`` (created → decided) is the human; ``dispatch_lag``
-    (decided → now) is us. Missing or mixed-timezone stamps degrade to
-    missing spans, never zero-filled or raised.
+    Missing or skewed stamps degrade to missing spans, never zero-filled.
     """
     try:
         if record.decided_at is None:
@@ -397,10 +395,12 @@ def _observe_hil_wait(record: HILApprovalRecord) -> None:
         dispatch_lag = (datetime.now(UTC) - record.decided_at).total_seconds()
     except TypeError:
         return
-    if user_wait >= 0.0:
-        observe_hil_user_wait(user_wait)
-    if dispatch_lag >= 0.0:
-        observe_hil_dispatch_lag(dispatch_lag)
+    if user_wait < 0.0 or dispatch_lag < 0.0:
+        # Clock skew between the decider and this worker: neither number is a
+        # measurement. Same degrade-to-missing rule as the histograms.
+        return
+    observe_hil_user_wait(user_wait)
+    observe_hil_dispatch_lag(dispatch_lag)
     log.set(hil={"user_wait_s": round(user_wait, 2), "dispatch_lag_s": round(dispatch_lag, 2)})
 
 

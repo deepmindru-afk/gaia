@@ -92,8 +92,7 @@ async def run_chat_stream_background(
     event log, so publish/subscribe timing needs no coordination.
 
     ``t0_perf`` is the request-accepted ``perf_counter`` stamped by the
-    endpoint; ``None`` falls back to this task's entry (loses only the spawn
-    delay, which stays unmeasured rather than faked).
+    endpoint; ``None`` falls back to this task's entry.
     """
     # get_trace_id() reads the spawning request's trace_id from this task's
     # copied context, so the agent-run event joins with its http_request event.
@@ -183,12 +182,11 @@ class _StreamState:
         # the saved user/comms messages keep timestamps EARLIER than a delegated
         # executor's answer (saved mid-wait). The frontend sorts by createdAt.
         self.turn_completed_at: datetime | None = None
-        # perf_counter stamps for latency benchmarking (monotonic, never logged).
+        # Monotonic stamps (never logged raw) and their ms derivations. A None
+        # ms means the span never happened — never zero-filled.
         self.t0_perf: float | None = None
         self.ttft_perf: float | None = None
         self.ack_perf: float | None = None
-        # Computed millisecond latencies, filled at stream end for PostHog +
-        # the wide event. ttft_ms stays None when no response text streamed.
         self.ttft_ms: float | None = None
         self.e2e_ack_ms: float | None = None
         self.e2e_full_ms: float | None = None
@@ -445,7 +443,6 @@ async def _resolve_pending_approval_turn(
     state.turn_completed_at = datetime.now(UTC)
     state.ack_perf = time.perf_counter()
     await stream_manager.publish_chunk(stream_id, format_sse_response(ack))
-    # The ack is this turn's first and only user-facing text.
     if state.ttft_perf is None:
         state.ttft_perf = state.ack_perf
     _stamp_turn_latencies(state)
@@ -639,9 +636,8 @@ async def _consume_agent_stream(
 
         if chunk.startswith("data: "):
             if state.ttft_perf is None and extract_response_text(chunk):
-                # First comms response text — init, description, keepalive and
-                # tool frames carry no "response" key, so this is TTFT, not
-                # first-byte.
+                # Init/description/keepalive/tool frames carry no "response"
+                # key — this is first reply text, not first byte.
                 state.ttft_perf = time.perf_counter()
             try:
                 state.follow_up_actions, _ = await process_data_chunk(
@@ -680,11 +676,7 @@ def _parse_complete_message(chunk: str) -> tuple[str, bool]:
 
 
 def _stamp_turn_latencies(state: _StreamState) -> None:
-    """Fill ``state``'s millisecond latencies from its perf_counter stamps.
-
-    Missing stamps stay missing — a turn that never streamed text has no
-    TTFT, and spans degrade to absent rather than zero-filled.
-    """
+    """Fill ``state``'s ms latencies from its stamps; missing stays missing."""
     if state.t0_perf is None:
         return
     if state.ttft_perf is not None:
@@ -950,8 +942,7 @@ async def _finalize_stream(
 
     tool_entries = state.tool_data.get("tool_data", [])
     fs_metrics = flush_fs_metrics()
-    # Latency fields merge into the chat namespace set at turn start; absent
-    # spans stay absent so Loki can distinguish "no text streamed" from zero.
+    # Absent spans stay absent so Loki can tell "no text" from zero.
     latency_fields: ChatContext = {
         "delegated": state.delegated,
         "queued": state.queued,

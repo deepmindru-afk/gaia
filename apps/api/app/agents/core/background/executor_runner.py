@@ -151,11 +151,15 @@ async def run_executor_background(
         ttft_ms: float | None = None
         active_ms: float | None = None
         if run.t_dispatch_perf is not None:
-            queue_wait_ms = round((run_start - run.t_dispatch_perf) * 1000.0, 2)
-            observe_executor_queue_wait(
-                run_start - run.t_dispatch_perf,
-                source=str(configurable.get("conversation_source") or "unknown"),
-            )
+            # A queued run can survive a restart inside its 1h TTL, mixing
+            # monotonic epochs — a negative delta is garbage, not a measurement.
+            queue_wait_s = run_start - run.t_dispatch_perf
+            if queue_wait_s >= 0.0:
+                queue_wait_ms = round(queue_wait_s * 1000.0, 2)
+                observe_executor_queue_wait(
+                    queue_wait_s,
+                    source=str(configurable.get("conversation_source") or "unknown"),
+                )
 
         # One lifecycle event per run segment; a resumed run re-enters here.
         executor_user_id = run.user.get("user_id", "")
@@ -174,12 +178,18 @@ async def run_executor_background(
                 result = await _execute_executor(task, configurable, run.stream_id, resume)
             active_ms = round(elapsed_active() * 1000.0, 2)
             result_text, result_type = result.text, result.type
-            observe_executor_active(
-                elapsed_active(),
-                status="error"
-                if result_type == "error"
-                else ("paused" if result_type == EXECUTOR_PAUSED else "success"),
-            )
+            # Cancellation is only known in finalize, but this span must agree
+            # with it — same flag read, one extra Redis lookup per run.
+            run_cancelled = bool(run.stream_id) and await StreamManager.is_cancelled(run.stream_id)
+            if result_type == "error":
+                active_status = "error"
+            elif result_type == EXECUTOR_PAUSED:
+                active_status = "paused"
+            elif run_cancelled:
+                active_status = "cancelled"
+            else:
+                active_status = "success"
+            observe_executor_active(elapsed_active(), status=active_status)
             ttft_ms = _executor_ttft_ms(run, run_start)
             if ttft_ms is not None:
                 observe_executor_ttft(ttft_ms / 1000.0, queued=queued)
@@ -252,10 +262,8 @@ async def _record_pause(
         item = build_run_item(
             task=task,
             configurable=configurable,
-            # A pause re-dispatch is a new incarnation: drop the original
-            # dispatch stamp so the resumed run measures no queue wait for
-            # time the user spent deciding. That wait is HIL wait, measured
-            # separately.
+            # A pause re-dispatch is a new incarnation: drop the original stamp
+            # so the resumed run measures no queue wait for user decision time.
             identity=replace(run.identity, t_dispatch_perf=None),
             workflow_execution_id=run.workflow_execution_id,
         )
@@ -276,15 +284,16 @@ async def _record_pause(
 def _executor_ttft_ms(run: ExecutorRun, run_start: float) -> float | None:
     """First executor frame minus dispatch (or run start without a stamp).
 
-    ``None`` when no frame was ever written — a run that produced nothing
-    has no TTFT, and a missing span beats a zero-filled one.
+    ``None`` when no frame was written, or the delta is negative (mixed
+    monotonic epochs across a restart) — missing beats zero-filled.
     """
     session = get_session(run.stream_id)
     first_frame = session.executor_first_frame_perf if session is not None else None
     if first_frame is None:
         return None
     base = run.t_dispatch_perf if run.t_dispatch_perf is not None else run_start
-    return round((first_frame - base) * 1000.0, 2)
+    ttft_ms = round((first_frame - base) * 1000.0, 2)
+    return ttft_ms if ttft_ms >= 0.0 else None
 
 
 class _ExecutorResult(NamedTuple):
@@ -463,9 +472,9 @@ async def _finalize_executor_run(
     )
     queued = run.kind is RunKind.QUEUED
     if run.t_dispatch_perf is not None:
-        observe_executor_e2e(
-            time.perf_counter() - run.t_dispatch_perf, status=end_status, queued=queued
-        )
+        e2e_s = time.perf_counter() - run.t_dispatch_perf
+        if e2e_s >= 0.0:  # mixed-epoch guard, same as queue wait above
+            observe_executor_e2e(e2e_s, status=end_status, queued=queued)
     observe_executor_run_total(status=end_status, queued=queued)
 
     # A terminal run that leaves landed-but-uncollected subagent work (a parked

@@ -111,6 +111,9 @@ async def _stream_from_redis(
                     )
                     break
                 yield chunk
+        except GeneratorExit:
+            delivery_status = "abandoned"
+            raise
         except asyncio.CancelledError:
             # Client disconnected mid-stream — expected, not an error. The
             # background LangGraph task keeps running and persists the result.
@@ -185,8 +188,8 @@ async def chat_stream_endpoint(
         conversation_id=conversation_id,
         user_id=user_id,
     )
-    # Request-accepted clock for TTFT/E2E benchmarking — stamped after the
-    # rate limit and cost budget so it counts turns actually accepted.
+    # Request-accepted clock for TTFT/E2E; past the rate limit and cost
+    # budget so it counts turns actually accepted.
     t0_perf = time.perf_counter()
     # The ONE event for a chat message. It fires for every surface (web,
     # desktop, and bots via endpoints/bot.py), no ad blocker can drop it, and

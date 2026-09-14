@@ -2159,10 +2159,8 @@ class MCPClient:
         # `-> CallToolResult` and returns the SDK model straight through.
         result = cast(CallToolResult, await session.call_tool(name=tool_name, arguments=arguments))
 
-        # Same surface as the reconnect path's latency_ms: the server
-        # round-trip including any rehydration above. Prometheus sees this
-        # call once, as tool_call_seconds{tool_name="mcp"} at the wrapper —
-        # a second histogram here would double-count it.
+        # Same surface as the reconnect path's latency_ms. Prometheus sees this
+        # call once, at the tool wrapper — a second histogram here would double-count.
         log.set_ns(
             "mcp",
             success=not result.isError,

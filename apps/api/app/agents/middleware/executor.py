@@ -53,13 +53,9 @@ ToolCallHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[An
 
 
 def _tool_metric_name(tool_name: str, tool: BaseTool | None) -> str:
-    """The Prometheus label for a tool call.
-
-    MCP-proxied and other dynamically registered tools carry user-defined
-    names — unbounded cardinality — so they collapse to ``"mcp"``. The real
-    name stays on the wide event and the ``tool:used`` PostHog prop.
-    ``McpToLangChainAdapter`` is method-local (no stable import path), so the
-    ``tool_connector`` attribute it always sets is the structural signal.
+    """Prometheus label for a tool call. MCP/dynamic tools carry user-defined
+    names, so they collapse to ``"mcp"``; the adapter class is method-local,
+    so its ``tool_connector`` field is the structural signal.
     """
     if tool is not None and hasattr(tool, "tool_connector"):
         return "mcp"
@@ -465,7 +461,6 @@ class MiddlewareExecutor:
             # a failure. It MUST propagate so LangGraph can checkpoint and pause —
             # the generic handler below would swallow it and then run the tool via
             # the direct-invocation fallback, executing a gated action unapproved.
-            # No latency sample either: the pause is HIL wait, measured separately.
             raise
         except asyncio.CancelledError:
             raise

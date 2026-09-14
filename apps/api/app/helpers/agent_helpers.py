@@ -208,8 +208,7 @@ def _build_agent_callbacks(
     if usage_metadata_callback:
         callbacks.append(usage_metadata_callback)
 
-    # True provider first-token latency for every tier on this run. Cheap and
-    # no-op for non-streaming calls (no token events, no sample).
+    # True provider first-token latency for every tier on this run.
     callbacks.append(LLMTtftCallback(agent=agent_name))
 
     return callbacks
@@ -650,9 +649,7 @@ async def build_agent_config(
         "user_id": user.get("user_id"),
         "source_category": source_category,
         "source_channel": source_channel,
-        # Lane identity for the TTFT callback: model invocations inherit this
-        # run metadata, so per-call samples carry their lane without the
-        # callback reaching into the configurable.
+        # Lane identity for the TTFT callback, which reads it off run metadata.
         "lane_provider": model_lane.provider.value,
         "lane_model": model_lane.model or "default",
     }
@@ -1215,9 +1212,6 @@ async def _stream_messages(
         message_id, held_text = _held_chunk_text(chunk, is_comms, state.tool_call_message_ids)
         if held_text:
             if state.pipeline_ttft_perf is None:
-                # First comms text on the wire — the graph-internal pipeline
-                # TTFT. The provider half lives on llm_ttft_seconds; the gap
-                # between them is our post-token overhead.
                 state.pipeline_ttft_perf = time.perf_counter()
             yield format_sse_response(held_text)
             state.message_texts[message_id] = state.message_texts.get(message_id, "") + held_text
@@ -1387,6 +1381,11 @@ async def execute_graph_streaming(
                     continue
                 async for frame in frames:
                     yield frame
+        except GeneratorExit:
+            # Abandoned mid-stream without cancellation (server shutdown path):
+            # neither success nor cancelled, and neither label may claim it.
+            graph_status = "abandoned"
+            raise
         except Exception:
             graph_status = "error"
             raise

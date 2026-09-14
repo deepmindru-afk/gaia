@@ -25,6 +25,7 @@ from app.agents.core.background.session import RunKind, StreamSession, create_se
 from app.agents.core.graph_manager import GraphUnavailableError
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
+    SubagentOutcome,
     ThreadSeed,
     _consume_stream_event,
     _finalize_run,
@@ -1596,10 +1597,11 @@ class TestReasoningStreamsPerDeltaButPersistsPerBlock:
 # ---------------------------------------------------------------------------
 
 
-def _subagent_count(subagent_id: str, status: str) -> float:
+def _subagent_count(integration_id: str, status: str) -> float:
+    # The span labels the registry integration id, never the per-call row uuid.
     return (
         REGISTRY.get_sample_value(
-            "subagent_run_seconds_count", {"subagent_id": subagent_id, "status": status}
+            "subagent_run_seconds_count", {"subagent_id": integration_id, "status": status}
         )
         or 0.0
     )
@@ -1614,7 +1616,7 @@ class TestSubagentRunLatency:
         mock_graph = MagicMock()
         mock_graph.astream = _fake_astream
         ctx = _make_ctx(subagent_graph=mock_graph)
-        before = _subagent_count("lat-sub", "success")
+        before = _subagent_count("test", "success")
 
         with patch("app.agents.core.subagents.subagent_runner.log"):
             outcome = await execute_subagent_stream(
@@ -1623,12 +1625,36 @@ class TestSubagentRunLatency:
 
         assert outcome.text
         assert not outcome.paused
-        assert _subagent_count("lat-sub", "success") == before + 1
+        assert _subagent_count("test", "success") == before + 1
+
+    @pytest.mark.asyncio
+    async def test_per_call_row_id_never_becomes_a_series(self):
+        """The subagent_id argument is the per-call UI row uuid — labelling a
+        series with it would mint unbounded cardinality. The span must carry
+        the registry integration id instead."""
+
+        async def _fake_astream(*args, **kwargs):
+            yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph)
+
+        with patch("app.agents.core.subagents.subagent_runner.log"):
+            await execute_subagent_stream(
+                ctx, stream_writer=MagicMock(), subagent_id="row-uuid-per-call-1"
+            )
+
+        assert (
+            REGISTRY.get_sample_value(
+                "subagent_run_seconds_count",
+                {"subagent_id": "row-uuid-per-call-1", "status": "success"},
+            )
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_paused_segment_observes_paused_span_not_success(self):
-        from app.agents.core.subagents.subagent_runner import SubagentOutcome
-
         async def _fake_astream(*args, **kwargs):
             yield ("updates", {"agent": {"messages": []}})
             if False:
@@ -1637,8 +1663,8 @@ class TestSubagentRunLatency:
         mock_graph = MagicMock()
         mock_graph.astream = _fake_astream
         ctx = _make_ctx(subagent_graph=mock_graph)
-        paused_before = _subagent_count("lat-sub-paused", "paused")
-        success_before = _subagent_count("lat-sub-paused", "success")
+        paused_before = _subagent_count("test", "paused")
+        success_before = _subagent_count("test", "success")
 
         with (
             patch("app.agents.core.subagents.subagent_runner.log"),
@@ -1652,8 +1678,8 @@ class TestSubagentRunLatency:
             )
 
         assert outcome.paused
-        assert _subagent_count("lat-sub-paused", "paused") == paused_before + 1
-        assert _subagent_count("lat-sub-paused", "success") == success_before
+        assert _subagent_count("test", "paused") == paused_before + 1
+        assert _subagent_count("test", "success") == success_before
 
     @pytest.mark.asyncio
     async def test_failed_segment_observes_error_span(self):
@@ -1664,7 +1690,7 @@ class TestSubagentRunLatency:
         mock_graph = MagicMock()
         mock_graph.astream = _fake_astream
         ctx = _make_ctx(subagent_graph=mock_graph)
-        before = _subagent_count("lat-sub-err", "error")
+        before = _subagent_count("test", "error")
 
         with (
             patch("app.agents.core.subagents.subagent_runner.log"),
@@ -1672,4 +1698,4 @@ class TestSubagentRunLatency:
         ):
             await execute_subagent_stream(ctx, stream_writer=MagicMock(), subagent_id="lat-sub-err")
 
-        assert _subagent_count("lat-sub-err", "error") == before + 1
+        assert _subagent_count("test", "error") == before + 1
