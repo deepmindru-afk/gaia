@@ -241,6 +241,7 @@ class TestCheckpointerManager:
 
         await self._make_manager().setup()
 
+        mock_store_cls.from_conn_string.assert_called_once_with(_TEST_DB_URL)
         lock = (LANGGRAPH_SETUP_LOCK_ID,)
         assert order.mock_calls == [
             call.execute("SELECT pg_advisory_lock(%s)", lock),
