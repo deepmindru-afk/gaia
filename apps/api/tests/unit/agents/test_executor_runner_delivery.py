@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 from fastapi import HTTPException
+from prometheus_client import REGISTRY
 import pytest
 
 from app.agents.core.background import executor_runner as er, result_delivery as rd, session as sess
@@ -348,6 +349,49 @@ class TestPersistCancelledRun:
             rd, "update_messages", new_callable=AsyncMock, side_effect=RuntimeError("mongo down")
         ):
             await rd.persist_cancelled_run(run, CARDS)  # must not raise
+
+
+def _persist_count(op: str) -> float:
+    return REGISTRY.get_sample_value("delivery_persist_seconds_count", {"op": op}) or 0.0
+
+
+def _narration_count(status: str) -> float:
+    return REGISTRY.get_sample_value("delivery_narration_seconds_count", {"status": status}) or 0.0
+
+
+class TestDeliveryLatency:
+    """Delivery splits narration (LLM) from persistence (Mongo)."""
+
+    async def test_cancelled_persist_records_span_without_narration(self) -> None:
+        run = _run(RunKind.QUEUED, stream_id="queued_lat", task_id="task-lat")
+        before = _persist_count("cancelled_cards")
+        narration_before = _narration_count("success")
+
+        with (
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd, "narrate_executor_result", new_callable=AsyncMock) as narrate,
+        ):
+            await rd.persist_cancelled_run(run, CARDS)
+
+        narrate.assert_not_awaited()
+        assert _persist_count("cancelled_cards") == before + 1
+        assert _narration_count("success") == narration_before
+
+    async def test_narration_records_span(self) -> None:
+        before = _narration_count("success")
+        with (
+            patch.object(rd, "narrate_executor_result", new_callable=AsyncMock, return_value="v"),
+            patch.object(rd, "_approval_outcomes_note", new_callable=AsyncMock, return_value=""),
+        ):
+            await rd._narrate_result(_run(), "raw", "final", "")
+        assert _narration_count("success") == before + 1
+
+    async def test_save_bot_message_records_span(self) -> None:
+        before = _persist_count("save_bot_message")
+        bot_message = MessageModel(type="bot", response="hi", date="2026-01-01")
+        with patch.object(rd, "update_messages", new_callable=AsyncMock):
+            assert await rd._save_bot_message("conv-1", {"user_id": "user-1"}, bot_message) is True
+        assert _persist_count("save_bot_message") == before + 1
 
 
 class TestDeliverResultToolDataOwnership:

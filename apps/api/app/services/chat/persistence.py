@@ -17,6 +17,7 @@ frontend chunk.
 from datetime import UTC, datetime, timedelta
 import json
 import re
+import time
 from typing import Any
 
 from app.constants.chat import ARTIFACT_REF_RE, WORKSPACE_ARTIFACT_RE
@@ -25,6 +26,7 @@ from app.models.message_models import MessageRequestWithHistory
 from app.models.stream_events import ConversationInitializedFrame
 from app.models.user_models import AuthenticatedUser
 from app.services.conversation_service import update_messages
+from app.services.latency_metrics import observe_delivery_persist
 from app.utils.artifact_utils import artifact_url_base
 from app.utils.chat_utils import create_conversation
 
@@ -162,10 +164,14 @@ async def save_conversation_async(
     for key, value in tool_data.items():
         setattr(bot_message, key, value)
 
-    await update_messages(
-        UpdateMessagesRequest(
-            conversation_id=conversation_id,
-            messages=[user_message, bot_message],
-        ),
-        user=user,
-    )
+    persist_start = time.perf_counter()
+    try:
+        await update_messages(
+            UpdateMessagesRequest(
+                conversation_id=conversation_id,
+                messages=[user_message, bot_message],
+            ),
+            user=user,
+        )
+    finally:
+        observe_delivery_persist(time.perf_counter() - persist_start, op="save_conversation")
