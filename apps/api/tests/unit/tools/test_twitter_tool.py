@@ -15,6 +15,7 @@ from pydantic import ValidationError
 import pytest
 
 from app.agents.tools.integrations.twitter_tool import register_twitter_custom_tools
+from app.constants.log_tags import LogTag
 from app.models.common_models import GatherContextInput
 from app.models.twitter_models import (
     BatchFollowInput,
@@ -157,11 +158,20 @@ class TestGatherContext:
         }
 
     def test_tweets_failure_keeps_profile(self, tools) -> None:
-        with patch(f"{MODULE}.proxy_request_sync", side_effect=[_ME, RuntimeError("rate")]):
+        with (
+            patch(f"{MODULE}.proxy_request_sync", side_effect=[_ME, RuntimeError("rate")]),
+            patch(f"{MODULE}.log") as log,
+        ):
             out = tools["CUSTOM_GATHER_CONTEXT"](GatherContextInput(), EXECUTE_REQUEST, AUTH)
 
         assert out["user"]["id"] == "tw-me"
         assert out["recent_tweets"] == []
+        log.warning.assert_called_once_with(
+            f"{LogTag.TOOL} Failed to fetch recent tweets, returning profile without them",
+            twitter_user_id="tw-me",
+            error="rate",
+            error_type="RuntimeError",
+        )
 
     def test_empty_profile_body_fails_loudly(self, tools) -> None:
         """/users/me without data is a provider fault, not an empty snapshot."""
@@ -404,6 +414,28 @@ class TestBatchFollow:
             "failed_count": 1,
         }
 
+    def test_follow_failures_and_unknown_usernames_are_all_counted(self, tools, writer) -> None:
+        with patch(
+            UTILS_PROXY,
+            side_effect=[_ME_ID, {}, {}, RuntimeError("nope"), {"data": {"following": True}}],
+        ):
+            out = tools["CUSTOM_BATCH_FOLLOW"](
+                BatchFollowInput(user_ids=["u1", "u2"], usernames=["ghost", "phantom"]),
+                EXECUTE_REQUEST,
+                AUTH,
+            )
+
+        assert out == {
+            "results": [
+                {"username": "ghost", "success": False, "error": "User not found"},
+                {"username": "phantom", "success": False, "error": "User not found"},
+                {"user_id": "u1", "username": None, "success": False, "error": "nope"},
+                {"user_id": "u2", "username": None, "success": True},
+            ],
+            "followed_count": 1,
+            "failed_count": 3,
+        }
+
     def test_all_failures_raise(self, tools, writer) -> None:
         with patch(UTILS_PROXY, side_effect=[_ME_ID, RuntimeError("nope")]):
             with pytest.raises(RuntimeError, match="Failed to follow all users"):
@@ -453,7 +485,18 @@ class TestBatchUnfollow:
                 BatchUnfollowInput(user_ids=["u1"], usernames=["ada"]), EXECUTE_REQUEST, AUTH
             )
 
-        assert [c.args[0] for c in proxy.call_args_list[2:]] == [
+        assert [c.args[0] for c in proxy.call_args_list[1:]] == [
+            ProxyRequest(
+                user_id="user-42",
+                toolkit="TWITTER",
+                endpoint=f"{TWITTER_API_BASE}/users/by/username/ada",
+                method="GET",
+                query={
+                    "user.fields": (
+                        "id,name,username,description,profile_image_url,verified,public_metrics"
+                    )
+                },
+            ),
             ProxyRequest(
                 user_id="user-42",
                 toolkit="TWITTER",
@@ -616,6 +659,17 @@ class TestSearchUsers:
                 "listed_count": 1,
                 "like_count": 7,
             },
+            "created_at": None,
+            "location": None,
+        }
+        assert streamed[1] == {
+            "id": "u2",
+            "username": "bob",
+            "name": "Bob",
+            "description": "",
+            "profile_image_url": None,
+            "verified": False,
+            "public_metrics": {},
             "created_at": None,
             "location": None,
         }

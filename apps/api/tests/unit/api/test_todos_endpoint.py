@@ -147,6 +147,7 @@ class TestTodoAnalytics:
                 return_value=BulkOperationResponse(total=2, message="ok"),
             ) as mock_bulk,
             patch(ANALYTICS_PATCH) as mock_capture,
+            patch(f"{TODOS_ENDPOINT}.log.set") as set_log,
         ):
             resp = await client.post(
                 "/api/v1/todos/bulk/complete",
@@ -154,6 +155,10 @@ class TestTodoAnalytics:
             )
 
         assert resp.status_code == 200
+        set_log.assert_any_call(
+            user={"id": "507f1f77bcf86cd799439011"},
+            todo={"operation": "bulk_complete", "bulk_count": 2},
+        )
         mock_capture.assert_called_once_with(AnalyticsEvents.TODO_TOGGLED, {"bulk_count": 2})
         mock_bulk.assert_awaited_once_with(
             BulkUpdateRequest(
@@ -179,17 +184,23 @@ class TestTodoAnalytics:
                 f"{TODOS_ENDPOINT}.todo_repository.get",
                 new_callable=AsyncMock,
                 return_value=doc,
-            ),
+            ) as get,
             patch(
                 f"{TODOS_ENDPOINT}.todo_repository.set_subtask_fields",
                 new_callable=AsyncMock,
                 return_value=updated_doc,
             ),
             patch(ANALYTICS_PATCH) as mock_capture,
+            patch(f"{TODOS_ENDPOINT}.log.set") as set_log,
         ):
             resp = await client.post("/api/v1/todos/todo-1/subtasks/sub-1/toggle")
 
         assert resp.status_code == 200
+        get.assert_awaited_once_with("todo-1", user_id="507f1f77bcf86cd799439011")
+        set_log.assert_any_call(
+            user={"id": "507f1f77bcf86cd799439011"},
+            todo={"operation": "toggle_subtask", "id": "todo-1"},
+        )
         mock_capture.assert_called_once_with(
             AnalyticsEvents.TODO_TOGGLED,
             {"is_subtask": True, "completed": True},
@@ -323,14 +334,21 @@ class TestTodoCanvas:
             canvas_content="# Fix the thing",
             activity_content="- 2026-09-01T09:00:00+00:00 started",
         )
-        with patch(
-            f"{TODOS_ENDPOINT}.todo_repository.get",
-            new_callable=AsyncMock,
-            return_value=doc,
-        ) as get:
+        with (
+            patch(
+                f"{TODOS_ENDPOINT}.todo_repository.get",
+                new_callable=AsyncMock,
+                return_value=doc,
+            ) as get,
+            patch(f"{TODOS_ENDPOINT}.log.set") as set_log,
+        ):
             resp = await client.get("/api/v1/todos/todo-1/canvas")
 
         assert resp.status_code == 200
+        set_log.assert_any_call(
+            user={"id": "507f1f77bcf86cd799439011"},
+            todo={"operation": "get_canvas", "id": "todo-1"},
+        )
         assert resp.json() == {
             "content": "# Fix the thing",
             "activity": "- 2026-09-01T09:00:00+00:00 started",

@@ -135,6 +135,15 @@ class TestInAppChannelAdapter:
         assert content.body == "World"
         assert content.metadata == {"key": "value"}
 
+    async def test_transform_carries_the_action_confirmation_message(self) -> None:
+        action = _make_redirect_action()
+        action.requires_confirmation = True
+        action.confirmation_message = "Really open it?"
+        content = await InAppChannelAdapter().transform(_make_request(actions=[action]))
+
+        assert content.actions[0].requires_confirmation is True
+        assert content.actions[0].confirmation_message == "Really open it?"
+
     async def test_transform_wire_frame(self) -> None:
         """The dumped payload is exactly the notification.new frame body."""
         action = _make_redirect_action(label="View", url="/todos/1")

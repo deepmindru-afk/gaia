@@ -178,6 +178,52 @@ class TestProvisionSystemWorkflows:
         mock_notify.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    ("profile", "expected_timezone"),
+    [
+        (UserDocument(timezone="Asia/Kolkata"), "Asia/Kolkata"),
+        (UserDocument(), "UTC"),
+        (UserDocument(timezone="   "), "UTC"),
+        (None, "UTC"),
+    ],
+    ids=["profile-timezone", "unset", "blank", "no-user"],
+)
+@patch(f"{MODULE}._notify_workflows_provisioned", new_callable=AsyncMock)
+@patch(f"{MODULE}._activate_for_paying_user", new_callable=AsyncMock)
+@patch(f"{MODULE}.ensure_trigger_config_object")
+@patch(f"{MODULE}.get_user_by_id", new_callable=AsyncMock)
+@patch(f"{MODULE}.WorkflowService")
+@patch(f"{MODULE}.workflow_repository")
+async def test_provisioning_stamps_the_profile_timezone_on_schedule_workflows(
+    mock_repo: MagicMock,
+    mock_service: MagicMock,
+    mock_get_user: AsyncMock,
+    mock_ensure: MagicMock,
+    _activate: AsyncMock,
+    _notify: AsyncMock,
+    profile: UserDocument | None,
+    expected_timezone: str,
+) -> None:
+    from app.services.system_workflows.provisioner import provision_system_workflows
+
+    mock_repo.find_system_workflow = AsyncMock(return_value=None)
+    mock_service.create_workflow = AsyncMock(return_value=MagicMock(id="wf-created"))
+    mock_get_user.return_value = profile
+    trigger_config = MagicMock(type=TriggerType.SCHEDULE, timezone=None)
+    mock_ensure.return_value = trigger_config
+    request = _make_workflow_request()
+    with patch.dict(
+        f"{MODULE}.SYSTEM_WORKFLOWS_BY_INTEGRATION",
+        {"gmail": [("gmail_digest", _make_factory(request))]},
+    ):
+        await provision_system_workflows("user-1", "gmail", "Gmail", notify=False)
+
+    mock_get_user.assert_awaited_once_with("user-1")
+    assert request.trigger_config is trigger_config
+    assert trigger_config.timezone == expected_timezone
+    mock_service.create_workflow.assert_awaited_once_with(request, "user-1")
+
+
 class TestNotifyWorkflowsProvisioned:
     @pytest.mark.asyncio
     @patch(f"{MODULE}.NotificationService")

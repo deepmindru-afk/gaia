@@ -610,6 +610,23 @@ def test_fetch_page_title_returns_first_title_segment() -> None:
     assert _fetch_page_title(composio, "pg-1", CREDS) == "Hello"
 
 
+def test_fetch_page_title_skips_title_items_without_text_and_non_title_items() -> None:
+    composio = _composio_returning(
+        {
+            "successful": True,
+            "data": {
+                "results": [
+                    {"type": "title", "title": None},
+                    {"type": "rich_text", "title": {"plain_text": "Not the title"}},
+                    {"type": "title", "title": {"plain_text": "Real Title"}},
+                ],
+            },
+        }
+    )
+
+    assert _fetch_page_title(composio, "pg-1", CREDS) == "Real Title"
+
+
 def test_fetch_page_title_without_title_items_is_empty() -> None:
     composio = _composio_returning(
         {"successful": True, "data": {"object": "property_item", "type": "number", "number": 1}}
