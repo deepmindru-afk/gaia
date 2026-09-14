@@ -7,13 +7,10 @@ import contextlib
 # Constants
 # ---------------------------------------------------------------------------
 import os
-from pathlib import Path
-import tempfile
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from filelock import FileLock
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -39,16 +36,12 @@ from app.override.langgraph_bigtool.create_agent import (
 from app.override.langgraph_bigtool.hooks import HookType
 from tests.helpers import (
     create_fake_llm,
+    pg_advisory_lock,
 )
 
 POSTGRES_TEST_URL = os.environ.get(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/gaia_test"
 )
-
-# All xdist workers/worktree sessions share one gaia_test Postgres database and
-# can race checkpointer setup() into a UniqueViolation on checkpoint_migrations.
-# This cross-process lock serializes setup; the lock file carries no state.
-_PG_MIGRATION_LOCK_PATH = Path(tempfile.gettempdir()) / "gaia_pg_checkpointer_migration.lock"
 
 # The hooks build_comms_graph declares, in run order. executor_status_hook
 # must stay before manage_system_prompts_node so the status frame lands inside
@@ -266,7 +259,7 @@ async def pg_checkpointer():
     await pool.open(wait=True, timeout=10)
 
     checkpointer = AsyncPostgresSaver(conn=pool)
-    with FileLock(_PG_MIGRATION_LOCK_PATH):
+    async with pg_advisory_lock(POSTGRES_TEST_URL):
         await checkpointer.setup()
 
     yield checkpointer
@@ -285,8 +278,7 @@ async def pg_checkpointer_manager():
     if os.environ.get("USE_REAL_SERVICES") != "1":
         pytest.skip("PostgreSQL not available at " + POSTGRES_TEST_URL)
     manager = CheckpointerManager(conninfo=POSTGRES_TEST_URL, max_pool_size=5)
-    with FileLock(_PG_MIGRATION_LOCK_PATH):
-        await manager.setup()
+    await manager.setup()
 
     yield manager
 
@@ -944,10 +936,7 @@ class TestCheckpointerManagerProduction:
         """CheckpointerManager.setup() must initialize the pool; get_checkpointer() returns a saver."""
         manager = CheckpointerManager(conninfo=POSTGRES_TEST_URL, max_pool_size=5)
         try:
-            # Same cross-process migration race as the fixtures above (see
-            # _PG_MIGRATION_LOCK_PATH) — this test calls setup() directly.
-            with FileLock(_PG_MIGRATION_LOCK_PATH):
-                await manager.setup()
+            await manager.setup()
         except Exception:
             pytest.skip("PostgreSQL not available at " + POSTGRES_TEST_URL)
 
@@ -969,8 +958,7 @@ class TestCheckpointerManagerProduction:
         """Calling close() multiple times must not raise."""
         manager = CheckpointerManager(conninfo=POSTGRES_TEST_URL, max_pool_size=5)
         try:
-            with FileLock(_PG_MIGRATION_LOCK_PATH):
-                await manager.setup()
+            await manager.setup()
         except Exception:
             pytest.skip("PostgreSQL not available at " + POSTGRES_TEST_URL)
         await manager.close()
