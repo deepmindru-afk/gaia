@@ -89,6 +89,10 @@ export class TurnSession {
   private flushHandle: number | null = null;
   private lastPartialPersistAt = 0;
   private closeHandled = false;
+  /** Client-side cross-check clock (performance.now). Server timing is the
+   *  SLO; these deltas only validate it from the user's perspective. */
+  private sendStartMs = 0;
+  private sawFirstFrame = false;
   /** Approval ids currently pending a user decision. The turn is "awaiting
    *  approval" while non-empty; a set (not a bool) so multiple gated tools
    *  resolve independently without prematurely clearing the state. */
@@ -133,6 +137,9 @@ export class TurnSession {
   async start(): Promise<void> {
     const store = useStreamStore.getState();
     store.startSession(this.key, this.inputText);
+    // Cross-check clock for turn:close/first-frame deltas. On a re-attach this
+    // measures reattach-to-first-replayed-frame, not the original send.
+    this.sendStartMs = performance.now();
     streamLog("lifecycle", "turn:start", {
       turnKey: this.key,
       conversationId: this.conversationId,
@@ -268,6 +275,14 @@ export class TurnSession {
     // Any frame — keepalives included — proves the connection is still alive.
     this.stallWatchdog.kick();
     if (!event.data) return undefined; // SSE comments dispatch empty events
+    if (!this.sawFirstFrame) {
+      this.sawFirstFrame = true;
+      streamLog("sse", "first-frame", {
+        turnKey: this.key,
+        conversationId: this.conversationId,
+        detail: { ttftMs: Math.round(performance.now() - this.sendStartMs) },
+      });
+    }
 
     try {
       for (const parsed of parseChatStreamEvent(event.data)) {
@@ -710,6 +725,7 @@ export class TurnSession {
     streamLog("lifecycle", "turn:close", {
       turnKey: this.key,
       conversationId: this.conversationId,
+      detail: { elapsedMs: Math.round(performance.now() - this.sendStartMs) },
     });
 
     try {

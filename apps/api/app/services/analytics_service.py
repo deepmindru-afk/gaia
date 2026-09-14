@@ -60,6 +60,10 @@ class AnalyticsEvents(StrEnum):
     CONVERSATION_RENAMED = "chat:conversation_renamed"
     CONVERSATION_STARRED = "chat:conversation_starred"
     CONVERSATION_DELETED = "chat:conversation_deleted"
+    # Terminal turn event. Latency props (all ms, measured server-side):
+    # ttft_ms (first response text; absent when no text streamed), e2e_ack_ms
+    # (comms ack), e2e_full_ms (stream DONE after executor wait), delegated,
+    # queued, queue_wait_ms, executor_ttft_ms, executor_active_ms, hil_wait_ms.
     CHAT_MESSAGE_COMPLETED = "chat:message_completed"
     CHAT_MESSAGE_CANCELLED = "chat:message_cancelled"
     # A comms reply scored dirty against the AI-ism detectors and was
@@ -141,7 +145,9 @@ class AnalyticsEvents(StrEnum):
     ACCOUNT_SETTING_CHANGED = "account:setting_changed"
     ACCOUNT_PLATFORM_DISCONNECTED = "account:platform_disconnected"
 
-    # Worker / agent lifecycle
+    # Worker / agent lifecycle. AGENT_RUN_COMPLETED/FAILED carry executor
+    # timing props when measured: queue_wait_ms, executor_ttft_ms,
+    # executor_active_ms, queued. Absent on runs dispatched before the stamp.
     AGENT_RUN_STARTED = "agent:run_started"
     AGENT_RUN_COMPLETED = "agent:run_completed"
     AGENT_RUN_FAILED = "agent:run_failed"
