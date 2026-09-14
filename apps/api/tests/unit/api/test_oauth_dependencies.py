@@ -22,6 +22,7 @@ from app.constants.error_codes import NOT_AUTHENTICATED
 from app.models.user_models import AuthenticatedUser
 
 _BACKFILL = "app.api.v1.dependencies.oauth_dependencies._backfill_user_timezone"
+_LOG = "app.api.v1.dependencies.oauth_dependencies.log"
 
 
 class TestGetUserTimezoneFromPreferences:
@@ -44,6 +45,23 @@ class TestGetUserTimezoneFromPreferences:
             await asyncio.sleep(0)
         assert result == "Asia/Kolkata"
         backfill.assert_awaited_once_with("u1", "Asia/Kolkata")
+
+    @pytest.mark.parametrize(("stored", "logged_stored"), [("UTC", "UTC"), (None, None)])
+    async def test_a_header_heal_warns_with_the_stored_and_header_zones(
+        self, stored: str | None, logged_stored: str | None
+    ) -> None:
+        with patch(_BACKFILL, new_callable=AsyncMock), patch(_LOG) as mock_log:
+            await get_user_timezone_from_preferences(
+                user=AuthenticatedUser(user_id="u1", timezone=stored),
+                x_timezone="Asia/Kolkata",
+            )
+            await asyncio.sleep(0)
+        mock_log.warning.assert_called_once()
+        assert mock_log.warning.call_args.kwargs == {
+            "user_id": "u1",
+            "stored_timezone": logged_stored,
+            "header_timezone": "Asia/Kolkata",
+        }
 
     async def test_empty_stored_is_filled_and_backfilled(self) -> None:
         with patch(_BACKFILL, new_callable=AsyncMock) as backfill:
@@ -75,6 +93,16 @@ class TestGetUserTimezoneFromPreferences:
         assert result == "UTC"
         backfill.assert_not_awaited()
 
+    async def test_no_signal_warns_about_the_utc_fallback(self) -> None:
+        with patch(_BACKFILL, new_callable=AsyncMock), patch(_LOG) as mock_log:
+            await get_user_timezone_from_preferences(
+                user=AuthenticatedUser(user_id="u1"),
+                x_timezone="",
+            )
+            await asyncio.sleep(0)
+        mock_log.warning.assert_called_once()
+        assert mock_log.warning.call_args.kwargs == {"user_id": "u1", "header_value": None}
+
     async def test_garbage_header_does_not_heal(self) -> None:
         with patch(_BACKFILL, new_callable=AsyncMock) as backfill:
             result = await get_user_timezone_from_preferences(
@@ -84,6 +112,15 @@ class TestGetUserTimezoneFromPreferences:
             await asyncio.sleep(0)
         assert result == "UTC"
         backfill.assert_not_awaited()
+
+    async def test_a_stored_utc_fallback_is_not_warned_about(self) -> None:
+        with patch(_BACKFILL, new_callable=AsyncMock), patch(_LOG) as mock_log:
+            await get_user_timezone_from_preferences(
+                user=AuthenticatedUser(user_id="u1", timezone="UTC"),
+                x_timezone="Not/A_Zone",
+            )
+            await asyncio.sleep(0)
+        mock_log.warning.assert_not_called()
 
 
 class TestGetUserTimezoneHeaderDependency:
@@ -122,3 +159,21 @@ class TestGetCurrentUser:
             await get_current_user(request)
         assert exc.value.status_code == 401
         assert exc.value.detail == {"code": NOT_AUTHENTICATED, "message": "User data missing"}
+
+    @pytest.mark.parametrize(
+        ("auth_provider", "method"), [("bot:discord", "bot:discord"), (None, "workos")]
+    )
+    async def test_an_authenticated_user_is_stamped_on_the_wide_event(
+        self, auth_provider: str | None, method: str
+    ) -> None:
+        user = AuthenticatedUser(
+            user_id="u1", email="a@b.c", auth_provider=auth_provider, impersonated=True
+        )
+        request = MagicMock()
+        request.state.authenticated = True
+        request.state.user = user
+        with patch(_LOG) as mock_log:
+            assert await get_current_user(request) is user
+        mock_log.set.assert_called_once_with(
+            auth={"user_id": "u1", "email": "a@b.c", "method": method, "is_agent_token": True}
+        )

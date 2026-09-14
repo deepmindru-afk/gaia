@@ -708,6 +708,41 @@ class TestResolveContext:
         assert ctx == {"user_id": None, "initiator": "frontend"}
 
 
+class TestUserContext:
+    def test_set_user_context_publishes_the_caller_and_initiator(self) -> None:
+        token = rl.user_context.set(None)
+        try:
+            ctx = rl.set_user_context("user-1", initiator="backend")
+            assert ctx == {"user_id": "user-1", "initiator": "backend"}
+            assert rl.user_context.get() == {"user_id": "user-1", "initiator": "backend"}
+        finally:
+            rl.user_context.reset(token)
+
+    async def test_a_run_with_no_user_id_is_not_metered(self) -> None:
+        async def tool(config: dict[str, Any] | None = None) -> dict[str, Any]:
+            return {"ran": True}
+
+        decorated = rl.with_rate_limiting(feature_key="generate_image")(tool)
+        token = rl.user_context.set(None)
+        try:
+            with (
+                patch(
+                    "app.decorators.rate_limiting.payment_service.get_cached_plan_type",
+                    new=AsyncMock(return_value=PlanType.FREE),
+                ),
+                patch(
+                    "app.decorators.rate_limiting.tiered_limiter.check_and_increment",
+                    new=AsyncMock(return_value={}),
+                ) as check,
+            ):
+                result = await decorated(config={"metadata": {}})
+        finally:
+            rl.user_context.reset(token)
+
+        check.assert_not_awaited()
+        assert result["ran"] is True
+
+
 class TestEnforceFeatureLimit:
     async def test_happy_path_records_exact_rate_limit_context(self) -> None:
         usage = {"second": SimpleNamespace(used=1, limit=5, reset_time=RESET_AT)}

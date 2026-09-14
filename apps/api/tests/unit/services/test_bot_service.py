@@ -201,6 +201,9 @@ class TestGetOrCreateSession:
         result = await BotService.get_or_create_session("discord", "user123", None, sample_user)
 
         assert result == "conv-existing"
+        mock_conversations.exists.assert_awaited_once_with(
+            "conv-existing", user_id=sample_user.user_id
+        )
 
     async def test_creates_new_session_when_no_existing(
         self,
@@ -596,3 +599,10 @@ class TestLoadConversationHistory:
 
         assert len(result) == 1
         assert result[0]["content"] == ""
+
+    async def test_handles_empty_bot_response_field(self, mock_conversations: MagicMock) -> None:
+        mock_conversations.get = AsyncMock(return_value=_conv([{"type": "bot", "response": ""}]))
+
+        result = await BotService.load_conversation_history("conv1", "user1")
+
+        assert result == [{"role": "assistant", "content": ""}]
