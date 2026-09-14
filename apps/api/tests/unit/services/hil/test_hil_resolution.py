@@ -617,10 +617,13 @@ class TestHILWaitBenchmarks:
         )
         assert 0.0 <= dispatch_lag <= 10.0
 
-    async def test_skipped_dispatch_measures_nothing(self, resume: Any) -> None:
+    async def test_skipped_dispatch_still_measures_the_user_wait(self, resume: Any) -> None:
+        """A decision that loses the resume claim is still a decision the user
+        served; only the dispatch lag (system time) goes unmeasured."""
         resume.claim.return_value = False
         record = make_record()
         wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        lag_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) or 0.0
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
             patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
@@ -628,4 +631,5 @@ class TestHILWaitBenchmarks:
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
         assert resume.runner.call_count == 0
-        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
+        assert REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) == lag_before

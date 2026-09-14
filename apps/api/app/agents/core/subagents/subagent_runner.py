@@ -504,8 +504,13 @@ async def execute_subagent_stream(
     # One span per segment; a pause ends its segment here, and the user wait
     # that follows is HIL wait, never subagent active time. The label is the
     # registry integration id — subagent_id is the per-call row uuid, which
-    # would mint unbounded series.
-    label = ctx.integration_id or ctx.agent_name or "unknown"
+    # would mint unbounded series. Custom MCP integrations are user-created and
+    # unbounded, so they collapse to one series.
+    label = (
+        "custom_mcp"
+        if ctx.agent_name.startswith("custom_mcp_")
+        else ctx.integration_id or ctx.agent_name or "unknown"
+    )
     cancelled = False
     segment_start = time.perf_counter()
     try:

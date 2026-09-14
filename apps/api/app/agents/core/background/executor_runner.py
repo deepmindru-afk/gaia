@@ -43,7 +43,6 @@ from app.agents.core.background.redis_writer import make_redis_stream_writer
 from app.agents.core.background.result_delivery import deliver_result, persist_cancelled_run
 from app.agents.core.background.session import (
     ExecutorRun,
-    RunKind,
     executor_abandoned,
     get_session,
     signal_executor_done,
@@ -117,7 +116,9 @@ async def run_executor_background(
     # get_trace_id() reads the spawner's trace_id from the task's copied
     # context, correlating this event with the request that dispatched it.
     run_start = time.perf_counter()
-    queued = run.kind is RunKind.QUEUED
+    # The busy-lock queue origin, not ``kind``: a HIL resume is RunKind.QUEUED
+    # but never waited on the lock, so it must not label as queued.
+    queued = run.queued
     async with wide_task(
         "executor_run",
         trace_id=get_trace_id() or None,
@@ -302,8 +303,9 @@ async def _record_pause(
             task=task,
             configurable=configurable,
             # A pause re-dispatch is a new incarnation: drop the original stamp
-            # so the resumed run measures no queue wait for user decision time.
-            identity=replace(run.identity, t_dispatch_perf=None),
+            # so the resumed run measures no queue wait for user decision time,
+            # and clear the queue origin — it did not wait on the busy lock.
+            identity=replace(run.identity, t_dispatch_perf=None, queued=False),
             workflow_execution_id=run.workflow_execution_id,
         )
         for approval_id in approval_ids:
@@ -509,7 +511,7 @@ async def _finalize_executor_run(
     end_status = (
         "error" if result_type == "error" else ("cancelled" if was_cancelled else "success")
     )
-    queued = run.kind is RunKind.QUEUED
+    queued = run.queued
     if run.t_dispatch_perf is not None:
         e2e_s = time.perf_counter() - run.t_dispatch_perf
         if e2e_s >= 0.0:  # mixed-epoch guard, same as queue wait above
@@ -594,7 +596,7 @@ async def _finalize_paused_run(run: ExecutorRun) -> None:
         )
     signal_executor_done(run.stream_id)
     await _close_queued_stream(run, was_cancelled=False)
-    observe_executor_run_total(status="paused", queued=run.kind is RunKind.QUEUED)
+    observe_executor_run_total(status="paused", queued=run.queued)
     log.info(
         f"{LogTag.HIL} Executor paused on approval; busy lock retained",
         task_id=run.task_id,

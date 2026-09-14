@@ -20,7 +20,7 @@ def _count(tool_name: str, status: str) -> float:
     )
 
 
-def _invoke(
+async def _invoke(
     executor: MiddlewareExecutor,
     tool_call: dict[str, Any],
     tool: Any,
@@ -36,7 +36,7 @@ def _invoke(
         ),
         patch("app.agents.middleware.executor.capture_event"),
     ):
-        return executor.wrap_tool_invocation(tool_call, tool, state, config, None, invoke_fn)
+        return await executor.wrap_tool_invocation(tool_call, tool, state, config, None, invoke_fn)
 
 
 async def test_successful_call_observes_tool_span() -> None:

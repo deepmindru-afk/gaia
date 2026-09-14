@@ -279,6 +279,8 @@ async def _dispatch_executor(
                         task_id=task_id,
                         user_message_id=user_message_id,
                         t_dispatch_perf=t_dispatch,
+                        # A busy-lock dequeue, not a HIL resume: label it queued.
+                        queued=True,
                     ),
                 ),
             )

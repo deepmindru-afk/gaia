@@ -298,7 +298,12 @@ class TestExecutorRunLatency:
 
         await self._background(_run("exec-live-qw", t_dispatch_perf=time.perf_counter()))
         await self._background(
-            _run("exec-queued-qw", kind=RunKind.QUEUED, t_dispatch_perf=time.perf_counter())
+            _run(
+                "exec-queued-qw",
+                kind=RunKind.QUEUED,
+                queued=True,
+                t_dispatch_perf=time.perf_counter(),
+            )
         )
 
         assert (
@@ -309,6 +314,26 @@ class TestExecutorRunLatency:
             _count("executor_queue_wait_seconds", {"source": "web", "queued": "true"})
             == queued_before + 1
         )
+
+    async def test_hil_resume_is_not_labelled_queued(self) -> None:
+        """A HIL resume runs on its own stream (``RunKind.QUEUED``) but never waited
+        on the busy lock, so its run must not count as queued work."""
+
+        def _run_total(queued: str) -> float:
+            return (
+                REGISTRY.get_sample_value(
+                    "executor_run_total", {"status": "success", "queued": queued}
+                )
+                or 0.0
+            )
+
+        resume_before = _run_total("false")
+        queued_before = _run_total("true")
+
+        await self._background(_run("exec-resume", kind=RunKind.QUEUED, queued=False))
+
+        assert _run_total("false") == resume_before + 1
+        assert _run_total("true") == queued_before
 
     async def test_live_run_reports_queue_wait_ttft_and_e2e(self) -> None:
         stream_id = "exec-live"

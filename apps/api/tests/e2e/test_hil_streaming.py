@@ -188,7 +188,6 @@ class InMemoryApprovals:
         feedback: str | None,
         scope: str,
         decided_by: str | None,
-        decided_at: datetime,
     ) -> bool:
         record = self.records.get(approval_id)
         if record is None or record.status != "pending":
@@ -199,7 +198,7 @@ class InMemoryApprovals:
                 "feedback": feedback,
                 "scope": scope,
                 "decided_by": decided_by,
-                "decided_at": decided_at,
+                "decided_at": datetime.now(UTC),
             }
         )
         return True

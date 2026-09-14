@@ -117,6 +117,10 @@ class RunIdentity:
     #: minus this is the queue wait. ``None`` on pre-stamp runs; cleared on
     #: HIL pause re-record (the resume's wait was user time, not queue time).
     t_dispatch_perf: float | None = None
+    #: Whether the run waited on the per-conversation busy-lock queue before it
+    #: started. Metric-only: a HIL resume is ``RunKind.QUEUED`` (it runs on its
+    #: own stream) but never queued on the lock, so it must not label as queued.
+    queued: bool = False
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,8 @@ class ExecutorRun:
     source_category: SourceCategory = SourceCategory.BG
     #: Dispatch stamp carried from ``RunIdentity`` — see its field comment.
     t_dispatch_perf: float | None = None
+    #: Busy-lock queue origin, carried from ``RunIdentity`` — see its comment.
+    queued: bool = False
 
     @classmethod
     def from_configurable(
@@ -189,6 +195,7 @@ class ExecutorRun:
                 configurable.get("source_category") or SourceCategory.BG.value
             ),
             t_dispatch_perf=identity.t_dispatch_perf,
+            queued=identity.queued,
         )
 
     @property
@@ -202,6 +209,7 @@ class ExecutorRun:
             user_message_id=self.user_message_id,
             bot_message_id=self.bot_message_id,
             t_dispatch_perf=self.t_dispatch_perf,
+            queued=self.queued,
         )
 
     @property

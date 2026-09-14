@@ -20,6 +20,7 @@ Runs as a pre-model hook so it also fires when a generation is cancelled
 """
 
 from collections import defaultdict
+from dataclasses import dataclass
 import hashlib
 import time
 from typing import cast
@@ -69,6 +70,46 @@ def manage_system_prompts_node(state: State, config: RunnableConfig, store: Base
         )
 
 
+@dataclass(frozen=True)
+class _KeptPrompts:
+    """One pass over the slots: what is sent, and what it pruned."""
+
+    messages: list[AnyMessage]
+    by_slot: dict[PromptSlot, list[AnyMessage]]
+    pruned_ids: list[str]
+    dropped_system: int
+    dropped_time: int
+
+
+def _keep_latest_per_slot(
+    by_slot: dict[PromptSlot, list[AnyMessage]], slot_order: tuple[PromptSlot, ...]
+) -> _KeptPrompts:
+    """Emit slots in order, keeping only the latest message of a singleton slot."""
+    messages: list[AnyMessage] = []
+    kept_by_slot: dict[PromptSlot, list[AnyMessage]] = {}
+    pruned_ids: list[str] = []
+    dropped_system = 0
+    dropped_time = 0
+    for slot in slot_order:
+        group = by_slot.get(slot)
+        if not group:
+            continue
+        if slot not in SINGLETON_SLOTS:
+            messages.extend(group)
+            kept_by_slot[slot] = group
+            continue
+        messages.append(group[-1])
+        kept_by_slot[slot] = [group[-1]]
+        for stale in group[:-1]:
+            if slot is PromptSlot.TIME:
+                dropped_time += 1
+            else:
+                dropped_system += 1
+            if stale.id:
+                pruned_ids.append(stale.id)
+    return _KeptPrompts(messages, kept_by_slot, pruned_ids, dropped_system, dropped_time)
+
+
 def _manage_system_prompts(state: State, config: RunnableConfig) -> State:
     """Keep the latest message per slot and emit them in canonical slot order.
 
@@ -85,29 +126,8 @@ def _manage_system_prompts(state: State, config: RunnableConfig) -> State:
         for message in messages:
             by_slot[slot_of(message)].append(message)
 
-        kept: list[AnyMessage] = []
-        pruned_ids: list[str] = []
-        dropped_system = 0
-        dropped_time = 0
         slot_order = request_slot_order(agent_configurable(config).get("provider"))
-        kept_by_slot: dict[PromptSlot, list[AnyMessage]] = {}
-        for slot in slot_order:
-            group = by_slot.get(slot)
-            if not group:
-                continue
-            if slot not in SINGLETON_SLOTS:
-                kept.extend(group)
-                kept_by_slot[slot] = group
-                continue
-            kept.append(group[-1])
-            kept_by_slot[slot] = [group[-1]]
-            for stale in group[:-1]:
-                if slot is PromptSlot.TIME:
-                    dropped_time += 1
-                else:
-                    dropped_system += 1
-                if stale.id:
-                    pruned_ids.append(stale.id)
+        kept = _keep_latest_per_slot(by_slot, slot_order)
 
         # A short content fingerprint per slot. The cached prefix is a BYTE
         # prefix, so a single slot whose bytes move between turns pushes
@@ -115,17 +135,17 @@ def _manage_system_prompts(state: State, config: RunnableConfig) -> State:
         # find which slot moved was to guess. Comparing these across two
         # consecutive requests names the culprit directly. Hashes, never
         # content: these carry user data.
-        # Built from ``kept_by_slot``, not ``by_slot``: a singleton slot sends
+        # Built from ``kept.by_slot``, not ``by_slot``: a singleton slot sends
         # only its LAST message, so hashing the whole group moves the digest
         # when a stale copy differs even though the sent bytes are identical —
         # a false "this slot churned" in precisely the stacked-slot case this
         # field exists to diagnose.
         slot_text = {
             slot.name.lower(): "\x00".join(
-                extract_text_content(m.content) for m in kept_by_slot[slot]
+                extract_text_content(m.content) for m in kept.by_slot[slot]
             )
             for slot in slot_order
-            if slot in kept_by_slot
+            if slot in kept.by_slot
         }
         slot_digests = {
             name: hashlib.blake2b(text.encode(), digest_size=4).hexdigest()
@@ -143,9 +163,9 @@ def _manage_system_prompts(state: State, config: RunnableConfig) -> State:
                 "slot_digests": slot_digests,
                 "slot_chars": slot_chars,
                 "messages_in": len(messages),
-                "messages_out": len(kept),
-                "dropped_system_prompts": dropped_system,
-                "dropped_time_context": dropped_time,
+                "messages_out": len(kept.messages),
+                "dropped_system_prompts": kept.dropped_system,
+                "dropped_time_context": kept.dropped_time,
                 **{field: bool(by_slot.get(slot)) for slot, field in _KEPT_FIELDS.items()},
                 # Which of the two layouts the request got. The tail layout is
                 # what lets the conversation join the cached prefix, so a
@@ -154,7 +174,9 @@ def _manage_system_prompts(state: State, config: RunnableConfig) -> State:
             }
         )
 
-        return cast(State, {**state, "messages": kept, PRUNED_MESSAGE_IDS_KEY: pruned_ids})
+        return cast(
+            State, {**state, "messages": kept.messages, PRUNED_MESSAGE_IDS_KEY: kept.pruned_ids}
+        )
 
     except Exception as e:
         log.error(

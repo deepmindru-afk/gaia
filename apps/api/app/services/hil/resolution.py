@@ -244,6 +244,7 @@ async def _resolve_or_close(
             f"{LogTag.HIL} Closing approval with no resume context",
             approval_id=record.approval_id,
         )
+        decided_at = datetime.now(UTC)
         await mark_decided(
             record.approval_id,
             _TERMINAL_STATUS[kind],
@@ -251,6 +252,8 @@ async def _resolve_or_close(
             scope="once",
             decided_by=None,
         )
+        # Closed with no run to resume, but still a decision the user served.
+        _observe_hil_user_wait(record.model_copy(update={"decided_at": decided_at}))
         return
     await _resolve_record(record, user_id=user_id, kind=kind, feedback=feedback)
 
@@ -315,6 +318,7 @@ async def _resolve_record(
             "decided_at": decided_at,
         }
     )
+    _observe_hil_user_wait(record)
 
     log.set(hil={"approval_id": record.approval_id, "decision": kind, "tool": record.tool_name})
     resume_status = "denied" if kind == "abandon" else _TERMINAL_STATUS[kind]
@@ -391,29 +395,42 @@ async def _dispatch_resume(
     _resume_tasks.add(task)
     task.add_done_callback(_resume_tasks.discard)
     await mark_resumed(record.approval_id)
-    _observe_hil_wait(record)
+    _observe_hil_dispatch_lag(record)
     log.info(f"{LogTag.HIL} Resumed paused executor run", approval_id=record.approval_id)
 
 
-def _observe_hil_wait(record: HILApprovalRecord) -> None:
-    """Split a dispatch's pause into user wait and system dispatch lag.
+def _observe_hil_user_wait(record: HILApprovalRecord) -> None:
+    """Record how long the user took to decide, once per decision.
 
+    Observed at the decision, not the dispatch: a decision that loses a batch
+    resume race, has no run to resume, or fails preparation is still a wait the
+    user served, and dropping it biases the histogram toward dispatched approvals.
     Missing or skewed stamps degrade to missing spans, never zero-filled.
     """
     try:
         if record.decided_at is None:
             return
-        user_wait = (record.decided_at - record.created_at).total_seconds()
-        dispatch_lag = (datetime.now(UTC) - record.decided_at).total_seconds()
-    except TypeError:
+        wait_s = (record.decided_at - record.created_at).total_seconds()
+    except TypeError:  # naive/aware mix — not a measurement
         return
-    if user_wait < 0.0 or dispatch_lag < 0.0:
-        # Clock skew between the decider and this worker: neither number is a
-        # measurement. Same degrade-to-missing rule as the histograms.
+    if wait_s < 0.0:  # clock skew between the decider and this worker
         return
-    observe_hil_user_wait(user_wait)
-    observe_hil_dispatch_lag(dispatch_lag)
-    log.set(hil={"user_wait_s": round(user_wait, 2), "dispatch_lag_s": round(dispatch_lag, 2)})
+    observe_hil_user_wait(wait_s)
+    log.set(hil={"user_wait_s": round(wait_s, 2)})
+
+
+def _observe_hil_dispatch_lag(record: HILApprovalRecord) -> None:
+    """Record decision-to-resume lag at the dispatch, the only point it exists."""
+    try:
+        if record.decided_at is None:
+            return
+        lag_s = (datetime.now(UTC) - record.decided_at).total_seconds()
+    except TypeError:  # naive/aware mix — not a measurement
+        return
+    if lag_s < 0.0:  # clock skew between the decider and this worker
+        return
+    observe_hil_dispatch_lag(lag_s)
+    log.set(hil={"dispatch_lag_s": round(lag_s, 2)})
 
 
 async def sweep_approvals() -> dict[str, int]:
