@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from prometheus_client import REGISTRY
 
 from app.agents.core.nodes.filter_messages import filter_messages_node
 
@@ -185,6 +186,28 @@ class TestFilterMessages:
         assert "filter messages node" in logged
         assert "has no attribute 'get'" in kwargs.get("error", ""), (
             f"The swallowed exception must be named in the log, got: {kwargs}"
+        )
+
+    def test_node_emits_latency_span(self):
+        config = {
+            "agent_name": "node-test-agent",
+            "configurable": {"user_id": "u1", "thread_id": "t1"},
+        }
+        before = (
+            REGISTRY.get_sample_value(
+                "graph_node_seconds_count",
+                {"node": "filter_messages", "agent": "node-test-agent"},
+            )
+            or 0.0
+        )
+        state = self._make_state([HumanMessage(content="hello")])
+        filter_messages_node(state, config, self._store())
+        assert (
+            REGISTRY.get_sample_value(
+                "graph_node_seconds_count",
+                {"node": "filter_messages", "agent": "node-test-agent"},
+            )
+            == before + 1
         )
 
     def test_cross_message_tool_call_deduplication(self):

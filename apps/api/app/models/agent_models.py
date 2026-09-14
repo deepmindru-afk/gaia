@@ -229,6 +229,18 @@ def agent_configurable(config: RunnableConfig | None) -> AgentConfigurable:
     return cast(AgentConfigurable, (config or {}).get("configurable") or {})
 
 
+def config_agent_name(config: RunnableConfig | None) -> str:
+    """Which agent a run belongs to, for metric labels.
+
+    ``agent_name`` is GAIA's own top-level run key (see
+    :class:`AgentRunnableConfig`), not part of the configurable bag —
+    ``"unknown"`` when the caller never stamped one, so label cardinality
+    stays bounded by construction.
+    """
+    name = cast(dict[str, Any], config or {}).get("agent_name")
+    return str(name) if name else "unknown"
+
+
 def runtime_configurable(request: ToolCallRequest) -> AgentConfigurable:
     """The same view as :func:`agent_configurable`, reached through a middleware
     ``ToolCallRequest``.

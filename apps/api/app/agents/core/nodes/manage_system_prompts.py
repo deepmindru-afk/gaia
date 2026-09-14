@@ -21,6 +21,7 @@ Runs as a pre-model hook so it also fires when a generation is cancelled
 
 from collections import defaultdict
 import hashlib
+import time
 from typing import cast
 
 from langchain_core.messages import AnyMessage
@@ -34,8 +35,9 @@ from app.agents.context.slots import (
     slot_of,
 )
 from app.constants.log_tags import LogTag
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import agent_configurable, config_agent_name
 from app.override.langgraph_bigtool.utils import PRUNED_MESSAGE_IDS_KEY, State
+from app.services.latency_metrics import observe_graph_node
 from app.utils.multimodal import extract_text_content
 from shared.py.wide_events import log
 
@@ -55,6 +57,19 @@ _KEPT_FIELDS = {
 
 
 def manage_system_prompts_node(state: State, config: RunnableConfig, store: BaseStore) -> State:  # noqa: ARG001 -- execute_hooks() passes state/config/store positionally
+    """Keep the latest message per slot and emit them in canonical slot order (timed)."""
+    start = time.perf_counter()
+    try:
+        return _manage_system_prompts(state, config)
+    finally:
+        observe_graph_node(
+            time.perf_counter() - start,
+            node="manage_system_prompts",
+            agent=config_agent_name(config),
+        )
+
+
+def _manage_system_prompts(state: State, config: RunnableConfig) -> State:
     """Keep the latest message per slot and emit them in canonical slot order.
 
     The order depends on the provider the request is bound for — see

@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 from langchain.agents.middleware.types import AgentState, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage
+from prometheus_client import REGISTRY
 import pytest
 
 from app.agents.middleware import accounting
@@ -335,6 +336,77 @@ async def test_the_latency_is_consumed_by_the_call_it_measured() -> None:
     assert record.await_args_list[1].kwargs["context"].duration_ms is None
 
 
+async def test_overlapping_stamps_do_not_clobber() -> None:
+    """Two in-flight stamps on one thread unwind LIFO: the second call's
+    ``aafter_model`` gets the second measurement, not the first — and the
+    first call's measurement is still there for its own ``aafter_model``."""
+    config_patch, cost_patch, usage_patch = _accounting_env(_LEDGER_CONFIG)
+    mw = LLMAccountingMiddleware(agent_name="comms_agent")
+
+    async def _handler(_request: Any) -> Any:
+        return ModelResponse(result=[_ai()])
+
+    with (
+        config_patch,
+        cost_patch,
+        usage_patch,
+        patch.object(accounting, "record_llm_call", AsyncMock(return_value=0.5)) as record,
+        patch.object(
+            accounting,
+            "get_budget_stop_reason",
+            AsyncMock(return_value=BudgetCheck(stop_reason=None, plan_type=None, spent_usd=None)),
+        ),
+        patch.object(
+            accounting.time, "monotonic", side_effect=[100.0, 100.0501234, 200.0, 200.0501234]
+        ),
+    ):
+        await mw.awrap_model_call(_model_request(), _handler)
+        await mw.awrap_model_call(_model_request(), _handler)
+        await mw.aafter_model(_state(_ai()), None)
+        await mw.aafter_model(_state(_ai()), None)
+
+    assert record.await_args_list[0].kwargs["context"].duration_ms == 50.12
+    assert record.await_args_list[1].kwargs["context"].duration_ms == 50.12
+    assert mw._invoke_ms.get("executor_conv-1") in (None, [])
+    assert mw._start_ts.get("executor_conv-1") in (None, [])
+
+
+async def test_metered_call_observes_llm_call_histogram() -> None:
+    config_patch, cost_patch, usage_patch = _accounting_env(_LEDGER_CONFIG)
+    mw = LLMAccountingMiddleware(agent_name="comms_agent")
+
+    async def _handler(_request: Any) -> Any:
+        return ModelResponse(result=[_ai()])
+
+    before = (
+        REGISTRY.get_sample_value(
+            "llm_call_seconds_count", {"model": "gemini-3-pro", "agent": "comms_agent"}
+        )
+        or 0.0
+    )
+    with (
+        config_patch,
+        cost_patch,
+        usage_patch,
+        patch.object(accounting, "record_llm_call", AsyncMock(return_value=0.5)),
+        patch.object(
+            accounting,
+            "get_budget_stop_reason",
+            AsyncMock(return_value=BudgetCheck(stop_reason=None, plan_type=None, spent_usd=None)),
+        ),
+        patch.object(accounting.time, "monotonic", side_effect=[100.0, 100.0501234]),
+    ):
+        await mw.awrap_model_call(_model_request(), _handler)
+        await mw.aafter_model(_state(_ai()), None)
+
+    assert (
+        REGISTRY.get_sample_value(
+            "llm_call_seconds_count", {"model": "gemini-3-pro", "agent": "comms_agent"}
+        )
+        == before + 1
+    )
+
+
 async def test_the_metered_call_carries_the_request_tree_it_belongs_to() -> None:
     """``root_request_id`` is what joins a comms turn to the executor calls it
     spawned. Losing it makes a multi-agent turn look like unrelated spend."""
@@ -543,7 +615,7 @@ async def test_handoff_latency_is_zero_when_the_pre_hook_never_ran() -> None:
 async def test_the_start_timestamp_is_consumed_by_the_call_it_belongs_to() -> None:
     mw = LLMAccountingMiddleware(agent_name="a")
     await _call(mw, _ai())
-    assert "conv-1" not in mw._start_ts  # popped, not left to accumulate
+    assert mw._start_ts.get("conv-1") in (None, [])  # popped, not left to accumulate
 
 
 # --- step index --------------------------------------------------------------- #

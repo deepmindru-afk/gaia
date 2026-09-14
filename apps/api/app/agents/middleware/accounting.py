@@ -58,6 +58,7 @@ from app.services.cost_budget import (
     get_budget_stop_reason,
     is_budget_wrapup_threshold,
 )
+from app.services.latency_metrics import observe_llm_call
 from app.services.llm_metering import (
     LLMCallContext,
     extract_finish_reason,
@@ -115,13 +116,16 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         self._step_counts: dict[str, int] = {}
         self._hwm_emitted: set[str] = set()
         self._budget_wrapup_emitted: set[str] = set()
-        self._start_ts: dict[str, float] = {}
+        # Stacks, not scalars: two model calls can overlap on one thread (a
+        # sync hook writing while an async run is in flight), and a scalar
+        # lets the later stamp clobber the earlier one. LIFO matches nesting.
+        self._start_ts: dict[str, list[float]] = {}
         # Wall time of the last provider call on each thread, measured around
         # the invocation itself in ``awrap_model_call``. ``_start_ts`` cannot
         # stand in: it spans before_model -> after_model, so it also carries
         # every other middleware in the stack. Consumed (popped) by the
         # ``aafter_model`` that meters that same call.
-        self._invoke_ms: dict[str, float] = {}
+        self._invoke_ms: dict[str, list[float]] = {}
 
     # --- helpers ---------------------------------------------------------
 
@@ -175,7 +179,7 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         del state, runtime  # state not consulted in this pre-call hook yet
         config = current_run_config()
         thread_id = self._thread_id(config)
-        self._start_ts[thread_id] = time.monotonic()
+        self._start_ts.setdefault(thread_id, []).append(time.monotonic())
         return None
 
     async def awrap_model_call(
@@ -276,7 +280,9 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         try:
             return await handler(request)
         finally:
-            self._invoke_ms[thread_id] = round((time.monotonic() - invoke_start) * 1000, 2)
+            self._invoke_ms.setdefault(thread_id, []).append(
+                round((time.monotonic() - invoke_start) * 1000, 2)
+            )
 
     async def aafter_model(
         self,
@@ -330,6 +336,8 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         provider_cost = extract_message_cost(ai_msg)
         generation_id = extract_generation_id(ai_msg)
         workflow_id = configurable.get("workflow_id")
+        invoke_stack = self._invoke_ms.get(thread_id)
+        invoke_ms = invoke_stack.pop() if invoke_stack else None
         total_cost = await record_llm_call(
             user_id=str(user_id) if user_id else None,
             model_name=str(model_name),
@@ -356,13 +364,16 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
                 # The surface the turn came from — inherited by executor and
                 # subagent runs, so a child call reports its root's channel.
                 channel=resolve_channel(configurable),
-                duration_ms=self._invoke_ms.pop(thread_id, None),
+                duration_ms=invoke_ms,
                 finish_reason=extract_finish_reason(ai_msg),
             ),
         )
+        if invoke_ms is not None:
+            observe_llm_call(invoke_ms / 1000.0, model=str(model_name), agent=self.agent_name)
 
         step_index = self._next_step(thread_id)
-        start = self._start_ts.pop(thread_id, None)
+        start_stack = self._start_ts.get(thread_id)
+        start = start_stack.pop() if start_stack else None
         handoff_latency_ms = (
             round((time.monotonic() - start) * 1000, 2) if start is not None else 0.0
         )
@@ -452,13 +463,17 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
     def before_model(self, state: AgentState[Any], runtime: Runtime[Any]) -> dict[str, Any] | None:
         del state, runtime
         thread_id = self._thread_id(current_run_config())
-        self._start_ts[thread_id] = time.monotonic()
+        self._start_ts.setdefault(thread_id, []).append(time.monotonic())
         return None
 
     def after_model(self, state: AgentState[Any], runtime: Runtime[Any]) -> dict[str, Any] | None:
         del state, runtime
         # Cost calc is async-only; in sync mode we still want the HWM signal.
+        # Pop the before_model stamp so a mixed sync/async thread never leaks it.
         thread_id = self._thread_id(current_run_config())
+        start_stack = self._start_ts.get(thread_id)
+        if start_stack:
+            start_stack.pop()
         step_index = self._next_step(thread_id)
         hwm_cap = max(1, int(self.recursion_limit * RECURSION_HWM_FRACTION))
         if step_index >= hwm_cap and thread_id not in self._hwm_emitted:

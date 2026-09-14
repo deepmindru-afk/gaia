@@ -6,7 +6,7 @@ per-turn fields for Loki deep-dives. This module owns the Prometheus half.
 
 Label discipline: low-cardinality labels only
 (``source, voice_mode, delegated, queued, status, stage, tool_name,
-subagent_id, model, lane, agent, op``). Never user/conversation/stream/task
+subagent_id, model, lane, agent, node, op``). Never user/conversation/stream/task
 ids on collectors — those go on ``log.set()`` + PostHog props. ``tool_name``
 is only safe for built-in tools; MCP-proxied or dynamically registered calls
 collapse to ``tool_name="mcp"`` and keep the real name on the wide event.
@@ -232,6 +232,26 @@ _SSE_DELIVERY_SECONDS = _register_once(
     ),
 )
 
+_LLM_CALL_SECONDS = _register_once(
+    "llm_call_seconds",
+    lambda: Histogram(
+        name="llm_call_seconds",
+        documentation="Provider LLM call duration in seconds by model and agent",
+        labelnames=("model", "agent"),
+        buckets=_TURN_BUCKETS,
+    ),
+)
+
+_GRAPH_NODE_SECONDS = _register_once(
+    "graph_node_seconds",
+    lambda: Histogram(
+        name="graph_node_seconds",
+        documentation="Graph node duration in seconds by node and agent",
+        labelnames=("node", "agent"),
+        buckets=_TTFT_BUCKETS,
+    ),
+)
+
 _CHAT_TURN_TOTAL = _register_once(
     "chat_turn_total",
     lambda: Counter(
@@ -422,6 +442,14 @@ def observe_sse_delivery(seconds: float, *, status: str) -> None:
     _observe(_SSE_DELIVERY_SECONDS, seconds, status=status)
 
 
+def observe_llm_call(seconds: float, *, model: str, agent: str) -> None:
+    _observe(_LLM_CALL_SECONDS, seconds, model=model, agent=agent)
+
+
+def observe_graph_node(seconds: float, *, node: str, agent: str) -> None:
+    _observe(_GRAPH_NODE_SECONDS, seconds, node=node, agent=agent)
+
+
 __all__ = [
     "observe_chat_e2e_ack",
     "observe_chat_e2e_full",
@@ -436,8 +464,10 @@ __all__ = [
     "observe_executor_queue_wait",
     "observe_executor_run_total",
     "observe_executor_ttft",
+    "observe_graph_node",
     "observe_hil_dispatch_lag",
     "observe_hil_user_wait",
+    "observe_llm_call",
     "observe_llm_ttft",
     "observe_sse_delivery",
     "observe_subagent_run",

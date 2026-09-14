@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from prometheus_client import REGISTRY
 import pytest
 
 from app.agents.core.nodes.follow_up_actions_node import (
@@ -126,6 +127,36 @@ class TestFollowUpActionsNode:
 
         assert result is state
         assert {"follow_up_actions": []} in written_values
+
+    @pytest.mark.asyncio
+    async def test_node_emits_latency_span(self):
+        state = _make_state([HumanMessage(content="hi")])
+        config = {
+            "agent_name": "node-test-agent",
+            "configurable": {"user_id": "user-123", "thread_id": "thread-abc"},
+        }
+        before = (
+            REGISTRY.get_sample_value(
+                "graph_node_seconds_count",
+                {"node": "follow_up_actions", "agent": "node-test-agent"},
+            )
+            or 0.0
+        )
+        mock_writer = MagicMock(side_effect=lambda *a, **k: None)
+
+        with patch(
+            "app.agents.core.nodes.follow_up_actions_node.get_stream_writer",
+            return_value=mock_writer,
+        ):
+            await follow_up_actions_node(state, config, _make_store())
+
+        assert (
+            REGISTRY.get_sample_value(
+                "graph_node_seconds_count",
+                {"node": "follow_up_actions", "agent": "node-test-agent"},
+            )
+            == before + 1
+        )
 
     @pytest.mark.asyncio
     async def test_happy_path_with_user_id_streams_actions(self):
