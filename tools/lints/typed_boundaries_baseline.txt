@@ -89,6 +89,7 @@ apps/api/app/agents/tools/discovery_tools.py	TB002
 apps/api/app/agents/tools/executor_tool.py	TB002
 apps/api/app/agents/tools/file_tools.py	TB002
 apps/api/app/agents/tools/integration_instructions_tools.py	TB002
+apps/api/app/agents/tools/integration_tool.py	TB002
 apps/api/app/agents/tools/memory_tools.py	TB002
 apps/api/app/agents/tools/playbook_tools.py	TB001
 apps/api/app/agents/tools/playbook_tools.py	TB002
@@ -111,6 +112,7 @@ apps/api/app/api/v1/endpoints/device.py	TB002
 apps/api/app/api/v1/endpoints/device_ws.py	TB002
 apps/api/app/api/v1/endpoints/health.py	TB002
 apps/api/app/api/v1/endpoints/integrations/custom.py	TB002
+apps/api/app/api/v1/endpoints/notification.py	TB002
 apps/api/app/api/v1/endpoints/oauth.py	TB002
 apps/api/app/api/v1/endpoints/payments.py	TB002
 apps/api/app/api/v1/endpoints/platform_auth.py	TB001
@@ -231,6 +233,7 @@ apps/api/app/services/files/service.py	TB001
 apps/api/app/services/files/service.py	TB002
 apps/api/app/services/files/store.py	TB002
 apps/api/app/services/files/summaries.py	TB002
+apps/api/app/services/gaia_task_files.py	TB002
 apps/api/app/services/hil/approvals_store.py	TB001
 apps/api/app/services/hil/bridge.py	TB001
 apps/api/app/services/hil/classification.py	TB002
@@ -259,6 +262,7 @@ apps/api/app/services/llm_metering.py	TB001
 apps/api/app/services/llm_metering.py	TB002
 apps/api/app/services/mail/email_importance_service.py	TB001
 apps/api/app/services/mcp/device_connector.py	TB002
+apps/api/app/services/mcp/device_exec.py	TB002
 apps/api/app/services/mcp/langchain_adapter.py	TB001
 apps/api/app/services/mcp/langchain_adapter.py	TB002
 apps/api/app/services/mcp/mcp_client.py	TB001
@@ -348,6 +352,7 @@ apps/api/app/services/workflow/trigger_search.py	TB001
 apps/api/app/services/workflow/trigger_search.py	TB002
 apps/api/app/services/workflow/workflow_subagent.py	TB001
 apps/api/app/services/workflow/workflow_subagent.py	TB002
+apps/api/app/utils/device_onboarding.py	TB002
 apps/api/app/workers/config/log_config.py	TB002
 apps/api/app/workers/lifecycle/shutdown.py	TB001
 apps/api/app/workers/lifecycle/shutdown.py	TB002
@@ -357,6 +362,7 @@ apps/api/app/workers/task_envelope.py	TB001
 apps/api/app/workers/tasks/checkpoint_retention_tasks.py	TB001
 apps/api/app/workers/tasks/checkpoint_retention_tasks.py	TB002
 apps/api/app/workers/tasks/cleanup_tasks.py	TB001
+apps/api/app/workers/tasks/device_tasks.py	TB001
 apps/api/app/workers/tasks/hil_sweep_tasks.py	TB001
 apps/api/app/workers/tasks/hil_sweep_tasks.py	TB002
 apps/api/app/workers/tasks/memory_backfill_tasks.py	TB001
