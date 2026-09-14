@@ -26,6 +26,10 @@ Base = declarative_base()
 # workers) race on CREATE TYPE for enum columns and fail on pg_type's unique index.
 SCHEMA_BOOTSTRAP_LOCK_ID = 743_001_993
 
+# Same race in langgraph's checkpointer/store setup(): its CREATE TABLE IF NOT EXISTS
+# collides on pg_type ("checkpoint_migrations") when two starters run it at once.
+LANGGRAPH_SETUP_LOCK_ID = 743_001_994
+
 # Datetime columns that must store tz-aware instants (timestamptz). The schema
 # is bootstrapped with create_all, which only CREATEs missing tables and never
 # ALTERs existing ones, so legacy tables still hold naive timestamp columns —
