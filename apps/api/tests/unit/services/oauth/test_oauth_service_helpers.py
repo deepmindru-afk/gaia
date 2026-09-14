@@ -3,6 +3,7 @@ handle_oauth_connection. Kept apart from test_oauth_service.py so that file
 imports only symbols that exist on the base revision — the regression-proof
 lane runs its marked tests there."""
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 from bson import ObjectId
@@ -128,6 +129,28 @@ class TestRunSignupSideEffects:
                 "error_type": "RuntimeError",
             }
         ]
+        mock_schedule_user_provision.assert_called_once_with(user_id)
+
+    async def test_a_stalled_redis_handoff_does_not_hold_the_signup(
+        self,
+        mock_track_signup,
+        mock_schedule_user_provision,
+        mock_redis_pool_manager,
+    ):
+        """A hung enqueue is bounded; the unstamped row lets the sweep deliver it later."""
+        user_id = str(ObjectId())
+
+        async def _never_returns(*_args: object, **_kwargs: object) -> None:
+            await asyncio.Event().wait()
+
+        mock_redis_pool_manager.enqueue_job.side_effect = _never_returns
+
+        with patch("app.services.oauth.oauth_service.SIGNUP_EMAIL_ENQUEUE_TIMEOUT_SECONDS", 0.01):
+            async with captured_wide_event() as event, asyncio.timeout(5):
+                await _run_signup_side_effects(user_id, "bob@test.com", "Bob")
+
+        assert [e["error_type"] for e in event["errors"]] == ["TimeoutError"]
+        assert event["errors"][0]["msg"] == f"{LogTag.OAUTH} Failed to queue signup email delivery"
         mock_schedule_user_provision.assert_called_once_with(user_id)
 
     async def test_a_posthog_failure_is_recorded_and_the_rest_still_runs(
