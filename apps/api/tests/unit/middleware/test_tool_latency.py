@@ -140,6 +140,8 @@ async def test_failing_call_records_exact_seconds() -> None:
             invoke_fn,
         )
     assert REGISTRY.get_sample_value("tool_call_seconds_sum", labels) == before + 0.5
+    # The tool already ran once: the fallback must re-raise, not run it again.
+    invoke_fn.assert_awaited_once()
 
 
 async def test_hil_pause_is_neither_success_nor_error() -> None:
@@ -162,3 +164,43 @@ async def test_hil_pause_is_neither_success_nor_error() -> None:
                 AsyncMock(),
             )
         assert _count("lat-tool-gated", status) == before
+
+
+async def test_middleware_chain_routes_through_each_wrapper() -> None:
+    """The chain is built by wrapping each middleware around the inner handler:
+    a wrapper wired to None (or a None seed) must route through the middleware,
+    not silently fall back to a direct tool call."""
+    from langchain.agents.middleware import AgentMiddleware
+    from langchain.agents.middleware.types import ToolCallRequest
+
+    seen: list[str] = []
+
+    class _Recorder(AgentMiddleware):  # type: ignore[type-arg]
+        async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
+            seen.append("async")
+            return await handler(request)
+
+    class _SyncRecorder(AgentMiddleware):  # type: ignore[type-arg]
+        def wrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
+            seen.append("sync")
+
+            # A sync hook may hand back a coroutine for the bridge to await —
+            # transform inside it so the result provably flowed through here.
+            async def _transform() -> Any:
+                result = await handler(request)
+                return ToolMessage(content=f"{result.content}[sync]", tool_call_id="c1")
+
+            return _transform()
+
+    invoke_fn = AsyncMock(return_value=ToolMessage(content="ok", tool_call_id="c1"))
+    result = await _invoke(
+        MiddlewareExecutor([_Recorder(), _SyncRecorder()]),
+        {"name": "lat-tool-chained", "args": {}, "id": "c1"},
+        None,
+        invoke_fn,
+    )
+    # The transform proves the result flowed through both wrappers: the
+    # direct-invocation fallback returns the raw tool result untouched.
+    assert result.content == "ok[sync]"
+    assert seen == ["async", "sync"]
+    invoke_fn.assert_awaited_once()

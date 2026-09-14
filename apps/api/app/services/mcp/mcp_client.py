@@ -2154,13 +2154,24 @@ class MCPClient:
             )
         session = client.get_session(matching_integration_id)
 
+        # Same surface as the reconnect path's latency_ms. Prometheus sees this
+        # call once, at the tool wrapper — a second histogram here would double-count.
+        # Stamped on failure too: without it an exception leaves the wide event
+        # with neither success=False nor any latency for the call that just ran.
         # mcp_use ships no py.typed marker, so mypy sees MCPSession.call_tool as
         # Any; its source (and BaseConnector.call_tool beneath it) is annotated
         # `-> CallToolResult` and returns the SDK model straight through.
-        result = cast(CallToolResult, await session.call_tool(name=tool_name, arguments=arguments))
-
-        # Same surface as the reconnect path's latency_ms. Prometheus sees this
-        # call once, at the tool wrapper — a second histogram here would double-count.
+        try:
+            result = cast(
+                CallToolResult, await session.call_tool(name=tool_name, arguments=arguments)
+            )
+        except Exception:
+            log.set_ns(
+                "mcp",
+                success=False,
+                latency_ms=round((time.perf_counter() - call_start) * 1000.0, 2),
+            )
+            raise
         log.set_ns(
             "mcp",
             success=not result.isError,

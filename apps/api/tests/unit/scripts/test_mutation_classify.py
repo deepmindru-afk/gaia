@@ -349,3 +349,16 @@ class TestFalsyAssignmentEquivalence:
 
         assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
         assert result.returncode == 1
+
+    def test_an_augmented_assignment_target_is_still_reported(self, workdir: Path) -> None:
+        """``x += 1`` reads the previous value: ``False + 1`` is 1 but
+        ``None + 1`` raises, so the initial literal is observable despite every
+        other read being a truthiness test."""
+        body = "    x = False\n    x += 1\n    if x:\n        return 1\n    return 0"
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("x = False", "x = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 1

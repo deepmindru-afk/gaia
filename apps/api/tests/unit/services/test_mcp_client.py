@@ -875,6 +875,37 @@ class TestMCPClientCallToolOnServer:
         mcp = log.get().get("mcp") or {}
         assert mcp.get("success") is True
         assert mcp.get("latency_ms") == pytest.approx(127.17, abs=1e-6)
+        # The call must carry the tool name and arguments through: a dropped or
+        # nulled kwarg would invoke the wrong tool (or fail) in production while
+        # the mock returns successfully either way.
+        mock_session.call_tool.assert_awaited_once_with(name="test_tool", arguments={"arg": "val"})
+
+    async def test_failed_call_stamps_latency_before_reraising(self):
+        """A raising tool call still stamps success=False and its latency: without
+        it the wide event has no record of the call that just ran."""
+        log.reset()
+        client = MCPClient(user_id=USER_ID)
+        mock_base = MagicMock()
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(side_effect=RuntimeError("tool blew up"))
+        mock_base.get_session = MagicMock(return_value=mock_session)
+        client._clients[INTEGRATION_ID] = mock_base
+        client._tools[INTEGRATION_ID] = [_mock_tool()]
+
+        client._find_integration_id_by_server_url = AsyncMock(return_value=INTEGRATION_ID)
+        client.ensure_connected = AsyncMock(return_value=[_mock_tool()])
+
+        with (
+            patch(
+                "app.services.mcp.mcp_client.time.perf_counter",
+                side_effect=[1000.0, 1000.1271658],
+            ),
+            pytest.raises(RuntimeError, match="tool blew up"),
+        ):
+            await client.call_tool_on_server(SERVER_URL, "test_tool", {"arg": "val"})
+        mcp = log.get().get("mcp") or {}
+        assert mcp.get("success") is False
+        assert mcp.get("latency_ms") == pytest.approx(127.17, abs=1e-6)
 
     async def test_raises_when_no_matching_integration(self):
         client = MCPClient(user_id=USER_ID)

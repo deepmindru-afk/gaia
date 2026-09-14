@@ -402,13 +402,17 @@ class MiddlewareExecutor:
 
         # Holds the tool's own result once it has run, so the fallback below can
         # tell a middleware that failed *before* the tool from one that failed
-        # after it — only the former is safe to retry.
+        # after it — only the former is safe to retry. `tool_attempted` covers
+        # the third case: the tool itself raised, so `tool_result` is still None
+        # but re-invoking would fire its side effects a second time.
         tool_result: ToolMessage | Command[Any] | None = None
+        tool_attempted = False
 
         # Build the handler chain from inside out
         async def final_handler(req: ToolCallRequest) -> ToolMessage | Command[Any]:
             """Innermost handler - actually calls the tool."""
-            nonlocal tool_result
+            nonlocal tool_result, tool_attempted
+            tool_attempted = True
             tool_result = await invoke_fn(req.tool_call)
             if tool_user_id:
                 capture_event(
@@ -479,7 +483,11 @@ class MiddlewareExecutor:
             if tool_result is not None:
                 return tool_result
             # Nothing ran yet: a pre-tool middleware broke, so invoke directly.
-            return await invoke_fn(tool_call)
+            if not tool_attempted:
+                return await invoke_fn(tool_call)
+            # The tool itself raised: retrying would run its side effects again,
+            # so let the original failure propagate.
+            raise
         observe_tool_call(
             time.perf_counter() - chain_start, tool_name=metric_name, status="success"
         )

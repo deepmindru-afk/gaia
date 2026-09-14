@@ -394,8 +394,10 @@ async def _dispatch_resume(
     )
     _resume_tasks.add(task)
     task.add_done_callback(_resume_tasks.discard)
-    await mark_resumed(record.approval_id)
+    # Timed at dispatch: mark_resumed's Mongo write below must not inflate the
+    # decision-to-dispatch lag the resumed executor already started accruing.
     _observe_hil_dispatch_lag(record)
+    await mark_resumed(record.approval_id)
     log.info(f"{LogTag.HIL} Resumed paused executor run", approval_id=record.approval_id)
 
 

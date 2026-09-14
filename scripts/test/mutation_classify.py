@@ -461,7 +461,10 @@ def _reads_only_as_boolean(assign: ast.Assign) -> bool:
     the mutation only changed the initial literal, and if every read of the name
     is a truthiness test then no read can tell one falsy value from another —
     whatever later assignment overwrote it first. Store reads are the rebinds
-    themselves and carry no value to observe.
+    themselves and carry no value to observe — EXCEPT an ``AugAssign`` target
+    (``x += 1``): augmented assignment reads the previous value first, so
+    ``x = False`` vs ``x = None`` diverges there (``False + 1`` is 1,
+    ``None + 1`` raises) even though both are falsy.
     """
     target = assign.targets[0]
     if not isinstance(target, ast.Name):
@@ -472,6 +475,9 @@ def _reads_only_as_boolean(assign: ast.Assign) -> bool:
     if scope is None:
         return False
     for node in ast.walk(scope):
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == target.id:
+                return False
         if (
             isinstance(node, ast.Name)
             and node.id == target.id
