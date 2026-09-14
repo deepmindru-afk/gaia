@@ -73,6 +73,9 @@ os.environ["GAIA_SIM_MODE"] = "false"
 # wins over .env) or its activation-variant executor prompt/context moves the
 # hermetic snapshots. Flag-on paths are exercised by tests that opt in explicitly.
 os.environ["ENABLE_INTEGRATION_ACTIVATION"] = "false"
+# Code mode mints per-invocation tokens; pin it off so a developer's .env
+# cannot leak execute env into hermetic bash tests. Opt in per test.
+os.environ["ENABLE_CODE_MODE"] = "false"
 # Same leak, opposite pin: the committed default for the OpenUI experiment is
 # ON, and the prompt-contract tests assert the OpenUI variant. A developer
 # running with ENABLE_COMMS_OPENUI=false in .env would otherwise flip the

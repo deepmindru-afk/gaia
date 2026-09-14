@@ -134,6 +134,10 @@ class CommonSettings(BaseAppSettings):
     # a short markdown-only output note so the persona/voice rules are not
     # crowded out by the component language. Text-only channels are unaffected.
     ENABLE_COMMS_OPENUI: bool = True
+    # Experiment: code mode — bash-injected `gaia.execute` client letting
+    # sandbox scripts call GAIA tools back server-side. Off mints no token
+    # (bash itself still runs; scripts just get no GAIA_EXECUTE_* env).
+    ENABLE_CODE_MODE: bool = False
 
     @field_validator("HOST", "FRONTEND_URL", mode="after")
     @classmethod

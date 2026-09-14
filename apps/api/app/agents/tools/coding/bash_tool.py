@@ -41,6 +41,7 @@ from app.constants.sandbox import (
     WORKSPACE_TMP_SUFFIX,
 )
 from app.decorators import with_doc, with_rate_limiting
+from app.services.feature_flags import is_code_mode_enabled
 from app.services.sandbox import (
     SandboxAcquisitionError,
     acquire_sandbox,
@@ -262,7 +263,9 @@ async def _run_bash(
             # the hardened template), TTL-bound to this command's own timeout —
             # see app/services/sandbox/execute_client.py for the threat model.
             execute_env: dict[str, str] | None = None
-            if sandbox_execute_enabled():
+            # Two gates: the env secret arms the mechanism globally, the
+            # per-user flag rolls it out (default off).
+            if sandbox_execute_enabled() and await is_code_mode_enabled(user_id):
                 await seed_execute_client(sbx)
                 execute_env = mint_execute_env(
                     user_id=user_id,

@@ -39,6 +39,7 @@ class FeatureFlag(StrEnum):
 
     COMMS_OPENUI = "COMMS_OPENUI"
     INTEGRATION_ACTIVATION = "INTEGRATION_ACTIVATION"
+    CODE_MODE = "CODE_MODE"
 
 
 # Human description per flag, kept next to the key so the dashboard setup and
@@ -52,6 +53,10 @@ FEATURE_FLAG_DESCRIPTIONS: dict[FeatureFlag, str] = {
         "Executor loads integration tools in-context via activate_integration; "
         "off routes through per-integration subagent handoff."
     ),
+    FeatureFlag.CODE_MODE: (
+        "Bash runs seed the `gaia.execute` client and mint a per-invocation "
+        "token; off runs bash with no GAIA_EXECUTE_* env."
+    ),
 }
 
 
@@ -63,6 +68,8 @@ def _default(flag: FeatureFlag) -> bool:
             return bool(settings.ENABLE_COMMS_OPENUI)
         case FeatureFlag.INTEGRATION_ACTIVATION:
             return bool(settings.ENABLE_INTEGRATION_ACTIVATION)
+        case FeatureFlag.CODE_MODE:
+            return bool(settings.ENABLE_CODE_MODE)
 
 
 def _coerce_result(result: Any, default: bool) -> bool:  # noqa: ANN401 -- posthog SDK returns untyped flag values; validated here
@@ -180,3 +187,9 @@ async def is_integration_activation_enabled(user_id: str | None) -> bool:
     integration tools via ``activate_integration``) instead of per-integration
     subagent handoff."""
     return await is_enabled(FeatureFlag.INTEGRATION_ACTIVATION, user_id)
+
+
+async def is_code_mode_enabled(user_id: str | None) -> bool:
+    """Whether ``user_id``'s bash runs get the ``gaia.execute`` client and a
+    per-invocation token. Off runs bash with no GAIA_EXECUTE_* env."""
+    return await is_enabled(FeatureFlag.CODE_MODE, user_id)

@@ -10,6 +10,7 @@ from app.services.feature_flags import (
     FeatureFlag,
     _coerce_result,
     _get_posthog_client,
+    is_code_mode_enabled,
     is_comms_openui_enabled,
     is_enabled,
     is_integration_activation_enabled,
@@ -159,12 +160,25 @@ class TestFlags:
         assert await is_integration_activation_enabled("u1") is True
         mock_client.get_feature_flag.assert_called_once_with("INTEGRATION_ACTIVATION", "u1")
 
+    async def test_is_code_mode_enabled_defaults_off(
+        self, no_client: None
+    ) -> None:
+        assert await is_code_mode_enabled("u1") is False
+
+    async def test_is_code_mode_enabled_live(
+        self, mock_client: MagicMock, evaluated: MagicMock
+    ) -> None:
+        mock_client.get_feature_flag.return_value = True
+        assert await is_code_mode_enabled("u1") is True
+        mock_client.get_feature_flag.assert_called_once_with("CODE_MODE", "u1")
+
     def test_feature_flag_evaluated_event_name(self) -> None:
         assert AnalyticsEvents.FEATURE_FLAG_EVALUATED == "feature_flag:evaluated"
 
     def test_flag_keys_match_dashboard(self) -> None:
         assert FeatureFlag.COMMS_OPENUI == "COMMS_OPENUI"
         assert FeatureFlag.INTEGRATION_ACTIVATION == "INTEGRATION_ACTIVATION"
+        assert FeatureFlag.CODE_MODE == "CODE_MODE"
 
 
 class TestExplicitDefaultIsFallbackOnly:
@@ -258,6 +272,10 @@ class TestHelpersWithoutUser:
         assert await is_integration_activation_enabled(None) is False
         evaluated.assert_not_called()
 
+    async def test_code_mode_none_user_is_default(self, evaluated: MagicMock) -> None:
+        assert await is_code_mode_enabled(None) is False
+        evaluated.assert_not_called()
+
 
 class TestRegistry:
     def test_every_flag_has_a_description(self) -> None:
@@ -311,6 +329,16 @@ class TestHelperDelegation:
             assert await is_integration_activation_enabled("u2") is False
             enabled.assert_called_once_with(FeatureFlag.INTEGRATION_ACTIVATION, "u2")
 
+    async def test_code_mode_helper_forwards_flag_and_user(
+        self, evaluated: MagicMock
+    ) -> None:
+        with patch(
+            "app.services.feature_flags.is_enabled",
+            return_value=True,
+        ) as enabled:
+            assert await is_code_mode_enabled("u3") is True
+            enabled.assert_called_once_with(FeatureFlag.CODE_MODE, "u3")
+
 
 class TestDefaultFollowsSettings:
     async def test_activation_default_true_when_env_enables(
@@ -322,6 +350,16 @@ class TestDefaultFollowsSettings:
 
         monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
         assert await is_integration_activation_enabled("u1") is True
+
+
+class TestCodeModeDefaultFollowsSettings:
+    async def test_code_mode_default_true_when_env_enables(
+        self, monkeypatch: pytest.MonkeyPatch, no_client: None, evaluated: MagicMock
+    ) -> None:
+        from app.config.settings import settings
+
+        monkeypatch.setattr(settings, "ENABLE_CODE_MODE", True)
+        assert await is_code_mode_enabled("u1") is True
 
 
 class TestCoerceEmptyString:
@@ -415,8 +453,7 @@ class TestLogContract:
     async def test_dedupe_clock_is_utc(
         self, mock_client: MagicMock, evaluated: MagicMock
     ) -> None:
-        from datetime import UTC
-        from datetime import datetime as real_datetime
+        from datetime import UTC, datetime as real_datetime
 
         mock_client.get_feature_flag.return_value = None
         with patch("app.services.feature_flags.datetime") as mock_dt:

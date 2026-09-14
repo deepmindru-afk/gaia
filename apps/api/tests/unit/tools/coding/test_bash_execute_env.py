@@ -1,8 +1,8 @@
 """bash + code mode: per-invocation token env injection.
 
 The token must exist only in the launched command's env, only when code mode
-is configured, and the client must be seeded first — no standing sandbox-wide
-token, ever.
+is both env-configured AND flag-enabled for the user, and the client must be
+seeded first — no standing sandbox-wide token, ever.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ class TestBashExecuteEnv:
         with (
             patch(f"{MODULE}.acquire_sandbox", new=_acquire(sbx)),
             patch(f"{MODULE}.sandbox_execute_enabled", return_value=True),
+            patch(f"{MODULE}.is_code_mode_enabled", return_value=True),
             patch(f"{MODULE}.seed_execute_client", new=AsyncMock()) as seed,
             patch(f"{MODULE}.mint_execute_env", return_value=EXECUTE_ENV) as mint,
         ):
@@ -69,6 +70,7 @@ class TestBashExecuteEnv:
         with (
             patch(f"{MODULE}.acquire_sandbox", new=_acquire(sbx)),
             patch(f"{MODULE}.sandbox_execute_enabled", return_value=True),
+            patch(f"{MODULE}.is_code_mode_enabled", return_value=True),
             patch(f"{MODULE}.seed_execute_client", new=AsyncMock()),
             patch(f"{MODULE}.mint_execute_env", return_value=EXECUTE_ENV) as mint,
         ):
@@ -82,6 +84,7 @@ class TestBashExecuteEnv:
         with (
             patch(f"{MODULE}.acquire_sandbox", new=_acquire(sbx)),
             patch(f"{MODULE}.sandbox_execute_enabled", return_value=True),
+            patch(f"{MODULE}.is_code_mode_enabled", return_value=True),
             patch(f"{MODULE}.seed_execute_client", new=AsyncMock()),
             patch(f"{MODULE}.mint_execute_env", return_value=EXECUTE_ENV) as mint,
         ):
@@ -99,6 +102,22 @@ class TestBashExecuteEnv:
         seed.assert_not_awaited()
         assert sbx.commands.run.await_args.kwargs["envs"] == {}
 
+    async def test_flag_off_mints_nothing_despite_env_config(self) -> None:
+        """The per-user flag is the rollout gate: env-configured but unflagged
+        runs bash with no execute env, same as unconfigured."""
+        sbx = _sbx()
+        with (
+            patch(f"{MODULE}.acquire_sandbox", new=_acquire(sbx)),
+            patch(f"{MODULE}.sandbox_execute_enabled", return_value=True),
+            patch(f"{MODULE}.is_code_mode_enabled", return_value=False),
+            patch(f"{MODULE}.seed_execute_client", new=AsyncMock()) as seed,
+            patch(f"{MODULE}.mint_execute_env", return_value=EXECUTE_ENV) as mint,
+        ):
+            await bash.ainvoke({"command": "echo hi"}, config=CONFIG)
+        seed.assert_not_awaited()
+        mint.assert_not_called()
+        assert sbx.commands.run.await_args.kwargs["envs"] == {}
+
     async def test_background_run_carries_the_env_too(self) -> None:
         sbx = _sbx()
         sbx.commands.run = AsyncMock(
@@ -107,6 +126,7 @@ class TestBashExecuteEnv:
         with (
             patch(f"{MODULE}.acquire_sandbox", new=_acquire(sbx)),
             patch(f"{MODULE}.sandbox_execute_enabled", return_value=True),
+            patch(f"{MODULE}.is_code_mode_enabled", return_value=True),
             patch(f"{MODULE}.seed_execute_client", new=AsyncMock()),
             patch(f"{MODULE}.mint_execute_env", return_value=EXECUTE_ENV),
         ):
