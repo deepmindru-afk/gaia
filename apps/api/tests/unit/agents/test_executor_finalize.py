@@ -20,7 +20,6 @@ from app.agents.core.background import (
     executor_queue as eq,
     executor_runner as er,
     result_delivery as rd,
-    session as sess,
 )
 from app.agents.core.background.executor_capture import (
     await_executor_done,
@@ -51,16 +50,6 @@ from shared.py.wide_events import log, log_context
 # The task text the finalize step now receives; forwarded to comms on a cancel.
 TASK = "run the standup summary"
 CARD_NOTE = wrap_agent_payload(AgentTag.RETURNED_TO_FRONTEND, "todo_data (1 todo)")
-
-
-@pytest.fixture(autouse=True)
-def _clean_registry():
-    # _abandoned too: another test abandoning "s1" on the same worker made finalize skip delivery.
-    sess._sessions.clear()
-    sess._abandoned.clear()
-    yield
-    sess._sessions.clear()
-    sess._abandoned.clear()
 
 
 def _run(
