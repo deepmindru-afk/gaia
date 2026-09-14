@@ -231,17 +231,49 @@ class TestTavilyProvider:
                 "app.utils.search.providers.tavily.asyncio.to_thread", new_callable=AsyncMock
             ) as mock_thread,
             patch("app.utils.search.providers.tavily.settings") as mock_settings,
+            patch("app.utils.search.providers.tavily.TavilyClient") as mock_client_cls,
         ):
             mock_settings.TAVILY_API_KEY = "tvly-key"  # pragma: allowlist secret
             mock_thread.return_value = payload
             result = await provider.search("test query", 5)
 
+        # One general-topic search asking for images and favicons, sized to the caller's count.
+        mock_thread.assert_awaited_once_with(
+            mock_client_cls.return_value.search,
+            query="test query",
+            max_results=5,
+            topic="general",
+            include_images=True,
+            include_favicon=True,
+        )
         assert result.provider == "tavily"
         assert result.answer == "The answer"
         assert result.images == ["https://img.example.com/1.png"]
         assert len(result.results) == 1
         assert result.results[0].url == "https://example.com"
+        assert result.results[0].title == "Example"
+        assert result.results[0].content == "Some content"
+        assert result.results[0].favicon == "https://example.com/fav.ico"
         assert result.results[0].score == 0.9
+
+    async def test_a_sparse_result_falls_back_to_neutral_defaults(self) -> None:
+        from app.utils.search.providers.tavily import TavilyProvider
+
+        payload = {"results": [{"url": "https://bare.com"}], "answer": None}
+        with (
+            patch(
+                "app.utils.search.providers.tavily.asyncio.to_thread", new_callable=AsyncMock
+            ) as mock_thread,
+            patch("app.utils.search.providers.tavily.settings") as mock_settings,
+        ):
+            mock_settings.TAVILY_API_KEY = "tvly-key"  # pragma: allowlist secret
+            mock_thread.return_value = payload
+            result = await TavilyProvider().search("q", 3)
+
+        item = result.results[0]
+        assert (item.title, item.content, item.favicon, item.score) == ("", "", "", 0.5)
+        assert result.answer == ""
+        assert result.images == []
 
     async def test_search_filters_items_without_url(self) -> None:
         from app.utils.search.providers.tavily import TavilyProvider

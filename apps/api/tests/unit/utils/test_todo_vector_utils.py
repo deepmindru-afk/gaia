@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from bson import ObjectId
+from langchain_core.documents import Document
 import pytest
 
 from app.models.todo_models import Priority, TodoDocument, TodoResponse
@@ -194,6 +195,8 @@ class TestStoreTodoEmbedding:
         self.mock_collection.add_texts.assert_called_once()
         call_kwargs = self.mock_collection.add_texts.call_args
         assert call_kwargs[1]["ids"] == [TODO_ID]
+        # The embedded text is the todo's own searchable rendering.
+        assert call_kwargs[1]["texts"] == [create_todo_content_for_embedding(todo)]
 
     async def test_exception_returns_false(self) -> None:
         self.mock_chroma.side_effect = RuntimeError("ChromaDB unavailable")
@@ -273,6 +276,7 @@ class TestStoreTodoEmbedding:
         metadata = self.mock_collection.add_texts.call_args[1]["metadatas"][0]
         assert metadata["user_id"] == USER_ID
         assert metadata["todo_id"] == TODO_ID
+        assert metadata["title"] == "Buy groceries"
 
     async def test_due_date_stored_as_iso(self) -> None:
         todo = _make_todo_data(due_date=datetime(2026, 3, 20, tzinfo=UTC))
@@ -411,10 +415,8 @@ class TestSemanticSearchTodos:
         )
 
     def _make_search_result(self, todo_id: str, score: float = 0.9) -> tuple:
-        """Create a (Document, score) tuple mimicking ChromaDB results."""
-        doc = MagicMock()
-        doc.metadata = {"todo_id": todo_id}
-        return (doc, score)
+        """Create a (Document, score) tuple as ChromaDB returns it."""
+        return (Document(page_content="", metadata={"todo_id": todo_id}), score)
 
     async def test_results_found_returns_todo_response_list(self) -> None:
         oid = ObjectId()
@@ -727,6 +729,7 @@ class TestHybridSearchTodos:
                 "query", USER_ID, filters=TodoSearchFilters(priority=Priority.HIGH)
             )
             assert all(r.priority == Priority.HIGH for r in results)
+            assert [r.id for r in results] == ["h1"]
 
     async def test_project_id_filter_applied_to_traditional(self) -> None:
         t1 = _make_todo_response(id="t1", project_id="proj_1")
