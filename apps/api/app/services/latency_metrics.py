@@ -5,9 +5,10 @@ carry per-turn fields for Loki deep-dives.
 
 Label discipline: low-cardinality labels only. Never user/conversation/stream/
 task ids on collectors — those go on ``log.set()`` + PostHog props.
-``tool_name`` is only safe for built-in tools; MCP-proxied or dynamically
-registered calls collapse to ``tool_name="mcp"``. Same rule for
-``subagent_id``: the registry integration id, never the per-call row uuid.
+``tool_name`` must come from a bounded catalog: built-in tool names, Composio
+action slugs, or tools collapsed to ``tool_name="mcp"`` (any tool exposing a
+``tool_connector``, i.e. the MCP adapter). Same rule for ``subagent_id``: the
+registry integration id, never the per-call row uuid.
 """
 
 from __future__ import annotations
@@ -105,7 +106,7 @@ _EXECUTOR_QUEUE_WAIT_SECONDS = _register_once(
     lambda: Histogram(
         name="executor_queue_wait_seconds",
         documentation="Executor dispatch to run start wait in seconds",
-        labelnames=("source",),
+        labelnames=("source", "queued"),
         buckets=_TURN_BUCKETS,
     ),
 )
@@ -146,7 +147,7 @@ _TOOL_CALL_SECONDS = _register_once(
         name="tool_call_seconds",
         documentation="Per tool call duration in seconds",
         labelnames=("tool_name", "status"),
-        buckets=_TTFT_BUCKETS,
+        buckets=_TURN_BUCKETS,
     ),
 )
 
@@ -296,10 +297,12 @@ def _observe(histogram: Histogram, amount: float, **labels: str) -> None:
             histogram.labels(**labels).observe(amount)
         else:
             histogram.observe(amount)  # .labels() raises on a labelless collector
-    except Exception as e:
+    except Exception as e:  # metrics must never break the turn they measure
         log.warning(
             "[metrics] latency observe failed",
+            error=str(e),
             error_type=type(e).__name__,
+            labels=labels,
         )
 
 
@@ -309,10 +312,12 @@ def _inc(counter: Counter, **labels: str) -> None:
             counter.labels(**labels).inc()
         else:
             counter.inc()
-    except Exception as e:
+    except Exception as e:  # metrics must never break the turn they measure
         log.warning(
             "[metrics] latency counter inc failed",
+            error=str(e),
             error_type=type(e).__name__,
+            labels=labels,
         )
 
 
@@ -380,8 +385,8 @@ def observe_context_assemble(seconds: float, *, stage: str) -> None:
     _observe(_CONTEXT_ASSEMBLE_SECONDS, seconds, stage=stage)
 
 
-def observe_executor_queue_wait(seconds: float, *, source: str) -> None:
-    _observe(_EXECUTOR_QUEUE_WAIT_SECONDS, seconds, source=source)
+def observe_executor_queue_wait(seconds: float, *, source: str, queued: bool) -> None:
+    _observe(_EXECUTOR_QUEUE_WAIT_SECONDS, seconds, source=source, queued=_bool_label(queued))
 
 
 def observe_executor_ttft(seconds: float, *, queued: bool) -> None:

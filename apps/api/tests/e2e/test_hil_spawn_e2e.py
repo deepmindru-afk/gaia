@@ -19,6 +19,7 @@ with the real gate and a real Postgres checkpoint.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -231,6 +232,7 @@ class SpawnDriver:
                 feedback=decision.get("feedback"),
                 scope=decision.get("scope", "once"),
                 decided_by=self._user_id,
+                decided_at=datetime.now(UTC),
             )
 
     async def run(self, conv: str, tasks: list[tuple[str, str]], resume: Any | None = None) -> list:

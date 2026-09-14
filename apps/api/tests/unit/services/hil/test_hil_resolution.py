@@ -593,8 +593,10 @@ class TestHILWaitBenchmarks:
     """Dispatch measures what the user waited and what the system added."""
 
     async def test_dispatch_measures_user_wait_and_dispatch_lag(self, resume: Any) -> None:
-        now = datetime.now(UTC)
-        record = make_record(created_at=now - timedelta(seconds=30), decided_at=now)
+        """A real decision arrives on a PENDING record: ``decided_at`` is stamped by the
+        transition itself, so the measurement must not depend on a pre-decided fixture."""
+        record = make_record(created_at=datetime.now(UTC) - timedelta(seconds=30))
+        assert record.decided_at is None
         wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
         wait_sum_before = REGISTRY.get_sample_value("hil_user_wait_seconds_sum", {}) or 0.0
         lag_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) or 0.0

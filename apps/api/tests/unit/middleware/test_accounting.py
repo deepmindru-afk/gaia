@@ -367,8 +367,38 @@ async def test_overlapping_stamps_do_not_clobber() -> None:
 
     assert record.await_args_list[0].kwargs["context"].duration_ms == 50.12
     assert record.await_args_list[1].kwargs["context"].duration_ms == 50.12
-    assert mw._invoke_ms.get("executor_conv-1") in (None, [])
-    assert mw._start_ts.get("executor_conv-1") in (None, [])
+    assert "executor_conv-1" not in mw._invoke_ms
+    assert "executor_conv-1" not in mw._start_ts
+
+
+async def test_a_raised_model_call_leaves_no_stamp_behind() -> None:
+    """When the provider call raises, the graph aborts and ``aafter_model`` never
+    runs — nothing consumes the stamps ``abefore_model``/``awrap_model_call``
+    pushed. Left in place they grow one entry per failure on a process-lifetime
+    instance, and the next successful call on the thread pops the stale one and
+    reports a latency that belongs to the failed call."""
+    config_patch, cost_patch, usage_patch = _accounting_env(_LEDGER_CONFIG)
+    mw = LLMAccountingMiddleware(agent_name="comms_agent")
+
+    async def _handler(_request: Any) -> Any:
+        raise RuntimeError("provider down")
+
+    with (
+        config_patch,
+        cost_patch,
+        usage_patch,
+        patch.object(
+            accounting,
+            "get_budget_stop_reason",
+            AsyncMock(return_value=BudgetCheck(stop_reason=None, plan_type=None, spent_usd=None)),
+        ),
+    ):
+        await mw.abefore_model({"messages": []}, None)
+        with pytest.raises(RuntimeError):
+            await mw.awrap_model_call(_model_request(), _handler)
+
+    assert mw._invoke_ms == {}
+    assert mw._start_ts == {}
 
 
 async def test_metered_call_observes_llm_call_histogram() -> None:
@@ -615,7 +645,7 @@ async def test_handoff_latency_is_zero_when_the_pre_hook_never_ran() -> None:
 async def test_the_start_timestamp_is_consumed_by_the_call_it_belongs_to() -> None:
     mw = LLMAccountingMiddleware(agent_name="a")
     await _call(mw, _ai())
-    assert mw._start_ts.get("conv-1") in (None, [])  # popped, not left to accumulate
+    assert "conv-1" not in mw._start_ts  # key dropped, not left to accumulate
 
 
 # --- step index --------------------------------------------------------------- #

@@ -211,6 +211,7 @@ async def cancel_conversation_approvals(conversation_id: str, user_id: str) -> l
             feedback=CANCELLED_FEEDBACK,
             scope="once",
             decided_by=user_id,
+            decided_at=datetime.now(UTC),
         ):
             continue
         await clear_resume_item(record.approval_id)
@@ -250,6 +251,7 @@ async def _resolve_or_close(
             feedback=feedback,
             scope="once",
             decided_by=None,
+            decided_at=datetime.now(UTC),
         )
         return
     await _resolve_record(record, user_id=user_id, kind=kind, feedback=feedback)
@@ -293,16 +295,29 @@ async def _resolve_record(
             raise ApprovalNotResumableError()
 
     decided_by = None if kind == "timeout" else user_id
+    decided_at = datetime.now(UTC)
     transitioned = await mark_decided(
         record.approval_id,
         _TERMINAL_STATUS[kind],
         feedback=feedback,
         scope=scope,
         decided_by=decided_by,
+        decided_at=decided_at,
     )
     if not transitioned:
         # Someone (or the sweep) already decided this one. Do not resume twice.
         raise ApprovalRequestNotFoundError()
+    # The loaded record predates the transition; carry the decided image forward so
+    # the resume dispatch (and the caller) see the decision, not the pending snapshot.
+    record = record.model_copy(
+        update={
+            "status": _TERMINAL_STATUS[kind],
+            "feedback": feedback,
+            "scope": scope,
+            "decided_by": decided_by,
+            "decided_at": decided_at,
+        }
+    )
 
     log.set(hil={"approval_id": record.approval_id, "decision": kind, "tool": record.tool_name})
     resume_status = "denied" if kind == "abandon" else _TERMINAL_STATUS[kind]

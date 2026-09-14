@@ -313,15 +313,12 @@ async def _run_chat_stream(
         # The turn reached a terminal state: capture the milestone. Cancelled
         # turns finish the same happy path (the driver ends the stream with a
         # `cancelled` nostream marker), so branch on the flag the loop recorded.
-        state.delegated, state.queued = _executor_delegation(stream_id)
-        _stamp_turn_latencies(state)
-        if state.t0_perf is not None:
-            state.e2e_full_ms = round((time.perf_counter() - state.t0_perf) * 1000.0, 2)
-        _observe_turn_latencies(
+        _close_turn_timings(
+            stream_id,
+            state,
             source=source,
             voice_mode=body.voice_mode,
-            state=state,
-            cancelled=state.is_cancelled,
+            status="cancelled" if state.is_cancelled else "success",
         )
         if user_id:
             event_props: dict[str, Any] = {
@@ -354,6 +351,11 @@ async def _run_chat_stream(
         # Persist the SAME user-facing text we stream (friendly for a recursion
         # stop), not the raw exception — a reload shows what the user saw.
         state.error = await _handle_stream_error(stream_id, e)
+        # A failed turn is the slow/broken one the SLOs exist to catch: it must
+        # land in the histograms as an error, not vanish from them.
+        _close_turn_timings(
+            stream_id, state, source=source, voice_mode=body.voice_mode, status="error"
+        )
     finally:
         await _finalize_stream(stream_id, body, user, conversation_id, state, artifact_task)
 
@@ -694,11 +696,21 @@ def _executor_delegation(stream_id: str) -> tuple[bool, bool]:
     return (session.executor_spawned or queued, queued)
 
 
+def _close_turn_timings(
+    stream_id: str, state: _StreamState, *, source: str | None, voice_mode: bool, status: str
+) -> None:
+    """Fill the turn's terminal timings and emit them under ``status``."""
+    state.delegated, state.queued = _executor_delegation(stream_id)
+    _stamp_turn_latencies(state)
+    if state.t0_perf is not None:
+        state.e2e_full_ms = round((time.perf_counter() - state.t0_perf) * 1000.0, 2)
+    _observe_turn_latencies(source=source, voice_mode=voice_mode, state=state, status=status)
+
+
 def _observe_turn_latencies(
-    *, source: str | None, voice_mode: bool, state: _StreamState, cancelled: bool
+    *, source: str | None, voice_mode: bool, state: _StreamState, status: str
 ) -> None:
     """Emit the turn's Prometheus observations. Never raises."""
-    status = "cancelled" if cancelled else "success"
     label_source = source or "unknown"
     if state.ttft_perf is not None and state.t0_perf is not None:
         observe_chat_ttft(

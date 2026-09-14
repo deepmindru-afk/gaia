@@ -56,12 +56,14 @@ class HilApprovalRepository(MongoRepository[HILApprovalRecord, HILApprovalUpdate
         feedback: str | None,
         scope: str,
         decided_by: str | None,
+        decided_at: datetime,
     ) -> bool:
         """Transition a ``pending`` record to a terminal status, exactly once.
 
         Conditional on the current status so a duplicate or racing decision
         cannot double-resolve: only the call that performed the transition
-        returns ``True``.
+        returns ``True``. ``decided_at`` is the caller's stamp so the record it
+        holds in memory and the one persisted agree on when the wait ended.
         """
         updated = await self._apply_raw_update(
             {"_id": approval_id, "status": HILApprovalStatus.PENDING},
@@ -71,7 +73,7 @@ class HilApprovalRepository(MongoRepository[HILApprovalRecord, HILApprovalUpdate
                     "feedback": feedback,
                     "scope": scope,
                     "decided_by": decided_by,
-                    "decided_at": datetime.now(UTC),
+                    "decided_at": decided_at,
                 }
             },
             scope=REPO_GLOBAL_SCOPE,

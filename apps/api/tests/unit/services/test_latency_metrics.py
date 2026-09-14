@@ -50,3 +50,30 @@ def test_labelless_histograms_observe_directly():
     m.observe_hil_dispatch_lag(0.5)
     m.observe_transport_redis_publish(0.01)
     assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == before + 1
+
+
+def test_tool_call_histogram_resolves_a_call_that_ran_to_the_timeout():
+    """Tools run for minutes (the generic guard is 120s; handoff/subagent/executor
+    calls are exempt from it entirely). A bucket ceiling below that folds every
+    slow call into +Inf and the p95 stops meaning anything."""
+    from prometheus_client import REGISTRY
+
+    from app.constants.llm import TOOL_EXECUTION_TIMEOUT_SECONDS
+    from app.services import latency_metrics as m
+
+    labels = {"tool_name": "bucket-probe", "status": "success"}
+    inf_before = (
+        REGISTRY.get_sample_value("tool_call_seconds_bucket", {**labels, "le": "+Inf"}) or 0.0
+    )
+    resolved_before = (
+        REGISTRY.get_sample_value("tool_call_seconds_bucket", {**labels, "le": "300.0"}) or 0.0
+    )
+    m.observe_tool_call(TOOL_EXECUTION_TIMEOUT_SECONDS, tool_name="bucket-probe", status="success")
+    assert (
+        REGISTRY.get_sample_value("tool_call_seconds_bucket", {**labels, "le": "+Inf"})
+        == inf_before + 1
+    )
+    assert (
+        REGISTRY.get_sample_value("tool_call_seconds_bucket", {**labels, "le": "300.0"})
+        == resolved_before + 1
+    )

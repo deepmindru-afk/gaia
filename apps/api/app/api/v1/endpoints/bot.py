@@ -554,9 +554,7 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
                 )
                 yield f"data: {json.dumps({'error': 'Stream error occurred'})}\n\n"
             finally:
-                observe_sse_delivery(
-                    time.perf_counter() - delivery_start, status=delivery_status
-                )
+                observe_sse_delivery(time.perf_counter() - delivery_start, status=delivery_status)
 
     # The translator above drops every web-only frame, so the socket can go
     # quiet for minutes while the turn is busy. with_heartbeat guarantees a

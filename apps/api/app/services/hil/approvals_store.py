@@ -118,6 +118,7 @@ async def mark_decided(
     feedback: str | None,
     scope: str,
     decided_by: str | None,
+    decided_at: datetime,
 ) -> bool:
     """Transition a ``pending`` record to a terminal status, exactly once.
 
@@ -126,7 +127,12 @@ async def mark_decided(
     one-time resolution before resuming the paused run.
     """
     return await hil_approval_repository.mark_decided(
-        approval_id, status, feedback=feedback, scope=scope, decided_by=decided_by
+        approval_id,
+        status,
+        feedback=feedback,
+        scope=scope,
+        decided_by=decided_by,
+        decided_at=decided_at,
     )
 
 

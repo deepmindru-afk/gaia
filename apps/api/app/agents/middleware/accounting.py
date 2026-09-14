@@ -138,6 +138,22 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         self._step_counts[thread_id] = n
         return n
 
+    @staticmethod
+    def _pop_stamp(stamps: dict[str, list[float]], thread_id: str) -> float | None:
+        """Pop this thread's newest stamp, dropping the key once the stack empties.
+
+        These dicts live on a process-lifetime middleware instance keyed by
+        thread, so a pop that leaves an empty list would grow one dead key per
+        conversation forever.
+        """
+        stack = stamps.get(thread_id)
+        if not stack:
+            return None
+        value = stack.pop()
+        if not stack:
+            del stamps[thread_id]
+        return value
+
     def _emit_budget_stop_card(self, stop_reason: str, plan_type: PlanType) -> None:
         """Stream a ``rate_limit_data`` frame so the frontend renders RateLimitCard
         instead of the bare stop text. Same helper ``with_rate_limiting`` uses in
@@ -278,11 +294,17 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         # waited for, and stashed for the ``aafter_model`` that meters it.
         invoke_start = time.monotonic()
         try:
-            return await handler(request)
-        finally:
-            self._invoke_ms.setdefault(thread_id, []).append(
-                round((time.monotonic() - invoke_start) * 1000, 2)
-            )
+            response = await handler(request)
+        except BaseException:
+            # The graph aborts on a raised call, so the ``aafter_model`` that
+            # would consume this call's stamps never runs. Drop them here or
+            # the next call on this thread meters the failed one's timing.
+            self._pop_stamp(self._start_ts, thread_id)
+            raise
+        self._invoke_ms.setdefault(thread_id, []).append(
+            round((time.monotonic() - invoke_start) * 1000, 2)
+        )
+        return response
 
     async def aafter_model(
         self,
@@ -336,8 +358,7 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         provider_cost = extract_message_cost(ai_msg)
         generation_id = extract_generation_id(ai_msg)
         workflow_id = configurable.get("workflow_id")
-        invoke_stack = self._invoke_ms.get(thread_id)
-        invoke_ms = invoke_stack.pop() if invoke_stack else None
+        invoke_ms = self._pop_stamp(self._invoke_ms, thread_id)
         total_cost = await record_llm_call(
             user_id=str(user_id) if user_id else None,
             model_name=str(model_name),
@@ -372,8 +393,7 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
             observe_llm_call(invoke_ms / 1000.0, model=str(model_name), agent=self.agent_name)
 
         step_index = self._next_step(thread_id)
-        start_stack = self._start_ts.get(thread_id)
-        start = start_stack.pop() if start_stack else None
+        start = self._pop_stamp(self._start_ts, thread_id)
         handoff_latency_ms = (
             round((time.monotonic() - start) * 1000, 2) if start is not None else 0.0
         )
@@ -471,9 +491,7 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         # Cost calc is async-only; in sync mode we still want the HWM signal.
         # Pop the before_model stamp so a mixed sync/async thread never leaks it.
         thread_id = self._thread_id(current_run_config())
-        start_stack = self._start_ts.get(thread_id)
-        if start_stack:
-            start_stack.pop()
+        self._pop_stamp(self._start_ts, thread_id)
         step_index = self._next_step(thread_id)
         hwm_cap = max(1, int(self.recursion_limit * RECURSION_HWM_FRACTION))
         if step_index >= hwm_cap and thread_id not in self._hwm_emitted:

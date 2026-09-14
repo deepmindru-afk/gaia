@@ -7,6 +7,7 @@ delivery/lock boundaries mocked, so the assertions cover the timing +
 PostHog wiring only.
 """
 
+import asyncio
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,6 +18,7 @@ from app.agents.core.background import executor_runner as er, session as sess
 from app.agents.core.background.executor_runner import _ExecutorResult, run_executor_background
 from app.agents.core.background.session import ExecutorRun, RunKind, get_session, teardown_session
 from app.agents.tools import executor_tool as et
+from app.constants.executor import EXECUTOR_PAUSED
 
 
 def _count(name: str, labels: dict[str, str]) -> float:
@@ -190,19 +192,31 @@ class TestExecutorRunLatency:
         sess._sessions.clear()
 
     async def _background(
-        self, run: ExecutorRun, *, first_frame_at: float | None = None
+        self,
+        run: ExecutorRun,
+        *,
+        first_frame_at: float | None = None,
+        result: _ExecutorResult | None = None,
+        record_pause: bool | AsyncMock = True,
     ) -> MagicMock:
         """Drive run_executor_background with execute stubbed and delivery/lock
         boundaries mocked. Returns the PostHog capture mock."""
         if first_frame_at is not None:
             session = sess.create_session(run.stream_id, run.kind)
             session.executor_first_frame_perf = first_frame_at
+        pause_recorder = (
+            record_pause
+            if isinstance(record_pause, AsyncMock)
+            else AsyncMock(return_value=record_pause)
+        )
         with (
             patch.object(
                 er,
                 "_execute_executor",
-                AsyncMock(return_value=_ExecutorResult("done", "final")),
+                AsyncMock(return_value=result or _ExecutorResult("done", "final")),
             ),
+            patch.object(er, "_record_pause", pause_recorder),
+            patch.object(er, "_finalize_paused_run", AsyncMock()),
             patch.object(er, "_deliver_terminal_outcome", AsyncMock()),
             patch.object(er, "release_lock_if_owned", AsyncMock()),
             patch.object(er, "_close_queued_stream", AsyncMock()),
@@ -214,6 +228,87 @@ class TestExecutorRunLatency:
                 run=run, task="do the thing", configurable={"conversation_source": "web"}
             )
         return mock_capture
+
+    async def test_pause_record_failure_labels_the_active_span_error(self) -> None:
+        """A pause whose resume context could not be written is failed as an
+        error, so its active span must say ``error`` too — not the pre-pause
+        ``paused`` — to agree with the E2E/run-total labels finalize emits."""
+        run = _run("exec-pause-lost", t_dispatch_perf=time.perf_counter())
+        error_before = _count("executor_active_seconds", {"status": "error"})
+        paused_before = _count("executor_active_seconds", {"status": "paused"})
+
+        mock_capture = await self._background(
+            run,
+            result=_ExecutorResult("", EXECUTOR_PAUSED, ("appr-1",)),
+            record_pause=False,
+        )
+
+        assert _count("executor_active_seconds", {"status": "error"}) == error_before + 1
+        assert _count("executor_active_seconds", {"status": "paused"}) == paused_before
+        failed = [c for c in mock_capture.call_args_list if c.args[1] == "agent:run_failed"]
+        assert len(failed) == 1
+
+    async def test_recorded_pause_labels_the_active_span_paused(self) -> None:
+        """A pause that records cleanly stays ``paused`` on the active span."""
+        run = _run("exec-pause-ok", t_dispatch_perf=time.perf_counter())
+        paused_before = _count("executor_active_seconds", {"status": "paused"})
+        error_before = _count("executor_active_seconds", {"status": "error"})
+
+        await self._background(
+            run,
+            result=_ExecutorResult("", EXECUTOR_PAUSED, ("appr-1",)),
+            record_pause=True,
+        )
+
+        assert _count("executor_active_seconds", {"status": "paused"}) == paused_before + 1
+        assert _count("executor_active_seconds", {"status": "error"}) == error_before
+
+    async def test_active_histogram_agrees_with_the_active_ms_it_reports(self) -> None:
+        """The histogram sample and the ``executor_active_ms`` sent to PostHog/Loki
+        are the same measurement: recording the pause is bookkeeping I/O after the
+        run went idle, and must not stretch one of them but not the other."""
+        run = _run("exec-slow-pause-record", t_dispatch_perf=time.perf_counter())
+        sum_before = (
+            REGISTRY.get_sample_value("executor_active_seconds_sum", {"status": "error"}) or 0.0
+        )
+
+        async def _slow_pause_record(*_args: Any, **_kwargs: Any) -> bool:
+            await asyncio.sleep(0.3)
+            return False
+
+        mock_capture = await self._background(
+            run,
+            result=_ExecutorResult("", EXECUTOR_PAUSED, ("appr-1",)),
+            record_pause=AsyncMock(side_effect=_slow_pause_record),
+        )
+
+        failed = [c for c in mock_capture.call_args_list if c.args[1] == "agent:run_failed"]
+        active_ms = failed[0].args[2]["executor_active_ms"]
+        observed_s = (
+            REGISTRY.get_sample_value("executor_active_seconds_sum", {"status": "error"})
+            - sum_before
+        )
+        assert abs(observed_s - active_ms / 1000.0) < 0.05
+
+    async def test_queue_wait_is_labelled_by_whether_the_run_was_queued(self) -> None:
+        """A live run's dispatch->start gap is spawn delay, not queue wait; the two
+        must be separable or a real backlog hides behind thousands of ~0s samples."""
+        live_before = _count("executor_queue_wait_seconds", {"source": "web", "queued": "false"})
+        queued_before = _count("executor_queue_wait_seconds", {"source": "web", "queued": "true"})
+
+        await self._background(_run("exec-live-qw", t_dispatch_perf=time.perf_counter()))
+        await self._background(
+            _run("exec-queued-qw", kind=RunKind.QUEUED, t_dispatch_perf=time.perf_counter())
+        )
+
+        assert (
+            _count("executor_queue_wait_seconds", {"source": "web", "queued": "false"})
+            == live_before + 1
+        )
+        assert (
+            _count("executor_queue_wait_seconds", {"source": "web", "queued": "true"})
+            == queued_before + 1
+        )
 
     async def test_live_run_reports_queue_wait_ttft_and_e2e(self) -> None:
         stream_id = "exec-live"
@@ -262,8 +357,7 @@ class TestExecutorRunLatency:
         e2e_before = _count("executor_e2e_seconds", {"status": "success", "queued": "false"})
         mock_capture = await self._background(run)
         assert (
-            _count("executor_e2e_seconds", {"status": "success", "queued": "false"})
-            == e2e_before
+            _count("executor_e2e_seconds", {"status": "success", "queued": "false"}) == e2e_before
         )
         completed = [
             call for call in mock_capture.call_args_list if call.args[1] == "agent:run_completed"

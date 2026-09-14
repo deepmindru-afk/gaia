@@ -18,6 +18,7 @@ from datetime import datetime
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from prometheus_client import REGISTRY
 import pytest
 
 from app.models.chat_models import ConversationModel
@@ -791,6 +792,47 @@ class TestRunChatStreamBackground:
             )
 
         sm.cleanup.assert_called_once_with("stream_6")
+
+    async def test_failed_turn_is_observed_with_error_status(self, test_user, existing_conv_body):
+        """A turn that raises is exactly the slow/broken one the SLOs exist for: it
+        must land in ``chat_turn_total`` and the E2E histogram as ``status=error``,
+        not vanish from both."""
+        labels_total = {"source": "web", "delegated": "false", "status": "error"}
+        labels_e2e = {
+            "source": "web",
+            "voice_mode": "false",
+            "delegated": "false",
+            "status": "error",
+        }
+        total_before = REGISTRY.get_sample_value("chat_turn_total", labels_total) or 0.0
+        e2e_before = REGISTRY.get_sample_value("chat_e2e_full_seconds_count", labels_e2e) or 0.0
+        sm = _make_stream_manager_mock()
+        sm.get_progress = AsyncMock(return_value=None)
+
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(side_effect=RuntimeError("agent exploded")),
+            ),
+            patch("app.services.chat.stream.save_conversation_async", new=AsyncMock()),
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+            patch("app.services.chat.stream.capture_event") as mock_capture,
+        ):
+            await run_chat_stream_background(
+                stream_id="stream_error_observed",
+                body=existing_conv_body,
+                user=test_user,
+                conversation_id="conv_existing_123",
+                source="web",
+            )
+
+        assert REGISTRY.get_sample_value("chat_turn_total", labels_total) == total_before + 1
+        assert (
+            REGISTRY.get_sample_value("chat_e2e_full_seconds_count", labels_e2e) == e2e_before + 1
+        )
+        # A failed turn is not a completed one: no completion milestone for it.
+        mock_capture.assert_not_called()
 
     async def test_error_chunk_published_before_set_error(self, test_user, existing_conv_body):
         """set_error() sends STREAM_ERROR_SIGNAL which breaks the subscriber.

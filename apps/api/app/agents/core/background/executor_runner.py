@@ -159,6 +159,7 @@ async def run_executor_background(
                 observe_executor_queue_wait(
                     queue_wait_s,
                     source=str(configurable.get("conversation_source") or "unknown"),
+                    queued=queued,
                 )
 
         # One lifecycle event per run segment; a resumed run re-enters here.
@@ -178,18 +179,6 @@ async def run_executor_background(
                 result = await _execute_executor(task, configurable, run.stream_id, resume)
             active_ms = round(elapsed_active() * 1000.0, 2)
             result_text, result_type = result.text, result.type
-            # Cancellation is only known in finalize, but this span must agree
-            # with it — same flag read, one extra Redis lookup per run.
-            run_cancelled = bool(run.stream_id) and await StreamManager.is_cancelled(run.stream_id)
-            if result_type == "error":
-                active_status = "error"
-            elif result_type == EXECUTOR_PAUSED:
-                active_status = "paused"
-            elif run_cancelled:
-                active_status = "cancelled"
-            else:
-                active_status = "success"
-            observe_executor_active(elapsed_active(), status=active_status)
             ttft_ms = _executor_ttft_ms(run, run_start)
             if ttft_ms is not None:
                 observe_executor_ttft(ttft_ms / 1000.0, queued=queued)
@@ -210,6 +199,19 @@ async def run_executor_background(
                 # come. Fail the run instead: the lock is released, queued work drains, and the
                 # sweep closes the orphaned approval.
                 result_text, result_type = EXECUTOR_APPROVAL_LOST_MESSAGE, "error"
+            # Cancellation and the pause-record outcome are only known here, so
+            # read both after the pause decision: the span must carry the same
+            # status finalize records, not the pre-pause guess.
+            run_cancelled = bool(run.stream_id) and await StreamManager.is_cancelled(run.stream_id)
+            if result_type == "error":
+                active_status = "error"
+            elif result_type == EXECUTOR_PAUSED:
+                active_status = "paused"
+            elif run_cancelled:
+                active_status = "cancelled"
+            else:
+                active_status = "success"
+            observe_executor_active(active_ms / 1000.0, status=active_status)
             log.info(
                 f"{LogTag.AGENT} Background executor finished",
                 result_type=result_type,

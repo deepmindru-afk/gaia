@@ -8,7 +8,6 @@ call that parked on an approval nobody could answer.
 
 import asyncio
 from contextlib import ExitStack
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -461,9 +460,7 @@ class _ApprovalStore:
         record = self.records.get(approval_id)
         if record is None or record.status != "pending":
             return False
-        self.records[approval_id] = record.model_copy(
-            update={"status": status, "decided_at": datetime.now(UTC), **kwargs}
-        )
+        self.records[approval_id] = record.model_copy(update={"status": status, **kwargs})
         return True
 
     async def clear_resume_item(self, approval_id: str) -> None:

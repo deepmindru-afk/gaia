@@ -542,11 +542,6 @@ async def execute_subagent_stream(
             # langgraph's own overload return type does not express.
             stream_mode, payload = cast(tuple[str, Any], event)
             await _consume_stream_event(run, stream_mode, payload)
-    except GeneratorExit:
-        observe_subagent_run(
-            time.perf_counter() - segment_start, subagent_id=label, status="abandoned"
-        )
-        raise
     except Exception:
         observe_subagent_run(time.perf_counter() - segment_start, subagent_id=label, status="error")
         raise
