@@ -9,7 +9,10 @@ import {
   BOT_PLATFORM_ICONS,
   BOT_PLATFORM_LABELS,
 } from "@/config/botPlatforms";
-import { useUserSubscriptionStatus } from "@/features/pricing/hooks/usePricing";
+import {
+  useShouldPromptUpgrade,
+  useUserSubscriptionStatus,
+} from "@/features/pricing/hooks/usePricing";
 import {
   PhoneLinkModal,
   type PhoneLinkTarget,
@@ -98,6 +101,7 @@ export default function LinkedAccountsSettings() {
   // previous attempt's number into the session the user is now in.
   const connectAttemptRef = useRef(0);
   const { data: subscriptionStatus } = useUserSubscriptionStatus();
+  const shouldPromptUpgrade = useShouldPromptUpgrade();
   const openPricingModal = usePricingModalStore((s) => s.openModal);
 
   const clearPollTimer = () => {
@@ -287,7 +291,7 @@ export default function LinkedAccountsSettings() {
               }
             >
               <div className="flex items-center gap-3">
-                {platform.premium && !subscriptionStatus?.is_subscribed && (
+                {platform.premium && shouldPromptUpgrade && (
                   <Chip size="sm" variant="flat" color="warning">
                     Pro
                   </Chip>

@@ -60,6 +60,19 @@ import {
 // Pre-ready setup (must run before app.ready)
 // ---------------------------------------------------------------------------
 
+// A GUI app must never die because a log write failed. When stdout/stderr is a
+// pipe whose reader has gone away (launched from a terminal that was closed, or
+// a parent process that exited), the main process's own console.* writes emit
+// EPIPE/EIO on the stream — and with no listener that becomes an uncaught
+// exception that crashes the app with a dialog (seen from console.error in
+// loadRoute). Swallow those benign pipe-gone errors; let anything else surface.
+const ignoreBrokenPipe = (err: NodeJS.ErrnoException): void => {
+  if (err.code === "EPIPE" || err.code === "EIO") return;
+  throw err;
+};
+process.stdout.on("error", ignoreBrokenPipe);
+process.stderr.on("error", ignoreBrokenPipe);
+
 /** GPU acceleration and performance flags. */
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
@@ -109,6 +122,20 @@ function createBackgroundSurfaces(): void {
   }
 }
 
+/** Delay after the main window appears before spinning up the hidden background
+ * surfaces. Each is a full renderer loading its own route; starting them the
+ * instant the user first sees the window steals CPU and embedded-server time
+ * from the visible window's first interaction (chat load). A short defer keeps
+ * that first moment snappy — the popup/wake-word are not needed immediately. */
+const BACKGROUND_SURFACES_DELAY_MS = 2_000;
+
+/** Schedule {@link createBackgroundSurfaces} shortly after the main window is on
+ * screen, deferred so it does not contend with first interaction. Idempotent via
+ * the guard in createBackgroundSurfaces. */
+function scheduleBackgroundSurfaces(): void {
+  setTimeout(createBackgroundSurfaces, BACKGROUND_SURFACES_DELAY_MS);
+}
+
 /**
  * Boot the visible surfaces — splash, embedded Next.js server, main window,
  * popup shortcut, and the splash→main fallback. Idempotent: the normal launch
@@ -153,7 +180,7 @@ function bootMainSurface(): void {
       const pendingUrl = showMainWindow();
       if (pendingUrl) handleDeepLink(pendingUrl, getMainWindow());
     }
-    createBackgroundSurfaces();
+    scheduleBackgroundSurfaces();
   }, FALLBACK_SHOW_TIMEOUT_MS);
 }
 
@@ -245,10 +272,24 @@ if (!gotTheLock) {
     registerIpcHandlers(() => {
       const pendingUrl = showMainWindow();
       if (pendingUrl) handleDeepLink(pendingUrl, getMainWindow());
-      createBackgroundSurfaces();
+      scheduleBackgroundSurfaces();
     });
 
     fixSessionCookies();
+
+    // Boot the splash + Next server + main window FIRST — before the bridge/tray
+    // setup below, which does synchronous disk reads (tray icon, stored bridge
+    // credentials) and a macOS login-item system call. Those are independent of
+    // the window (createBridgeTray only stores the openMainSurface callback), so
+    // running them after boot lets the splash paint and the server spawn sooner.
+    //
+    // A `--hidden` login launch stays tray-only: no splash, no window, no Next
+    // server, and (macOS) no Dock icon until the user opens GAIA.
+    if (launchedHidden()) {
+      if (process.platform === "darwin") app.dock?.hide();
+    } else {
+      bootMainSurface();
+    }
 
     // Watch the session cookie so signing out tears down the bridge device (R5),
     // and reconcile the stored binding against the current session on launch.
@@ -260,14 +301,6 @@ if (!gotTheLock) {
     createBridgeTray(openMainSurface);
     applyLaunchAtLogin(getDesktopSettings().launchAtLogin);
     void maybeAutoStartBridge();
-
-    // A `--hidden` login launch stays tray-only: no splash, no window, no Next
-    // server, and (macOS) no Dock icon until the user opens GAIA.
-    if (launchedHidden()) {
-      if (process.platform === "darwin") app.dock?.hide();
-    } else {
-      bootMainSurface();
-    }
 
     // macOS Dock click / relaunch: open (or re-create) the main window. The
     // hidden background surfaces mean "no windows left" never happens, so this
