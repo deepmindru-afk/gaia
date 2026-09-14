@@ -235,7 +235,6 @@ apps/api/app/services/files/store.py	TB002
 apps/api/app/services/files/summaries.py	TB002
 apps/api/app/services/gaia_task_files.py	TB002
 apps/api/app/services/hil/approvals_store.py	TB001
-apps/api/app/services/hil/bridge.py	TB001
 apps/api/app/services/hil/classification.py	TB002
 apps/api/app/services/hil/conversational.py	TB002
 apps/api/app/services/hil/gate.py	TB002
