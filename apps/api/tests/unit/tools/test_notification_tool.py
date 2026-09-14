@@ -540,9 +540,10 @@ class TestSendNotificationChannels:
         )
 
         assert result["success"] is False
-        assert result["error"].startswith("channels is required")
-        for channel in NOTIFICATION_CHANNEL_TYPES:
-            assert channel in result["error"]
+        assert result["error"].startswith(
+            f"channels is required: specify which channel(s) to notify "
+            f"({', '.join(NOTIFICATION_CHANNEL_TYPES)})."
+        )
         mock_service.create_notification.assert_not_called()
 
     @patch(f"{MODULE}.notification_service")
