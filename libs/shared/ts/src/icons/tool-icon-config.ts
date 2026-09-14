@@ -437,6 +437,14 @@ export const toolIconConfigs: Record<string, ToolIconConfig> = {
     iconColorRaw: "#4ade80",
     isImage: false,
   },
+  account: {
+    icon: "UserCircleIcon",
+    bgColor: "bg-blue-500/20 backdrop-blur",
+    iconColor: "text-blue-400",
+    bgColorRaw: "rgba(59, 130, 246, 0.2)",
+    iconColorRaw: "#60a5fa",
+    isImage: false,
+  },
   general: {
     icon: "ToolsIcon",
     bgColor: "bg-gray-500/20 backdrop-blur",

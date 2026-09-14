@@ -105,3 +105,21 @@ export const useUserSubscriptionStatus = () => {
     retry: false, // Don't retry on auth failures
   });
 };
+
+/**
+ * Whether to surface an "Upgrade to Pro" CTA. True only once the API has
+ * confirmed the user is on the free plan; while the status is loading
+ * (`undefined`) or the user is subscribed it is false, so upgrade prompts never
+ * flash before the subscription status resolves. Use this everywhere an upgrade
+ * CTA is gated instead of testing `is_subscribed` truthiness (which defaults to
+ * showing the prompt while the query is pending).
+ */
+export const useShouldPromptUpgrade = (): boolean => {
+  const { data, isError, isLoading } = useUserSubscriptionStatus();
+  // A failed status request must not hide upgrade paths for the session:
+  // fail open so a transient error still surfaces the upgrade flow. Loading
+  // stays fail-closed so CTAs never flash before the status resolves.
+  if (isError) return true;
+  if (isLoading || !data) return false;
+  return data.is_subscribed === false;
+};

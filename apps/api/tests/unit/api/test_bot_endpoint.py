@@ -8,13 +8,22 @@ import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
 from httpx import AsyncClient
 import pytest
 
-from app.api.v1.endpoints.bot import _bot_rate_limit_notice, bot_chat_stream
+from app.api.v1.endpoints.bot import (
+    _bot_data_payload,
+    _bot_rate_limit_notice,
+    _prepare_bot_conversation,
+    _resolve_bot_stream_user,
+    _start_bot_stream_task,
+    _translate_bot_data_chunk,
+    bot_chat_stream,
+)
 from app.core.stream_manager import with_heartbeat
 from app.models.bot_models import BotChatRequest
 from app.models.payment_models import (
@@ -565,7 +574,7 @@ class TestBotChatStream:
         mock_capture.assert_called_once_with(
             "uid1",
             AnalyticsEvents.CHAT_MESSAGE_SUBMITTED,
-            {"platform": "discord", "has_files": False},
+            {"source": "discord", "has_files": False},
         )
 
     # The four the body never touches are patched with `new=`, which injects no
@@ -621,7 +630,7 @@ class TestBotChatStream:
         mock_capture.assert_called_once_with(
             "uid1",
             AnalyticsEvents.CHAT_MESSAGE_SUBMITTED,
-            {"platform": "discord", "has_files": True},
+            {"source": "discord", "has_files": True},
         )
 
     @patch("app.api.v1.endpoints.bot.BotService.enforce_rate_limit", new_callable=AsyncMock)
@@ -1427,3 +1436,327 @@ class TestBotRateLimitNotice:
     async def test_other_tool_cards_are_left_alone(self) -> None:
         chunk = {"tool_data": {"tool_name": "memory_data", "data": {}}}
         assert await _bot_rate_limit_notice(chunk, "user_1") is None
+
+
+class TestBotStreamHelpers:
+    """Direct tests for the bot_chat_stream helpers.
+
+    The endpoint tests above cover the gates; these pin the extraction sites —
+    every forwarded argument, the appended history turn, the per-frame
+    translation contract (frame, done), and the stream-failure callback — so
+    no refactor can silently change what crosses each boundary.
+    """
+
+    @staticmethod
+    def _body(**overrides: object) -> BotChatRequest:
+        payload: dict[str, object] = {
+            "message": "hello",
+            "platform": "discord",
+            "platform_user_id": "u1",
+        }
+        payload.update(overrides)
+        return BotChatRequest.model_validate(payload)
+
+    async def test_prepare_forwards_session_args_and_appends_user_turn(self) -> None:
+        user = {"user_id": "uid1", "_id": "uid1"}
+        with (
+            patch("app.api.v1.endpoints.bot.BotService") as bot_svc,
+        ):
+            bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
+            bot_svc.load_conversation_history = AsyncMock(
+                return_value=[{"role": "assistant", "content": "hey"}]
+            )
+            body = self._body(channel_id="c1", is_dm=True)
+            conversation_id, request = await _prepare_bot_conversation(body, user, "uid1")
+
+        assert conversation_id == "conv-1"
+        bot_svc.get_or_create_session.assert_awaited_once_with(
+            "discord", "u1", "c1", user, is_dm=True
+        )
+        bot_svc.load_conversation_history.assert_awaited_once_with("conv-1", "uid1")
+        assert request.messages[-1] == {"role": "user", "content": "hello"}
+        assert request.messages[0] == {"role": "assistant", "content": "hey"}
+        assert request.conversation_id == "conv-1"
+        assert request.fileIds == []
+        assert request.fileData == []
+
+    async def test_prepare_passes_attachments_through(self) -> None:
+        with patch("app.api.v1.endpoints.bot.BotService") as bot_svc:
+            bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
+            bot_svc.load_conversation_history = AsyncMock(return_value=[])
+            _, request = await _prepare_bot_conversation(
+                self._body(
+                    file_ids=["f1"],
+                    file_data=[
+                        {
+                            "fileId": "f1",
+                            "url": "https://cdn.example/f1",
+                            "filename": "a.txt",
+                        }
+                    ],
+                ),
+                {"user_id": "uid1"},
+                "uid1",
+            )
+
+        assert request.fileIds == ["f1"]
+        assert request.fileData is not None and len(request.fileData) == 1
+        assert request.fileData[0].fileId == "f1"
+
+    async def test_start_returns_token_and_forwards_every_kwarg(self) -> None:
+        user = {"user_id": "uid1"}
+        body = self._body()
+        with (
+            patch(
+                "app.api.v1.endpoints.bot.create_bot_session_token",
+                new=MagicMock(return_value="tok"),
+            ) as mock_token,
+            patch("app.api.v1.endpoints.bot.stream_manager") as mock_sm,
+            patch("app.api.v1.endpoints.bot.spawn_background_task") as mock_spawn,
+            patch("app.api.v1.endpoints.bot.run_chat_stream_background") as mock_bg,
+        ):
+            mock_sm.start_stream = AsyncMock()
+            token = await _start_bot_stream_task(
+                stream_id="s1",
+                conversation_id="conv-1",
+                user_id="uid1",
+                user=user,
+                message_request=MagicMock(),
+                body=body,
+            )
+
+        assert token == "tok"
+        mock_token.assert_called_once_with(
+            user_id="uid1",
+            platform="discord",
+            platform_user_id="u1",
+            expires_minutes=15,
+        )
+        mock_sm.start_stream.assert_awaited_once_with("s1", "conv-1", "uid1")
+        _, kwargs = mock_bg.call_args
+        assert kwargs["stream_id"] == "s1"
+        assert kwargs["conversation_id"] == "conv-1"
+        assert kwargs["user"] == user
+        assert kwargs["source"] == "discord"
+        assert callable(mock_spawn.call_args.kwargs["on_done"])
+
+    async def test_stream_failure_callback_logs_only_real_failures(self) -> None:
+        with (
+            patch(
+                "app.api.v1.endpoints.bot.create_bot_session_token",
+                new=MagicMock(return_value="tok"),
+            ),
+            patch("app.api.v1.endpoints.bot.stream_manager") as mock_sm,
+            patch("app.api.v1.endpoints.bot.spawn_background_task") as mock_spawn,
+            patch("app.api.v1.endpoints.bot.run_chat_stream_background"),
+            patch("app.api.v1.endpoints.bot.log") as mock_log,
+        ):
+            mock_sm.start_stream = AsyncMock()
+            await _start_bot_stream_task(
+                stream_id="s1",
+                conversation_id="conv-1",
+                user_id="uid1",
+                user={"user_id": "uid1"},
+                message_request=MagicMock(),
+                body=self._body(),
+            )
+            on_done = mock_spawn.call_args.kwargs["on_done"]
+
+            cancelled = MagicMock()
+            cancelled.cancelled.return_value = True
+            on_done(cancelled)
+            mock_log.error.assert_not_called()
+
+            clean = MagicMock()
+            clean.cancelled.return_value = False
+            clean.exception.return_value = None
+            on_done(clean)
+            mock_log.error.assert_not_called()
+
+            failed = MagicMock()
+            failed.cancelled.return_value = False
+            failed.exception.return_value = RuntimeError("boom")
+            on_done(failed)
+            mock_log.error.assert_called_once()
+            assert mock_log.error.call_args.args[0].endswith("Background stream task failed")
+            assert mock_log.error.call_args.kwargs["error_type"] == "RuntimeError"
+            assert mock_log.error.call_args.kwargs["error"] == "boom"
+            assert mock_log.error.call_args.kwargs["stream_id"] == "s1"
+            assert mock_log.error.call_args.kwargs["conversation_id"] == "conv-1"
+
+    async def test_resolve_uses_middleware_user_when_authenticated(self) -> None:
+        state = MagicMock()
+        state.user = {"user_id": "uid1"}
+        state.authenticated = True
+        request = MagicMock()
+        request.state = state
+        with patch(
+            "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+            new_callable=AsyncMock,
+        ) as mock_lookup:
+            user, user_id = await _resolve_bot_stream_user(request, self._body())
+
+        assert (user, user_id) == ({"user_id": "uid1"}, "uid1")
+        mock_lookup.assert_not_awaited()
+
+    async def test_resolve_falls_back_to_lookup_without_auth_flag(self) -> None:
+        """request.state without `authenticated` is unauthenticated, not an error."""
+        request = SimpleNamespace(state=SimpleNamespace(user={"user_id": "uid1"}))
+        with patch(
+            "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+            new_callable=AsyncMock,
+            return_value={"_id": "uid9"},
+        ) as mock_lookup:
+            user, user_id = await _resolve_bot_stream_user(request, self._body())
+
+        mock_lookup.assert_awaited_once_with("discord", "u1")
+        assert (user, user_id) == ({"_id": "uid9", "user_id": "uid9"}, "uid9")
+
+    async def test_resolve_unknown_user_returns_empty_id(self) -> None:
+        request = SimpleNamespace(state=SimpleNamespace(user=None))
+        with patch(
+            "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            assert await _resolve_bot_stream_user(request, self._body()) == (None, "")
+
+    def test_data_payload_strips_resume_id_line(self) -> None:
+        assert _bot_data_payload('id: 42\ndata: {"a": 1}') == '{"a": 1}'
+
+    def test_data_payload_splits_on_the_first_newline(self) -> None:
+        """Last-Event-ID resume tags one id line; a payload spanning lines must
+        not lose its head to rpartition."""
+        assert _bot_data_payload("id: 42\ndata: a\nb") == "a\nb"
+
+    def test_data_payload_passes_plain_data_through(self) -> None:
+        assert _bot_data_payload("data: [DONE]") == "[DONE]"
+
+    def test_data_payload_drops_non_data_frames(self) -> None:
+        assert _bot_data_payload(": keepalive") is None
+        assert _bot_data_payload("event: ping") is None
+
+    async def test_translate_keepalive_frame(self) -> None:
+        frame, done = await _translate_bot_data_chunk({"keepalive": True}, "uid1")
+        assert frame == 'data: {"keepalive": true}\n\n'
+        assert done is False
+
+    async def test_translate_notice_is_not_terminal(self) -> None:
+        card = {
+            "tool_data": {
+                "tool_name": "rate_limit_data",
+                "data": {"feature": "chat_messages", "current_plan": "pro"},
+            }
+        }
+        frame, done = await _translate_bot_data_chunk(card, "uid1")
+        assert frame is not None and '"notice"' in frame
+        assert done is False
+
+    async def test_translate_approval_frame(self) -> None:
+        from app.constants.hil import APPROVAL_REQUEST_TOOL_NAME
+
+        chunk = {"tool_data": {"tool_name": APPROVAL_REQUEST_TOOL_NAME, "data": {"x": 1}}}
+        frame, done = await _translate_bot_data_chunk(chunk, "uid1")
+        assert frame is not None and '"approval"' in frame
+        assert done is False
+
+    async def test_translate_boundary_frame(self) -> None:
+        frame, done = await _translate_bot_data_chunk({"message_boundary": {"kind": "end"}}, "uid1")
+        assert frame is not None and '"message_boundary"' in frame
+        assert done is False
+
+    async def test_translate_web_only_frame_is_dropped(self) -> None:
+        frame, done = await _translate_bot_data_chunk({"tool_data": {"x": 1}}, "uid1")
+        assert frame is None
+        assert done is False
+
+    async def test_translate_response_and_error_frames(self) -> None:
+        frame, done = await _translate_bot_data_chunk({"response": "hi"}, "uid1")
+        assert frame == 'data: {"text": "hi"}\n\n'
+        assert done is False
+        frame, done = await _translate_bot_data_chunk({"error": "bad"}, "uid1")
+        assert frame == 'data: {"error": "bad"}\n\n'
+        assert done is True
+
+    async def test_translate_unknown_frame_is_dropped(self) -> None:
+        assert await _translate_bot_data_chunk({"other": 1}, "uid1") == (None, False)
+
+    async def test_error_frame_closes_the_wire_stream(
+        self,
+        client: AsyncClient,
+    ) -> None:
+        """The (frame, done) contract end to end: an error frame ends the SSE body."""
+
+        async def failing() -> AsyncGenerator[str, None]:
+            yield 'data: {"response": "part"}\n\n'
+            yield "this line carries no data payload\n\n"
+            yield 'data: {"error": "bad"}\n\n'
+            yield 'data: {"response": "never"}\n\n'
+
+        body = await TestBotChatStreamBody._collect(client, failing())
+        assert '"text": "part"' in body
+        assert '"error": "bad"' in body
+        assert "never" not in body
+
+    async def test_background_turn_receives_the_resolved_user_and_request(
+        self,
+        client: AsyncClient,
+    ) -> None:
+        """What the caller hands the background turn: the resolved user (not
+        None) and the built request carrying the posted message."""
+
+        async def _empty_stream():
+            if False:  # pragma: no cover
+                yield
+
+        with (
+            patch("app.api.v1.endpoints.bot.require_bot_api_key", new=AsyncMock()),
+            patch("app.api.v1.endpoints.bot.spawn_background_task", new=MagicMock()),
+            patch(
+                "app.api.v1.endpoints.bot.run_chat_stream_background",
+                new=MagicMock(),
+            ) as mock_bg,
+            patch(
+                "app.api.v1.endpoints.bot.create_bot_session_token",
+                new=MagicMock(return_value="tok"),
+            ),
+            patch(
+                "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+                new=AsyncMock(return_value={"user_id": "uid1", "_id": "uid1"}),
+            ),
+            patch("app.api.v1.endpoints.bot.BotService") as bot_svc,
+            patch("app.api.v1.endpoints.bot.capture_event", new=MagicMock()),
+            patch("app.api.v1.endpoints.bot.stream_manager") as mock_sm,
+            patch("app.api.v1.endpoints.bot.enforce_tiered_limit", new=AsyncMock()),
+            patch("app.api.v1.endpoints.bot.enforce_daily_cost_budget", new=AsyncMock()),
+            patch(
+                "app.api.v1.endpoints.bot.platform_requires_upgrade",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            bot_svc.enforce_rate_limit = AsyncMock()
+            bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
+            bot_svc.load_conversation_history = AsyncMock(return_value=[])
+            mock_sm.start_stream = AsyncMock()
+            mock_sm.subscribe_stream.return_value = _empty_stream()
+
+            response = await client.post(
+                f"{BOT_BASE}/chat-stream",
+                json={"message": "wired", "platform": "discord", "platform_user_id": "u1"},
+            )
+            assert response.status_code == 200
+            await response.aread()
+
+        _, kwargs = mock_bg.call_args
+        assert kwargs["user"] == {"user_id": "uid1", "_id": "uid1"}
+        assert kwargs["body"].message == "wired"
+        assert kwargs["conversation_id"] == "conv-1"
+        assert kwargs["source"] == "discord"
+        # The stream id is a fresh uuid: pin it by consistency across all
+        # three sinks (background task, stream registry, SSE subscription),
+        # not by value. A caller passing None would agree nowhere.
+        assert kwargs["stream_id"]
+        assert kwargs["stream_id"] == mock_sm.start_stream.await_args.args[0]
+        assert mock_sm.subscribe_stream.call_args.args[0] == kwargs["stream_id"]
+        mock_sm.start_stream.assert_awaited_once_with(kwargs["stream_id"], "conv-1", "uid1")
+        bot_svc.load_conversation_history.assert_awaited_once_with("conv-1", "uid1")

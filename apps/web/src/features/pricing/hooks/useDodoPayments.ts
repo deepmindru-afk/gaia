@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 
 import { pricingApi } from "../api/pricingApi";
@@ -17,12 +16,6 @@ export const useDodoPayments = () => {
       setError(null);
 
       try {
-        // Track checkout started
-        trackEvent(ANALYTICS_EVENTS.SUBSCRIPTION_CHECKOUT_STARTED, {
-          planId: productId,
-        });
-
-        // Create subscription via API - backend handles user authentication via JWT
         const result = await pricingApi.createSubscription({
           product_id: productId,
           ...(discountCode ? { discount_code: discountCode } : {}),
@@ -41,12 +34,6 @@ export const useDodoPayments = () => {
           err instanceof Error ? err.message : "Failed to create subscription";
         setError(errorMessage);
         toast.error(errorMessage);
-
-        // Track checkout failure
-        trackEvent(ANALYTICS_EVENTS.SUBSCRIPTION_FAILED, {
-          planId: productId,
-          reason: errorMessage,
-        });
       } finally {
         setIsLoading(false);
       }
