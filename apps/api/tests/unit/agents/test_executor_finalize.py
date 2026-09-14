@@ -59,8 +59,14 @@ CARD_NOTE = wrap_agent_payload(AgentTag.RETURNED_TO_FRONTEND, "todo_data (1 todo
 @pytest.fixture(autouse=True)
 def _clean_registry():
     sess._sessions.clear()
+    # Same class of per-test global as _sessions: every test in this file runs
+    # as stream "s1", and a test that tears its session down marks "s1"
+    # abandoned — without this, a later test's finalize silently skips delivery
+    # depending on xdist worker ordering.
+    sess._abandoned.clear()
     yield
     sess._sessions.clear()
+    sess._abandoned.clear()
 
 
 def _run(
