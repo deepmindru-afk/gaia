@@ -1,8 +1,10 @@
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import BackgroundTasks, HTTPException
 
 from app.constants.auth import LOGIN_METHOD_WORKOS
+from app.constants.email import SIGNUP_EMAIL_ENQUEUE_TIMEOUT_SECONDS
 from app.constants.integrations import (
     GMAIL_INTEGRATION_ID,
     GOOGLE_CALENDAR_INTEGRATION_ID,
@@ -85,12 +87,13 @@ async def _run_signup_side_effects(user_id: str, email: str, signup_name: str) -
             error_type=type(e).__name__,
         )
 
-    # Welcome email + marketing contact are ESP round-trips that must not block
-    # signup (observed 90s+ hangs); queued on the worker so a restart doesn't
-    # drop them — losing even the enqueue is survivable via the hourly recovery sweep.
+    # Welcome email + marketing contact must not block signup (observed 90s+ hangs): queued so
+    # a restart doesn't drop them, bounded so a stalled Redis can't hold the OAuth callback. A
+    # lost enqueue is survivable via the hourly recovery sweep.
     try:
-        pool = await RedisPoolManager.get_pool()
-        await enqueue_signup_emails(pool, user_id)
+        async with asyncio.timeout(SIGNUP_EMAIL_ENQUEUE_TIMEOUT_SECONDS):
+            pool = await RedisPoolManager.get_pool()
+            await enqueue_signup_emails(pool, user_id)
         log.info(f"{LogTag.OAUTH} Queued signup email delivery", user={"id": user_id})
     except Exception as e:
         log.error(
