@@ -392,7 +392,7 @@ async def mark_all_read(
     currently loaded — this is what lets "mark all as read" cover notifications
     beyond the first page a paginated client has fetched.
     """
-    user_id = current_user.get("user_id")
+    user_id = current_user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
 
