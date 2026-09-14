@@ -83,7 +83,7 @@ _TEST_DB_URL = "postgresql://localhost/test"
 
 
 def _mock_pool() -> AsyncMock:
-    """An AsyncConnectionPool whose connection() is the context manager setup() borrows."""
+    """Build an AsyncConnectionPool mock whose connection() is the context manager setup() borrows."""
     pool = AsyncMock()
     pool.connection = MagicMock()
     pool.connection.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
