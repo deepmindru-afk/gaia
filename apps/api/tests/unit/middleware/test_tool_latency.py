@@ -150,7 +150,7 @@ async def test_hil_pause_is_neither_success_nor_error() -> None:
     from langchain.agents.middleware import AgentMiddleware
     from langchain.agents.middleware.types import ToolCallRequest
 
-    class _Gate(AgentMiddleware):  # type: ignore[type-arg]
+    class _Gate(AgentMiddleware):  # type: ignore[type-arg] -- test double uses the unparameterized middleware base
         async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
             raise GraphBubbleUp("paused")
 
@@ -175,12 +175,12 @@ async def test_middleware_chain_routes_through_each_wrapper() -> None:
 
     seen: list[str] = []
 
-    class _Recorder(AgentMiddleware):  # type: ignore[type-arg]
+    class _Recorder(AgentMiddleware):  # type: ignore[type-arg] -- test double uses the unparameterized middleware base
         async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
             seen.append("async")
             return await handler(request)
 
-    class _SyncRecorder(AgentMiddleware):  # type: ignore[type-arg]
+    class _SyncRecorder(AgentMiddleware):  # type: ignore[type-arg] -- test double uses the unparameterized middleware base
         def wrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
             seen.append("sync")
 
@@ -204,3 +204,21 @@ async def test_middleware_chain_routes_through_each_wrapper() -> None:
     assert result.content == "ok[sync]"
     assert seen == ["async", "sync"]
     invoke_fn.assert_awaited_once()
+
+
+async def test_pre_tool_failure_falls_back_with_the_original_call() -> None:
+    """A middleware that breaks before the tool runs is retried directly — and
+    the retry must carry the original tool_call, not a nulled one."""
+    from langchain.agents.middleware import AgentMiddleware
+    from langchain.agents.middleware.types import ToolCallRequest
+
+    class _PreToolBreak(AgentMiddleware):  # type: ignore[type-arg] -- test double uses the unparameterized middleware base
+        async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
+            raise RuntimeError("pre-tool middleware broke")
+
+    tool_call = {"name": "lat-tool-fallback", "args": {"q": 1}, "id": "c9"}
+    invoke_fn = AsyncMock(return_value=ToolMessage(content="recovered", tool_call_id="c9"))
+    result = await _invoke(MiddlewareExecutor([_PreToolBreak()]), tool_call, None, invoke_fn)
+
+    assert result.content == "recovered"
+    invoke_fn.assert_awaited_once_with(tool_call)

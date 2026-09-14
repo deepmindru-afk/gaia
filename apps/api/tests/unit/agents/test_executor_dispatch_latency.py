@@ -751,7 +751,7 @@ class TestResumeForwarding:
                 run=run,
                 task="do the thing",
                 configurable={"conversation_source": "web"},
-                resume=sentinel,  # type: ignore[arg-type]
+                resume=sentinel,  # type: ignore[arg-type] -- sentinel object proves forwarding by identity; intentionally not a Command
             )
 
         assert execute.await_args.args[3] is sentinel
