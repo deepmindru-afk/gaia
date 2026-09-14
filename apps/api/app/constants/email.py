@@ -4,6 +4,7 @@ Email Constants.
 Constants for email processing and display.
 """
 
+from datetime import timedelta
 from enum import StrEnum
 from typing import Literal
 
@@ -128,6 +129,9 @@ SIGNUP_EMAIL_JOB_ID_TEMPLATE = "signupmail:{user_id}"
 # Resend drops a repeat send under this key for 24h, so a welcome email the
 # provider accepted but whose stamp write failed is not re-mailed by the hourly sweep.
 WELCOME_EMAIL_IDEMPOTENCY_KEY_TEMPLATE = "welcome-email:{user_id}"
+# Past Resend's 24h key memory a retry could be a second copy, so an older owed
+# welcome email is abandoned; the hour of margin covers queue-to-send latency.
+WELCOME_EMAIL_RESEND_WINDOW = timedelta(hours=23)
 # Bound on signup's Redis handoff. A lost enqueue is recovered by the sweep, so a
 # stalled Redis must cost the signup this long at most, not the OAuth callback.
 SIGNUP_EMAIL_ENQUEUE_TIMEOUT_SECONDS = 5

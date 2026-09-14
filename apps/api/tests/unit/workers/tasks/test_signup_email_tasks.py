@@ -13,7 +13,7 @@ leaves its stamp absent, which is what the recovery sweep selects on.
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,7 +33,12 @@ OTHER_USER_ID = "507f1f77bcf86cd799439012"
 
 def _user(**overrides) -> UserDocument:
     """The stored signup row the job reads; no stamps means both are owed."""
-    fields: dict = {"id": USER_ID, "email": "bob@test.com", "name": "Bob"}
+    fields: dict = {
+        "id": USER_ID,
+        "email": "bob@test.com",
+        "name": "Bob",
+        "created_at": datetime.now(UTC),
+    }
     fields.update(overrides)
     return UserDocument(**fields)
 
@@ -163,6 +168,19 @@ class TestDeliverSignupEmails:
         mock_send_welcome_email.assert_not_awaited()
         mock_add_marketing_contact.assert_awaited_once_with("bob@test.com", "Bob", user_id=USER_ID)
         assert _stamps(mock_stamp) == [(USER_ID, SignupDelivery.MARKETING_CONTACT)]
+
+    async def test_a_welcome_email_past_the_idempotency_window_is_not_resent(
+        self, mock_stamp, mock_send_welcome_email, mock_add_marketing_contact
+    ):
+        """Resend forgets the welcome key after 24h; a send older than that could be a second copy."""
+        stale = _user(created_at=datetime.now(UTC) - timedelta(hours=25))
+        with patch(f"{MODULE}.user_repository.get", AsyncMock(return_value=stale)):
+            async with captured_wide_event() as event:
+                await deliver_signup_emails({}, USER_ID)
+
+        mock_send_welcome_email.assert_not_awaited()
+        mock_add_marketing_contact.assert_awaited_once_with("bob@test.com", "Bob", user_id=USER_ID)
+        assert event["welcome_email_abandoned"] is True
 
     async def test_a_fully_delivered_signup_does_no_work_at_all(
         self, mock_stamp, mock_send_welcome_email, mock_add_marketing_contact
