@@ -523,7 +523,13 @@ class TestRunLifecycleAnalytics:
         # asserted only by name, so its user id and payload could both go null
         # without a test noticing.
         assert mock_capture.call_args_list[1].args[0] == "user-1"
-        assert mock_capture.call_args_list[1].args[2] == expected_props
+        terminal_props = mock_capture.call_args_list[1].args[2]
+        assert terminal_props["agent"] == "executor"
+        assert terminal_props["mode"] == "background"
+        assert terminal_props["conversation_id"] == "conv-1"
+        assert terminal_props["task_id"] == "task-1"
+        assert terminal_props["queued"] is False
+        assert terminal_props["executor_active_ms"] >= 0.0
 
     async def test_failed_on_error_result(self) -> None:
         mock_capture = await self._run_lifecycle("it broke", "error")
@@ -531,12 +537,11 @@ class TestRunLifecycleAnalytics:
         events = [c.args[1] for c in mock_capture.call_args_list]
         assert events == [AnalyticsEvents.AGENT_RUN_STARTED, AnalyticsEvents.AGENT_RUN_FAILED]
         assert mock_capture.call_args_list[1].args[0] == "user-1"
-        assert mock_capture.call_args_list[1].args[2] == {
-            "agent": "executor",
-            "mode": "background",
-            "conversation_id": "conv-1",
-            "task_id": "task-1",
-        }
+        terminal_props = mock_capture.call_args_list[1].args[2]
+        assert terminal_props["agent"] == "executor"
+        assert terminal_props["task_id"] == "task-1"
+        assert terminal_props["queued"] is False
+        assert terminal_props["executor_active_ms"] >= 0.0
 
     async def test_a_run_with_no_user_id_captures_nothing(self) -> None:
         """`run.user` with no id must produce no events at all.

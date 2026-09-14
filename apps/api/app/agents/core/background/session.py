@@ -74,6 +74,10 @@ class StreamSession:
     # Voice-mode streams: the executor's finalize step publishes a TTS-only
     # ``voice_tts`` frame with its narrated answer for the voice agent to speak.
     voice_mode: bool = False
+    # ``perf_counter`` of this stream's first executor tool-data frame, set
+    # once by the Redis stream writer. Run start for TTFT math lives on the
+    # run, not here — the session outlives any one run incarnation.
+    executor_first_frame_perf: float | None = None
     # tool_call_ids whose result has already been streamed on this stream. A
     # subagent handed off to from an executor tool is a *nested* run, and
     # langgraph's "messages" mode replays its chunks into the outer run's stream
@@ -110,6 +114,12 @@ class RunIdentity:
     kind: RunKind = RunKind.QUEUED
     #: The ORIGINAL live turn's bot message id — see ``ExecutorRun.bot_message_id``.
     bot_message_id: str | None = None
+    #: ``perf_counter`` stamped by ``call_executor`` at dispatch. Run start
+    #: minus this is the queue wait. ``None`` for runs dispatched before this
+    #: stamp existed, and cleared when a HIL pause re-records the run: the
+    #: resume is a new incarnation whose wait was user time, measured
+    #: separately, not queue time.
+    t_dispatch_perf: float | None = None
 
 
 @dataclass(frozen=True)
@@ -139,6 +149,8 @@ class ExecutorRun:
     #: work, matching ``build_agent_config``: the only callers that leave the
     #: source unset are the silent background paths.
     source_category: SourceCategory = SourceCategory.BG
+    #: Dispatch stamp carried from ``RunIdentity`` — see its field comment.
+    t_dispatch_perf: float | None = None
 
     @classmethod
     def from_configurable(
@@ -179,6 +191,7 @@ class ExecutorRun:
             source_category=SourceCategory(
                 configurable.get("source_category") or SourceCategory.BG.value
             ),
+            t_dispatch_perf=identity.t_dispatch_perf,
         )
 
     @property
@@ -191,6 +204,7 @@ class ExecutorRun:
             task_id=self.task_id,
             user_message_id=self.user_message_id,
             bot_message_id=self.bot_message_id,
+            t_dispatch_perf=self.t_dispatch_perf,
         )
 
     @property
@@ -282,7 +296,11 @@ _abandoned: deque[str] = deque(maxlen=_ABANDONED_REMEMBERED)
 
 def mark_executor_spawned(stream_id: str) -> None:
     """Record that call_executor spawned a background task for this stream."""
-    get_or_create_session(stream_id).executor_spawned = True
+    session = get_or_create_session(stream_id)
+    session.executor_spawned = True
+    # A new incarnation on this stream gets its own first frame: without the
+    # reset a redirect's second run would inherit the cancelled run's stamp.
+    session.executor_first_frame_perf = None
 
 
 def mark_executor_queued(stream_id: str, task_id: str) -> None:

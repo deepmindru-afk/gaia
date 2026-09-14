@@ -77,6 +77,9 @@ class ExecutorRunItem(TypedDict, total=False):
     #: item is the only thing that can carry it across. Read back into
     #: ``ExecutorRun`` so the resumed run's model calls stay attributable.
     workflow_execution_id: str | None
+    #: Dispatch stamp from ``RunIdentity`` — the popped run's queue wait is
+    #: measured from this. Absent on items written before the stamp existed.
+    t_dispatch_perf: float | None
 
 
 @dataclass(frozen=True)
@@ -373,6 +376,7 @@ def build_run_item(
         "user_message_id": identity.user_message_id,
         "bot_message_id": identity.bot_message_id,
         "workflow_execution_id": workflow_execution_id or current_workflow_execution_id(),
+        "t_dispatch_perf": identity.t_dispatch_perf,
     }
 
 
@@ -467,6 +471,7 @@ async def prepare_run_from_item(
             task_id=task_id,
             user_message_id=queued_user_message_id,
             bot_message_id=queued_bot_message_id,
+            t_dispatch_perf=item.get("t_dispatch_perf"),
         ),
         workflow_execution_id=item.get("workflow_execution_id"),
     )
