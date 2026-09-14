@@ -56,10 +56,30 @@ class TestBeginTurn:
         with (
             patch("app.services.latitude_service.settings", _settings("key-1")),
             patch("app.services.latitude_service.capture") as mock_capture,
+            patch("app.services.latitude_service.log") as mock_log,
         ):
             mock_capture.start.side_effect = RuntimeError("boom")
 
             assert begin_turn(user_id="u1", conversation_id="c1") is None
+            mock_log.warning.assert_called_once_with(
+                "latitude_begin_failed",
+                error="boom",
+                error_type="RuntimeError",
+                conversation_id="c1",
+            )
+
+    def test_none_valued_properties_are_dropped(self) -> None:
+        scope = MagicMock()
+        with (
+            patch("app.services.latitude_service.settings", _settings("key-1")),
+            patch("app.services.latitude_service.capture") as mock_capture,
+        ):
+            mock_capture.start.return_value = scope
+
+            begin_turn(user_id="u1", conversation_id="c1", properties={"keep": "x", "drop": None})
+
+            _, options = mock_capture.start.call_args.args
+            assert options["metadata"] == {"keep": "x"}
 
 
 class TestEndTurn:
@@ -119,7 +139,13 @@ class TestEndTurn:
     def test_sdk_failure_does_not_raise(self) -> None:
         scope, span = MagicMock(), MagicMock()
         handle = TurnCapture(scope=scope, span=span)
-        with patch("app.services.latitude_service.capture") as mock_capture:
+        with (
+            patch("app.services.latitude_service.capture") as mock_capture,
+            patch("app.services.latitude_service.log") as mock_log,
+        ):
             mock_capture.end.side_effect = RuntimeError("boom")
 
             end_turn(handle, error=RuntimeError("x"))
+            mock_log.warning.assert_called_once_with(
+                "latitude_end_failed", error="boom", error_type="RuntimeError"
+            )

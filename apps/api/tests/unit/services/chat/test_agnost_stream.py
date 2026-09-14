@@ -110,6 +110,7 @@ async def _run_turn(
     user: dict,
     conversation_id: str,
     agent_stream: AsyncGenerator[str, None],
+    source: str | None = None,
 ) -> None:
     with (
         _patch_stream_manager(sm),
@@ -128,6 +129,7 @@ async def _run_turn(
             body=body,
             user=user,
             conversation_id=conversation_id,
+            source=source,
         )
 
 
@@ -138,7 +140,7 @@ class TestTurnTelemetry:
     ):
         sm = _make_stream_manager_mock()
         with (
-            patch("app.services.agnost_service.begin_turn") as mock_begin,
+            patch("app.services.chat.stream.begin_turn_all") as mock_begin_all,
             patch("app.services.agnost_service.end_turn") as mock_agnost_end,
             patch("app.services.latitude_service.end_turn") as mock_lat_end,
             patch("app.services.laminar_service.end_turn") as mock_lam_end,
@@ -151,11 +153,17 @@ class TestTurnTelemetry:
                 _text_then_nostream("Follow", "Follow-up complete"),
             )
 
-        mock_begin.assert_called_once()
-        begin_kwargs = mock_begin.call_args.kwargs
+        mock_begin_all.assert_called_once()
+        begin_kwargs = mock_begin_all.call_args.kwargs
         assert begin_kwargs["user_id"] == "user_abc"
         assert begin_kwargs["conversation_id"] == "conv_existing_123"
         assert begin_kwargs["user_input"] == "Follow-up"
+        assert begin_kwargs["source"] is None
+        assert begin_kwargs["properties"] == {
+            "voice_mode": False,
+            "is_new_conversation": False,
+            "selected_tool": None,
+        }
 
         mock_agnost_end.assert_called_once()
         end_kwargs = mock_agnost_end.call_args.kwargs
@@ -204,14 +212,32 @@ class TestTurnTelemetry:
                 _text_then_nostream("partial", "partial"),
             )
 
+        mock_agnost_end.assert_called_once()
+        assert mock_agnost_end.call_args.kwargs["output"] == "partial"
         assert mock_agnost_end.call_args.kwargs["success"] is False
         assert mock_agnost_end.call_args.kwargs["properties"]["cancelled"] is True
         assert mock_agnost_end.call_args.kwargs["properties"]["outcome"] == "cancelled"
         # Cancelled is not a failure: no error reaches any trace backend.
         assert mock_lat_end.call_args.kwargs["error"] is None
         assert mock_lat_end.call_args.kwargs["cancelled"] is True
+        assert mock_lam_end.call_args.kwargs["output"] == "partial"
         assert mock_lam_end.call_args.kwargs["error"] is None
         assert mock_lam_end.call_args.kwargs["cancelled"] is True
+
+    async def test_empty_user_id_opens_turn_unattributed(self, existing_conv_body):
+        """The `or ""` guard pins the anonymous shape: no user must never
+        break the turn or misattribute it."""
+        sm = _make_stream_manager_mock()
+        with patch("app.services.chat.stream.begin_turn_all") as mock_begin_all:
+            await _run_turn(
+                sm,
+                existing_conv_body,
+                {"user_id": ""},
+                "conv_existing_123",
+                _text_then_nostream("Follow", "Follow-up complete"),
+            )
+
+        assert mock_begin_all.call_args.kwargs["user_id"] == ""
 
     async def test_telemetry_explosion_never_breaks_the_turn(self, test_user, existing_conv_body):
         """Sabotage below the services: the real fan-out must still not break the turn."""
@@ -266,16 +292,36 @@ class TestTurnTelemetry:
         close its scopes (as cancelled) instead of leaking them."""
         sm = _make_stream_manager_mock()
         with (
-            patch("app.services.chat.stream.end_turn_all") as mock_end_all,
+            patch("app.services.agnost_service.end_turn") as mock_agnost_end,
+            patch("app.services.latitude_service.end_turn") as mock_lat_end,
+            patch("app.services.laminar_service.end_turn") as mock_lam_end,
             pytest.raises(asyncio.CancelledError),
         ):
             await _run_turn(
                 sm, existing_conv_body, test_user, "conv_existing_123", _cancelled_stream()
             )
 
-        mock_end_all.assert_called_once()
-        assert mock_end_all.call_args.kwargs["cancelled"] is True
-        assert "error" not in mock_end_all.call_args.kwargs
+        mock_agnost_end.assert_called_once()
+        assert mock_agnost_end.call_args.kwargs["output"] == ""
+        assert mock_agnost_end.call_args.kwargs["success"] is False
+        assert mock_agnost_end.call_args.kwargs["properties"]["outcome"] == "cancelled"
+        assert mock_lat_end.call_args.kwargs["error"] is None
+        assert mock_lat_end.call_args.kwargs["cancelled"] is True
+        assert mock_lam_end.call_args.kwargs["cancelled"] is True
+
+    async def test_source_reaches_telemetry(self, test_user, existing_conv_body):
+        sm = _make_stream_manager_mock()
+        with patch("app.services.chat.stream.begin_turn_all") as mock_begin_all:
+            await _run_turn(
+                sm,
+                existing_conv_body,
+                test_user,
+                "conv_existing_123",
+                _text_then_nostream("Follow", "Follow-up complete"),
+                source="desktop",
+            )
+
+        assert mock_begin_all.call_args.kwargs["source"] == "desktop"
 
     async def test_error_frame_marks_posthog_completed_with_error(
         self, test_user, existing_conv_body
@@ -284,7 +330,12 @@ class TestTurnTelemetry:
         vendors read failed — PostHog must carry has_error or it reads 100%
         completed during a setup outage."""
         sm = _make_stream_manager_mock()
-        with patch("app.services.chat.stream.capture_event") as mock_capture:
+        with (
+            patch("app.services.chat.stream.capture_event") as mock_capture,
+            patch("app.services.agnost_service.end_turn") as mock_agnost_end,
+            patch("app.services.latitude_service.end_turn") as mock_lat_end,
+            patch("app.services.laminar_service.end_turn") as mock_lam_end,
+        ):
             await _run_turn(
                 sm, existing_conv_body, test_user, "conv_existing_123", _error_frame_then_nostream()
             )
@@ -296,6 +347,12 @@ class TestTurnTelemetry:
         ]
         assert len(completed) == 1
         assert completed[0].args[2]["has_error"] is True
+        # ...and the vendors read the same failure, with the message.
+        assert mock_agnost_end.call_args.kwargs["success"] is False
+        assert mock_agnost_end.call_args.kwargs["output"], "the failure must carry a message"
+        lat_error = mock_lat_end.call_args.kwargs["error"]
+        assert isinstance(lat_error, Exception) and "graph exploded" in str(lat_error)
+        assert mock_lam_end.call_args.kwargs["error"] is lat_error
 
     async def test_clean_turn_marks_posthog_completed_without_error(
         self, test_user, existing_conv_body

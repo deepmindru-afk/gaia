@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agents.core.agent import call_agent_silent
+from app.agents.core.agent import AgentRunOptions, call_agent_silent
 from app.models.message_models import MessageRequestWithHistory
 
 
@@ -71,6 +71,7 @@ class TestSilentTelemetry:
                 request=body,
                 conversation_id="conv_bg_1",
                 user=test_user,
+                options=AgentRunOptions(source="cron"),
             )
 
         assert result.message == "done reply"
@@ -78,11 +79,27 @@ class TestSilentTelemetry:
         assert begin_kwargs["user_id"] == "user_abc"
         assert begin_kwargs["conversation_id"] == "conv_bg_1"
         assert begin_kwargs["user_input"] == "Summarize inbox"
+        assert begin_kwargs["properties"] == {
+            "source": "cron",
+            "mode": "background",
+            "tier": "comms_agent",
+        }
 
         assert mock_agnost_end.call_args.kwargs["output"] == "done reply"
         assert mock_agnost_end.call_args.kwargs["success"] is True
         assert mock_lat_end.call_args.kwargs["error"] is None
         assert mock_lam_end.call_args.kwargs["error"] is None
+
+    async def test_empty_user_id_opens_turn_unattributed(self, body):
+        with patch("app.agents.core.agent.begin_turn_all") as mock_begin_all:
+            with _silent_agent("done reply"):
+                await call_agent_silent(
+                    request=body,
+                    conversation_id="conv_bg_1",
+                    user={"user_id": ""},
+                )
+
+        assert mock_begin_all.call_args.kwargs["user_id"] == ""
 
     async def test_failure_records_and_still_raises(self, test_user, body):
         with (
@@ -98,7 +115,7 @@ class TestSilentTelemetry:
             )
 
         assert mock_agnost_end.call_args.kwargs["success"] is False
-        assert mock_agnost_end.call_args.kwargs["output"], "the failure must carry a message"
+        assert mock_agnost_end.call_args.kwargs["output"] == "worker exploded"
         lat_error = mock_lat_end.call_args.kwargs["error"]
         assert isinstance(lat_error, RuntimeError) and str(lat_error) == "worker exploded"
 
@@ -117,6 +134,7 @@ class TestSilentTelemetry:
             )
 
         assert mock_agnost_end.call_args.kwargs["success"] is False
+        assert mock_agnost_end.call_args.kwargs["output"] == ""
         assert mock_agnost_end.call_args.kwargs["properties"]["outcome"] == "cancelled"
         assert mock_lat_end.call_args.kwargs["error"] is None
         assert mock_lat_end.call_args.kwargs["cancelled"] is True

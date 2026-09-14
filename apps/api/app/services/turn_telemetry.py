@@ -58,10 +58,11 @@ def begin_turn_all(
 ) -> TurnHandles:
     """Open all three vendor scopes. Never raises (each service guards)."""
     # source/mode/tier are owned here so every caller records them identically
-    # (streaming, silent, narrator); anything else rides in properties. A
-    # caller key colliding with a reserved one loses — uniformity is the point.
+    # (streaming, silent, narrator); anything else rides in properties.
+    # Reserved keys win by application order alone — a caller key colliding
+    # with one is overwritten below, so no separate filter is needed.
     props = {
-        **{k: v for k, v in (properties or {}).items() if k not in ("source", "mode", "tier")},
+        **(properties or {}),
         "source": source or "background",
         "mode": mode,
         "tier": tier,

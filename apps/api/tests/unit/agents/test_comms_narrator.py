@@ -8,9 +8,11 @@ string instead of crashing the caller. Also the cancellation record appended
 to the comms checkpoint.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage
+import pytest
 
 from app.agents.core.background.comms_narrator import (
     narrate_executor_result,
@@ -320,6 +322,8 @@ class TestNarratorTelemetry:
         assert begin_kwargs["user_input"] == RESULT_TEXT
         assert begin_kwargs["mode"] == "background"
         assert begin_kwargs["tier"] == "narrator"
+        assert begin_kwargs["properties"] == {"msg_type": "result"}
+        assert mock_end.call_args.args[0] is mock_begin.return_value
         end_kwargs = mock_end.call_args.kwargs
         assert end_kwargs["output"] == "voiced"
         assert end_kwargs.get("error") is None
@@ -330,12 +334,32 @@ class TestNarratorTelemetry:
             patch(
                 f"{MODULE}.execute_graph_silent", AsyncMock(side_effect=RuntimeError("llm down"))
             ),
-            patch(f"{MODULE}.begin_turn_all"),
+            patch(f"{MODULE}.begin_turn_all") as mock_begin,
             patch(f"{MODULE}.end_turn_all") as mock_end,
         ):
             assert await narrate_executor_result(RESULT_TEXT, "result", CONVERSATION_ID, USER) == ""
 
+        assert mock_end.call_args.args[0] is mock_begin.return_value
+        assert mock_end.call_args.kwargs["output"] == "llm down"
         assert isinstance(mock_end.call_args.kwargs["error"], RuntimeError)
+
+    async def test_cancel_closes_as_cancelled_and_propagates(self) -> None:
+        with (
+            _patch_graph(_fake_comms_graph()),
+            patch(
+                f"{MODULE}.execute_graph_silent",
+                AsyncMock(side_effect=asyncio.CancelledError("shutdown")),
+            ),
+            patch(f"{MODULE}.begin_turn_all") as mock_begin,
+            patch(f"{MODULE}.end_turn_all") as mock_end,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await narrate_executor_result(RESULT_TEXT, "result", CONVERSATION_ID, USER)
+
+        assert mock_end.call_args.args[0] is mock_begin.return_value
+        assert mock_end.call_args.kwargs["output"] == ""
+        assert mock_end.call_args.kwargs["cancelled"] is True
+        assert "error" not in mock_end.call_args.kwargs
 
     async def test_unavailable_graph_opens_no_turn(self) -> None:
         with (
@@ -348,3 +372,14 @@ class TestNarratorTelemetry:
             assert await narrate_executor_result(RESULT_TEXT, "result", CONVERSATION_ID, USER) == ""
 
         mock_begin.assert_not_called()
+
+    async def test_empty_user_id_opens_turn_unattributed(self) -> None:
+        with (
+            _patch_graph(_fake_comms_graph()),
+            patch(f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("voiced", {}))),
+            patch(f"{MODULE}.begin_turn_all") as mock_begin,
+            patch(f"{MODULE}.end_turn_all"),
+        ):
+            await narrate_executor_result(RESULT_TEXT, "result", CONVERSATION_ID, {"user_id": ""})
+
+        assert mock_begin.call_args.kwargs["user_id"] == ""

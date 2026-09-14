@@ -1420,13 +1420,18 @@ class TestTheOptionsEachEntryPointDerives:
         callback = MagicMock(name="usage_metadata_callback")
         trigger = {"type": "cron", "schedule": "daily"}
         patches = _common_patches()
+
+        def _seed_from_run_id(seed: object) -> str:
+            assert isinstance(seed, str) and seed, "trace must seed from the run id"
+            return "trace-bg-1"
+
         with (
             patches["log"],
             patch(
                 "app.agents.core.agent._core_agent_logic",
                 new=self._recording_core(seen, _fresh_config()),
             ),
-            patch("app.agents.core.agent.trace_id_for_message", return_value="trace-bg-1"),
+            patch("app.agents.core.agent.trace_id_for_message", side_effect=_seed_from_run_id),
             patch(
                 "app.agents.core.agent.execute_graph_silent",
                 new_callable=AsyncMock,

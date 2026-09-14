@@ -45,7 +45,7 @@ class TestOutcomeValues:
 @pytest.mark.unit
 class TestBeginFanOut:
     def test_carries_real_ids_input_and_uniform_properties(self, services: MagicMock) -> None:
-        begin_turn_all(
+        handles = begin_turn_all(
             user_id="u1",
             conversation_id="c1",
             user_input="hello",
@@ -53,18 +53,36 @@ class TestBeginFanOut:
             properties={"voice_mode": True},
         )
 
-        agnost_kwargs = services.agnost.begin_turn.call_args.kwargs
-        assert agnost_kwargs["user_id"] == "u1"
-        assert agnost_kwargs["conversation_id"] == "c1"
-        assert agnost_kwargs["user_input"] == "hello"
-        assert agnost_kwargs["properties"] == {
+        assert set(handles) == {"agnost", "latitude", "laminar"}
+        assert handles["laminar"] is services.laminar.begin_turn.return_value
+
+        expected_props = {
             "source": "web",
             "mode": "interactive",
             "tier": "comms_agent",
             "voice_mode": True,
         }
-        assert services.latitude.begin_turn.call_args.kwargs["user_id"] == "u1"
-        assert services.laminar.begin_turn.call_args.kwargs["user_input"] == "hello"
+        agnost_kwargs = services.agnost.begin_turn.call_args.kwargs
+        assert agnost_kwargs == {
+            "user_id": "u1",
+            "conversation_id": "c1",
+            "user_input": "hello",
+            "agent_name": "comms_agent",
+            "properties": expected_props,
+        }
+        assert services.latitude.begin_turn.call_args.kwargs == {
+            "user_id": "u1",
+            "conversation_id": "c1",
+            "agent_name": "comms_agent",
+            "properties": expected_props,
+        }
+        assert services.laminar.begin_turn.call_args.kwargs == {
+            "user_id": "u1",
+            "conversation_id": "c1",
+            "agent_name": "comms_agent",
+            "user_input": "hello",
+            "properties": expected_props,
+        }
 
     def test_reserved_keys_win_over_caller_properties(self, services: MagicMock) -> None:
         begin_turn_all(
@@ -78,15 +96,27 @@ class TestBeginFanOut:
         )
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
-        assert props["source"] == "web"
-        assert props["mode"] == "background"
-        assert props["tier"] == "narrator"
+        assert props == {"source": "web", "mode": "background", "tier": "narrator"}
 
     def test_missing_source_defaults_to_background(self, services: MagicMock) -> None:
         begin_turn_all(user_id="u1", conversation_id="c1", user_input="hello")
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
+        assert props == {"source": "background", "mode": "interactive", "tier": "comms_agent"}
+
+    def test_empty_source_defaults_to_background(self, services: MagicMock) -> None:
+        begin_turn_all(user_id="u1", conversation_id="c1", user_input="hello", source="")
+
+        props = services.agnost.begin_turn.call_args.kwargs["properties"]
         assert props["source"] == "background"
+
+    def test_no_properties_leaves_only_reserved_keys(self, services: MagicMock) -> None:
+        begin_turn_all(
+            user_id="u1", conversation_id="c1", user_input="hello", source="web", mode="m"
+        )
+
+        props = services.agnost.begin_turn.call_args.kwargs["properties"]
+        assert props == {"source": "web", "mode": "m", "tier": "comms_agent"}
 
     def test_all_none_scopes_logs_once(
         self, services: MagicMock, _reset_disabled_flag: None
@@ -102,6 +132,19 @@ class TestBeginFanOut:
                 "turn_telemetry_no_scopes", reason="keys unset or all begins failed"
             )
 
+    def test_partial_scopes_stay_silent(
+        self, services: MagicMock, _reset_disabled_flag: None
+    ) -> None:
+        services.agnost.begin_turn.return_value = MagicMock()
+        services.latitude.begin_turn.return_value = None
+        services.laminar.begin_turn.return_value = None
+        with patch("app.services.turn_telemetry.log") as mock_log:
+            handles = begin_turn_all(user_id="u1", conversation_id="c1", user_input="hello")
+
+            assert handles["agnost"] is not None
+            assert handles["latitude"] is None
+            mock_log.info.assert_not_called()
+
 
 @pytest.mark.unit
 class TestEndFanOut:
@@ -114,17 +157,21 @@ class TestEndFanOut:
 
         end_turn_all(handles, output="hi")  # type: ignore[typeddict-item]
 
+        assert services.agnost.end_turn.call_args.args[0] is handles["agnost"]
         agnost_kwargs = services.agnost.end_turn.call_args.kwargs
+        assert agnost_kwargs["output"] == "hi"
         assert agnost_kwargs["success"] is True
         assert agnost_kwargs["properties"] == {
             "cancelled": False,
             "has_error": False,
             "outcome": "success",
         }
+        assert services.latitude.end_turn.call_args.args[0] is handles["latitude"]
         assert services.latitude.end_turn.call_args.kwargs == {
             "error": None,
             "cancelled": False,
         }
+        assert services.laminar.end_turn.call_args.args[0] is handles["laminar"]
         laminar_kwargs = services.laminar.end_turn.call_args.kwargs
         assert laminar_kwargs["output"] == "hi"
         assert laminar_kwargs["error"] is None
@@ -141,10 +188,14 @@ class TestEndFanOut:
         end_turn_all(handles, output="boom", error=error)
 
         agnost_kwargs = services.agnost.end_turn.call_args.kwargs
+        assert agnost_kwargs["output"] == "boom"
         assert agnost_kwargs["success"] is False
         assert agnost_kwargs["properties"]["outcome"] == "failed"
+        assert services.latitude.end_turn.call_args.args[0] is handles["latitude"]
         assert services.latitude.end_turn.call_args.kwargs["error"] is error
+        assert services.laminar.end_turn.call_args.args[0] is handles["laminar"]
         assert services.laminar.end_turn.call_args.kwargs["error"] is error
+        assert services.laminar.end_turn.call_args.kwargs["output"] == "boom"
 
     def test_cancelled_is_not_failed(self, services: MagicMock) -> None:
         handles = {
@@ -156,17 +207,21 @@ class TestEndFanOut:
         end_turn_all(handles, output="partial", cancelled=True)
 
         agnost_kwargs = services.agnost.end_turn.call_args.kwargs
+        assert agnost_kwargs["output"] == "partial"
         assert agnost_kwargs["success"] is False
         assert agnost_kwargs["properties"] == {
             "cancelled": True,
             "has_error": False,
             "outcome": "cancelled",
         }
+        assert services.latitude.end_turn.call_args.args[0] is handles["latitude"]
         assert services.latitude.end_turn.call_args.kwargs == {
             "error": None,
             "cancelled": True,
         }
+        assert services.laminar.end_turn.call_args.args[0] is handles["laminar"]
         assert services.laminar.end_turn.call_args.kwargs["cancelled"] is True
+        assert services.laminar.end_turn.call_args.kwargs["output"] == "partial"
 
     def test_error_dominates_cancelled(self, services: MagicMock) -> None:
         handles = {

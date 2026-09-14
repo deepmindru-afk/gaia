@@ -67,6 +67,18 @@ class TestBeginTurn:
 
             assert begin_turn(user_id="u1", conversation_id="c1") is None
 
+    def test_none_valued_properties_are_dropped(self) -> None:
+        scope, _ = _entered_scope()
+        with (
+            patch("app.services.laminar_service.settings", _settings("key-1")),
+            patch("app.services.laminar_service.Laminar") as mock_sdk,
+        ):
+            mock_sdk.start_as_current_span.return_value = scope
+
+            begin_turn(user_id="u1", conversation_id="c1", properties={"keep": "x", "drop": None})
+
+            assert mock_sdk.start_as_current_span.call_args.kwargs["metadata"] == {"keep": "x"}
+
 
 class TestEndTurn:
     def test_none_scope_is_noop(self) -> None:
@@ -85,13 +97,18 @@ class TestEndTurn:
     def test_error_exits_with_exception_and_no_cancelled_tag(self) -> None:
         scope, span = _entered_scope()
         handle = TurnScope(scope=scope, span=span)
-        error = RuntimeError("provider down")
+        try:
+            raise RuntimeError("provider down")
+        except RuntimeError as error:
+            caught = error
+            tb = error.__traceback__
 
-        end_turn(handle, output="boom", error=error)
+        assert tb is not None, "mutant guard: traceback must be real"
+        end_turn(handle, output="boom", error=caught)
 
         span.set_output.assert_called_once_with("boom")
         span.set_attribute.assert_not_called()
-        assert scope.__exit__.call_args.args == (type(error), error, error.__traceback__)
+        assert scope.__exit__.call_args.args == (type(caught), caught, tb)
 
     def test_cancelled_sets_output_tag_and_exits_clean(self) -> None:
         scope, span = _entered_scope()
@@ -107,14 +124,49 @@ class TestEndTurn:
         scope, span = _entered_scope()
         span.set_output.side_effect = RuntimeError("otel down")
         handle = TurnScope(scope=scope, span=span)
+        with patch("app.services.laminar_service.log") as mock_log:
+            end_turn(handle, output="hi")
 
-        end_turn(handle, output="hi")
-
-        scope.__exit__.assert_called_once_with(None, None, None)
+            scope.__exit__.assert_called_once_with(None, None, None)
+            mock_log.warning.assert_called_once_with(
+                "laminar_span_update_failed", error="otel down", error_type="RuntimeError"
+            )
 
     def test_exit_failure_does_not_raise(self) -> None:
         scope, span = _entered_scope()
         scope.__exit__.side_effect = RuntimeError("export down")
         handle = TurnScope(scope=scope, span=span)
+        with patch("app.services.laminar_service.log") as mock_log:
+            end_turn(handle, output="hi")
 
-        end_turn(handle, output="hi")
+            mock_log.warning.assert_called_once_with(
+                "laminar_end_failed", error="export down", error_type="RuntimeError"
+            )
+
+    def test_exit_reraise_of_turn_error_stays_quiet(self) -> None:
+        scope, span = _entered_scope()
+        try:
+            raise RuntimeError("turn blew up")
+        except RuntimeError as error:
+            scope.__exit__.side_effect = error
+            handle = TurnScope(scope=scope, span=span)
+            with patch("app.services.laminar_service.log") as mock_log:
+                end_turn(handle, output="boom", error=error)
+
+                mock_log.warning.assert_not_called()
+
+    def test_begin_failure_logs_conversation(self) -> None:
+        with (
+            patch("app.services.laminar_service.settings", _settings("key-1")),
+            patch("app.services.laminar_service.Laminar") as mock_sdk,
+            patch("app.services.laminar_service.log") as mock_log,
+        ):
+            mock_sdk.start_as_current_span.side_effect = RuntimeError("boom")
+
+            assert begin_turn(user_id="u1", conversation_id="c1") is None
+            mock_log.warning.assert_called_once_with(
+                "laminar_begin_failed",
+                error="boom",
+                error_type="RuntimeError",
+                conversation_id="c1",
+            )
