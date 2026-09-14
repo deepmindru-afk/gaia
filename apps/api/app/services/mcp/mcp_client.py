@@ -2144,6 +2144,7 @@ class MCPClient:
         )
 
         # Rehydrate a previously-connected integration if its in-memory session was evicted.
+        call_start = time.perf_counter()
         await self.ensure_connected(matching_integration_id)
 
         client = self._clients.get(matching_integration_id)
@@ -2158,7 +2159,15 @@ class MCPClient:
         # `-> CallToolResult` and returns the SDK model straight through.
         result = cast(CallToolResult, await session.call_tool(name=tool_name, arguments=arguments))
 
-        log.set_ns("mcp", success=not result.isError)
+        # Same surface as the reconnect path's latency_ms: the server
+        # round-trip including any rehydration above. Prometheus sees this
+        # call once, as tool_call_seconds{tool_name="mcp"} at the wrapper —
+        # a second histogram here would double-count it.
+        log.set_ns(
+            "mcp",
+            success=not result.isError,
+            latency_ms=round((time.perf_counter() - call_start) * 1000.0, 2),
+        )
 
         return result
 

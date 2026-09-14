@@ -14,6 +14,7 @@ It handles executing middleware hooks at appropriate points:
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 import inspect
+import time
 from typing import Any, cast
 
 from langchain.agents.middleware import AgentMiddleware
@@ -41,6 +42,7 @@ from app.constants.log_tags import LogTag
 from app.models.agent_models import AgentMiddlewareStack
 from app.override.langgraph_bigtool.utils import State, messages_delta_reducer
 from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.latency_metrics import observe_tool_call
 from shared.py.wide_events import log
 
 # The handler chains built below. LangChain's hooks accept a wider return union
@@ -48,6 +50,20 @@ from shared.py.wide_events import log
 # ever feeds and consumes ModelResponse, so the model chain is narrowed to it.
 ModelCallHandler = Callable[[ModelRequest], Awaitable[ModelResponse]]
 ToolCallHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]]
+
+
+def _tool_metric_name(tool_name: str, tool: BaseTool | None) -> str:
+    """The Prometheus label for a tool call.
+
+    MCP-proxied and other dynamically registered tools carry user-defined
+    names — unbounded cardinality — so they collapse to ``"mcp"``. The real
+    name stays on the wide event and the ``tool:used`` PostHog prop.
+    ``McpToLangChainAdapter`` is method-local (no stable import path), so the
+    ``tool_connector`` attribute it always sets is the structural signal.
+    """
+    if tool is not None and hasattr(tool, "tool_connector"):
+        return "mcp"
+    return tool_name or "unknown"
 
 
 def _apply_state_update(current_state: dict[str, Any], update: Mapping[str, Any]) -> None:
@@ -440,17 +456,23 @@ class MiddlewareExecutor:
                 current_handler = make_sync_wrapper(mw, current_handler)
 
         # Execute the chain
+        metric_name = _tool_metric_name(tool_name, tool)
+        chain_start = time.perf_counter()
         try:
-            return await current_handler(request)
+            result = await current_handler(request)
         except GraphBubbleUp:
             # A GraphInterrupt (from the HIL gate's interrupt()) is control flow, not
             # a failure. It MUST propagate so LangGraph can checkpoint and pause —
             # the generic handler below would swallow it and then run the tool via
             # the direct-invocation fallback, executing a gated action unapproved.
+            # No latency sample either: the pause is HIL wait, measured separately.
             raise
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            observe_tool_call(
+                time.perf_counter() - chain_start, tool_name=metric_name, status="error"
+            )
             log.error(
                 f"{LogTag.AGENT} Middleware wrap_tool_call chain failed",
                 tool_name=tool_name,
@@ -463,6 +485,10 @@ class MiddlewareExecutor:
                 return tool_result
             # Nothing ran yet: a pre-tool middleware broke, so invoke directly.
             return await invoke_fn(tool_call)
+        observe_tool_call(
+            time.perf_counter() - chain_start, tool_name=metric_name, status="success"
+        )
+        return result
 
     def has_wrap_model_call(self) -> bool:
         """Check if any middleware has wrap_model_call."""

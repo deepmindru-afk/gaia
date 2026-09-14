@@ -55,6 +55,7 @@ from app.services.mcp.token_management import (
     try_refresh_token,
 )
 from app.utils.mcp_oauth_utils import MCP_PROTOCOL_VERSION
+from shared.py.wide_events import log
 
 # ---------------------------------------------------------------------------
 # Helpers / Factories
@@ -845,6 +846,28 @@ class TestMCPClientCallToolOnServer:
         result = await client.call_tool_on_server(SERVER_URL, "test_tool", {"arg": "val"})
         assert result.isError is False
         assert result.content[0].text == "result"
+
+    async def test_successful_call_stamps_latency_on_wide_event(self):
+        log.reset()
+        client = MCPClient(user_id=USER_ID)
+        mock_base = MagicMock()
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="result")], isError=False
+            )
+        )
+        mock_base.get_session = MagicMock(return_value=mock_session)
+        client._clients[INTEGRATION_ID] = mock_base
+        client._tools[INTEGRATION_ID] = [_mock_tool()]
+
+        client._find_integration_id_by_server_url = AsyncMock(return_value=INTEGRATION_ID)
+        client.ensure_connected = AsyncMock(return_value=[_mock_tool()])
+
+        await client.call_tool_on_server(SERVER_URL, "test_tool", {"arg": "val"})
+        mcp = log.get().get("mcp") or {}
+        assert mcp.get("success") is True
+        assert mcp.get("latency_ms", -1.0) >= 0.0
 
     async def test_raises_when_no_matching_integration(self):
         client = MCPClient(user_id=USER_ID)

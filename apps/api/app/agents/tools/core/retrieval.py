@@ -44,6 +44,7 @@ from app.services.integrations.integration_service import (
     get_user_available_tool_namespaces,
 )
 from app.services.integrations.user_integrations import get_user_integrations
+from app.services.latency_metrics import observe_tool_retrieval, span
 from app.services.mcp.mcp_client import get_mcp_client
 from app.services.oauth.oauth_service import get_all_integrations_status
 from app.utils.mcp_utils import canonical_tool_name_map
@@ -920,7 +921,8 @@ def get_retrieve_tools_function(
             include_desktop=desktop_enabled,
         )
 
-        results = await asyncio.gather(*search_tasks, return_exceptions=True)
+        with span() as elapsed_retrieval:
+            results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
         # Surface search failures instead of treating them as empty namespaces.
         # A partial outage degrades to the namespaces that answered; a total
@@ -934,7 +936,9 @@ def get_retrieve_tools_function(
                 error_type=type(failure).__name__,
             )
         if failures and len(failures) == len(results):
+            observe_tool_retrieval(elapsed_retrieval(), status="error")
             raise failures[0]
+        observe_tool_retrieval(elapsed_retrieval(), status="success")
 
         # MCP tool names don't live in the global registry anymore (resilience
         # rewrite removed the per-user mcp_{iid}_{user_id} categories). Union
