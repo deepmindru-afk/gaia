@@ -12,6 +12,7 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from prometheus_client import REGISTRY
 import pytest
 
 from app.constants.cache import (
@@ -325,6 +326,20 @@ class TestPublishChunk:
         ):
             # Should not raise
             await StreamManager.publish_chunk("s1", "data: hello\n\n")
+
+    async def test_publish_observes_transport_span(self) -> None:
+        before = REGISTRY.get_sample_value("transport_redis_publish_seconds_count", {}) or 0.0
+        await StreamManager.publish_chunk("s1", "data: hello\n\n")
+        assert REGISTRY.get_sample_value("transport_redis_publish_seconds_count", {}) == before + 1
+
+    async def test_no_observation_without_redis(self) -> None:
+        before = REGISTRY.get_sample_value("transport_redis_publish_seconds_count", {}) or 0.0
+        with patch(
+            "app.core.stream_manager.redis_cache",
+            new=MagicMock(redis=None),
+        ):
+            await StreamManager.publish_chunk("s1", "data: hello\n\n")
+        assert REGISTRY.get_sample_value("transport_redis_publish_seconds_count", {}) == before
 
 
 # ---------------------------------------------------------------------------
