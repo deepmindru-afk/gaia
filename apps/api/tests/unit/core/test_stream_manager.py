@@ -341,6 +341,20 @@ class TestPublishChunk:
             await StreamManager.publish_chunk("s1", "data: hello\n\n")
         assert REGISTRY.get_sample_value("transport_redis_publish_seconds_count", {}) == before
 
+    async def test_publish_records_exact_elapsed_seconds(self) -> None:
+        # Two pinned clock reads make the recorded duration deterministic: a
+        # start/end subtraction lands exactly 0.5. A sign error (end + start)
+        # would record 200.5 here instead, so this pins the direction of the
+        # elapsed-time arithmetic, not merely that an observation happened.
+        before = REGISTRY.get_sample_value("transport_redis_publish_seconds_sum", {}) or 0.0
+        with patch(
+            "app.core.stream_manager.time.perf_counter",
+            side_effect=[100.0, 100.5],
+        ):
+            await StreamManager.publish_chunk("s1", "data: hello\n\n")
+        after = REGISTRY.get_sample_value("transport_redis_publish_seconds_sum", {})
+        assert after == before + 0.5
+
 
 # ---------------------------------------------------------------------------
 # subscribe_stream

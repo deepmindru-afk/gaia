@@ -393,6 +393,69 @@ class TestDeliveryLatency:
             assert await rd._save_bot_message("conv-1", {"user_id": "user-1"}, bot_message) is True
         assert _persist_count("save_bot_message") == before + 1
 
+    async def test_cancelled_persist_records_exact_seconds(self) -> None:
+        # Pinned clock: the persisted sample must be the elapsed subtraction in
+        # SECONDS. A sign error (end + start) would record 40.75 here.
+        run = _run(RunKind.QUEUED, stream_id="queued_lat2", task_id="task-lat2")
+        labels = {"op": "cancelled_cards"}
+        before = REGISTRY.get_sample_value("delivery_persist_seconds_sum", labels) or 0.0
+        with (
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd.time, "perf_counter", side_effect=[20.0, 20.75]),
+        ):
+            await rd.persist_cancelled_run(run, CARDS)
+        assert REGISTRY.get_sample_value("delivery_persist_seconds_sum", labels) == before + 0.75
+
+    async def test_save_bot_message_records_exact_seconds(self) -> None:
+        labels = {"op": "save_bot_message"}
+        before = REGISTRY.get_sample_value("delivery_persist_seconds_sum", labels) or 0.0
+        bot_message = MessageModel(type="bot", response="hi", date="2026-01-01")
+        with (
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd.time, "perf_counter", side_effect=[7.0, 7.25]),
+        ):
+            assert await rd._save_bot_message("conv-1", {"user_id": "user-1"}, bot_message) is True
+        assert REGISTRY.get_sample_value("delivery_persist_seconds_sum", labels) == before + 0.25
+
+    async def test_narration_records_exact_seconds(self) -> None:
+        labels = {"status": "success"}
+        before = REGISTRY.get_sample_value("delivery_narration_seconds_sum", labels) or 0.0
+        with (
+            patch.object(rd, "narrate_executor_result", new_callable=AsyncMock, return_value="v"),
+            patch.object(rd, "_approval_outcomes_note", new_callable=AsyncMock, return_value=""),
+            patch.object(rd.time, "perf_counter", side_effect=[3.0, 3.5]),
+        ):
+            await rd._narrate_result(_run(), "raw", "final", "")
+        assert REGISTRY.get_sample_value("delivery_narration_seconds_sum", labels) == before + 0.5
+
+    async def test_narration_fallback_is_recorded_under_the_fallback_status(self) -> None:
+        # comms unavailable -> the raw text is delivered, and the sample is
+        # labelled "fallback". A recased or renamed status would silently split
+        # the fallback rate across two series.
+        run = _run(RunKind.QUEUED, stream_id="queued_lat3", task_id="task-lat3")
+        count_labels = {"status": "fallback"}
+        sum_labels = {"status": "fallback"}
+        count_before = (
+            REGISTRY.get_sample_value("delivery_narration_seconds_count", count_labels) or 0.0
+        )
+        sum_before = REGISTRY.get_sample_value("delivery_narration_seconds_sum", sum_labels) or 0.0
+        with (
+            patch.object(rd, "narrate_executor_result", new_callable=AsyncMock, return_value=""),
+            patch.object(rd, "_approval_outcomes_note", new_callable=AsyncMock, return_value=""),
+            patch.object(rd.time, "perf_counter", side_effect=[3.0, 3.5]),
+        ):
+            assert await rd._narrate_result(run, "raw fallback text", "final", "") == (
+                "raw fallback text"
+            )
+        assert (
+            REGISTRY.get_sample_value("delivery_narration_seconds_count", count_labels)
+            == count_before + 1
+        )
+        assert (
+            REGISTRY.get_sample_value("delivery_narration_seconds_sum", sum_labels)
+            == sum_before + 0.5
+        )
+
 
 class TestDeliverResultToolDataOwnership:
     """deliver_result attaches the cards its caller snapshotted, and keys queued

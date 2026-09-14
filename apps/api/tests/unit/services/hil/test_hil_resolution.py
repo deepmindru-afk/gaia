@@ -22,6 +22,9 @@ from app.services.hil.resolution import (
     ApprovalNotResumableError,
     ApprovalRequestForbiddenError,
     ApprovalRequestNotFoundError,
+    _observe_hil_dispatch_lag,
+    _observe_hil_user_wait,
+    _resolve_or_close,
     abandon_conversation_approvals,
     cancel_conversation_approvals,
     resolve_approval,
@@ -305,6 +308,36 @@ class TestDecisionSemantics:
 
         assert decided.await_args.args[1] == "abandoned"
         assert resume.runner.call_args.kwargs["resume"].resume["status"] == "denied"
+
+    async def test_the_returned_record_carries_the_full_decision_forward(self, resume: Any) -> None:
+        # The loaded record predates the transition; the caller and the resume dispatch
+        # must see the decided image, not the pending snapshot. Every copied field is
+        # load-bearing — a renamed key silently drops it back to the pending value.
+        record = make_record()
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+        ):
+            decided = await resolve_approval(
+                approval_id="appr-1",
+                user_id=USER_ID,
+                kind="approve",
+                feedback="looks good",
+                scope="always",
+            )
+
+        assert decided is not record
+        assert decided.status == "approved"
+        assert decided.feedback == "looks good"
+        assert decided.scope == "always"
+        assert decided.decided_by == USER_ID
+        assert decided.decided_at is not None
+        # The pending snapshot the caller loaded is not mutated in place.
+        assert record.status == "pending"
+        assert record.feedback is None
+        assert record.scope == "once"
+        assert record.decided_by is None
+        assert record.decided_at is None
 
 
 class TestBatchDecisions:
@@ -633,3 +666,61 @@ class TestHILWaitBenchmarks:
         assert resume.runner.call_count == 0
         assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
         assert REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) == lag_before
+
+    async def test_a_closed_record_without_resume_context_still_measures_the_user_wait(
+        self,
+    ) -> None:
+        """A record closed in place (no run to resume) is still a decision the user
+        served: the wait must reach the histogram, not just dispatched approvals."""
+        record = make_record(resume_item=None)
+        wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        with (
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.log") as log_mock,
+        ):
+            await _resolve_or_close(record, user_id=USER_ID, kind="deny", feedback="no")
+
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
+        assert "user_wait_s" in log_mock.set.call_args.kwargs["hil"]
+
+    def test_the_user_wait_is_logged_with_two_decimal_precision(self) -> None:
+        created = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        record = make_record(created_at=created, decided_at=created + timedelta(seconds=12.3456))
+        with patch(f"{MODULE}.log") as log_mock:
+            _observe_hil_user_wait(record)
+
+        assert log_mock.set.call_args.kwargs == {"hil": {"user_wait_s": 12.35}}
+
+    def test_a_zero_second_user_wait_is_still_measured(self) -> None:
+        # The guard is "never negative", not "never zero": a user who answers the instant
+        # the card is created served no wait, but it is still a real observation.
+        fixed = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        record = make_record(created_at=fixed, decided_at=fixed)
+        wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        _observe_hil_user_wait(record)
+
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
+
+    def test_the_dispatch_lag_is_logged_with_two_decimal_precision(self) -> None:
+        decided = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        record = make_record(decided_at=decided)
+        with (
+            patch(f"{MODULE}.datetime") as clock,
+            patch(f"{MODULE}.log") as log_mock,
+        ):
+            clock.now.return_value = decided + timedelta(seconds=7.891)
+            _observe_hil_dispatch_lag(record)
+
+        assert log_mock.set.call_args.kwargs == {"hil": {"dispatch_lag_s": 7.89}}
+
+    def test_a_zero_second_dispatch_lag_is_still_measured(self) -> None:
+        # Clock skew is a negative delta; a resume that starts at the instant of the
+        # decision is zero lag, not a reason to drop the measurement.
+        decided = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        record = make_record(decided_at=decided)
+        lag_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) or 0.0
+        with patch(f"{MODULE}.datetime") as clock:
+            clock.now.return_value = decided
+            _observe_hil_dispatch_lag(record)
+
+        assert REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) == lag_before + 1

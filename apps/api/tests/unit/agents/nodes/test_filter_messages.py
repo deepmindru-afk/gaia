@@ -219,6 +219,28 @@ class TestFilterMessages:
             == before + 1
         )
 
+    def test_node_records_the_exact_elapsed_seconds(self):
+        # Two pinned clock reads make the recorded duration deterministic: a
+        # start/end subtraction lands exactly 0.5. A sign error (end + start)
+        # would record 10.5 here instead, so this pins the direction of the
+        # elapsed-time arithmetic, not merely that an observation happened.
+        config = {
+            "agent_name": "span-test-agent",
+            "configurable": {"user_id": "u1", "thread_id": "t1"},
+        }
+        labels = {"node": "filter_messages", "agent": "span-test-agent"}
+        before = REGISTRY.get_sample_value("graph_node_seconds_sum", labels) or 0.0
+
+        with patch(
+            "app.agents.core.nodes.filter_messages.time.perf_counter",
+            side_effect=[5.0, 5.5],
+        ):
+            filter_messages_node(
+                self._make_state([HumanMessage(content="hello")]), config, self._store()
+            )
+
+        assert REGISTRY.get_sample_value("graph_node_seconds_sum", labels) == before + 0.5
+
     def test_cross_message_tool_call_deduplication(self):
         """ToolMessages following ai2 must not affect filtering of ai1's tool_calls."""
         ai1 = AIMessage(content="", tool_calls=[{"id": "tc1", "name": "a", "args": {}}])

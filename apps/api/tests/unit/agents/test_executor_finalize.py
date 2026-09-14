@@ -12,8 +12,10 @@ the routing logic under test are real.
 
 import asyncio
 from contextlib import ExitStack, contextmanager
+from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
+from prometheus_client import REGISTRY
 import pytest
 
 from app.agents.core.background import (
@@ -44,6 +46,7 @@ from app.agents.core.background.session import (
 from app.agents.core.nodes import executor_status
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.cache import EXECUTOR_BUSY_PREFIX
+from app.constants.hil import HIL_PAUSED_LOCK_TTL_SECONDS
 from app.constants.log_tags import LogTag
 from app.models.chat_models import SourceCategory
 from shared.py.wide_events import log, log_context
@@ -759,3 +762,121 @@ class TestBuildRunItem:
         )
 
         assert item["bot_message_id"] is None
+
+
+def _count(name: str, labels: dict[str, str]) -> float:
+    return REGISTRY.get_sample_value(f"{name}_count", labels) or 0.0
+
+
+def _sum(name: str, labels: dict[str, str]) -> float:
+    return REGISTRY.get_sample_value(f"{name}_sum", labels) or 0.0
+
+
+def _counter(name: str, labels: dict[str, str]) -> float:
+    """A Counter's own sample is its base name, not ``<name>_count``."""
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+class TestTerminalRunMetrics:
+    """The terminal labels and the e2e boundary. A run's end status drives alerts
+    and SLOs, so the exact literal on the collector is the contract."""
+
+    async def test_error_run_records_error_status_and_a_zero_e2e_sample(
+        self, boundaries
+    ) -> None:
+        """An error run is labelled ``error`` (not the mixed-case literal), and a
+        dispatch stamp equal to the finalize instant is a real 0.0 sample — the
+        ``>=`` boundary, not the strict ``>`` that would drop it."""
+        boundaries.stream_manager.is_cancelled.return_value = False
+        run = replace(_run(RunKind.QUEUED), t_dispatch_perf=1234.5, queued=True)
+        create_session("s1", RunKind.QUEUED)
+        e2e_before = _count("executor_e2e_seconds", {"status": "error", "queued": "true"})
+        error_before = _counter("executor_run_total", {"status": "error", "queued": "true"})
+        success_before = _counter("executor_run_total", {"status": "success", "queued": "true"})
+
+        with (
+            patch.object(er.time, "perf_counter", return_value=1234.5),
+            patch.object(er, "_queue_collection_if_uncollected", AsyncMock()),
+        ):
+            await er._finalize_executor_run(run, TASK, "the model call failed", "error")
+
+        assert _count("executor_e2e_seconds", {"status": "error", "queued": "true"}) == e2e_before + 1
+        assert (
+            _counter("executor_run_total", {"status": "error", "queued": "true"}) == error_before + 1
+        )
+        assert (
+            _counter("executor_run_total", {"status": "success", "queued": "true"})
+            == success_before
+        )
+
+    async def test_cancelled_run_records_cancelled_status(self, boundaries) -> None:
+        boundaries.stream_manager.is_cancelled.return_value = True
+        run = replace(_run(RunKind.QUEUED), t_dispatch_perf=1234.5, queued=True)
+        create_session("s1", RunKind.QUEUED)
+        before = _counter("executor_run_total", {"status": "cancelled", "queued": "true"})
+        success_before = _counter("executor_run_total", {"status": "success", "queued": "true"})
+
+        with (
+            patch.object(er.time, "perf_counter", return_value=1234.5),
+            patch.object(er, "_queue_collection_if_uncollected", AsyncMock()),
+        ):
+            await er._finalize_executor_run(run, TASK, "partial text", "final")
+
+        assert (
+            _counter("executor_run_total", {"status": "cancelled", "queued": "true"}) == before + 1
+        )
+        assert (
+            _counter("executor_run_total", {"status": "success", "queued": "true"})
+            == success_before
+        )
+
+
+class TestFinalizePausedRun:
+    """A HIL pause holds the lock and signals the stream, but must not deliver or
+    drain the queue. ``observe_executor_run_total`` gets the pause's own label."""
+
+    async def _pause(self, *, queued: bool):
+        run = replace(_run(RunKind.QUEUED), queued=queued)
+        with (
+            patch.object(er, "extend_lock_if_owned", AsyncMock(return_value=True)) as extend,
+            patch.object(er, "signal_executor_done") as signal,
+            patch.object(er, "_close_queued_stream", AsyncMock()) as close,
+            patch.object(er, "observe_executor_run_total") as total,
+            patch.object(er, "log") as mock_log,
+        ):
+            await er._finalize_paused_run(run)
+        return run, extend, signal, close, total, mock_log
+
+    async def test_it_extends_the_lock_signals_done_and_counts_paused(self) -> None:
+        run, extend, signal, close, total, mock_log = await self._pause(queued=True)
+
+        extend.assert_awaited_once_with(
+            "conv-1", "s1", "task-1", HIL_PAUSED_LOCK_TTL_SECONDS
+        )
+        signal.assert_called_once_with("s1")
+        close.assert_awaited_once_with(run, was_cancelled=False)
+        total.assert_called_once_with(status="paused", queued=True)
+        # A successful extend is not a warning: the orphan warning is for the
+        # losing branch only.
+        mock_log.warning.assert_not_called()
+
+    async def test_a_non_queued_pause_is_counted_as_not_queued(self) -> None:
+        _run_arg, _extend, _signal, _close, total, _log = await self._pause(queued=False)
+
+        total.assert_called_once_with(status="paused", queued=False)
+
+
+class TestRecordPauseIdentityRewrite:
+    async def test_the_resume_context_drops_the_stamp_and_the_queue_origin(self) -> None:
+        """A pause re-dispatch is a new incarnation: the stamp goes (so the
+        resume measures no queue wait for the user's decision time) and the queue
+        origin is cleared (it did not wait on the busy lock)."""
+        run = replace(_run(RunKind.QUEUED), t_dispatch_perf=1234.5, queued=True)
+
+        with patch.object(er, "set_resume_item", new_callable=AsyncMock) as set_item:
+            recorded = await er._record_pause(run, TASK, {"user_id": "u1"}, ("appr-1",))
+
+        assert recorded is True
+        item = set_item.await_args.args[1]
+        assert item["t_dispatch_perf"] is None
+        assert item["queued"] is False

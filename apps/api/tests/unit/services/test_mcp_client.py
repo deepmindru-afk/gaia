@@ -864,10 +864,17 @@ class TestMCPClientCallToolOnServer:
         client._find_integration_id_by_server_url = AsyncMock(return_value=INTEGRATION_ID)
         client.ensure_connected = AsyncMock(return_value=[_mock_tool()])
 
-        await client.call_tool_on_server(SERVER_URL, "test_tool", {"arg": "val"})
+        # Pin the clock so the reported latency is exact: this is what makes the
+        # arithmetic (subtract start, *1000, round to 2dp) load-bearing — a range
+        # assertion passes for every one of those mutants.
+        with patch(
+            "app.services.mcp.mcp_client.time.perf_counter",
+            side_effect=[1000.0, 1000.1271658],
+        ):
+            await client.call_tool_on_server(SERVER_URL, "test_tool", {"arg": "val"})
         mcp = log.get().get("mcp") or {}
         assert mcp.get("success") is True
-        assert mcp.get("latency_ms", -1.0) >= 0.0
+        assert mcp.get("latency_ms") == pytest.approx(127.17, abs=1e-6)
 
     async def test_raises_when_no_matching_integration(self):
         client = MCPClient(user_id=USER_ID)

@@ -596,7 +596,9 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
                     if frame is not None:
                         yield frame
                     if stop:
-                        break
+                        # `return` here is behaviourally identical: nothing follows
+                        # the loop inside the try, and both run the same finally.
+                        break  # pragma: no mutate
             except GeneratorExit:
                 delivery_status = "abandoned"
                 raise

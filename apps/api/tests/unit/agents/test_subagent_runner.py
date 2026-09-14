@@ -12,6 +12,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langgraph.types import Command
 from prometheus_client import REGISTRY
 import pytest
 
@@ -1607,6 +1608,25 @@ def _subagent_count(integration_id: str, status: str) -> float:
     )
 
 
+def _subagent_sum(integration_id: str, status: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "subagent_run_seconds_sum", {"subagent_id": integration_id, "status": status}
+        )
+        or 0.0
+    )
+
+
+class _FakeClock:
+    """A `time` stub standing in for `subagent_runner.time`, one tick per call."""
+
+    def __init__(self, *values: float) -> None:
+        self._values = list(values)
+
+    def perf_counter(self) -> float:
+        return self._values.pop(0)
+
+
 class TestSubagentRunLatency:
     @pytest.mark.asyncio
     async def test_finished_segment_observes_success_span(self):
@@ -1699,3 +1719,173 @@ class TestSubagentRunLatency:
             await execute_subagent_stream(ctx, stream_writer=MagicMock(), subagent_id="lat-sub-err")
 
         assert _subagent_count("test", "error") == before + 1
+
+    @pytest.mark.asyncio
+    async def test_stream_is_driven_with_seed_state_config_and_exit_durability(self):
+        """A fake astream that ignores its arguments cannot notice any of the
+        drive contract drifting: the seed state, the three stream modes, the run
+        config, or durability="exit" (the run's one checkpoint write)."""
+        captured: dict[str, Any] = {}
+
+        async def _fake_astream(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph)
+
+        with patch("app.agents.core.subagents.subagent_runner.log"):
+            await execute_subagent_stream(ctx, stream_writer=MagicMock())
+
+        assert captured["args"] == (ctx.initial_state,)
+        assert captured["kwargs"]["stream_mode"] == ["messages", "custom", "updates"]
+        assert captured["kwargs"]["config"] is ctx.config
+        assert captured["kwargs"]["durability"] == "exit"
+
+    @pytest.mark.asyncio
+    async def test_resume_reclocks_the_run_before_streaming_it(self):
+        """A resumed run goes through `_with_current_time(resume, configurable)`
+        — dropping either, or swapping one for the other, hands the graph the
+        wrong command or a stale clock."""
+        captured: dict[str, Any] = {}
+        reclocker = MagicMock(return_value=object())
+
+        async def _fake_astream(*args, **kwargs):
+            captured["args"] = args
+            yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        mock_graph.aget_state = AsyncMock(return_value=MagicMock(interrupts=("x",), next=None))
+        ctx = _make_ctx(subagent_graph=mock_graph)
+        resume = Command(resume="approved")
+
+        with (
+            patch("app.agents.core.subagents.subagent_runner.log"),
+            patch(
+                "app.agents.core.subagents.subagent_runner._with_current_time",
+                reclocker,
+            ),
+        ):
+            await execute_subagent_stream(ctx, resume=resume)
+
+        reclocker.assert_called_once_with(resume, ctx.configurable)
+        assert captured["args"][0] is reclocker.return_value
+
+    @pytest.mark.asyncio
+    async def test_custom_mcp_label_collapses_to_one_series(self):
+        """A custom MCP integration's user-created name would mint unbounded
+        series; the span labels the literal "custom_mcp" instead."""
+
+        async def _fake_astream(*args, **kwargs):
+            yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(
+            subagent_graph=mock_graph,
+            agent_name="custom_mcp_google",
+            integration_id="google",
+        )
+        before = _subagent_count("custom_mcp", "success")
+
+        with patch("app.agents.core.subagents.subagent_runner.log"):
+            await execute_subagent_stream(ctx, stream_writer=MagicMock())
+
+        assert _subagent_count("custom_mcp", "success") == before + 1
+
+    @pytest.mark.asyncio
+    async def test_label_falls_back_integration_id_then_agent_name_then_unknown(self):
+        async def _fake_astream(*args, **kwargs):
+            yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+
+        agent_ctx = _make_ctx(subagent_graph=mock_graph, agent_name="test_agent", integration_id="")
+        agent_before = _subagent_count("test_agent", "success")
+        with patch("app.agents.core.subagents.subagent_runner.log"):
+            await execute_subagent_stream(agent_ctx, stream_writer=MagicMock())
+        assert _subagent_count("test_agent", "success") == agent_before + 1
+
+        unknown_ctx = _make_ctx(subagent_graph=mock_graph, agent_name="", integration_id="")
+        unknown_before = _subagent_count("unknown", "success")
+        with patch("app.agents.core.subagents.subagent_runner.log"):
+            await execute_subagent_stream(unknown_ctx, stream_writer=MagicMock())
+        assert _subagent_count("unknown", "success") == unknown_before + 1
+
+    @pytest.mark.asyncio
+    async def test_cancelled_segment_observes_cancelled_span_not_success(self):
+        async def _fake_astream(*args, **kwargs):
+            yield ("messages", (AIMessageChunk(content="partial"), {}))
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph, stream_id="s-cancel")
+        cancelled_before = _subagent_count("test", "cancelled")
+        success_before = _subagent_count("test", "success")
+
+        with (
+            patch("app.agents.core.subagents.subagent_runner.log"),
+            patch(
+                "app.agents.core.subagents.subagent_runner.stream_manager.is_cancelled",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_is_cancelled,
+        ):
+            outcome = await execute_subagent_stream(
+                ctx, stream_writer=MagicMock(), subagent_id="lat-cancel"
+            )
+
+        assert not outcome.paused
+        mock_is_cancelled.assert_awaited_once_with("s-cancel")
+        assert _subagent_count("test", "cancelled") == cancelled_before + 1
+        assert _subagent_count("test", "success") == success_before
+
+    @pytest.mark.asyncio
+    async def test_success_span_records_elapsed_seconds_not_the_summed_clock(self):
+        async def _fake_astream(*args, **kwargs):
+            yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph)
+        before = _subagent_sum("test", "success")
+
+        with (
+            patch("app.agents.core.subagents.subagent_runner.log"),
+            patch(
+                "app.agents.core.subagents.subagent_runner.time",
+                new=_FakeClock(100.0, 100.25),
+            ),
+        ):
+            await execute_subagent_stream(ctx, stream_writer=MagicMock(), subagent_id="lat-clock")
+
+        assert _subagent_sum("test", "success") == pytest.approx(before + 0.25)
+
+    @pytest.mark.asyncio
+    async def test_error_span_records_elapsed_seconds_not_the_summed_clock(self):
+        async def _fake_astream(*args, **kwargs):
+            raise RuntimeError("graph exploded")
+            yield ("updates", {})
+
+        mock_graph = MagicMock()
+        mock_graph.astream = _fake_astream
+        ctx = _make_ctx(subagent_graph=mock_graph)
+        before = _subagent_sum("test", "error")
+
+        with (
+            patch("app.agents.core.subagents.subagent_runner.log"),
+            patch(
+                "app.agents.core.subagents.subagent_runner.time",
+                new=_FakeClock(200.0, 200.5),
+            ),
+            pytest.raises(RuntimeError, match="graph exploded"),
+        ):
+            await execute_subagent_stream(
+                ctx, stream_writer=MagicMock(), subagent_id="lat-clock-err"
+            )
+
+        assert _subagent_sum("test", "error") == pytest.approx(before + 0.5)

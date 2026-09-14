@@ -437,6 +437,37 @@ async def test_metered_call_observes_llm_call_histogram() -> None:
     )
 
 
+async def test_metered_call_records_the_exact_provider_seconds() -> None:
+    """The recorded sample is the provider wall time in SECONDS. Pinning the
+    clock makes the value deterministic, so a wrong unit (ms recorded as s, or a
+    near-miss divisor) cannot hide behind a count-only assertion."""
+    config_patch, cost_patch, usage_patch = _accounting_env(_LEDGER_CONFIG)
+    mw = LLMAccountingMiddleware(agent_name="comms_agent")
+    labels = {"model": "gemini-3-pro", "agent": "comms_agent"}
+    before = REGISTRY.get_sample_value("llm_call_seconds_sum", labels) or 0.0
+
+    async def _handler(_request: Any) -> Any:
+        return ModelResponse(result=[_ai()])
+
+    with (
+        config_patch,
+        cost_patch,
+        usage_patch,
+        patch.object(accounting, "record_llm_call", AsyncMock(return_value=0.5)),
+        patch.object(
+            accounting,
+            "get_budget_stop_reason",
+            AsyncMock(return_value=BudgetCheck(stop_reason=None, plan_type=None, spent_usd=None)),
+        ),
+        patch.object(accounting.time, "monotonic", side_effect=[100.0, 100.0501234]),
+    ):
+        await mw.awrap_model_call(_model_request(), _handler)
+        await mw.aafter_model(_state(_ai()), None)
+
+    # 50.12 ms of provider time -> 0.05012 s.
+    assert REGISTRY.get_sample_value("llm_call_seconds_sum", labels) == before + 50.12 / 1000.0
+
+
 async def test_the_metered_call_carries_the_request_tree_it_belongs_to() -> None:
     """``root_request_id`` is what joins a comms turn to the executor calls it
     spawned. Losing it makes a multi-agent turn look like unrelated spend."""
@@ -977,7 +1008,22 @@ def test_sync_pre_hook_records_the_start_timestamp() -> None:
     mw = LLMAccountingMiddleware(agent_name="a")
     with patch.object(accounting, "current_run_config", lambda: CONFIG):
         assert mw.before_model({"messages": []}, None) is None
-    assert "conv-1" in mw._start_ts
+    # The stamp itself must be a clock reading: a None pushed here still puts a
+    # key in the map, so a membership check alone would pass while every
+    # handoff latency computed from it becomes a crash or a zero.
+    [stamp] = mw._start_ts["conv-1"]
+    assert isinstance(stamp, float)
+
+
+def test_sync_post_hook_consumes_the_threads_start_stamp() -> None:
+    mw = LLMAccountingMiddleware(agent_name="a")
+    with patch.object(accounting, "current_run_config", lambda: CONFIG):
+        mw.before_model({"messages": []}, None)
+        assert "conv-1" in mw._start_ts
+        mw.after_model({"messages": []}, None)
+    # Consumed for THIS thread: a pop against the wrong key leaves the stamp to
+    # be attributed to the next call on this conversation.
+    assert "conv-1" not in mw._start_ts
 
 
 def test_sync_post_hook_advances_the_step_and_emits_the_high_water_mark() -> None:

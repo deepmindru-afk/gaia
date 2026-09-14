@@ -8,7 +8,7 @@ from langgraph.errors import GraphBubbleUp
 from prometheus_client import REGISTRY
 import pytest
 
-from app.agents.middleware.executor import MiddlewareExecutor
+from app.agents.middleware.executor import MiddlewareExecutor, _tool_metric_name
 
 
 def _count(tool_name: str, status: str) -> float:
@@ -18,6 +18,36 @@ def _count(tool_name: str, status: str) -> float:
         )
         or 0.0
     )
+
+
+def _sum(tool_name: str, status: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "tool_call_seconds_sum", {"tool_name": tool_name, "status": status}
+        )
+        or 0.0
+    )
+
+
+class _RegularTool:
+    """A non-MCP tool: no ``tool_connector``, so it keeps its own name."""
+
+
+class _McpTool:
+    tool_connector = object()
+
+
+def test_metric_name_keeps_a_regular_tools_own_name() -> None:
+    # ``or`` instead of ``and`` would collapse EVERY non-None tool to "mcp".
+    assert _tool_metric_name("web_search", _RegularTool()) == "web_search"
+
+
+def test_metric_name_collapses_an_mcp_tool() -> None:
+    assert _tool_metric_name("user_defined_thing", _McpTool()) == "mcp"
+
+
+def test_metric_name_falls_back_to_unknown_without_a_name() -> None:
+    assert _tool_metric_name("", None) == "unknown"
 
 
 async def _invoke(
@@ -77,6 +107,39 @@ async def test_mcp_tool_collapses_to_mcp_label() -> None:
     )
     assert _count("mcp", "success") == before + 1
     assert _count("lat-user-defined-tool", "success") == 0.0
+
+
+async def test_successful_call_records_exact_seconds() -> None:
+    # Pinned clock: the recorded sample must be the elapsed subtraction in
+    # SECONDS. A sign error (end + start) would record 20.25 here.
+    labels = {"tool_name": "lat-tool-exact", "status": "success"}
+    before = _sum("lat-tool-exact", "success")
+    invoke_fn = AsyncMock(return_value=ToolMessage(content="ok", tool_call_id="c1"))
+    with patch("app.agents.middleware.executor.time.perf_counter", side_effect=[10.0, 10.25]):
+        await _invoke(
+            MiddlewareExecutor([]),
+            {"name": "lat-tool-exact", "args": {}, "id": "c1"},
+            None,
+            invoke_fn,
+        )
+    assert REGISTRY.get_sample_value("tool_call_seconds_sum", labels) == before + 0.25
+
+
+async def test_failing_call_records_exact_seconds() -> None:
+    labels = {"tool_name": "lat-tool-exact-bad", "status": "error"}
+    before = _sum("lat-tool-exact-bad", "error")
+    invoke_fn = AsyncMock(side_effect=RuntimeError("tool exploded"))
+    with (
+        patch("app.agents.middleware.executor.time.perf_counter", side_effect=[5.0, 5.5]),
+        pytest.raises(RuntimeError, match="tool exploded"),
+    ):
+        await _invoke(
+            MiddlewareExecutor([]),
+            {"name": "lat-tool-exact-bad", "args": {}, "id": "c1"},
+            None,
+            invoke_fn,
+        )
+    assert REGISTRY.get_sample_value("tool_call_seconds_sum", labels) == before + 0.5
 
 
 async def test_hil_pause_is_neither_success_nor_error() -> None:

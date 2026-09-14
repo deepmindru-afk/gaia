@@ -7,6 +7,7 @@ the client's websocket-to-fetch round trip — so the short-circuit dropped
 every frame of nearly every resumed run.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -225,4 +226,70 @@ class TestSSEDeliveryLatency:
             frames = [chunk async for chunk in _stream_from_redis("s-lat", _dropped_request())]
 
         assert frames == []
+        assert _delivery_count("disconnected") == before + 1
+
+    async def test_abandoned_delivery_observes_abandoned_span(self) -> None:
+        before = _delivery_count("abandoned")
+        with (
+            patch(
+                "app.api.v1.endpoints.chat.stream_manager.subscribe_stream",
+                new=_fake_subscribe,
+            ),
+            patch("app.api.v1.endpoints.chat.redis_cache.redis", new=MagicMock()),
+        ):
+            stream = _stream_from_redis("s-lat-abandoned", _connected_request())
+            first = await stream.__anext__()
+            await stream.aclose()
+
+        assert first == FRAMES[0]
+        assert _delivery_count("abandoned") == before + 1
+
+    async def test_error_delivery_observes_error_span(self) -> None:
+        async def _boom(*_args: object, **_kwargs: object) -> AsyncGenerator[str, None]:
+            raise RuntimeError("subscribe failed")
+            yield ""  # pragma: no cover — makes this an async generator
+
+        before = _delivery_count("error")
+        with (
+            patch("app.api.v1.endpoints.chat.stream_manager.subscribe_stream", new=_boom),
+            patch("app.api.v1.endpoints.chat.redis_cache.redis", new=MagicMock()),
+        ):
+            [chunk async for chunk in _stream_from_redis("s-lat-error", _connected_request())]
+
+        assert _delivery_count("error") == before + 1
+
+    async def test_delivery_span_uses_exact_elapsed_seconds(self) -> None:
+        labels = {"status": "completed"}
+        before = REGISTRY.get_sample_value("sse_delivery_seconds_sum", labels) or 0.0
+        fake_time = MagicMock()
+        fake_time.perf_counter.side_effect = [100.0, 100.5]
+        with (
+            patch(
+                "app.api.v1.endpoints.chat.stream_manager.subscribe_stream",
+                new=_fake_subscribe,
+            ),
+            patch("app.api.v1.endpoints.chat.redis_cache.redis", new=MagicMock()),
+            patch("app.api.v1.endpoints.chat.time", new=fake_time),
+        ):
+            [chunk async for chunk in _stream_from_redis("s-lat-exact", _connected_request())]
+
+        elapsed = (REGISTRY.get_sample_value("sse_delivery_seconds_sum", labels) or 0.0) - before
+        assert elapsed == pytest.approx(0.5)
+
+    async def test_cancelled_delivery_observes_disconnected_span(self) -> None:
+        """Cancellation mid-stream (server shutdown / client task cancel) is a
+        disconnect, not an error — it must not land in the error series."""
+        before = _delivery_count("disconnected")
+        with (
+            patch(
+                "app.api.v1.endpoints.chat.stream_manager.subscribe_stream",
+                new=_fake_subscribe,
+            ),
+            patch("app.api.v1.endpoints.chat.redis_cache.redis", new=MagicMock()),
+        ):
+            stream = _stream_from_redis("s-lat-cancelled", _connected_request())
+            await stream.__anext__()
+            with pytest.raises(asyncio.CancelledError):
+                await stream.athrow(asyncio.CancelledError)
+
         assert _delivery_count("disconnected") == before + 1

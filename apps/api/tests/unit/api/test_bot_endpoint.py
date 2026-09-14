@@ -6,6 +6,7 @@ routing, status codes, response bodies, and auth checks.
 
 import asyncio
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import json
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
 from httpx import AsyncClient
+from prometheus_client import REGISTRY
 import pytest
 
 from app.api.v1.endpoints.bot import (
@@ -22,6 +24,7 @@ from app.api.v1.endpoints.bot import (
     _resolve_bot_stream_user,
     _start_bot_stream_task,
     _translate_bot_data_chunk,
+    _translate_bot_stream_chunk,
     bot_chat_stream,
 )
 from app.core.stream_manager import with_heartbeat
@@ -1540,6 +1543,32 @@ class TestBotStreamHelpers:
         assert kwargs["source"] == "discord"
         assert callable(mock_spawn.call_args.kwargs["on_done"])
 
+    async def test_start_stamps_the_request_accepted_clock(self) -> None:
+        """The background turn is handed the same request-accepted clock the web
+        endpoint passes, so bot TTFT/E2E share the web definition. Dropped or
+        nulled, every bot latency silently reports an unbounded duration."""
+        with (
+            patch(
+                "app.api.v1.endpoints.bot.create_bot_session_token",
+                new=MagicMock(return_value="tok"),
+            ),
+            patch("app.api.v1.endpoints.bot.stream_manager") as mock_sm,
+            patch("app.api.v1.endpoints.bot.spawn_background_task", new=MagicMock()),
+            patch("app.api.v1.endpoints.bot.run_chat_stream_background") as mock_bg,
+            patch("app.api.v1.endpoints.bot.time.perf_counter", return_value=123.5),
+        ):
+            mock_sm.start_stream = AsyncMock()
+            await _start_bot_stream_task(
+                stream_id="s1",
+                conversation_id="conv-1",
+                user_id="uid1",
+                user={"user_id": "uid1"},
+                message_request=MagicMock(),
+                body=self._body(),
+            )
+
+        assert mock_bg.call_args.kwargs["t0_perf"] == 123.5
+
     async def test_stream_failure_callback_logs_only_real_failures(self) -> None:
         with (
             patch(
@@ -1635,6 +1664,57 @@ class TestBotStreamHelpers:
     def test_data_payload_drops_non_data_frames(self) -> None:
         assert _bot_data_payload(": keepalive") is None
         assert _bot_data_payload("event: ping") is None
+
+    async def test_stream_chunk_keepalive_passes_through_verbatim(self) -> None:
+        assert await _translate_bot_stream_chunk(": keepalive\n\n", "uid1", "conv-1") == (
+            ": keepalive\n\n",
+            False,
+        )
+
+    async def test_stream_chunk_done_is_the_exact_terminal_frame(self) -> None:
+        frame, done = await _translate_bot_stream_chunk("data: [DONE]\n\n", "uid1", "conv-1")
+        assert frame == 'data: {"done": true, "conversation_id": "conv-1"}\n\n'
+        assert done is True
+
+    async def test_stream_chunk_without_a_data_payload_is_dropped(self) -> None:
+        assert await _translate_bot_stream_chunk("event: ping\n\n", "uid1", "conv-1") == (
+            None,
+            False,
+        )
+
+    async def test_stream_chunk_malformed_json_is_dropped_and_logged(self) -> None:
+        """A malformed frame must not abort the stream, but the drop is not
+        silent — the wide event carries what failed, not just that something did."""
+        log.reset()
+        assert await _translate_bot_stream_chunk("data: {not json\n\n", "uid1", "conv-1") == (
+            None,
+            False,
+        )
+        assert log.get()["warnings"] == [
+            {
+                "msg": "[API] Bot stream: dropped a malformed SSE chunk",
+                "error_type": "JSONDecodeError",
+            }
+        ]
+
+    async def test_stream_chunk_delegates_a_decoded_data_frame(self) -> None:
+        assert await _translate_bot_stream_chunk(
+            'data: {"response": "hi"}\n\n', "uid1", "conv-1"
+        ) == ('data: {"text": "hi"}\n\n', False)
+
+    async def test_stream_chunk_forwards_the_decoded_frame_and_user(self) -> None:
+        """The decoded payload AND the resolved user reach the translator — the
+        user id is what mints a personal upgrade link on a rate-limit card."""
+        card = {"tool_data": {"tool_name": "rate_limit_data", "data": {}}}
+        mint = AsyncMock(return_value="notice")
+        with patch("app.api.v1.endpoints.bot._bot_rate_limit_notice", mint):
+            frame, done = await _translate_bot_stream_chunk(
+                f"data: {json.dumps(card)}\n\n", "uid1", "conv-1"
+            )
+
+        mint.assert_awaited_once_with(card, "uid1")
+        assert frame == 'data: {"notice": {"text": "notice"}}\n\n'
+        assert done is False
 
     async def test_translate_keepalive_frame(self) -> None:
         frame, done = await _translate_bot_data_chunk({"keepalive": True}, "uid1")
@@ -1760,3 +1840,137 @@ class TestBotStreamHelpers:
         assert mock_sm.subscribe_stream.call_args.args[0] == kwargs["stream_id"]
         mock_sm.start_stream.assert_awaited_once_with(kwargs["stream_id"], "conv-1", "uid1")
         bot_svc.load_conversation_history.assert_awaited_once_with("conv-1", "uid1")
+
+
+# ---------------------------------------------------------------------------
+# POST /bot/chat-stream — the sse_delivery_seconds observation
+# ---------------------------------------------------------------------------
+
+
+class TestBotStreamDeliveryMetrics:
+    """`sse_delivery_seconds` is the only record of how a bot stream ended.
+
+    The observation lives in the generator's `finally`, so it fires on every
+    exit — clean completion, a client that dropped (polled or cancelled), the
+    response generator being closed, and an error. Each path stamps a distinct
+    `status`. The duration is `end - delivery_start`; pinning the clock lands an
+    exact 0.5, so a sign error (end + start) is hundreds off and a nulled
+    `delivery_start` cannot produce an observation at all.
+    """
+
+    @staticmethod
+    def _body() -> BotChatRequest:
+        return BotChatRequest(message="hello", platform="discord", platform_user_id="u1")
+
+    @staticmethod
+    def _observed(status: str) -> float:
+        return REGISTRY.get_sample_value("sse_delivery_seconds_sum", {"status": status}) or 0.0
+
+    @staticmethod
+    @asynccontextmanager
+    async def _open(
+        frames: AsyncGenerator[str, None], *, disconnected: bool = False
+    ) -> AsyncGenerator[AsyncGenerator[str, None], None]:
+        request = MagicMock()
+        request.state = _make_request(user={"user_id": "uid1", "_id": "uid1"}, authenticated=True)
+        request.is_disconnected = AsyncMock(return_value=disconnected)
+        with (
+            # Identity: this seam is the endpoint's own generator. with_heartbeat's
+            # padding is exercised for real in TestBotChatStreamBody.
+            patch("app.api.v1.endpoints.bot.with_heartbeat", new=lambda gen: gen),
+            patch("app.api.v1.endpoints.bot.require_bot_api_key", new=AsyncMock()),
+            patch("app.api.v1.endpoints.bot.spawn_background_task", new=MagicMock()),
+            patch("app.api.v1.endpoints.bot.run_chat_stream_background", new=MagicMock()),
+            patch(
+                "app.api.v1.endpoints.bot.create_bot_session_token",
+                new=MagicMock(return_value="tok"),
+            ),
+            patch("app.api.v1.endpoints.bot.capture_event", new=MagicMock()),
+            patch("app.api.v1.endpoints.bot.BotService") as bot_svc,
+            patch("app.api.v1.endpoints.bot.stream_manager") as sm,
+        ):
+            bot_svc.enforce_rate_limit = AsyncMock()
+            bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
+            bot_svc.load_conversation_history = AsyncMock(return_value=[])
+            sm.start_stream = AsyncMock()
+            sm.subscribe_stream.return_value = frames
+            response = await bot_chat_stream(request, TestBotStreamDeliveryMetrics._body())
+            yield response.body_iterator
+
+    @staticmethod
+    def _pinned_clock():
+        return patch(
+            "app.api.v1.endpoints.bot.time.perf_counter",
+            side_effect=[100.0, 100.5],
+        )
+
+    async def test_clean_completion_records_completed(self) -> None:
+        async def frames() -> AsyncGenerator[str, None]:
+            yield 'data: {"response": "hi"}\n\n'
+            yield "data: [DONE]\n\n"
+
+        before = self._observed("completed")
+        async with self._open(frames()) as body:
+            with self._pinned_clock():
+                collected = [frame async for frame in body]
+
+        assert '"done": true' in "".join(collected)
+        assert self._observed("completed") - before == pytest.approx(0.5)
+
+    async def test_client_poll_disconnect_records_disconnected(self) -> None:
+        async def frames() -> AsyncGenerator[str, None]:
+            yield 'data: {"response": "hi"}\n\n'
+
+        before = self._observed("disconnected")
+        async with self._open(frames(), disconnected=True) as body:
+            with self._pinned_clock():
+                collected = [frame async for frame in body]
+
+        assert '"text"' not in "".join(collected)
+        assert self._observed("disconnected") - before == pytest.approx(0.5)
+
+    async def test_generator_close_records_abandoned(self) -> None:
+        async def frames() -> AsyncGenerator[str, None]:
+            yield 'data: {"response": "hi"}\n\n'
+            await asyncio.Event().wait()
+
+        before = self._observed("abandoned")
+        async with self._open(frames()) as body:
+            with self._pinned_clock():
+                assert await body.__anext__() == 'data: {"session_token": "tok"}\n\n'
+                assert await body.__anext__() == ": keepalive\n\n"
+                assert await body.__anext__() == 'data: {"text": "hi"}\n\n'
+                await body.aclose()
+
+        assert self._observed("abandoned") - before == pytest.approx(0.5)
+
+    async def test_cancellation_records_disconnected(self) -> None:
+        async def frames() -> AsyncGenerator[str, None]:
+            yield 'data: {"response": "hi"}\n\n'
+            await asyncio.Event().wait()
+
+        before = self._observed("disconnected")
+        async with self._open(frames()) as body:
+            with self._pinned_clock():
+                await body.__anext__()
+                await body.__anext__()
+                await body.__anext__()
+                with pytest.raises(asyncio.CancelledError):
+                    await body.athrow(asyncio.CancelledError)
+
+        assert self._observed("disconnected") - before == pytest.approx(0.5)
+
+    async def test_stream_error_records_error(self) -> None:
+        async def frames() -> AsyncGenerator[str, None]:
+            raise RuntimeError("redis down")
+            yield  # pragma: no cover - unreachable; makes this an async generator
+
+        before = self._observed("error")
+        async with self._open(frames()) as body:
+            with self._pinned_clock():
+                collected = [frame async for frame in body]
+
+        # Exact frame: the client parses this by key, so a renamed key or reworded
+        # value is a real regression, not a cosmetic one.
+        assert 'data: {"error": "Stream error occurred"}\n\n' in collected
+        assert self._observed("error") - before == pytest.approx(0.5)
