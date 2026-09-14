@@ -3,6 +3,7 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.constants.notifications import NOTIFICATION_CHANNEL_TYPES
 from app.models.notification.notification_models import (
     NotificationContentView,
     NotificationListFilters,
@@ -517,3 +518,51 @@ class TestMarkNotificationsRead:
 
         assert result["success"] is False
         assert "service down" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: send_notification channel validation
+# ---------------------------------------------------------------------------
+
+
+class TestSendNotificationChannels:
+    @patch(f"{MODULE}.notification_service")
+    @patch(f"{MODULE}.get_user_id_from_config", return_value=FAKE_USER_ID)
+    async def test_no_channels_is_refused_and_lists_every_channel(
+        self,
+        mock_get_user: MagicMock,
+        mock_service: MagicMock,
+    ) -> None:
+        from app.agents.tools.notification_tool import send_notification
+
+        result = await send_notification.coroutine(
+            config=_make_config(), message="Build done", title="Build", channels=[]
+        )
+
+        assert result["success"] is False
+        assert result["error"].startswith("channels is required")
+        for channel in NOTIFICATION_CHANNEL_TYPES:
+            assert channel in result["error"]
+        mock_service.create_notification.assert_not_called()
+
+    @patch(f"{MODULE}.notification_service")
+    @patch(f"{MODULE}.get_user_id_from_config", return_value=FAKE_USER_ID)
+    async def test_unknown_channels_are_named_and_valid_ones_listed(
+        self,
+        mock_get_user: MagicMock,
+        mock_service: MagicMock,
+    ) -> None:
+        from app.agents.tools.notification_tool import send_notification
+
+        result = await send_notification.coroutine(
+            config=_make_config(),
+            message="Build done",
+            title="Build",
+            channels=["telegram", "pager", "imessage", "fax"],
+        )
+
+        assert result["success"] is False
+        unknown, valid = result["error"].split(" Valid channels: ")
+        assert unknown == "Unknown channel(s): pager, fax."
+        assert valid == f"{', '.join(NOTIFICATION_CHANNEL_TYPES)}."
+        mock_service.create_notification.assert_not_called()
