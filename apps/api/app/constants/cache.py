@@ -154,6 +154,9 @@ PLATFORM_LINK_CODE_CLAIM_TTL = FIVE_MINUTES_TTL
 # later tap is told the code is dead rather than answered as an in-flight twin.
 PLATFORM_LINK_CODE_CLAIM_HELD = "1"
 PLATFORM_LINK_CODE_CLAIM_SPENT = "spent"
+# A lost claim whose marker is gone by the time it is read (a twin released, or
+# its claim lapsed) is retried this many times before it is answered as in flight.
+PLATFORM_LINK_CODE_CLAIM_ATTEMPTS = 3
 # Desktop tool bridge — request ownership keys + per-request result channels.
 # A request key expiring means the desktop never answered; the result endpoint
 # rejects late POSTs whose key is gone.

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from app.config.settings import settings
 from app.constants.auth import PLATFORM_LINK_CODE_BYTES
 from app.constants.cache import (
+    PLATFORM_LINK_CODE_CLAIM_ATTEMPTS,
     PLATFORM_LINK_CODE_CLAIM_HELD,
     PLATFORM_LINK_CODE_CLAIM_SPENT,
     PLATFORM_LINK_CODE_CLAIM_TTL,
@@ -133,18 +134,23 @@ async def claim_platform_link_code(code: str) -> LinkCodeClaim:
     deliveries of the same handoff both run the link's side effects. The record
     is untouched, so a refused or broken redemption can release the claim.
     """
-    claimed = await redis_cache.client.set(
-        _claim_key(code),
-        PLATFORM_LINK_CODE_CLAIM_HELD,
-        nx=True,
-        ex=PLATFORM_LINK_CODE_CLAIM_TTL,
-    )
-    if not claimed:
+    for _ in range(PLATFORM_LINK_CODE_CLAIM_ATTEMPTS):
+        claimed = await redis_cache.client.set(
+            _claim_key(code),
+            PLATFORM_LINK_CODE_CLAIM_HELD,
+            nx=True,
+            ex=PLATFORM_LINK_CODE_CLAIM_TTL,
+        )
+        if claimed:
+            break
         # Losing the claim has two opposite answers and only the marker's value
         # separates them: a twin redemption still running, or a spent code whose
-        # marker outlived the record it stands for.
+        # marker outlived the record. A marker gone by now means the code may be live.
         held = await redis_cache.client.get(_claim_key(code))
-        return LinkCodeClaim(in_flight=held == PLATFORM_LINK_CODE_CLAIM_HELD)
+        if held is not None:
+            return LinkCodeClaim(in_flight=held == PLATFORM_LINK_CODE_CLAIM_HELD)
+    else:
+        return LinkCodeClaim(in_flight=True)
 
     payload = await get_cache(_code_key(code), PlatformLinkCodePayload)
     if payload is None:
