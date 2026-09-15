@@ -85,6 +85,7 @@ class TestResendProviderSend:
         params = m_send.call_args[0][0]
         assert "reply_to" not in params
 
+    @pytest.mark.regression
     async def test_forwards_the_idempotency_key(self, mock_resend):
         """A retried send with the same key is dropped by Resend instead of mailed twice."""
         m_settings, m_send, m_contact = mock_resend
