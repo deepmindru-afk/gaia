@@ -56,9 +56,17 @@ def register_slack_custom_tools(composio: Composio) -> list[str]:
         mention_ts = {m.ts for m in mentions}
         other_messages = [m for m in messages if m.ts not in mention_ts]
 
+        # A match is all strings, so the json mode the tool-dump-boundary lint pins here
+        # dumps exactly what python mode would -- hence the pragmas.
         return {
-            "messages": [m.model_dump(mode="json", exclude_unset=True) for m in other_messages],
-            "mentions": [m.model_dump(mode="json", exclude_unset=True) for m in mentions],
+            "messages": [
+                m.model_dump(mode="json", exclude_unset=True)  # pragma: no mutate
+                for m in other_messages
+            ],
+            "mentions": [
+                m.model_dump(mode="json", exclude_unset=True)  # pragma: no mutate
+                for m in mentions
+            ],
             # Sum both lists: they're disjoint, and the two searches page
             # independently (20 vs 10), so a mention can arrive that the
             # message page never returned.

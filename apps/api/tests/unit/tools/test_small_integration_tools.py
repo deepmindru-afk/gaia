@@ -497,6 +497,12 @@ class TestTodoistGatherContext:
                 {"id": "1", "content": "Due today", "due": {"date": "2026-06-15"}},
                 {"id": "2", "content": "Due tomorrow", "due": {"date": "2026-06-16"}},
                 {"id": "3", "content": "Due yesterday", "due": {"date": "2026-06-14"}},
+                {"id": "4", "content": "No due at all"},
+                {
+                    "id": "5",
+                    "content": "Due object carrying no date",
+                    "due": {"is_recurring": True},
+                },
             ]
         }
 
@@ -791,6 +797,8 @@ class TestGoogleTasksGatherContext:
                 {"id": "1", "title": "Due today", "due": "2026-06-15"},
                 {"id": "2", "title": "Due tomorrow", "due": "2026-06-16"},
                 {"id": "3", "title": "Due yesterday", "due": "2026-06-14"},
+                {"id": "4", "title": "No due key"},
+                {"id": "5", "title": "Explicitly null due", "due": None},
             ]
         }
 
