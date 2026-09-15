@@ -37,6 +37,23 @@ class GatedCall:
 
 
 @dataclass(frozen=True)
+class ApprovalRequest:
+    """One gated call to surface for approval: its identity, run, and rendered summary.
+
+    The transient form of a :class:`~app.models.hil_models.HILApprovalRecord` — what
+    the gate hands the bridge to publish and persist, before any decision exists.
+    """
+
+    approval_id: str
+    stream_id: str
+    user_id: str
+    conversation_id: str
+    tool_call: GatedCall
+    summary: str
+    integration_name: str | None
+
+
+@dataclass(frozen=True)
 class PriorCall:
     """A tool call this run already made — an action, never a narration."""
 

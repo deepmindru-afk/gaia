@@ -31,7 +31,7 @@ from app.services.hil.bridge import (
     recall_declined_call,
     remember_declined_call,
 )
-from app.services.hil.utils import GatedCall
+from app.services.hil.utils import ApprovalRequest, GatedCall
 
 from .conftest import CONVERSATION_ID, STREAM_ID, USER_ID, make_record
 
@@ -68,13 +68,15 @@ def bridge():
 
 async def publish(bridge: dict) -> None:
     await publish_approval_request(
-        approval_id="appr-1",
-        stream_id=STREAM_ID,
-        user_id=USER_ID,
-        conversation_id=CONVERSATION_ID,
-        tool_call=TOOL_CALL,
-        summary="Send email — to: bob@example.com",
-        integration_name="Gmail",
+        ApprovalRequest(
+            approval_id="appr-1",
+            stream_id=STREAM_ID,
+            user_id=USER_ID,
+            conversation_id=CONVERSATION_ID,
+            tool_call=TOOL_CALL,
+            summary="Send email — to: bob@example.com",
+            integration_name="Gmail",
+        )
     )
     await asyncio.sleep(0)  # let the fire-and-forget notify task start
 

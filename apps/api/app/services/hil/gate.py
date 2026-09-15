@@ -69,6 +69,7 @@ from app.services.hil.prompts import (
     UNPAUSABLE_DENIAL_TEMPLATE,
 )
 from app.services.hil.utils import (
+    ApprovalRequest,
     GatedCall,
     approval_window_label,
     configurable_of,
@@ -204,6 +205,25 @@ def read_gate_context(request: ToolCallRequest) -> GateContext | None:
     return GateContext(stream_id, user_id, conversation_id, turns, pausable)
 
 
+def _approval_request(
+    approval_id: str,
+    context: GateContext,
+    call: GatedCall,
+    summary: str,
+    integration_name: str | None,
+) -> ApprovalRequest:
+    """Bundle this run's identity and the gated call into a publishable request."""
+    return ApprovalRequest(
+        approval_id=approval_id,
+        stream_id=context.stream_id,
+        user_id=context.user_id,
+        conversation_id=context.conversation_id,
+        tool_call=call,
+        summary=summary,
+        integration_name=integration_name,
+    )
+
+
 async def _decide(
     request: ToolCallRequest,
     context: GateContext,
@@ -250,25 +270,13 @@ async def _decide(
             # The receipt says GAIA decided to act, and why. It is not a claim that the
             # action happened — the tool node runs it afterwards, like any other call.
             await publish_auto_approval(
-                approval_id=approval_id,
-                stream_id=context.stream_id,
-                user_id=context.user_id,
-                conversation_id=context.conversation_id,
-                tool_call=call,
-                summary=summary,
-                integration_name=integration_name,
+                _approval_request(approval_id, context, call, summary, integration_name),
                 reason=decision.reason,
             )
             return None
 
         await publish_approval_request(
-            approval_id=approval_id,
-            stream_id=context.stream_id,
-            user_id=context.user_id,
-            conversation_id=context.conversation_id,
-            tool_call=call,
-            summary=summary,
-            integration_name=integration_name,
+            _approval_request(approval_id, context, call, summary, integration_name)
         )
         return _Pending(approval_id, call.name, summary, integration_name)
     except GraphBubbleUp:

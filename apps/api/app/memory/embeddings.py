@@ -63,14 +63,20 @@ _T = TypeVar("_T")
 
 
 class EmbedQueryResponse(TypedDict):
+    """Sidecar ``/embed`` response for a single query."""
+
     vector: list[float]
 
 
 class EmbedBatchResponse(TypedDict):
+    """Sidecar ``/embed`` response for a batch of texts."""
+
     vectors: list[list[float]]
 
 
 class RerankResponse(TypedDict):
+    """Sidecar ``/rerank`` response: one score per candidate."""
+
     scores: list[float]
 
 
