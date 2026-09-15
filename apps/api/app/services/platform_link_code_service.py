@@ -23,6 +23,8 @@ from pydantic import BaseModel
 from app.config.settings import settings
 from app.constants.auth import PLATFORM_LINK_CODE_BYTES
 from app.constants.cache import (
+    PLATFORM_LINK_CODE_CLAIM_HELD,
+    PLATFORM_LINK_CODE_CLAIM_SPENT,
     PLATFORM_LINK_CODE_CLAIM_TTL,
     PLATFORM_LINK_CODE_PREFIX,
     PLATFORM_LINK_CODE_TTL,
@@ -132,10 +134,17 @@ async def claim_platform_link_code(code: str) -> LinkCodeClaim:
     is untouched, so a refused or broken redemption can release the claim.
     """
     claimed = await redis_cache.client.set(
-        _claim_key(code), "1", nx=True, ex=PLATFORM_LINK_CODE_CLAIM_TTL
+        _claim_key(code),
+        PLATFORM_LINK_CODE_CLAIM_HELD,
+        nx=True,
+        ex=PLATFORM_LINK_CODE_CLAIM_TTL,
     )
     if not claimed:
-        return LinkCodeClaim(in_flight=True)
+        # Losing the claim has two opposite answers and only the marker's value
+        # separates them: a twin redemption still running, or a spent code whose
+        # marker outlived the record it stands for.
+        held = await redis_cache.client.get(_claim_key(code))
+        return LinkCodeClaim(in_flight=held == PLATFORM_LINK_CODE_CLAIM_HELD)
 
     payload = await get_cache(_code_key(code), PlatformLinkCodePayload)
     if payload is None:
@@ -152,8 +161,12 @@ async def release_platform_link_code(code: str) -> None:
 async def discard_platform_link_code(code: str) -> None:
     """Spend code once the link it authorised has been written.
 
-    The claim goes with it, so a later tap by a different platform account is
-    answered as the dead code it is rather than as an in-flight twin.
+    The claim becomes a spent marker outliving the record, written first: a
+    delete that fails is swallowed by delete_cache, and a claim lapsing after
+    five minutes would leave a live record to redeem a second time, repeating
+    the greeting. Its value answers the next tap with the dead code it is.
     """
+    await redis_cache.client.set(
+        _claim_key(code), PLATFORM_LINK_CODE_CLAIM_SPENT, ex=PLATFORM_LINK_CODE_TTL
+    )
     await delete_cache(_code_key(code))
-    await release_platform_link_code(code)
