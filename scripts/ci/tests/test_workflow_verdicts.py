@@ -277,3 +277,57 @@ def test_the_mutation_shard_declares_the_namespace_it_owns(workflow: dict[str, A
                 f"job '{name}' uploads lane {lane!r} but does not declare "
                 "`family: mutation`, so its per-module verdicts read as foreign"
             )
+
+
+# A required check whose latest run on the head SHA is `skipped` counts as
+# PASSING for branch protection. So the gate may never skip: a plain title or
+# body edit fires `edited`, the whole lane DAG skips (that part is right — the
+# tree did not move), and a gate that skipped with it would overwrite a RED
+# verdict on that same SHA with a green tick nobody ran. The gate stays
+# `always()` and mirrors what the head SHA's last completed run concluded.
+MIRROR_COMMAND = "verdict.py mirror-previous-gate"
+CONSOLIDATE_COMMAND = "verdict.py consolidate"
+PLAIN_EDIT = ("github.event.action", "edited", "github.event.changes.base")
+
+
+def _step_with(workflow: dict[str, Any], command: str) -> dict[str, Any]:
+    matches = [s for s in _gate(workflow)["steps"] if command in str(s.get("run", ""))]
+    assert len(matches) == 1, f"the quality-gate job has {len(matches)} `{command}` steps, want 1"
+    return matches[0]
+
+
+def test_the_gate_never_skips_itself_on_a_pr_edit(workflow: dict[str, Any]) -> None:
+    condition = str(_gate(workflow).get("if", ""))
+
+    assert "always()" in condition
+    assert "changes.base" not in condition, (
+        "quality-gate skips itself on a plain edit. A skipped required check counts as "
+        "PASSING, so editing the title of a PR whose last run was RED flips the same head "
+        "SHA to mergeable with no completed verdict behind it"
+    )
+
+
+def test_a_plain_edit_mirrors_the_head_shas_last_completed_verdict(
+    workflow: dict[str, Any],
+) -> None:
+    condition = str(_step_with(workflow, MIRROR_COMMAND).get("if", ""))
+
+    for token in PLAIN_EDIT:
+        assert token in condition, (
+            f"the gate's mirror step is guarded by {condition!r}, which does not read "
+            f"{token}: it must run for exactly the edit that skipped every lane"
+        )
+
+
+def test_the_gate_does_not_consolidate_a_run_that_ran_no_lanes(
+    workflow: dict[str, Any],
+) -> None:
+    # The other half: with every lane skipped, `consolidate` has nothing to read
+    # — main.yml's list would print "quality-gate: PASSED" having run nothing.
+    condition = str(_step_with(workflow, CONSOLIDATE_COMMAND).get("if", ""))
+
+    for token in PLAIN_EDIT:
+        assert token in condition, (
+            f"the gate consolidates under {condition!r}, which does not read {token}: on a "
+            "plain edit every lane is skipped and there is no run to consolidate"
+        )
