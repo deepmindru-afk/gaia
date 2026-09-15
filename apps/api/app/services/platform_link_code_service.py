@@ -145,7 +145,7 @@ async def claim_platform_link_code(code: str) -> LinkCodeClaim:
 
 
 async def release_platform_link_code(code: str) -> None:
-    """Hand ``code`` back after a redemption that did not write the link."""
+    """Hand the code back after a redemption that did not write the link."""
     await delete_cache(_claim_key(code))
 
 

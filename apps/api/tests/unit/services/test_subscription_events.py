@@ -586,10 +586,12 @@ class TestSideEffectsNeverFailTheEvent:
 
 @pytest.mark.unit
 class TestAFailedWorkflowSyncIsOwedToTheWorker:
-    """Dodo's own retry cannot recover this one. By the time the pause runs the
-    row already carries the reported status, so a redelivery reduces to
-    "unchanged" and never reaches the workflows again — the remainder has to
-    become durable work here or it is lost for good."""
+    """Dodo's own retry cannot recover this one.
+
+    By the time the pause runs the row already carries the reported status, so a
+    redelivery reduces to "unchanged" and never reaches the workflows again — the
+    remainder has to become durable work here or it is lost for good.
+    """
 
     async def test_a_deactivation_failure_queues_the_lapsed_sync(self) -> None:
         pool = object()
@@ -655,8 +657,7 @@ class TestAFailedWorkflowSyncIsOwedToTheWorker:
         enqueue.assert_not_awaited()
 
     async def test_a_queue_that_is_itself_down_is_reported_not_hidden(self) -> None:
-        """Nothing is left to fall back on, so the line naming the user is the
-        only trace the stranded workflows leave."""
+        """The line naming the user is the only trace the stranded workflows leave."""
         with (
             patch(
                 f"{PAUSE}.deactivate_workflows_for_lapsed_subscription",
