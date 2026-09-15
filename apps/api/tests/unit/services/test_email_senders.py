@@ -49,6 +49,7 @@ class TestSendWelcomeEmail:
         assert message.subject == "From the founder of GAIA, personally"
         assert message.html == "<h1>Welcome</h1>"
 
+    @pytest.mark.regression
     @patch(f"{SENDERS}.send_email")
     @patch(f"{SENDERS}.render_email_template", return_value="<h1>Welcome</h1>")
     async def test_carries_a_per_user_idempotency_key(self, mock_render, mock_send):
