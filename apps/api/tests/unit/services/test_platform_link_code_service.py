@@ -13,6 +13,7 @@ import pytest
 
 from app.constants.auth import PLATFORM_LINK_CODE_BYTES
 from app.constants.cache import (
+    PLATFORM_LINK_CODE_CLAIM_ATTEMPTS,
     PLATFORM_LINK_CODE_CLAIM_TTL,
     PLATFORM_LINK_CODE_PREFIX,
     PLATFORM_LINK_CODE_TTL,
@@ -133,6 +134,20 @@ class TestClaimReleaseDiscard:
 
         assert claim.payload is not None
         assert claim.in_flight is False
+
+    async def test_a_claim_lost_on_every_attempt_is_answered_as_in_flight(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """Contention that outlasts every retry is a twin still running, never an expired code."""
+        code = await mint_platform_link_code("user1", PREFS)
+        svc.redis_cache.client.set.side_effect = None
+        svc.redis_cache.client.set.return_value = None
+
+        claim = await claim_platform_link_code(code)
+
+        assert claim.payload is None
+        assert claim.in_flight is True
+        assert svc.redis_cache.client.set.await_count == PLATFORM_LINK_CODE_CLAIM_ATTEMPTS
 
     async def test_releasing_leaves_the_code_claimable_again(
         self, fake_store: dict[str, tuple[object, int | None]]
