@@ -42,6 +42,7 @@ from app.models.agent_models import (
     AgentRunnableConfig,
     AgentUserContext,
     ExecutionMode,
+    LlmCallMetadata,
     read_agent_configurable,
 )
 from app.models.chat_models import ConversationSource, SourceCategory, ToolDataEntry
@@ -772,9 +773,11 @@ async def build_agent_config(
         "user_id": acting_user.user_id,
         "source_category": source_category,
         "source_channel": source_channel,
-        # Lane identity for the TTFT callback, which reads it off run metadata.
-        "lane_provider": model_lane.provider.value,
-        "lane_model": model_lane.model or "default",
+        # Lane identity for the TTFT callback, which reads it back as LlmCallMetadata.
+        **LlmCallMetadata(
+            lane_provider=model_lane.provider.value,
+            lane_model=model_lane.model or "default",
+        ),
     }
     _stamp_langfuse(
         configurable,

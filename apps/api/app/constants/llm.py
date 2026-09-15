@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Final
 
 from app.agents.llm.types import DevModelOption, LLMProviderName
 
@@ -111,7 +111,7 @@ TOOL_TIMEOUT_EXEMPT_TOOLS = frozenset(
 # ``label`` so callbacks (TTFT) can attribute a sample to the call that made it —
 # a turn's callback list is shared by the comms call and its title/follow-up/
 # memory side calls, and the run-level agent name cannot tell them apart.
-LLM_LABEL_METADATA_KEY = "llm_label"
+LLM_LABEL_METADATA_KEY: Final = "llm_label"
 
 # Attempts for the model-level transient-error retry before the caller falls back
 # to the default model (see with_llm_retry in app/agents/llm/client.py).
