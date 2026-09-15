@@ -149,6 +149,11 @@ PLATFORM_LINK_CODE_TTL = THIRTY_MINUTES_TTL
 # single-use while the record survives a refusal. The TTL is the recovery bound —
 # a redeemer that died mid-link frees the code again once it lapses.
 PLATFORM_LINK_CODE_CLAIM_TTL = FIVE_MINUTES_TTL
+# The claim key's two values. Spending a code overwrites the held marker for the
+# record's whole life, so a record whose delete failed stays unredeemable, and a
+# later tap is told the code is dead rather than answered as an in-flight twin.
+PLATFORM_LINK_CODE_CLAIM_HELD = "1"
+PLATFORM_LINK_CODE_CLAIM_SPENT = "spent"
 # Desktop tool bridge — request ownership keys + per-request result channels.
 # A request key expiring means the desktop never answered; the result endpoint
 # rejects late POSTs whose key is gone.
