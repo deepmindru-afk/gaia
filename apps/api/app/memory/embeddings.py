@@ -223,6 +223,12 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client[1]
 
 
+# A 503 (overloaded) or a 429 (rate-limited) is transient — the sidecar already
+# waited out its own slot budget — so it is worth another attempt; any other
+# status is the caller's answer.
+_RETRYABLE_STATUS_CODES = frozenset({429, 503})
+
+
 async def _post_with_retry(
     client: httpx.AsyncClient,
     url: str,
@@ -231,30 +237,28 @@ async def _post_with_retry(
     retries: int = EMBEDDING_SIDECAR_RETRIES,
     timeout: float = EMBEDDING_SIDECAR_TIMEOUT_SECONDS,
 ) -> httpx.Response:
-    """POST until success, a non-retryable status, or the retry budget runs
-    out — with a short fixed backoff between attempts. A 503 means the sidecar
-    was overloaded right now (it already waited out its own slot budget) and a
-    connection error means it is mid-restart; dropping a background memory save
-    over either blip would lose data, so ingestion retries. Interactive recall
-    passes ``retries=0`` so a slow sidecar fails fast into the retrieval-order
-    fallback instead of stacking 5s backoffs onto the user's turn. Exhausted
-    retries still fail loud."""
-    remaining = retries
-    while True:
+    """POST with a bounded retry budget and a fixed backoff between attempts.
+
+    A transient failure (retryable status or a mid-restart connection error) is
+    retried so a background memory save survives the blip; interactive recall
+    passes ``retries=0`` to fail fast into its retrieval-order fallback instead
+    of stacking backoffs onto the user's turn. The final attempt returns its
+    response (so the caller sees the 503) or re-raises the connection error.
+    """
+    for attempt in range(retries + 1):
+        final_attempt = attempt == retries
         try:
             response = await client.post(url, json=payload, timeout=timeout)
         except httpx.TransportError:
-            if remaining == 0:
+            if final_attempt:
                 raise
-            remaining -= 1
-            await asyncio.sleep(EMBEDDING_SIDECAR_RETRY_MAX_WAIT_SECONDS)
-            continue
-        if response.status_code not in (429, 503):
-            return response
-        if remaining == 0:
-            return response
-        remaining -= 1
+        else:
+            if final_attempt or response.status_code not in _RETRYABLE_STATUS_CODES:
+                return response
         await asyncio.sleep(EMBEDDING_SIDECAR_RETRY_MAX_WAIT_SECONDS)
+    raise AssertionError(
+        "unreachable: the final attempt always returns or raises"
+    )  # pragma: no cover
 
 
 def _call_budget(interactive: bool) -> tuple[int, float]:
