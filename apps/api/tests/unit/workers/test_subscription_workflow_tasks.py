@@ -73,16 +73,67 @@ class TestSyncWorkflowsForSubscriptionState:
         """A flat interval burns the try budget before a down dependency recovers."""
         pause = AsyncMock(side_effect=RuntimeError("composio down"))
         defers = []
+        logged = []
 
         for job_try in (1, 2, 3):
             with (
                 patch.dict(f"{_MOD}.SYNC_ACTIONS", _actions(pause, AsyncMock()), clear=True),
+                patch(f"{_MOD}.log") as mock_log,
                 pytest.raises(Retry) as caught,
             ):
                 await sync_workflows_for_subscription_state(
                     {"job_try": job_try}, USER_ID, SubscriptionWorkflowSync.PAUSE.value
                 )
             defers.append(caught.value.defer_score)
+            logged.append(mock_log.warning.call_args.kwargs["defer_seconds"])
 
         base = SUBSCRIPTION_WORKFLOW_SYNC_RETRY_DELAY.total_seconds() * 1000
         assert defers == [base, base * 2, base * 4]
+        # The logged wait is what an operator reads; it must be the wait ARQ was given.
+        assert logged == [d / 1000 for d in defers]
+
+    async def test_a_context_without_a_try_counter_is_the_first_try(self) -> None:
+        """ARQ omits job_try on a bare context, and a wrong first try skews every later backoff."""
+        pause = AsyncMock(side_effect=RuntimeError("composio down"))
+
+        with (
+            patch.dict(f"{_MOD}.SYNC_ACTIONS", _actions(pause, AsyncMock()), clear=True),
+            patch(f"{_MOD}.log") as mock_log,
+            pytest.raises(Retry) as caught,
+        ):
+            await sync_workflows_for_subscription_state(
+                {}, USER_ID, SubscriptionWorkflowSync.PAUSE.value
+            )
+
+        assert caught.value.defer_score == SUBSCRIPTION_WORKFLOW_SYNC_RETRY_DELAY / timedelta(
+            milliseconds=1
+        )
+        mock_log.set.assert_called_once_with(
+            user={"id": USER_ID},
+            workflow_sync={"direction": SubscriptionWorkflowSync.PAUSE.value, "try": 1},
+        )
+
+    async def test_the_retry_warning_carries_the_user_direction_cause_and_wait(self) -> None:
+        resume = AsyncMock(side_effect=SubscriptionWorkflowSyncIncomplete(USER_ID, ["wf-1"]))
+
+        with (
+            patch.dict(f"{_MOD}.SYNC_ACTIONS", _actions(AsyncMock(), resume), clear=True),
+            patch(f"{_MOD}.log") as mock_log,
+            pytest.raises(Retry),
+        ):
+            await sync_workflows_for_subscription_state(
+                {"job_try": 3}, USER_ID, SubscriptionWorkflowSync.RESUME.value
+            )
+
+        mock_log.warning.assert_called_once()
+        assert (
+            mock_log.warning.call_args.args[0]
+            == "[WORKFLOW] Workflow subscription sync incomplete; retrying"
+        )
+        assert mock_log.warning.call_args.kwargs == {
+            "user_id": USER_ID,
+            "direction": SubscriptionWorkflowSync.RESUME.value,
+            "error": "1 workflow(s) did not follow the subscription change",
+            "error_type": "SubscriptionWorkflowSyncIncomplete",
+            "defer_seconds": SUBSCRIPTION_WORKFLOW_SYNC_RETRY_DELAY.total_seconds() * 4,
+        }

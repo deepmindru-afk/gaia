@@ -705,6 +705,11 @@ def _gate_job(conclusion: str | None, *, status: str = "completed") -> dict[str,
     return {"name": MIRROR_JOB, "status": status, "conclusion": conclusion}
 
 
+def _jobs_with_lane(gate: dict[str, Any], lane: str | None) -> list[dict[str, Any]]:
+    """Build a run's job listing: one lane beside the gate job."""
+    return [{"name": "build", "conclusion": lane}, gate]
+
+
 def _stub_api(
     monkeypatch: pytest.MonkeyPatch,
     runs: list[dict[str, Any]],
@@ -782,7 +787,7 @@ def test_no_completed_run_on_this_sha_fails_rather_than_assuming(
     _stub_api(monkeypatch, [{"id": 8, "status": "in_progress"}], {})
 
     assert _mirror() == 1
-    assert "no completed" in capsys.readouterr().out.lower()
+    assert "latest validation has not concluded" in capsys.readouterr().out
 
 
 def test_the_run_doing_the_mirroring_is_not_its_own_evidence(
@@ -799,19 +804,88 @@ def test_the_run_doing_the_mirroring_is_not_its_own_evidence(
     assert _mirror() == 1
 
 
-def test_a_run_whose_gate_never_concluded_is_passed_over(
+def test_a_run_whose_gate_never_concluded_is_not_a_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Newest first. A run whose gate job was skipped (every run before this fix,
-    # on a plain edit) carries no verdict at all, so the search walks back to
-    # the run that actually decided rather than reading the skip as a pass.
+    # A gate job skipped rather than concluded (every run before this
+    # subcommand, on a plain edit) carries no verdict, and a skip must never
+    # read as a pass.
     _stub_api(
         monkeypatch,
-        [{"id": 9, "status": "completed"}, {"id": 7, "status": "completed"}],
-        {9: [_gate_job("skipped")], 7: [_gate_job("failure")]},
+        [{"id": 9, "status": "completed"}],
+        {9: [_gate_job("skipped")]},
     )
 
     assert _mirror() == 1
+
+
+def test_a_plain_edit_run_is_not_the_validation_it_mirrored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An earlier edit's run skipped every lane and only republished run 7's
+    # verdict, so it is not evidence of its own — the failure underneath it is.
+    _stub_api(
+        monkeypatch,
+        [{"id": 9, "status": "completed"}, {"id": 7, "status": "completed"}],
+        {
+            9: _jobs_with_lane(_gate_job("success"), "skipped"),
+            7: _jobs_with_lane(_gate_job("failure"), "failure"),
+        },
+    )
+
+    assert _mirror() == 1
+
+
+def test_a_newer_validation_still_running_blocks_an_older_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A retarget re-scoped every lane against the new base and has not decided
+    # yet; mirroring the success it supersedes would publish a stale pass.
+    _stub_api(
+        monkeypatch,
+        [{"id": 9, "status": "in_progress"}, {"id": 7, "status": "completed"}],
+        {
+            9: _jobs_with_lane(_gate_job(None, status="queued"), None),
+            7: _jobs_with_lane(_gate_job("success"), "success"),
+        },
+    )
+
+    assert _mirror() == 1
+    assert "latest validation has not concluded" in capsys.readouterr().out
+
+
+def test_a_newer_cancelled_validation_blocks_an_older_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A cancelled run's gate job never starts, so it concludes `skipped` — the
+    # one value that must not let the search fall back to an older success.
+    _stub_api(
+        monkeypatch,
+        [{"id": 9, "status": "completed"}, {"id": 7, "status": "completed"}],
+        {
+            9: _jobs_with_lane(_gate_job("skipped"), "cancelled"),
+            7: _jobs_with_lane(_gate_job("success"), "success"),
+        },
+    )
+
+    assert _mirror() == 1
+
+
+def test_the_newest_substantive_run_decides_the_mirror(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The newest run passed after the older one failed, so the mirror is green.
+    _stub_api(
+        monkeypatch,
+        [{"id": 9, "status": "completed"}, {"id": 7, "status": "completed"}],
+        {
+            9: _jobs_with_lane(_gate_job("success"), "success"),
+            7: _jobs_with_lane(_gate_job("failure"), "failure"),
+        },
+    )
+
+    assert _mirror() == 0
+    assert "mirroring run 9" in capsys.readouterr().out
 
 
 def test_an_unreachable_api_is_a_failure_not_a_pass(monkeypatch: pytest.MonkeyPatch) -> None:
