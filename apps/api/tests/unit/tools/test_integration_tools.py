@@ -1043,10 +1043,11 @@ class TestLinearCreateIssueRelation:
             )
 
     @pytest.mark.regression
-    def test_create_relation_failure_without_a_relation_raises_the_domain_error(
+    def test_create_relation_success_without_a_relation_raises_the_domain_error(
         self, tools, proxy
     ) -> None:
-        _answers(proxy, {"issueRelationCreate": {"success": False, "issueRelation": None}})
+        """A success envelope with no relation used to crash reading relation.get; it is a failed create."""
+        _answers(proxy, {"issueRelationCreate": {"success": True, "issueRelation": None}})
 
         with pytest.raises(RuntimeError, match=r"^Failed to create relation$"):
             tools["CUSTOM_CREATE_ISSUE_RELATION"](

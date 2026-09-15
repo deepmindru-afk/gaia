@@ -24,7 +24,7 @@ async def get_weather(
     weather = await user_weather(location)
     weather_data = (
         weather.model_dump(
-            mode="json",  # pragma: no mutate — a WeatherReport holds only JSON-native values, so json and python dumps match
+            mode="json",  # pragma: no mutate -- a WeatherReport holds only JSON-native values, so json and python dumps match
             exclude_unset=True,
         )
         if isinstance(weather, WeatherReport)
