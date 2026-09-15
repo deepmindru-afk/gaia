@@ -50,7 +50,7 @@ def _gated_jobs(workflow: dict[str, Any]) -> list[str]:
 
 
 def _job_name(entry: str) -> str:
-    """The `needs` entry one `--expect` entry enforces.
+    """Return the `needs` entry one `--expect` entry enforces.
 
     `<job>[@<family>][*<planned members>][=<result>]` — everything after the job
     name says how it is satisfied, not which job it is.
