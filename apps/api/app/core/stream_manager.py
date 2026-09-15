@@ -65,8 +65,8 @@ from app.constants.streaming import (
     STREAM_ERROR_SIGNAL,
 )
 from app.db.redis import redis_cache
-from app.utils.message_breaks import append_message_bubble
 from app.services.latency_metrics import observe_transport_redis_publish
+from app.utils.message_breaks import append_message_bubble
 from shared.py.wide_events import log
 
 
