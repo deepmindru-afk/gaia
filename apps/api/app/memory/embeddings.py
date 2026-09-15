@@ -37,6 +37,7 @@ from app.constants.memory import (
     EMBEDDING_SIDECAR_MAX_BATCH_TEXTS,
     EMBEDDING_SIDECAR_RETRIES,
     EMBEDDING_SIDECAR_RETRY_MAX_WAIT_SECONDS,
+    EMBEDDING_SIDECAR_RETRYABLE_STATUS_CODES,
     EMBEDDING_SIDECAR_TIMEOUT_SECONDS,
     EMBEDDING_SIDECAR_URL_ENV,
     MODEL_CACHE_DIR,
@@ -223,12 +224,6 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client[1]
 
 
-# A 503 (overloaded) or a 429 (rate-limited) is transient — the sidecar already
-# waited out its own slot budget — so it is worth another attempt; any other
-# status is the caller's answer.
-_RETRYABLE_STATUS_CODES = frozenset({429, 503})
-
-
 async def _post_with_retry(
     client: httpx.AsyncClient,
     url: str,
@@ -253,7 +248,10 @@ async def _post_with_retry(
             if final_attempt:
                 raise
         else:
-            if final_attempt or response.status_code not in _RETRYABLE_STATUS_CODES:
+            if (
+                final_attempt
+                or response.status_code not in EMBEDDING_SIDECAR_RETRYABLE_STATUS_CODES
+            ):
                 return response
         await asyncio.sleep(EMBEDDING_SIDECAR_RETRY_MAX_WAIT_SECONDS)
     raise AssertionError(

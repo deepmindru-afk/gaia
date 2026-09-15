@@ -86,6 +86,11 @@ EMBEDDING_SIDECAR_RETRY_MAX_WAIT_SECONDS = max(
     0.0, float(os.getenv("MEMORY_SIDECAR_RETRY_MAX_WAIT_SECONDS", "5"))
 )
 
+# A 503 (overloaded) or 429 (rate-limited) is transient — the sidecar already
+# waited out its own slot budget — so it is worth another attempt; any other
+# status is the caller's answer.
+EMBEDDING_SIDECAR_RETRYABLE_STATUS_CODES = frozenset({429, 503})
+
 # How long a sidecar request may wait for a free inference slot before failing
 # with 503 instead of queueing invisibly until the client's own timeout.
 EMBEDDING_SIDECAR_SLOT_WAIT_SECONDS = max(
