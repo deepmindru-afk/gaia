@@ -126,14 +126,19 @@ class TestLoadUserWithTz:
         assert user_data.user_id == "user1"
 
     async def test_missing_user_returns_utc(self):
-        with patch(
-            "app.workers.tasks.tracked_todo_tasks.load_user_context",
-            new=AsyncMock(return_value=None),
+        with (
+            patch(
+                "app.workers.tasks.tracked_todo_tasks.load_user_context",
+                new=AsyncMock(return_value=None),
+            ),
+            patch("app.workers.tasks.tracked_todo_tasks.log") as log,
         ):
             user_data, tz = await _load_user_with_tz("user1")
 
         assert user_data == AuthenticatedUser(user_id="user1")
         assert tz == Timezone.utc()
+        # A user with no record is expected, not a failed load.
+        log.warning.assert_not_called()
 
     async def test_exception_falls_back_to_utc(self):
         with patch(

@@ -94,3 +94,30 @@ class TestToolDataDispatch:
         tool_output.assert_awaited_once_with(STREAM, new_data, acc.tool_outputs)
         assert result == (["Draft the reply", "Book the slot"], True)
         assert acc.follow_up_actions == ["Draft the reply", "Book the slot"]
+
+    async def test_a_todo_snapshot_is_published_and_progress_saves_only_the_set_tool_fields(
+        self,
+    ) -> None:
+        acc = _acc()
+        snapshot = {"source": "executor", "todos": [{"id": "t1", "status": "done"}]}
+        payload = {"follow_up_actions": ["Draft the reply"], "todo_progress": snapshot}
+        publish_chunk = AsyncMock()
+        update_progress = AsyncMock()
+        with (
+            patch(f"{MODULE}._settle_boundary", AsyncMock()),
+            patch(f"{MODULE}.publish_other_data", AsyncMock(return_value=["Draft the reply"])),
+            patch(f"{MODULE}.publish_tool_data", AsyncMock()),
+            patch(f"{MODULE}.publish_tool_output", AsyncMock()),
+            patch(f"{MODULE}.stream_manager.publish_chunk", publish_chunk),
+            patch(f"{MODULE}.stream_manager.update_progress", update_progress),
+        ):
+            await process_data_chunk(STREAM, _chunk(payload), acc)
+
+        publish_chunk.assert_awaited_once_with(
+            STREAM, f"data: {json.dumps({'todo_progress': snapshot})}\n\n"
+        )
+        update_progress.assert_awaited_once_with(
+            STREAM,
+            message_chunk="",
+            tool_data={"other_data": {"follow_up_actions": ["Draft the reply"]}},
+        )

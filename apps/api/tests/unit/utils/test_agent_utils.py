@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.constants.agents import AgentTag, wrap_agent_payload
+from app.constants.cache import CUSTOM_INT_METADATA_CACHE_PREFIX, CUSTOM_INT_METADATA_TTL
 from app.models.integration_models import Integration
+from app.models.stream_events import ToolOutputPayload
 from app.utils.agent_utils import (
     IntegrationDisplayMetadata,
     ToolCallView,
@@ -15,6 +17,7 @@ from app.utils.agent_utils import (
     _lookup_custom_integration_name,
     _registry_mcp_ui_metadata,
     _resolve_handoff_display_name,
+    _resolve_mcp_ui_metadata,
     _special_tool_display,
     format_sse_data,
     format_sse_response,
@@ -23,7 +26,7 @@ from app.utils.agent_utils import (
     process_custom_event_for_tools,
     strip_internal_agent_tags,
 )
-from app.utils.stream_publishers import ExtractedToolData
+from app.utils.stream_publishers import ExtractedToolData, publish_tool_output
 
 
 def _integration(integration_id: str, name: str) -> Integration:
@@ -286,6 +289,52 @@ class TestFormatToolCallEntry:
 # ---------------------------------------------------------------------------
 
 
+class TestPublishToolOutput:
+    @pytest.mark.asyncio
+    async def test_an_empty_output_is_streamed_but_never_captured_for_the_saved_turn(self) -> None:
+        tool_outputs: dict[str, str] = {}
+        new_data = ExtractedToolData(tool_output=ToolOutputPayload(tool_call_id="tc-1", output=""))
+
+        with patch("app.utils.stream_publishers.stream_manager") as sm:
+            sm.publish_chunk = AsyncMock()
+            await publish_tool_output("stream-1", new_data, tool_outputs)
+
+        assert tool_outputs == {}
+        sm.publish_chunk.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_non_empty_output_is_captured_under_its_tool_call(self) -> None:
+        tool_outputs: dict[str, str] = {}
+        new_data = ExtractedToolData(
+            tool_output=ToolOutputPayload(tool_call_id="tc-1", output="42 results")
+        )
+
+        with patch("app.utils.stream_publishers.stream_manager") as sm:
+            sm.publish_chunk = AsyncMock()
+            await publish_tool_output("stream-1", new_data, tool_outputs)
+
+        assert tool_outputs == {"tc-1": "42 results"}
+
+
+class TestResolveMcpUiMetadata:
+    @pytest.mark.asyncio
+    async def test_the_named_tools_mcp_ui_and_server_url_are_returned(self) -> None:
+        tool = MagicMock()
+        tool.name = "ui_tool"
+        tool.metadata = {"mcp_ui": {"type": "form"}, "mcp_server_url": "https://mcp.example.com"}
+        client = MagicMock()
+        client._tools = {"notion_int": [tool]}
+
+        with patch(
+            "app.services.mcp.mcp_client.get_mcp_client",
+            new_callable=AsyncMock,
+            return_value=client,
+        ):
+            result = await _resolve_mcp_ui_metadata("ui_tool", "user123")
+
+        assert result == ({"type": "form"}, "https://mcp.example.com")
+
+
 class TestResolveMcpIconName:
     @pytest.mark.asyncio
     async def test_cache_miss_looks_up_db_and_fills_icon_name(self) -> None:
@@ -303,7 +352,9 @@ class TestResolveMcpIconName:
                 new_callable=AsyncMock,
                 return_value=mock_registry,
             ),
-            patch("app.db.redis.get_cache", new_callable=AsyncMock, return_value=None),
+            patch(
+                "app.db.redis.get_cache", new_callable=AsyncMock, return_value=None
+            ) as mock_get_cache,
             patch("app.db.redis.set_cache", new_callable=AsyncMock) as mock_set_cache,
             patch(
                 "app.utils.agent_utils.integration_repository.get",
@@ -321,7 +372,17 @@ class TestResolveMcpIconName:
         assert result["data"]["icon_url"] == "https://cdn.example.com/icon.png"
         assert result["data"]["integration_name"] == "Custom Service"
         mock_repo_get.assert_awaited_once_with("custom_integration_1")
-        mock_set_cache.assert_awaited_once()
+        cache_key = f"{CUSTOM_INT_METADATA_CACHE_PREFIX}:custom_integration_1"
+        mock_get_cache.assert_awaited_once_with(cache_key, IntegrationDisplayMetadata)
+        mock_set_cache.assert_awaited_once_with(
+            cache_key,
+            IntegrationDisplayMetadata(
+                icon_url="https://cdn.example.com/icon.png",
+                integration_id="custom_integration_1",
+                integration_name="Custom Service",
+            ),
+            ttl=CUSTOM_INT_METADATA_TTL,
+        )
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_db_lookup(self) -> None:

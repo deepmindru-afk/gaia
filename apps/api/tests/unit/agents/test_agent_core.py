@@ -15,6 +15,7 @@ from app.agents.core.agent import (
     call_agent,
     call_agent_silent,
 )
+from app.agents.core.messages import MessageAttachments, MessageScope
 from app.agents.llm import lane as lane_module
 from app.agents.llm.lane import AgentRole
 from app.config.settings import settings
@@ -30,6 +31,7 @@ from app.helpers.agent_helpers import (
 )
 from app.models.agent_models import SilentRunResult, agent_user_context
 from app.models.message_models import (
+    FileData,
     MessageRequestWithHistory,
     ReplyToMessageData,
     SelectedCalendarEventData,
@@ -177,6 +179,62 @@ class TestCoreAgentLogic:
         kwargs = mock_construct.call_args.kwargs
         assert kwargs["query"] == "custom query"
         assert kwargs["scope"].user_name == "Alice"
+
+    @pytest.mark.asyncio
+    async def test_every_request_and_run_field_reaches_message_construction(self):
+        workflow = SelectedWorkflowData(id="wf-1", title="Wf", description="d", steps=[])
+        event = SelectedCalendarEventData(
+            id="evt-1", summary="Evt", description="d", start={}, end={}
+        )
+        reply = ReplyToMessageData(id="msg-1", content="hi", role="user")
+        files = [FileData(fileId="file-1", url="https://files/1", filename="a.txt")]
+        req = _make_request(
+            selectedTool="web_search",
+            toolCategory="research",
+            selectedWorkflow=workflow,
+            selectedCalendarEvent=event,
+            replyToMessage=reply,
+            fileData=files,
+            fileIds=["file-1"],
+        )
+        user = _make_user()
+        trigger = {"execution_mode": "background", "active_todo_id": "todo-7"}
+        patches = _common_patches()
+        with (
+            patches["construct"] as mock_construct,
+            patches["get_graph"],
+            patches["build_state"] as mock_build_state,
+            patches["build_config"],
+            patches["log"],
+        ):
+            await _core_agent_logic(
+                request=req,
+                conversation_id="conv-1",
+                user=user,
+                options=AgentRunOptions(trigger_context=trigger, source="web"),
+            )
+
+        kwargs = mock_construct.call_args.kwargs
+        assert kwargs["scope"] == MessageScope(
+            user_id="user-123",
+            user_name="Test User",
+            user_dict=user,
+            conversation_id="conv-1",
+            source="web",
+            active_todo_id="todo-7",
+            execution_mode="background",
+        )
+        assert kwargs["attachments"] == MessageAttachments(
+            selected_tool="web_search",
+            tool_category="research",
+            selected_workflow=workflow,
+            selected_calendar_event=event,
+            reply_to_message=reply,
+            files_data=files,
+            currently_uploaded_file_ids=["file-1"],
+            trigger_context=trigger,
+        )
+        assert mock_build_state.call_args.args[1] == "user-123"
 
     @pytest.mark.asyncio
     async def test_the_users_onboarding_data_reaches_build_agent_config(self):
@@ -719,6 +777,37 @@ class TestCallAgentSilent:
         failure.assert_called_once_with(stream_id)
 
     @pytest.mark.asyncio
+    async def test_the_detached_executors_tool_data_is_appended_to_the_result(self):
+        patches = _common_patches()
+        with (
+            patches["construct"],
+            patches["get_graph"],
+            patches["build_state"],
+            patches["build_config"],
+            patches["log"],
+            patch(
+                "app.agents.core.agent.execute_graph_silent",
+                new_callable=AsyncMock,
+                return_value=("Hello!", [{"tool_name": "comms_tool", "data": "c"}]),
+            ),
+            patch("app.agents.core.agent.await_executor_done", new_callable=AsyncMock),
+            patch(
+                "app.agents.core.agent.drain_executor_tool_data",
+                return_value=[{"tool_name": "executor_tool", "data": "e"}],
+            ),
+        ):
+            result = await call_agent_silent(
+                request=_make_request(),
+                conversation_id="conv-1",
+                user=_make_user(),
+            )
+
+        assert result.tool_data == [
+            {"tool_name": "comms_tool", "data": "c"},
+            {"tool_name": "executor_tool", "data": "e"},
+        ]
+
+    @pytest.mark.asyncio
     async def test_a_graph_failure_propagates_instead_of_becoming_a_result_string(self):
         """A swallowed failure reads as success to every caller — how workflows reported success through 429s."""
         patches = _common_patches()
@@ -1080,6 +1169,12 @@ class TestTheLaneTheRunResolves:
             )
 
         assert build_config.call_args.args == ()
+        assert build_config.call_args.kwargs["identity"].user == {
+            "user_id": "user-123",
+            "email": "test@example.com",
+            "name": "Test User",
+            "timezone": None,
+        }
         # Dataclass equality, so this is exactly as strict as the flat-kwargs dict
         # it replaced: every field of every group has to match, and an argument
         # dropped on the floor shows up as a default that is not the value here.

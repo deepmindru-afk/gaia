@@ -279,8 +279,8 @@ async def get_handoff_metadata(subagent_id: str) -> IntegrationDisplayMetadata:
     subagent = get_subagent_by_id(clean_id)
     if subagent:
         log.set(integration_type="platform")
+        # No icon_url: platform/builtin subagents use category-based icons.
         return IntegrationDisplayMetadata(
-            icon_url=None,  # Platform/builtin subagents use category-based icons
             integration_id=subagent.id,
             integration_name=subagent.name,
         )
@@ -385,7 +385,7 @@ def _inherit_from_parent_configurable(
     here — a child inherits its parent's lane whole (see build_agent_config).
     """
     if parent is None:
-        return replace(current, stream_id=None)
+        return current
 
     return replace(
         current,

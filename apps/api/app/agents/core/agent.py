@@ -150,8 +150,8 @@ async def _core_agent_logic(
     execution_mode: ExecutionMode = "interactive"
     if trigger_context:
         active_todo_id = trigger.active_todo_id or trigger.todo_id
-        if trigger.execution_mode in ("interactive", "background"):
-            execution_mode = cast(ExecutionMode, trigger.execution_mode)
+        if trigger.execution_mode == "background":
+            execution_mode = "background"
 
     # Build langchain messages and get graph concurrently
     history, graph = await asyncio.gather(

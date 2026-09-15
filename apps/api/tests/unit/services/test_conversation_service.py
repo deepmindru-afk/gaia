@@ -347,6 +347,10 @@ class TestPinMessage:
         result = await pin_message("conv_abc", "msg_1", True, test_user)
         assert result.pinned is True
         assert "pinned successfully" in result.message
+        mock_repo.get.assert_awaited_once_with("conv_abc", user_id="user_123")
+        mock_repo.set_message_pinned.assert_awaited_once_with(
+            "conv_abc", user_id="user_123", message_id="msg_1", pinned=True
+        )
 
     async def test_raises_404_conversation_not_found(self, mock_repo, test_user):
         mock_repo.get.return_value = None
@@ -374,6 +378,7 @@ class TestGetStarredMessages:
         result = await get_starred_messages(test_user)
         assert len(result.results) == 1
         assert result.results[0].conversation_id == "conv_1"
+        mock_repo.list_pinned_messages.assert_awaited_once_with("user_123")
 
     async def test_returns_empty(self, mock_repo, test_user):
         mock_repo.list_pinned_messages.return_value = []

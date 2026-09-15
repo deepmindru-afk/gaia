@@ -2,12 +2,16 @@
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from posthog.ai.langchain import CallbackHandler as PostHogCallbackHandler
 import pytest
 
 from app.agents.llm.lane import AgentRole, ModelLane
 from app.agents.llm.types import LLMProviderName
+from app.config.posthog import POSTHOG_PROVIDER_KEY
+from app.constants.cache import CUSTOM_INT_METADATA_TTL, HANDOFF_METADATA_CACHE_PREFIX
 from app.constants.log_tags import LogTag
 from app.helpers.agent_helpers import (
     AgentIdentity,
@@ -26,6 +30,7 @@ from app.helpers.agent_helpers import (
     execute_graph_silent,
     execute_graph_streaming,
     get_handoff_metadata,
+    recent_user_messages,
 )
 from app.models.integration_models import Integration
 from app.models.mcp_config import SubAgentConfig
@@ -144,8 +149,15 @@ class TestGetHandoffMetadata:
         )
 
         result = await get_handoff_metadata("custom_mymcp")
-        assert result.integration_name == "MyMCP"
-        mock_set_cache.assert_called_once()
+        expected = IntegrationDisplayMetadata(
+            icon_url="https://icon.png",
+            integration_id="custom_mymcp",
+            integration_name="MyMCP",
+        )
+        assert result == expected
+        cache_key = f"{HANDOFF_METADATA_CACHE_PREFIX}:custom_mymcp"
+        mock_get_cache.assert_awaited_once_with(cache_key, IntegrationDisplayMetadata)
+        mock_set_cache.assert_awaited_once_with(cache_key, expected, ttl=CUSTOM_INT_METADATA_TTL)
 
     @patch("app.helpers.agent_helpers.set_cache", new_callable=AsyncMock)
     @patch("app.helpers.agent_helpers.get_cache", new_callable=AsyncMock)
@@ -204,6 +216,65 @@ class TestBuildAgentConfig:
         # No stored home zone and no parent zone -> UTC.
         assert config["configurable"]["user_timezone"] == "UTC"
         assert config["recursion_limit"] == AGENT_RECURSION_LIMIT
+
+    @patch("app.helpers.agent_helpers.providers")
+    async def test_a_root_run_stamps_the_users_identity_and_its_own_conversation(
+        self, mock_providers
+    ):
+        mock_providers.get.return_value = None
+
+        config = await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="comms_agent",
+            ),
+        )
+
+        configurable = config["configurable"]
+        assert configurable["conversation_id"] == CONV_ID
+        assert configurable["email"] == "test@example.com"
+        assert configurable["user_name"] == "Test User"
+        assert configurable["execution_mode"] == "interactive"
+        assert config["metadata"]["user_id"] == USER_ID
+
+    @patch("app.helpers.agent_helpers.providers")
+    async def test_a_root_run_mints_a_request_id_that_a_child_inherits(self, mock_providers):
+        mock_providers.get.return_value = None
+
+        root = (
+            await build_agent_config(
+                identity=AgentIdentity(
+                    conversation_id=CONV_ID, user=FAKE_USER, agent_name="comms_agent"
+                ),
+            )
+        )["configurable"]
+        child = (
+            await build_agent_config(
+                identity=AgentIdentity(
+                    conversation_id=CONV_ID, user=FAKE_USER, agent_name="executor"
+                ),
+                thread=AgentThread(base_configurable={"root_request_id": "root-req-1"}),
+            )
+        )["configurable"]
+
+        assert str(UUID(root["root_request_id"])) == root["root_request_id"]
+        assert child["root_request_id"] == "root-req-1"
+
+    @patch("app.helpers.agent_helpers.providers")
+    async def test_a_child_whose_parent_has_no_zone_falls_back_to_utc(self, mock_providers):
+        mock_providers.get.return_value = None
+
+        configurable = (
+            await build_agent_config(
+                identity=AgentIdentity(
+                    conversation_id=CONV_ID, user=FAKE_USER, agent_name="executor"
+                ),
+                thread=AgentThread(base_configurable={"stream_id": "stream-1"}),
+            )
+        )["configurable"]
+
+        assert configurable["user_timezone"] == "UTC"
 
     @patch("app.helpers.agent_helpers.providers")
     async def test_uses_home_profile_timezone(self, mock_providers):
@@ -435,11 +506,13 @@ class TestBuildAgentConfig:
                 ),
                 turn=AgentTurn(
                     user_request="pls archive the junk mail",
+                    user_messages=["pls archive the junk mail"],
                 ),
             )
         )["configurable"]
 
         assert configurable["user_request"] == "pls archive the junk mail"
+        assert configurable["user_messages"] == ["pls archive the junk mail"]
 
     @patch("app.helpers.agent_helpers.providers")
     async def test_a_handoff_subagent_inherits_preferences_established_by_comms(
@@ -638,6 +711,27 @@ class TestBuildAgentConfig:
         assert len(config["callbacks"]) >= 1
 
     @patch("app.helpers.agent_helpers.providers")
+    async def test_the_posthog_callback_uses_the_client_registered_under_the_posthog_key(
+        self, mock_providers
+    ):
+        client = MagicMock()
+        mock_providers.is_available.side_effect = lambda key: key == POSTHOG_PROVIDER_KEY
+        mock_providers.get.side_effect = lambda key: client if key == POSTHOG_PROVIDER_KEY else None
+
+        config = await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="comms_agent",
+            ),
+        )
+
+        posthog_callbacks = [
+            cb for cb in config["callbacks"] if isinstance(cb, PostHogCallbackHandler)
+        ]
+        assert len(posthog_callbacks) == 1
+
+    @patch("app.helpers.agent_helpers.providers")
     async def test_usage_metadata_callback(self, mock_providers):
         mock_providers.get.return_value = None
 
@@ -781,6 +875,31 @@ class TestBuildInitialState:
 
         assert state["trigger_context"] == ctx
         assert state["selected_tool"] == "tool_x"
+
+    def test_a_trigger_binds_its_todo_and_execution_mode_into_state(self):
+        request = MagicMock()
+        request.message = "Trigger"
+        request.selectedTool = None
+        request.selectedWorkflow = None
+        request.selectedCalendarEvent = None
+
+        ctx = {"todo_id": "todo-3", "execution_mode": "background"}
+        state = build_initial_state(request, USER_ID, CONV_ID, [], trigger_context=ctx)
+
+        assert state["active_todo_id"] == "todo-3"
+        assert state["execution_mode"] == "background"
+
+
+class TestRecentUserMessages:
+    def test_only_non_blank_user_turns_are_kept_and_the_current_turn_ends_the_list(self):
+        history = [
+            {"role": "user", "content": " draft an email to Bob "},
+            {"role": "assistant", "content": "Here is a draft"},
+            {"role": "user", "content": None},
+            {"role": "user", "content": "   "},
+        ]
+
+        assert recent_user_messages(history, "send it") == ["draft an email to Bob", "send it"]
 
     def test_with_all_selections(self):
         request = MagicMock()

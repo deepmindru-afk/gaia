@@ -888,6 +888,37 @@ class TestHealthCheckAgentCall:
             "todo_id": "todo-7",
         }
 
+    async def _user_the_check_runs_as(self, load_user_context: AsyncMock) -> object:
+        agent = AsyncMock(return_value=SilentRunResult(message="ok", tool_data=[]))
+        with (
+            patch(f"{MODULE}.call_agent_silent", agent),
+            patch(f"{MODULE}.load_user_context", load_user_context),
+            patch(f"{MODULE}.log") as log,
+        ):
+            await _call_health_check_agent("todo-7", "user-3", "is this todo alive?")
+        self.log = log
+        return agent.await_args.kwargs["user"]
+
+    async def test_the_check_runs_as_the_loaded_user(self) -> None:
+        loaded = AuthenticatedUser(user_id="user-3", name="Ada", timezone="Asia/Kolkata")
+        load = AsyncMock(return_value=loaded)
+
+        user = await self._user_the_check_runs_as(load)
+
+        assert user == loaded
+        load.assert_awaited_once_with("user-3")
+
+    async def test_a_user_with_no_record_runs_as_a_placeholder_without_a_warning(self) -> None:
+        user = await self._user_the_check_runs_as(AsyncMock(return_value=None))
+
+        assert user == AuthenticatedUser(user_id="user-3", name="User")
+        self.log.warning.assert_not_called()
+
+    async def test_a_failed_user_load_runs_as_a_placeholder(self) -> None:
+        user = await self._user_the_check_runs_as(AsyncMock(side_effect=RuntimeError("db down")))
+
+        assert user == AuthenticatedUser(user_id="user-3", name="User")
+
     async def test_a_queued_dispatch_is_logged_with_the_todo_and_task_ids(self) -> None:
         # The queued verdict is deliberately vague ("not run"), so the log line is
         # the only place the operator learns WHICH todo was skipped and WHICH
