@@ -26,6 +26,7 @@ it down — see ``executor_runner._finalize_executor_run``.
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -56,6 +57,7 @@ from app.models.message_models import ReplyToMessageData
 from app.models.user_models import AuthenticatedUser
 from app.services.conversation_service import update_messages
 from app.services.hil.approvals_store import get_approval
+from app.services.latency_metrics import observe_delivery_narration, observe_delivery_persist
 from app.services.platform_message_service import deliver_message_to_platform, is_bot_platform
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import get_trace_id, log, log_context
@@ -157,6 +159,7 @@ async def persist_cancelled_run(run: ExecutorRun, tool_data: list[ToolDataEntry]
     bot_message.message_id = run.task_id or str(uuid4())
     bot_message.tool_data = tool_data
 
+    persist_start = time.perf_counter()
     try:
         await update_messages(
             UpdateMessagesRequest(
@@ -177,6 +180,8 @@ async def persist_cancelled_run(run: ExecutorRun, tool_data: list[ToolDataEntry]
     except Exception as e:  # best-effort save of a stopped run
         log.error(f"{LogTag.AGENT} Failed to save cancelled executor cards", error=str(e))
         return
+    finally:
+        observe_delivery_persist(time.perf_counter() - persist_start, op="cancelled_cards")
 
     log.info(
         f"{LogTag.AGENT} Persisted cancelled executor cards",
@@ -403,6 +408,7 @@ async def _narrate_result(
     # spec often DEFINED done that way), so the decided statuses are injected
     # mechanically: comms must never re-offer a decision the user already made.
     approval_note = await _approval_outcomes_note(run)
+    narration_start = time.perf_counter()
     notification_text = await narrate_executor_result(
         result_text + approval_note,
         result_type,
@@ -416,6 +422,9 @@ async def _narrate_result(
     narrated = bool(notification_text)
     if not narrated:
         notification_text = result_text
+    observe_delivery_narration(
+        time.perf_counter() - narration_start, status="success" if narrated else "fallback"
+    )
     log.set_ns(
         "result_delivery",
         result_type=result_type,
@@ -507,6 +516,7 @@ async def _save_bot_message(
     conversation_id: str, user: AuthenticatedUser, bot_message: MessageModel
 ) -> bool:
     """Append the bot message to the conversation; False when it wasn't saved."""
+    persist_start = time.perf_counter()
     try:
         await update_messages(
             UpdateMessagesRequest(
@@ -527,6 +537,8 @@ async def _save_bot_message(
     except Exception as e:
         log.error(f"{LogTag.AGENT} deliver_result: failed to save message", error=str(e))
         return False
+    finally:
+        observe_delivery_persist(time.perf_counter() - persist_start, op="save_bot_message")
     return True
 
 

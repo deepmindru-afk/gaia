@@ -34,6 +34,9 @@ class TestMCPOAuthCallback:
             patch(f"{_MODULE}.invalidate_user_integration_caches", new_callable=AsyncMock),
             patch(f"{_MODULE}.get_api_base_url", return_value="http://api"),
             patch(f"{_MODULE}.get_frontend_url", return_value="http://frontend"),
+            patch(
+                f"{_MODULE}._clear_excluded_scopes_quietly", new_callable=AsyncMock
+            ) as mock_clear,
             patch(f"{_MODULE}.capture_context_event") as mock_capture,
         ):
             resp = await client.get(
@@ -43,7 +46,17 @@ class TestMCPOAuthCallback:
             )
 
         assert resp.status_code in (302, 307)
-        assert "status=connected" in resp.headers["location"]
+        assert (
+            resp.headers["location"]
+            == "http://frontend/integrations?id=github&status=connected&name=GitHub"
+        )
+        mock_clear.assert_awaited_once_with(mcp_client, "github", "oauth_success")
+        mcp_client.handle_oauth_callback.assert_awaited_once_with(
+            integration_id="github",
+            code="code1",
+            state="tok",
+            redirect_uri="http://api/api/v1/mcp/oauth/callback",
+        )
         mock_capture.assert_called_once_with(
             AnalyticsEvents.INTEGRATION_CONNECTED,
             {"integration_id": "github", "connection_method": "oauth"},

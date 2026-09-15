@@ -49,15 +49,13 @@ export const ANALYTICS_EVENTS = {
   // Desktop-only and deliberately its own name: Electron IPC (app icon, popup
   // shortcut) that never reaches the API, so no server event exists for it.
   SETTINGS_DESKTOP_PREFERENCE_CHANGED: "settings:desktop_preference_changed",
-  // Auth events
   USER_SESSION_RESUMED: "user:session_resumed",
-  USER_LOGGED_IN: "user:logged_in",
-  USER_LOGGED_OUT: "user:logged_out",
 
-  // Onboarding events
   ONBOARDING_STARTED: "onboarding:started",
+  // Client-owned: the wizard's UI stages never reach the API as individual
+  // steps (it only sees phase completions), so `trackOnboardingStep` is the
+  // sole emitter.
   ONBOARDING_STEP_COMPLETED: "onboarding:step_completed",
-  ONBOARDING_COMPLETED: "onboarding:completed",
   ONBOARDING_SKIPPED: "onboarding:skipped",
   // Wiping the wizard and starting over. Client-only: the server sees the
   // reset request, but only the browser knows it came from the restart modal
@@ -67,7 +65,6 @@ export const ANALYTICS_EVENTS = {
   // plans again. No request leaves the browser, so nothing else can see it.
   ONBOARDING_CHECKOUT_RETRIED: "onboarding:checkout_retried",
 
-  // Subscription events
   SUBSCRIPTION_PAGE_VIEWED: "subscription:page_viewed",
   SUBSCRIPTION_PLAN_VIEWED: "subscription:plan_viewed",
   // Two subscription events deliberately have no entry here, because the API
@@ -92,42 +89,28 @@ export const ANALYTICS_EVENTS = {
   // without knowing which surface produced them.
   PAYWALL_MODAL_VIEWED: "paywall:modal_viewed",
 
-  // Chat events
-  CHAT_STARTED: "chat:started",
-  CHAT_FIRST_MESSAGE_SENT: "chat:first_message_sent",
   CHAT_VOICE_MODE_TOGGLED: "chat:voice_mode_toggled",
 
-  // Chat – interaction detail events
-  CHAT_MESSAGE_FEEDBACK: "chat:message_feedback",
+  // Chat – interaction detail events (all client-owned composer UI)
   CHAT_SLASH_COMMAND_SELECTED: "chat:slash_command_selected",
   CHAT_SLASH_COMMAND_CATEGORY_CHANGED: "chat:slash_command_category_changed",
   CHAT_COMPOSER_PLUS_MENU_CLICKED: "chat:composer_plus_menu_clicked",
   CHAT_TOOLS_BUTTON_CLICKED: "chat:tools_button_clicked",
   CHAT_GRID_INTEGRATION_CONNECT_CLICKED:
     "chat:grid_integration_connect_clicked",
-  CHAT_MESSAGE_RETRIED: "chat:message_retried",
 
   INTEGRATION_ERROR: "integration:error",
 
   // Feature discovery events
   FEATURE_DISCOVERED: "feature:discovered",
 
-  // Workflow events
-  WORKFLOWS_CREATED: "workflows:created",
-  WORKFLOWS_DELETED: "workflows:deleted",
-  WORKFLOWS_EXECUTED: "workflows:executed",
-  WORKFLOWS_PUBLISHED: "workflows:published",
-  WORKFLOWS_UNPUBLISHED: "workflows:unpublished",
-  WORKFLOWS_STEPS_REGENERATED: "workflows:steps_regenerated",
   WORKFLOW_CARD_NAVIGATE: "workflow_card:navigate",
   USE_CASES_PROMPT_INSERTED: "use_cases:prompt_inserted",
 
   TODOS_VIEW_CHANGED: "todos:view_changed",
 
-  // Email events
   EMAIL_OPENED: "email:opened",
   EMAIL_COMPOSE_OPENED: "email:compose_opened",
-  EMAIL_AI_DRAFT_GENERATED: "email:ai_draft_generated",
 
   // UI/UX events
   UI_SIDEBAR_COLLAPSED: "ui:sidebar_collapsed",
@@ -136,9 +119,6 @@ export const ANALYTICS_EVENTS = {
   SEARCH_GLOBAL_OPENED: "search:global_opened",
   SEARCH_RESULT_CLICKED: "search:result_clicked",
 
-  // Pins/Bookmarks events
-  PIN_CREATED: "pin:created",
-  PIN_DELETED: "pin:deleted",
   PIN_VIEWED: "pin:viewed",
 
   // Profile events
@@ -146,8 +126,6 @@ export const ANALYTICS_EVENTS = {
 
   // Notifications events
   NOTIFICATION_VIEWED: "notification:viewed",
-  NOTIFICATION_CLICKED: "notification:clicked",
-  NOTIFICATION_DISMISSED: "notification:dismissed",
 
   // Content/Learning events
   BLOG_ARTICLE_VIEWED: "blog:article_viewed",
@@ -190,20 +168,9 @@ export const ANALYTICS_EVENTS = {
   VOICE_TRANSCRIPTION_RECEIVED: "voice:transcription_received",
   WAKE_WORD_DETECTED: "wake_word:detected",
 
-  // Device events
-  DEVICE_CONNECTED: "device:connected",
-  DEVICE_DISCONNECTED: "device:disconnected",
-
   // Desktop popup events
   DESKTOP_POPUP_OPENED: "desktop_popup:opened",
   DESKTOP_POPUP_DISMISSED: "desktop_popup:dismissed",
-
-  // Bot events
-  BOT_CONNECTED: "bot:connected",
-  BOT_DISCONNECTED: "bot:disconnected",
-
-  // Weather events
-  WEATHER_QUERIED: "weather:queried",
 
   SKILL_SEARCHED: "skill:searched",
 
@@ -352,7 +319,9 @@ export function setUserProperties(properties: UserProperties): void {
 }
 
 /**
- * Track onboarding progress.
+ * Track onboarding progress. Client-owned: the wizard's UI stages (each
+ * question, the payment reveal, the platform pick) never reach the API as
+ * individual steps — the server only sees phase completions.
  */
 export function trackOnboardingStep(
   step: number,

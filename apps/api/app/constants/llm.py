@@ -132,6 +132,12 @@ TOOL_TIMEOUT_EXEMPT_TOOLS = frozenset(
     }
 )
 
+# Run-metadata key under which ``ainvoke_llm``/``invoke_llm`` publish the call's
+# ``label`` so callbacks (TTFT) can attribute a sample to the call that made it —
+# a turn's callback list is shared by the comms call and its title/follow-up/
+# memory side calls, and the run-level agent name cannot tell them apart.
+LLM_LABEL_METADATA_KEY = "llm_label"
+
 # Attempts for the model-level transient-error retry before the caller falls back
 # to the default model (see with_llm_retry in app/agents/llm/client.py).
 LLM_RETRY_MAX_ATTEMPTS = 3

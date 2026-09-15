@@ -129,6 +129,7 @@ async def update_custom_mcp_integration(
             )
         log.set(integration_name=updated.name)
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.INTEGRATION_CUSTOM_UPDATED)
         return IntegrationSuccessResponse(
             message="Integration updated",
             integration_id=updated.integration_id,
@@ -164,6 +165,7 @@ async def delete_custom_mcp_integration(
                 status_code=404, detail="Integration not found or you are not the owner"
             )
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.INTEGRATION_CUSTOM_DELETED)
         return IntegrationSuccessResponse(
             message="Integration deleted",
             integration_id=integration_id,
@@ -195,6 +197,7 @@ async def publish_integration(
         )
         result = await publish_custom_integration(integration_id, user_id)
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.INTEGRATION_CUSTOM_PUBLISHED)
         return PublishIntegrationResponse(
             message="Integration published successfully",
             integration_id=result["integration_id"],
@@ -227,6 +230,7 @@ async def unpublish_integration(
         )
         result = await unpublish_custom_integration(integration_id, user_id)
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.INTEGRATION_CUSTOM_UNPUBLISHED)
         return UnpublishIntegrationResponse(
             message="Integration unpublished successfully",
             integration_id=result["integration_id"],

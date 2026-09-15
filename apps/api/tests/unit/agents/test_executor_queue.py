@@ -524,3 +524,41 @@ class TestRunItemCarriesWorkflowExecution:
         assert prepared is not None
         assert prepared.run.workflow_id == "wf-9"
         assert prepared.run.workflow_execution_id == "exec-42"
+
+
+class TestRunItemDiscriminatorRoundTrip:
+    """``t_dispatch_perf`` and ``queued`` are the executor metrics' discriminators:
+    they must survive ``build_run_item`` -> ``prepare_run_from_item`` intact, or a
+    dequeued run is measured as a HIL resume (or vice versa)."""
+
+    async def test_dispatch_stamp_and_queue_origin_round_trip(self) -> None:
+        item = build_run_item(
+            task="do it",
+            configurable={"user_id": "u1"},
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id="msg-1",
+                t_dispatch_perf=1234.5,
+                queued=True,
+            ),
+        )
+        # Exact keys: a renamed key drops the value silently on the read side.
+        assert item["t_dispatch_perf"] == 1234.5
+        assert item["queued"] is True
+
+        with (
+            patch.object(eq, "redis_cache") as redis,
+            patch.object(eq, "StreamManager") as sm,
+            patch.object(eq, "websocket_manager") as ws,
+        ):
+            redis.client.set = AsyncMock()
+            sm.start_stream = AsyncMock()
+            ws.broadcast_to_user = AsyncMock()
+            prepared = await prepare_run_from_item("conv-1", item)
+
+        assert prepared is not None
+        assert prepared.run.t_dispatch_perf == 1234.5
+        assert prepared.run.queued is True
