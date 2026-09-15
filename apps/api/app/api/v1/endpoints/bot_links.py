@@ -241,10 +241,9 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
             first_contact=bubbles,
         )
     except PostLinkSideEffectError:
-        # The link is written; only its follow-through failed. The code paid for
-        # that link, so it is spent here rather than released: handed back, the
-        # retry would redeem it against the link that already exists and publish
-        # the first contact a second time. The failure still surfaces.
+        # The link is written; only its follow-through failed. Spent, not released:
+        # handed back, the retry would redeem it against the existing link and
+        # publish the first contact a second time. The failure still surfaces.
         await discard_platform_link_code(body.code)
         raise
     except Exception:

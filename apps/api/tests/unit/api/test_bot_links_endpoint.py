@@ -683,13 +683,7 @@ class TestRedeemLinkCode:
     async def test_a_failure_after_the_link_is_written_spends_the_code_rather_than_releasing_it(
         self,
     ):
-        """The link held; only its follow-through broke.
-
-        Handing the code back would make it redeemable against a link that
-        already exists, and the retry would greet the user all over again. The
-        failure still surfaces — the code being spent is not the link being
-        pretended into success.
-        """
+        """A post-commit failure spends the code, since a retry would greet the user again; the failure still surfaces."""
         request = MagicMock()
         request.state = _make_request()
         broker_down = RuntimeError("could not resolve the outbound destination")
@@ -722,12 +716,7 @@ class TestRedeemLinkCode:
     async def test_the_retry_after_that_failure_does_not_greet_the_user_a_second_time(
         self, _already_linked: AsyncMock
     ):
-        """The same tap again, against the link the failed redemption wrote.
-
-        Both calls go through the real code store semantics: a release leaves
-        the code live, a discard spends it. Only the second is safe here — a
-        live code is redeemed again, and the first contact goes out twice.
-        """
+        """The same tap against the link the failed redemption wrote must not send the first contact twice."""
         spent = False
 
         async def _discard(code: str) -> None:

@@ -57,21 +57,10 @@ async def complete_platform_link(
 ) -> PlatformLinkCompletion:
     """Link the account and run every side effect a successful link owes.
 
-    Whatever GAIA says after the link is sent from here, on the outbound queue
-    every other server-initiated message uses. ``first_contact`` is the
-    composed opening for the one-tap onboarding link (hello, promise, first
-    move) and is delivered as-is; without it a new link gets the generic
-    "you're connected" text. The bots deliver, they never compose.
-
-    Reports back whether that first contact actually went out: nothing retries
-    the publish, so a caller holding the bubbles is the only thing standing
-    between a failed delivery and a linked platform that never said a word.
-
-    Raises AppError(409) when the platform account belongs to another GAIA user
-    (or the user already has a different account on this platform) — the one
-    failure a caller is expected to report back to the person linking. Anything
-    that breaks once the link is written raises PostLinkSideEffectError instead,
-    so a caller can tell a refusal from a link it now has to live with.
+    first_contact, when given, is delivered as-is on the outbound queue; the
+    result reports whether it went out, since nothing retries the publish.
+    Raises AppError(409) when the platform account belongs to another user, and
+    PostLinkSideEffectError for any failure after the link is already written.
     """
     try:
         result = await PlatformLinkService.link_account(
@@ -115,10 +104,9 @@ async def complete_platform_link(
             code=LINK_CONFLICT_ACCOUNT_HAS_OTHER,
         ) from e
 
-    # Everything below runs against a link that is already written, so a failure
-    # here is not a failure to link. It is re-raised — nothing is swallowed —
-    # but named, so a caller holding a single-use credential spends it instead
-    # of handing it back for a retry that would greet the user a second time.
+    # Everything below runs against a link that is already written: a failure is
+    # re-raised, nothing swallowed, but named so a caller holding a single-use
+    # credential spends it instead of handing it back for a duplicate retry.
     try:
         delivered = True
         if first_contact:
@@ -143,13 +131,9 @@ async def complete_platform_link(
             await notify_account_linked(platform, user_id)
         schedule_account_sync(user_id)
         if result.is_new_link:
-            # Only a link that did not exist a moment ago is a connection. An
-            # idempotent re-link — a second tap on the same deep link, a re-issued
-            # token — used to capture too, so the connection count tracked taps.
-            #
-            # capture_event, not capture_context_event: the bot route resolves its
-            # user from the link code, not a session, so there is no request
-            # identity to inherit and the event would land on an anonymous profile.
+            # Only a link that did not exist a moment ago is a connection, so an
+            # idempotent re-link never captures. capture_event, not the context one:
+            # the bot route has no session identity to inherit.
             capture_event(
                 user_id,
                 AnalyticsEvents.INTEGRATION_CONNECTED,

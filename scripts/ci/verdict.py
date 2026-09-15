@@ -1205,7 +1205,7 @@ def _gh_json(endpoint: str) -> dict[str, Any] | None:
 
 
 def _gate_conclusion(repo: str, run_id: int, job_name: str) -> str | None:
-    """What that run's gate job concluded, or None if it never concluded."""
+    """Return what that run's gate job concluded, or None if it never concluded."""
     jobs = _gh_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
     for job in (jobs or {}).get("jobs", []):
         if job.get("name") != job_name:
