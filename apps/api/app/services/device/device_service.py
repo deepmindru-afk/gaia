@@ -15,7 +15,6 @@ import secrets
 from urllib.parse import quote
 import uuid
 
-from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +52,7 @@ from app.models.device import (
 )
 from app.models.integration_models import Integration
 from app.models.mcp_config import MCPConfig
+from app.schemas.device.manifest import DeviceManifestEntry
 from app.schemas.device.responses import PollPairingResponse, StartPairingResponse
 from app.services.device.bridge import request_revoke, send_down
 from app.services.device.device_auth import (
@@ -593,20 +593,6 @@ async def reconcile_device_servers(user_id: str, device_id: str, reported_keys: 
             device={"operation": "reconcile_servers", "device_id": device_id},
             pruned=len(stale),
         )
-
-
-class DeviceManifestEntry(BaseModel):
-    """One active device as the connected-devices context manifest renders it.
-
-    Only the structural fields: name/platform/id plus the servers' display names.
-    Online status and per-server sync state change constantly and are read live by
-    the UI and the ``list_devices`` tool, so they are deliberately not cached here.
-    """
-
-    id: str
-    name: str
-    platform: str | None
-    servers: list[str]
 
 
 #: Generation scoped so a write orphans the previous manifest key instead of

@@ -7,7 +7,7 @@ import pytest
 from tests.helpers import captured_wide_event
 
 from app.agents.context import fetchers as mod
-from app.services.device.device_service import DeviceManifestEntry
+from app.schemas.device.manifest import DeviceManifestEntry
 
 
 def _entry(device_id: str, name: str, platform: str, servers: list[str]) -> DeviceManifestEntry:

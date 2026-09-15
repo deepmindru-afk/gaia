@@ -16,8 +16,8 @@ import pytest
 from app.constants.cache import ONE_DAY_TTL
 from app.constants.device_bridge import MAX_ACTIVE_DEVICES_PER_USER
 from app.models.device import DeviceStatus
+from app.schemas.device.manifest import DeviceManifestEntry
 from app.services.device import device_service
-from app.services.device.device_service import DeviceManifestEntry
 from app.utils.errors import AppError
 
 pytestmark = pytest.mark.unit
