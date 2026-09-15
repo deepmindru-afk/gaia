@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 from fastapi import HTTPException
+from prometheus_client import REGISTRY
 import pytest
 
 from app.agents.core.background import executor_runner as er, result_delivery as rd, session as sess
@@ -350,6 +351,112 @@ class TestPersistCancelledRun:
             await rd.persist_cancelled_run(run, CARDS)  # must not raise
 
 
+def _persist_count(op: str) -> float:
+    return REGISTRY.get_sample_value("delivery_persist_seconds_count", {"op": op}) or 0.0
+
+
+def _narration_count(status: str) -> float:
+    return REGISTRY.get_sample_value("delivery_narration_seconds_count", {"status": status}) or 0.0
+
+
+class TestDeliveryLatency:
+    """Delivery splits narration (LLM) from persistence (Mongo)."""
+
+    async def test_cancelled_persist_records_span_without_narration(self) -> None:
+        run = _run(RunKind.QUEUED, stream_id="queued_lat", task_id="task-lat")
+        before = _persist_count("cancelled_cards")
+        narration_before = _narration_count("success")
+
+        with (
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd, "narrate_executor_result", new_callable=AsyncMock) as narrate,
+        ):
+            await rd.persist_cancelled_run(run, CARDS)
+
+        narrate.assert_not_awaited()
+        assert _persist_count("cancelled_cards") == before + 1
+        assert _narration_count("success") == narration_before
+
+    async def test_narration_records_span(self) -> None:
+        before = _narration_count("success")
+        with (
+            patch.object(rd, "narrate_executor_result", new_callable=AsyncMock, return_value="v"),
+            patch.object(rd, "_approval_outcomes_note", new_callable=AsyncMock, return_value=""),
+        ):
+            await rd._narrate_result(_run(), "raw", "final", "")
+        assert _narration_count("success") == before + 1
+
+    async def test_save_bot_message_records_span(self) -> None:
+        before = _persist_count("save_bot_message")
+        bot_message = MessageModel(type="bot", response="hi", date="2026-01-01")
+        with patch.object(rd, "update_messages", new_callable=AsyncMock):
+            assert await rd._save_bot_message("conv-1", {"user_id": "user-1"}, bot_message) is True
+        assert _persist_count("save_bot_message") == before + 1
+
+    async def test_cancelled_persist_records_exact_seconds(self) -> None:
+        # Pinned clock: the persisted sample must be the elapsed subtraction in
+        # SECONDS. A sign error (end + start) would record 40.75 here.
+        run = _run(RunKind.QUEUED, stream_id="queued_lat2", task_id="task-lat2")
+        labels = {"op": "cancelled_cards"}
+        before = REGISTRY.get_sample_value("delivery_persist_seconds_sum", labels) or 0.0
+        with (
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd.time, "perf_counter", side_effect=[20.0, 20.75]),
+        ):
+            await rd.persist_cancelled_run(run, CARDS)
+        assert REGISTRY.get_sample_value("delivery_persist_seconds_sum", labels) == before + 0.75
+
+    async def test_save_bot_message_records_exact_seconds(self) -> None:
+        labels = {"op": "save_bot_message"}
+        before = REGISTRY.get_sample_value("delivery_persist_seconds_sum", labels) or 0.0
+        bot_message = MessageModel(type="bot", response="hi", date="2026-01-01")
+        with (
+            patch.object(rd, "update_messages", new_callable=AsyncMock),
+            patch.object(rd.time, "perf_counter", side_effect=[7.0, 7.25]),
+        ):
+            assert await rd._save_bot_message("conv-1", {"user_id": "user-1"}, bot_message) is True
+        assert REGISTRY.get_sample_value("delivery_persist_seconds_sum", labels) == before + 0.25
+
+    async def test_narration_records_exact_seconds(self) -> None:
+        labels = {"status": "success"}
+        before = REGISTRY.get_sample_value("delivery_narration_seconds_sum", labels) or 0.0
+        with (
+            patch.object(rd, "narrate_executor_result", new_callable=AsyncMock, return_value="v"),
+            patch.object(rd, "_approval_outcomes_note", new_callable=AsyncMock, return_value=""),
+            patch.object(rd.time, "perf_counter", side_effect=[3.0, 3.5]),
+        ):
+            await rd._narrate_result(_run(), "raw", "final", "")
+        assert REGISTRY.get_sample_value("delivery_narration_seconds_sum", labels) == before + 0.5
+
+    async def test_narration_fallback_is_recorded_under_the_fallback_status(self) -> None:
+        # comms unavailable -> the raw text is delivered, and the sample is
+        # labelled "fallback". A recased or renamed status would silently split
+        # the fallback rate across two series.
+        run = _run(RunKind.QUEUED, stream_id="queued_lat3", task_id="task-lat3")
+        count_labels = {"status": "fallback"}
+        sum_labels = {"status": "fallback"}
+        count_before = (
+            REGISTRY.get_sample_value("delivery_narration_seconds_count", count_labels) or 0.0
+        )
+        sum_before = REGISTRY.get_sample_value("delivery_narration_seconds_sum", sum_labels) or 0.0
+        with (
+            patch.object(rd, "narrate_executor_result", new_callable=AsyncMock, return_value=""),
+            patch.object(rd, "_approval_outcomes_note", new_callable=AsyncMock, return_value=""),
+            patch.object(rd.time, "perf_counter", side_effect=[3.0, 3.5]),
+        ):
+            assert await rd._narrate_result(run, "raw fallback text", "final", "") == (
+                "raw fallback text"
+            )
+        assert (
+            REGISTRY.get_sample_value("delivery_narration_seconds_count", count_labels)
+            == count_before + 1
+        )
+        assert (
+            REGISTRY.get_sample_value("delivery_narration_seconds_sum", sum_labels)
+            == sum_before + 0.5
+        )
+
+
 class TestDeliverResultToolDataOwnership:
     """deliver_result attaches the cards its caller snapshotted, and keys queued
     messages on task_id so sync dedups against the placeholder.
@@ -523,7 +630,13 @@ class TestRunLifecycleAnalytics:
         # asserted only by name, so its user id and payload could both go null
         # without a test noticing.
         assert mock_capture.call_args_list[1].args[0] == "user-1"
-        assert mock_capture.call_args_list[1].args[2] == expected_props
+        terminal_props = mock_capture.call_args_list[1].args[2]
+        assert terminal_props["agent"] == "executor"
+        assert terminal_props["mode"] == "background"
+        assert terminal_props["conversation_id"] == "conv-1"
+        assert terminal_props["task_id"] == "task-1"
+        assert terminal_props["queued"] is False
+        assert terminal_props["executor_active_ms"] >= 0.0
 
     async def test_failed_on_error_result(self) -> None:
         mock_capture = await self._run_lifecycle("it broke", "error")
@@ -531,12 +644,11 @@ class TestRunLifecycleAnalytics:
         events = [c.args[1] for c in mock_capture.call_args_list]
         assert events == [AnalyticsEvents.AGENT_RUN_STARTED, AnalyticsEvents.AGENT_RUN_FAILED]
         assert mock_capture.call_args_list[1].args[0] == "user-1"
-        assert mock_capture.call_args_list[1].args[2] == {
-            "agent": "executor",
-            "mode": "background",
-            "conversation_id": "conv-1",
-            "task_id": "task-1",
-        }
+        terminal_props = mock_capture.call_args_list[1].args[2]
+        assert terminal_props["agent"] == "executor"
+        assert terminal_props["task_id"] == "task-1"
+        assert terminal_props["queued"] is False
+        assert terminal_props["executor_active_ms"] >= 0.0
 
     async def test_a_run_with_no_user_id_captures_nothing(self) -> None:
         """`run.user` with no id must produce no events at all.

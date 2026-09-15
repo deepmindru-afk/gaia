@@ -47,9 +47,13 @@ export default function UserContainer() {
           </Avatar>
           <div className="flex flex-col items-start -space-y-0.5">
             <span className="text-sm">{user?.name}</span>
-            <span className="text-[11px] text-foreground-400">
-              {subscriptionStatus?.is_subscribed ? "GAIA Pro" : "GAIA Free"}
-            </span>
+            {/* Render the plan label only once status resolves, so a paid user
+                never briefly reads "GAIA Free" while the query is loading. */}
+            {subscriptionStatus && (
+              <span className="text-[11px] text-foreground-400">
+                {subscriptionStatus.is_subscribed ? "GAIA Pro" : "GAIA Free"}
+              </span>
+            )}
           </div>
         </div>
       </Button>

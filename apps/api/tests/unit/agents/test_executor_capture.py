@@ -348,6 +348,27 @@ class TestRedisStreamWriter:
             writer({"tool_data": {"x": 1}})  # publish still happens, no collector
         assert get_session("unregistered") is None
 
+    async def test_writer_stamps_the_first_frame_once(self) -> None:
+        # The stamp is the executor TTFT start, written on the FIRST frame only.
+        # Two distinct clock reads pin both halves: a guard that never stamps
+        # leaves it None, and a guard that stamps every frame overwrites the
+        # first (the metrics would then measure gap-to-last frame, not TTFT).
+        create_session("s1", RunKind.QUEUED)
+        session = get_session("s1")
+        assert session is not None
+
+        with (
+            patch.object(rw, "stream_manager") as sm,
+            patch.object(rw, "spawn_background_task"),
+            patch.object(rw.time, "perf_counter", side_effect=[42.0, 43.0]),
+        ):
+            sm.publish_chunk = AsyncMock()
+            writer = make_redis_stream_writer("s1")
+            writer({"tool_data": {"i": 1}})
+            assert session.executor_first_frame_perf == 42.0
+            writer({"tool_data": {"i": 2}})
+            assert session.executor_first_frame_perf == 42.0
+
 
 @pytest.mark.unit
 class TestAnExecutorThatNeverFinishes:

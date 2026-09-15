@@ -33,6 +33,7 @@ from app.agents.tools.core.tool_runtime_config import (
 from app.agents.tools.executor_tool import call_executor, cancel_executor
 from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_tools
 from app.agents.tools.wait_for_subagents_tool import wait_for_subagents as wait_for_subagents_tool
+from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 from app.constants.general import WAIT_FOR_SUBAGENTS_NAME
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
@@ -104,13 +105,14 @@ async def build_executor_graph(
                 "plan_tasks",
                 "update_tasks",
                 "read",
+                "write",
+                "edit",
                 "bash",
                 "deep_research",
                 "wait_for_subagents",
                 "read_manual",
                 "create_tracked_todo",
                 "update_tracked_todo",
-                "update_tracked_todo_canvas",
                 "complete_tracked_todo",
                 "search_todo_context",
                 "list_tracked_todos",
@@ -127,6 +129,19 @@ async def build_executor_graph(
                 "decline_playbook",
                 "read_playbook",
                 "disable_playbook",
+                # Same rule as the playbook tools above: the device-onboarding
+                # flow names these by hand — comms delegates "connect the user's
+                # machine" / "complete pairing with code X", and the connected-
+                # devices context section tells the executor to call list_devices.
+                # They are not in the retrieval index, so a run left to
+                # retrieve_tools finds nothing and improvises (it shelled out a
+                # non-existent `gaia bridge approve` and handed off to a
+                # non-existent device-setup subagent). approve_device_pairing is
+                # always-gated, so binding it does not weaken the human approval.
+                "add_device",
+                "approve_device_pairing",
+                "list_devices",
+                "run_on_device",
             ],
         ),
         hooks_config=HookConfig(
@@ -191,6 +206,8 @@ async def build_comms_graph(
     tool_registry = {
         "call_executor": call_executor,
         "cancel_executor": cancel_executor,
+        web_search_tool.name: web_search_tool,
+        fetch_webpages.name: fetch_webpages,
         **{memory_tool.name: memory_tool for memory_tool in memory_tools.tools},
     }
     store = await get_tools_store()
@@ -207,6 +224,8 @@ async def build_comms_graph(
             initial_tool_ids=[
                 "call_executor",
                 "cancel_executor",
+                web_search_tool.name,
+                fetch_webpages.name,
                 *[memory_tool.name for memory_tool in memory_tools.tools],
             ],
         ),

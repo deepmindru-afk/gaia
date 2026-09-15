@@ -56,6 +56,7 @@ from app.agents.llm.client import (
     background_structured_runnable,
     get_default_llm,
     init_llm,
+    invoke_llm,
     register_llm_providers,
 )
 from app.agents.llm.exceptions import LLM_FALLBACK_EXCEPTIONS, LLMNotConfiguredError
@@ -2078,6 +2079,83 @@ class TestFallbackRunsOnTheOtherProvider:
         assert "model_kwargs" not in seen
 
 
+class TestFallbackRunCarriesTheCallLabel:
+    """The fallback attempt must publish the SAME call label as the primary.
+
+    A turn's callback list is shared by the comms call and its title/follow-up/
+    memory side calls, and the run-level agent name cannot tell them apart — so
+    a fallback attempt that dropped the label would attribute its TTFT sample
+    to the wrong call. Both the async and the sync fallback path label the
+    config they pass to the fallback runnable, and each is asserted here.
+    """
+
+    @pytest.mark.regression
+    async def test_the_async_fallback_run_carries_the_call_label(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def _record(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            seen.update(config or {})
+            return AIMessage(content="from-fallback")
+
+        def _boom(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            raise ConnectionError("primary down")
+
+        result = await ainvoke_llm(
+            RunnableLambda(_boom),
+            "hi",
+            fallback=RunnableLambda(_record),
+            options=LLMInvokeOptions(
+                max_attempts=1,
+                fallback_config=cast(RunnableConfig, {"configurable": {"provider": "gemini"}}),
+            ),
+            label="memory_extraction",
+        )
+
+        assert result.content == "from-fallback"
+        assert seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert seen["configurable"] == {"provider": "gemini"}
+
+    @pytest.mark.regression
+    def test_the_sync_path_labels_the_call_on_primary_and_fallback(self) -> None:
+        """The sync primary runs under the caller's own config PLUS the label,
+        and the sync fallback under the fallback config PLUS the label.
+
+        Asserting the configurable on both sides pins that labelling ADDS to the
+        config rather than replacing it — a label written onto ``None`` (or onto
+        the wrong base) would silently drop the user/session the call was made
+        for, and a fallback that lost its provider config would run on the
+        primary's dead lane.
+        """
+        primary_seen: dict[str, Any] = {}
+        fallback_seen: dict[str, Any] = {}
+
+        def _primary(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            primary_seen.update(config or {})
+            raise ConnectionError("primary down")
+
+        def _fallback(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            fallback_seen.update(config or {})
+            return AIMessage(content="from-fallback")
+
+        result = invoke_llm(
+            RunnableLambda(_primary),
+            "hi",
+            fallback=RunnableLambda(_fallback),
+            config=cast(RunnableConfig, {"configurable": {"user_id": "u1"}}),
+            options=LLMInvokeOptions(
+                max_attempts=1,
+                fallback_config=cast(RunnableConfig, {"configurable": {"provider": "gemini"}}),
+            ),
+            label="memory_extraction",
+        )
+
+        assert result.content == "from-fallback"
+        assert primary_seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert primary_seen["configurable"] == {"user_id": "u1"}
+        assert fallback_seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert fallback_seen["configurable"] == {"provider": "gemini"}
+
+
 class TestFallbackKeepsItsLanesStickySession:
     """Which sticky key the fallback binds depends on the lane it is serving.
 
@@ -2190,6 +2268,45 @@ class TestTheStickyKeyNeverReachesANonOpenRouterFallback:
         assert _is_openrouter_wire(client) is True
         assert _is_openrouter_wire(client.bind_tools([])) is True
         assert _is_openrouter_wire(client.with_structured_output(_Extracted)) is True
+
+    @pytest.mark.regression
+    def test_a_chatopenrouter_at_a_non_openrouter_base_is_not_openrouter_wire(self) -> None:
+        """A ChatOpenRouter aimed at another OpenAI-compatible endpoint (the
+        DEV_LLM_* custom lane, e.g. api.openai.com) is NOT talking to OpenRouter:
+        session_id is an OpenRouter-service routing hint and OpenAI rejects it as
+        an unknown argument, killing the call. Only the default base is the wire."""
+        from app.agents.llm.client import _is_openrouter_wire
+
+        custom_openai = ChatOpenRouter(
+            model="gpt-4.1-mini", api_key="k", base_url="https://api.openai.com/v1"
+        )
+
+        assert _is_openrouter_wire(custom_openai) is False
+        assert _is_openrouter_wire(custom_openai.bind_tools([])) is False
+
+    @pytest.mark.regression
+    def test_bind_session_id_skips_a_custom_openai_lane(self) -> None:
+        """The CUSTOM provider is in STICKY_ROUTING_PROVIDERS, so a sticky key IS
+        computed for it — but when that lane points at OpenAI the graph must NOT
+        bind session_id (OpenAI 400s the whole turn). The real OpenRouter lane
+        still gets it. The endpoint check, not the provider, is the guard."""
+        from app.constants.llm import LLMProviderName
+        from app.override.langgraph_bigtool.create_agent import _bind_session_id
+
+        custom = ChatOpenRouter(
+            model="gpt-4.1-mini", api_key="k", base_url="https://api.openai.com/v1"
+        ).bind_tools([])
+        real = ChatOpenRouter(model="m", api_key="k").bind_tools([])
+
+        skipped = _bind_session_id(
+            custom, {"provider": LLMProviderName.CUSTOM, "session_id": "conv-1"}, "comms"
+        )
+        bound = _bind_session_id(
+            real, {"provider": LLMProviderName.OPENROUTER, "session_id": "conv-1"}, "comms"
+        )
+
+        assert getattr(skipped, "kwargs", {}).get("session_id") is None
+        assert getattr(bound, "kwargs", {}).get("session_id") == "conv-1-comms"
 
     def test_another_provider_is_not_mistaken_for_openrouter(self) -> None:
         from app.agents.llm.client import _is_openrouter_wire
@@ -2853,3 +2970,40 @@ class TestWithUsageHandler:
 
     def test_no_handler_and_no_config_still_yields_a_config(self) -> None:
         assert _with_usage_handler(None, None) == RunnableConfig()
+
+
+@pytest.mark.unit
+class TestIsOpenrouterWire:
+    """`_is_openrouter_wire` decides whether the sticky session_id may be bound:
+    only when the client actually talks to OpenRouter's own endpoint. Aiming a
+    ChatOpenRouter at another OpenAI-compatible base (the DEV_LLM_* lane) must
+    say no, or that endpoint rejects the unknown session_id argument."""
+
+    def test_default_base_is_openrouter(self) -> None:
+        # No base set = OpenRouter's own default endpoint.
+        node = ChatOpenRouter(model="m", api_key="k")
+        assert client_module._is_openrouter_wire(node) is True
+
+    def test_explicit_openrouter_base_is_openrouter(self) -> None:
+        # base set but pointing at openrouter.ai — exercises the substring match,
+        # which the default-None case never reaches.
+        node = ChatOpenRouter(
+            model="m", api_key="k", openrouter_api_base="https://openrouter.ai/api/v1"
+        )
+        assert client_module._is_openrouter_wire(node) is True
+
+    def test_non_openrouter_base_is_not_openrouter(self) -> None:
+        # A ChatOpenRouter aimed at another OpenAI-compatible endpoint is NOT
+        # OpenRouter — kills the getattr-name and base-is-None-only mutants.
+        node = ChatOpenRouter(
+            model="m", api_key="k", openrouter_api_base="https://api.openai.com/v1"
+        )
+        assert client_module._is_openrouter_wire(node) is False
+
+    def test_walks_through_a_binding_to_a_non_openrouter_client(self) -> None:
+        inner = ChatOpenRouter(
+            model="m", api_key="k", openrouter_api_base="https://api.openai.com/v1"
+        )
+        binding = NonCallableMagicMock(spec=RunnableBinding)
+        binding.bound = inner
+        assert client_module._is_openrouter_wire(binding) is False

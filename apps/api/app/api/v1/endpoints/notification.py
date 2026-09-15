@@ -25,6 +25,7 @@ from app.models.device_token_models import (
 from app.models.notification.notification_models import (
     ChannelPreferences,
     ChannelPreferencesUpdate,
+    NotificationListFilters,
     NotificationRecord,
     NotificationStatus,
     NotificationView,
@@ -32,12 +33,13 @@ from app.models.notification.notification_models import (
 from app.models.notification.request_models import (
     BulkActionRequest,
     BulkActionSummary,
+    MarkAllReadSummary,
     NotificationResponse,
     PaginatedNotificationsResponse,
 )
 from app.models.user_models import AuthenticatedUser
 from app.services.account_fs import schedule_account_sync
-from app.services.analytics_service import AnalyticsEvents, capture_context_event
+from app.services.analytics_service import AnalyticsEvents, capture_context_event, capture_event
 from app.services.device_token_service import get_device_token_service
 from app.services.notification_service import notification_service
 from app.utils.notification.channel_preferences import fetch_channel_preferences
@@ -86,6 +88,7 @@ async def unsubscribe_from_emails(token: Annotated[str, Query()]) -> Response:
     log.set(user={"id": user_id}, operation="unsubscribe_email_one_click")
     await _disable_email_channel(user_id)
     log.set(outcome="success")
+    capture_event(user_id, AnalyticsEvents.NOTIFICATION_UNSUBSCRIBED)
     return Response(status_code=200)
 
 
@@ -116,10 +119,11 @@ async def get_notifications(
     )
 
     try:
+        filters = NotificationListFilters(
+            status=status, channel_type=channel_type, limit=limit, offset=offset
+        )
         notifications, notification_count = await asyncio.gather(
-            notification_service.get_user_notifications(
-                user_id, status, limit, offset, channel_type
-            ),
+            notification_service.get_user_notifications(user_id, filters=filters),
             notification_service.get_user_notifications_count(user_id, status, channel_type),
         )
 
@@ -139,7 +143,7 @@ async def get_notifications(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to get notifications") from e
 
 
 @router.get("/notifications/preferences/channels", response_model=ChannelPreferences)
@@ -169,7 +173,7 @@ async def get_channel_preferences(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to get channel preferences") from e
 
 
 @router.put("/notifications/preferences/channels", response_model=ChannelPreferences)
@@ -221,7 +225,7 @@ async def update_channel_preferences(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to update channel preferences") from e
 
 
 @router.post("/notifications/{notification_id}/actions/{action_id}/execute")
@@ -256,6 +260,7 @@ async def execute_action(
 
         log.set(outcome="success")
         log.set_ns("notification", success=True)
+        capture_context_event(AnalyticsEvents.NOTIFICATION_ACTION_EXECUTED)
         return NotificationResponse(
             success=True,
             message=result.message or "Action executed successfully",
@@ -272,7 +277,7 @@ async def execute_action(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to execute action") from e
 
 
 @router.post("/notifications/{notification_id}/read")
@@ -303,6 +308,7 @@ async def mark_as_read(
 
         log.set(outcome="success")
         log.set_ns("notification", success=True)
+        capture_context_event(AnalyticsEvents.NOTIFICATION_READ, {"count": 1})
         return NotificationResponse(
             success=True,
             message="Notification marked as read",
@@ -319,7 +325,7 @@ async def mark_as_read(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to mark notification as read") from e
 
 
 @router.post("/notifications/bulk-actions")
@@ -355,7 +361,10 @@ async def bulk_actions(
             result_count=successful,
             success=successful == total,
         )
-
+        capture_context_event(
+            AnalyticsEvents.NOTIFICATION_BULK_ACTION,
+            {"action": request.action, "successful": successful, "total": total},
+        )
         return NotificationResponse(
             success=True,
             message=f"Bulk action completed: {successful}/{total} successful",
@@ -370,7 +379,53 @@ async def bulk_actions(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to perform bulk actions") from e
+
+
+@router.post("/notifications/mark-all-read")
+async def mark_all_read(
+    channel_type: str | None = Query(None, description="Only mark notifications on this channel"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> NotificationResponse[MarkAllReadSummary]:
+    """Mark every delivered notification for the user as read, server-side.
+
+    Operates on every matching notification, not just the ones the caller has
+    currently loaded — this is what lets "mark all as read" cover notifications
+    beyond the first page a paginated client has fetched.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User not authenticated or user_id not found")
+
+    log.set(
+        user={"id": user_id},
+        operation="mark_all_read",
+        notification=NotificationContext(operation="mark_all_read", channel=channel_type)
+        if channel_type
+        else NotificationContext(operation="mark_all_read"),
+    )
+
+    try:
+        updated_count = await notification_service.mark_all_read(user_id, channel_type=channel_type)
+
+        log.set(outcome="success")
+        log.set_ns("notification", result_count=updated_count, success=True)
+        return NotificationResponse(
+            success=True,
+            message=f"Marked {updated_count} notifications as read",
+            data=MarkAllReadSummary(updated_count=updated_count),
+        )
+
+    except Exception as e:
+        log.error(
+            f"{LogTag.NOTIFICATION} Failed to mark all notifications as read",
+            user_id=user_id,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to mark all notifications as read"
+        ) from e
 
 
 @router.post("/notifications/register-device", response_model=DeviceTokenResponse)
@@ -432,7 +487,7 @@ async def register_device_token(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to register device token") from e
 
 
 @router.post("/notifications/unregister-device", response_model=DeviceTokenResponse)
@@ -470,7 +525,7 @@ async def unregister_device_token(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to unregister device token") from e
 
 
 @router.get("/notifications/{notification_id}")
@@ -512,4 +567,4 @@ async def get_notification(
             error_type=type(e).__name__,
             error=str(e),
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to get notification") from e

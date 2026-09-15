@@ -454,6 +454,84 @@ def _unobservable_get_default(
     return False
 
 
+def _reads_only_as_boolean(assign: ast.Assign) -> bool:
+    """True when every LOAD of the assigned name collapses all falsy values.
+
+    Unlike ``_only_boolean_uses`` this does not bail when the name is rebound:
+    the mutation only changed the initial literal, and if every read of the name
+    is a truthiness test then no read can tell one falsy value from another —
+    whatever later assignment overwrote it first. Store reads are the rebinds
+    themselves and carry no value to observe — EXCEPT an ``AugAssign`` target
+    (``x += 1``): augmented assignment reads the previous value first, so
+    ``x = False`` vs ``x = None`` diverges there (``False + 1`` is 1,
+    ``None + 1`` raises) even though both are falsy.
+    """
+    target = assign.targets[0]
+    if not isinstance(target, ast.Name):
+        return False
+    scope = assign
+    while scope is not None and not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+        scope = scope.parent
+    if scope is None:
+        return False
+    for node in ast.walk(scope):
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == target.id:
+                return False
+        if (
+            isinstance(node, ast.Name)
+            and node.id == target.id
+            and node is not target
+            and isinstance(node.ctx, ast.Load)
+            and not (_boolean_consumer(node) or _guarded_by(node, target.id))
+        ):
+            return False
+    return True
+
+
+def _unobservable_falsy_assignment(
+    path: str, line_no: int, col: int, orig_line: str, mut_line: str
+) -> bool:
+    """True when the mutation only swapped one falsy literal for another in an
+    assignment whose name nothing can tell apart.
+
+    The canonical case is ``cancelled = False`` mutated to ``cancelled = None``:
+    the name is read only by a truthiness test (``elif cancelled:``), and every
+    falsy value answers that test identically, so no test can distinguish them —
+    the same CONSUMER-based reasoning as the .get()-default rule, applied to a
+    plain assignment instead of a lookup. A TRUTHY original or replacement stays
+    observable (``cancelled = True`` really does select another branch), so both
+    the original literal and its replacement must be falsy; anything unparseable
+    fails closed.
+    """
+    try:
+        tree = ast.parse(Path(path).read_text())
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        value = node.value
+        if not _falsy_literal(value):
+            continue
+        span = (
+            value.lineno,
+            value.col_offset,
+            value.end_lineno or value.lineno,
+            value.end_col_offset,
+        )
+        if not _within(span, line_no, col):
+            continue
+        return _falsy_replacement(
+            _mutated_token(span, line_no, orig_line, mut_line),
+            removal_stays_falsy=False,
+        ) and _reads_only_as_boolean(node)
+    return False
+
+
 def _unobservable_header_case(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
@@ -636,6 +714,7 @@ for i, (a, b) in enumerate(zip(orig_lines, mut_lines)):
         real_path = f"{workdir}/{module_path}"
         if (
             _unobservable_get_default(real_path, line_no, col, orig_raw[i], mut_raw[i])
+            or _unobservable_falsy_assignment(real_path, line_no, col, orig_raw[i], mut_raw[i])
             or _unobservable_ensure_ascii(real_path, line_no, col, orig_raw[i], mut_raw[i])
             or _unobservable_header_case(real_path, line_no, col, orig_raw[i], mut_raw[i])
             or _unreachable_match_arm(real_path, line_no)
