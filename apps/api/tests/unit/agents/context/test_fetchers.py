@@ -379,35 +379,22 @@ class TestDedupeByProvider:
 
 @pytest.mark.unit
 class TestTrackedTodosBlock:
-    async def test_renders_the_cached_summary(self) -> None:
-        """The cache is keyed by user alone, so the requesting user's id is what
-        has to reach it — a lookup under anything else reads another entry."""
-
-        async def _summary_for(user_id: str) -> str:
-            return "Tracked: ship the refactor" if user_id == "user1" else "another user's todos"
-
-        with patch("app.agents.context.fetchers._cached_tracked_todos_summary", _summary_for):
-            assert await build_tracked_todos_block(ctx()) == "Tracked: ship the refactor"
-
-    async def test_a_pinned_view_bypasses_the_cache(self) -> None:
-        """Caching the pinned form would surface one run's bound todo on every
-        other turn for that user until the TTL expired — the cache key is the
-        user alone."""
-        cached = AsyncMock(return_value="cached summary")
-        with (
-            patch("app.agents.context.fetchers._cached_tracked_todos_summary", cached),
-            patch(
-                "app.services.tracked_todo_service.tracked_todo_service.get_active_tracked_summary",
-                AsyncMock(return_value="pinned summary"),
-            ),
+    async def test_the_requesting_user_and_bound_todo_reach_the_summary(self) -> None:
+        """The summary is read for this user and this run's binding is passed
+        through so the service can pin it — a dropped id pins nothing."""
+        summary = AsyncMock(return_value="Tracked: ship the refactor")
+        with patch(
+            "app.services.tracked_todo_service.tracked_todo_service.get_active_tracked_summary",
+            summary,
         ):
-            assert await build_tracked_todos_block(ctx(active_todo_id="todo-7")) == "pinned summary"
+            block = await build_tracked_todos_block(ctx(user_id="user-7", active_todo_id="todo-7"))
 
-        cached.assert_not_awaited()
+        assert block == "Tracked: ship the refactor"
+        summary.assert_awaited_once_with("user-7", active_todo_id="todo-7")
 
     async def test_failure_yields_no_block(self) -> None:
         with patch(
-            "app.agents.context.fetchers._cached_tracked_todos_summary",
+            "app.services.tracked_todo_service.tracked_todo_service.get_active_tracked_summary",
             AsyncMock(side_effect=RuntimeError("mongo down")),
         ):
             assert await build_tracked_todos_block(ctx()) == ""
@@ -731,7 +718,7 @@ class TestASectionDeclinesWhenItsContextIsAbsent:
 
     async def test_no_user_means_no_tracked_todos(self) -> None:
         with patch(
-            "app.agents.context.fetchers._cached_tracked_todos_summary",
+            "app.services.tracked_todo_service.tracked_todo_service.get_active_tracked_summary",
             AsyncMock(return_value="Tracked: ship the refactor"),
         ):
             assert await build_tracked_todos_block(ctx(user_id=None)) == ""

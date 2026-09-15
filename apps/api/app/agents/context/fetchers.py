@@ -26,9 +26,7 @@ from app.agents.context.text import (
     MEMORY_RECALL_HEADER,
 )
 from app.agents.workspace.paths import session_dir
-from app.constants.cache import TRACKED_TODOS_SUMMARY_CACHE_KEY, TRACKED_TODOS_SUMMARY_CACHE_TTL
 from app.db.repositories.todos import todo_repository
-from app.decorators.caching import Cacheable
 from app.memory.context import AGENDA_HEADING, RECENT_ACTIVITY_HEADING
 from app.memory.engine import memory_engine
 from app.memory.mappers import entry_to_note
@@ -207,28 +205,20 @@ async def build_gaia_knowledge_block(ctx: SectionContext) -> str:
     return f"{GAIA_KNOWLEDGE_HEADER}\n{lines}"
 
 
-@Cacheable(key_pattern=TRACKED_TODOS_SUMMARY_CACHE_KEY, ttl=TRACKED_TODOS_SUMMARY_CACHE_TTL)
-async def _cached_tracked_todos_summary(user_id: str) -> str:
-    return await tracked_todo_service.get_active_tracked_summary(user_id)
-
-
 async def build_tracked_todos_block(ctx: SectionContext) -> str:
-    """Active tracked-todo summary.
+    """Active tracked-todo summary, with this run's bound todo pinned.
 
-    Both branches read the same user-scoped list, cached at the repository under
-    the user's generation; the bound branch pins the run's todo in memory *after*
-    the fetch. The pin cannot be cached by user alone — that would show one run's
-    bound todo on every other turn until the TTL expired — but the list can.
+    The summary is rendered from the user-scoped list the repository caches under
+    the user's generation — cleared by every todo write, so it is never staler
+    than the last write. The pin is applied here because it is per-run binding,
+    not per-user state, and a user-keyed cache of the pinned form would leak one
+    run's binding onto every other turn.
     """
     if not ctx.user_id:
         return ""
     try:
-        return (
-            await tracked_todo_service.get_active_tracked_summary(
-                ctx.user_id, active_todo_id=ctx.active_todo_id
-            )
-            if ctx.active_todo_id
-            else await _cached_tracked_todos_summary(ctx.user_id)
+        return await tracked_todo_service.get_active_tracked_summary(
+            ctx.user_id, active_todo_id=ctx.active_todo_id
         )
     except Exception as e:
         log.warning(

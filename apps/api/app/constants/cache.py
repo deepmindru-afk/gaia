@@ -36,11 +36,6 @@ PLANS_CACHE_KEYS = (ACTIVE_PLANS_CACHE_KEY, ALL_PLANS_CACHE_KEY)
 # doesn't leave a trail of abandoned sessions in Dodo.
 UPGRADE_LINK_CACHE_PREFIX = "upgrade_link:"
 UPGRADE_LINK_CACHE_TTL = ONE_HOUR_TTL
-# The tracked-todo summary injected into comms context. Deliberately short: the
-# list changes as the agent works, and a stale pin is worse than the lookup it
-# saves. Keyed by user alone, so only the unpinned summary may use it.
-TRACKED_TODOS_SUMMARY_CACHE_KEY = "tracked_todos:summary:{user_id}"
-TRACKED_TODOS_SUMMARY_CACHE_TTL = 60
 OAUTH_STATE_TTL = TEN_MINUTES_TTL
 OAUTH_DISCOVERY_TTL = ONE_DAY_TTL
 MCP_TOOLS_CACHE_TTL = ONE_DAY_TTL
