@@ -32,6 +32,7 @@ from app.models.user_models import (
 )
 from app.services.outbound_delivery import OutboundResult
 from app.services.platform_link_code_service import LinkCodeClaim, PlatformLinkCodePayload
+from app.services.platform_link_completion import PostLinkSideEffectError
 from app.utils.errors import AppError
 from shared.py.wide_events import log, log_context
 
@@ -648,6 +649,86 @@ class TestRedeemLinkCode:
         mock_release.assert_awaited_once_with("CODE123")
         mock_discard.assert_not_awaited()
 
+    async def test_a_failure_after_the_link_is_written_spends_the_code_rather_than_releasing_it(
+        self,
+    ):
+        """A post-commit failure spends the code, since a retry would greet the user again; the failure still surfaces."""
+        request = MagicMock()
+        request.state = _make_request()
+        broker_down = RuntimeError("could not resolve the outbound destination")
+        with (
+            patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=_claimed()),
+            patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
+            patch(RELEASE_PATCH, new_callable=AsyncMock) as mock_release,
+            patch(
+                f"{COMPLETION_MODULE}.PlatformLinkService.link_account",
+                new_callable=AsyncMock,
+                return_value=_link_result(),
+            ),
+            patch(
+                f"{COMPLETION_MODULE}.publish_outbound_message",
+                new_callable=AsyncMock,
+                side_effect=broker_down,
+            ),
+            patch(f"{COMPLETION_MODULE}.schedule_account_sync", MagicMock()),
+            patch(f"{COMPLETION_MODULE}.capture_event", MagicMock()),
+        ):
+            async with log_context("redeem_link_code_test"):
+                with pytest.raises(PostLinkSideEffectError) as excinfo:
+                    await redeem_link_code(request, RedeemLinkCodeRequest(**REDEEM_BODY))
+
+        assert excinfo.value.__cause__ is broker_down
+        mock_discard.assert_awaited_once_with("CODE123")
+        mock_release.assert_not_awaited()
+
+    async def test_the_retry_after_that_failure_does_not_greet_the_user_a_second_time(
+        self, _already_linked: AsyncMock
+    ):
+        """The same tap against the link the failed redemption wrote must not send the first contact twice."""
+        spent = False
+
+        async def _discard(code: str) -> None:
+            nonlocal spent
+            spent = True
+
+        async def _claim(code: str) -> LinkCodeClaim:
+            return LinkCodeClaim() if spent else _claimed()
+
+        publish = AsyncMock(
+            side_effect=[RuntimeError("could not resolve the outbound destination"), None]
+        )
+        link = AsyncMock(return_value=_link_result())
+        request = MagicMock()
+        request.state = _make_request()
+        body = RedeemLinkCodeRequest(**REDEEM_BODY)
+        # The link the first redemption wrote before it fell over.
+        _already_linked.return_value = UserDocument(id="user1", name="Aryan Randeriya")
+
+        with (
+            patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
+            patch(CLAIM_PATCH, new=_claim),
+            patch(DISCARD_PATCH, new=_discard),
+            patch(RELEASE_PATCH, new_callable=AsyncMock),
+            patch(
+                f"{COMPLETION_MODULE}.PlatformLinkService.link_account",
+                new=link,
+            ),
+            patch(f"{COMPLETION_MODULE}.publish_outbound_message", new=publish),
+            patch(f"{COMPLETION_MODULE}.schedule_account_sync", MagicMock()),
+            patch(f"{COMPLETION_MODULE}.capture_event", MagicMock()),
+        ):
+            async with log_context("redeem_link_code_test"):
+                with pytest.raises(PostLinkSideEffectError):
+                    await redeem_link_code(request, body)
+                retry = await redeem_link_code(request, body)
+
+        assert retry.linked is True
+        assert retry.first_contact == []
+        # One tap, one greeting attempt, one link write.
+        assert publish.await_count == 1
+        assert link.await_count == 1
+
     @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
     async def test_a_spent_code_presented_by_an_unlinked_account_still_expires(
         self, _auth: AsyncMock, client: AsyncClient, _already_linked: AsyncMock
@@ -708,6 +789,7 @@ class TestRedeemLinkCode:
                 return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
+            patch(RELEASE_PATCH, new_callable=AsyncMock) as mock_release,
             patch(
                 COMPLETE_PATCH,
                 new_callable=AsyncMock,
@@ -720,8 +802,10 @@ class TestRedeemLinkCode:
             response = await client.post(f"{BOT_BASE}/redeem-link-code", json=REDEEM_BODY)
 
         assert response.status_code == 409
-        # The refusal asks the user to unlink and tap again: the code must still work.
+        # The refusal asks the user to unlink and tap again: the code must still
+        # work, and nothing was written for it to have been spent on.
         mock_discard.assert_not_awaited()
+        mock_release.assert_awaited_once_with("CODE123")
         assert "already linked" in response.json()["message"]
 
     @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
