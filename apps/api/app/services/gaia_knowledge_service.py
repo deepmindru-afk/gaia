@@ -72,6 +72,20 @@ def _unit_matrix(vectors: list[NDArray[np.float32]]) -> NDArray[np.float32]:
     return (matrix / safe_norms).astype(np.float32)
 
 
+#: Load locks per event loop: an asyncio.Lock binds to the loop that first awaits
+#: it, and this service is a process singleton — one shared lock raises "bound to
+#: a different event loop" wherever multiple loops run (test workers, scripts).
+_load_locks: dict[int, asyncio.Lock] = {}
+
+
+def _load_lock() -> asyncio.Lock:
+    """The reload lock for the running event loop."""
+    loop_id = id(asyncio.get_running_loop())
+    if loop_id not in _load_locks:
+        _load_locks[loop_id] = asyncio.Lock()
+    return _load_locks[loop_id]
+
+
 class GaiaKnowledgeService:
     """Service for managing GAIA self-knowledge in ChromaDB"""
 
@@ -79,7 +93,6 @@ class GaiaKnowledgeService:
         self.collection_name = "gaia_knowledge"
         self._snapshot: _Snapshot | None = None
         self._loaded_at = 0.0
-        self._load_lock = asyncio.Lock()
 
     async def search_knowledge(self, query: str, limit: int = 5) -> list[KnowledgeResult]:
         """Search the GAIA knowledge base using semantic similarity."""
@@ -193,7 +206,7 @@ class GaiaKnowledgeService:
         """
         if self._fresh():
             return self._snapshot
-        async with self._load_lock:
+        async with _load_lock():
             if self._fresh():
                 return self._snapshot
             previous = self._snapshot
