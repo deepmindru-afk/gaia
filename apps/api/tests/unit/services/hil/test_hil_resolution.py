@@ -618,8 +618,7 @@ class TestHILWaitBenchmarks:
     """Dispatch measures what the user waited and what the system added."""
 
     async def test_dispatch_measures_user_wait_and_dispatch_lag(self, resume: Any) -> None:
-        """A real decision arrives on a PENDING record: ``decided_at`` is stamped by the
-        transition itself, so the measurement must not depend on a pre-decided fixture."""
+        """decided_at is stamped by the transition, so this starts from a PENDING record."""
         record = make_record(created_at=datetime.now(UTC) - timedelta(seconds=30))
         assert record.decided_at is None
         wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
@@ -643,8 +642,7 @@ class TestHILWaitBenchmarks:
         assert 0.0 <= dispatch_lag <= 10.0
 
     async def test_skipped_dispatch_still_measures_the_user_wait(self, resume: Any) -> None:
-        """A decision that loses the resume claim is still a decision the user
-        served; only the dispatch lag (system time) goes unmeasured."""
+        """Losing the resume claim leaves only the dispatch lag unmeasured, not the user wait."""
         resume.claim.return_value = False
         record = make_record()
         wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
@@ -662,8 +660,7 @@ class TestHILWaitBenchmarks:
     async def test_a_closed_record_without_resume_context_still_measures_the_user_wait(
         self,
     ) -> None:
-        """A record closed in place (no run to resume) is still a decision the user
-        served: the wait must reach the histogram, not just dispatched approvals."""
+        """A record closed in place, with no run to resume, still reaches the wait histogram."""
         record = make_record(resume_item=None)
         wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
         with (

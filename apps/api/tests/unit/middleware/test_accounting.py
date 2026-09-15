@@ -315,9 +315,7 @@ async def test_the_latency_is_consumed_by_the_call_it_measured() -> None:
 
 
 async def test_overlapping_stamps_do_not_clobber() -> None:
-    """Two in-flight stamps on one thread unwind LIFO: the second call's
-    ``aafter_model`` gets the second measurement, not the first — and the
-    first call's measurement is still there for its own ``aafter_model``."""
+    """Two in-flight stamps on one thread unwind LIFO, each aafter_model getting its own."""
     config_patch, cost_patch, usage_patch = _accounting_env(_LEDGER_CONFIG)
     mw = LLMAccountingMiddleware(agent_name="comms_agent")
 
@@ -350,11 +348,7 @@ async def test_overlapping_stamps_do_not_clobber() -> None:
 
 
 async def test_a_raised_model_call_leaves_no_stamp_behind() -> None:
-    """When the provider call raises, the graph aborts and ``aafter_model`` never
-    runs — nothing consumes the stamps ``abefore_model``/``awrap_model_call``
-    pushed. Left in place they grow one entry per failure on a process-lifetime
-    instance, and the next successful call on the thread pops the stale one and
-    reports a latency that belongs to the failed call."""
+    """Unconsumed stamps would grow per failure and let the next call report the failed call's latency."""
     config_patch, cost_patch, usage_patch = _accounting_env(_LEDGER_CONFIG)
     mw = LLMAccountingMiddleware(agent_name="comms_agent")
 
@@ -416,9 +410,7 @@ async def test_metered_call_observes_llm_call_histogram() -> None:
 
 
 async def test_metered_call_records_the_exact_provider_seconds() -> None:
-    """The recorded sample is the provider wall time in SECONDS. Pinning the
-    clock makes the value deterministic, so a wrong unit (ms recorded as s, or a
-    near-miss divisor) cannot hide behind a count-only assertion."""
+    """The sample is provider wall time in seconds, pinned so a wrong unit cannot hide behind a count."""
     config_patch, cost_patch, usage_patch = _accounting_env(_LEDGER_CONFIG)
     mw = LLMAccountingMiddleware(agent_name="comms_agent")
     labels = {"model": "gemini-3-pro", "agent": "comms_agent"}

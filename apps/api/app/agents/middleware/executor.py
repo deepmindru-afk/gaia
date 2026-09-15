@@ -53,9 +53,11 @@ ToolCallHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[An
 
 
 def _tool_metric_name(tool_name: str, tool: BaseTool | None) -> str:
-    """Prometheus label for a tool call. MCP/dynamic tools carry user-defined
-    names, so they collapse to ``"mcp"``; the adapter class is method-local,
-    so its ``tool_connector`` field is the structural signal.
+    """Return the Prometheus label for a tool call.
+
+    MCP/dynamic tools carry user-defined names, so they collapse to "mcp";
+    the adapter class is method-local, so its tool_connector field is the
+    structural signal.
     """
     if tool is not None and hasattr(tool, "tool_connector"):
         return "mcp"

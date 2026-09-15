@@ -171,9 +171,7 @@ class TestFilterMessages:
         )
 
     async def test_node_emits_latency_span_labelled_by_agent(self):
-        """Driven through a compiled graph, not a hand-built config: LangGraph's
-        ``ensure_config`` relocates GAIA's top-level ``agent_name`` into
-        ``configurable`` before the node runs, and the label must survive that."""
+        """ensure_config relocates top-level agent_name into configurable; the label survives it."""
         config = {
             "agent_name": "node-test-agent",
             "configurable": {"user_id": "u1", "thread_id": "t1"},
