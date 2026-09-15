@@ -224,6 +224,33 @@ async def test_pre_tool_failure_falls_back_with_the_original_call() -> None:
     invoke_fn.assert_awaited_once_with(tool_call)
 
 
+async def test_pre_tool_break_then_direct_invoke_failure_records_exact_error_seconds() -> None:
+    """Pre-tool middleware breaks AND the direct-invoke retry also fails: the
+    error span is the elapsed subtraction in seconds (a sign error records 14.5)."""
+    from langchain.agents.middleware import AgentMiddleware
+    from langchain.agents.middleware.types import ToolCallRequest
+
+    class _PreToolBreak(AgentMiddleware):  # type: ignore[type-arg] -- test double uses the unparameterized middleware base
+        async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
+            raise RuntimeError("pre-tool middleware broke")
+
+    labels = {"tool_name": "lat-tool-double-fail", "status": "error"}
+    before = _sum("lat-tool-double-fail", "error")
+    invoke_fn = AsyncMock(side_effect=RuntimeError("tool exploded"))
+    with (
+        patch("app.agents.middleware.executor.time.perf_counter", side_effect=[7.0, 7.5]),
+        pytest.raises(RuntimeError, match="tool exploded"),
+    ):
+        await _invoke(
+            MiddlewareExecutor([_PreToolBreak()]),
+            {"name": "lat-tool-double-fail", "args": {}, "id": "c1"},
+            None,
+            invoke_fn,
+        )
+    assert REGISTRY.get_sample_value("tool_call_seconds_sum", labels) == before + 0.5
+    invoke_fn.assert_awaited_once()
+
+
 async def test_post_tool_middleware_failure_still_records_success() -> None:
     """A middleware that breaks AFTER the tool ran and succeeded is a successful
     tool call: the status label reflects the tool's outcome, not the
