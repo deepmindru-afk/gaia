@@ -125,7 +125,7 @@ async def _fetch_sources(
     ) -> ResearchSource:
         return ResearchSource(
             **url_info.model_dump(
-                mode="json",  # pragma: no mutate — RankedUrl has only str/float/int fields
+                mode="json",  # pragma: no mutate -- RankedUrl has only str/float/int fields
             ),
             content=content,
             fetch_error=fetch_error,
@@ -299,7 +299,7 @@ async def deep_research(
             error=None,
             integrity_note=_INTEGRITY_NOTE,
         ).model_dump(
-            mode="json",  # pragma: no mutate — every ResearchResult field is JSON-native
+            mode="json",  # pragma: no mutate -- every ResearchResult field is JSON-native
         )
 
         # Only cache when we have content — avoid masking transient fetch failures

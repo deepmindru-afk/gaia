@@ -44,6 +44,7 @@ class LLMTtftCallback(BaseCallbackHandler):
         metadata: Mapping[str, object] | None = None,
         **_kwargs: object,
     ) -> None:
+        """Stamp the run's start time and its model, lane and call labels, to be read when the first token lands."""
         # LangChain owns this bag; only GAIA's stamped keys are read, by name.
         meta: LlmCallMetadata = cast(LlmCallMetadata, metadata or {})
         self._starts[str(run_id)] = (
@@ -65,6 +66,7 @@ class LLMTtftCallback(BaseCallbackHandler):
         tags: list[str] | None = None,  # noqa: ARG002 -- LangChain BaseCallbackHandler contract
         **_kwargs: object,
     ) -> None:
+        """Observe seconds from run start to this first token into llm_ttft_seconds; later tokens of the run find no start and do nothing."""
         key = str(run_id)
         entry = self._starts.pop(key, None)
         if entry is None or key in self._observed:
@@ -82,6 +84,7 @@ class LLMTtftCallback(BaseCallbackHandler):
         tags: list[str] | None = None,  # noqa: ARG002 -- LangChain BaseCallbackHandler contract
         **_kwargs: object,
     ) -> None:
+        """Forget the finished run, so a non-streaming call that never emitted a token leaves no pending start behind."""
         self._starts.pop(str(run_id), None)
         self._observed.discard(str(run_id))
 
@@ -94,5 +97,6 @@ class LLMTtftCallback(BaseCallbackHandler):
         tags: list[str] | None = None,  # noqa: ARG002 -- LangChain BaseCallbackHandler contract
         **_kwargs: object,
     ) -> None:
+        """Forget the failed run, so a call that died before its first token contributes no sample."""
         self._starts.pop(str(run_id), None)
         self._observed.discard(str(run_id))

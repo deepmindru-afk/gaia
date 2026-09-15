@@ -423,6 +423,32 @@ class TestDeepResearch:
             error="crawl4ai: fail; httpx: fail",
         )
 
+    @patch(
+        f"{MODULE}.batch_fetch_with_crawl4ai",
+        new_callable=AsyncMock,
+        return_value=({}, {"https://a.com": "fail"}),
+    )
+    @patch(
+        f"{MODULE}.fetch_with_httpx",
+        new_callable=AsyncMock,
+        side_effect=Exception("fail"),
+    )
+    async def test_a_source_with_no_content_carries_every_fetcher_error(
+        self,
+        _mock_httpx: AsyncMock,
+        _mock_batch_crawl4ai: AsyncMock,
+        _patch_log: MagicMock,
+    ) -> None:
+        """deep_research drops contentless sources, so the joined error is only visible on the fetch itself."""
+        from app.agents.tools.research_tool import _fetch_sources
+
+        ranked = [RankedUrl(url="https://a.com", title="", snippet="", score=1.0, appearances=1)]
+
+        sources = await _fetch_sources(ranked, "test", MagicMock())
+
+        assert sources[0].content is None
+        assert sources[0].fetch_error == "crawl4ai: fail; httpx: fail"
+
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
     @patch(f"{MODULE}.build_research_cache_key", return_value="cache:key")
