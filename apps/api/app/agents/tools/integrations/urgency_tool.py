@@ -298,7 +298,11 @@ def register_urgency_custom_tools(composio: Composio) -> list[str]:
 
         return {
             "urgent_items": [
-                item.model_dump(mode="json", exclude_unset=True) for item in urgent_items
+                item.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                    mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
+                    exclude_unset=True,
+                )
+                for item in urgent_items
             ],
             "total_urgent": len(urgent_items),
             "summary": {

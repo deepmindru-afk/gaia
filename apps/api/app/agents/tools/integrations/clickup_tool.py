@@ -44,8 +44,20 @@ def register_clickup_custom_tools(composio: Composio) -> list[str]:
         today_ms = int(datetime.now(UTC).timestamp() * 1000)
         overdue = [t for t in tasks if _is_overdue(t, today_ms)]
         return {
-            "tasks": [t.model_dump(mode="json", exclude_unset=True) for t in tasks],
-            "overdue_tasks": [t.model_dump(mode="json", exclude_unset=True) for t in overdue],
+            "tasks": [
+                t.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                    mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
+                    exclude_unset=True,
+                )
+                for t in tasks
+            ],
+            "overdue_tasks": [
+                t.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                    mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
+                    exclude_unset=True,
+                )
+                for t in overdue
+            ],
         }
 
     return ["CLICKUP_CUSTOM_GATHER_CONTEXT"]
