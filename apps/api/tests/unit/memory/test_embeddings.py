@@ -84,7 +84,7 @@ class TestEmbedBatchSplitsRequests:
             observed.append((operation, backend, count))
             return await awaitable
 
-        async def fake_post(path: str, payload: dict) -> dict:
+        async def fake_post(path: str, payload: dict, *, interactive: bool = False) -> dict:
             if path == "/embed_query":
                 assert set(payload) == {"text"}
                 calls.append({"path": path, "text": payload["text"]})
@@ -430,3 +430,67 @@ class TestPooledClientThroughPublicApi:
         await closed.aclose()
         await embeddings.embed_query("three")
         assert len(made) == 2  # closed pools are replaced, not reused
+
+
+class TestInteractiveBudget:
+    """Recall on a user turn fails fast; ingestion keeps the durable budget."""
+
+    def test_call_budget_interactive_drops_retries_and_shortens_timeout(self) -> None:
+        assert embeddings._call_budget(interactive=True) == (
+            0,
+            embeddings.EMBEDDING_SIDECAR_INTERACTIVE_TIMEOUT_SECONDS,
+        )
+        assert embeddings._call_budget(interactive=False) == (
+            embeddings.EMBEDDING_SIDECAR_RETRIES,
+            embeddings.EMBEDDING_SIDECAR_TIMEOUT_SECONDS,
+        )
+
+    async def test_interactive_call_uses_short_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[float] = []
+
+        class RecordingClient:
+            async def post(self, url: str, json: dict, timeout: float) -> httpx.Response:
+                seen.append(timeout)
+                return httpx.Response(
+                    200, json={"vector": [0.1]}, request=httpx.Request("POST", url)
+                )
+
+        monkeypatch.setattr(embeddings, "_get_http_client", RecordingClient)
+        monkeypatch.setattr(embeddings, "_sidecar_url", lambda: "http://sidecar.test")
+
+        await embeddings.embed_query("q", interactive=True)
+        await embeddings.embed_query("q", interactive=False)
+
+        assert seen == [
+            embeddings.EMBEDDING_SIDECAR_INTERACTIVE_TIMEOUT_SECONDS,
+            embeddings.EMBEDDING_SIDECAR_TIMEOUT_SECONDS,
+        ]
+
+    async def test_interactive_503_fails_fast_without_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        attempts: list[httpx.Request] = []
+        sleeps: list[float] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts.append(request)
+            return httpx.Response(503)
+
+        async def fake_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(
+            embeddings,
+            "_get_http_client",
+            lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        monkeypatch.setattr(embeddings, "_sidecar_url", lambda: "http://sidecar.test")
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await embeddings.rerank("q", ["doc"], interactive=True)
+
+        assert len(attempts) == 1  # no retry on the interactive path
+        assert sleeps == []

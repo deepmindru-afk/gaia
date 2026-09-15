@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 from freezegun import freeze_time as _freeze_time
+import httpx
 import pytest
 
 from app.constants.memory import (
@@ -628,6 +629,22 @@ class TestRerankAndBoost:
             scored = await _rerank_and_boost("q", [weak, strong], ann_similarity={}, fts_ids=set())
         assert [item.row.content for item in scored] == ["strong", "weak"]
 
+    async def test_rerank_timeout_falls_back_to_retrieval_order(self) -> None:
+        # A slow/overloaded sidecar must not fail the user's turn: recall
+        # degrades to dense-retrieval order (by cosine) instead of raising.
+        low, high = make_row("low"), make_row("high")
+        with patch.object(
+            retrieval, "rerank", new=AsyncMock(side_effect=httpx.ReadTimeout("slow"))
+        ):
+            scored = await _rerank_and_boost(
+                "q",
+                [low, high],
+                ann_similarity={str(low.id): 0.3, str(high.id): 0.9},
+                fts_ids=set(),
+            )
+        assert [item.row.content for item in scored] == ["high", "low"]
+        assert len(scored) == 2
+
     async def test_importance_boost_is_applied_to_the_final_score(self) -> None:
         now = datetime.now(UTC)
         dull = make_row("dull", importance=0.1, mentioned_at=now)
@@ -751,7 +768,7 @@ class TestRerankAndBoost:
         rerank = AsyncMock(return_value=[0.0, 0.0])
         with patch.object(retrieval, "rerank", new=rerank):
             await _rerank_and_boost("my query", rows, ann_similarity={}, fts_ids=set())
-        rerank.assert_awaited_once_with("my query", ["alpha", "beta"])
+        rerank.assert_awaited_once_with("my query", ["alpha", "beta"], interactive=True)
 
 
 # ---------------------------------------------------------------------------
@@ -994,7 +1011,9 @@ class _RecallHarness:
         self.rerank_inputs: list[list[str]] = []
         self.rerank_scores: dict[str, float] = {}
 
-    async def fake_rerank(self, _query: str, documents: list[str]) -> list[float]:
+    async def fake_rerank(
+        self, _query: str, documents: list[str], *, interactive: bool = False
+    ) -> list[float]:
         self.rerank_inputs.append(list(documents))
         return [self.rerank_scores.get(document, 0.0) for document in documents]
 
