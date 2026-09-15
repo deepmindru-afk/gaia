@@ -1166,6 +1166,11 @@ class TestMarkdownToNotionBlocks:
         assert rows == [["A"], ["1"], ["2"]]
         assert result[1] == {"block_property": "paragraph", "content": "After"}
 
+    def test_a_separator_with_doubled_edge_pipes_and_empty_cells_is_dropped(self) -> None:
+        result = _md_blocks("| A | B |\n||---| --- ||\n| 1 | 2 |")
+        rows = [[cell[0]["text"]["content"] for cell in row["cells"]] for row in result[0]["rows"]]
+        assert rows == [["A", "B"], ["1", "2"]]
+
     def test_table_cells_at_the_row_edges_keep_their_text(self) -> None:
         result = _md_blocks("|X|Y|\n|---|---|\n|X|X|")
         rows = [[cell[0]["text"]["content"] for cell in row["cells"]] for row in result[0]["rows"]]

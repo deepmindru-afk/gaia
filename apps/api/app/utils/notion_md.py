@@ -374,13 +374,9 @@ def _rendered_lines(md_content: str, block_id: str | None, nesting_level: int) -
     # Add block ID comment if requested
     if block_id:
         block_id_comment = f"<!-- block:{block_id} -->"
-        if nesting_level > 0:
-            block_id_comment = _add_tab_space(block_id_comment, nesting_level)
-        lines.append(block_id_comment)
+        lines.append(_add_tab_space(block_id_comment, nesting_level))
 
-    # Add indentation for nesting
-    if nesting_level > 0:
-        md_content = _add_tab_space(md_content, nesting_level)
+    md_content = _add_tab_space(md_content, nesting_level)
 
     lines.append(md_content)
     return lines
@@ -475,11 +471,7 @@ def _parse_table_row(row_line: str) -> list[str]:
 
 def _is_table_separator(row_line: str) -> bool:
     """Return whether a row is a separator (e.g. |---|---| or |:---|:---:|)."""
-    return all(
-        re.match(r"^:?-+:?$", cell.strip())
-        for cell in row_line.strip("|").split("|")
-        if cell.strip()
-    )
+    return all(re.match(r"^:?-+:?$", cell.strip()) for cell in row_line.split("|") if cell.strip())
 
 
 def _parse_table(lines: list[str], start: int) -> tuple[NotionTableBlock | None, int]:
@@ -510,7 +502,7 @@ def _parse_table(lines: list[str], start: int) -> tuple[NotionTableBlock | None,
         cells = cells[:table_width]
         notion_rows.append(NotionTableRow(cells=[[_text_run(cell)] for cell in cells]))
 
-    table = NotionTableBlock(table_width=table_width, has_column_header=True, rows=notion_rows)
+    table = NotionTableBlock(table_width=table_width, rows=notion_rows)
     return table, i
 
 
