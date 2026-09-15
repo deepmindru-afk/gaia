@@ -20,7 +20,7 @@ lane without grepping the workflow first.
 | What this PR changed | `changes.sh` | `files`, `py-source`, `docker-inputs` |
 | Standing dependency + pin gates | `audit.sh` | `pnpm`, `playwright-pin`, `alert-rule-tools`, `evlog` |
 | Static hygiene over the TS/JS surface | `checks.mjs` | `file-sizes`, `components-per-file`, `types-location`, `duplication`, `evlog-map-bots` |
-| Turning a run's output into a verdict | `verdict.py` | `emit`, `consolidate`, `dir`, `check-ownership`, `pytest-verdict`, `regression-proof-select`, `regression-proof-verdict`, `collect`, `step-outcomes` |
+| Turning a run's output into a verdict | `verdict.py` | `emit`, `consolidate`, `dir`, `check-ownership`, `pytest-verdict`, `regression-proof-select`, `regression-proof-verdict`, `collect`, `step-outcomes`, `mirror-previous-gate` |
 | Publishing what a green master produced | `release.sh` | `resolve-image-tags`, `promote-latest`, `dispatch-cli-publish`, `disable-cf-builds` |
 | The release-metadata guards | `release.mjs` | `validate-manifest`, `verify-cli` |
 | Shipping to production | `deploy.sh` | `plan`, `stack`, `verify`, `retag`, `notify` |
@@ -246,6 +246,16 @@ Two rules make that enforceable rather than decorative:
   untouched) runs no steps and CANNOT write a verdict, while a lane that ran
   and wrote nothing has lost its reporting. Conflating them either reds every
   TS-only PR or hides the bug the contract exists to catch.
+
+**The gate job itself may never be skipped.** Branch protection counts a
+skipped required check as PASSING, so the one event that runs no lanes — a
+title or body edit, which the DAG's `github.event.changes.base` guard drops —
+would otherwise republish the head SHA as green after a red run. The gate
+therefore runs `if: always()` and splits its two cases across two steps:
+`consolidate` for a run that had lanes, and `verdict.py mirror-previous-gate`
+for that edit, which reads the head SHA's most recent completed run of the same
+workflow through `gh api` and repeats its gate job's conclusion — failing loud
+when nothing has concluded yet.
 
 `timed_out` is its own status, not a flavour of `fail`, because the two need
 opposite reactions: a failure has a finding to open, a timeout has a diff to
