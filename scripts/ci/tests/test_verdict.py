@@ -417,6 +417,38 @@ def test_a_family_with_no_members_at_all_is_still_NO_VERDICT(
     assert "test-mutation" in out
 
 
+def test_a_family_that_reported_pass_still_fails_on_its_jobs_result(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A shard finished its modules and wrote PASS, then the job went red in a
+    # LATER step — releasing the test services, stopping the sidecar, the upload
+    # itself. `--only-if-missing` stands down on a lane that already reported,
+    # so nothing in the verdict tree records that failure and the job result is
+    # the only witness left. Trusting the verdicts alone made the required gate
+    # green over a job GitHub calls failed.
+    _emit(tmp_path, "--lane", "mutation/shard-0", "--status", "pass", "--summary", "clean")
+
+    assert _consolidate(tmp_path, "test-mutation@mutation=failure") == 1
+    assert "test-mutation" in capsys.readouterr().out
+
+
+def test_every_planned_matrix_member_must_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # `mutation.sh plan` packs the diff into a known number of shards, and one
+    # verdict per shard is the only evidence each of them ran. A shard cancelled
+    # before its `if: always()` upload leaves the family satisfied by its
+    # siblings: the modules it was carrying go unmutated and nothing says so.
+    # The count is of MEMBERS — direct children of the family — not of every
+    # verdict under it, because one member reports many sub-unit lanes.
+    _emit(tmp_path, "--lane", "mutation/shard-0", "--status", "pass", "--summary", "clean")
+    _emit(tmp_path, "--lane", "mutation/app/services/x.py", "--status", "pass", "--summary", "ok")
+
+    assert _consolidate(tmp_path, "test-mutation@mutation*2=success") == 1
+    assert "1 of 2" in capsys.readouterr().out
+    assert _consolidate(tmp_path, "test-mutation@mutation*1=success") == 0
+
+
 def test_a_result_only_lane_passes_without_any_verdict(tmp_path: Path) -> None:
     # `select-runner` checks out the default branch and `probe` never checks
     # out, so neither can run the local upload composite. Demanding a verdict

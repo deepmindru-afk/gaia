@@ -8,13 +8,39 @@ regardless of billing state, and the same is true in reverse for a resume.
 
 Resume only ever touches workflows carrying DeactivationReason.SUBSCRIPTION_LAPSED,
 so a workflow the user switched off themselves is never silently re-enabled.
+
+A workflow that fails is attempted alongside the rest and then reported: unlike
+``dormancy.py``, nothing sweeps this on a schedule, and the caller's own retry
+cannot recover it either — by the time the pause runs, the billing row already
+carries the reported status, so a webhook redelivery reduces to "unchanged" and
+never reaches the workflows again. The remainder therefore has to leave this
+call as ``SubscriptionWorkflowSyncIncomplete`` for the caller to make durable.
 """
 
+from collections.abc import Awaitable, Callable
+
 from app.constants.log_tags import LogTag
+from app.constants.payments import SubscriptionWorkflowSync
 from app.db.repositories.workflows import workflow_repository
 from app.models.workflow_models import DeactivationReason, WorkflowDocument
 from app.services.workflow.service import WorkflowService
 from shared.py.wide_events import log
+
+
+class SubscriptionWorkflowSyncIncomplete(Exception):
+    """Some of ``user_id``'s workflows did not follow their billing state.
+
+    Raised only after the whole batch has been attempted, so the workflows that
+    did move stay moved; it marks the remainder as owed work, not the run as
+    abandoned.
+    """
+
+    def __init__(self, user_id: str, failed_workflow_ids: list[str]) -> None:
+        super().__init__(
+            f"{len(failed_workflow_ids)} workflow(s) did not follow the subscription change"
+        )
+        self.user_id = user_id
+        self.failed_workflow_ids = failed_workflow_ids
 
 
 async def lapsable_workflows(user_id: str) -> list[WorkflowDocument]:
@@ -31,10 +57,12 @@ async def lapsable_workflows(user_id: str) -> list[WorkflowDocument]:
 async def deactivate_workflows_for_lapsed_subscription(user_id: str) -> int:
     """Deactivate every lapsable workflow user_id owns; return the count deactivated.
 
-    Idempotent. One workflow that fails to deactivate is logged and skipped
-    rather than aborting the rest.
+    Idempotent. One workflow that fails to deactivate does not abort the rest;
+    the batch then raises SubscriptionWorkflowSyncIncomplete so the remainder
+    is retried.
     """
     deactivated = 0
+    failed: list[str] = []
 
     for workflow in await lapsable_workflows(user_id):
         try:
@@ -43,6 +71,7 @@ async def deactivate_workflows_for_lapsed_subscription(user_id: str) -> int:
             )
             deactivated += 1
         except Exception as e:
+            failed.append(workflow.id)
             log.warning(
                 f"{LogTag.WORKFLOW} Could not deactivate workflow for lapsed subscription",
                 workflow_id=workflow.id,
@@ -57,6 +86,8 @@ async def deactivate_workflows_for_lapsed_subscription(user_id: str) -> int:
             user_id=user_id,
             deactivated=deactivated,
         )
+    if failed:
+        raise SubscriptionWorkflowSyncIncomplete(user_id, failed)
     return deactivated
 
 
@@ -66,9 +97,11 @@ async def reactivate_workflows_for_restored_subscription(user_id: str) -> int:
     Returns the count resumed. Idempotent. Only touches workflows carrying
     DeactivationReason.SUBSCRIPTION_LAPSED, so a workflow the user switched
     off themselves is never silently re-enabled. One workflow that fails to
-    reactivate is logged and skipped rather than aborting the rest.
+    reactivate does not abort the rest; the batch then raises
+    SubscriptionWorkflowSyncIncomplete.
     """
     reactivated = 0
+    failed: list[str] = []
 
     for workflow in await workflow_repository.find_paused_for_reason(
         user_id, DeactivationReason.SUBSCRIPTION_LAPSED
@@ -77,6 +110,7 @@ async def reactivate_workflows_for_restored_subscription(user_id: str) -> int:
             await WorkflowService.activate_workflow(workflow.id, user_id)
             reactivated += 1
         except Exception as e:
+            failed.append(workflow.id)
             log.warning(
                 f"{LogTag.WORKFLOW} Could not reactivate workflow for restored subscription",
                 workflow_id=workflow.id,
@@ -91,4 +125,14 @@ async def reactivate_workflows_for_restored_subscription(user_id: str) -> int:
             user_id=user_id,
             reactivated=reactivated,
         )
+    if failed:
+        raise SubscriptionWorkflowSyncIncomplete(user_id, failed)
     return reactivated
+
+
+#: Both halves take a user id and answer how many workflows moved, so the retry
+#: task dispatches straight through this rather than adapting either of them.
+SYNC_ACTIONS: dict[SubscriptionWorkflowSync, Callable[[str], Awaitable[int]]] = {
+    SubscriptionWorkflowSync.PAUSE: deactivate_workflows_for_lapsed_subscription,
+    SubscriptionWorkflowSync.RESUME: reactivate_workflows_for_restored_subscription,
+}

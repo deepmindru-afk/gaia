@@ -32,8 +32,9 @@ from app.services.bot_service import BotService
 from app.services.conversation_service import update_messages
 from app.services.onboarding.first_contact import build_first_contact
 from app.services.platform_link_code_service import (
+    claim_platform_link_code,
     discard_platform_link_code,
-    peek_platform_link_code,
+    release_platform_link_code,
 )
 from app.services.platform_link_completion import complete_platform_link
 from app.services.platform_link_service import require_platform_plan
@@ -168,7 +169,8 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
             status_code=403,
         )
 
-    payload = await peek_platform_link_code(body.code)
+    claim = await claim_platform_link_code(body.code)
+    payload = claim.payload
     if payload is None:
         # A spent code from an already-linked account is a second tap (deep
         # links and Telegram's /start re-fire), not a dead link. Replying with
@@ -188,6 +190,21 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
             # nothing, so there is nothing for the bot to send.
             return RedeemLinkCodeResponse(linked=True, delivered=True)
 
+        if claim.in_flight:
+            # A twin delivery of the same handoff holds the claim and is
+            # running the link right now — the same second tap as above, only
+            # it arrived before the first one finished. Answering it the same
+            # way keeps this request silent: the twin delivers the first
+            # contact, and if the link fails the twin is what tells the user.
+            log.audit(
+                "platform link code already being redeemed by this account",
+                actor=AUDIT_ACTOR_BOT_API,
+                resource=body.platform_user_id,
+                provider=body.platform,
+            )
+            log.set(outcome="success", is_new_link=False)
+            return RedeemLinkCodeResponse(linked=True, delivered=True)
+
         # Never log the code — it is the credential. The platform account that
         # presented it and the outcome are what make a probe findable.
         log.audit(
@@ -205,24 +222,30 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
         )
 
     log.set(user={"id": payload.user_id})
-    await require_platform_plan(payload.user_id, body.platform)
-
     profile: dict[str, str | None] = {"username": body.username, "display_name": body.display_name}
 
-    # First contact is composed here, not as a model turn — the opener turn
-    # skipped per-pick promises and sometimes never produced connect links.
-    # Link completion delivers it on the outbound queue.
-    user = await get_user_by_id(payload.user_id)
-    bubbles = await build_first_contact(
-        payload.user_id, body.platform, user.name if user else None, payload.preferences
-    )
-    completion = await complete_platform_link(
-        payload.user_id,
-        body.platform,
-        body.platform_user_id,
-        profile=profile,
-        first_contact=bubbles,
-    )
+    try:
+        await require_platform_plan(payload.user_id, body.platform)
+
+        # First contact is composed here, not as a model turn — the opener turn
+        # skipped per-pick promises and sometimes never produced connect links.
+        # Link completion delivers it on the outbound queue.
+        user = await get_user_by_id(payload.user_id)
+        bubbles = await build_first_contact(
+            payload.user_id, body.platform, user.name if user else None, payload.preferences
+        )
+        completion = await complete_platform_link(
+            payload.user_id,
+            body.platform,
+            body.platform_user_id,
+            profile=profile,
+            first_contact=bubbles,
+        )
+    except Exception:
+        # Every refusal asks the user to tap the same link again, and the code is
+        # the only way back without redoing onboarding: released, not spent.
+        await release_platform_link_code(body.code)
+        raise
     await discard_platform_link_code(body.code)
     log.audit(
         "platform account linked via one-tap code",
