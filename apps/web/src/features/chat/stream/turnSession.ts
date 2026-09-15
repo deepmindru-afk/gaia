@@ -16,7 +16,6 @@ import {
 } from "@/features/chat/api/chatApi";
 import { relayDesktopToolRequest } from "@/features/chat/utils/desktopToolBridge";
 import { loadingLabelForEvent } from "@/features/chat/utils/loadingHints";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import { db, type IConversation, type IMessage } from "@/lib/db/chatDb";
 import { streamLog, streamLogError } from "@/lib/streamLogger";
 import { toast } from "@/lib/toast";
@@ -84,6 +83,10 @@ export class TurnSession {
   private flushHandle: number | null = null;
   private lastPartialPersistAt = 0;
   private closeHandled = false;
+  /** Client cross-check clock. Server timing is the SLO; these deltas only
+   *  validate it from the user's side. */
+  private sendStartMs = 0;
+  private sawFirstFrame = false;
   /** Approval ids currently pending a user decision. The turn is "awaiting
    *  approval" while non-empty; a set (not a bool) so multiple gated tools
    *  resolve independently without prematurely clearing the state. */
@@ -128,17 +131,14 @@ export class TurnSession {
   async start(): Promise<void> {
     const store = useStreamStore.getState();
     store.startSession(this.key, this.inputText);
+    // Re-attach measures reattach-to-first-replayed-frame, not the send.
+    this.sendStartMs = performance.now();
     streamLog("lifecycle", "turn:start", {
       turnKey: this.key,
       conversationId: this.conversationId,
       // Carried so an on-disk recording is self-describing: the reader can see
       // which prompt produced the frames that follow.
       detail: { prompt: this.inputText },
-    });
-
-    trackEvent(ANALYTICS_EVENTS.CHAT_STARTED, {
-      conversation_id: this.conversationId,
-      is_new_conversation: this.isNewConversation,
     });
 
     this.stallWatchdog.arm();
@@ -263,6 +263,16 @@ export class TurnSession {
     // Any frame — keepalives included — proves the connection is still alive.
     this.stallWatchdog.kick();
     if (!event.data) return undefined; // SSE comments dispatch empty events
+    // First raw frame (usually init), which precedes server first-*text* TTFT
+    // by the whole LLM latency — compare trends, never absolutes.
+    if (!this.sawFirstFrame) {
+      this.sawFirstFrame = true;
+      streamLog("sse", "first-frame", {
+        turnKey: this.key,
+        conversationId: this.conversationId,
+        detail: { ttftMs: Math.round(performance.now() - this.sendStartMs) },
+      });
+    }
 
     try {
       for (const parsed of parseChatStreamEvent(event.data)) {
@@ -698,6 +708,7 @@ export class TurnSession {
     streamLog("lifecycle", "turn:close", {
       turnKey: this.key,
       conversationId: this.conversationId,
+      detail: { elapsedMs: Math.round(performance.now() - this.sendStartMs) },
     });
 
     try {

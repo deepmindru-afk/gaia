@@ -16,7 +16,7 @@ from contextvars import ContextVar
 from enum import StrEnum
 
 from app.models.payment_models import PlanType
-from app.services.analytics_service import capture_event
+from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.email.senders import (
     send_limit_reached_email,
     send_workflows_paused_email,
@@ -66,7 +66,11 @@ def schedule_limit_upsell(
 
 async def _run(user_id: str, feature_key: str, origin: LimitHitOrigin) -> None:
     try:
-        capture_event(user_id, "rate_limit_hit", {"feature": feature_key, "origin": origin.value})
+        capture_event(
+            user_id,
+            AnalyticsEvents.RATE_LIMIT_HIT,
+            {"feature": feature_key, "origin": origin.value},
+        )
         if origin == LimitHitOrigin.BACKGROUND:
             await send_workflows_paused_email(user_id)
         else:

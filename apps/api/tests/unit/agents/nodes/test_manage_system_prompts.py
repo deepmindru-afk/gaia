@@ -18,8 +18,14 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
+from prometheus_client import REGISTRY
 
-from app.agents.core.nodes.manage_system_prompts import manage_system_prompts_node
+from app.agents.context.slots import PromptSlot
+from app.agents.core.nodes.manage_system_prompts import (
+    _keep_latest_per_slot,
+    _KeptPrompts,
+    manage_system_prompts_node,
+)
 from app.override.langgraph_bigtool.utils import State
 
 
@@ -36,6 +42,13 @@ def _config(provider: str | None = None) -> RunnableConfig:
     if provider is not None:
         cfg["provider"] = provider
     return cast(RunnableConfig, {"configurable": cfg})
+
+
+def _agent_config(agent_name: str) -> RunnableConfig:
+    return cast(
+        RunnableConfig,
+        {"configurable": {"user_id": "u1", "thread_id": "t1", "agent_name": agent_name}},
+    )
 
 
 def _store() -> MagicMock:
@@ -196,6 +209,26 @@ class TestManageSystemPrompts:
             f"The swallowed exception must be named in the log, got: {kwargs}"
         )
 
+    def test_node_records_the_exact_elapsed_seconds(self) -> None:
+        """Two pinned clock reads make the recorded duration deterministic: a
+        start/end subtraction lands exactly 0.5. A sign error (end + start)
+        would record 10.5 instead, so this pins the direction of the elapsed
+        arithmetic, not merely that an observation happened."""
+        labels = {"node": "manage_system_prompts", "agent": "span-test-agent"}
+        before = REGISTRY.get_sample_value("graph_node_seconds_sum", labels) or 0.0
+
+        with patch(
+            "app.agents.core.nodes.manage_system_prompts.time.perf_counter",
+            side_effect=[5.0, 5.5],
+        ):
+            manage_system_prompts_node(
+                cast(State, {"messages": [HumanMessage(content="hello")]}),
+                _agent_config("span-test-agent"),
+                _store(),
+            )
+
+        assert REGISTRY.get_sample_value("graph_node_seconds_sum", labels) == before + 0.5
+
 
 class _PromptPruning(TypedDict):
     """The prompt_pruning wide-event payload these tests assert on.
@@ -291,3 +324,75 @@ class TestPromptPruningWideEvent:
         pruning = self._pruning_for([_static("prompt"), _dynamic("hunter2 is the secret")])
 
         assert "hunter2" not in str(pruning["slot_digests"])
+
+    def test_reports_the_exact_message_and_prune_counts(self) -> None:
+        """``messages_in``/``messages_out`` and the two drop counters are how a
+        reviewer reads what the prune actually did. A renamed key or a wrong
+        count tells the wrong story, so both the names and the values are part
+        of the contract."""
+        msgs = [
+            _static("p"),
+            _dynamic("stale"),
+            _dynamic("fresh"),
+            HumanMessage(content="hello"),
+            HumanMessage(content="t1", additional_kwargs={"time_context": True}),
+            HumanMessage(content="t2", additional_kwargs={"time_context": True}),
+        ]
+
+        pruning = self._pruning_for(msgs)
+
+        assert pruning["messages_in"] == 6
+        assert pruning["messages_out"] == 4
+        assert pruning["dropped_system_prompts"] == 1
+        assert pruning["dropped_time_context"] == 1
+
+
+def _with_id(message: AnyMessage, mid: str) -> AnyMessage:
+    message.id = mid
+    return message
+
+
+def _time_message(content: str, mid: str) -> AnyMessage:
+    return _with_id(HumanMessage(content=content, additional_kwargs={"time_context": True}), mid)
+
+
+class TestKeepLatestPerSlot:
+    """The prune step, driven directly.
+
+    ``manage_system_prompts_node`` only ever hands the helper one message per
+    slot, so the drop accounting and the returned ``pruned_ids`` are
+    unobservable through it. These feed it stacked slots and assert every
+    ``_KeptPrompts`` field exactly.
+    """
+
+    def test_singleton_slots_keep_the_last_message_and_count_their_drops(self) -> None:
+        statics = [_with_id(_static(f"static {i}"), f"s{i}") for i in range(3)]
+        times = [_time_message(f"time {i}", f"t{i}") for i in range(4)]
+        conversation = [
+            _with_id(HumanMessage(content="hello"), "c0"),
+            _with_id(AIMessage(content="reply"), "c1"),
+        ]
+        by_slot: dict[PromptSlot, list[AnyMessage]] = {
+            PromptSlot.STATIC: statics,
+            PromptSlot.CONVERSATION: conversation,
+            PromptSlot.TIME: times,
+        }
+
+        kept: _KeptPrompts = _keep_latest_per_slot(
+            by_slot, (PromptSlot.STATIC, PromptSlot.CONVERSATION, PromptSlot.TIME)
+        )
+
+        assert kept.messages == [statics[-1], *conversation, times[-1]]
+        assert kept.by_slot == {
+            PromptSlot.STATIC: [statics[-1]],
+            PromptSlot.CONVERSATION: conversation,
+            PromptSlot.TIME: [times[-1]],
+        }
+        assert kept.pruned_ids == ["s0", "s1", "t0", "t1", "t2"]
+        assert kept.dropped_system == 2
+        assert kept.dropped_time == 3
+
+    def test_slots_absent_from_the_input_produce_an_empty_result(self) -> None:
+        kept = _keep_latest_per_slot({}, (PromptSlot.STATIC, PromptSlot.TIME))
+
+        assert kept == _KeptPrompts([], {}, [], 0, 0)

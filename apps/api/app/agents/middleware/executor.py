@@ -14,6 +14,7 @@ It handles executing middleware hooks at appropriate points:
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 import inspect
+import time
 from typing import Any, cast
 
 from langchain.agents.middleware import AgentMiddleware
@@ -41,6 +42,7 @@ from app.constants.log_tags import LogTag
 from app.models.agent_models import AgentMiddlewareStack
 from app.override.langgraph_bigtool.utils import State, messages_delta_reducer
 from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.latency_metrics import observe_tool_call
 from shared.py.wide_events import log
 
 # The handler chains built below. LangChain's hooks accept a wider return union
@@ -48,6 +50,16 @@ from shared.py.wide_events import log
 # ever feeds and consumes ModelResponse, so the model chain is narrowed to it.
 ModelCallHandler = Callable[[ModelRequest], Awaitable[ModelResponse]]
 ToolCallHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]]
+
+
+def _tool_metric_name(tool_name: str, tool: BaseTool | None) -> str:
+    """Prometheus label for a tool call. MCP/dynamic tools carry user-defined
+    names, so they collapse to ``"mcp"``; the adapter class is method-local,
+    so its ``tool_connector`` field is the structural signal.
+    """
+    if tool is not None and hasattr(tool, "tool_connector"):
+        return "mcp"
+    return tool_name or "unknown"
 
 
 def _apply_state_update(current_state: dict[str, Any], update: Mapping[str, Any]) -> None:
@@ -309,13 +321,17 @@ class MiddlewareExecutor:
 
         # Holds the tool's own result once it has run, so the fallback below can
         # tell a middleware that failed *before* the tool from one that failed
-        # after it — only the former is safe to retry.
+        # after it — only the former is safe to retry. `tool_attempted` covers
+        # the third case: the tool itself raised, so `tool_result` is still None
+        # but re-invoking would fire its side effects a second time.
         tool_result: ToolMessage | Command[Any] | None = None
+        tool_attempted = False
 
         # Build the handler chain from inside out
         async def final_handler(req: ToolCallRequest) -> ToolMessage | Command[Any]:
             """Innermost handler - actually calls the tool."""
-            nonlocal tool_result
+            nonlocal tool_result, tool_attempted
+            tool_attempted = True
             tool_result = await invoke_fn(req.tool_call)
             if tool_user_id:
                 capture_event(
@@ -359,8 +375,10 @@ class MiddlewareExecutor:
                 current_handler = make_sync_wrapper(mw, current_handler)
 
         # Execute the chain
+        metric_name = _tool_metric_name(tool_name, tool)
+        chain_start = time.perf_counter()
         try:
-            return await current_handler(request)
+            result = await current_handler(request)
         except GraphBubbleUp:
             # A GraphInterrupt is control flow, not a failure — it MUST
             # propagate, or the fallback below runs a gated action unapproved.
@@ -368,6 +386,9 @@ class MiddlewareExecutor:
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            observe_tool_call(
+                time.perf_counter() - chain_start, tool_name=metric_name, status="error"
+            )
             log.error(
                 f"{LogTag.AGENT} Middleware wrap_tool_call chain failed",
                 tool_name=tool_name,
@@ -379,7 +400,15 @@ class MiddlewareExecutor:
             if tool_result is not None:
                 return tool_result
             # Nothing ran yet: a pre-tool middleware broke, so invoke directly.
-            return await invoke_fn(tool_call)
+            if not tool_attempted:
+                return await invoke_fn(tool_call)
+            # The tool itself raised: retrying would run its side effects again,
+            # so let the original failure propagate.
+            raise
+        observe_tool_call(
+            time.perf_counter() - chain_start, tool_name=metric_name, status="success"
+        )
+        return result
 
     def has_wrap_model_call(self) -> bool:
         """Check if any middleware has wrap_model_call."""

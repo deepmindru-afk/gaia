@@ -12,6 +12,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 import json
+import time
 from typing import Any, cast
 
 from app.constants.cache import (
@@ -33,6 +34,7 @@ from app.constants.streaming import (
 )
 from app.db.redis import redis_cache
 from app.utils.message_breaks import append_message_bubble
+from app.services.latency_metrics import observe_transport_redis_publish
 from shared.py.wide_events import log
 
 
@@ -343,6 +345,7 @@ class StreamManager:
         reload-resume can replay everything a subscriber missed.
         """
         if redis_cache.redis:
+            publish_start = time.perf_counter()
             key = f"{STREAM_EVENTS_PREFIX}{stream_id}"
             await redis_cache.redis.xadd(
                 key,
@@ -351,6 +354,7 @@ class StreamManager:
                 approximate=True,
             )
             await redis_cache.redis.expire(key, STREAM_TTL)
+            observe_transport_redis_publish(time.perf_counter() - publish_start)
 
     # -------------------------------------------------------------------------
     # Cancellation

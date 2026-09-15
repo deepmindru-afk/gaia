@@ -6,7 +6,6 @@ import { Divider } from "@heroui/divider";
 import { CheckmarkCircle02Icon, ComputerIcon } from "@icons";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { devicesApi } from "../api/devicesApi";
 import {
@@ -52,9 +51,6 @@ export function ApproveDeviceForm() {
     try {
       const result = await devicesApi.approve(toApiPairingCode(digits));
       setApproved(result.name);
-      trackEvent(ANALYTICS_EVENTS.DEVICE_CONNECTED, {
-        source: cameFromCli ? "cli" : "settings",
-      });
     } catch {
       // The API client already surfaced the error toast
     } finally {

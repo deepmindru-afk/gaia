@@ -6,6 +6,7 @@ import { getToolCategoryIcon } from "@/features/chat/utils/toolIcons";
 // Must match `_add_category(...)` in apps/api/app/agents/tools/core/registry.py —
 // `billing` shipped with no icon entry, so it silently rendered with no icon.
 const BUILTIN_TOOL_CATEGORIES = [
+  "account",
   "billing",
   "context",
   "creative",

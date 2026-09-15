@@ -8,6 +8,7 @@ run_executor_background.
 
 import asyncio
 import json
+import time
 from typing import Annotated
 from uuid import uuid4
 
@@ -202,6 +203,8 @@ async def _dispatch_executor(
     stream_id = configurable.get("stream_id")
     user_message_id = configurable.get("user_message_id")
     bot_message_id = configurable.get("bot_message_id")
+    # Dispatch stamp every later latency derives from; monotonic, never logged.
+    t_dispatch = time.perf_counter()
 
     lock_key = f"{EXECUTOR_BUSY_PREFIX}{conversation_id}"
     lock_value = build_lock_value(stream_id, task_id)
@@ -226,7 +229,19 @@ async def _dispatch_executor(
         # A same-turn redirect (cancel + call_executor together) races the
         # cancel: wait for it to free the lock and run live in the same turn's
         # card instead of queuing. Only waits when a cancel is in flight.
-        if await _acquire_lock_through_redirect(lock_key, lock_value, held_stream_id):
+        redirect_start = time.perf_counter()
+        redirect_acquired = await _acquire_lock_through_redirect(
+            lock_key, lock_value, held_stream_id
+        )
+        if redirect_acquired:
+            log.set(
+                tool={
+                    "name": CALL_EXECUTOR_NAME,
+                    "action": "dispatch",
+                    "task_id": task_id,
+                    "redirect_wait_ms": round((time.perf_counter() - redirect_start) * 1000.0, 2),
+                },
+            )
             log.info(
                 f"{LogTag.TOOL} Acquired executor lock after redirect cancel — running live",
                 task_id=task_id,
@@ -244,6 +259,9 @@ async def _dispatch_executor(
                         conversation_id=conversation_id,
                         task_id=task_id,
                         user_message_id=user_message_id,
+                        t_dispatch_perf=t_dispatch,
+                        # A busy-lock dequeue, not a HIL resume: label it queued.
+                        queued=True,
                     ),
                 ),
             )
@@ -279,6 +297,7 @@ async def _dispatch_executor(
             task_id=task_id,
             user_message_id=user_message_id,
             bot_message_id=bot_message_id,
+            t_dispatch_perf=t_dispatch,
         ),
     )
     spawn_background_task(

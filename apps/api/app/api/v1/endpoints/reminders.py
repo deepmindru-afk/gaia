@@ -234,6 +234,7 @@ async def update_reminder_endpoint(
 
         log.set(reminder=_reminder_context("update", updated_reminder))
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.REMINDER_UPDATED)
 
         return ReminderResponse.model_validate(updated_reminder)
 
@@ -414,6 +415,7 @@ async def pause_reminder_endpoint(
                 detail="Failed to retrieve updated reminder",
             )
 
+        capture_context_event(AnalyticsEvents.REMINDER_PAUSED)
         return ReminderResponse.model_validate(updated_reminder)
 
     except HTTPException:
@@ -494,6 +496,7 @@ async def resume_reminder_endpoint(
                 detail="Failed to retrieve updated reminder",
             )
 
+        capture_context_event(AnalyticsEvents.REMINDER_RESUMED)
         return ReminderResponse(**updated_reminder.model_dump())
 
     except HTTPException:

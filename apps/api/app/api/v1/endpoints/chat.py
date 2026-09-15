@@ -7,6 +7,7 @@ runs to completion and the conversation lands in MongoDB.
 
 import asyncio
 from collections.abc import AsyncGenerator
+import time
 from typing import Annotated
 from uuid import uuid4
 
@@ -29,6 +30,7 @@ from app.models.stream_events import ErrorFrame
 from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents, capture_context_event
 from app.services.chat.stream import run_chat_stream_background
+from app.services.latency_metrics import observe_sse_delivery
 from app.utils.agent_utils import format_sse_data
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import ChatContext, get_trace_id, log, log_context
@@ -88,11 +90,14 @@ async def _stream_from_redis(
             yield "data: [STREAM_ERROR]\n\n"
             return
 
+        delivery_start = time.perf_counter()
+        delivery_status = "completed"
         try:
             async for chunk in stream_manager.subscribe_stream(
                 stream_id, last_event_id=last_event_id
             ):
                 if await request.is_disconnected():
+                    delivery_status = "disconnected"
                     log.set(client_disconnected=True)
                     log.info(
                         f"{LogTag.CHAT} Client disconnected, stream continues in background",
@@ -100,13 +105,18 @@ async def _stream_from_redis(
                     )
                     break
                 yield chunk
+        except GeneratorExit:
+            delivery_status = "abandoned"
+            raise
         except asyncio.CancelledError:
             # Client disconnected mid-stream — expected, not an error. The
             # background LangGraph task keeps running and persists the result.
+            delivery_status = "disconnected"
             log.set(client_disconnected=True)
             log.info(f"{LogTag.CHAT} Client connection cancelled", stream_id=stream_id)
             raise
         except Exception as e:
+            delivery_status = "error"
             log.error(
                 f"{LogTag.CHAT} Error streaming to client",
                 stream_id=stream_id,
@@ -116,6 +126,8 @@ async def _stream_from_redis(
             # Closing silently is indistinguishable from a finished turn, so the
             # client would render a truncated answer as complete.
             yield format_sse_data(ErrorFrame(error=_DELIVERY_FAILED).model_dump())
+        finally:
+            observe_sse_delivery(time.perf_counter() - delivery_start, status=delivery_status)
 
 
 @router.post("/chat-stream", response_class=StreamingResponse)
@@ -170,6 +182,9 @@ async def chat_stream_endpoint(
         conversation_id=conversation_id,
         user_id=user_id,
     )
+    # Request-accepted clock for TTFT/E2E; past the rate limit and cost
+    # budget so it counts turns actually accepted.
+    t0_perf = time.perf_counter()
     # The ONE event for a chat message: fires for every surface, no ad blocker
     # can drop it, and lands only once rate limit + cost budget pass. A
     # duplicate client-side `chat:message_sent` emitter has been removed.
@@ -198,6 +213,7 @@ async def chat_stream_endpoint(
             user=user,
             conversation_id=conversation_id,
             source=_resolve_source(request),
+            t0_perf=t0_perf,
         )
     )
 

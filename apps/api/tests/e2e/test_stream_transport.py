@@ -122,6 +122,7 @@ def stub_turn(monkeypatch: pytest.MonkeyPatch, runs: list[dict[str, Any]]) -> No
         user: dict[str, Any],
         conversation_id: str,
         source: str | None = None,
+        t0_perf: float | None = None,
     ) -> None:
         runs.append({"stream_id": stream_id, "conversation_id": conversation_id})
         await stream_manager.publish_chunk(stream_id, TURN_FRAMES[0])
@@ -487,6 +488,7 @@ class TestClientDisconnect:
             user: dict[str, Any],
             conversation_id: str,
             source: str | None = None,
+            t0_perf: float | None = None,
         ) -> None:
             await stream_manager.publish_chunk(stream_id, TURN_FRAMES[0])
             await client_gone.wait()
