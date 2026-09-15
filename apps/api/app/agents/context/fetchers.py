@@ -12,6 +12,8 @@ directly in ``sections.SECTIONS``; only a section that genuinely branches keeps
 a body of its own next to the table.
 """
 
+import asyncio
+import functools
 import re
 
 from app.agents.context.section_context import SectionContext
@@ -61,15 +63,12 @@ def _split_off_section(context: str, heading: str) -> tuple[str, str]:
     return context, ""
 
 
-async def _core_context(user_id: str | None) -> str:
-    """The memory core as the engine renders it, or ``""``.
+async def _fetch_core_context(user_id: str) -> str:
+    """Read the memory core once, or ``""``.
 
-    Redis-cached inside the engine and invalidated on ingestion, so the two
-    sections built from it (the stable documents and the volatile agenda +
-    journal) each read it without a second round trip to Mongo.
+    Redis-cached inside the engine and invalidated on ingestion; the swallow logs
+    its cause so a degraded core is visible in the wide event.
     """
-    if not user_id:
-        return ""
     try:
         return await memory_engine.get_core_context(user_id)
     except Exception as e:
@@ -80,6 +79,46 @@ async def _core_context(user_id: str | None) -> str:
             user_id=user_id,
         )
         return ""
+
+
+#: One in-flight core fetch per (event loop, user). The two core-memory sections
+#: run in the same ``asyncio.gather`` and would otherwise each pay the whole
+#: fetch; sharing the task pays it once. Keyed by loop so a task bound to a
+#: closed loop (tests, reloads) is never awaited from another.
+_inflight_core: dict[tuple[asyncio.AbstractEventLoop, str], asyncio.Task[str]] = {}
+
+
+def _forget_inflight(
+    key: tuple[asyncio.AbstractEventLoop, str], task: asyncio.Task[str]
+) -> None:
+    """Drop the finished fetch and consume its result.
+
+    Eviction is load-bearing, not cleanup: without it the registry would retain
+    every user's core context for the process's life. ``task.exception()``
+    consumes a failure so asyncio does not warn about an unretrieved exception;
+    ``_fetch_core_context`` returns ``""`` rather than raising.
+    """
+    _inflight_core.pop(key, None)
+    if not task.cancelled():
+        task.exception()
+
+
+async def _core_context(user_id: str | None) -> str:
+    """The memory core as the engine renders it, or ``""``.
+
+    A singleflight over the two sections built from it: an assembly pays the core
+    read once, and the fetch is evicted on completion so a later assembly reads
+    afresh — sharing, not TTL caching.
+    """
+    if not user_id:
+        return ""
+    key = (asyncio.get_running_loop(), user_id)
+    task = _inflight_core.get(key)
+    if task is None:
+        task = asyncio.ensure_future(_fetch_core_context(user_id))
+        _inflight_core[key] = task
+        task.add_done_callback(functools.partial(_forget_inflight, key))
+    return await task
 
 
 def _split_core_context(core_context: str) -> tuple[str, str, str]:
