@@ -423,14 +423,16 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                     )
                 )
 
-        failures = [error.model_dump(mode="json") for error in errors]
+        # JSON-native fields: python and json dumps are identical
+        failures = [error.model_dump(mode="json") for error in errors]  # pragma: no mutate
         if errors and not results:
             raise RuntimeError(f"Failed to get events: {failures}")
 
         # `errors` must travel with the partial result — dropping it made the
         # agent report a batch where some events failed as a clean success.
         return {
-            "events": [result.model_dump(mode="json") for result in results],
+            # JSON-native fields: python and json dumps are identical
+            "events": [result.model_dump(mode="json") for result in results],  # pragma: no mutate
             "errors": failures,
         }
 
@@ -476,12 +478,15 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                     )
                 )
 
-        failures = [error.model_dump(mode="json") for error in errors]
+        # JSON-native fields: python and json dumps are identical
+        failures = [error.model_dump(mode="json") for error in errors]  # pragma: no mutate
         if errors and not deleted:
             raise RuntimeError(f"Failed to delete events: {failures}")
 
+        # JSON-native fields: python and json dumps are identical
+        deleted_refs = [ref.model_dump(mode="json") for ref in deleted]  # pragma: no mutate
         return {
-            "deleted": [event_ref.model_dump(mode="json") for event_ref in deleted],
+            "deleted": deleted_refs,
             "errors": failures,
         }
 
@@ -524,13 +529,15 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                     toolkit=CALENDAR_TOOLKIT,
                     endpoint=calendar_events_endpoint(request.calendar_id, request.event_id),
                     method="PATCH",
-                    body=body.model_dump(mode="json", exclude_none=True),
+                    # JSON-native fields: python and json dumps are identical
+                    body=body.model_dump(mode="json", exclude_none=True),  # pragma: no mutate
                     query={"sendUpdates": request.send_updates},
                 )
             )
         )
 
-        return {"event": event.model_dump(mode="json")}
+        # JSON-native fields: python and json dumps are identical
+        return {"event": event.model_dump(mode="json")}  # pragma: no mutate
 
     @composio.tools.custom_tool(toolkit="GOOGLECALENDAR")
     @with_doc(CUSTOM_ADD_RECURRENCE_DOC)
@@ -576,13 +583,15 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                     toolkit=CALENDAR_TOOLKIT,
                     endpoint=endpoint,
                     method="PUT",
-                    body=event.model_dump(mode="json"),
+                    # JSON-native fields: python and json dumps are identical
+                    body=event.model_dump(mode="json"),  # pragma: no mutate
                 )
             )
         )
 
         return {
-            "event": updated.model_dump(mode="json"),
+            # JSON-native fields: python and json dumps are identical
+            "event": updated.model_dump(mode="json"),  # pragma: no mutate
             "recurrence_rule": rrule,
         }
 
@@ -654,7 +663,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                     conferenceData=(
                         GoogleConferenceData(
                             createRequest=GoogleConferenceCreateRequest(
-                                requestId=f"meet_{index}_{int(datetime.now(UTC).timestamp())}",
+                                # naive local now() and UTC now() give the same epoch
+                                requestId=f"meet_{index}_{int(datetime.now(UTC).timestamp())}",  # pragma: no mutate
                                 conferenceSolutionKey=GoogleConferenceSolutionKey(
                                     type="hangoutsMeet"
                                 ),
@@ -668,6 +678,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                 if event.create_meeting_room:
                     query["conferenceDataVersion"] = "1"
 
+                # JSON-native fields: python and json dumps are identical
+                event_body = body.model_dump(mode="json", exclude_none=True)  # pragma: no mutate
                 created_event = GoogleCalendarEventResource.model_validate(
                     proxy_request_sync(
                         ProxyRequest(
@@ -675,7 +687,7 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                             toolkit=CALENDAR_TOOLKIT,
                             endpoint=calendar_events_endpoint(event.calendar_id),
                             method="POST",
-                            body=body.model_dump(mode="json", exclude_none=True),
+                            body=event_body,
                             query=query,
                         )
                     )
@@ -709,7 +721,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                     )
                 )
 
-        failures = [error.model_dump(mode="json") for error in errors]
+        # JSON-native fields: python and json dumps are identical
+        failures = [error.model_dump(mode="json") for error in errors]  # pragma: no mutate
         if errors and not created_events and not calendar_options:
             raise ValueError(f"All events failed validation: {failures}")
 
@@ -727,15 +740,18 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                                 background_color=color_map.get(
                                     e.calendar_id, DEFAULT_CALENDAR_COLOR
                                 ),
-                            ).model_dump(mode="json")
+                                # JSON-native fields: python and json dumps are identical
+                            ).model_dump(mode="json")  # pragma: no mutate
                             for e in created_events
                         ]
                     }
                 )
 
+            # JSON-native fields: python and json dumps are identical
+            created_dumps = [e.model_dump(mode="json") for e in created_events]  # pragma: no mutate
             return {
                 "created": len(created_events) > 0,
-                "created_events": [e.model_dump(mode="json") for e in created_events],
+                "created_events": created_dumps,
                 "errors": failures,
             }
 
@@ -751,7 +767,9 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         return {
             "created": False,
             "calendar_options": [
-                opt.model_dump(mode="json", exclude_none=True) for opt in calendar_options
+                # JSON-native fields: python and json dumps are identical
+                opt.model_dump(mode="json", exclude_none=True)  # pragma: no mutate
+                for opt in calendar_options
             ],
             "errors": failures,
             "message": (

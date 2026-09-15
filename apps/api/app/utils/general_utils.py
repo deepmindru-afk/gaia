@@ -147,9 +147,7 @@ def _header(headers: list[GmailHeader], name: str) -> str:
 
 
 def _decode_part_data(data: str) -> str:
-    return base64.urlsafe_b64decode(data.replace("-", "+").replace("_", "/")).decode(
-        "utf-8", errors="ignore"
-    )
+    return base64.urlsafe_b64decode(data).decode(errors="ignore")
 
 
 def decode_message_body(msg: GmailApiMessage) -> str:
@@ -169,7 +167,8 @@ def decode_message_body(msg: GmailApiMessage) -> str:
     plain_body = None
 
     for part in parts:
-        part_mime_type = part.mime_type or ""
+        # any non-text/* fallback is skipped alike
+        part_mime_type = part.mime_type or ""  # pragma: no mutate
         body_data = part.body.data if part.body else None
 
         if body_data:

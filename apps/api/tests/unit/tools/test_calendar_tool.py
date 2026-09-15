@@ -53,7 +53,7 @@ from app.models.integrations.composio import CustomToolAuthCredentials
 from app.models.user_models import UserDocument
 from app.services.composio.proxy_client import ProxyRequest
 from app.utils.calendar_utils import CALENDAR_API_BASE
-from app.utils.concurrency import reset_captured_loop
+from app.utils.concurrency import reset_captured_loop, run_on_captured_loop
 from app.utils.errors import AppError
 
 MODULE = "app.agents.tools.integrations.calendar_tool"
@@ -491,6 +491,26 @@ class TestGetDaySummary:
         assert kwargs["selected_calendars"] is None
         assert out["date"] == "2026-03-15"
         assert out["timezone"] == "Asia/Kolkata"
+
+    def test_user_lookup_is_for_the_caller_and_bounded_to_five_seconds(self, tools, writer) -> None:
+        user_lookup = AsyncMock(return_value=UserDocument.model_validate({"timezone": "UTC"}))
+        with (
+            patch(f"{MODULE}.user_repository.get", new=user_lookup),
+            patch(
+                "app.services.calendar_service.get_calendar_events",
+                new=AsyncMock(return_value=_events_response([])),
+            ),
+            patch(
+                "app.services.calendar_service.get_calendar_metadata_map",
+                new=AsyncMock(return_value=({}, {})),
+            ),
+            patch(f"{MODULE}.run_on_captured_loop", wraps=run_on_captured_loop) as dispatch,
+        ):
+            tools["CUSTOM_GET_DAY_SUMMARY"](
+                GetDaySummaryInput(date="2026-03-15"), EXECUTE_REQUEST, AUTH
+            )
+        user_lookup.assert_awaited_once_with("user-42")
+        assert 5 in [c.kwargs.get("timeout") for c in dispatch.call_args_list]
 
     def test_fixed_offset_timezone_is_supported(self, tools, writer) -> None:
         # A stored "+05:30" home zone makes zoneinfo.ZoneInfo raise; Timezone.parse
@@ -1501,6 +1521,7 @@ class TestCreateEvent:
             )
         streamed = writer.call_args[0][0]["calendar_fetch_data"][0]
         assert streamed["background_color"] == DEFAULT_CALENDAR_COLOR
+        assert streamed["calendar_name"] == ""
 
     def test_draft_uses_calendar_metadata_when_available(self, tools, writer) -> None:
         with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
