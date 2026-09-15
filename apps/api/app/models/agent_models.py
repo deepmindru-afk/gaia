@@ -229,6 +229,18 @@ def agent_configurable(config: RunnableConfig | None) -> AgentConfigurable:
     return cast(AgentConfigurable, (config or {}).get("configurable") or {})
 
 
+def config_agent_name(config: RunnableConfig | None) -> str:
+    """Which agent a run belongs to, for metric labels (``"unknown"`` when unstamped).
+
+    ``build_agent_config`` stamps ``agent_name`` at the top level, but LangGraph's
+    ``ensure_config`` folds every non-standard top-level key into ``configurable``
+    before a node sees the config — so inside a graph the key only exists there.
+    """
+    bag = cast(dict[str, Any], config or {})
+    name = (bag.get("configurable") or {}).get("agent_name") or bag.get("agent_name")
+    return str(name) if name else "unknown"
+
+
 def runtime_configurable(request: ToolCallRequest) -> AgentConfigurable:
     """The same view as :func:`agent_configurable`, reached through a middleware
     ``ToolCallRequest``.

@@ -364,4 +364,77 @@ class TestResponseHeaderCase:
         result = _classify(workdir)
 
         assert result.stdout.strip().startswith("CHANGED"), result.stdout + result.stderr
+
+
+class TestFalsyAssignmentEquivalence:
+    """A falsy literal assigned to a name whose every read is a truthiness test
+    is unobservable — every falsy value takes the same branch, whether or not a
+    later assignment overwrites it first. `cancelled = False` mutated to
+    `cancelled = None` in subagent_runner is the canonical case."""
+
+    def _write_real_module(self, workdir: Path, body: str) -> None:
+        (workdir / MODULE_REL).write_text(f"def probe(flag):\n{body}\n")
+
+    def test_a_falsy_initial_read_only_by_truthiness_is_equivalent(self, workdir: Path) -> None:
+        body = (
+            "    cancelled = False\n"
+            "    if flag:\n"
+            "        cancelled = True\n"
+            "    if cancelled:\n"
+            "        return 1\n"
+            "    return 0"
+        )
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("cancelled = False", "cancelled = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() == "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 0
+
+    def test_a_truthy_original_surviving_is_still_reported(self, workdir: Path) -> None:
+        body = (
+            "    cancelled = True\n"
+            "    if flag:\n"
+            "        cancelled = False\n"
+            "    if cancelled:\n"
+            "        return 1\n"
+            "    return 0"
+        )
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("cancelled = True", "cancelled = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 1
+
+    def test_a_non_boolean_read_is_still_reported(self, workdir: Path) -> None:
+        body = (
+            "    x = False\n"
+            "    if flag:\n"
+            "        x = True\n"
+            "    if x:\n"
+            "        return 1\n"
+            "    return x == False"
+        )
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("x = False", "x = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 1
+
+    def test_an_augmented_assignment_target_is_still_reported(self, workdir: Path) -> None:
+        """``x += 1`` reads the previous value: ``False + 1`` is 1 but
+        ``None + 1`` raises, so the initial literal is observable despite every
+        other read being a truthiness test."""
+        body = "    x = False\n    x += 1\n    if x:\n        return 1\n    return 0"
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("x = False", "x = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
         assert result.returncode == 1

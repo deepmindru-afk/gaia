@@ -3,11 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 
 import { turnManager } from "@/features/chat/stream/turnManager";
 import type { TurnOptions } from "@/features/chat/stream/types";
-import {
-  ANALYTICS_EVENTS,
-  setUserProperties,
-  trackEvent,
-} from "@/lib/analytics";
+import { setUserProperties } from "@/lib/analytics";
 import { db, type IMessage } from "@/lib/db/chatDb";
 import { useChatStore } from "@/stores/chatStore";
 import { useComposerStore } from "@/stores/composerStore";
@@ -102,9 +98,8 @@ const trackFirstMessageMilestone = () => {
   try {
     const stored = localStorage.getItem("gaia_first_message_sent");
     if (!stored) {
-      trackEvent(ANALYTICS_EVENTS.CHAT_FIRST_MESSAGE_SENT, {
-        milestone: "first_message",
-      });
+      // No event capture here — first-message volume is chat:message_submitted
+      // server-side. Keep only the person property for segmentation.
       setUserProperties({ first_message_sent: true });
       localStorage.setItem("gaia_first_message_sent", "true");
     }
@@ -214,11 +209,6 @@ export const useSendMessage = () => {
         isOnboardingDemo: false,
       };
 
-      // No analytics capture here. A send is recorded once, server-side, by
-      // chat:message_submitted in apps/api/app/api/v1/endpoints/chat.py: every
-      // field the client used to attach (tool, workflow, calendar event, reply,
-      // file count) arrives in that same request, so a client emitter was the
-      // same event counted twice under a second name.
       turnManager.send({ inputText: ctx.content, userMessage, options });
     },
     [],

@@ -56,6 +56,7 @@ from app.agents.llm.client import (
     background_structured_runnable,
     get_default_llm,
     init_llm,
+    invoke_llm,
     register_llm_providers,
 )
 from app.agents.llm.exceptions import LLM_FALLBACK_EXCEPTIONS, LLMNotConfiguredError
@@ -2021,6 +2022,83 @@ class TestFallbackRunsOnTheOtherProvider:
         assert seen["model"] == "gemini-x"
         # the dead lane's routing pin must not ride along to the new provider
         assert "model_kwargs" not in seen
+
+
+class TestFallbackRunCarriesTheCallLabel:
+    """The fallback attempt must publish the SAME call label as the primary.
+
+    A turn's callback list is shared by the comms call and its title/follow-up/
+    memory side calls, and the run-level agent name cannot tell them apart — so
+    a fallback attempt that dropped the label would attribute its TTFT sample
+    to the wrong call. Both the async and the sync fallback path label the
+    config they pass to the fallback runnable, and each is asserted here.
+    """
+
+    @pytest.mark.regression
+    async def test_the_async_fallback_run_carries_the_call_label(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def _record(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            seen.update(config or {})
+            return AIMessage(content="from-fallback")
+
+        def _boom(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            raise ConnectionError("primary down")
+
+        result = await ainvoke_llm(
+            RunnableLambda(_boom),
+            "hi",
+            fallback=RunnableLambda(_record),
+            options=LLMInvokeOptions(
+                max_attempts=1,
+                fallback_config=cast(RunnableConfig, {"configurable": {"provider": "gemini"}}),
+            ),
+            label="memory_extraction",
+        )
+
+        assert result.content == "from-fallback"
+        assert seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert seen["configurable"] == {"provider": "gemini"}
+
+    @pytest.mark.regression
+    def test_the_sync_path_labels_the_call_on_primary_and_fallback(self) -> None:
+        """The sync primary runs under the caller's own config PLUS the label,
+        and the sync fallback under the fallback config PLUS the label.
+
+        Asserting the configurable on both sides pins that labelling ADDS to the
+        config rather than replacing it — a label written onto ``None`` (or onto
+        the wrong base) would silently drop the user/session the call was made
+        for, and a fallback that lost its provider config would run on the
+        primary's dead lane.
+        """
+        primary_seen: dict[str, Any] = {}
+        fallback_seen: dict[str, Any] = {}
+
+        def _primary(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            primary_seen.update(config or {})
+            raise ConnectionError("primary down")
+
+        def _fallback(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            fallback_seen.update(config or {})
+            return AIMessage(content="from-fallback")
+
+        result = invoke_llm(
+            RunnableLambda(_primary),
+            "hi",
+            fallback=RunnableLambda(_fallback),
+            config=cast(RunnableConfig, {"configurable": {"user_id": "u1"}}),
+            options=LLMInvokeOptions(
+                max_attempts=1,
+                fallback_config=cast(RunnableConfig, {"configurable": {"provider": "gemini"}}),
+            ),
+            label="memory_extraction",
+        )
+
+        assert result.content == "from-fallback"
+        assert primary_seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert primary_seen["configurable"] == {"user_id": "u1"}
+        assert fallback_seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert fallback_seen["configurable"] == {"provider": "gemini"}
 
 
 class TestFallbackKeepsItsLanesStickySession:
