@@ -8,7 +8,9 @@ auth_credentials.
 Note: Errors are raised as exceptions - Composio wraps responses automatically.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
+from typing import TypeVar
 
 from composio import Composio
 from composio.types import ExecuteRequestFn
@@ -40,6 +42,7 @@ from app.models.integrations.linear import (
     LinearLabelsData,
     LinearMyIssuesVariables,
     LinearNotificationsData,
+    LinearPassthroughNode,
     LinearProjectsData,
     LinearSearchIssuesData,
     LinearSearchIssuesVariables,
@@ -108,6 +111,14 @@ _CLOSED_STATE_TYPES = ("completed", "canceled")
 _URGENT_PRIORITIES = (1, 2)
 _SPRINT_STATE_TYPES = ("backlog", "unstarted", "started", "completed")
 _UNDATED_SORT_KEY = "9999-12-31"  # pragma: no mutate -- ISO dates sort before any letter-led key
+_PassthroughT = TypeVar("_PassthroughT", bound=LinearPassthroughNode)
+# Linear's name for each relation_type the tool accepts.
+_RELATION_TYPES: dict[str, str] = {
+    "blocks": "blocks",
+    "is_blocked_by": "blocked_by",
+    "relates_to": "related",
+    "duplicates": "duplicate",
+}
 
 
 def _user_id(auth_credentials: dict[str, object]) -> str:
@@ -212,6 +223,12 @@ def _history_entry(
     return line
 
 
+def _dump_matches(nodes: Sequence[_PassthroughT]) -> list[dict[str, object]]:
+    """Matched nodes as CUSTOM_RESOLVE_CONTEXT returns them: Linear's own camelCase keys."""
+    # JSON-native fields: python and json dumps are identical
+    return [n.model_dump(mode="json", by_alias=True) for n in nodes]  # pragma: no mutate
+
+
 def _run_resolve_context(request: ResolveContextInput, user_id: str) -> dict[str, object]:
     result: dict[str, object] = {}
 
@@ -224,24 +241,12 @@ def _run_resolve_context(request: ResolveContextInput, user_id: str) -> dict[str
 
     if request.team_name:
         teams = graphql_request(QUERY_TEAMS, None, user_id, LinearTeamsData).teams.nodes
-        result["teams"] = [
-            t.model_dump(
-                mode="json",  # pragma: no mutate -- primitive fields dump alike
-                by_alias=True,
-            )
-            for t in fuzzy_match(request.team_name, teams)
-        ]
+        result["teams"] = _dump_matches(fuzzy_match(request.team_name, teams))
 
     if request.user_name:
         users = graphql_request(QUERY_USERS, None, user_id, LinearUsersData).users.nodes
         active_users = [u for u in users if u.active]
-        result["users"] = [
-            u.model_dump(
-                mode="json",  # pragma: no mutate -- primitive fields dump alike
-                by_alias=True,  # pragma: no mutate -- field names equal their aliases
-            )
-            for u in fuzzy_match(request.user_name, active_users)
-        ]
+        result["users"] = _dump_matches(fuzzy_match(request.user_name, active_users))
 
     if request.label_names:
         if request.team_id:
@@ -257,23 +262,11 @@ def _run_resolve_context(request: ResolveContextInput, user_id: str) -> dict[str
         matched_labels: list[LinearLabel] = []
         for label_name in request.label_names[:3]:
             matched_labels.extend(fuzzy_match(label_name, labels, limit=1))
-        result["labels"] = [
-            label.model_dump(
-                mode="json",  # pragma: no mutate -- primitive fields dump alike
-                by_alias=True,  # pragma: no mutate -- field names equal their aliases
-            )
-            for label in matched_labels[:4]  # pragma: no mutate -- at most 3 labels reach it
-        ]
+        result["labels"] = _dump_matches(matched_labels)
 
     if request.project_name:
         projects = graphql_request(QUERY_PROJECTS, None, user_id, LinearProjectsData).projects.nodes
-        result["projects"] = [
-            p.model_dump(
-                mode="json",  # pragma: no mutate -- primitive fields dump alike
-                by_alias=True,  # pragma: no mutate -- field names equal their aliases
-            )
-            for p in fuzzy_match(request.project_name, projects)
-        ]
+        result["projects"] = _dump_matches(fuzzy_match(request.project_name, projects))
 
     if request.state_name and request.team_id:
         states = graphql_request(
@@ -282,13 +275,7 @@ def _run_resolve_context(request: ResolveContextInput, user_id: str) -> dict[str
             user_id,
             LinearStatesData,
         ).workflow_states.nodes
-        result["states"] = [
-            s.model_dump(
-                mode="json",  # pragma: no mutate -- primitive fields dump alike
-                by_alias=True,  # pragma: no mutate -- field names equal their aliases
-            )
-            for s in fuzzy_match(request.state_name, states)
-        ]
+        result["states"] = _dump_matches(fuzzy_match(request.state_name, states))
 
     return {"data": result}
 
@@ -564,16 +551,7 @@ def _run_create_sub_issues(request: CreateSubIssuesInput, user_id: str) -> dict[
 def _run_create_issue_relation(
     request: CreateIssueRelationInput, user_id: str
 ) -> dict[str, object]:
-    type_mapping = {
-        "blocks": "blocks",  # pragma: no mutate -- a missing key falls back to "blocks" too
-        "is_blocked_by": "blocked_by",
-        "relates_to": "related",
-        "duplicates": "duplicate",
-    }
-    linear_type = type_mapping.get(
-        request.relation_type,
-        request.relation_type,  # pragma: no mutate -- relation_type is always a mapped key
-    )
+    linear_type = _RELATION_TYPES[request.relation_type]
 
     create_result = graphql_request(
         MUTATION_CREATE_RELATION,
@@ -648,7 +626,7 @@ def _run_get_active_sprint(request: GetActiveSprintInput, user_id: str) -> dict[
         todo: list[dict[str, object]] = []
 
         for issue in issues:
-            state_type = (issue.state.type or "unstarted").lower()
+            state_type = issue.state.type.lower() if issue.state.type else "unstarted"
             if state_type not in counts:
                 continue
             counts[state_type] += 1

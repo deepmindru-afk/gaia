@@ -26,6 +26,7 @@ from app.models.integrations.composio import CustomToolAuthCredentials
 from app.models.integrations.twitter import (
     TwitterTimelineResponse,
     TwitterUser,
+    TwitterUserPublicMetrics,
     TwitterUserResponse,
 )
 from app.models.twitter_models import (
@@ -58,6 +59,12 @@ from shared.py.wide_events import log
 
 def _user_id(auth_credentials: dict[str, object]) -> str:
     return CustomToolAuthCredentials.parse(auth_credentials).user_id
+
+
+def _public_metrics(metrics: TwitterUserPublicMetrics | None) -> dict[str, object]:
+    """A user's metrics for the stream; empty when X did not expand them."""
+    # integer counts only: python and json dumps are identical
+    return metrics.model_dump(mode="json") if metrics else {}  # pragma: no mutate
 
 
 @dataclass(slots=True, frozen=True)
@@ -324,11 +331,7 @@ def register_twitter_custom_tools(composio: Composio) -> list[str]:
                             "description": u.description or "",
                             "profile_image_url": u.profile_image_url,
                             "verified": u.verified or False,
-                            "public_metrics": u.public_metrics.model_dump(
-                                mode="json",  # pragma: no mutate — integer counts only
-                            )
-                            if u.public_metrics
-                            else {},
+                            "public_metrics": _public_metrics(u.public_metrics),
                             "created_at": u.created_at,
                             "location": u.location,
                         }
