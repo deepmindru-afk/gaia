@@ -11,8 +11,10 @@ binding lives server-side, bounded TTL) except for how the code is spent. There
 it is consumed on first read; here a redemption takes a short-lived claim on the
 code (claim_platform_link_code) and only deletes the record once the link it
 authorised is written (discard_platform_link_code). The claim makes a redemption
-single-use, while a refused or broken redemption releases it
-(release_platform_link_code) and leaves the code usable for the retry.
+single-use, while a redemption refused BEFORE the link is written releases it
+(release_platform_link_code) and leaves the code usable for the retry. One that
+breaks after spends the code like a successful one: the link it authorised
+exists, and a retry would run that link's side effects a second time.
 """
 
 import secrets
