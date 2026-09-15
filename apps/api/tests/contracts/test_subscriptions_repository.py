@@ -88,8 +88,7 @@ class TestSubscriptionsRepository:
         )  # empty patch → no-op
 
     async def test_apply_update_by_dodo_id_refuses_a_row_carrying_a_newer_event(self, repo):
-        """The guard is the filter, not a check the caller repeats: a patch decided
-        from an older event must not land on a row a newer one already wrote."""
+        """The guard is the filter, not a check the caller is trusted to repeat."""
         await repo.create(_sub(dodo_subscription_id="s", status="expired", last_event_at=EVENT_AT))
 
         refused = await repo.apply_update_by_dodo_id(

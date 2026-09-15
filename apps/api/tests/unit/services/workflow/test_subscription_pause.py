@@ -109,11 +109,7 @@ class TestDeactivateWorkflowsForLapsedSubscription:
         assert service.deactivate_workflow.await_count == 2
 
     async def test_a_failure_leaves_the_call_so_the_batch_can_be_retried(self) -> None:
-        """A workflow whose trigger could not be unregistered is still armed
-        upstream for someone who no longer pays. The webhook that called this has
-        already written the lapsed status, so a Dodo redelivery reduces to
-        "unchanged" and never reaches the workflows again — swallowing the
-        failure here is what makes it permanent."""
+        """A workflow left armed upstream is owed work, so the failure must not be swallowed."""
         with (
             patch(f"{MODULE}.workflow_repository") as repo,
             patch(f"{MODULE}.WorkflowService") as service,

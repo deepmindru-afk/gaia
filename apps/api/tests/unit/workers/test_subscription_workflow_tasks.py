@@ -53,9 +53,7 @@ class TestSyncWorkflowsForSubscriptionState:
         pause.assert_not_awaited()
 
     async def test_a_workflow_left_behind_asks_arq_for_another_run(self) -> None:
-        """Without this the job ends "successfully" with the workflow still
-        armed upstream — exactly the outcome the webhook handed it here to
-        avoid, and nothing else ever comes back for it."""
+        """Otherwise the job ends "successfully" with the workflow still armed upstream."""
         pause = AsyncMock(side_effect=SubscriptionWorkflowSyncIncomplete(USER_ID, ["wf-1"]))
 
         with (
@@ -72,8 +70,7 @@ class TestSyncWorkflowsForSubscriptionState:
         assert isinstance(caught.value.__cause__, SubscriptionWorkflowSyncIncomplete)
 
     async def test_each_further_try_waits_longer(self) -> None:
-        """A dependency that is down stays down for a while; retrying at a flat
-        interval just burns the try budget before it recovers."""
+        """A flat interval burns the try budget before a down dependency recovers."""
         pause = AsyncMock(side_effect=RuntimeError("composio down"))
         defers = []
 

@@ -78,8 +78,7 @@ class TestClaimReleaseDiscard:
     async def test_a_second_claim_while_the_first_runs_gets_nothing(
         self, fake_store: dict[str, tuple[object, int | None]]
     ) -> None:
-        """Single-use is the claim, not the read: a twin redemption of the same
-        code must not be handed the binding and run the link a second time."""
+        """Single-use is the claim, not the read."""
         code = await mint_platform_link_code("user1", PREFS)
         assert (await claim_platform_link_code(code)).payload is not None
 
