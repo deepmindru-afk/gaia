@@ -16,6 +16,7 @@ from app.models.todo_models import (
     BulkUpdateRequest,
     PaginationMeta,
     Priority,
+    ProjectResponse,
     SearchMode,
     SubTask,
     TodoDocument,
@@ -48,6 +49,16 @@ def _todo_response() -> TodoResponse:
         id="todo-1",
         user_id="507f1f77bcf86cd799439011",
         title="Test todo",
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+
+
+def _project_response(name: str = "Work") -> ProjectResponse:
+    return ProjectResponse(
+        id="p1",
+        user_id="507f1f77bcf86cd799439011",
+        name=name,
         created_at=datetime(2025, 1, 1, tzinfo=UTC),
         updated_at=datetime(2025, 1, 1, tzinfo=UTC),
     )
@@ -205,6 +216,108 @@ class TestTodoAnalytics:
             AnalyticsEvents.TODO_TOGGLED,
             {"is_subtask": True, "completed": True},
         )
+
+
+class TestTodoWideEventContext:
+    """The user and todo namespaces the bulk-move, project and subtask routes stamp.
+
+    These are the only record of who did what on a route whose response body
+    carries no operation name, so a renamed key or a dropped namespace is a
+    silent observability regression.
+    """
+
+    async def test_bulk_move_stamps_the_move(self, client: AsyncClient) -> None:
+        with (
+            patch(
+                f"{TODOS_ENDPOINT}.TodoService.bulk_move_todos",
+                new_callable=AsyncMock,
+                return_value=BulkOperationResponse(success=["t1"], total=1, message="ok"),
+            ),
+            patch(f"{TODOS_ENDPOINT}.log.set") as set_log,
+        ):
+            resp = await client.post(
+                "/api/v1/todos/bulk/move",
+                json={"todo_ids": ["t1", "t2"], "project_id": "p1"},
+            )
+
+        assert resp.status_code == 200
+        set_log.assert_any_call(
+            user={"id": "507f1f77bcf86cd799439011"},
+            todo={"operation": "bulk_move", "bulk_count": 2, "project_id": "p1"},
+        )
+
+    async def test_create_project_stamps_the_operation(self, client: AsyncClient) -> None:
+        with (
+            patch(
+                f"{TODOS_ENDPOINT}.ProjectService.create_project",
+                new_callable=AsyncMock,
+                return_value=_project_response(),
+            ),
+            patch(f"{TODOS_ENDPOINT}.log.set") as set_log,
+        ):
+            resp = await client.post("/api/v1/projects", json={"name": "Work"})
+
+        assert resp.status_code == 201
+        set_log.assert_any_call(
+            user={"id": "507f1f77bcf86cd799439011"},
+            todo={"operation": "create_project"},
+        )
+
+    async def test_update_project_stamps_the_target(self, client: AsyncClient) -> None:
+        with (
+            patch(
+                f"{TODOS_ENDPOINT}.ProjectService.update_project",
+                new_callable=AsyncMock,
+                return_value=_project_response(name="Renamed"),
+            ),
+            patch(f"{TODOS_ENDPOINT}.log.set") as set_log,
+        ):
+            resp = await client.put("/api/v1/projects/p1", json={"name": "Renamed"})
+
+        assert resp.status_code == 200
+        set_log.assert_any_call(
+            user={"id": "507f1f77bcf86cd799439011"},
+            todo={"operation": "update_project", "project_id": "p1"},
+        )
+
+    async def test_delete_project_stamps_the_target(self, client: AsyncClient) -> None:
+        with (
+            patch(f"{TODOS_ENDPOINT}.ProjectService.delete_project", new_callable=AsyncMock),
+            patch(f"{TODOS_ENDPOINT}.log.set") as set_log,
+        ):
+            resp = await client.delete("/api/v1/projects/p1")
+
+        assert resp.status_code == 204
+        set_log.assert_any_call(
+            user={"id": "507f1f77bcf86cd799439011"},
+            todo={"operation": "delete_project", "project_id": "p1"},
+        )
+
+    async def test_create_subtask_stamps_the_parent_todo(self, client: AsyncClient) -> None:
+        doc = TodoDocument(
+            id="todo-1",
+            user_id="507f1f77bcf86cd799439011",
+            title="Test todo",
+            created_at=datetime(2025, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2025, 1, 1, tzinfo=UTC),
+            subtasks=[SubTask(id="sub-1", title="Buy milk", completed=False)],
+        )
+        with (
+            patch(
+                f"{TODOS_ENDPOINT}.todo_repository.add_subtask",
+                new_callable=AsyncMock,
+                return_value=doc,
+            ) as add_subtask,
+            patch(f"{TODOS_ENDPOINT}.log.set") as set_log,
+        ):
+            resp = await client.post("/api/v1/todos/todo-1/subtasks", json={"title": "Buy milk"})
+
+        assert resp.status_code == 201
+        set_log.assert_any_call(
+            user={"id": "507f1f77bcf86cd799439011"},
+            todo={"operation": "create_subtask", "id": "todo-1"},
+        )
+        assert add_subtask.await_args.kwargs["user_id"] == "507f1f77bcf86cd799439011"
 
 
 class TestListQueryHelpers:

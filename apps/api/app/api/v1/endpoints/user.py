@@ -70,7 +70,7 @@ async def get_me(
 
     # The auth-path flags are on the wire only when set — a plain session has
     # never sent ``impersonated: false`` — so the False ones stay out here, the
-    # same way ``exclude_none`` keeps the unset document fields out.
+    # same way ``response_model_exclude_none`` keeps the unset document fields out.
     flags = {
         name: True
         for name, value in (
@@ -82,10 +82,7 @@ async def get_me(
     }
     response = AuthenticatedUserResponse.model_validate(
         {
-            **user.model_dump(
-                exclude_none=True,  # pragma: no mutate -- the route drops None fields on the wire
-                exclude=set(_AUTH_PATH_FLAGS),
-            ),
+            **user.model_dump(exclude=set(_AUTH_PATH_FLAGS)),
             **flags,
             "message": "User retrieved successfully",
             "onboarding": onboarding_status,

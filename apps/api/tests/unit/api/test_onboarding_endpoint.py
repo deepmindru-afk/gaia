@@ -19,6 +19,7 @@ import pytest
 from app.api.v1.endpoints.onboarding import get_onboarding_personalization
 from app.constants.log_tags import LogTag
 from app.constants.todos import ONBOARDING_TODO_LIMIT
+from app.models.onboarding_models import OnboardingResetCounts, SocialProfile
 from app.models.payment_models import PlanType
 from app.models.user_models import (
     OTHER_NEED_MAX_LENGTH,
@@ -1069,3 +1070,62 @@ class TestOnboardingGenerationPaidOnlyGate:
             await client.post(REGENERATE_URL, json=_REGENERATE_PAYLOAD)
 
         gate.assert_awaited_once_with(FAKE_USER.user_id, feature="regenerate_writing_style_example")
+
+
+class TestOnboardingActsOnTheCaller:
+    """The caller's id reaching the service, and the wide-event namespaces naming the operation.
+
+    Every route here answers a body that identifies neither the user nor the
+    operation, so a dropped user id would destroy another user's onboarding
+    and a dropped namespace would leave nothing to attribute it to.
+    """
+
+    async def test_reset_tears_down_the_callers_onboarding(self, client: AsyncClient):
+        counts = OnboardingResetCounts(
+            workflows_deleted=1,
+            todos_deleted=2,
+            conversation_deleted=1,
+            demo_conversations_deleted=0,
+            integrations_disconnected=3,
+            memories_cleared=4,
+        )
+        with (
+            patch(
+                "app.api.v1.endpoints.onboarding.reset_onboarding",
+                new_callable=AsyncMock,
+                return_value=counts,
+            ) as reset,
+            patch("app.api.v1.endpoints.onboarding.log.set") as set_log,
+        ):
+            response = await client.post(f"{BASE_URL}/reset")
+
+        assert response.status_code == 200
+        reset.assert_awaited_once_with(FAKE_USER_ID)
+        set_log.assert_any_call(user={"id": FAKE_USER_ID}, onboarding={"operation": "reset"})
+
+    async def test_save_writing_style_saves_for_the_caller(self, client: AsyncClient):
+        with patch(
+            "app.api.v1.endpoints.onboarding.save_user_edited_summary",
+            new_callable=AsyncMock,
+        ) as save:
+            response = await client.post(
+                f"{BASE_URL}/writing-style", json={"edited_summary": "  Warm and brief  "}
+            )
+
+        assert response.status_code == 200
+        save.assert_awaited_once_with(FAKE_USER_ID, "Warm and brief")
+
+    async def test_confirm_social_profiles_saves_for_the_caller(self, client: AsyncClient):
+        with patch(
+            "app.api.v1.endpoints.onboarding.save_confirmed_profiles",
+            new_callable=AsyncMock,
+        ) as save:
+            response = await client.post(
+                f"{BASE_URL}/social-profiles",
+                json={"profiles": [{"platform": "github", "url": "https://github.com/me"}]},
+            )
+
+        assert response.status_code == 200
+        save.assert_awaited_once_with(
+            FAKE_USER_ID, [SocialProfile(platform="github", url="https://github.com/me")]
+        )
