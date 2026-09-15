@@ -65,6 +65,12 @@ class AnalyticsEvents(StrEnum):
     CONVERSATION_RENAMED = "chat:conversation_renamed"
     CONVERSATION_STARRED = "chat:conversation_starred"
     CONVERSATION_DELETED = "chat:conversation_deleted"
+    # Terminal turn event. Latency props (all ms, measured server-side):
+    # ttft_ms (first response text; absent when no text streamed), e2e_ack_ms
+    # (comms ack), e2e_full_ms (stream DONE after executor wait), delegated,
+    # queued. Executor-leg timings (queue_wait_ms, executor_ttft_ms,
+    # executor_active_ms) ride on agent:run_completed, and HIL waits on the
+    # wide event — not here.
     CHAT_MESSAGE_COMPLETED = "chat:message_completed"
     CHAT_MESSAGE_CANCELLED = "chat:message_cancelled"
     CHAT_MESSAGE_PINNED = "chat:message_pinned"
@@ -205,7 +211,9 @@ class AnalyticsEvents(StrEnum):
     # Human-in-the-loop approvals
     APPROVAL_DECIDED = "approval:decided"
 
-    # Worker / agent lifecycle
+    # Worker / agent lifecycle. AGENT_RUN_COMPLETED/FAILED carry executor
+    # timing props when measured: queue_wait_ms, executor_ttft_ms,
+    # executor_active_ms, queued. Absent on runs dispatched before the stamp.
     AGENT_RUN_STARTED = "agent:run_started"
     AGENT_RUN_COMPLETED = "agent:run_completed"
     AGENT_RUN_FAILED = "agent:run_failed"

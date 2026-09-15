@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 import json
 import secrets
+import time
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -48,6 +49,7 @@ from app.services.bot_token_service import create_bot_session_token
 from app.services.chat.stream import run_chat_stream_background
 from app.services.integrations.marketplace import get_integration_details
 from app.services.integrations.user_integrations import get_user_integration_records
+from app.services.latency_metrics import observe_sse_delivery
 from app.services.payments.payment_service import payment_service
 from app.services.platform_link_service import (
     Platform,
@@ -281,6 +283,9 @@ async def _start_bot_stream_task(
         expires_minutes=15,
     )
     await stream_manager.start_stream(stream_id, conversation_id, user_id)
+    # Same request-accepted clock as the web endpoint, so bot turns share
+    # the web turns' TTFT/E2E definition.
+    t0_perf = time.perf_counter()
 
     def _log_stream_failure(t: asyncio.Task[Any]) -> None:
         if not t.cancelled() and (exc := t.exception()):
@@ -299,6 +304,7 @@ async def _start_bot_stream_task(
             user=user,
             conversation_id=conversation_id,
             source=body.platform,
+            t0_perf=t0_perf,
         ),
         on_done=_log_stream_failure,
     )
@@ -315,6 +321,34 @@ def _bot_data_payload(chunk: str) -> str | None:
     if not chunk.startswith("data: "):
         return None
     return chunk[len("data: ") :].strip()
+
+
+async def _translate_bot_stream_chunk(
+    chunk: str, user_id: str, conversation_id: str
+) -> tuple[str | None, bool]:
+    """Translate one raw wire chunk into a bot frame and whether the stream ends.
+
+    Forwarded keepalives pass through verbatim; ``[DONE]`` becomes the bot's
+    terminal frame; a malformed data frame is logged and dropped rather than
+    aborting the stream.
+    """
+    if chunk.startswith(":"):
+        return chunk, False
+    raw = _bot_data_payload(chunk)
+    if raw is None:
+        return None, False
+    if raw == "[DONE]":
+        payload = json.dumps({"done": True, "conversation_id": conversation_id})
+        return f"data: {payload}\n\n", True
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        log.warning(
+            f"{LogTag.API} Bot stream: dropped a malformed SSE chunk",
+            error_type=type(exc).__name__,
+        )
+        return None, False
+    return await _translate_bot_data_chunk(data, user_id)
 
 
 async def _translate_bot_data_chunk(data: dict[str, Any], user_id: str) -> tuple[str | None, bool]:
@@ -543,50 +577,40 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
             # Send initial keepalive to establish connection
             yield ": keepalive\n\n"
 
+            delivery_start = time.perf_counter()
+            delivery_status = "completed"
             try:
                 async for chunk in stream_manager.subscribe_stream(stream_id):
                     # Match the web stream path: stop forwarding if the bot client
                     # dropped the connection. The background task keeps running and
                     # persists the conversation.
                     if await request.is_disconnected():
+                        delivery_status = "disconnected"
                         log.set(client_disconnected=True)
                         log.info(
                             f"{LogTag.API} Bot client disconnected, stream continues in background",
                             stream_id=stream_id,
                         )
                         break
-                    # Forward keepalive comments directly
-                    if chunk.startswith(":"):
-                        yield chunk
-                        continue
-
-                    raw = _bot_data_payload(chunk)
-                    if raw is None:
-                        continue
-                    if raw == "[DONE]":
-                        yield f"data: {json.dumps({'done': True, 'conversation_id': conversation_id})}\n\n"
-                        return
-
-                    try:
-                        data = json.loads(raw)
-                        frame, done = await _translate_bot_data_chunk(data, user_id)
-                        if frame is not None:
-                            yield frame
-                        if done:
-                            break
-                    except json.JSONDecodeError as exc:
-                        log.warning(
-                            f"{LogTag.API} Bot stream: dropped a malformed SSE chunk",
-                            error_type=type(exc).__name__,
-                        )
-                        continue
+                    frame, stop = await _translate_bot_stream_chunk(chunk, user_id, conversation_id)
+                    if frame is not None:
+                        yield frame
+                    if stop:
+                        # `return` here is behaviourally identical: nothing follows
+                        # the loop inside the try, and both run the same finally.
+                        break  # pragma: no mutate
+            except GeneratorExit:
+                delivery_status = "abandoned"
+                raise
             except asyncio.CancelledError:
                 # Client disconnected mid-stream — expected, not an error. The
                 # background LangGraph task keeps running and persists the result.
+                delivery_status = "disconnected"
                 log.set(client_disconnected=True)
                 log.info(f"{LogTag.API} Bot stream cancelled (client disconnected)")
                 raise
             except Exception as e:
+                delivery_status = "error"
                 log.error(
                     f"{LogTag.API} Bot stream subscription error",
                     stream_id=stream_id,
@@ -595,6 +619,8 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
                     error=str(e),
                 )
                 yield f"data: {json.dumps({'error': 'Stream error occurred'})}\n\n"
+            finally:
+                observe_sse_delivery(time.perf_counter() - delivery_start, status=delivery_status)
 
     # The translator above drops every web-only frame, so the socket can go
     # quiet for minutes while the turn is busy. with_heartbeat guarantees a
