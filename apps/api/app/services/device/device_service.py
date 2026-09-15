@@ -330,8 +330,8 @@ async def rotate_refresh_token(refresh_token: str) -> tuple[str, str, str]:
                 # Same teardown as an explicit revoke: otherwise the device drops
                 # out of the ACTIVE-only list with its integrations left dangling
                 # and any live tunnel stays up until the connect JWT expires.
-                await _teardown_revoked_device(replayed_user_id, replayed_id, integration_ids)
                 await _invalidate_device_manifest(replayed_user_id)
+                await _teardown_revoked_device(replayed_user_id, replayed_id, integration_ids)
                 log.warning(
                     f"{LogTag.API} Device refresh-token reuse detected — revoking device",
                     device_id=replayed_id,
@@ -406,9 +406,9 @@ async def register_device_server(
             existing.status = DeviceServerStatus.CONNECTED
             existing.error_message = None
             await session.commit()
+            await _invalidate_device_manifest(user_id)
             await session.refresh(existing)
             await _ensure_server_integration(user_id, existing)
-            await _invalidate_device_manifest(user_id)
             return existing
 
         integration_id = str(uuid.uuid4())
@@ -423,10 +423,10 @@ async def register_device_server(
         )
         session.add(server)
         await session.commit()
+        await _invalidate_device_manifest(user_id)
         await session.refresh(server)
 
     await _create_server_integration(user_id, device_id, server_key, display_name, integration_id)
-    await _invalidate_device_manifest(user_id)
     return server
 
 
@@ -547,8 +547,8 @@ async def deregister_device_server(
         await session.delete(server)
         await session.commit()
 
-    await _remove_server_cloud_mirror(user_id, integration_id)
     await _invalidate_device_manifest(user_id)
+    await _remove_server_cloud_mirror(user_id, integration_id)
     if notify_device:
         await _send_server_remove(device_id, server_key)
     return True
@@ -772,7 +772,7 @@ async def revoke_device(user_id: str, device_id: str) -> bool:
         integration_ids = await _device_server_integration_ids(session, device_id)
         await session.commit()
 
-    await _teardown_revoked_device(user_id, device_id, integration_ids)
     await _invalidate_device_manifest(user_id)
+    await _teardown_revoked_device(user_id, device_id, integration_ids)
     log.set(device={"operation": "revoke", "device_id": device_id}, user={"id": user_id})
     return True

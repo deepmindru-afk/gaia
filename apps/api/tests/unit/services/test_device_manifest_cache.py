@@ -239,6 +239,26 @@ class TestWritersInvalidateTheManifest:
 
         invalidate.assert_awaited_once_with("u1")
 
+    async def test_invalidation_survives_a_post_commit_failure(
+        self, monkeypatch: pytest.MonkeyPatch, invalidate: AsyncMock
+    ) -> None:
+        """The write is already committed, so the invalidation must precede the
+        fallible cleanup that follows — otherwise a cleanup failure skips it and
+        the manifest serves the old device list for the TTL."""
+        session = _Session(SimpleNamespace(status=DeviceStatus.ACTIVE))
+        monkeypatch.setattr(device_service, "get_db_session", _session_cm(session))
+        monkeypatch.setattr(
+            device_service, "_device_server_integration_ids", AsyncMock(return_value=[])
+        )
+        monkeypatch.setattr(
+            device_service, "_teardown_revoked_device", AsyncMock(side_effect=RuntimeError("boom"))
+        )
+
+        with pytest.raises(RuntimeError):
+            await device_service.revoke_device("u1", "d1")
+
+        invalidate.assert_awaited_once_with("u1")
+
     async def test_refresh_token_reuse_revocation(
         self, monkeypatch: pytest.MonkeyPatch, invalidate: AsyncMock
     ) -> None:
