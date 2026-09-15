@@ -287,6 +287,10 @@ async def pin_message(
     if not updated:
         raise HTTPException(status_code=404, detail="Message not found or update failed")
 
+    capture_event(
+        user_id,
+        AnalyticsEvents.CHAT_MESSAGE_PINNED if pinned else AnalyticsEvents.CHAT_MESSAGE_UNPINNED,
+    )
     response_message = (
         f"Message with ID {message_id} pinned successfully"
         if pinned

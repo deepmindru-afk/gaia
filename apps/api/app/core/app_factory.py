@@ -33,6 +33,7 @@ from app.schemas.errors import (
     ValidationIssue,
     error_response,
 )
+from app.services import latency_metrics as _latency_metrics  # noqa: F401 -- side effects
 
 # Eager-import so Prometheus collectors register at startup; otherwise the
 # storage layer lazy-imports on first use and /metrics omits fs_op_* metadata

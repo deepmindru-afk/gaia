@@ -71,6 +71,10 @@ class AgentConfigurable(TypedDict, total=False):
     own keys, checkpoints it) — this only describes the GAIA-owned keys.
     """
 
+    # Stamped at the top level by build_agent_config and folded in here by
+    # LangGraph's ensure_config before a node runs.
+    agent_name: str
+
     # --- identity: who and which conversation ------------------------------
     #: LangGraph's checkpoint thread. For child agents this is the WRAPPED
     #: thread (``<integration>_executor_<conv>``), never the conversation id.
@@ -238,6 +242,16 @@ class AgentConfigurableView(BaseModel):
 def read_agent_configurable(config: RunnableConfig | None) -> AgentConfigurableView:
     """Return agent_configurable, parsed into AgentConfigurableView."""
     return AgentConfigurableView.model_validate(agent_configurable(config))
+
+
+def config_agent_name(config: RunnableConfig | None) -> str:
+    """Which agent a run belongs to, for metric labels ("unknown" when unstamped).
+
+    build_agent_config stamps agent_name at the top level, and LangGraph's
+    ensure_config folds it into configurable before any node sees the config,
+    so configurable is the one place a node can read it.
+    """
+    return agent_configurable(config).get("agent_name") or "unknown"
 
 
 def runtime_configurable(request: ToolCallRequest) -> AgentConfigurable:

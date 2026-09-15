@@ -15,6 +15,7 @@ from app.schemas.hil_schemas import (
     SetToolOverrideRequest,
     UpdateHILPreferencesRequest,
 )
+from app.services.analytics_service import AnalyticsEvents, capture_context_event
 from app.services.hil.preferences import (
     get_hil_preferences,
     set_tool_override,
@@ -50,6 +51,7 @@ async def post_approval_decision(
         scope=payload.scope,
     )
     log.set(hil={"resolved": True})
+    capture_context_event(AnalyticsEvents.APPROVAL_DECIDED, {"decision": payload.decision})
     return ApprovalDecisionResponse(success=True)
 
 
@@ -76,6 +78,14 @@ async def post_batch_decision(
         [(item.approval_id, item.decision, item.feedback) for item in payload.decisions],
     )
     log.set(hil={"resolved": sum(1 for o in outcomes if o.resolved)})
+    capture_context_event(
+        AnalyticsEvents.APPROVAL_DECIDED,
+        {
+            "batch": True,
+            "decisions": len(payload.decisions),
+            "resolved": sum(1 for o in outcomes if o.resolved),
+        },
+    )
     return BatchApprovalDecisionResponse(outcomes=outcomes)
 
 

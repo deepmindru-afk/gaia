@@ -20,6 +20,7 @@ from app.models.files_models import FileDocument
 from app.models.message_models import FileData
 from app.models.user_models import AuthenticatedUser
 from app.schemas.file import FileDeletedResponse, UpdateFileRequest
+from app.services.analytics_service import AnalyticsEvents, capture_context_event
 from app.services.files import FileService
 from app.services.storage import SAFE_PATH_ID_PATTERN
 from shared.py.wide_events import log
@@ -112,6 +113,7 @@ async def update_file_endpoint(
         )
 
         log.set(user={"id": user_id}, operation="update", file_id=file_id, outcome="success")
+        capture_context_event(AnalyticsEvents.FILE_UPDATED)
         # CacheInvalidator erases the wrapped function's return type; FileService.update
         # is declared -> FileDocument, so this is correct by construction.
         return cast(FileDocument, result)
@@ -147,6 +149,7 @@ async def delete_file_endpoint(
             file_id=file_id,
             outcome="success",
         )
+        capture_context_event(AnalyticsEvents.FILE_DELETED)
         # CacheInvalidator erases the wrapped function's return type; FileService.delete
         # is declared -> FileDeletedResponse, so this is correct by construction.
         return cast(FileDeletedResponse, result)

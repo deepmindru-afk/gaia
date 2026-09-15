@@ -9,6 +9,7 @@ from posthog.ai.langchain import CallbackHandler as PostHogCallbackHandler
 import pytest
 
 from app.agents.llm.lane import AgentRole, ModelLane
+from app.agents.llm.ttft import LLMTtftCallback
 from app.agents.llm.types import LLMProviderName
 from app.config.posthog import POSTHOG_PROVIDER_KEY
 from app.constants.cache import CUSTOM_INT_METADATA_TTL, HANDOFF_METADATA_CACHE_PREFIX
@@ -20,6 +21,7 @@ from app.helpers.agent_helpers import (
     AgentTracing,
     AgentTurn,
     _accumulate_silent_custom_event,
+    _build_agent_callbacks,
     _collect_silent_tool_entries,
     _hold_silent_chunk,
     _record_interruption_quietly,
@@ -1459,6 +1461,22 @@ DEV_OPTION = {
 }
 
 
+class TestBuildAgentCallbacks:
+    @patch("app.helpers.agent_helpers.build_langfuse_callback", return_value=None)
+    @patch("app.helpers.agent_helpers.providers")
+    def test_every_run_carries_the_provider_ttft_callback(self, mock_providers, _mock_langfuse):
+        """The TTFT callback rides the run's list on every tier — it is the only
+        source of true provider first-token latency. Dropping the append silences
+        that metric everywhere at once, and no other test would see it."""
+        mock_providers.is_available.return_value = False
+        mock_providers.get.return_value = None
+
+        callbacks = _build_agent_callbacks(CONV_ID, FAKE_USER, "comms_agent", None)
+
+        assert len(callbacks) == 1
+        assert isinstance(callbacks[0], LLMTtftCallback)
+
+
 class TestBuildAgentConfigCallbackWiring:
     @patch("app.helpers.agent_helpers.resolve_lane", new_callable=AsyncMock)
     @patch("app.helpers.agent_helpers._build_agent_callbacks")
@@ -1565,6 +1583,59 @@ class TestBuildAgentConfigLaneResolution:
 
         mock_resolve.assert_awaited_once_with(USER_ID, AgentRole.SUBAGENT, DEV_OPTION)
         assert config["configurable"]["lane"] == DEV_LANE.to_configurable()
+
+
+class TestBuildAgentConfigLaneMetadata:
+    @patch("app.helpers.agent_helpers.providers")
+    async def test_metadata_carries_the_lanes_provider_and_model(self, mock_providers):
+        """The TTFT callback reads its labels off run metadata, so the lane must
+        land there exactly: a resolved lane that never reaches metadata meters
+        every sample as the wrong provider/model."""
+        mock_providers.get.return_value = None
+        lane = ModelLane(
+            provider=LLMProviderName.GEMINI,
+            model="gemini-flash",
+            reasoning=None,
+            provider_pin=None,
+            max_input_tokens=128_000,
+        )
+
+        config = await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="executor",
+            ),
+            thread=AgentThread(base_configurable={"lane": lane.to_configurable()}),
+        )
+
+        assert config["metadata"]["lane_provider"] == "gemini"
+        assert config["metadata"]["lane_model"] == "gemini-flash"
+
+    @patch("app.helpers.agent_helpers.providers")
+    async def test_a_lane_with_no_model_metadata_says_default(self, mock_providers):
+        """The custom dev endpoint pins no model; metadata must read "default"
+        rather than a null, which the callback would render as an unknown label."""
+        mock_providers.get.return_value = None
+        lane = ModelLane(
+            provider=LLMProviderName.CUSTOM,
+            model=None,
+            reasoning=None,
+            provider_pin=None,
+            max_input_tokens=128_000,
+        )
+
+        config = await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="executor",
+            ),
+            thread=AgentThread(base_configurable={"lane": lane.to_configurable()}),
+        )
+
+        assert config["metadata"]["lane_provider"] == "custom"
+        assert config["metadata"]["lane_model"] == "default"
 
 
 class TestBuildAgentConfigLangfuseWiring:

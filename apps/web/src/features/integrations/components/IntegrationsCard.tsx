@@ -47,11 +47,11 @@ const IntegrationItem: React.FC<{
 
   return (
     <div
-      className={`flex min-h-12 flex-col justify-center ${gapClass} overflow-hidden ${size === "small" ? "rounded-xl" : "rounded-2xl"} bg-zinc-800/40 ${paddingClass} transition hover:bg-zinc-700`}
+      className={`flex min-h-12 items-center ${gapClass} overflow-hidden ${size === "small" ? "rounded-xl" : "rounded-2xl"} bg-zinc-800/40 ${paddingClass} transition hover:bg-zinc-700`}
     >
       <button
         type="button"
-        className="flex min-w-0 cursor-pointer items-center gap-3 text-left"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
         onClick={handleClick}
       >
         <div className="shrink-0">
@@ -77,34 +77,26 @@ const IntegrationItem: React.FC<{
         )}
       </button>
 
-      <div className="shrink-0 flex items-center gap-2">
-        {/* Status Dots - always show */}
-        {isConnected && (
-          <span className="h-2 w-2 rounded-full bg-success mr-2" />
-        )}
-
-        {state === "pending" && (
-          <span className="h-2 w-2 rounded-full bg-warning mr-2" />
-        )}
-
-        {state === "expired" && (
-          <span className="h-2 w-2 rounded-full bg-danger mr-2" />
-        )}
-
-        {/* Action button — pending reads as Retry, expired as Reconnect, never Connect */}
-        {(isAvailable || needsAttention) && !isConnected && (
-          <Button
-            size="sm"
-            variant="flat"
-            color={needsAttention ? "warning" : "primary"}
-            className="text-xs"
-            startContent={
-              needsAttention ? <RedoIcon width={16} height={16} /> : undefined
-            }
-            onPress={handleConnectClick}
-          >
-            {CONNECT_ACTION_LABEL[state]}
-          </Button>
+      {/* Inline status: a colored dot when connected, otherwise the action
+          button (pending reads as Retry, expired as Reconnect, never Connect). */}
+      <div className="flex shrink-0 items-center">
+        {isConnected ? (
+          <span className="h-2 w-2 rounded-full bg-success" />
+        ) : (
+          (isAvailable || needsAttention) && (
+            <Button
+              size="sm"
+              variant="flat"
+              color={needsAttention ? "warning" : "primary"}
+              className="text-xs"
+              startContent={
+                needsAttention ? <RedoIcon width={16} height={16} /> : undefined
+              }
+              onPress={handleConnectClick}
+            >
+              {CONNECT_ACTION_LABEL[state]}
+            </Button>
+          )
         )}
       </div>
     </div>
