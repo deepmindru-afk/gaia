@@ -1042,6 +1042,7 @@ class TestLinearCreateIssueRelation:
                 AUTH_CREDS,
             )
 
+    @pytest.mark.regression
     def test_create_relation_failure_without_a_relation_raises_the_domain_error(
         self, tools, proxy
     ) -> None:
