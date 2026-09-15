@@ -15,7 +15,7 @@ conversation. TTL of 30 minutes is a safety net — released explicitly.
 
 from dataclasses import dataclass, replace
 import time
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
@@ -185,9 +185,9 @@ async def run_executor_background(
                 await release_resume_dispatch(run.conversation_id)
 
 
-def _run_props(run: ExecutorRun) -> dict[str, Any]:
+def _run_props(run: ExecutorRun) -> dict[str, str]:
     """Build the lifecycle props shared by the start and terminal events."""
-    props: dict[str, Any] = {
+    props: dict[str, str] = {
         "agent": "executor",
         "mode": "background",
         "conversation_id": run.conversation_id,
@@ -244,7 +244,7 @@ def _active_status(result_type: str, cancelled: bool) -> str:
 def _capture_executor_terminal(
     run: ExecutorRun,
     *,
-    run_props: dict[str, Any],
+    run_props: dict[str, str],
     queued: bool,
     timing_fields: dict[str, float],
     result_type: str,

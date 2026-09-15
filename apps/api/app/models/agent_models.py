@@ -251,7 +251,8 @@ def config_agent_name(config: RunnableConfig | None) -> str:
     ensure_config folds it into configurable before any node sees the config,
     so configurable is the one place a node can read it.
     """
-    return agent_configurable(config).get("agent_name") or "unknown"
+    configurable: AgentConfigurable = agent_configurable(config)
+    return configurable.get("agent_name") or "unknown"
 
 
 def runtime_configurable(request: ToolCallRequest) -> AgentConfigurable:
@@ -265,6 +266,18 @@ def runtime_configurable(request: ToolCallRequest) -> AgentConfigurable:
     if not isinstance(config, dict):
         return {}
     return agent_configurable(cast(RunnableConfig, config))
+
+
+class LlmCallMetadata(TypedDict, total=False):
+    """The run-metadata keys the TTFT callback reads off one LLM call.
+
+    lane_* is stamped by build_agent_config for the whole run; llm_label by
+    ainvoke_llm per call (under LLM_LABEL_METADATA_KEY).
+    """
+
+    lane_provider: str
+    lane_model: str
+    llm_label: str
 
 
 class AgentRunnableConfig(RunnableConfig):
