@@ -61,6 +61,9 @@ class StreamSession:
     # Voice-mode streams: the executor's finalize step publishes a TTS-only
     # ``voice_tts`` frame with its narrated answer for the voice agent to speak.
     voice_mode: bool = False
+    # ``perf_counter`` of this stream's first executor frame, set once by the
+    # writer. A redirect's second run must not inherit the cancelled run's.
+    executor_first_frame_perf: float | None = None
     # tool_call_ids already streamed: a nested subagent run's chunks replay
     # into the outer stream too, so a second sighting is always the echo.
     streamed_tool_outputs: set[str] = field(default_factory=set)
@@ -87,6 +90,14 @@ class RunIdentity:
     kind: RunKind = RunKind.QUEUED
     #: The ORIGINAL live turn's bot message id — see ``ExecutorRun.bot_message_id``.
     bot_message_id: str | None = None
+    #: ``perf_counter`` stamped by ``call_executor`` at dispatch. Run start
+    #: minus this is the queue wait. ``None`` on pre-stamp runs; cleared on
+    #: HIL pause re-record (the resume's wait was user time, not queue time).
+    t_dispatch_perf: float | None = None
+    #: Whether the run waited on the per-conversation busy-lock queue before it
+    #: started. Metric-only: a HIL resume is ``RunKind.QUEUED`` (it runs on its
+    #: own stream) but never queued on the lock, so it must not label as queued.
+    queued: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,6 +126,10 @@ class ExecutorRun:
     #: work, matching ``build_agent_config``: the only callers that leave the
     #: source unset are the silent background paths.
     source_category: SourceCategory = SourceCategory.BG
+    #: Dispatch stamp carried from ``RunIdentity`` — see its field comment.
+    t_dispatch_perf: float | None = None
+    #: Busy-lock queue origin, carried from ``RunIdentity`` — see its comment.
+    queued: bool = False
 
     @classmethod
     def from_configurable(
@@ -155,6 +170,8 @@ class ExecutorRun:
             source_category=SourceCategory(
                 configurable.get("source_category") or SourceCategory.BG.value
             ),
+            t_dispatch_perf=identity.t_dispatch_perf,
+            queued=identity.queued,
         )
 
     @property
@@ -167,6 +184,8 @@ class ExecutorRun:
             task_id=self.task_id,
             user_message_id=self.user_message_id,
             bot_message_id=self.bot_message_id,
+            t_dispatch_perf=self.t_dispatch_perf,
+            queued=self.queued,
         )
 
     @property
@@ -251,7 +270,9 @@ _abandoned: deque[str] = deque(maxlen=_ABANDONED_REMEMBERED)
 
 def mark_executor_spawned(stream_id: str) -> None:
     """Record that call_executor spawned a background task for this stream."""
-    get_or_create_session(stream_id).executor_spawned = True
+    session = get_or_create_session(stream_id)
+    session.executor_spawned = True
+    session.executor_first_frame_perf = None  # new incarnation, new first frame
 
 
 def mark_executor_queued(stream_id: str, task_id: str) -> None:

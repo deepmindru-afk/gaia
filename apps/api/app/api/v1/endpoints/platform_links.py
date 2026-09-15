@@ -251,4 +251,8 @@ async def initiate_platform_connect(
 
     result = await start_platform_connect(user_id, platform, phone=body.phone)
     log.set(outcome="success", auth_type=result.auth_type)
+    capture_context_event(
+        AnalyticsEvents.INTEGRATION_CONNECT_INITIATED,
+        {"integration_id": platform, "auth_type": result.auth_type},
+    )
     return result

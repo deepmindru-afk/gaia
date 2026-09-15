@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import json
+import time
 from typing import Any, TypedDict, cast
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from app.agents.core.graph_manager import CompiledAgentGraph
 from app.agents.core.interruption import record_interruption
 from app.agents.core.subagents.registry import get_subagent_by_id
 from app.agents.llm.lane import AgentRole, ModelLane, resolve_lane
+from app.agents.llm.ttft import LLMTtftCallback
 from app.agents.llm.types import DevModelOption
 from app.config.langfuse import build_langfuse_callback
 from app.constants.cache import (
@@ -47,6 +49,7 @@ from app.models.stream_events import (
     ModelFallbackFrame,
     ToolOutputPayload,
 )
+from app.services.latency_metrics import observe_comms_graph, span
 from app.services.mcp.mcp_resource_fetcher import fetch_mcp_ui_resource
 from app.utils.agent_utils import (
     format_sse_data,
@@ -195,6 +198,9 @@ def _build_agent_callbacks(
 
     if usage_metadata_callback:
         callbacks.append(usage_metadata_callback)
+
+    # True provider first-token latency for every tier on this run.
+    callbacks.append(LLMTtftCallback())
 
     return callbacks
 
@@ -600,6 +606,9 @@ async def build_agent_config(
         "user_id": user.get("user_id"),
         "source_category": source_category,
         "source_channel": source_channel,
+        # Lane identity for the TTFT callback, which reads it off run metadata.
+        "lane_provider": model_lane.provider.value,
+        "lane_model": model_lane.model or "default",
     }
     _stamp_langfuse(
         configurable, metadata, effective_trace_id, effective_tags, user, conversation_id
@@ -908,6 +917,9 @@ class _StreamAccumulators:
     # We detect UI metadata in "updates" but emit the mcp_app event in "messages"
     # when the ToolMessage arrives with the actual result.
     pending_mcp_apps: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # perf_counter of the first comms text yield in this run; None until then.
+    # Only comms_agent text reaches the yield below, so executor runs never stamp.
+    pipeline_ttft_perf: float | None = None
 
 
 async def _emit_mcp_app_event(
@@ -1145,6 +1157,8 @@ async def _stream_messages(
     if chunk and isinstance(chunk, (AIMessage, AIMessageChunk)):
         message_id, held_text = _held_chunk_text(chunk, is_comms, state.tool_call_message_ids)
         if held_text:
+            if state.pipeline_ttft_perf is None:
+                state.pipeline_ttft_perf = time.perf_counter()
             yield format_sse_response(held_text)
             state.message_texts[message_id] = state.message_texts.get(message_id, "") + held_text
 
@@ -1241,6 +1255,30 @@ def _parse_stream_event(event: tuple[Any, ...]) -> tuple[str, Any] | None:
     return None
 
 
+async def _frames_for_stream_event(
+    event: tuple[Any, ...],
+    state: _StreamAccumulators,
+    is_comms: bool,
+    stream_id: str | None,
+    user_id: str | None,
+) -> AsyncGenerator[str, None]:
+    """Yield the SSE frames one langgraph stream event produces."""
+    parsed = _parse_stream_event(event)
+    if parsed is None:
+        return
+    stream_mode, payload = parsed
+    if stream_mode == "updates":
+        frames = _stream_updates(payload, state, is_comms, user_id)
+    elif stream_mode == "messages":
+        frames = _stream_messages(payload, state, is_comms, stream_id, user_id)
+    elif stream_mode == "custom":
+        frames = _stream_custom(payload, state, user_id)
+    else:
+        return
+    async for frame in frames:
+        yield frame
+
+
 async def execute_graph_streaming(
     graph: CompiledAgentGraph,
     initial_state: dict[str, Any],
@@ -1262,6 +1300,8 @@ async def execute_graph_streaming(
     state = _StreamAccumulators()
 
     cancelled = False
+    graph_status = "success"
+    run_start = time.perf_counter()
     # Yields (namespace, mode, payload) triples — occasionally (mode, payload)
     # pairs, handled below — and is a real async generator, so it supports
     # aclose(); langgraph's astream overloads express neither.
@@ -1274,31 +1314,35 @@ async def execute_graph_streaming(
             subgraphs=True,
         ),
     )
-    async for event in stream:
-        # Check for cancellation at each event
-        if stream_id and await stream_manager.is_cancelled(stream_id):
-            cancelled = True
-            break
-
-        parsed = _parse_stream_event(event)
-        if parsed is None:
-            continue
-        stream_mode, payload = parsed
-
-        if stream_mode == "updates":
-            frames = _stream_updates(payload, state, is_comms, user_id)
-        elif stream_mode == "messages":
-            frames = _stream_messages(payload, state, is_comms, stream_id, user_id)
-        elif stream_mode == "custom":
-            frames = _stream_custom(payload, state, user_id)
-        else:
-            continue
-        async for frame in frames:
-            yield frame
+    with span() as elapsed_graph:
+        try:
+            async for event in stream:
+                # Check for cancellation at each event
+                if stream_id and await stream_manager.is_cancelled(stream_id):
+                    cancelled = True
+                    break
+                async for frame in _frames_for_stream_event(
+                    event, state, is_comms, stream_id, user_id
+                ):
+                    yield frame
+        except GeneratorExit:
+            # Abandoned mid-stream without cancellation (server shutdown path):
+            # neither success nor cancelled, and neither label may claim it.
+            graph_status = "abandoned"
+            raise
+        except Exception:
+            graph_status = "error"
+            raise
+        finally:
+            observe_comms_graph(
+                elapsed_graph(), status=graph_status if not cancelled else "cancelled"
+            )
 
     # A run that ends without its closing node update (cancellation, a graph that
     # never reaches the agent node again) still owes the user what it streamed.
     state.complete_message = _flush_held_messages(state.complete_message, state.message_texts)
+    if state.pipeline_ttft_perf is not None:
+        log.set(comms_pipeline_ttft_ms=round((state.pipeline_ttft_perf - run_start) * 1000.0, 2))
 
     if cancelled:
         # aclose() raises GeneratorExit at the run's yield point so LangGraph

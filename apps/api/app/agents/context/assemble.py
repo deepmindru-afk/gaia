@@ -26,6 +26,7 @@ from app.agents.context.text import (
     VOLATILE_SECTION_JOIN,
 )
 from app.constants.log_tags import LogTag
+from app.services.latency_metrics import observe_context_assemble, span
 from shared.py.wide_events import log
 
 
@@ -73,7 +74,11 @@ async def _render_section(section: Section, ctx: SectionContext) -> tuple[str, s
     which text belongs to which section — pairing bare strings back by
     position risked an invisible off-by-one landing in the byte-stable block.
     """
-    return section.id, await section.fetch(ctx)
+    with span() as elapsed:
+        try:
+            return section.id, await section.fetch(ctx)
+        finally:
+            observe_context_assemble(elapsed(), stage=f"section:{section.id}")
 
 
 async def _gather_sections(ctx: SectionContext) -> AssembledContext:
@@ -85,11 +90,18 @@ async def _gather_sections(ctx: SectionContext) -> AssembledContext:
     stable_sections = sections_for(ctx.tier, PromptSlot.DYNAMIC_STABLE)
     volatile_sections = sections_for(ctx.tier, PromptSlot.MEMORY_RECALL)
 
-    rendered = dict(
-        await asyncio.gather(
-            *(_render_section(section, ctx) for section in (*stable_sections, *volatile_sections))
-        )
-    )
+    with span() as elapsed_total:
+        try:
+            rendered = dict(
+                await asyncio.gather(
+                    *(
+                        _render_section(section, ctx)
+                        for section in (*stable_sections, *volatile_sections)
+                    )
+                )
+            )
+        finally:
+            observe_context_assemble(elapsed_total(), stage="total")
 
     stable_text = STABLE_SECTION_JOIN.join(
         text for section in stable_sections if (text := rendered[section.id])

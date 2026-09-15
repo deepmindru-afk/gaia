@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 import json
+import time
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -64,6 +65,7 @@ from app.services.bot_token_service import create_bot_session_token
 from app.services.chat.stream import run_chat_stream_background
 from app.services.integrations.marketplace import get_integration_details
 from app.services.integrations.user_integrations import get_user_integration_records
+from app.services.latency_metrics import observe_sse_delivery
 from app.services.payments.payment_service import payment_service
 from app.services.platform_link_service import (
     Platform,
@@ -393,6 +395,42 @@ def _bot_stream_failure_logger(
     return _log_stream_failure
 
 
+async def _forward_bot_frames(
+    request: Request,
+    *,
+    stream_id: str,
+    conversation_id: str,
+    upgrade_url: Callable[[], Awaitable[str]],
+) -> AsyncGenerator[str, None]:
+    """Translate the Redis stream into bot frames until it ends or the client leaves."""
+    async for chunk in stream_manager.subscribe_stream(stream_id):
+        # Match the web stream path: stop forwarding if the bot client
+        # dropped the connection. The background task keeps running and
+        # persists the conversation.
+        if await request.is_disconnected():
+            log.set(client_disconnected=True)
+            log.info(
+                f"{LogTag.API} Bot client disconnected, stream continues in background",
+                stream_id=stream_id,
+            )
+            return
+
+        frame, data, stop = _bot_stream_control_frame(chunk, conversation_id)
+        if frame is not None:
+            yield frame
+            if stop:
+                return
+            continue
+        if data is None:
+            continue
+
+        payload_frame, stop = await _bot_stream_payload_frame(data, upgrade_url)
+        if payload_frame is not None:
+            yield payload_frame
+        if stop:
+            return
+
+
 async def _bot_stream_from_redis(
     request: Request,
     *,
@@ -419,40 +457,32 @@ async def _bot_stream_from_redis(
         # Send initial keepalive to establish connection
         yield comment_keepalive_frame()
 
+        delivery_start = time.perf_counter()
+        delivery_status = "completed"
         try:
-            async for chunk in stream_manager.subscribe_stream(stream_id):
-                # Match the web stream path: stop forwarding if the bot client
-                # dropped the connection. The background task keeps running and
-                # persists the conversation.
-                if await request.is_disconnected():
-                    log.set(client_disconnected=True)
-                    log.info(
-                        f"{LogTag.API} Bot client disconnected, stream continues in background",
-                        stream_id=stream_id,
-                    )
-                    break  # pragma: no mutate — last stmt in the loop; return is identical
-
-                frame, data, stop = _bot_stream_control_frame(chunk, conversation_id)
-                if frame is not None:
-                    yield frame
-                    if stop:
-                        return
-                    continue
-                if data is None:
-                    continue
-
-                payload_frame, stop = await _bot_stream_payload_frame(data, upgrade_url)
-                if payload_frame is not None:
-                    yield payload_frame
-                if stop:
-                    break  # pragma: no mutate — last stmt in the loop; return is identical
+            async for frame in _forward_bot_frames(
+                request,
+                stream_id=stream_id,
+                conversation_id=conversation_id,
+                upgrade_url=upgrade_url,
+            ):
+                yield frame
+            # The forwarder ends the same way for a finished turn and for a
+            # client that polled as gone; only the request knows which.
+            if await request.is_disconnected():
+                delivery_status = "disconnected"
+        except GeneratorExit:
+            delivery_status = "abandoned"
+            raise
         except asyncio.CancelledError:
             # Client disconnected mid-stream — expected, not an error. The
             # background LangGraph task keeps running and persists the result.
+            delivery_status = "disconnected"
             log.set(client_disconnected=True)
             log.info(f"{LogTag.API} Bot stream cancelled (client disconnected)")
             raise
         except Exception as e:
+            delivery_status = "error"
             log.error(
                 f"{LogTag.API} Bot stream subscription error",
                 stream_id=stream_id,
@@ -461,6 +491,8 @@ async def _bot_stream_from_redis(
                 error=str(e),
             )
             yield stream_error_frame()
+        finally:
+            observe_sse_delivery(time.perf_counter() - delivery_start, status=delivery_status)
 
 
 @router.post(
@@ -514,6 +546,9 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
     # Generate stream ID and start background streaming
     stream_id = str(uuid4())
     await stream_manager.start_stream(stream_id, conversation_id, user_id)
+    # Same request-accepted clock as the web endpoint, so bot turns share
+    # the web turns' TTFT/E2E definition.
+    t0_perf = time.perf_counter()
 
     # Launch background task
     spawn_background_task(
@@ -523,6 +558,7 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
             user=user,
             conversation_id=conversation_id,
             source=body.platform,
+            t0_perf=t0_perf,
         ),
         on_done=_bot_stream_failure_logger(stream_id, conversation_id),
     )

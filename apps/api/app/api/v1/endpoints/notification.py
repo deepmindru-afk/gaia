@@ -40,7 +40,7 @@ from app.models.notification.request_models import (
 from app.models.user_models import AuthenticatedUser
 from app.schemas.errors import HTML_ROUTE_ERROR_RESPONSES
 from app.services.account_fs import schedule_account_sync
-from app.services.analytics_service import AnalyticsEvents, capture_context_event
+from app.services.analytics_service import AnalyticsEvents, capture_context_event, capture_event
 from app.services.device_token_service import get_device_token_service
 from app.services.notification_service import notification_service
 from app.utils.notification.channel_preferences import fetch_channel_preferences
@@ -103,6 +103,7 @@ async def unsubscribe_from_emails(token: Annotated[str, Query()]) -> Response:
     log.set(user={"id": user_id}, operation="unsubscribe_email_one_click")
     await _disable_email_channel(user_id)
     log.set(outcome="success")
+    capture_event(user_id, AnalyticsEvents.NOTIFICATION_UNSUBSCRIBED)
     return Response(status_code=200)
 
 
@@ -274,6 +275,7 @@ async def execute_action(
 
         log.set(outcome="success")
         log.set_ns("notification", success=True)
+        capture_context_event(AnalyticsEvents.NOTIFICATION_ACTION_EXECUTED)
         return NotificationResponse(
             success=True,
             message=result.message or "Action executed successfully",
@@ -321,6 +323,7 @@ async def mark_as_read(
 
         log.set(outcome="success")
         log.set_ns("notification", success=True)
+        capture_context_event(AnalyticsEvents.NOTIFICATION_READ, {"count": 1})
         return NotificationResponse(
             success=True,
             message="Notification marked as read",
@@ -373,7 +376,10 @@ async def bulk_actions(
             result_count=successful,
             success=successful == total,
         )
-
+        capture_context_event(
+            AnalyticsEvents.NOTIFICATION_BULK_ACTION,
+            {"action": request.action, "successful": successful, "total": total},
+        )
         return NotificationResponse(
             success=True,
             message=f"Bulk action completed: {successful}/{total} successful",

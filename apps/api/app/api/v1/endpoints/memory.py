@@ -241,6 +241,7 @@ async def update_memory_document(
     result = await memory_engine.update_document(user_id, doc_type, request.content)
 
     log.set(memory=MemoryContext(operation="update_document", version=result.version))
+    capture_context_event(AnalyticsEvents.MEMORY_DOCUMENT_UPDATED)
     return result
 
 
@@ -285,6 +286,7 @@ async def create_memory(
 
     entry = retained.entry
     log.set(memory=MemoryContext(operation="create", memory_id=entry.id, success=True))
+    capture_context_event(AnalyticsEvents.MEMORY_CREATED)
     return CreateMemoryResponse(
         success=True,
         memory_id=entry.id,
@@ -340,6 +342,7 @@ async def update_memory(
     entry = await memory_engine.update_memory(user_id, memory_id, request.content)
 
     log.set(memory=MemoryContext(operation="update", new_memory_id=entry.id, version=entry.version))
+    capture_context_event(AnalyticsEvents.MEMORY_UPDATED)
     return entry
 
 

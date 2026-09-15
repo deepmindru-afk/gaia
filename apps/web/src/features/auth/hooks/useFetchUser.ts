@@ -85,9 +85,6 @@ const useFetchUser = () => {
     !hasTrackedOAuthLogin
   ) {
     hasTrackedOAuthLogin = true;
-    trackEvent(ANALYTICS_EVENTS.USER_LOGGED_IN, {
-      method: "workos_oauth",
-    });
 
     // A pending checkout takes priority; useCheckoutResume redirects to Dodo.
     const needsOnboarding = !data.onboarding?.completed;
