@@ -84,16 +84,15 @@ _inflight_core: dict[tuple[asyncio.AbstractEventLoop, str], asyncio.Task[str]] =
 
 
 def _forget_inflight(key: tuple[asyncio.AbstractEventLoop, str], task: asyncio.Task[str]) -> None:
-    """Drop the finished fetch and consume its result.
+    """Drop the finished fetch, if it is still the registered one.
 
     Eviction is load-bearing, not cleanup: without it the registry would retain
-    every user's core context for the process's life. ``task.exception()``
-    consumes a failure so asyncio does not warn about an unretrieved exception;
-    ``_fetch_core_context`` returns ``""`` rather than raising.
+    every user's core context for the process's life. Nothing consumes the task's
+    result — ``_fetch_core_context`` catches and returns ``""``, so it never holds
+    an exception to retrieve.
     """
-    _inflight_core.pop(key, None)
-    if not task.cancelled():
-        task.exception()
+    if _inflight_core.get(key) is task:
+        del _inflight_core[key]
 
 
 async def _core_context(user_id: str | None) -> str:

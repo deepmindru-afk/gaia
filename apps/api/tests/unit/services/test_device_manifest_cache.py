@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.constants.cache import ONE_DAY_TTL
 from app.constants.device_bridge import MAX_ACTIVE_DEVICES_PER_USER
 from app.models.device import DeviceStatus
 from app.services.device import device_service
@@ -67,33 +68,55 @@ def _session_cm(session: _Session):
     return _cm
 
 
+#: The exact generation-scoped key the reader must use for user "u1" at
+#: generation 0 — hard-coded so a mutation of the prefix/method/arg-hash is caught.
+_MANIFEST_KEY = "device_manifest:u1:q:0:manifest:v1"
+
+
 @pytest.fixture
 def manifest_cache(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """In-memory stand-ins for the generation-scoped Redis seams.
+    """Recording stand-ins for the generation-scoped Redis seams.
 
-    ``values`` is the query store and ``generations`` the per-user counter — the
-    two things the repository cache primitives read and write.
+    Every call is recorded (key, policy, ttl, model), so a test can pin them and a
+    mutation of any is caught — a fake that ignored its args would let a mutated
+    key or policy pass.
     """
     values: dict[str, object] = {}
-    generations: dict[str, int] = {}
+    generations: dict[str, object] = {}
+    gets: list[tuple[str, object]] = []
+    sets: list[tuple[str, int, object]] = []
+    reads: list[tuple[object, str]] = []
+    bumps: list[tuple[object, str]] = []
 
     async def _get(key: str, model: object = None) -> object:
+        gets.append((key, model))
         return values.get(key)
 
     async def _set(key: str, value: object, ttl: int = 0, model: object = None) -> None:
+        sets.append((key, ttl, model))
         values[key] = value
 
-    async def _read_generation(_policy: object, scope: str) -> int:
+    async def _read_generation(policy: object, scope: str) -> object:
+        reads.append((policy, scope))
         return generations.get(scope, 0)
 
-    async def _bump_generation(_policy: object, scope: str) -> None:
-        generations[scope] = generations.get(scope, 0) + 1
+    async def _bump_generation(policy: object, scope: str) -> None:
+        bumps.append((policy, scope))
+        generations[scope] = (generations.get(scope) or 0) + 1
 
     monkeypatch.setattr(device_service, "get_cache", _get)
     monkeypatch.setattr(device_service, "set_cache", _set)
     monkeypatch.setattr(device_service, "read_generation", _read_generation)
     monkeypatch.setattr(device_service, "bump_generation", _bump_generation)
-    return SimpleNamespace(values=values, generations=generations, set=_set)
+    return SimpleNamespace(
+        values=values,
+        generations=generations,
+        gets=gets,
+        sets=sets,
+        reads=reads,
+        bumps=bumps,
+        set=_set,
+    )
 
 
 @pytest.fixture
@@ -125,6 +148,44 @@ class TestGetDeviceManifest:
         assert entries == [
             DeviceManifestEntry(id="d1", name="MacBook", platform="macOS", servers=["Local Files"])
         ]
+
+    async def test_the_cache_key_policy_and_ttl_are_exact(
+        self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
+    ) -> None:
+        """Pins every argument the cache seams receive. The fake honours whatever
+        it is handed, so without this a mutated key, policy, ttl or model still
+        passes — the mutation gate requires them observed."""
+        list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
+        list_servers = AsyncMock(return_value={"d1": [SimpleNamespace(display_name="Local Files")]})
+        monkeypatch.setattr(device_service, "list_devices", list_devices)
+        monkeypatch.setattr(device_service, "list_device_servers", list_servers)
+
+        manifest = await device_service.get_device_manifest("u1")
+
+        assert manifest == [
+            DeviceManifestEntry(id="d1", name="MacBook", platform="macOS", servers=["Local Files"])
+        ]
+        list_devices.assert_awaited_once_with("u1")
+        list_servers.assert_awaited_once_with(["d1"])
+        assert manifest_cache.reads == [(device_service._DEVICE_MANIFEST_POLICY, "u1")]
+        assert manifest_cache.gets == [(_MANIFEST_KEY, list[DeviceManifestEntry])]
+        assert manifest_cache.sets == [(_MANIFEST_KEY, ONE_DAY_TTL, list[DeviceManifestEntry])]
+
+    async def test_redis_down_skips_the_cache(
+        self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
+    ) -> None:
+        """``read_generation`` returning None means no cache at all — not a cache
+        keyed on a sentinel, which would serve one user's value to every other."""
+        manifest_cache.generations["u1"] = None
+        list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
+        monkeypatch.setattr(device_service, "list_devices", list_devices)
+        monkeypatch.setattr(device_service, "list_device_servers", AsyncMock(return_value={}))
+
+        await device_service.get_device_manifest("u1")
+
+        assert manifest_cache.gets == []
+        assert manifest_cache.sets == []
+        list_devices.assert_awaited_once_with("u1")
 
     async def test_a_second_call_is_served_from_the_cache(
         self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
@@ -169,6 +230,7 @@ class TestGetDeviceManifest:
 
         await device_service._invalidate_device_manifest("u1")
 
+        assert manifest_cache.bumps == [(device_service._DEVICE_MANIFEST_POLICY, "u1")]
         await device_service.get_device_manifest("u1")
         assert list_devices.await_count == 2
 

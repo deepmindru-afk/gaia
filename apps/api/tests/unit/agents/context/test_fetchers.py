@@ -524,6 +524,26 @@ class TestCoreContextSingleFlight:
             f"{AGENDA_HEADING}\n- ship it\n\n{RECENT_ACTIVITY_HEADING}\n- reviewed"
         )
 
+    async def test_different_users_do_not_share_a_fetch(self) -> None:
+        """Keyed by user, not just by loop: an entry keyed on the loop alone would
+        hand one user's core context to another running at the same time."""
+        seen: list[str] = []
+
+        async def _core(user_id: str) -> str:
+            seen.append(user_id)
+            await asyncio.sleep(0.05)
+            return f"docs-for-{user_id}"
+
+        with patch("app.memory.engine.memory_engine.get_core_context", _core):
+            block_a, block_b = await asyncio.gather(
+                build_core_memory_block(ctx(user_id="user-a")),
+                build_core_memory_block(ctx(user_id="user-b")),
+            )
+
+        assert sorted(seen) == ["user-a", "user-b"]
+        assert "docs-for-user-a" in block_a
+        assert "docs-for-user-b" in block_b
+
     async def test_sequential_assemblies_each_read_afresh(self) -> None:
         """No TTL is smuggled in: once the in-flight fetch resolves it is gone, so
         the next assembly reads the core again rather than serving a stale one."""
