@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.db.repositories.subscriptions import SubscriptionsRepository
 from app.models.payment_models import SubscriptionDocument, SubscriptionUpdate
+
+EVENT_AT = datetime(2026, 5, 1, tzinfo=UTC)
 
 
 def _sub(**overrides: object) -> SubscriptionDocument:
@@ -65,17 +67,40 @@ class TestSubscriptionsRepository:
 
     async def test_apply_update_by_dodo_id_sets_status_and_stamps_updated_at(self, repo):
         created = await repo.create(_sub(dodo_subscription_id="s", status="active"))
-        matched = await repo.apply_update_by_dodo_id("s", SubscriptionUpdate(status="cancelled"))
+        matched = await repo.apply_update_by_dodo_id(
+            "s", SubscriptionUpdate(status="cancelled"), if_not_newer_than=EVENT_AT
+        )
         assert matched is True
         got = await repo.get_by_dodo_id("s")
         assert got is not None and got.status == "cancelled"
         assert got.updated_at is not None and got.updated_at >= created.updated_at
         assert (
-            await repo.apply_update_by_dodo_id("missing", SubscriptionUpdate(status="x")) is False
+            await repo.apply_update_by_dodo_id(
+                "missing", SubscriptionUpdate(status="x"), if_not_newer_than=EVENT_AT
+            )
+            is False
         )
         assert (
-            await repo.apply_update_by_dodo_id("s", SubscriptionUpdate()) is False
+            await repo.apply_update_by_dodo_id(
+                "s", SubscriptionUpdate(), if_not_newer_than=EVENT_AT
+            )
+            is False
         )  # empty patch → no-op
+
+    async def test_apply_update_by_dodo_id_refuses_a_row_carrying_a_newer_event(self, repo):
+        """The guard is the filter, not a check the caller repeats: a patch decided
+        from an older event must not land on a row a newer one already wrote."""
+        await repo.create(_sub(dodo_subscription_id="s", status="expired", last_event_at=EVENT_AT))
+
+        refused = await repo.apply_update_by_dodo_id(
+            "s",
+            SubscriptionUpdate(status="active", last_event_at=EVENT_AT - timedelta(days=1)),
+            if_not_newer_than=EVENT_AT - timedelta(days=1),
+        )
+
+        assert refused is False
+        got = await repo.get_by_dodo_id("s")
+        assert got is not None and got.status == "expired"
 
     async def test_extra_billing_fields_preserved(self, repo):
         await repo.create(
