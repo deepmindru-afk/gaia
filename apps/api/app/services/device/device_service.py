@@ -15,9 +15,11 @@ import secrets
 from urllib.parse import quote
 import uuid
 
+from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.constants.cache import DEVICE_MANIFEST_CACHE_KEY, ONE_DAY_TTL
 from app.constants.device_bridge import (
     DEVICE_CATEGORY,
     DEVICE_CODE_BYTES,
@@ -38,8 +40,15 @@ from app.constants.device_bridge import (
 )
 from app.constants.log_tags import LogTag
 from app.db.postgresql import get_db_session
-from app.db.redis import get_and_delete_cache, get_cache, redis_cache, set_cache
+from app.db.redis import (
+    delete_cache,
+    get_and_delete_cache,
+    get_cache,
+    redis_cache,
+    set_cache,
+)
 from app.db.repositories.integrations import integration_repository
+from app.decorators.caching import Cacheable
 from app.helpers.integration_helpers import dedup_server_url_key
 from app.helpers.mcp_helpers import get_frontend_url
 from app.models.device import (
@@ -195,6 +204,7 @@ async def _create_device(
             )
         session.add(device)
         await session.commit()
+    await _invalidate_device_manifest(user_id)
     return device_id, refresh_token
 
 
@@ -327,6 +337,7 @@ async def rotate_refresh_token(refresh_token: str) -> tuple[str, str, str]:
                 # out of the ACTIVE-only list with its integrations left dangling
                 # and any live tunnel stays up until the connect JWT expires.
                 await _teardown_revoked_device(replayed_user_id, replayed_id, integration_ids)
+                await _invalidate_device_manifest(replayed_user_id)
                 log.warning(
                     f"{LogTag.API} Device refresh-token reuse detected — revoking device",
                     device_id=replayed_id,
@@ -403,6 +414,7 @@ async def register_device_server(
             await session.commit()
             await session.refresh(existing)
             await _ensure_server_integration(user_id, existing)
+            await _invalidate_device_manifest(user_id)
             return existing
 
         integration_id = str(uuid.uuid4())
@@ -420,6 +432,7 @@ async def register_device_server(
         await session.refresh(server)
 
     await _create_server_integration(user_id, device_id, server_key, display_name, integration_id)
+    await _invalidate_device_manifest(user_id)
     return server
 
 
@@ -541,6 +554,7 @@ async def deregister_device_server(
         await session.commit()
 
     await _remove_server_cloud_mirror(user_id, integration_id)
+    await _invalidate_device_manifest(user_id)
     if notify_device:
         await _send_server_remove(device_id, server_key)
     return True
@@ -562,9 +576,11 @@ async def deregister_device_server_for_integration(
         if server is None:
             return False
         device_id, server_key = server.device_id, server.server_key
+        server_user_id = server.user_id
         await session.delete(server)
         await session.commit()
 
+    await _invalidate_device_manifest(server_user_id)
     if notify_device:
         await _send_server_remove(device_id, server_key)
     return True
@@ -583,6 +599,53 @@ async def reconcile_device_servers(user_id: str, device_id: str, reported_keys: 
             device={"operation": "reconcile_servers", "device_id": device_id},
             pruned=len(stale),
         )
+
+
+class DeviceManifestEntry(BaseModel):
+    """One active device as the connected-devices context manifest renders it.
+
+    Only the structural fields: name/platform/id plus the servers' display names.
+    Online status and per-server sync state change constantly and are read live by
+    the UI and the ``list_devices`` tool, so they are deliberately not cached here.
+    """
+
+    id: str
+    name: str
+    platform: str | None
+    servers: list[str]
+
+
+@Cacheable(
+    key_pattern=DEVICE_MANIFEST_CACHE_KEY,
+    ttl=ONE_DAY_TTL,
+    model=list[DeviceManifestEntry],
+)
+async def get_device_manifest(user_id: str) -> list[DeviceManifestEntry]:
+    """The user's active devices and the servers they expose, cached per user.
+
+    The day-long cache is kept correct by explicit invalidation on every
+    structural device/server write (see ``_invalidate_device_manifest`` call
+    sites), never by the TTL. ``build_connected_devices_manifest`` reads it once
+    per turn instead of paying two Postgres queries.
+    """
+    devices = await list_devices(user_id)
+    if not devices:
+        return []
+    servers_by_device = await list_device_servers([device.id for device in devices])
+    return [
+        DeviceManifestEntry(
+            id=device.id,
+            name=device.name,
+            platform=device.platform,
+            servers=[server.display_name for server in servers_by_device.get(device.id, [])],
+        )
+        for device in devices
+    ]
+
+
+async def _invalidate_device_manifest(user_id: str) -> None:
+    """Drop ``user_id``'s cached device manifest after a structural write."""
+    await delete_cache(DEVICE_MANIFEST_CACHE_KEY.format(user_id=user_id))
 
 
 async def list_devices(user_id: str) -> list[Device]:
@@ -699,5 +762,6 @@ async def revoke_device(user_id: str, device_id: str) -> bool:
         await session.commit()
 
     await _teardown_revoked_device(user_id, device_id, integration_ids)
+    await _invalidate_device_manifest(user_id)
     log.set(device={"operation": "revoke", "device_id": device_id}, user={"id": user_id})
     return True

@@ -31,10 +31,7 @@ from app.memory.context import AGENDA_HEADING, RECENT_ACTIVITY_HEADING
 from app.memory.engine import memory_engine
 from app.memory.mappers import entry_to_note
 from app.models.todo_models import TodoDocument
-from app.services.device.device_service import (
-    list_device_servers,
-    list_devices as list_devices_service,
-)
+from app.services.device.device_service import get_device_manifest
 from app.services.gaia_knowledge_service import gaia_knowledge_service
 from app.services.integrations.user_integrations import get_connected_integrations_named
 from app.services.storage._vfs_common import folder_name
@@ -86,9 +83,7 @@ async def _fetch_core_context(user_id: str) -> str:
 _inflight_core: dict[tuple[asyncio.AbstractEventLoop, str], asyncio.Task[str]] = {}
 
 
-def _forget_inflight(
-    key: tuple[asyncio.AbstractEventLoop, str], task: asyncio.Task[str]
-) -> None:
+def _forget_inflight(key: tuple[asyncio.AbstractEventLoop, str], task: asyncio.Task[str]) -> None:
     """Drop the finished fetch and consume its result.
 
     Eviction is load-bearing, not cleanup: without it the registry would retain
@@ -357,12 +352,13 @@ async def build_connected_devices_manifest(user_id: str, header: str) -> str:
     """One line per paired device and the servers it exposes, so the agent knows
     the user has their own machine reachable and routes local-file work there
     instead of the cloud sandbox. Capability awareness only - live online status
-    and tool schemas come from list_devices / retrieve_tools at call time."""
+    and tool schemas come from list_devices / retrieve_tools at call time.
+
+    Reads the per-user device manifest, which the service caches for a day and
+    clears on every structural device/server write.
+    """
     try:
-        devices = await list_devices_service(user_id)
-        if not devices:
-            return ""
-        servers_by_device = await list_device_servers([d.id for d in devices])
+        entries = await get_device_manifest(user_id)
     except Exception as e:
         log.warning(
             "Error building connected-devices manifest",
@@ -371,13 +367,14 @@ async def build_connected_devices_manifest(user_id: str, header: str) -> str:
             user_id=user_id,
         )
         return ""
+    if not entries:
+        return ""
     lines = [header]
-    for device in devices:
-        servers = servers_by_device.get(device.id, [])
-        names = ", ".join(s.display_name for s in servers)
+    for entry in entries:
+        names = ", ".join(entry.servers)
         exposing = f" exposing: {names}" if names else ""
         # Include the id verbatim: it is the device_id run_on_device / the device
         # tools take. Without it the model invents one from the name and the call
         # fails the ownership check.
-        lines.append(f"- {device.name} ({device.platform}, id: {device.id}){exposing}")
+        lines.append(f"- {entry.name} ({entry.platform}, id: {entry.id}){exposing}")
     return "\n".join(lines)
