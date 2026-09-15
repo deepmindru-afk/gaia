@@ -24,7 +24,7 @@ _SLUG_STRIP_CHARS = "-"
 def generate_integration_slug(
     name: str,
     category: str,
-    max_length: int = 80,
+    max_length: int = 80,  # pragma: no mutate — segments cap the slug at 65 chars, so 80 and 81 never truncate
 ) -> str:
     """Generate canonical slug: {name}-mcp-{category}.
 
