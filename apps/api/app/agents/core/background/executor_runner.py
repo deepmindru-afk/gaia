@@ -16,7 +16,8 @@ The executor:busy Redis key prevents concurrent executor spawns per
 conversation. TTL of 30 minutes is a safety net — released explicitly.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import time
 from typing import Any, NamedTuple
 
 from langgraph.errors import GraphRecursionError
@@ -68,6 +69,14 @@ from app.services.hil.approvals_store import (
     set_resume_item,
 )
 from app.services.hil.resume_slot import release_resume_dispatch
+from app.services.latency_metrics import (
+    observe_executor_active,
+    observe_executor_e2e,
+    observe_executor_queue_wait,
+    observe_executor_run_total,
+    observe_executor_ttft,
+    span,
+)
 from app.utils.agent_utils import format_sse_data
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import WorkflowContext, get_trace_id, log, wide_task
@@ -106,6 +115,10 @@ async def run_executor_background(
     # log.set() in the run (LLM accounting included) is silently discarded.
     # get_trace_id() reads the spawner's trace_id from the task's copied
     # context, correlating this event with the request that dispatched it.
+    run_start = time.perf_counter()
+    # The busy-lock queue origin, not ``kind``: a HIL resume is RunKind.QUEUED
+    # but never waited on the lock, so it must not label as queued.
+    queued = run.queued
     async with wide_task(
         "executor_run",
         trace_id=get_trace_id() or None,
@@ -135,22 +148,26 @@ async def run_executor_background(
     ):
         result_text = ""
         result_type = "final"
+        queue_wait_ms = _queue_wait_ms(run, run_start, configurable, queued=queued)
+        ttft_ms: float | None = None
+        active_ms: float | None = None
 
         # One lifecycle event per run segment; a resumed run re-enters here.
         executor_user_id = run.user.get("user_id", "")
-        run_props = {
-            "agent": "executor",
-            "mode": "background",
-            "conversation_id": run.conversation_id,
-        }
-        if run.task_id:
-            run_props["task_id"] = run.task_id
+        run_props = _run_props(run)
         if executor_user_id:
             capture_event(executor_user_id, AnalyticsEvents.AGENT_RUN_STARTED, run_props)
 
         try:
-            result = await _execute_executor(task, configurable, run.stream_id, resume)
+            with span() as elapsed_active:
+                result = await _execute_executor(task, configurable, run.stream_id, resume)
+            active_ms = round(elapsed_active() * 1000.0, 2)
             result_text, result_type = result.text, result.type
+            ttft_ms = _executor_ttft_ms(run, run_start)
+            if ttft_ms is not None:
+                observe_executor_ttft(ttft_ms / 1000.0, queued=queued)
+            timing_fields = _timing_fields(queue_wait_ms, ttft_ms, active_ms)
+            log.set(executor={"queued": queued, **timing_fields})
             if result.paused_on and not await _record_pause(
                 run, task, configurable, result.paused_on
             ):
@@ -160,17 +177,26 @@ async def run_executor_background(
                 # come. Fail the run instead: the lock is released, queued work drains, and the
                 # sweep closes the orphaned approval.
                 result_text, result_type = EXECUTOR_APPROVAL_LOST_MESSAGE, "error"
+            # Cancellation and the pause-record outcome are only known here, so
+            # read both after the pause decision: the span must carry the same
+            # status finalize records, not the pre-pause guess.
+            run_cancelled = bool(run.stream_id) and await StreamManager.is_cancelled(run.stream_id)
+            observe_executor_active(
+                active_ms / 1000.0, status=_active_status(result_type, run_cancelled)
+            )
             log.info(
                 f"{LogTag.AGENT} Background executor finished",
                 result_type=result_type,
                 task_id=run.task_id,
                 stream_id=run.stream_id,
             )
-            if executor_user_id:
-                if result_type == "final":
-                    capture_event(executor_user_id, AnalyticsEvents.AGENT_RUN_COMPLETED, run_props)
-                elif result_type == "error":
-                    capture_event(executor_user_id, AnalyticsEvents.AGENT_RUN_FAILED, run_props)
+            _capture_executor_terminal(
+                run,
+                run_props=run_props,
+                queued=queued,
+                timing_fields=timing_fields,
+                result_type=result_type,
+            )
         finally:
             await _finalize_executor_run(run, task, result_text, result_type)
             if resume is not None:
@@ -178,6 +204,87 @@ async def run_executor_background(
                 # Freeing it AFTER finalize means the next decision can dispatch only
                 # once this run's pause/completion bookkeeping is fully written.
                 await release_resume_dispatch(run.conversation_id)
+
+
+def _run_props(run: ExecutorRun) -> dict[str, Any]:
+    """The lifecycle event's base props, shared by the start and terminal events."""
+    props: dict[str, Any] = {
+        "agent": "executor",
+        "mode": "background",
+        "conversation_id": run.conversation_id,
+    }
+    if run.task_id:
+        props["task_id"] = run.task_id
+    return props
+
+
+def _timing_fields(
+    queue_wait_ms: float | None, ttft_ms: float | None, active_ms: float | None
+) -> dict[str, float]:
+    """The measured executor timings, omitting any span that never happened."""
+    fields: dict[str, float] = {}
+    if queue_wait_ms is not None:
+        fields["queue_wait_ms"] = queue_wait_ms
+    if ttft_ms is not None:
+        fields["executor_ttft_ms"] = ttft_ms
+    if active_ms is not None:
+        fields["executor_active_ms"] = active_ms
+    return fields
+
+
+def _queue_wait_ms(
+    run: ExecutorRun, run_start: float, configurable: AgentConfigurable, *, queued: bool
+) -> float | None:
+    """Observe dispatch-to-start queue wait, or ``None`` without a usable stamp.
+
+    A queued run can survive a restart inside its 1h TTL, mixing monotonic
+    epochs — a negative delta is garbage, not a measurement.
+    """
+    if run.t_dispatch_perf is None:
+        return None
+    queue_wait_s = run_start - run.t_dispatch_perf
+    if queue_wait_s < 0.0:
+        return None
+    observe_executor_queue_wait(
+        queue_wait_s,
+        source=str(configurable.get("conversation_source") or "unknown"),
+        queued=queued,
+    )
+    return round(queue_wait_s * 1000.0, 2)
+
+
+def _active_status(result_type: str, cancelled: bool) -> str:
+    """The active span's status — the same labels finalize records."""
+    if result_type == "error":
+        return "error"
+    if result_type == EXECUTOR_PAUSED:
+        return "paused"
+    return "cancelled" if cancelled else "success"
+
+
+def _capture_executor_terminal(
+    run: ExecutorRun,
+    *,
+    run_props: dict[str, Any],
+    queued: bool,
+    timing_fields: dict[str, float],
+    result_type: str,
+) -> None:
+    """Emit the run's terminal lifecycle event with its measured timings."""
+    user_id = run.user.get("user_id", "")
+    if not user_id or result_type not in ("final", "error"):
+        return
+    event = (
+        AnalyticsEvents.AGENT_RUN_COMPLETED
+        if result_type == "final"
+        else AnalyticsEvents.AGENT_RUN_FAILED
+    )
+    capture_event(
+        user_id,
+        event,
+        {**run_props, "queued": queued, **timing_fields},
+        dedupe_key=run.task_id or run.stream_id,
+    )
 
 
 async def _record_pause(
@@ -195,7 +302,10 @@ async def _record_pause(
         item = build_run_item(
             task=task,
             configurable=configurable,
-            identity=run.identity,
+            # A pause re-dispatch is a new incarnation: drop the original stamp
+            # so the resumed run measures no queue wait for user decision time,
+            # and clear the queue origin — it did not wait on the busy lock.
+            identity=replace(run.identity, t_dispatch_perf=None, queued=False),
             workflow_execution_id=run.workflow_execution_id,
         )
         for approval_id in approval_ids:
@@ -210,6 +320,21 @@ async def _record_pause(
             error=str(e),
         )
         return False
+
+
+def _executor_ttft_ms(run: ExecutorRun, run_start: float) -> float | None:
+    """First executor frame minus dispatch (or run start without a stamp).
+
+    ``None`` when no frame was written, or the delta is negative (mixed
+    monotonic epochs across a restart) — missing beats zero-filled.
+    """
+    session = get_session(run.stream_id)
+    first_frame = session.executor_first_frame_perf if session is not None else None
+    if first_frame is None:
+        return None
+    base = run.t_dispatch_perf if run.t_dispatch_perf is not None else run_start
+    ttft_ms = round((first_frame - base) * 1000.0, 2)
+    return ttft_ms if ttft_ms >= 0.0 else None
 
 
 class _ExecutorResult(NamedTuple):
@@ -249,11 +374,13 @@ async def _execute_executor(
     ``configurable`` (free -> Gemini, paid -> MiniMax M3), so no override here.
     """
     try:
-        ctx, error = await prepare_executor_execution(
-            task=task,
-            configurable=configurable,
-            stream_id=stream_id,
-        )
+        with span() as elapsed_prep:
+            ctx, error = await prepare_executor_execution(
+                task=task,
+                configurable=configurable,
+                stream_id=stream_id,
+            )
+        log.set(executor={"prep_ms": round(elapsed_prep() * 1000.0, 2)})
         if error or ctx is None:
             log.error(f"{LogTag.AGENT} Executor prep failed", error=error)
             return _ExecutorResult(error or "Executor agent not available", "error")
@@ -381,6 +508,16 @@ async def _finalize_executor_run(
             error=str(e),
         )
 
+    end_status = (
+        "error" if result_type == "error" else ("cancelled" if was_cancelled else "success")
+    )
+    queued = run.queued
+    if run.t_dispatch_perf is not None:
+        e2e_s = time.perf_counter() - run.t_dispatch_perf
+        if e2e_s >= 0.0:  # mixed-epoch guard, same as queue wait above
+            observe_executor_e2e(e2e_s, status=end_status, queued=queued)
+    observe_executor_run_total(status=end_status, queued=queued)
+
     # A terminal run that leaves landed-but-uncollected subagent work (a parked
     # approval, or results the model never joined on) queues a collection turn
     # NOW, so the very hand-off below claims and runs it. Without this, a card
@@ -459,6 +596,7 @@ async def _finalize_paused_run(run: ExecutorRun) -> None:
         )
     signal_executor_done(run.stream_id)
     await _close_queued_stream(run, was_cancelled=False)
+    observe_executor_run_total(status="paused", queued=run.queued)
     log.info(
         f"{LogTag.HIL} Executor paused on approval; busy lock retained",
         task_id=run.task_id,

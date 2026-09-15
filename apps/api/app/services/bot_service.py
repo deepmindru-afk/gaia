@@ -319,7 +319,9 @@ async def charge_bot_turn(user_id: str, body: BotChatRequest) -> None:
         user_id,
         AnalyticsEvents.CHAT_MESSAGE_SUBMITTED,
         {
-            "platform": body.platform,
+            # `source` is the canonical key: a ConversationSource value, the same
+            # key every other chat event reports its surface under.
+            "source": body.platform,
             "has_files": bool(body.file_ids or body.file_data),
         },
     )

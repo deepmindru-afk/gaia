@@ -48,6 +48,7 @@ from app.constants.llm import (
     DEV_LLM_MAX_OUTPUT_TOKENS,
     HELPER_MAX_OUTPUT_TOKENS,
     LLM_INVOKE_TIMEOUT_SECONDS,
+    LLM_LABEL_METADATA_KEY,
     LLM_RETRY_MAX_ATTEMPTS,
     MEMORY_MODEL_NAME,
     MODEL_FIELD_ID,
@@ -913,6 +914,10 @@ async def ainvoke_llm(
     # fallback policy) but is already metered by LLMAccountingMiddleware, so it
     # passes meter_auxiliary=False — otherwise every graph call is booked twice.
     opts = options or LLMInvokeOptions()
+    config = _with_call_label(config, label)
+    fallback_config = (
+        _with_call_label(opts.fallback_config, label) if opts.fallback_config else None
+    )
     usage_handler = UsageMetadataCallbackHandler() if opts.meter_auxiliary else None
     generation_handler = _GenerationIdCallback() if opts.meter_auxiliary else None
     user_id = (config or {}).get("configurable", {}).get("user_id")
@@ -946,7 +951,7 @@ async def ainvoke_llm(
                         ).ainvoke(
                             messages,
                             config=_with_usage_handler(
-                                _with_usage_handler(opts.fallback_config or config, usage_handler),
+                                _with_usage_handler(fallback_config or config, usage_handler),
                                 generation_handler,
                             ),
                         )
@@ -1001,6 +1006,7 @@ def invoke_llm(
     ``options.fallback_config`` and ``options.sticky_session_id`` apply here —
     ``timeout``/``meter_auxiliary`` are async-only (see :class:`LLMInvokeOptions`)."""
     opts = options or LLMInvokeOptions()
+    config = _with_call_label(config, label)
     try:
         return with_llm_retry(primary, max_attempts=opts.max_attempts).invoke(
             messages, config=config
@@ -1016,7 +1022,12 @@ def invoke_llm(
                 # on whatever provider the router picked instead of the chain
                 # the primary had been warming.
                 session_id=opts.sticky_session_id or _sticky_session_id(config, auxiliary=False),
-            ).invoke(messages, config=opts.fallback_config or config)
+            ).invoke(
+                messages,
+                config=_with_call_label(opts.fallback_config, label)
+                if opts.fallback_config
+                else config,
+            )
         )
 
 
@@ -1213,6 +1224,15 @@ class _GenerationIdCallback(BaseCallbackHandler):
                 info = generation.generation_info or {}
                 if info.get("finish_reason"):
                     self.finish_reason = str(info["finish_reason"])
+
+
+def _with_call_label(config: RunnableConfig | None, label: str) -> RunnableConfig:
+    """Return ``config`` with the call's ``label`` published on its run metadata
+    (``LLM_LABEL_METADATA_KEY``), never mutating the caller's object. Callbacks
+    attribute per-call samples (TTFT) by it."""
+    merged: dict[str, Any] = dict(config) if config else {}
+    merged["metadata"] = {**(merged.get("metadata") or {}), LLM_LABEL_METADATA_KEY: label}
+    return cast(RunnableConfig, merged)
 
 
 def _with_usage_handler(

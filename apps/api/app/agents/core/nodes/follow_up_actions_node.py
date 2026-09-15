@@ -1,6 +1,7 @@
 """Follow-up actions node: suggests contextual follow-up actions from
 conversation context and tool usage."""
 
+import time
 from typing import cast
 
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
@@ -17,9 +18,10 @@ from app.agents.llm.client import ainvoke_structured
 from app.agents.tools.core.registry import get_tool_registry
 from app.constants.general import CALL_EXECUTOR_NAME
 from app.constants.log_tags import LogTag
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import agent_configurable, config_agent_name
 from app.models.stream_events import MainResponseCompleteFrame
 from app.override.langgraph_bigtool.utils import State
+from app.services.latency_metrics import observe_graph_node
 from app.templates.docstrings.follow_up_actions_tool_docs import (
     SUGGEST_FOLLOW_UP_ACTIONS,
 )
@@ -97,6 +99,19 @@ async def generate_follow_up_actions(
 
 
 async def follow_up_actions_node(state: State, config: RunnableConfig, store: BaseStore) -> State:  # noqa: ARG001 -- execute_hooks() passes state/config/store positionally
+    """Analyze conversation context and stream relevant follow-up actions (timed)."""
+    start = time.perf_counter()
+    try:
+        return await _follow_up_actions(state, config)
+    finally:
+        observe_graph_node(
+            time.perf_counter() - start,
+            node="follow_up_actions",
+            agent=config_agent_name(config),
+        )
+
+
+async def _follow_up_actions(state: State, config: RunnableConfig) -> State:
     """Analyze conversation context and stream relevant follow-up actions.
 
     Follow-up actions are streamed, not stored in state.

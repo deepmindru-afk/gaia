@@ -124,6 +124,12 @@ class ChatContext(TypedDict, total=False):
     has_reply: bool
     has_calendar_event: bool
     selected_workflow_id: str
+    # Turn latencies, stamped at stream end; absent when the span never happened.
+    ttft_ms: float
+    e2e_ack_ms: float
+    e2e_full_ms: float
+    delegated: bool
+    queued: bool
 
 
 class ModelContext(TypedDict, total=False):

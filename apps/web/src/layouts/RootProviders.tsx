@@ -1,6 +1,9 @@
 "use client";
 
-import { ThemeProvider } from "@openuidev/react-ui";
+// Subpath, not the package barrel: the barrel drags recharts + react-markdown +
+// react-syntax-highlighter + react-day-picker onto every route (RootProviders is
+// global). The heavy OpenUI components load separately in chat. See theme.ts.
+import { ThemeProvider } from "@openuidev/react-ui/ThemeProvider";
 import dynamic from "next/dynamic";
 import type { ReactNode } from "react";
 
