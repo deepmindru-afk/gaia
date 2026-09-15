@@ -124,7 +124,13 @@ class TestPostCommitFailures:
         broker_down = RuntimeError("could not resolve the outbound destination")
         publish.side_effect = broker_down
 
-        with pytest.raises(PostLinkSideEffectError) as excinfo:
+        # The message is the only place the platform and the underlying failure
+        # reach the operator: the caller re-raises it as-is.
+        with pytest.raises(
+            PostLinkSideEffectError,
+            match="the whatsapp link was written but its follow-through failed: "
+            "could not resolve the outbound destination",
+        ) as excinfo:
             await complete_platform_link("u1", "whatsapp", "wa-1", first_contact=BUBBLES)
 
         assert excinfo.value.__cause__ is broker_down
