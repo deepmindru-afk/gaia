@@ -39,6 +39,7 @@ apps/api/app/agents/tools/integrations/urgency_tool.py	PLR0915
 apps/api/app/agents/tools/research_tool.py	PLR0915
 apps/api/app/agents/tools/todo_tools.py	PLR0912
 apps/api/app/agents/workspace/paths.py	PLR0911
+apps/api/app/api/v1/endpoints/bot.py	PLR0912
 apps/api/app/core/lazy_loader.py	PLR0912
 apps/api/app/core/lazy_loader.py	PLR0913
 apps/api/app/db/chroma/chroma_store.py	PLR0912

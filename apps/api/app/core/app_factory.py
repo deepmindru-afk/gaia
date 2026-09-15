@@ -31,6 +31,7 @@ from app.schemas.errors import (
     ValidationIssue,
     error_response,
 )
+from app.services import latency_metrics as _latency_metrics  # noqa: F401 -- side effects
 
 # Eager-import the FsOps metrics module so its Prometheus collectors register
 # on the default registry at app startup. Without this the storage layer is

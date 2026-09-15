@@ -10,7 +10,6 @@ import { useIsPaid } from "@/features/pricing/hooks/useIsPaid";
 import { useWorkflowCreation } from "@/features/workflows/hooks/useWorkflowCreation";
 import { toTriggerConfig } from "@/features/workflows/triggers/types";
 import { useRouter } from "@/i18n/navigation";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { useUpgradeModalStore } from "@/stores/upgradeModalStore";
 import type { PublicWorkflowStep } from "@/types/features/workflowTypes";
@@ -291,13 +290,6 @@ export function useWorkflowModalActions({
     }
 
     const createdWorkflow = result.workflow;
-    trackEvent(ANALYTICS_EVENTS.WORKFLOWS_CREATED, {
-      workflow_id: createdWorkflow.id,
-      // workflow_title is user-authored free text — never sent to PostHog.
-      step_count: createdWorkflow.steps?.length || 0,
-      trigger_type: data.trigger_config.type,
-      has_schedule: data.trigger_config.type === "schedule",
-    });
 
     // Update currentWorkflow with the newly created workflow
     setCurrentWorkflow(createdWorkflow);
@@ -476,12 +468,6 @@ export function useWorkflowModalActions({
     if (!(mode === "edit" && existingWorkflow)) return;
     setIsDeleting(true);
     try {
-      trackEvent(ANALYTICS_EVENTS.WORKFLOWS_DELETED, {
-        workflow_id: existingWorkflow.id,
-        step_count: existingWorkflow.steps?.length || 0,
-        is_public: existingWorkflow.is_public,
-      });
-
       await deleteMutation.mutateAsync(existingWorkflow.id);
 
       if (onWorkflowDeleted) onWorkflowDeleted(existingWorkflow.id);
@@ -558,15 +544,6 @@ export function useWorkflowModalActions({
   ) => {
     if (mode !== "edit" || !currentWorkflow) return;
 
-    trackEvent(ANALYTICS_EVENTS.WORKFLOWS_STEPS_REGENERATED, {
-      workflow_id: currentWorkflow.id,
-      // The instruction is user-authored free text (often contains the goal
-      // or context of the workflow) — never send it to PostHog, only its length.
-      instruction_length: instruction.length,
-      force_different_tools: forceDifferentTools,
-      previous_step_count: currentWorkflow.steps?.length || 0,
-    });
-
     dispatch({ type: "regenerating", value: true });
     dispatch({ type: "regenerationError", message: null });
 
@@ -612,16 +589,9 @@ export function useWorkflowModalActions({
     if (!currentWorkflow?.id) return;
     try {
       if (currentWorkflow.is_public) {
-        trackEvent(ANALYTICS_EVENTS.WORKFLOWS_UNPUBLISHED, {
-          workflow_id: currentWorkflow.id,
-        });
         await workflowApi.unpublishWorkflow(currentWorkflow.id);
         setCurrentWorkflow({ ...currentWorkflow, is_public: false });
       } else {
-        trackEvent(ANALYTICS_EVENTS.WORKFLOWS_PUBLISHED, {
-          workflow_id: currentWorkflow.id,
-          step_count: currentWorkflow.steps?.length || 0,
-        });
         const result = await workflowApi.publishWorkflow(currentWorkflow.id);
         const slug = result.slug ?? currentWorkflow.slug;
         setCurrentWorkflow({ ...currentWorkflow, is_public: true, slug });
@@ -653,15 +623,6 @@ export function useWorkflowModalActions({
     }
 
     try {
-      trackEvent(ANALYTICS_EVENTS.WORKFLOWS_EXECUTED, {
-        workflow_id: existingWorkflow.id,
-        step_count: currentWorkflow.steps.length,
-        trigger_type: existingWorkflow.trigger_config.type,
-      });
-
-      // selectWorkflow navigates to /c, which unmounts this page (and modal).
-      // Do NOT close the modal here: the parent's close handler pushes back to
-      // /workflows, which would clobber the /c navigation in the same tick.
       selectWorkflow(existingWorkflow, { autoSend: true });
     } catch (error) {
       console.error("Failed to select workflow for execution:", error);

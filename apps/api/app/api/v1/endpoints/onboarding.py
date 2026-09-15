@@ -138,6 +138,7 @@ async def reset_user_onboarding(
     log.set(user={"id": user["user_id"]}, onboarding={"operation": "reset"})
     try:
         counts = await reset_onboarding(user["user_id"])
+        capture_context_event(AnalyticsEvents.ONBOARDING_RESET)
         return OnboardingResetResponse(success=True, **counts.model_dump())
     except HTTPException:
         raise
@@ -504,6 +505,10 @@ async def save_writing_style(
     log.set(user={"id": user_id}, onboarding={"operation": "save_writing_style"})
     try:
         await save_user_edited_summary(user_id, request.edited_summary.strip())
+        capture_context_event(
+            AnalyticsEvents.ONBOARDING_WRITING_STYLE_SAVED,
+            {"summary_length": len(request.edited_summary.strip())},
+        )
         return SaveWritingStyleResponse(success=True)
     except Exception as e:
         log.error(
@@ -544,6 +549,7 @@ async def regenerate_writing_style_example(
         )
         if example:
             await save_generated_example(user_id, example)
+        capture_context_event(AnalyticsEvents.ONBOARDING_WRITING_STYLE_EXAMPLE_REGENERATED)
         return RegenerateWritingStyleExampleResponse(example=example)
     except Exception as e:
         log.error(
@@ -575,6 +581,13 @@ async def confirm_social_profiles(
     log.set(user={"id": user_id}, onboarding={"operation": "confirm_social_profiles"})
     try:
         await save_confirmed_profiles(user_id, request.profiles)
+        capture_context_event(
+            AnalyticsEvents.ONBOARDING_SOCIAL_PROFILES_CONFIRMED,
+            {
+                "profile_count": len(request.profiles),
+                "platforms": sorted({profile.platform for profile in request.profiles}),
+            },
+        )
         return SaveSocialProfilesResponse(success=True, saved=len(request.profiles))
     except Exception as e:
         log.error(

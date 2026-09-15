@@ -36,6 +36,11 @@ class AnalyticsEvents(StrEnum):
     WORKFLOW_EXECUTED = "workflow:executed"
     WORKFLOW_ACTIVATED = "workflow:activated"
     WORKFLOW_PUBLISHED = "workflow:published"
+    WORKFLOW_DELETED = "workflow:deleted"
+    WORKFLOW_UNPUBLISHED = "workflow:unpublished"
+    WORKFLOW_DEACTIVATED = "workflow:deactivated"
+    WORKFLOW_UPDATED = "workflow:updated"
+    WORKFLOW_STEPS_REGENERATED = "workflow:steps_regenerated"
     PAYMENT_CHECKOUT_STARTED = "payment:checkout_started"
     SUBSCRIPTION_CANCELLATION_REQUESTED = "subscription:cancellation_requested"
     FEEDBACK_MESSAGE_SUBMITTED = "feedback:message_submitted"
@@ -74,11 +79,28 @@ class AnalyticsEvents(StrEnum):
     CONVERSATION_RENAMED = "chat:conversation_renamed"
     CONVERSATION_STARRED = "chat:conversation_starred"
     CONVERSATION_DELETED = "chat:conversation_deleted"
+    # Terminal turn event. Latency props (all ms, measured server-side):
+    # ttft_ms (first response text; absent when no text streamed), e2e_ack_ms
+    # (comms ack), e2e_full_ms (stream DONE after executor wait), delegated,
+    # queued. Executor-leg timings (queue_wait_ms, executor_ttft_ms,
+    # executor_active_ms) ride on agent:run_completed, and HIL waits on the
+    # wide event — not here.
     CHAT_MESSAGE_COMPLETED = "chat:message_completed"
     CHAT_MESSAGE_CANCELLED = "chat:message_cancelled"
+    CHAT_MESSAGE_PINNED = "chat:message_pinned"
+    CHAT_MESSAGE_UNPINNED = "chat:message_unpinned"
+    # A comms reply scored dirty against the AI-ism detectors and was
+    # rewritten before delivery. Counts only — never the text.
+    CHAT_STYLE_GUARD_REGENERATED = "chat:style_guard_regenerated"
 
     # Files
     FILE_UPLOADED = "chat:file_uploaded"
+    FILE_UPDATED = "chat:file_updated"
+    FILE_DELETED = "chat:file_deleted"
+
+    # Images
+    IMAGE_GENERATED = "image:generated"
+    IMAGE_DESCRIBED = "image:described"
 
     # Todos
     TODO_CREATED = "todos:created"
@@ -93,9 +115,14 @@ class AnalyticsEvents(StrEnum):
     TODO_SUBSCRIPTION_FAILED = "todos:subscription_failed"
     TODO_TRIGGER_FIRED = "todos:trigger_fired"
 
+    PROJECT_CREATED = "projects:created"
+    PROJECT_UPDATED = "projects:updated"
+    PROJECT_DELETED = "projects:deleted"
+
     CALENDAR_EVENT_CREATED = "calendar:event_created"
     CALENDAR_EVENT_UPDATED = "calendar:event_updated"
     CALENDAR_EVENT_DELETED = "calendar:event_deleted"
+    CALENDAR_PREFERENCES_UPDATED = "calendar:preferences_updated"
 
     EMAIL_SENT = "email:sent"
     EMAIL_REPLIED = "email:replied"
@@ -103,10 +130,29 @@ class AnalyticsEvents(StrEnum):
     # the modal. This fires when the ASSISTANT finishes composing a draft — a
     # different action that happened to be wearing the same name.
     EMAIL_COMPOSED = "email:draft_composed"
+    EMAIL_MARKED_READ = "email:marked_read"
+    EMAIL_MARKED_UNREAD = "email:marked_unread"
+    EMAIL_STARRED = "email:starred"
+    EMAIL_UNSTARRED = "email:unstarred"
+    EMAIL_TRASHED = "email:trashed"
+    EMAIL_UNTRASHED = "email:untrashed"
+    EMAIL_ARCHIVED = "email:archived"
+    EMAIL_MOVED_TO_INBOX = "email:moved_to_inbox"
+    EMAIL_LABEL_CREATED = "email:label_created"
+    EMAIL_LABEL_UPDATED = "email:label_updated"
+    EMAIL_LABEL_DELETED = "email:label_deleted"
+    EMAIL_LABEL_APPLIED = "email:label_applied"
+    EMAIL_LABEL_REMOVED = "email:label_removed"
+    EMAIL_DRAFT_CREATED = "email:draft_created"
+    EMAIL_DRAFT_UPDATED = "email:draft_updated"
+    EMAIL_DRAFT_DELETED = "email:draft_deleted"
 
     # Memory
+    MEMORY_CREATED = "memory:created"
+    MEMORY_UPDATED = "memory:updated"
     MEMORY_CLEARED = "memory:cleared"
     MEMORY_ITEM_DELETED = "memory:item_deleted"
+    MEMORY_DOCUMENT_UPDATED = "memory:document_updated"
 
     # Notes
     NOTE_CREATED = "notes:created"
@@ -115,6 +161,9 @@ class AnalyticsEvents(StrEnum):
 
     # Reminders
     REMINDER_CREATED = "reminder:created"
+    REMINDER_UPDATED = "reminder:updated"
+    REMINDER_PAUSED = "reminder:paused"
+    REMINDER_RESUMED = "reminder:resumed"
     REMINDER_COMPLETED = "reminder:completed"
     REMINDER_DELETED = "reminder:deleted"
 
@@ -127,8 +176,14 @@ class AnalyticsEvents(StrEnum):
 
     # Device bridge
     DEVICE_SELF_PAIRED = "device:self_paired"
+    DEVICE_APPROVED = "device:approved"
+    DEVICE_REVOKED = "device:revoked"
 
     NOTIFICATION_PREFERENCE_UPDATED = "settings:notifications_toggled"
+    NOTIFICATION_READ = "notification:read"
+    NOTIFICATION_BULK_ACTION = "notification:bulk_action"
+    NOTIFICATION_ACTION_EXECUTED = "notification:action_executed"
+    NOTIFICATION_UNSUBSCRIBED = "notification:unsubscribed"
 
     # Onboarding
     # Named for its "phase" payload: the web emits its own
@@ -136,13 +191,28 @@ class AnalyticsEvents(StrEnum):
     # carrying two different shapes is unqueryable.
     ONBOARDING_PHASE_COMPLETED = "onboarding:phase_completed"
     ONBOARDING_COMPLETED = "onboarding:completed"
+    ONBOARDING_INTEGRATIONS_SUBMITTED = "onboarding:integrations_submitted"
+    ONBOARDING_RESET = "onboarding:reset"
+    ONBOARDING_WRITING_STYLE_SAVED = "onboarding:writing_style_saved"
+    ONBOARDING_WRITING_STYLE_EXAMPLE_REGENERATED = "onboarding:writing_style_example_regenerated"
+    ONBOARDING_SOCIAL_PROFILES_CONFIRMED = "onboarding:social_profiles_confirmed"
 
     # Integrations
     INTEGRATION_CONNECTED = "integration:connected"
+    INTEGRATION_CONNECT_INITIATED = "integration:connect_initiated"
     INTEGRATION_DISCONNECTED = "integration:disconnected"
+    INTEGRATION_INSTRUCTIONS_UPDATED = "integration:instructions_updated"
+    INTEGRATION_CUSTOM_UPDATED = "integration:custom_updated"
+    INTEGRATION_CUSTOM_DELETED = "integration:custom_deleted"
+    INTEGRATION_CUSTOM_PUBLISHED = "integration:custom_published"
+    INTEGRATION_CUSTOM_UNPUBLISHED = "integration:custom_unpublished"
+    MCP_CONNECTION_TESTED = "mcp:connection_tested"
 
     # Skills
     SKILL_INSTALLED = "skill:installed"
+    SKILL_UPDATED = "skill:updated"
+    SKILL_ENABLED = "skill:enabled"
+    SKILL_DISABLED = "skill:disabled"
     SKILL_UNINSTALLED = "skill:uninstalled"
 
     # Support
@@ -155,7 +225,12 @@ class AnalyticsEvents(StrEnum):
     ACCOUNT_SETTING_CHANGED = "account:setting_changed"
     ACCOUNT_PLATFORM_DISCONNECTED = "account:platform_disconnected"
 
-    # Worker / agent lifecycle
+    # Human-in-the-loop approvals
+    APPROVAL_DECIDED = "approval:decided"
+
+    # Worker / agent lifecycle. AGENT_RUN_COMPLETED/FAILED carry executor
+    # timing props when measured: queue_wait_ms, executor_ttft_ms,
+    # executor_active_ms, queued. Absent on runs dispatched before the stamp.
     AGENT_RUN_STARTED = "agent:run_started"
     AGENT_RUN_COMPLETED = "agent:run_completed"
     AGENT_RUN_FAILED = "agent:run_failed"

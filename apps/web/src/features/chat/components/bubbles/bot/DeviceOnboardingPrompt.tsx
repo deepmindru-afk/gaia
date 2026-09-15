@@ -25,7 +25,6 @@ import {
   normalizePairingCode,
   toApiPairingCode,
 } from "@/features/devices/utils";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 
 const PACKAGE_MANAGERS = ["npm", "pnpm", "bun"] as const;
 type PackageManager = (typeof PACKAGE_MANAGERS)[number];
@@ -140,7 +139,6 @@ function CliOnboardingSteps({
     try {
       const result = await devicesApi.approve(toApiPairingCode(digits));
       setApprovedName(result.name);
-      trackEvent(ANALYTICS_EVENTS.DEVICE_CONNECTED, { source: "chat" });
     } catch {
       // The typed api client already surfaced the error toast.
     } finally {
