@@ -36,7 +36,7 @@ Subcommands:
         Exit 1 naming any verdict in the directory whose lane this job does not
         own, so a stray file is a red line pointing at itself rather than a
         phantom lane in the gate's table.
-    consolidate DIR --expect "job[@family][=job-result],…"
+    consolidate DIR --expect "job[@family][*planned-members][=job-result],…"
         The gate's verdict. Print the table every lane's JSON forms and exit 1
         if any lane failed, timed out, errored — or never reported at all.
     pytest-verdict <junit.xml> --lane L [--path-prefix P] [--out DIR]
@@ -412,7 +412,11 @@ def cmd_emit(args: list[str]) -> int:
 # Each `--expect` entry may carry the lane's GitHub job result (`lane=result`),
 # which is the only way to tell the two silences apart: a `skipped` lane
 # legitimately writes nothing (its language was untouched), while a `success`
-# lane that wrote nothing has lost its reporting.
+# lane that wrote nothing has lost its reporting. The result is cross-checked
+# against the verdicts rather than dropped once any of them turn up — see
+# RESULT_OVERRIDE — and `lane@family*<n>` additionally demands one verdict per
+# PLANNED matrix member, so a shard that died before its upload cannot be
+# spoken for by the shard beside it.
 # ---------------------------------------------------------------------------
 
 # Verdict a lane's job result implies when the lane itself wrote no file.
@@ -441,6 +445,38 @@ RESULT_ONLY: dict[str, tuple[Status, str]] = {
 }
 _RESULT_ONLY_UNKNOWN = (Status.ERROR, "result-only, but the job result did not reach the gate")
 
+# What a lane's JOB RESULT says when its verdicts do not say it themselves. A
+# lane writes its verdict and then keeps running — releasing the test services,
+# stopping the sidecar, uploading — and `emit --only-if-missing` stands down on
+# a lane that already reported, so a step that reds the job AFTER the verdict is
+# written leaves no trace in the tree at all. The result is then the only
+# witness, and a gate that read the verdicts alone went green over a job GitHub
+# calls failed. Only consulted when no verdict is already failing: a red lane
+# that named its own finding must not be reported twice.
+RESULT_OVERRIDE: dict[str, tuple[Status, str]] = {
+    "failure": (
+        Status.FAIL,
+        "the job failed but every verdict it uploaded passed — a step outside the lane "
+        "(setup, teardown, the upload) went red after the lane reported",
+    ),
+    "cancelled": (
+        Status.TIMED_OUT,
+        "cancelled after reporting — whatever it had not finished is missing from these verdicts",
+    ),
+}
+
+
+def _is_member(lane: str, family: str) -> bool:
+    """Is ``lane`` one MEMBER of ``family`` rather than a sub-unit of a member?
+
+    A matrix member reports under `<family>/<member>` — `mutation/shard-3`,
+    `test-python/unit-a` — and anything deeper belongs to one of them: the
+    mutation shards write one verdict per mutated MODULE
+    (`mutation/app/services/x.py`), many per shard. Counting every verdict in
+    the family would let one shard's modules stand in for a shard that never ran.
+    """
+    return lane == family or "/" not in lane[len(family) + 1 :]
+
 
 def _load_verdicts(directory: Path) -> dict[str, VerdictDoc]:
     found: dict[str, VerdictDoc] = {}
@@ -467,6 +503,30 @@ def _matching_lanes(family: str, found: dict[str, VerdictDoc]) -> list[str]:
     return sorted(k for k in found if _belongs(k, family))
 
 
+def _missing_members(lane: str, family: str, matched: list[str], planned: str) -> list[Row]:
+    """The row a family owes when fewer members reported than were planned.
+
+    `<job>@<family>*<n>` is how the runtime size of a matrix reaches the gate —
+    `mutation.sh plan` already emits the shard count it packed the diff into.
+    Without it a family is satisfied by ANY member, so a shard killed before its
+    `if: always()` upload (a job-level cap, a superseded run) is spoken for by
+    its siblings and the modules it carried go unmutated, silently.
+    """
+    if not planned:
+        return []
+    reported = sum(1 for key in matched if _is_member(key, family))
+    if reported >= int(planned):
+        return []
+    return [
+        (
+            lane,
+            Status.ERROR,
+            f"NO VERDICT — {reported} of {planned} planned matrix member(s) reported; "
+            "the rest were cancelled or never uploaded, so their work is unproven",
+        )
+    ]
+
+
 def _row_for(entry: str, found: dict[str, VerdictDoc]) -> list[Row]:
     """Return the table rows one `--expect` entry produces, and nothing else.
 
@@ -476,13 +536,18 @@ def _row_for(entry: str, found: dict[str, VerdictDoc]) -> list[Row]:
     into a branch count the PLR ratchet was right to flag.
     """
     job, _, result = entry.partition("=")
+    job, _, planned = job.partition("*")
     lane, _, family = job.partition("@")
     if family == RESULT_ONLY_FAMILY:
         return [(lane, *RESULT_ONLY.get(result, _RESULT_ONLY_UNKNOWN))]
     matched = _matching_lanes(family or lane, found)
     if not matched:
         return [(lane, *RESULT_FALLBACK.get(result, _NO_VERDICT))]
-    return [(key, Status(found[key]["status"]), found[key]["summary"]) for key in matched]
+    rows = [(key, Status(found[key]["status"]), found[key]["summary"]) for key in matched]
+    rows += _missing_members(lane, family or lane, matched, planned)
+    if result in RESULT_OVERRIDE and not any(status in FAILING_STATUSES for _, status, _ in rows):
+        rows.append((lane, *RESULT_OVERRIDE[result]))
+    return rows
 
 
 def consolidated_rows(expect: str, found: dict[str, VerdictDoc]) -> list[Row]:
@@ -569,13 +634,19 @@ def cmd_consolidate(args: list[str]) -> int:
         "--expect",
         required=True,
         help=(
-            "comma-separated `<job>[@<family>][=<github job result>]` entries. "
+            "comma-separated `<job>[@<family>][*<planned members>][=<github job result>]` "
+            "entries. "
             "<job> is the gate's needs entry, and by default also the lane id to "
             "look for; @<family> names a different one when the job and its lane "
             "ids differ (test-mutation@mutation — the mutation gate reports one "
             "verdict per MODULE, not one per job). A family is satisfied by any "
             "verdict whose lane is it or starts with `<family>/`, because how "
-            "many members there are is decided at runtime. "
+            "many members there are is decided at runtime; `*<n>` pins that "
+            "number where the planner knows it, so a matrix member cancelled "
+            "before it could upload cannot be spoken for by its siblings. A "
+            "failure/cancelled job result reds the lane even when every verdict "
+            "it did upload passed — a step that goes red AFTER the lane reported "
+            "leaves no other trace. "
             "The family `result-only` (select-runner@result-only) marks a job that "
             "CANNOT report — no checkout, or a checkout pinned to another revision, "
             "so it can never run the local upload composite. It is still enforced on "

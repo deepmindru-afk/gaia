@@ -7,8 +7,11 @@ just flips a local flag.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.models.workflow_models import DeactivationReason
 from app.services.workflow.subscription_pause import (
+    SubscriptionWorkflowSyncIncomplete,
     deactivate_workflows_for_lapsed_subscription,
     reactivate_workflows_for_restored_subscription,
 )
@@ -96,10 +99,34 @@ class TestDeactivateWorkflowsForLapsedSubscription:
                 side_effect=[RuntimeError("composio down"), None]
             )
 
-            deactivated = await deactivate_workflows_for_lapsed_subscription(USER_ID)
+            with pytest.raises(SubscriptionWorkflowSyncIncomplete):
+                await deactivate_workflows_for_lapsed_subscription(USER_ID)
 
         # A half-applied deactivation beats none: the second workflow still stopped.
-        assert deactivated == 1
+        assert service.deactivate_workflow.await_count == 2
+
+    async def test_a_failure_leaves_the_call_so_the_batch_can_be_retried(self) -> None:
+        """A workflow whose trigger could not be unregistered is still armed
+        upstream for someone who no longer pays. The webhook that called this has
+        already written the lapsed status, so a Dodo redelivery reduces to
+        "unchanged" and never reaches the workflows again — swallowing the
+        failure here is what makes it permanent."""
+        with (
+            patch(f"{MODULE}.workflow_repository") as repo,
+            patch(f"{MODULE}.WorkflowService") as service,
+        ):
+            repo.find_activated_for_user = AsyncMock(
+                return_value=[_workflow("wf-1"), _workflow("wf-2")]
+            )
+            service.deactivate_workflow = AsyncMock(
+                side_effect=[RuntimeError("composio down"), None]
+            )
+
+            with pytest.raises(SubscriptionWorkflowSyncIncomplete) as caught:
+                await deactivate_workflows_for_lapsed_subscription(USER_ID)
+
+        assert caught.value.user_id == USER_ID
+        assert caught.value.failed_workflow_ids == ["wf-1"]
 
     async def test_no_activated_workflows_is_a_no_op(self) -> None:
         with (
@@ -160,7 +187,8 @@ class TestDeactivateWorkflowsForLapsedSubscription:
             repo.find_activated_for_user = AsyncMock(return_value=[_workflow("wf-1")])
             service.deactivate_workflow = AsyncMock(side_effect=RuntimeError("composio down"))
 
-            await deactivate_workflows_for_lapsed_subscription(USER_ID)
+            with pytest.raises(SubscriptionWorkflowSyncIncomplete):
+                await deactivate_workflows_for_lapsed_subscription(USER_ID)
 
         mock_log.warning.assert_called_once()
         message, kwargs = mock_log.warning.call_args.args[0], mock_log.warning.call_args.kwargs
@@ -263,10 +291,12 @@ class TestReactivateWorkflowsForRestoredSubscription:
                 side_effect=[RuntimeError("integration since expired"), None]
             )
 
-            reactivated = await reactivate_workflows_for_restored_subscription(USER_ID)
+            with pytest.raises(SubscriptionWorkflowSyncIncomplete) as caught:
+                await reactivate_workflows_for_restored_subscription(USER_ID)
 
         # A half-applied reactivation beats none: the second workflow still resumed.
-        assert reactivated == 1
+        assert service.activate_workflow.await_count == 2
+        assert caught.value.failed_workflow_ids == ["wf-1"]
 
     async def test_it_never_reactivates_behind_the_service_and_strands_a_composio_trigger(
         self,
@@ -298,7 +328,8 @@ class TestReactivateWorkflowsForRestoredSubscription:
                 side_effect=RuntimeError("integration since expired")
             )
 
-            await reactivate_workflows_for_restored_subscription(USER_ID)
+            with pytest.raises(SubscriptionWorkflowSyncIncomplete):
+                await reactivate_workflows_for_restored_subscription(USER_ID)
 
         mock_log.warning.assert_called_once()
         message, kwargs = mock_log.warning.call_args.args[0], mock_log.warning.call_args.kwargs

@@ -15,6 +15,7 @@ from dodopayments.types import Subscription
 import pytest
 
 from app.constants.log_tags import LogTag
+from app.constants.payments import SUBSCRIPTION_WORKFLOW_SYNC_TASK, SubscriptionWorkflowSync
 from app.models.payment_models import SubscriptionDocument
 from app.models.webhook_models import DodoSubscriptionData
 from app.services.analytics_service import AnalyticsEvents, SubscriptionPlan
@@ -550,6 +551,8 @@ class TestSideEffectsNeverFailTheEvent:
                 side_effect=RuntimeError("mongo exploded"),
             ),
             patch(f"{EVENTS_MODULE}.log") as mock_log,
+            patch(f"{EVENTS_MODULE}.enqueue_worker_job", new_callable=AsyncMock),
+            patch(f"{EVENTS_MODULE}.RedisPoolManager.get_pool", new_callable=AsyncMock),
         ):
             await reactivate_workflows_safely(FAKE_USER_ID)
 
@@ -568,6 +571,8 @@ class TestSideEffectsNeverFailTheEvent:
                 side_effect=RuntimeError("mongo exploded"),
             ),
             patch(f"{EVENTS_MODULE}.log") as mock_log,
+            patch(f"{EVENTS_MODULE}.enqueue_worker_job", new_callable=AsyncMock),
+            patch(f"{EVENTS_MODULE}.RedisPoolManager.get_pool", new_callable=AsyncMock),
         ):
             await deactivate_workflows_safely(FAKE_USER_ID)
 
@@ -577,6 +582,99 @@ class TestSideEffectsNeverFailTheEvent:
             error_type="RuntimeError",
             user_id=FAKE_USER_ID,
         )
+
+
+@pytest.mark.unit
+class TestAFailedWorkflowSyncIsOwedToTheWorker:
+    """Dodo's own retry cannot recover this one. By the time the pause runs the
+    row already carries the reported status, so a redelivery reduces to
+    "unchanged" and never reaches the workflows again — the remainder has to
+    become durable work here or it is lost for good."""
+
+    async def test_a_deactivation_failure_queues_the_lapsed_sync(self) -> None:
+        pool = object()
+        with (
+            patch(
+                f"{PAUSE}.deactivate_workflows_for_lapsed_subscription",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("composio down"),
+            ),
+            patch(
+                f"{EVENTS_MODULE}.RedisPoolManager.get_pool",
+                new_callable=AsyncMock,
+                return_value=pool,
+            ),
+            patch(f"{EVENTS_MODULE}.enqueue_worker_job", new_callable=AsyncMock) as enqueue,
+        ):
+            await deactivate_workflows_safely(FAKE_USER_ID)
+
+        enqueue.assert_awaited_once_with(
+            pool,
+            SUBSCRIPTION_WORKFLOW_SYNC_TASK,
+            FAKE_USER_ID,
+            SubscriptionWorkflowSync.PAUSE.value,
+            _job_id=f"{SUBSCRIPTION_WORKFLOW_SYNC_TASK}:{FAKE_USER_ID}:pause",
+        )
+
+    async def test_a_reactivation_failure_queues_the_restored_sync(self) -> None:
+        pool = object()
+        with (
+            patch(
+                f"{PAUSE}.reactivate_workflows_for_restored_subscription",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("composio down"),
+            ),
+            patch(
+                f"{EVENTS_MODULE}.RedisPoolManager.get_pool",
+                new_callable=AsyncMock,
+                return_value=pool,
+            ),
+            patch(f"{EVENTS_MODULE}.enqueue_worker_job", new_callable=AsyncMock) as enqueue,
+        ):
+            await reactivate_workflows_safely(FAKE_USER_ID)
+
+        enqueue.assert_awaited_once_with(
+            pool,
+            SUBSCRIPTION_WORKFLOW_SYNC_TASK,
+            FAKE_USER_ID,
+            SubscriptionWorkflowSync.RESUME.value,
+            _job_id=f"{SUBSCRIPTION_WORKFLOW_SYNC_TASK}:{FAKE_USER_ID}:resume",
+        )
+
+    async def test_a_successful_pause_queues_nothing(self) -> None:
+        with (
+            patch(
+                f"{PAUSE}.deactivate_workflows_for_lapsed_subscription",
+                new_callable=AsyncMock,
+                return_value=2,
+            ),
+            patch(f"{EVENTS_MODULE}.enqueue_worker_job", new_callable=AsyncMock) as enqueue,
+        ):
+            await deactivate_workflows_safely(FAKE_USER_ID)
+
+        enqueue.assert_not_awaited()
+
+    async def test_a_queue_that_is_itself_down_is_reported_not_hidden(self) -> None:
+        """Nothing is left to fall back on, so the line naming the user is the
+        only trace the stranded workflows leave."""
+        with (
+            patch(
+                f"{PAUSE}.deactivate_workflows_for_lapsed_subscription",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("composio down"),
+            ),
+            patch(
+                f"{EVENTS_MODULE}.RedisPoolManager.get_pool",
+                new_callable=AsyncMock,
+                side_effect=ConnectionError("redis down"),
+            ),
+            patch(f"{EVENTS_MODULE}.log") as mock_log,
+        ):
+            await deactivate_workflows_safely(FAKE_USER_ID)
+
+        assert mock_log.error.call_count == 2
+        assert mock_log.error.call_args.kwargs["user_id"] == FAKE_USER_ID
+        assert "could not be queued" in mock_log.error.call_args.args[0]
 
     async def test_the_welcome_mail_names_who_was_mailed_not_where(
         self, mock_webhook_users_collection, mock_webhook_send_email

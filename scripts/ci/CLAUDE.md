@@ -217,10 +217,23 @@ first shipped broken.
 A lane may report as a FAMILY of sub-units — `test-python` as one verdict per
 slice (`test-python/unit-a`), `test-mutation` as one per mutated MODULE
 (`mutation/<module>`, plus `mutation/shard-<n>`) — and the family is satisfied
-by any member, because how many members exist is decided at runtime by the
+by its members, because how many members exist is decided at runtime by the
 matrix or by `mutation.sh plan`. Where the job name and the family differ, the
 `--expect` entry says so: `test-mutation@mutation=${{ … }}`. A family with NO
 members is still `NO VERDICT`, reported under the job name.
+
+Satisfied by its members means ALL of them where the planner knows how many:
+`*<n>` carries that count into the entry
+(`test-mutation@mutation*${{ needs.test-mutation-plan.outputs.count }}`), and a
+member is a DIRECT child of the family — `mutation/shard-3`, not the many
+`mutation/<module>` lanes that shard writes. Without it a shard killed before
+its `if: always()` upload (the job cap, a superseded run) is spoken for by the
+shard beside it, and the modules it was carrying go unmutated behind a green
+gate. For the same reason the job RESULT is cross-checked against the verdicts
+rather than dropped once any of them turn up: a lane keeps running after it
+reports — releasing services, stopping the sidecar, uploading — and
+`emit --only-if-missing` stands down on a lane that already reported, so a step
+that reds the job AFTER the verdict is written leaves no other trace.
 
 Two rules make that enforceable rather than decorative:
 
