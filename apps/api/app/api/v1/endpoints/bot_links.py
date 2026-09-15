@@ -191,11 +191,9 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
             return RedeemLinkCodeResponse(linked=True, delivered=True)
 
         if claim.in_flight:
-            # A twin delivery of the same handoff holds the claim and is
-            # running the link right now — the same second tap as above, only
-            # it arrived before the first one finished. Answering it the same
-            # way keeps this request silent: the twin delivers the first
-            # contact, and if the link fails the twin is what tells the user.
+            # A twin delivery holds the claim and is running the link right
+            # now — the second tap above, arriving before the first finished.
+            # The twin delivers the first contact, so this request stays silent.
             log.audit(
                 "platform link code already being redeemed by this account",
                 actor=AUDIT_ACTOR_BOT_API,

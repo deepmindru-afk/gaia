@@ -13,6 +13,7 @@ from app.agents.llm.ttft import LLMTtftCallback
 from app.agents.llm.types import LLMProviderName
 from app.config.posthog import POSTHOG_PROVIDER_KEY
 from app.constants.cache import CUSTOM_INT_METADATA_TTL, HANDOFF_METADATA_CACHE_PREFIX
+from app.constants.llm import LLM_LABEL_METADATA_KEY
 from app.constants.log_tags import LogTag
 from app.helpers.agent_helpers import (
     AgentIdentity,
@@ -218,6 +219,20 @@ class TestBuildAgentConfig:
         # No stored home zone and no parent zone -> UTC.
         assert config["configurable"]["user_timezone"] == "UTC"
         assert config["recursion_limit"] == AGENT_RECURSION_LIMIT
+
+    @patch("app.helpers.agent_helpers.providers")
+    async def test_metadata_stamps_the_agent_label_for_the_ttft_callback(self, mock_providers):
+        """build_agent_config stamps the agent tier as the default LLM_LABEL_METADATA_KEY, or the graph's own streaming calls land on agent=unknown."""
+        mock_providers.get.return_value = None
+
+        config = await build_agent_config(
+            identity=AgentIdentity(
+                conversation_id=CONV_ID,
+                user=FAKE_USER,
+                agent_name="executor_agent",
+            ),
+        )
+        assert config["metadata"][LLM_LABEL_METADATA_KEY] == "executor_agent"
 
     @patch("app.helpers.agent_helpers.providers")
     async def test_a_root_run_stamps_the_users_identity_and_its_own_conversation(

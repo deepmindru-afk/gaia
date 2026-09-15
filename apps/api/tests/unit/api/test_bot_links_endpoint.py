@@ -307,7 +307,7 @@ COMPLETION_MODULE = "app.services.platform_link_completion"
 
 
 def _claimed() -> LinkCodeClaim:
-    """A code this request won the claim on."""
+    """Build a code this request won the claim on."""
     return LinkCodeClaim(payload=PlatformLinkCodePayload(user_id="user1", preferences=PREFS))
 
 
@@ -608,12 +608,7 @@ class TestRedeemLinkCode:
         _already_linked: AsyncMock,
         _first_contact: AsyncMock,
     ):
-        """The same second tap, arriving before the first one finished.
-
-        Nothing dedupes the delivery on the bot side, so Telegram resending
-        ``/start`` puts two redemptions of one code in flight at once. The one
-        that lost the claim must stay silent rather than run the link again or
-        answer a live link with "that link has expired"."""
+        """The same second tap, arriving before the first one finished."""
         with (
             patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=LinkCodeClaim(in_flight=True)),
             patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
@@ -636,9 +631,7 @@ class TestRedeemLinkCode:
     async def test_a_refused_redemption_releases_the_code_for_the_retry(
         self, _auth: AsyncMock, client: AsyncClient
     ):
-        """Every refusal here tells the user to tap the same link again, and the
-        code is the only way back — spending it on the refusal would strand
-        them. It is released, never discarded."""
+        """The refusal tells the user to tap the same link again, so the code survives it."""
         with (
             patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=_claimed()),
             patch(

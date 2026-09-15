@@ -31,6 +31,12 @@ except ValueError:
 # ONCE for the deployment instead of in every process. Unset = load locally.
 EMBEDDING_SIDECAR_URL_ENV = "MEMORY_EMBEDDING_SIDECAR_URL"
 EMBEDDING_SIDECAR_TIMEOUT_SECONDS = 30.0
+# Recall on the user's turn fails fast into retrieval-order ranking rather than
+# holding the turn for the 30s client timeout plus retry backoff; ingestion keeps
+# the long budget above because a dropped memory save is worse than a slow one.
+EMBEDDING_SIDECAR_INTERACTIVE_TIMEOUT_SECONDS = max(
+    0.1, float(os.getenv("MEMORY_SIDECAR_INTERACTIVE_TIMEOUT_SECONDS", "5"))
+)
 
 # Max in-flight sidecar inferences: more than (cores / ONNX_INTRA_OP_THREADS)
 # concurrent calls oversubscribes the CPU past the client timeout above.
@@ -60,6 +66,11 @@ EMBEDDING_SIDECAR_RETRIES = max(0, int(os.getenv("MEMORY_SIDECAR_RETRIES", "2"))
 EMBEDDING_SIDECAR_RETRY_MAX_WAIT_SECONDS = max(
     0.0, float(os.getenv("MEMORY_SIDECAR_RETRY_MAX_WAIT_SECONDS", "5"))
 )
+
+# A 503 (overloaded) or 429 (rate-limited) is transient — the sidecar already
+# waited out its own slot budget — so it is worth another attempt; any other
+# status is the caller's answer.
+EMBEDDING_SIDECAR_RETRYABLE_STATUS_CODES = frozenset({429, 503})
 
 # How long a sidecar request may wait for a free inference slot before failing
 # with 503 instead of queueing invisibly until the client's own timeout.

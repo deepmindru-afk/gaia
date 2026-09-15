@@ -15,6 +15,7 @@
 apps/api/app/agents/core/nodes/memory_node.py	PLR0912	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/agents/core/nodes/memory_node.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/agents/middleware/compaction.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
+apps/api/app/agents/middleware/executor.py	PLR0915	deferred-until=2026-10-15; docstring-only cleanup (#1224) touched the file; the statement count came in with master's tool-latency change (#1239), no code changed here (decided 2026-09-16)
 apps/api/app/agents/middleware/runtime_adapter.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/agents/skills/parser.py	PLR0912	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/agents/tools/coding/_artifacts.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
@@ -44,7 +45,6 @@ apps/api/app/memory/reconciliation.py	PLR0912
 apps/api/app/patches/langchain_merge_dicts_model_name_patch.py	PLR0912	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/services/chat/persistence.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/services/hil/approvals_store.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
-apps/api/app/services/hil/bridge.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/services/integrations/integration_connection_service.py	PLR0911	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/services/integrations/integration_connection_service.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/app/services/mcp/langchain_adapter.py	PLR0912	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
@@ -85,7 +85,6 @@ apps/api/tests/unit/agents/test_mail_templates.py	PLR0913	deferred-until=2026-10
 apps/api/tests/unit/memory/pg_store/test_memories.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/tests/unit/memory/test_ingestion.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/tests/unit/memory/test_management.py	PLR0913
-apps/api/tests/unit/memory/test_retrieval.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/api/tests/unit/services/test_trigger_handlers_extras.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/voice-agent/src/agent.py	PLR0913	deferred-until=2026-10-15; docstring/comment-only cleanup (#1223) touched the file; no code changed, complexity untouched (decided 2026-09-14)
 apps/web/scripts/analyze-chunks.py	PLR0912

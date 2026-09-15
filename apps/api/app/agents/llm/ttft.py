@@ -51,8 +51,9 @@ class LLMTtftCallback(BaseCallbackHandler):
             time.perf_counter(),
             str(meta.get("lane_model") or "unknown"),
             str(meta.get("lane_provider") or "unknown"),
-            # The CALL's label (stamped by ainvoke_llm), not the run's agent: one
-            # turn's callback list also carries its title/follow-up/memory calls.
+            # build_agent_config stamps the run's agent tier as the default label;
+            # ainvoke_llm overrides it per side call (title/follow-up/memory) so
+            # those never pollute the tier's p95.
             str(meta.get(LLM_LABEL_METADATA_KEY) or "unknown"),
         )
 
@@ -66,7 +67,7 @@ class LLMTtftCallback(BaseCallbackHandler):
         tags: list[str] | None = None,  # noqa: ARG002 -- LangChain BaseCallbackHandler contract
         **_kwargs: object,
     ) -> None:
-        """Observe seconds from run start to this first token into llm_ttft_seconds; later tokens of the run find no start and do nothing."""
+        """Emit the TTFT sample on the first token of each run, once."""
         key = str(run_id)
         entry = self._starts.pop(key, None)
         if entry is None or key in self._observed:
@@ -84,7 +85,7 @@ class LLMTtftCallback(BaseCallbackHandler):
         tags: list[str] | None = None,  # noqa: ARG002 -- LangChain BaseCallbackHandler contract
         **_kwargs: object,
     ) -> None:
-        """Forget the finished run, so a non-streaming call that never emitted a token leaves no pending start behind."""
+        """Drop the run's tracking state once it completes."""
         self._starts.pop(str(run_id), None)
         self._observed.discard(str(run_id))
 
@@ -97,6 +98,6 @@ class LLMTtftCallback(BaseCallbackHandler):
         tags: list[str] | None = None,  # noqa: ARG002 -- LangChain BaseCallbackHandler contract
         **_kwargs: object,
     ) -> None:
-        """Forget the failed run, so a call that died before its first token contributes no sample."""
+        """Drop the run's tracking state on failure, emitting no sample."""
         self._starts.pop(str(run_id), None)
         self._observed.discard(str(run_id))

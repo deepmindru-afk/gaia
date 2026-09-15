@@ -1,13 +1,13 @@
 """Stress: race-for-claim on the one-tap platform link code.
 
-Real code under test: ``redeem_link_code``
-(``app/api/v1/endpoints/bot_links.py``) and the code store it claims through
-(``app/services/platform_link_code_service.py``). Redis is an in-process fake
-whose commands have no ``await`` between check and write, mirroring Redis's
+Real code under test: redeem_link_code
+(app/api/v1/endpoints/bot_links.py) and the code store it claims through
+(app/services/platform_link_code_service.py). Redis is an in-process fake
+whose commands have no await between check and write, mirroring Redis's
 single-threaded command atomicity, so the race resolves deterministically.
 
 Two deliveries of the same handoff are ordinary, not exotic: Telegram resends
-``/start`` and mobile clients re-fire the deep link, and nothing on the bot side
+/start and mobile clients re-fire the deep link, and nothing on the bot side
 dedupes the update. The invariant is that N of them run the link's side effects
 exactly once — one greeting on the outbound queue, one transcript write — and
 that a redemption which *failed* leaves the code redeemable, because the retry
@@ -40,7 +40,7 @@ BUBBLES = ["Hey. I'm with you on Telegram now.", "One tap and your inbox sorts i
 class _FakeRedis:
     """In-process Redis stand-in: atomic SETEX/SET-NX/GETDEL/DELETE on a dict.
 
-    Every command completes without an ``await`` in the middle, which is the
+    Every command completes without an await in the middle, which is the
     atomicity the real single-threaded Redis gives — so of N concurrent
     claimants exactly one can observe the winning result.
     """
@@ -78,7 +78,7 @@ def _body(code: str) -> RedeemLinkCodeRequest:
 
 
 def _request() -> Any:
-    """A bot request whose headers carry nothing to cross-check the body against."""
+    """Build a bot request whose headers carry nothing to cross-check the body against."""
     request = AsyncMock()
     request.state.bot_platform = None
     request.state.bot_platform_user_id = None
@@ -86,8 +86,7 @@ def _request() -> Any:
 
 
 async def _yielding_completion(*_args: Any, **_kwargs: Any) -> PlatformLinkCompletion:
-    """The winner's critical section: yields so the twins get scheduled while
-    the link is still being written."""
+    """Run the winner's critical section, yielding so the twins get scheduled mid-write."""
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     return PlatformLinkCompletion(
@@ -146,12 +145,7 @@ class TestLinkCodeRedemptionRace:
         assert all(r.linked for r in responses)
 
     async def test_a_failed_redemption_leaves_the_code_redeemable(self, fake_redis):
-        """The retry a refusal asks for is the same code.
-
-        A plan refusal ("subscribe and tap the link again") or a transient
-        fault must not spend the code — the user has no way to mint another
-        without walking back through onboarding.
-        """
+        """The retry a refusal asks for is the same code."""
         code = await mint_platform_link_code("user1", PREFS)
         complete = AsyncMock(side_effect=_yielding_completion)
         plan = AsyncMock(side_effect=AppError(message="needs Pro", status_code=429))

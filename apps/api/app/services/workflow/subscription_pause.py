@@ -9,12 +9,10 @@ regardless of billing state, and the same is true in reverse for a resume.
 Resume only ever touches workflows carrying DeactivationReason.SUBSCRIPTION_LAPSED,
 so a workflow the user switched off themselves is never silently re-enabled.
 
-A workflow that fails is attempted alongside the rest and then reported: unlike
-``dormancy.py``, nothing sweeps this on a schedule, and the caller's own retry
-cannot recover it either — by the time the pause runs, the billing row already
-carries the reported status, so a webhook redelivery reduces to "unchanged" and
-never reaches the workflows again. The remainder therefore has to leave this
-call as ``SubscriptionWorkflowSyncIncomplete`` for the caller to make durable.
+A workflow that fails is attempted alongside the rest and then reported: nothing
+sweeps this on a schedule, and by the time the pause runs the billing row already
+carries the reported status, so a webhook redelivery never reaches the workflows
+again. The remainder leaves this call as SubscriptionWorkflowSyncIncomplete.
 """
 
 from collections.abc import Awaitable, Callable
@@ -28,7 +26,7 @@ from shared.py.wide_events import log
 
 
 class SubscriptionWorkflowSyncIncomplete(Exception):
-    """Some of ``user_id``'s workflows did not follow their billing state.
+    """Some of the user's workflows did not follow their billing state.
 
     Raised only after the whole batch has been attempted, so the workflows that
     did move stay moved; it marks the remainder as owed work, not the run as
@@ -94,11 +92,10 @@ async def deactivate_workflows_for_lapsed_subscription(user_id: str) -> int:
 async def reactivate_workflows_for_restored_subscription(user_id: str) -> int:
     """Re-activate the workflows paused for user_id when their subscription lapsed.
 
-    Returns the count resumed. Idempotent. Only touches workflows carrying
-    DeactivationReason.SUBSCRIPTION_LAPSED, so a workflow the user switched
-    off themselves is never silently re-enabled. One workflow that fails to
-    reactivate does not abort the rest; the batch then raises
-    SubscriptionWorkflowSyncIncomplete.
+    Returns the count resumed. Idempotent, and only touches workflows carrying
+    DeactivationReason.SUBSCRIPTION_LAPSED, so one the user switched off themselves
+    is never silently re-enabled. A workflow that fails does not abort the rest; the
+    batch then raises SubscriptionWorkflowSyncIncomplete.
     """
     reactivated = 0
     failed: list[str] = []
