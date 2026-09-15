@@ -439,6 +439,9 @@ def _text_run(content: str) -> NotionTextRun:
 
 
 # Single-line prefixes, checked in order after the divider test.
+# GitHub's alert grammar; any other "> [!" line is an ordinary quote.
+_GITHUB_ALERT_RE = re.compile(r"^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]")
+
 _PREFIX_BLOCK_PROPERTIES: tuple[tuple[str, str], ...] = (
     ("### ", "heading_3"),
     ("## ", "heading_2"),
@@ -513,7 +516,7 @@ def _line_block(stripped: str) -> NotionContentBlock:
         return NotionContentBlock(block_property="paragraph", content="───")
 
     # Callout (GitHub alert style) — before the "> " quote prefix, which also matches it
-    if stripped.startswith("> [!"):
+    if _GITHUB_ALERT_RE.match(stripped):
         return NotionContentBlock(block_property="callout", content=stripped[2:])
 
     # Headings, quote

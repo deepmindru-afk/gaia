@@ -1246,3 +1246,9 @@ class TestMarkdownToNotionBlocks:
     @pytest.mark.parametrize("md", ["> [!WARNING] Be careful", "> [!TIP] A tip"])
     def test_every_alert_kind_is_a_callout_not_a_quote(self, md: str) -> None:
         assert _md_blocks(md)[0]["block_property"] == "callout"
+
+    @pytest.mark.parametrize("md", ["> [! this is a quote", "> [!UNKNOWN] text"])
+    def test_a_quote_that_only_looks_like_an_alert_stays_a_quote(self, md: str) -> None:
+        block = _md_blocks(md)[0]
+        assert block["block_property"] == "quote"
+        assert block["content"] == md[2:]
