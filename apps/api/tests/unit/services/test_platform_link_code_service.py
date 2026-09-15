@@ -6,7 +6,7 @@ parse back) are the boundaries worth probing.
 """
 
 from collections.abc import Generator
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -17,9 +17,10 @@ import app.services.platform_link_code_service as svc
 from app.services.platform_link_code_service import (
     build_handoff_links,
     build_handoff_text,
+    claim_platform_link_code,
     discard_platform_link_code,
     mint_platform_link_code,
-    peek_platform_link_code,
+    release_platform_link_code,
 )
 from app.utils.errors import AppError
 
@@ -46,43 +47,74 @@ def fake_store() -> Generator[dict[str, tuple[object, int | None]], None, None]:
     async def _delete(key: str) -> None:
         store.pop(key, None)
 
+    async def _set_nx(name: str, value: str, *, ex: int | None = None, nx: bool = False):
+        if nx and name in store:
+            return None
+        store[name] = (value, ex)
+        return True
+
+    redis = MagicMock()
+    redis.client.set = AsyncMock(side_effect=_set_nx)
+
     with (
         patch.object(svc, "set_cache", AsyncMock(side_effect=_set)),
         patch.object(svc, "get_cache", AsyncMock(side_effect=_get)),
         patch.object(svc, "delete_cache", AsyncMock(side_effect=_delete)),
+        patch.object(svc, "redis_cache", redis),
     ):
         yield store
 
 
-class TestMintPeekDiscard:
-    async def test_mint_then_peek_returns_the_binding(
+class TestClaimReleaseDiscard:
+    async def test_mint_then_claim_returns_the_binding(
         self, fake_store: dict[str, tuple[object, int | None]]
     ) -> None:
         code = await mint_platform_link_code("user1", PREFS)
-        payload = await peek_platform_link_code(code)
-        assert payload is not None
-        assert payload.user_id == "user1"
-        assert payload.preferences == PREFS
+        claim = await claim_platform_link_code(code)
+        assert claim.payload is not None
+        assert claim.payload.user_id == "user1"
+        assert claim.payload.preferences == PREFS
 
-    async def test_peeking_does_not_spend_the_code(
+    async def test_a_second_claim_while_the_first_runs_gets_nothing(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """Single-use is the claim, not the read: a twin redemption of the same
+        code must not be handed the binding and run the link a second time."""
+        code = await mint_platform_link_code("user1", PREFS)
+        assert (await claim_platform_link_code(code)).payload is not None
+
+        second = await claim_platform_link_code(code)
+        assert second.payload is None
+        assert second.in_flight is True
+
+    async def test_releasing_leaves_the_code_claimable_again(
         self, fake_store: dict[str, tuple[object, int | None]]
     ) -> None:
         """A refused redemption must leave the code live for the retry the refusal asks for."""
         code = await mint_platform_link_code("user1", PREFS)
-        assert await peek_platform_link_code(code) is not None
-        assert await peek_platform_link_code(code) is not None
+        await claim_platform_link_code(code)
+        await release_platform_link_code(code)
+        assert (await claim_platform_link_code(code)).payload is not None
 
     async def test_discard_makes_the_code_single_use(
         self, fake_store: dict[str, tuple[object, int | None]]
     ) -> None:
         code = await mint_platform_link_code("user1", PREFS)
+        await claim_platform_link_code(code)
         await discard_platform_link_code(code)
-        assert await peek_platform_link_code(code) is None
 
-    async def test_unknown_code_is_none(
+        spent = await claim_platform_link_code(code)
+        # Spent, not in flight: the claim goes with the record, so a later tap
+        # is told the code is dead instead of being answered as a twin.
+        assert spent.payload is None
+        assert spent.in_flight is False
+
+    async def test_unknown_code_is_empty(
         self, fake_store: dict[str, tuple[object, int | None]]
     ) -> None:
-        assert await peek_platform_link_code("not-a-real-code") is None
+        claim = await claim_platform_link_code("not-a-real-code")
+        assert claim.payload is None
+        assert claim.in_flight is False
 
     async def test_two_mints_have_distinct_codes(
         self, fake_store: dict[str, tuple[object, int | None]]
