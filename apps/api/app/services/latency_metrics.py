@@ -350,6 +350,7 @@ def span() -> Iterator[Callable[[], float]]:
 
 
 def observe_chat_ttft(seconds: float, *, source: str, voice_mode: bool, status: str) -> None:
+    """Record seconds from turn start to the first comms response text into chat_ttft_seconds."""
     _observe(
         _CHAT_TTFT_SECONDS,
         seconds,
@@ -362,6 +363,7 @@ def observe_chat_ttft(seconds: float, *, source: str, voice_mode: bool, status: 
 def observe_chat_e2e_ack(
     seconds: float, *, source: str, voice_mode: bool, delegated: bool, status: str
 ) -> None:
+    """Record seconds from request accepted to comms ack complete into chat_e2e_ack_seconds."""
     _observe(
         _CHAT_E2E_ACK_SECONDS,
         seconds,
@@ -375,6 +377,7 @@ def observe_chat_e2e_ack(
 def observe_chat_e2e_full(
     seconds: float, *, source: str, voice_mode: bool, delegated: bool, status: str
 ) -> None:
+    """Record seconds from request accepted to stream DONE into chat_e2e_full_seconds."""
     _observe(
         _CHAT_E2E_FULL_SECONDS,
         seconds,
@@ -386,6 +389,7 @@ def observe_chat_e2e_full(
 
 
 def observe_chat_turn_total(*, source: str, delegated: bool, status: str) -> None:
+    """Count one closed chat turn in chat_turn_total, emitted even when no timing span was captured."""
     _inc(
         _CHAT_TURN_TOTAL,
         source=source,
@@ -395,30 +399,37 @@ def observe_chat_turn_total(*, source: str, delegated: bool, status: str) -> Non
 
 
 def observe_llm_ttft(seconds: float, *, model: str, lane: str, agent: str) -> None:
+    """Record seconds from a streaming LLM call's start to its first token into llm_ttft_seconds."""
     _observe(_LLM_TTFT_SECONDS, seconds, model=model, lane=lane, agent=agent)
 
 
 def observe_comms_graph(seconds: float, *, status: str) -> None:
+    """Record seconds of one comms graph streaming run into comms_graph_seconds."""
     _observe(_COMMS_GRAPH_SECONDS, seconds, status=status)
 
 
 def observe_context_assemble(seconds: float, *, stage: str) -> None:
+    """Record seconds of one context assembly stage into context_assemble_seconds, once per section and once for the total."""
     _observe(_CONTEXT_ASSEMBLE_SECONDS, seconds, stage=stage)
 
 
 def observe_executor_queue_wait(seconds: float, *, source: str, queued: bool) -> None:
+    """Record seconds from executor dispatch to run start into executor_queue_wait_seconds."""
     _observe(_EXECUTOR_QUEUE_WAIT_SECONDS, seconds, source=source, queued=_bool_label(queued))
 
 
 def observe_executor_ttft(seconds: float, *, queued: bool) -> None:
+    """Record seconds from executor dispatch to its first tool-data frame into executor_ttft_seconds."""
     _observe(_EXECUTOR_TTFT_SECONDS, seconds, queued=_bool_label(queued))
 
 
 def observe_executor_active(seconds: float, *, status: str) -> None:
+    """Record seconds of executor run time excluding any HIL pause into executor_active_seconds."""
     _observe(_EXECUTOR_ACTIVE_SECONDS, seconds, status=status)
 
 
 def observe_executor_e2e(seconds: float, *, status: str, queued: bool) -> None:
+    """Record seconds from executor dispatch to finalize into executor_e2e_seconds."""
     _observe(
         _EXECUTOR_E2E_SECONDS,
         seconds,
@@ -428,48 +439,59 @@ def observe_executor_e2e(seconds: float, *, status: str, queued: bool) -> None:
 
 
 def observe_executor_run_total(*, status: str, queued: bool) -> None:
+    """Count one executor run reaching a terminal or paused state in executor_run_total."""
     _inc(_EXECUTOR_RUN_TOTAL, status=status, queued=_bool_label(queued))
 
 
 def observe_tool_call(seconds: float, *, tool_name: str, status: str) -> None:
+    """Record seconds of one tool call into tool_call_seconds and count it in tool_call_total, both labelled by the same outcome."""
     _observe(_TOOL_CALL_SECONDS, seconds, tool_name=tool_name, status=status)
     _inc(_TOOL_CALL_TOTAL, tool_name=tool_name, status=status)
 
 
 def observe_subagent_run(seconds: float, *, subagent_id: str, status: str) -> None:
+    """Record seconds of one subagent run segment, excluding pause, into subagent_run_seconds."""
     _observe(_SUBAGENT_RUN_SECONDS, seconds, subagent_id=subagent_id, status=status)
 
 
 def observe_hil_user_wait(seconds: float) -> None:
+    """Record seconds the user took to decide a HIL approval into hil_user_wait_seconds and count the pause in hil_pause_total."""
     _observe(_HIL_USER_WAIT_SECONDS, seconds)
     _inc(_HIL_PAUSE_TOTAL)
 
 
 def observe_hil_dispatch_lag(seconds: float) -> None:
+    """Record seconds from a HIL decision to the run's resume dispatch into hil_dispatch_lag_seconds."""
     _observe(_HIL_DISPATCH_LAG_SECONDS, seconds)
 
 
 def observe_delivery_narration(seconds: float, *, status: str) -> None:
+    """Record seconds spent narrating an executor result into delivery_narration_seconds."""
     _observe(_DELIVERY_NARRATION_SECONDS, seconds, status=status)
 
 
 def observe_delivery_persist(seconds: float, *, op: str) -> None:
+    """Record seconds of one result-persistence write into delivery_persist_seconds, labelled by which write it was."""
     _observe(_DELIVERY_PERSIST_SECONDS, seconds, op=op)
 
 
 def observe_transport_redis_publish(seconds: float) -> None:
+    """Record seconds spent writing one chunk onto the Redis stream key into transport_redis_publish_seconds."""
     _observe(_TRANSPORT_REDIS_PUBLISH_SECONDS, seconds)
 
 
 def observe_sse_delivery(seconds: float, *, status: str) -> None:
+    """Record seconds an SSE response spent from subscribe to close into sse_delivery_seconds."""
     _observe(_SSE_DELIVERY_SECONDS, seconds, status=status)
 
 
 def observe_llm_call(seconds: float, *, model: str, agent: str) -> None:
+    """Record seconds of one provider LLM call, start to final chunk, into llm_call_seconds."""
     _observe(_LLM_CALL_SECONDS, seconds, model=model, agent=agent)
 
 
 def observe_graph_node(seconds: float, *, node: str, agent: str) -> None:
+    """Record seconds spent inside one graph node into graph_node_seconds."""
     _observe(_GRAPH_NODE_SECONDS, seconds, node=node, agent=agent)
 
 
