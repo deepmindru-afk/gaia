@@ -325,12 +325,12 @@ class TestDeepResearch:
     )
     async def test_all_fetchers_fail_uses_snippet(
         self,
-        mock_httpx: AsyncMock,
+        _mock_httpx: AsyncMock,
         mock_batch_crawl4ai: AsyncMock,
         mock_rank: MagicMock,
         mock_ddg: AsyncMock,
         mock_decompose: AsyncMock,
-        mock_set_cache: AsyncMock,
+        _mock_set_cache: AsyncMock,
         _mock_cache: AsyncMock,
         _mock_cache_key: MagicMock,
         _mock_uid: MagicMock,
