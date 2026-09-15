@@ -122,8 +122,9 @@ class TestLoggingMiddlewareNormalRequests:
         assert context["status_code"] == 200
         assert "duration_ms" in context
         mock_bound.log.assert_called_once()
-        # A clean 2xx with no warning/error calls stays at INFO.
-        assert mock_bound.log.call_args[0][0] == "INFO"
+        # A clean 2xx with no warning/error calls stays at INFO, and every HTTP
+        # event is emitted under the one name the dashboards query.
+        assert mock_bound.log.call_args[0] == ("INFO", "http_request")
 
     def test_400_response_logged_as_warning(self) -> None:
         app = _build_test_app()

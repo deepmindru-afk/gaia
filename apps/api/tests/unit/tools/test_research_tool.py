@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from app.constants.cache import ONE_HOUR_TTL
 from app.constants.log_tags import LogTag
 from app.constants.search import (
     CRAWL4AI_PAGE_TIMEOUT_MS,
@@ -33,6 +34,16 @@ def _make_config(user_id: str | None = "user-123") -> dict[str, Any]:
 
 def _no_user_config() -> dict[str, Any]:
     return {"configurable": {}}
+
+
+class _Clock:
+    """Stands in for the module's time module with a scripted wall clock."""
+
+    def __init__(self, *ticks: float) -> None:
+        self._ticks = iter(ticks)
+
+    def time(self) -> float:
+        return next(self._ticks)
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +75,7 @@ class TestDeepResearch:
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value=None)
-    async def test_no_user_returns_error(self, _mock_uid: MagicMock) -> None:
+    async def test_no_user_returns_error(self, _mock_uid: MagicMock, _patch_log: MagicMock) -> None:
         from app.agents.tools.research_tool import deep_research
 
         result = await deep_research.ainvoke(
@@ -73,10 +84,12 @@ class TestDeepResearch:
         )
         assert result["error"] == "User authentication required"
         assert result["data"] is None
+        # Every run stamps the wide event with the tool and the action it ran under.
+        _patch_log.set.assert_any_call(tool={"name": "deep_research", "action": "research"})
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
-    async def test_invalid_depth_returns_error(self, _mock_uid: MagicMock) -> None:
+    async def test_invalid_depth_returns_error(self, mock_uid: MagicMock) -> None:
         from app.agents.tools.research_tool import deep_research
 
         result = await deep_research.ainvoke(
@@ -85,6 +98,8 @@ class TestDeepResearch:
         )
         assert "Invalid depth" in result["error"]
         assert result["data"] is None
+        # The caller's user is read from the runnable config the tool was handed.
+        assert mock_uid.call_args.args[0]["configurable"]["user_id"] == "user-123"
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
@@ -226,7 +241,11 @@ class TestDeepResearch:
             if isinstance(call.args[0], dict) and "progress" in call.args[0]
         ]
         assert "Found 2 unique sources, fetching full content..." in progress
-        mock_set_cache.assert_awaited_once()
+        # What is cached and what is streamed is the frame itself, minus the two
+        # per-call-site keys — a wrong key, payload or TTL is a silent miss.
+        frame = {k: v for k, v in result.items() if k not in ("cached", "instructions")}
+        mock_set_cache.assert_awaited_once_with("cache:key", frame, ttl=ONE_HOUR_TTL)
+        _patch_stream_writer.assert_any_call({"research_data": frame})
         mock_get_cache.assert_awaited_once_with("cache:key")
         assert [s["content"] for s in result["sources"]] == ["Full page content"] * 2
         # The research-queries card renders found_urls; the fetch bar counts off
@@ -250,6 +269,49 @@ class TestDeepResearch:
             semaphore_count=DEEP_RESEARCH_CRAWL4AI_SEMAPHORE_COUNT,
             context_name="crawl4ai",
             content_query="AI trends",
+        )
+
+    @pytest.mark.asyncio
+    @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
+    @patch(f"{MODULE}.build_research_cache_key", return_value="cache:key")
+    @patch(f"{MODULE}.get_cache", new_callable=AsyncMock, return_value=None)
+    @patch(f"{MODULE}.set_cache", new_callable=AsyncMock)
+    @patch(f"{MODULE}.decompose_research_queries", new_callable=AsyncMock)
+    @patch(f"{MODULE}.search_for_research", new_callable=AsyncMock)
+    @patch(f"{MODULE}.rank_and_deduplicate_urls")
+    @patch(f"{MODULE}.batch_fetch_with_crawl4ai", new_callable=AsyncMock)
+    async def test_elapsed_seconds_is_the_measured_wall_time_to_two_decimals(
+        self,
+        mock_batch_crawl4ai: AsyncMock,
+        mock_rank: MagicMock,
+        mock_ddg: AsyncMock,
+        mock_decompose: AsyncMock,
+        _mock_set_cache: AsyncMock,
+        _mock_cache: AsyncMock,
+        _mock_cache_key: MagicMock,
+        _mock_uid: MagicMock,
+        _patch_stream_writer: MagicMock,
+    ) -> None:
+        mock_decompose.return_value = ["sub-q1"]
+        mock_ddg.return_value = ResearchSearchResult(
+            results=[SearchResultItem(url="https://a.com")]
+        )
+        mock_rank.return_value = [
+            RankedUrl(url="https://a.com", title="", snippet="s", score=1.0, appearances=1)
+        ]
+        mock_batch_crawl4ai.return_value = ({"https://a.com": "content"}, {})
+
+        from app.agents.tools.research_tool import deep_research
+
+        with patch(f"{MODULE}.time", _Clock(1000.0, 1002.3456)):
+            result = await deep_research.ainvoke(
+                {"query": "test", "scope": "", "depth": 1, "focus_areas": None},
+                config=_make_config(),
+            )
+
+        assert result["elapsed_seconds"] == 2.35
+        _patch_stream_writer.assert_any_call(
+            {"progress": "Research complete! 1 sources fetched (0 failed) in 2.35s"}
         )
 
     @pytest.mark.asyncio
@@ -448,6 +510,30 @@ class TestDeepResearch:
 
         assert sources[0].content is None
         assert sources[0].fetch_error == "crawl4ai: fail; httpx: fail"
+
+    @patch(
+        f"{MODULE}.batch_fetch_with_crawl4ai",
+        new_callable=AsyncMock,
+        return_value=({}, {"https://a.com": "fail", "https://b.com": "fail"}),
+    )
+    @patch(f"{MODULE}.fetch_with_httpx", new_callable=AsyncMock, return_value="page")
+    async def test_every_httpx_fallback_advances_the_fetch_counter(
+        self,
+        _mock_httpx: AsyncMock,
+        _mock_batch_crawl4ai: AsyncMock,
+    ) -> None:
+        """Progress counts sources fetched so far, so the second httpx fallback reports 2/2."""
+        from app.agents.tools.research_tool import _fetch_sources
+
+        writer = MagicMock()
+        ranked = [
+            RankedUrl(url="https://a.com", title="", snippet="", score=1.0, appearances=1),
+            RankedUrl(url="https://b.com", title="", snippet="", score=1.0, appearances=1),
+        ]
+
+        await _fetch_sources(ranked, "test", writer)
+
+        writer.assert_any_call({"progress": "Fetched source 2/2..."})
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")

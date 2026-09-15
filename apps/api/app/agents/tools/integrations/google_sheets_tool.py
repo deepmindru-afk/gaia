@@ -125,8 +125,8 @@ def _sheets_proxy(
             endpoint=endpoint,
             method=method,
             body=(
-                body.model_dump(
-                    mode="json",  # pragma: no mutate — JSON-native fields only
+                body.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                    mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
                     exclude_none=True,
                 )
                 if body is not None

@@ -34,6 +34,13 @@ def register_trello_custom_tools(composio: Composio) -> list[str]:
                 user_id,
             )
         ).cards
-        return {"cards": [c.model_dump(mode="json", exclude_unset=True) for c in cards]}
+        return {
+            "cards": [
+                c.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                    mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
+                )
+                for c in cards
+            ]
+        }
 
     return ["TRELLO_CUSTOM_GATHER_CONTEXT"]

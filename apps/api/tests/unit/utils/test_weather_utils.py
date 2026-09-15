@@ -1,7 +1,6 @@
 """Comprehensive unit tests for app.utils.weather_utils."""
 
 import datetime
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -651,13 +650,7 @@ class TestPrepareWeatherData:
     async def test_minimal_sys_sunrise_is_now_and_sunset_twelve_hours_later(self) -> None:
         frozen = datetime.datetime(2024, 1, 15, 6, 0, tzinfo=datetime.UTC)
 
-        class _FrozenDateTime(datetime.datetime):
-            @classmethod
-            def now(cls, tz: datetime.tzinfo | None = None) -> datetime.datetime:  # type: ignore[override]  # mirrors datetime.now's optional-tz signature
-                return frozen
-
-        clock = SimpleNamespace(datetime=_FrozenDateTime, UTC=datetime.UTC)
-        with patch("app.utils.weather_utils.datetime", clock):
+        with patch("app.utils.weather_utils.time.time", return_value=frozen.timestamp()):
             result = await self._call(
                 _resolved("Tokyo", "JP", "Kanto"),
                 current_weather=_make_current_weather(include_sys=False),

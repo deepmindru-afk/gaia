@@ -236,7 +236,7 @@ def _render_file_like(block: NotionBlock, _list_number: int | None) -> str:
     """Render a video, file or pdf block."""
     if not block.content:
         return ""
-    title = block.type or ""
+    title = block.type
     caption = _plain_caption(block.content)
     link = _file_link(block.content)
     title = caption.strip() or (link.split("/")[-1] if "/" in link else title)
@@ -245,7 +245,7 @@ def _render_file_like(block: NotionBlock, _list_number: int | None) -> str:
 
 def _render_link_like(block: NotionBlock, _list_number: int | None) -> str:
     """Render a bookmark, embed, link_preview or link_to_page block."""
-    block_type = block.type or ""
+    block_type = block.type
     block_content = _block_content(block)
     if block_type != "link_to_page":
         return _link(block_type, block_content.url)
@@ -500,7 +500,7 @@ def _parse_table(lines: list[str], start: int) -> tuple[NotionTableBlock | None,
     for row_line in data_rows:
         cells = _parse_table_row(row_line)
         # Pad or trim to table_width
-        while len(cells) < table_width:
+        while len(cells) < table_width:  # pragma: no mutate -- the trim below re-imposes the bound
             cells.append("")
         cells = cells[:table_width]
         notion_rows.append(NotionTableRow(cells=[[_text_run(cell)] for cell in cells]))

@@ -17,7 +17,8 @@ from shared.py.wide_events import log
 
 
 def _passthrough(items: list[GitHubIssue] | list[GitHubNotification]) -> list[dict[str, object]]:
-    return [item.model_dump(mode="json", exclude_unset=True) for item in items]
+    # JSON-native fields: python and json dumps are identical
+    return [item.model_dump(mode="json", exclude_unset=True) for item in items]  # pragma: no mutate
 
 
 def register_github_custom_tools(composio: Composio) -> list[str]:

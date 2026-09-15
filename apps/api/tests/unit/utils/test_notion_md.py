@@ -1252,3 +1252,10 @@ class TestMarkdownToNotionBlocks:
         block = _md_blocks(md)[0]
         assert block["block_property"] == "quote"
         assert block["content"] == md[2:]
+
+    def test_a_line_that_only_ends_with_a_pipe_is_prose(self) -> None:
+        """A table row is pipe-delimited at both ends; one trailing pipe is an ordinary line."""
+        assert _md_blocks("Total: 42|")[0] == {
+            "block_property": "paragraph",
+            "content": "Total: 42|",
+        }

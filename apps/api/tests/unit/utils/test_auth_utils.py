@@ -1,11 +1,13 @@
 """Unit tests for app.utils.auth_utils — WorkOS session authentication."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.constants.auth import DEV_USER_HEADER
 from app.models.first_steps_models import FirstStepsState
 from app.models.user_models import OnboardingSubdocument, UserDocument
 from app.utils.auth_utils import (
@@ -13,6 +15,7 @@ from app.utils.auth_utils import (
     build_user_context,
     load_user_context,
     resolve_bot_user,
+    resolve_dev_bypass_user,
 )
 
 
@@ -783,6 +786,49 @@ class TestResolveBotUser:
             repo.get_by_platform_id = AsyncMock(return_value=None)
 
             assert await resolve_bot_user("telegram", "tg-1") is None
+
+
+@pytest.mark.asyncio
+class TestResolveDevBypassUser:
+    """Precedence: X-Dev-User header, then the dev_bypass_user cookie, then the configured default."""
+
+    @staticmethod
+    async def _resolve(
+        headers: dict[str, str], cookies: dict[str, str], default: str | None
+    ) -> str:
+        doc, _ = _every_field_document()
+        connection = SimpleNamespace(headers=headers, cookies=cookies)
+        with patch(_PATCH_SETTINGS) as mock_settings, patch(_PATCH_USER_REPO) as repo:
+            mock_settings.DEV_AUTH_BYPASS_EMAIL = default
+            repo.get_by_email = AsyncMock(return_value=doc)
+
+            email, user = await resolve_dev_bypass_user(connection)  # type: ignore[arg-type]
+
+        repo.get_by_email.assert_awaited_once_with(email)
+        assert user is doc
+        return email
+
+    async def test_the_header_outranks_the_cookie_and_the_default(self) -> None:
+        email = await self._resolve(
+            {DEV_USER_HEADER: "header@example.com"},
+            {"dev_bypass_user": "cookie@example.com"},
+            "default@example.com",
+        )
+
+        assert email == "header@example.com"
+
+    async def test_the_cookie_outranks_the_default(self) -> None:
+        email = await self._resolve({}, {"dev_bypass_user": "cookie@example.com"}, "default@e.com")
+
+        assert email == "cookie@example.com"
+
+    async def test_the_configured_default_is_the_last_resort(self) -> None:
+        email = await self._resolve({}, {}, "default@example.com")
+
+        assert email == "default@example.com"
+
+    async def test_nothing_configured_resolves_to_the_empty_email(self) -> None:
+        assert await self._resolve({}, {}, None) == ""
 
 
 @pytest.mark.asyncio

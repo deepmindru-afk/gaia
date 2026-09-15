@@ -729,23 +729,19 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         if request.confirm_immediately:
             writer = get_stream_writer()
             if created_events:
-                writer(
-                    {
-                        "calendar_fetch_data": [
-                            CalendarEventDisplay(
-                                summary=e.summary,
-                                start_time=_extract_datetime(e.start),
-                                end_time=_extract_datetime(e.end),
-                                calendar_name=name_map.get(e.calendar_id, ""),
-                                background_color=color_map.get(
-                                    e.calendar_id, DEFAULT_CALENDAR_COLOR
-                                ),
-                                # JSON-native fields: python and json dumps are identical
-                            ).model_dump(mode="json")  # pragma: no mutate
-                            for e in created_events
-                        ]
-                    }
-                )
+                displays = [
+                    CalendarEventDisplay(
+                        summary=e.summary,
+                        start_time=_extract_datetime(e.start),
+                        end_time=_extract_datetime(e.end),
+                        calendar_name=name_map.get(e.calendar_id, ""),
+                        background_color=color_map.get(e.calendar_id, DEFAULT_CALENDAR_COLOR),
+                    )
+                    for e in created_events
+                ]
+                # JSON-native fields: python and json dumps are identical
+                dumps = [d.model_dump(mode="json") for d in displays]  # pragma: no mutate
+                writer({"calendar_fetch_data": dumps})
 
             # JSON-native fields: python and json dumps are identical
             created_dumps = [e.model_dump(mode="json") for e in created_events]  # pragma: no mutate

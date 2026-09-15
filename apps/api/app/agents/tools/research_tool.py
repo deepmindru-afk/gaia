@@ -124,9 +124,7 @@ async def _fetch_sources(
         url_info: RankedUrl, content: str | None, fetch_error: str | None
     ) -> ResearchSource:
         return ResearchSource(
-            **url_info.model_dump(
-                mode="json",  # pragma: no mutate -- RankedUrl has only str/float/int fields
-            ),
+            **url_info.model_dump(mode="json"),  # pragma: no mutate -- RankedUrl is all primitives
             content=content,
             fetch_error=fetch_error,
         )
@@ -285,7 +283,7 @@ async def deep_research(
 
         # ── Build result ─────────────────────────────────────────────────────
         # Include the authoritative list of real URLs so the LLM cannot fabricate others
-        result = ResearchResult(
+        research = ResearchResult(
             query=query,
             scope=scope,
             focus_areas=focus_areas,
@@ -298,9 +296,8 @@ async def deep_research(
             failed_sources=failed_count,
             error=None,
             integrity_note=_INTEGRITY_NOTE,
-        ).model_dump(
-            mode="json",  # pragma: no mutate -- every ResearchResult field is JSON-native
         )
+        result = research.model_dump(mode="json")  # pragma: no mutate -- every field is JSON-native
 
         # Only cache when we have content — avoid masking transient fetch failures
         if valid_sources:
