@@ -710,6 +710,25 @@ class TestClickUpGatherContext:
             FAKE_USER_ID,
         )
 
+    @patch(f"{CLICKUP_MODULE}.datetime", _UTCOnlyDateTime)
+    @patch(f"{CLICKUP_MODULE}.execute_tool")
+    def test_a_task_due_this_exact_millisecond_is_not_yet_overdue(
+        self, mock_exec: MagicMock
+    ) -> None:
+        now_ms = int(datetime(2026, 6, 15, 2, 0, tzinfo=UTC).timestamp() * 1000)
+        mock_exec.return_value = {
+            "tasks": [
+                {"id": "1", "name": "Due now", "due_date": str(now_ms)},
+                {"id": "2", "name": "Due a millisecond ago", "due_date": str(now_ms - 1)},
+            ]
+        }
+
+        captured = self._register()
+        fn = captured["CUSTOM_GATHER_CONTEXT"]
+        result = fn(GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS_USER_ONLY)
+
+        assert [t["name"] for t in result["overdue_tasks"]] == ["Due a millisecond ago"]
+
     @patch(f"{CLICKUP_MODULE}.execute_tool")
     def test_missing_user_id(self, mock_exec: MagicMock) -> None:
         captured = self._register()
@@ -944,6 +963,10 @@ class TestUrgencyAggregator:
             {},
         )
         assert result["urgent_items"][0]["priority"] == "medium"
+        at_threshold = fn(
+            self._make_input({"gmail": {"inbox_unread_count": 20}}), EXECUTE_REQUEST, {}
+        )
+        assert at_threshold["urgent_items"][0]["priority"] == "medium"
 
     def test_gmail_zero_unread(self) -> None:
         """Gmail with 0 unread does not create an item."""
@@ -1247,6 +1270,133 @@ class TestUrgencyAggregator:
                 "description": "3 unread emails in inbox",
             },
         ]
+        without_mentions = fn(self._make_input({"slack": {"unread_count": 3}}), EXECUTE_REQUEST, {})
+        assert without_mentions["urgent_items"] == result["urgent_items"]
+
+    def test_a_single_unread_counts_and_every_priority_is_tallied_exactly(self) -> None:
+        captured = self._register()
+        fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
+
+        result = fn(
+            self._make_input(
+                {
+                    "gmail": {"inbox_unread_count": 1},
+                    "teams": {"unread_chat_count": 1},
+                    "reddit": {"unread_message_count": 1},
+                }
+            ),
+            EXECUTE_REQUEST,
+            {},
+        )
+
+        assert result == {
+            "urgent_items": [
+                {
+                    "integration": "gmail",
+                    "type": "unread_emails",
+                    "count": 1,
+                    "priority": "medium",
+                    "description": "1 unread emails in inbox",
+                },
+                {
+                    "integration": "microsoft_teams",
+                    "type": "unread_chats",
+                    "count": 1,
+                    "priority": "medium",
+                    "description": "1 unread Microsoft Teams chats",
+                },
+                {
+                    "integration": "reddit",
+                    "type": "unread_messages",
+                    "count": 1,
+                    "priority": "low",
+                    "description": "1 unread Reddit messages",
+                },
+            ],
+            "total_urgent": 3,
+            "summary": {"high_priority": 0, "medium_priority": 2, "low_priority": 1},
+        }
+
+    @pytest.mark.parametrize("unread", [0, None])
+    def test_reddit_with_no_unread_messages_yields_nothing(self, unread: int | None) -> None:
+        captured = self._register()
+        fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
+
+        result = fn(
+            self._make_input({"reddit": {"unread_message_count": unread}}), EXECUTE_REQUEST, {}
+        )
+
+        assert result["urgent_items"] == []
+
+    def test_linear_with_an_empty_overdue_list_yields_nothing(self) -> None:
+        captured = self._register()
+        fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
+
+        result = fn(self._make_input({"linear": {"overdue_issues": []}}), EXECUTE_REQUEST, {})
+
+        assert result["urgent_items"] == []
+
+    def test_github_fires_on_notifications_alone_and_on_review_requests_alone(self) -> None:
+        captured = self._register()
+        fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
+
+        result = fn(
+            self._make_input(
+                {
+                    "github": {"notifications": [{"id": "n1"}]},
+                    "github_reviews": {"review_requests": [{"title": "PR"}]},
+                }
+            ),
+            EXECUTE_REQUEST,
+            {},
+        )
+
+        assert result["urgent_items"] == [
+            {
+                "integration": "github",
+                "type": "review_requests",
+                "count": 1,
+                "priority": "high",
+                "description": "1 GitHub PRs awaiting your review",
+                "details": ["PR"],
+            },
+            {
+                "integration": "github",
+                "type": "unread_notifications",
+                "count": 1,
+                "priority": "medium",
+                "description": "1 unread GitHub notifications",
+            },
+        ]
+
+    def test_quoted_details_stop_at_three_and_blank_a_missing_label(self) -> None:
+        captured = self._register()
+        fn = captured["CUSTOM_URGENCY_AGGREGATOR"]
+
+        result = fn(
+            self._make_input(
+                {
+                    "slack": {"mentions": [{"text": "a"}, {}, {"text": "c"}, {"text": "d"}]},
+                    "linear": {"overdue_issues": [{"title": str(n)} for n in range(1, 5)]},
+                    "github": {
+                        "review_requests": [{"title": "p"}, {}, {"title": "r"}, {"title": "s"}]
+                    },
+                    "asana": {"overdue_tasks": [{"name": f"t{n}"} for n in range(1, 5)]},
+                }
+            ),
+            EXECUTE_REQUEST,
+            {},
+        )
+
+        assert {
+            (i["integration"], i["type"]): (i["count"], i["details"])
+            for i in result["urgent_items"]
+        } == {
+            ("slack", "unread_messages"): (4, ["a", "", "c"]),
+            ("linear", "overdue_issues"): (4, ["1", "2", "3"]),
+            ("github", "review_requests"): (4, ["p", "", "r"]),
+            ("asana", "overdue_tasks"): (4, ["t1", "t2", "t3"]),
+        }
 
     def test_exact_items_and_details_shape(self) -> None:
         """Count-only branches omit details; quoting branches carry the first three labels."""
