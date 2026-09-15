@@ -438,6 +438,42 @@ def _bot_stream_failure_logger(
     return _log_stream_failure
 
 
+async def _forward_bot_frames(
+    request: Request,
+    *,
+    stream_id: str,
+    conversation_id: str,
+    upgrade_url: Callable[[], Awaitable[str]],
+) -> AsyncGenerator[str, None]:
+    """Translate the Redis stream into bot frames until it ends or the client leaves."""
+    async for chunk in stream_manager.subscribe_stream(stream_id):
+        # Match the web stream path: stop forwarding if the bot client
+        # dropped the connection. The background task keeps running and
+        # persists the conversation.
+        if await request.is_disconnected():
+            log.set(client_disconnected=True)
+            log.info(
+                f"{LogTag.API} Bot client disconnected, stream continues in background",
+                stream_id=stream_id,
+            )
+            return
+
+        frame, data, stop = _bot_stream_control_frame(chunk, conversation_id)
+        if frame is not None:
+            yield frame
+            if stop:
+                return
+            continue
+        if data is None:
+            continue
+
+        payload_frame, stop = await _bot_stream_payload_frame(data, upgrade_url)
+        if payload_frame is not None:
+            yield payload_frame
+        if stop:
+            return
+
+
 async def _bot_stream_from_redis(
     request: Request,
     *,
@@ -470,33 +506,17 @@ async def _bot_stream_from_redis(
         delivery_start = time.perf_counter()
         delivery_status = "completed"
         try:
-            async for chunk in stream_manager.subscribe_stream(stream_id):
-                # Match the web stream path: stop forwarding if the bot client
-                # dropped the connection. The background task keeps running and
-                # persists the conversation.
-                if await request.is_disconnected():
-                    delivery_status = "disconnected"
-                    log.set(client_disconnected=True)
-                    log.info(
-                        f"{LogTag.API} Bot client disconnected, stream continues in background",
-                        stream_id=stream_id,
-                    )
-                    break  # pragma: no mutate — last stmt in the loop; return is identical
-
-                frame, data, stop = _bot_stream_control_frame(chunk, conversation_id)
-                if frame is not None:
-                    yield frame
-                    if stop:
-                        return
-                    continue
-                if data is None:
-                    continue
-
-                payload_frame, stop = await _bot_stream_payload_frame(data, upgrade_url)
-                if payload_frame is not None:
-                    yield payload_frame
-                if stop:
-                    break  # pragma: no mutate — last stmt in the loop; return is identical
+            async for frame in _forward_bot_frames(
+                request,
+                stream_id=stream_id,
+                conversation_id=conversation_id,
+                upgrade_url=upgrade_url,
+            ):
+                yield frame
+            # The forwarder ends the same way for a finished turn and for a
+            # client that polled as gone; only the request knows which.
+            if await request.is_disconnected():
+                delivery_status = "disconnected"
         except GeneratorExit:
             delivery_status = "abandoned"
             raise
