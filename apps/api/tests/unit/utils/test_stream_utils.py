@@ -365,6 +365,63 @@ class TestReconstructSubagentGroups:
         assert self._group(td, "done")["completed_at"] is not None
         assert self._group(td, "cut")["completed_at"] is not None
 
+    def test_the_lifecycle_accumulators_are_consumed(self) -> None:
+        td = self._data(
+            starts={"sub-1": {"subagent_name": "gmail"}},
+            ends={"sub-1": {"duration_ms": 10}},
+            entries=[],
+        )
+
+        reconstruct_subagent_groups(td)
+
+        assert "subagent_starts" not in td
+        assert "subagent_ends" not in td
+
+    def test_a_group_starts_and_is_stamped_at_its_start_events_time(self) -> None:
+        started_at = "2026-01-01T00:00:00+00:00"
+        td = self._data(
+            starts={"sub-1": {"subagent_name": "gmail", "started_at": started_at}},
+            ends={},
+            entries=[],
+        )
+
+        reconstruct_subagent_groups(td)
+
+        [entry] = td["tool_data"]
+        assert entry["data"]["started_at"] == started_at
+        assert entry["timestamp"] == started_at
+
+    def test_only_a_known_subagents_tool_calls_move_into_its_group(self) -> None:
+        own_call = {"tool_name": "tool_calls_data", "subagent_id": "sub-1", "data": {"id": "a"}}
+        unknown_subagent = {"tool_name": "tool_calls_data", "subagent_id": "ghost", "data": {}}
+        other_kind = {"tool_name": "search_results", "subagent_id": "sub-1", "data": {}}
+        td = self._data(
+            starts={"sub-1": {"subagent_name": "gmail"}},
+            ends={},
+            entries=[own_call, unknown_subagent, other_kind],
+        )
+
+        reconstruct_subagent_groups(td)
+
+        assert td["tool_data"][:2] == [unknown_subagent, other_kind]
+        assert self._group(td, "sub-1")["tool_calls"] == [{"id": "a"}]
+
+    def test_a_child_group_nests_inside_its_parent_instead_of_the_root(self) -> None:
+        td = self._data(
+            starts={
+                "parent": {"subagent_name": "executor"},
+                "child": {"subagent_name": "gmail", "parent_subagent_id": "parent"},
+            },
+            ends={},
+            entries=[],
+        )
+
+        reconstruct_subagent_groups(td)
+
+        [root] = td["tool_data"]
+        assert root["data"]["subagent_id"] == "parent"
+        assert [nested["subagent_id"] for nested in root["data"]["nested_subagents"]] == ["child"]
+
 
 @pytest.mark.unit
 def test_a_groups_stable_subagent_id_comes_from_its_start_event() -> None:

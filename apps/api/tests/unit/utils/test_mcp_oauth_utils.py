@@ -936,11 +936,24 @@ class TestParseOauthErrorResponse:
             json_data={
                 "error": "server_error",
                 "error_description": "Internal failure",
+                "error_uri": "https://docs.example.com/errors/server_error",
             },
         )
         result = parse_oauth_error_response(response)
 
         assert result["error"] == "server_error"
+        assert result["error_description"] == "Internal failure"
+        assert result["error_uri"] == "https://docs.example.com/errors/server_error"
+
+    def test_non_json_content_type_json_body_without_error_code(self) -> None:
+        response = _make_response(
+            status_code=400,
+            headers={"content-type": "text/html"},
+            json_data={"error_description": "Internal failure"},
+        )
+        result = parse_oauth_error_response(response)
+
+        assert result["error"] == "unknown_error"
         assert result["error_description"] == "Internal failure"
 
     def test_non_json_content_type_non_json_body(self) -> None:

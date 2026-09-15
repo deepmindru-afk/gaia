@@ -1409,6 +1409,52 @@ class TestExecuteWorkflowByIdNotifications:
         assert len(notif_req.content.actions) == 1
         assert "Upgrade" in notif_req.content.actions[0].label
 
+    async def _quota_notification(self, ctx, error, reset_user):
+        workflow = _make_workflow()
+        p_sched, p_chat, p_create, p_complete = self._make_error_patches(workflow, error)
+        with (
+            p_sched,
+            p_chat,
+            p_create,
+            p_complete,
+            patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
+            patch("app.workers.tasks.workflow_tasks.notification_service") as mock_notif,
+            patch(
+                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                AsyncMock(return_value=reset_user),
+            ),
+        ):
+            mock_wf_svc.increment_execution_count = AsyncMock()
+            mock_notif.create_notification = AsyncMock()
+            await execute_workflow_by_id(ctx, workflow.id)
+        return mock_notif.create_notification.call_args[0][0]
+
+    async def test_a_pro_user_at_the_quota_wall_gets_no_upgrade_pitch(self, ctx):
+        error = RateLimitExceededException(
+            feature="trigger_workflow_executions",
+            plan_required="pro",
+            reset_time=datetime(2026, 3, 21, 12, 0, 0, tzinfo=UTC),
+            current_plan="pro",
+        )
+
+        notif_req = await self._quota_notification(ctx, error, reset_user=None)
+
+        assert "Upgrade" not in notif_req.content.body
+        assert not notif_req.content.actions
+
+    async def test_the_reset_time_is_shown_in_the_users_home_timezone(self, ctx):
+        error = RateLimitExceededException(
+            feature="trigger_workflow_executions",
+            plan_required="pro",
+            reset_time=datetime(2026, 3, 21, 12, 0, 0, tzinfo=UTC),
+        )
+
+        notif_req = await self._quota_notification(
+            ctx, error, reset_user=MagicMock(timezone="Asia/Kolkata")
+        )
+
+        assert "Resets Mar 21 at 05:30 PM" in notif_req.content.body
+
     async def test_rate_limit_without_reset_time_sends_plan_gated_notification(self, ctx):
         """RateLimitExceededException without reset_time sends a plan-gated message."""
         workflow = _make_workflow()

@@ -473,6 +473,17 @@ async def test_tool_call_frames_skip_a_call_with_no_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_call_frames_emit_nothing_for_a_message_that_is_not_an_ai_message() -> None:
+    formatter = _RecordingFormatter([])
+
+    with patch("app.helpers.agent_helpers.format_tool_call_entry", new=formatter):
+        frames = await _drain(_stream_tool_call_frames(HumanMessage(content="hi"), set(), {}, None))
+
+    assert frames == []
+    assert formatter.calls == []
+
+
+@pytest.mark.asyncio
 async def test_tool_call_frames_emit_nothing_for_a_message_with_no_tool_calls_attribute() -> None:
     formatter = _RecordingFormatter([])
 
