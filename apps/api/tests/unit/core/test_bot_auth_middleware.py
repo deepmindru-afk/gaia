@@ -14,6 +14,7 @@ from jose import JWTError
 import pytest
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from app.constants.cache import TEN_MINUTES_TTL
 from app.core.bot_auth_middleware import BotAuthMiddleware
 from app.models.user_models import AuthenticatedUser, UserDocument
 
@@ -261,6 +262,18 @@ class TestJWTAuth:
         assert data["user"]["user_id"] == "user_abc123"
         assert data["user"]["auth_provider"] == "bot:discord"
         assert data["user"]["bot_authenticated"] is True
+        # The token's platform identity drives the lookup and the cache entry.
+        mock_platform.assert_awaited_once_with("discord", "disc_999")
+        mock_get_cache.assert_awaited_once_with(
+            "bot_user:discord:disc_999", model=AuthenticatedUser
+        )
+        mock_set_cache.assert_awaited_once()
+        assert mock_set_cache.await_args.args[0] == "bot_user:discord:disc_999"
+        assert mock_set_cache.await_args.args[1].user_id == "user_abc123"
+        assert mock_set_cache.await_args.kwargs == {
+            "ttl": TEN_MINUTES_TTL,
+            "model": AuthenticatedUser,
+        }
 
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
@@ -454,6 +467,14 @@ class TestAPIKeyAuth:
         assert data["bot_api_key_valid"] is True
         assert data["bot_platform"] == "telegram"
         assert data["bot_platform_user_id"] == "tg_123"
+        mock_get_cache.assert_awaited_once_with("bot_user:telegram:tg_123", model=AuthenticatedUser)
+        mock_set_cache.assert_awaited_once()
+        assert mock_set_cache.await_args.args[0] == "bot_user:telegram:tg_123"
+        assert mock_set_cache.await_args.args[1].user_id == "user_abc123"
+        assert mock_set_cache.await_args.kwargs == {
+            "ttl": TEN_MINUTES_TTL,
+            "model": AuthenticatedUser,
+        }
 
     @patch("app.core.bot_auth_middleware.get_cache", new_callable=AsyncMock)
     @patch("app.core.bot_auth_middleware.set_cache", new_callable=AsyncMock)
