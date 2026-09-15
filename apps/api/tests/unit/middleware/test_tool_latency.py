@@ -222,3 +222,82 @@ async def test_pre_tool_failure_falls_back_with_the_original_call() -> None:
 
     assert result.content == "recovered"
     invoke_fn.assert_awaited_once_with(tool_call)
+
+
+async def test_post_tool_middleware_failure_still_records_success() -> None:
+    """A middleware that breaks AFTER the tool ran and succeeded is a successful
+    tool call: the status label reflects the tool's outcome, not the
+    middleware's. Recording it as an error inflated the tool error rate while the
+    tool's success went uncounted."""
+    from langchain.agents.middleware import AgentMiddleware
+    from langchain.agents.middleware.types import ToolCallRequest
+
+    class _PostToolBreak(AgentMiddleware):  # type: ignore[type-arg] -- test double uses the unparameterized middleware base
+        async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
+            await handler(request)  # the tool runs and succeeds here
+            raise RuntimeError("post-tool middleware broke")
+
+    ok_before = _count("lat-tool-post", "success")
+    err_before = _count("lat-tool-post", "error")
+    invoke_fn = AsyncMock(return_value=ToolMessage(content="shipped", tool_call_id="c1"))
+    result = await _invoke(
+        MiddlewareExecutor([_PostToolBreak()]),
+        {"name": "lat-tool-post", "args": {}, "id": "c1"},
+        None,
+        invoke_fn,
+    )
+
+    # The raw tool result is shipped (re-invoking would double its side effects).
+    assert result.content == "shipped"
+    assert _count("lat-tool-post", "success") == ok_before + 1
+    assert _count("lat-tool-post", "error") == err_before
+    invoke_fn.assert_awaited_once()
+
+
+async def test_pre_tool_failure_records_success_when_the_direct_invoke_succeeds() -> None:
+    """A pre-tool middleware breaks, the tool never ran, the direct fallback runs
+    it and it succeeds — that is a successful tool call, not an error."""
+    from langchain.agents.middleware import AgentMiddleware
+    from langchain.agents.middleware.types import ToolCallRequest
+
+    class _PreToolBreak(AgentMiddleware):  # type: ignore[type-arg] -- test double uses the unparameterized middleware base
+        async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
+            raise RuntimeError("pre-tool middleware broke")
+
+    ok_before = _count("lat-tool-pre-ok", "success")
+    err_before = _count("lat-tool-pre-ok", "error")
+    invoke_fn = AsyncMock(return_value=ToolMessage(content="recovered", tool_call_id="c1"))
+    await _invoke(
+        MiddlewareExecutor([_PreToolBreak()]),
+        {"name": "lat-tool-pre-ok", "args": {}, "id": "c1"},
+        None,
+        invoke_fn,
+    )
+
+    assert _count("lat-tool-pre-ok", "success") == ok_before + 1
+    assert _count("lat-tool-pre-ok", "error") == err_before
+
+
+async def test_pre_tool_failure_records_error_when_the_direct_invoke_also_fails() -> None:
+    """The tool genuinely never produced a result — a real error span, and the
+    failure propagates."""
+    from langchain.agents.middleware import AgentMiddleware
+    from langchain.agents.middleware.types import ToolCallRequest
+
+    class _PreToolBreak(AgentMiddleware):  # type: ignore[type-arg] -- test double uses the unparameterized middleware base
+        async def awrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
+            raise RuntimeError("pre-tool middleware broke")
+
+    ok_before = _count("lat-tool-pre-bad", "success")
+    err_before = _count("lat-tool-pre-bad", "error")
+    invoke_fn = AsyncMock(side_effect=RuntimeError("tool also exploded"))
+    with pytest.raises(RuntimeError, match="tool also exploded"):
+        await _invoke(
+            MiddlewareExecutor([_PreToolBreak()]),
+            {"name": "lat-tool-pre-bad", "args": {}, "id": "c1"},
+            None,
+            invoke_fn,
+        )
+
+    assert _count("lat-tool-pre-bad", "error") == err_before + 1
+    assert _count("lat-tool-pre-bad", "success") == ok_before

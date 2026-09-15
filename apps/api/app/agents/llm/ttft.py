@@ -48,8 +48,10 @@ class LLMTtftCallback(BaseCallbackHandler):
             time.perf_counter(),
             str(meta.get("lane_model") or "unknown"),
             str(meta.get("lane_provider") or "unknown"),
-            # The CALL's label (stamped by ainvoke_llm), not the run's agent: one
-            # turn's callback list also carries its title/follow-up/memory calls.
+            # The CALL's label: build_agent_config stamps the run's agent tier as
+            # the default, and ainvoke_llm overrides it with a finer per-call
+            # label for the title/follow-up/memory calls that share one turn's
+            # callback list — so those side calls never pollute the tier's p95.
             str(meta.get(LLM_LABEL_METADATA_KEY) or "unknown"),
         )
 

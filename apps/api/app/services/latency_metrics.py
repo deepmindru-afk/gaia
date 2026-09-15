@@ -441,9 +441,12 @@ def observe_subagent_run(seconds: float, *, subagent_id: str, status: str) -> No
     _observe(_SUBAGENT_RUN_SECONDS, seconds, subagent_id=subagent_id, status=status)
 
 
+def observe_hil_pause() -> None:
+    _inc(_HIL_PAUSE_TOTAL)
+
+
 def observe_hil_user_wait(seconds: float) -> None:
     _observe(_HIL_USER_WAIT_SECONDS, seconds)
-    _inc(_HIL_PAUSE_TOTAL)
 
 
 def observe_hil_dispatch_lag(seconds: float) -> None:
@@ -491,6 +494,7 @@ __all__ = [
     "observe_executor_ttft",
     "observe_graph_node",
     "observe_hil_dispatch_lag",
+    "observe_hil_pause",
     "observe_hil_user_wait",
     "observe_llm_call",
     "observe_llm_ttft",

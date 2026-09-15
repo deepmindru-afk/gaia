@@ -237,26 +237,20 @@ async def _post_with_retry(
     A transient failure (retryable status or a mid-restart connection error) is
     retried so a background memory save survives the blip; interactive recall
     passes ``retries=0`` to fail fast into its retrieval-order fallback instead
-    of stacking backoffs onto the user's turn. The final attempt returns its
-    response (so the caller sees the 503) or re-raises the connection error.
+    of stacking backoffs onto the user's turn.
     """
-    for attempt in range(retries + 1):
-        final_attempt = attempt == retries
+    for _ in range(retries):
         try:
             response = await client.post(url, json=payload, timeout=timeout)
         except httpx.TransportError:
-            if final_attempt:
-                raise
+            pass  # transient — fall through to the backoff and retry
         else:
-            if (
-                final_attempt
-                or response.status_code not in EMBEDDING_SIDECAR_RETRYABLE_STATUS_CODES
-            ):
+            if response.status_code not in EMBEDDING_SIDECAR_RETRYABLE_STATUS_CODES:
                 return response
         await asyncio.sleep(EMBEDDING_SIDECAR_RETRY_MAX_WAIT_SECONDS)
-    raise AssertionError(
-        "unreachable: the final attempt always returns or raises"
-    )  # pragma: no cover
+    # Budget exhausted (or none): the final attempt is authoritative — its
+    # response (including a 503) is returned, or its connection error propagates.
+    return await client.post(url, json=payload, timeout=timeout)
 
 
 def _call_budget(interactive: bool) -> tuple[int, float]:
@@ -304,7 +298,7 @@ async def _sidecar_embed(texts: list[str]) -> list[list[float]]:
             "embed",
             "sidecar",
             len(chunk),
-            _sidecar_post("/embed", {"texts": chunk}, interactive=False),
+            _sidecar_post("/embed", {"texts": chunk}),
         )
         vectors.extend(cast(EmbedBatchResponse, result)["vectors"])
     return vectors
@@ -319,7 +313,9 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
     return await _observed("embed", "local", len(texts), asyncio.to_thread(_embed_sync, texts))
 
 
-async def _sidecar_rerank(query: str, documents: list[str], *, interactive: bool) -> list[float]:
+async def _sidecar_rerank(
+    query: str, documents: list[str], *, interactive: bool = False
+) -> list[float]:
     """POST /rerank in bounded chunks, preserving document order."""
     scores: list[float] = []
     # The query is sent with every chunk, so it consumes char budget too.
@@ -349,7 +345,7 @@ async def rerank(query: str, documents: list[str], *, interactive: bool = False)
         if interactive:
             async with asyncio.timeout(EMBEDDING_SIDECAR_INTERACTIVE_TIMEOUT_SECONDS):
                 return await _sidecar_rerank(query, documents, interactive=True)
-        return await _sidecar_rerank(query, documents, interactive=False)
+        return await _sidecar_rerank(query, documents)
     return await _observed(
         "rerank", "local", len(documents), asyncio.to_thread(_rerank_sync, query, documents)
     )
