@@ -1,11 +1,11 @@
 """Unit tests for app.utils.auth_utils — WorkOS session authentication."""
 
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.requests import Request
 
 from app.constants.auth import DEV_USER_HEADER
 from app.models.first_steps_models import FirstStepsState
@@ -797,12 +797,16 @@ class TestResolveDevBypassUser:
         headers: dict[str, str], cookies: dict[str, str], default: str | None
     ) -> str:
         doc, _ = _every_field_document()
-        connection = SimpleNamespace(headers=headers, cookies=cookies)
+        raw_headers = [(name.lower().encode(), value.encode()) for name, value in headers.items()]
+        if cookies:
+            cookie = "; ".join(f"{name}={value}" for name, value in cookies.items())
+            raw_headers.append((b"cookie", cookie.encode()))
+        connection = Request({"type": "http", "headers": raw_headers})
         with patch(_PATCH_SETTINGS) as mock_settings, patch(_PATCH_USER_REPO) as repo:
             mock_settings.DEV_AUTH_BYPASS_EMAIL = default
             repo.get_by_email = AsyncMock(return_value=doc)
 
-            email, user = await resolve_dev_bypass_user(connection)  # type: ignore[arg-type]
+            email, user = await resolve_dev_bypass_user(connection)
 
         repo.get_by_email.assert_awaited_once_with(email)
         assert user is doc
