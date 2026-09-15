@@ -174,11 +174,12 @@ async def _cached_tracked_todos_summary(user_id: str) -> str:
 
 
 async def build_tracked_todos_block(ctx: SectionContext) -> str:
-    """Active tracked-todo summary, briefly cached.
+    """Active tracked-todo summary.
 
-    A pinned view is per-run-binding and deliberately skips the cache: it is
-    keyed by user alone, so caching the pinned form would show one run's bound
-    todo on every other turn until the TTL expired.
+    Both branches read the same user-scoped list, cached at the repository under
+    the user's generation; the bound branch pins the run's todo in memory *after*
+    the fetch. The pin cannot be cached by user alone — that would show one run's
+    bound todo on every other turn until the TTL expired — but the list can.
     """
     if not ctx.user_id:
         return ""

@@ -7,6 +7,7 @@ is absent — that precondition lives with the read rather than at the call site
 so no caller can forget it.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -37,6 +38,8 @@ from app.agents.context.text import (
 )
 from app.agents.context.tiers import AgentTier
 from app.agents.workspace.paths import session_dir
+from app.constants.todos import GAIA_TRACKED_LABEL
+from app.db.repositories.todos import todo_repository
 from app.memory.context import AGENDA_HEADING, RECENT_ACTIVITY_HEADING
 from app.models.memory_models import MemorySearchResult
 from app.models.todo_models import TodoDocument
@@ -413,6 +416,91 @@ class TestTrackedTodosBlock:
             AsyncMock(side_effect=RuntimeError("mongo down")),
         ):
             assert await build_tracked_todos_block(ctx(active_todo_id="todo-7")) == ""
+
+
+def _tracked_doc(todo_id: str, title: str) -> TodoDocument:
+    now = datetime.now(UTC)
+    return TodoDocument(
+        id=todo_id,
+        user_id="user1",
+        title=title,
+        labels=[GAIA_TRACKED_LABEL],
+        created_at=now - timedelta(days=2),
+        updated_at=now - timedelta(hours=1),
+    )
+
+
+@pytest.fixture
+def repo_reads() -> AsyncMock:
+    """The repository's Mongo read, with the ``cached_query`` cache seams faked.
+
+    The active-tracked finder is generation-cached; these fakes stand in for the
+    two Redis round trips (generation + query store) so the real decorator runs
+    without Redis. Returns the ``_find`` spy — its await count is the Mongo reads.
+    """
+    find = AsyncMock(return_value=[])
+    generation = {"value": 1}
+    store: dict[str, object] = {}
+
+    async def _read_generation(_policy: object, _scope: str) -> int:
+        return generation["value"]
+
+    async def _get(key: str, model: object = None) -> object:
+        return store.get(key)
+
+    async def _set(key: str, value: object, ttl: int = 0, model: object = None) -> None:
+        store[key] = value
+
+    async def _bump(_policy: object, _scope: str) -> None:
+        generation["value"] += 1
+
+    with (
+        patch.object(todo_repository, "_find", find),
+        patch("app.db.repositories.base.read_generation", _read_generation),
+        patch("app.db.repositories.base.get_cache", _get),
+        patch("app.db.repositories.base.set_cache", _set),
+        patch("app.db.repositories.base.bump_generation", _bump),
+    ):
+        yield find
+
+
+@pytest.mark.unit
+class TestTrackedTodosListIsTheCachedRead:
+    """The active-tracked docs list is cached at the repository layer, so a bound
+    turn reads Mongo once per generation instead of once per assembly — and the
+    bound todo is still pinned in memory after the (possibly cached) fetch.
+    """
+
+    async def test_two_bound_turns_read_mongo_once_and_still_pin(
+        self, repo_reads: AsyncMock
+    ) -> None:
+        repo_reads.return_value = [
+            _tracked_doc("todo-2", "Second"),
+            _tracked_doc("todo-7", "Bound"),
+        ]
+
+        first = await build_tracked_todos_block(ctx(active_todo_id="todo-7"))
+        second = await build_tracked_todos_block(ctx(active_todo_id="todo-7"))
+
+        assert repo_reads.await_count == 1
+        assert first == second
+        lines = second.split("\n")
+        assert lines[0] == "ACTIVE TRACKED TODOS:"
+        assert lines[1].startswith('  ⭐ ACTIVE "Bound"')
+
+    async def test_a_write_bumps_the_generation_and_the_next_turn_requeries(
+        self, repo_reads: AsyncMock
+    ) -> None:
+        repo_reads.return_value = [_tracked_doc("todo-7", "Bound")]
+
+        await build_tracked_todos_block(ctx(active_todo_id="todo-7"))
+        await build_tracked_todos_block(ctx(active_todo_id="todo-7"))  # cached — no Mongo
+        assert repo_reads.await_count == 1
+
+        await todo_repository._invalidate("user1")  # what every todo write does
+        await build_tracked_todos_block(ctx(active_todo_id="todo-7"))
+
+        assert repo_reads.await_count == 2
 
 
 @pytest.mark.unit
