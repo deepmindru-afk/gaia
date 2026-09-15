@@ -751,6 +751,25 @@ class TestFetchThread:
         assert result.messages is not None
         assert result.messages[0]["internalDate"] == "1000"
         assert result.messages[1]["internalDate"] == "2000"
+        assert "threadId" in result.messages[0]
+
+    async def test_message_without_internal_date_sorts_as_the_oldest(
+        self, mock_invoke_gmail_tool, mock_transform
+    ):
+        mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
+            {
+                "successful": True,
+                "messages": [
+                    {"internalDate": "1", "subject": "dated"},
+                    {"subject": "undated"},
+                ],
+            }
+        )
+
+        result = await fetch_thread(USER_ID, "thread_abc")
+
+        assert result.messages is not None
+        assert [m["subject"] for m in result.messages] == ["undated", "dated"]
 
     async def test_returns_empty_messages_on_failure(self, mock_invoke_gmail_tool):
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
@@ -1099,6 +1118,9 @@ class TestListDrafts:
         assert len(result.drafts) == 1
         assert result.next_page_token == "tok"
         mock_transform.assert_called_once()
+        assert result.drafts[0]["id"] == "d1"
+        assert result.drafts[0]["message"]["threadId"] == ""
+        assert "thread_id" not in result.drafts[0]["message"]
 
     async def test_includes_page_token_when_provided(self, mock_invoke_gmail_tool):
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
@@ -1152,6 +1174,8 @@ class TestGetDraft:
 
         mock_transform.assert_called_once()
         assert result.message is not None
+        assert result.message["threadId"] == ""
+        assert "thread_id" not in result.message
 
     async def test_returns_error_on_failure(self, mock_invoke_gmail_tool):
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
@@ -1341,6 +1365,8 @@ class TestGetEmailById:
 
         assert result.success is True
         assert result.message is not None
+        assert result.message["threadId"] == ""
+        assert "thread_id" not in result.message
         mock_transform.assert_called_once()
         args, _ = mock_invoke_gmail_tool.call_args
         assert args[1] == "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID"

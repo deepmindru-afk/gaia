@@ -115,6 +115,17 @@ class TestCreateSupportTicket:
         )
         assert "authentication required" in result.lower()
 
+    async def test_config_without_metadata_asks_for_authentication(self) -> None:
+        from app.agents.tools.support_tool import create_support_ticket
+
+        result = await create_support_ticket.coroutine(
+            config={},
+            ticket_type="support",
+            title="Test",
+            description="A test description for the ticket.",
+        )
+        assert result == "User authentication required to create support ticket."
+
     @patch(f"{MODULE}.user_service")
     async def test_user_not_found(self, mock_user_svc: MagicMock) -> None:
         mock_user_svc.get_user_by_id = AsyncMock(return_value=None)

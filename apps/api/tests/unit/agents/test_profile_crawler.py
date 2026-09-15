@@ -92,6 +92,8 @@ class TestCrawlProfileUrl:
 
         assert result.content is None
         assert result.error == "TimeoutError: timed out"
+        assert result.url == URL
+        assert result.platform == PLATFORM
 
     async def test_exception_without_a_message_names_the_type(self) -> None:
         crawler = MagicMock()

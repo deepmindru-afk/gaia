@@ -561,3 +561,22 @@ class TestGenericBeforeHook:
         params = {"arguments": {"attachments": "legacy-string"}, "user_id": "u1"}
         with pytest.raises(HookAbortError, match="must be a list"):
             file_upload_before_hook("OUTLOOK_SEND_EMAIL", "outlook", params)
+
+
+class TestSchemaModifierRequiredAndKeyOrder:
+    def test_required_list_without_the_native_param_is_left_intact(self):
+        schema = _schema({"attachment": _native_attachment_schema()}, required=["subject"])
+        out = file_upload_schema_modifier("OUTLOOK_SEND_EMAIL", "outlook", schema)
+        assert out.input_parameters["required"] == ["subject"]
+
+    def test_rewritten_schema_keeps_the_provider_key_order(self):
+        # The schema reaches the model as JSON text, so key order is part of it.
+        schema = SimpleNamespace(
+            input_parameters={
+                "required": ["subject"],
+                "properties": {"attachment": _native_attachment_schema()},
+                "type": "object",
+            }
+        )
+        out = file_upload_schema_modifier("OUTLOOK_SEND_EMAIL", "outlook", schema)
+        assert list(out.input_parameters) == ["required", "properties", "type"]

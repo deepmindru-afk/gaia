@@ -35,5 +35,9 @@ class TestRequireIntegration:
         dependency = require_integration("gmail")
         user = AuthenticatedUser(user_id="user_1")
 
-        with patch(f"{_MODULE}.check_integration_status", AsyncMock(return_value=True)):
+        with patch(
+            f"{_MODULE}.check_integration_status", AsyncMock(return_value=True)
+        ) as check_status:
             assert await dependency(user=user) is user
+
+        check_status.assert_awaited_once_with("gmail", "user_1")

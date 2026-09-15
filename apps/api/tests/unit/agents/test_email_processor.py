@@ -17,6 +17,7 @@ from app.agents.memory.email_processor import (
     ProfileExtractionResult,
     _await_discovery_tasks,
     _collect_platform_results,
+    _collect_profile_extraction,
     _collect_storage_results,
     _crawl_and_store_discovered,
     _discover_and_store_linked_profiles,
@@ -218,6 +219,9 @@ class TestProcessSinglePlatform:
         assert result.platform == "github"
         assert result.url == "https://github.com/testuser"
         mock_store.assert_awaited_once()
+        mock_extract.assert_awaited_once_with(
+            "github", [emails[0].model_dump(by_alias=True)], "Test User", user_id=USER_ID
+        )
 
         # Clean up the discovery task
         result.discovery_task.cancel()
@@ -285,6 +289,26 @@ class TestProcessSinglePlatform:
             USER_ID, "github", [{"id": "1"}], asyncio.Semaphore()
         )
         assert result == PlatformSkipped(error="timeout")
+
+    @patch(_PATCH_STORE_PROFILE, new_callable=AsyncMock)
+    @patch(_PATCH_CRAWL, new_callable=AsyncMock)
+    @patch(_PATCH_BUILD_URL, return_value="https://github.com/testuser")
+    @patch(_PATCH_VALIDATE, return_value=True)
+    @patch(_PATCH_EXTRACT_USER, new_callable=AsyncMock, return_value="testuser")
+    async def test_crawl_with_content_but_an_error_is_skipped_not_stored(
+        self,
+        mock_extract: AsyncMock,
+        mock_validate: MagicMock,
+        mock_build: MagicMock,
+        mock_crawl: AsyncMock,
+        mock_store: AsyncMock,
+    ) -> None:
+        mock_crawl.return_value = _crawl("partial page", "truncated")
+        result = await _process_single_platform(
+            USER_ID, "github", [{"id": "1"}], asyncio.Semaphore()
+        )
+        assert result == PlatformSkipped(error="truncated")
+        mock_store.assert_not_awaited()
 
     @patch(
         _PATCH_EXTRACT_USER,
@@ -373,6 +397,9 @@ class TestProcessGmailToMemory:
         assert result["profiles_stored"] == 2
         assert result["processing_complete"] is True
         mock_mark.assert_awaited_once()
+        mock_process.assert_called_once_with(
+            [GmailMessageSummary(id="1"), GmailMessageSummary(id="2")]
+        )
 
     @patch(_PATCH_USERS)
     @patch(_PATCH_SEARCH, new_callable=AsyncMock)
@@ -1154,6 +1181,20 @@ class TestCollectStorageResultsDirect:
         critical = [c for c in log.error.call_args_list if "Critical error" in str(c.args[0])]
         assert len(critical) == 1
         assert critical[0].kwargs["error_type"] == "RuntimeError"
+
+
+class TestCollectProfileExtraction:
+    async def test_returns_the_tracks_count_and_extracted_profiles(self) -> None:
+        profiles = [{"platform": "github", "url": "https://github.com/testuser"}]
+
+        async def _track() -> ProfileExtractionResult:
+            return ProfileExtractionResult(profiles_stored=1, extracted_profiles=profiles)
+
+        result = await _collect_profile_extraction(
+            USER_ID, asyncio.create_task(_track()), _StepTimer()
+        )
+
+        assert result == (1, profiles)
 
 
 class TestMarkProcessingCompletePins:
