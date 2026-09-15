@@ -7,10 +7,14 @@ trailing ``#code`` in the WhatsApp/iMessage message they send), and the BOT
 redeems it on first contact. Nobody has to type ``/auth``.
 
 Security properties match ``connect_link_service`` (128-bit opaque code, the
-binding lives server-side, bounded TTL) except that a code is spent after the
-link is written, not on first read: ``peek_platform_link_code`` then
-``discard_platform_link_code``, so a refused tap leaves the code usable for the
-retry the refusal asks for.
+binding lives server-side, bounded TTL) except for how the code is spent. There
+it is consumed on first read; here a redemption takes a short-lived CLAIM on the
+code (``claim_platform_link_code``) and only deletes the record once the link it
+authorised is written (``discard_platform_link_code``). The claim is what makes
+a redemption single-use — two deliveries of the same deep link cannot both run
+the link's side effects — while a refused or broken redemption releases the
+claim (``release_platform_link_code``) and leaves the code usable for the retry
+the refusal asks for.
 """
 
 import secrets
@@ -20,8 +24,12 @@ from pydantic import BaseModel
 
 from app.config.settings import settings
 from app.constants.auth import PLATFORM_LINK_CODE_BYTES
-from app.constants.cache import PLATFORM_LINK_CODE_PREFIX, PLATFORM_LINK_CODE_TTL
-from app.db.redis import delete_cache, get_cache, set_cache
+from app.constants.cache import (
+    PLATFORM_LINK_CODE_CLAIM_TTL,
+    PLATFORM_LINK_CODE_PREFIX,
+    PLATFORM_LINK_CODE_TTL,
+)
+from app.db.redis import delete_cache, get_cache, redis_cache, set_cache
 from app.models.user_models import OnboardingPreferences
 from app.services.platform_link_service import Platform
 from app.utils.errors import create_error
@@ -41,8 +49,25 @@ class PlatformLinkCodePayload(BaseModel):
     preferences: OnboardingPreferences
 
 
+class LinkCodeClaim(BaseModel):
+    """What trying to take a code found.
+
+    ``payload`` is set only for the caller that won the claim. ``in_flight``
+    marks the one that lost it to a twin redemption still running — a distinct
+    state from a code that is simply gone, because the two owe the presenting
+    account opposite answers.
+    """
+
+    payload: PlatformLinkCodePayload | None = None
+    in_flight: bool = False
+
+
 def _code_key(code: str) -> str:
     return f"{PLATFORM_LINK_CODE_PREFIX}:{code}"
+
+
+def _claim_key(code: str) -> str:
+    return f"{PLATFORM_LINK_CODE_PREFIX}:claim:{code}"
 
 
 def build_handoff_text(first_message: str, code: str) -> str:
@@ -101,18 +126,42 @@ async def mint_platform_link_code(user_id: str, preferences: OnboardingPreferenc
     return code
 
 
-async def peek_platform_link_code(code: str) -> PlatformLinkCodePayload | None:
-    """The binding behind ``code``, or None if it is not live.
+async def claim_platform_link_code(code: str) -> LinkCodeClaim:
+    """Take ``code`` for exactly one in-flight redemption.
 
-    Reading does not spend the code: the redeem endpoint checks the plan and
-    the platform-account conflict first and only ``discard``s after the link
-    is written, so a refused tap ("already connected to someone else") leaves
-    the code usable for the retry the refusal asks for. A second successful
-    tap in the same window links the same user again, which is a no-op.
+    The claim, not the read, is what makes a redemption single-use. Reading
+    alone left the record live until the link had been written, so two
+    deliveries of the same handoff — Telegram resending ``/start``, a re-fired
+    deep link — both resolved it and both ran the link's side effects: two
+    greetings on the outbound queue, two transcript writes.
+
+    The record itself is untouched here, so a redemption that refuses or breaks
+    can ``release`` the claim and leave the code redeemable.
     """
-    return await get_cache(_code_key(code), PlatformLinkCodePayload)
+    claimed = await redis_cache.client.set(
+        _claim_key(code), "1", nx=True, ex=PLATFORM_LINK_CODE_CLAIM_TTL
+    )
+    if not claimed:
+        return LinkCodeClaim(in_flight=True)
+
+    payload = await get_cache(_code_key(code), PlatformLinkCodePayload)
+    if payload is None:
+        await release_platform_link_code(code)
+        return LinkCodeClaim()
+    return LinkCodeClaim(payload=payload)
+
+
+async def release_platform_link_code(code: str) -> None:
+    """Hand ``code`` back after a redemption that did not write the link."""
+    await delete_cache(_claim_key(code))
 
 
 async def discard_platform_link_code(code: str) -> None:
-    """Spend ``code`` once the link it authorised has been written."""
+    """Spend ``code`` once the link it authorised has been written.
+
+    The claim goes with it: leaving it behind would answer a later tap by a
+    different platform account as an in-flight twin rather than as the dead
+    code it is.
+    """
     await delete_cache(_code_key(code))
+    await release_platform_link_code(code)

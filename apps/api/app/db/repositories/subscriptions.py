@@ -7,6 +7,8 @@ paths are named methods. ``updated_at`` is snake_case, so the base stamps it on
 every write automatically.
 """
 
+from datetime import datetime
+
 from app.constants.cache import REPO_GLOBAL_SCOPE
 from app.db.repositories.base import MongoRepository
 from app.models.payment_models import SubscriptionDocument, SubscriptionUpdate
@@ -55,18 +57,39 @@ class SubscriptionsRepository(MongoRepository[SubscriptionDocument, Subscription
         return await self._find_one({"dodo_subscription_id": dodo_subscription_id})
 
     async def apply_update_by_dodo_id(
-        self, dodo_subscription_id: str, update: SubscriptionUpdate
+        self,
+        dodo_subscription_id: str,
+        update: SubscriptionUpdate,
+        *,
+        if_not_newer_than: datetime,
     ) -> bool:
         """Apply a ``$set`` patch to the subscription with this Dodo id, returning
         whether one matched. Only the fields the caller actually set are written
         (``exclude_unset``), so an untouched field is never overwritten with its
-        default. ``updated_at`` is auto-stamped by the base."""
+        default. ``updated_at`` is auto-stamped by the base.
+
+        ``if_not_newer_than`` is the event clock the patch was decided from, and it
+        is part of the filter rather than something the caller re-checks: the write
+        lands only while the stored ``last_event_at`` is no newer, so two deliveries
+        for one subscription cannot both read the same row and have the older one
+        write last. ``False`` therefore means either no such subscription or a newer
+        event applied in between — the caller's patch was computed from a row that
+        no longer exists.
+        """
         set_fields = update.model_dump(exclude_unset=True)
         if not set_fields:
             return False
         updated = await self._apply_raw_update(
             {"dodo_subscription_id": dodo_subscription_id},
             {"$set": set_fields},
+            # A row that has never carried an event (created before the field
+            # existed) has nothing to be older than, so it always qualifies.
+            extra_filter={
+                "$or": [
+                    {"last_event_at": None},
+                    {"last_event_at": {"$lte": if_not_newer_than}},
+                ]
+            },
             scope=REPO_GLOBAL_SCOPE,
             return_document=False,
         )

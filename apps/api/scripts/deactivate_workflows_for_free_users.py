@@ -38,6 +38,7 @@ from app.constants.vfs import SYSTEM_USER_ID
 from app.db.repositories.subscriptions import subscription_repository
 from app.db.repositories.workflows import workflow_repository
 from app.services.workflow.subscription_pause import (
+    SubscriptionWorkflowSyncIncomplete,
     deactivate_workflows_for_lapsed_subscription,
     lapsable_workflows,
 )
@@ -56,6 +57,8 @@ class MigrationResult:
     dry_run: bool
     free_users: list[FreeUserWorkflows]
     workflows_deactivated: int = 0
+    #: Workflows whose trigger could not be unregistered — still armed upstream.
+    stranded_workflow_ids: list[str] = field(default_factory=list)
 
 
 async def find_free_user_candidates() -> list[FreeUserWorkflows]:
@@ -96,14 +99,24 @@ async def run_migration(*, dry_run: bool) -> MigrationResult:
     # fires on the subscription event and has already run by then.
     deactivated_users: list[FreeUserWorkflows] = []
     deactivated = 0
+    stranded: list[str] = []
     for candidate in candidates:
         if await subscription_repository.get_active_for_user(candidate.user_id):
             continue
         deactivated_users.append(candidate)
-        deactivated += await deactivate_workflows_for_lapsed_subscription(candidate.user_id)
+        try:
+            deactivated += await deactivate_workflows_for_lapsed_subscription(candidate.user_id)
+        except SubscriptionWorkflowSyncIncomplete as incomplete:
+            # One user's stuck trigger must not end the backfill for everyone
+            # behind them. The ids are reported so a re-run can be targeted;
+            # the script is safely re-runnable by design.
+            stranded.extend(incomplete.failed_workflow_ids)
 
     return MigrationResult(
-        dry_run=False, free_users=deactivated_users, workflows_deactivated=deactivated
+        dry_run=False,
+        free_users=deactivated_users,
+        workflows_deactivated=deactivated,
+        stranded_workflow_ids=stranded,
     )
 
 
@@ -115,6 +128,9 @@ def _render(result: MigrationResult, limit: int) -> None:
     print(f"workflows in scope:                  {total_workflows}")
     if not result.dry_run:
         print(f"workflows deactivated:               {result.workflows_deactivated}")
+        if result.stranded_workflow_ids:
+            print(f"workflows still armed (re-run me):   {len(result.stranded_workflow_ids)}")
+            print(f"  {', '.join(result.stranded_workflow_ids)}")
 
     if not result.free_users:
         print("\nNothing to do.")
