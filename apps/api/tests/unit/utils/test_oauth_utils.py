@@ -1,6 +1,7 @@
 """Unit tests for OAuth utility functions."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 import pytest
@@ -184,6 +185,9 @@ class TestBuildGoogleOAuthUrl:
 
         # Should still produce a valid URL despite None scope
         assert url.startswith("https://accounts.google.com/o/oauth2/auth?")
+        # A None scope contributes no scopes of its own.
+        (scope,) = parse_qs(urlparse(url).query)["scope"]
+        assert set(scope.split()) == {"openid", "profile", "email", "new_scope"}
 
     @patch("app.utils.oauth_utils.settings")
     @patch("app.utils.oauth_utils.token_repository")

@@ -564,7 +564,9 @@ async def publish_workflow(
                 slug = await generate_unique_workflow_slug(workflow.title, exclude_id=workflow_id)
             try:
                 await workflow_repository.publish(
-                    workflow_id, created_by=user.user_id, slug=slug or ""
+                    workflow_id,
+                    created_by=user.user_id,
+                    slug=slug or "",  # pragma: no mutate — slug is never empty here
                 )
                 break
             except DuplicateKeyError:
