@@ -1,28 +1,34 @@
 """Unit tests for gaia_knowledge_service (GAIA self-knowledge in ChromaDB).
 
-Search serves from an in-memory snapshot of a corpus that production never writes
-(the only writers are the offline populate script and an explicit clear), so the
-tests pin three things: the ranking is local cosine over the snapshot, the
-snapshot is loaded once and reused, and every writer clears it.
+Search serves from an in-memory snapshot of a corpus production never writes, so
+these tests cover the local cosine ranking, the snapshot lifecycle (load, TTL,
+failed refresh, invalidation), and the loading seams — from the vector math up.
 """
 
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from pydantic import ValidationError
 import pytest
 
+from app.constants.chroma import GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS
+from app.services import gaia_knowledge_service as mod
 from app.services.gaia_knowledge_service import (
+    GaiaKnowledgeService,
     KnowledgeItem,
+    _dot,
+    _load_lock,
+    _normalized,
     gaia_knowledge_service,
 )
+from tests.helpers import captured_wide_event
 
 _MOD = "app.services.gaia_knowledge_service"
 
-#: A timestamp guaranteed to be older than any TTL. Expiry is `monotonic() -
-#: loaded_at < TTL`, and `monotonic()` is system uptime — so `0.0` only reads as
-#: expired on a host that has been up longer than the TTL. Tests must not depend
-#: on host uptime, so expire with a value no uptime can make look fresh.
+#: A timestamp no uptime can make look fresh (expiry is `monotonic() - loaded <
+#: TTL`, and monotonic() is system uptime, so `0.0` would read as fresh on a host
+#: up less than the TTL).
 _LONG_AGO = -1e9
 
 
@@ -51,8 +57,12 @@ def embeddings():
         aembed_query=AsyncMock(return_value=[1.0, 0.0]),
     )
     with patch(f"{_MOD}.providers") as providers:
-        providers.aget = AsyncMock(return_value=fake)
-        yield fake
+        providers.aget = aget = AsyncMock(return_value=fake)
+        yield SimpleNamespace(
+            aget=aget,
+            aembed_documents=fake.aembed_documents,
+            aembed_query=fake.aembed_query,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -81,6 +91,94 @@ def _corpus(
     }
     embeddings.aembed_documents.return_value = doc_vectors
     embeddings.aembed_query.return_value = query_vector or [1.0, 0.0]
+
+
+class TestVectorMath:
+    def test_normalized_scales_to_unit_length(self):
+        assert _normalized([3.0, 4.0]) == (0.6, 0.8)
+
+    def test_normalized_keeps_the_zero_vector(self):
+        assert _normalized([0.0, 0.0]) == (0.0, 0.0)
+
+    def test_dot_is_the_sum_of_component_products(self):
+        assert _dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]) == 32.0
+
+    def test_dot_of_orthogonal_vectors_is_zero(self):
+        assert _dot([1.0, 0.0], [0.0, 1.0]) == 0.0
+
+
+class TestLoadLock:
+    def test_the_same_loop_reuses_its_lock(self):
+        locks: list[asyncio.Lock] = []
+
+        async def _grab() -> None:
+            locks.append(_load_lock())
+            locks.append(_load_lock())
+
+        asyncio.run(_grab())
+
+        assert isinstance(locks[0], asyncio.Lock)
+        assert locks[0] is locks[1]
+
+    def test_a_new_loop_gets_a_new_lock(self):
+        """A short-lived loop's id is reused by the next one — keying on the id
+        hands the second loop a lock bound to the dead first loop."""
+        locks: list[asyncio.Lock] = []
+
+        async def _grab() -> None:
+            locks.append(_load_lock())
+
+        asyncio.run(_grab())
+        asyncio.run(_grab())
+
+        assert locks[0] is not locks[1]
+
+
+class TestInitialState:
+    def test_a_new_service_starts_with_no_snapshot(self):
+        service = GaiaKnowledgeService()
+
+        assert service.collection_name == "gaia_knowledge"
+        assert service._snapshot is None
+        assert service._loaded_at == 0.0
+
+
+class TestInvalidate:
+    def test_invalidate_drops_the_snapshot_and_resets_the_clock(self):
+        service = GaiaKnowledgeService()
+        service._snapshot = MagicMock()
+        service._loaded_at = 123.0
+
+        service._invalidate()
+
+        assert service._snapshot is None
+        assert service._loaded_at == 0.0
+
+
+class TestFreshness:
+    def test_fresh_within_the_ttl(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(mod, "monotonic", lambda: 1_000.0)
+        service = GaiaKnowledgeService()
+        service._snapshot = MagicMock()
+        service._loaded_at = 1_000.0 - GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS / 2
+
+        assert service._fresh() is True
+
+    def test_not_fresh_at_exactly_the_ttl_boundary(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(mod, "monotonic", lambda: 1_000.0)
+        service = GaiaKnowledgeService()
+        service._snapshot = MagicMock()
+        service._loaded_at = 1_000.0 - GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS
+
+        assert service._fresh() is False
+
+    def test_not_fresh_without_a_snapshot(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(mod, "monotonic", lambda: 1_000.0)
+        service = GaiaKnowledgeService()
+        service._snapshot = None
+        service._loaded_at = 1_000.0
+
+        assert service._fresh() is False
 
 
 class TestKnowledgeItemValidation:
@@ -134,6 +232,39 @@ class TestSearchKnowledge:
 
         assert [r.content for r in results] == ["a", "b"]
 
+    async def test_the_load_reads_this_collections_documents(self, chroma, embeddings):
+        _corpus(chroma, embeddings, ["Doc"], [[1.0, 0.0]])
+
+        await gaia_knowledge_service.search_knowledge("q")
+
+        chroma.client.get_or_create_collection.assert_awaited_once_with(name="gaia_knowledge")
+        chroma.collection.get.assert_awaited_once_with(include=["documents", "metadatas"])
+
+    async def test_it_embeds_the_query_and_the_corpus_via_google_embeddings(
+        self, chroma, embeddings
+    ):
+        _corpus(chroma, embeddings, ["Doc"], [[1.0, 0.0]])
+
+        await gaia_knowledge_service.search_knowledge("what can you do?")
+
+        assert embeddings.aget.await_args_list == [
+            call("google_embeddings"),
+            call("google_embeddings"),
+        ]
+        embeddings.aembed_query.assert_awaited_once_with("what can you do?")
+
+    async def test_blank_documents_are_skipped(self, chroma, embeddings):
+        chroma.collection.get.return_value = {
+            "documents": ["", "Doc"],
+            "metadatas": [{}, {"i": 1}],
+        }
+        embeddings.aembed_documents.return_value = [[1.0, 0.0], [0.0, 1.0]]
+
+        results = await gaia_knowledge_service.search_knowledge("q", limit=5)
+
+        assert [r.content for r in results] == ["Doc"]
+        assert results[0].metadata == {"i": 1}
+
     async def test_a_second_search_reuses_the_snapshot(self, chroma, embeddings):
         """The point of the snapshot: the per-turn cost is the query embedding
         alone — no Chroma read, no re-embedding of the corpus."""
@@ -151,27 +282,39 @@ class TestSearchKnowledge:
         _corpus(chroma, embeddings, ["Doc"], [[1.0, 0.0]])
 
         await gaia_knowledge_service.search_knowledge("q")
-        gaia_knowledge_service._loaded_at = _LONG_AGO  # past any TTL
+        gaia_knowledge_service._loaded_at = _LONG_AGO
         await gaia_knowledge_service.search_knowledge("q")
 
         assert chroma.collection.get.await_count == 2
 
     async def test_a_failed_refresh_serves_the_previous_snapshot(self, chroma, embeddings):
         """A corpus for a section is enrichment: a refresh blip must degrade to
-        the last good snapshot, not to an empty knowledge block."""
+        the last good snapshot, not to an empty knowledge block — and the blip
+        must keep serving it on later turns, not just the failing one."""
         _corpus(chroma, embeddings, ["Doc"], [[1.0, 0.0]])
         first = await gaia_knowledge_service.search_knowledge("q")
 
         chroma.collection.get.side_effect = RuntimeError("chroma down")
         gaia_knowledge_service._loaded_at = _LONG_AGO
-        second = await gaia_knowledge_service.search_knowledge("q")
+        async with captured_wide_event() as event:
+            second = await gaia_knowledge_service.search_knowledge("q")
+        third = await gaia_knowledge_service.search_knowledge("q")
 
         assert second == first
+        assert third == first
+        (warning,) = event["warnings"]
+        assert warning["msg"] == (
+            "gaia_knowledge snapshot refresh failed; serving the previous corpus"
+        )
+        assert warning["error"] == "chroma down"
+        assert warning["error_type"] == "RuntimeError"
 
     async def test_an_empty_corpus_yields_no_results(self, chroma, embeddings):
         _corpus(chroma, embeddings, [], [])
 
         assert await gaia_knowledge_service.search_knowledge("anything") == []
+        # No corpus means no ranking, so the query is never embedded.
+        embeddings.aembed_query.assert_not_awaited()
 
     async def test_a_first_load_failure_degrades_to_empty(self, chroma, embeddings):
         chroma.collection.get.side_effect = RuntimeError("chroma down")
