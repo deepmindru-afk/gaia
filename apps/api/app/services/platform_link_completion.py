@@ -37,6 +37,16 @@ from app.utils.errors import create_error
 from shared.py.wide_events import log
 
 
+class PostLinkSideEffectError(Exception):
+    """Raised when the follow-through failed but the account link is written.
+
+    The distinction is what a caller holding a single-use credential (a one-tap
+    link code, a link token) acts on: a refusal leaves the credential good for
+    the retry it asks for, while this one must spend it. Redeemed a second time
+    it would find the link already there and publish the first contact again.
+    """
+
+
 async def complete_platform_link(
     user_id: str,
     platform: str,
@@ -47,19 +57,10 @@ async def complete_platform_link(
 ) -> PlatformLinkCompletion:
     """Link the account and run every side effect a successful link owes.
 
-    Whatever GAIA says after the link is sent from here, on the outbound queue
-    every other server-initiated message uses. ``first_contact`` is the
-    composed opening for the one-tap onboarding link (hello, promise, first
-    move) and is delivered as-is; without it a new link gets the generic
-    "you're connected" text. The bots deliver, they never compose.
-
-    Reports back whether that first contact actually went out: nothing retries
-    the publish, so a caller holding the bubbles is the only thing standing
-    between a failed delivery and a linked platform that never said a word.
-
-    Raises AppError(409) when the platform account belongs to another GAIA user
-    (or the user already has a different account on this platform) — the one
-    failure a caller is expected to report back to the person linking.
+    first_contact, when given, is delivered as-is on the outbound queue; the
+    result reports whether it went out, since nothing retries the publish.
+    Raises AppError(409) when the platform account belongs to another user, and
+    PostLinkSideEffectError for any failure after the link is already written.
     """
     try:
         result = await PlatformLinkService.link_account(
@@ -103,39 +104,43 @@ async def complete_platform_link(
             code=LINK_CONFLICT_ACCOUNT_HAS_OTHER,
         ) from e
 
-    delivered = True
-    if first_contact:
-        delivery = await publish_outbound_message(
-            ConversationSource.coerce(platform) or ConversationSource.WEB,
-            user_id,
-            first_contact,
-            ttl_seconds=OUTBOUND_TTL_SECONDS_GREETING,
-        )
-        delivered = delivery is OutboundResult.PUBLISHED
-        if not delivered:
-            # The link itself held; the one message a new user is guaranteed
-            # to read did not. Loud, because nothing else will retry it — and
-            # reported back so the caller can have the bot send it instead.
-            log.warning(
-                "first contact was not delivered after a one-tap link",
-                platform=platform,
-                user_id=user_id,
-                outcome=delivery.value,
+    # Everything below runs against a link that is already written: a failure is
+    # re-raised, nothing swallowed, but named so a caller holding a single-use
+    # credential spends it instead of handing it back for a duplicate retry.
+    try:
+        delivered = True
+        if first_contact:
+            delivery = await publish_outbound_message(
+                ConversationSource.coerce(platform) or ConversationSource.WEB,
+                user_id,
+                first_contact,
+                ttl_seconds=OUTBOUND_TTL_SECONDS_GREETING,
             )
-    elif result.is_new_link:
-        await notify_account_linked(platform, user_id)
-    schedule_account_sync(user_id)
-    if result.is_new_link:
-        # Only a link that did not exist a moment ago is a connection. An
-        # idempotent re-link — a second tap on the same deep link, a re-issued
-        # token — used to capture too, so the connection count tracked taps.
-        #
-        # capture_event, not capture_context_event: the bot route resolves its
-        # user from the link code, not a session, so there is no request
-        # identity to inherit and the event would land on an anonymous profile.
-        capture_event(
-            user_id,
-            AnalyticsEvents.INTEGRATION_CONNECTED,
-            {"integration_id": platform, "is_new_link": result.is_new_link},
-        )
+            delivered = delivery is OutboundResult.PUBLISHED
+            if not delivered:
+                # The link itself held; the one message a new user is guaranteed
+                # to read did not. Loud, because nothing else will retry it — and
+                # reported back so the caller can have the bot send it instead.
+                log.warning(
+                    "first contact was not delivered after a one-tap link",
+                    platform=platform,
+                    user_id=user_id,
+                    outcome=delivery.value,
+                )
+        elif result.is_new_link:
+            await notify_account_linked(platform, user_id)
+        schedule_account_sync(user_id)
+        if result.is_new_link:
+            # Only a link that did not exist a moment ago is a connection, so an
+            # idempotent re-link never captures. capture_event, not the context one:
+            # the bot route has no session identity to inherit.
+            capture_event(
+                user_id,
+                AnalyticsEvents.INTEGRATION_CONNECTED,
+                {"integration_id": platform, "is_new_link": result.is_new_link},
+            )
+    except Exception as e:
+        raise PostLinkSideEffectError(
+            f"the {platform} link was written but its follow-through failed: {e}"
+        ) from e
     return PlatformLinkCompletion(link=result, first_contact_delivered=delivered)

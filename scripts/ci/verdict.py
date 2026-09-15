@@ -57,6 +57,11 @@ Subcommands:
     step-outcomes --lane L [--findings F] [--out DIR] <name>=<outcome> [...]
         Fail a job when any of its `continue-on-error` steps did not pass,
         naming every one that did not.
+    mirror-previous-gate --repo R --sha S --workflow W --job J --run-id N
+        Repeat what the LAST completed run of this workflow concluded for this
+        same head SHA. The gate calls it on a PR edit that moved no code: it
+        must not re-run the lanes (nothing changed) and it must not skip
+        either, because a skipped required check counts as passing.
 
 Interpreters: the JUnit readers need defusedxml and are invoked with
 `uv run --no-project` (the PEP 723 block above is what supplies it); the rest
@@ -75,8 +80,10 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
-from typing import NamedTuple, NotRequired, TypedDict
+from typing import Any, NamedTuple, NotRequired, TypedDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # Where verdicts go, most specific first. The checkout is LAST on purpose: a
@@ -1163,6 +1170,98 @@ def cmd_step_outcomes(args: list[str]) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# mirror-previous-gate
+#
+# `pull_request: edited` is carried for RETARGETS, which re-scope every lane
+# against the new base. It fires for a title or body edit too, and those move
+# no code, so the lane DAG is guarded to skip them. The GATE may not skip with
+# it: branch protection reads a skipped required check as PASSING, so the edit
+# run's skipped gate becomes the head SHA's latest verdict and a PR whose last
+# real run was RED turns mergeable on a typo fix. So the gate always runs, and
+# on that edit it repeats the verdict this same head SHA already earned.
+# ---------------------------------------------------------------------------
+
+# A gate job that did not conclude has no verdict to mirror. `skipped` is what
+# every run older than this subcommand left behind on an edit, and it is
+# precisely the value that must never read as a pass.
+NO_VERDICT_CONCLUSIONS = frozenset({None, "skipped"})
+
+
+def _gh_json(endpoint: str) -> dict[str, Any] | None:
+    """`gh api <endpoint>` decoded, or None when gh or the API fails."""
+    if shutil.which("gh") is None:
+        print("  gh is not on PATH")
+        return None
+    proc = subprocess.run(["gh", "api", endpoint], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        print(f"  gh api {endpoint} failed: {proc.stderr.strip()}")
+        return None
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        print(f"  gh api {endpoint} returned no JSON")
+        return None
+
+
+def _gate_conclusion(repo: str, run_id: int, job_name: str) -> str | None:
+    """Return what that run's gate job concluded, or None if it never concluded."""
+    jobs = _gh_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+    for job in (jobs or {}).get("jobs", []):
+        if job.get("name") != job_name:
+            continue
+        conclusion = job.get("conclusion")
+        return None if conclusion in NO_VERDICT_CONCLUSIONS else str(conclusion)
+    return None
+
+
+def cmd_mirror_previous_gate(args: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="verdict.py mirror-previous-gate")
+    parser.add_argument("--repo", required=True, help="owner/name")
+    parser.add_argument(
+        "--sha",
+        required=True,
+        help=(
+            "the PR HEAD sha, not github.sha — a pull_request run's github.sha is the "
+            "merge commit, while the check runs branch protection reads hang off the head"
+        ),
+    )
+    parser.add_argument("--workflow", required=True, help="this workflow's file name")
+    parser.add_argument("--job", required=True, help="the gate job's `name:`")
+    parser.add_argument("--run-id", required=True, type=int, help="this run, excluded")
+    opts = parser.parse_args(args)
+
+    listing = _gh_json(
+        f"repos/{opts.repo}/actions/workflows/{opts.workflow}/runs?head_sha={opts.sha}&per_page=50"
+    )
+    if listing is None:
+        print(f"::error::quality-gate: could not read the runs for {opts.sha} — nothing to mirror")
+        return 1
+
+    # Newest first, as the API returns them.
+    for run in listing.get("workflow_runs", []):
+        run_id = int(run["id"])
+        if run_id == opts.run_id or run.get("status") != "completed":
+            continue
+        conclusion = _gate_conclusion(opts.repo, run_id, opts.job)
+        if conclusion is None:
+            continue
+        if conclusion == "success":
+            print(f"quality-gate: PASSED — mirroring run {run_id}, which concluded success")
+            return 0
+        print(
+            f"::error::quality-gate: run {run_id} concluded {conclusion} for this commit, and "
+            "this edit changed no code. Fix the failures and push, or re-run that run."
+        )
+        return 1
+
+    print(
+        f"::error::quality-gate: no completed run of {opts.workflow} has decided {opts.sha} yet, "
+        "so there is no verdict to mirror. Re-run this gate once the lanes finish."
+    )
+    return 1
+
+
 SUBCOMMANDS = {
     "emit": cmd_emit,
     "consolidate": cmd_consolidate,
@@ -1173,6 +1272,7 @@ SUBCOMMANDS = {
     "regression-proof-verdict": cmd_regression_proof_verdict,
     "collect": cmd_collect,
     "step-outcomes": cmd_step_outcomes,
+    "mirror-previous-gate": cmd_mirror_previous_gate,
 }
 
 

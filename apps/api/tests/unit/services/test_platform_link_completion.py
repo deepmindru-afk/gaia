@@ -11,7 +11,10 @@ from app.models.chat_models import ConversationSource
 from app.models.platform_models import PlatformLinkResult
 from app.services.analytics_service import AnalyticsEvents
 from app.services.outbound_delivery import OutboundResult
-from app.services.platform_link_completion import complete_platform_link
+from app.services.platform_link_completion import (
+    PostLinkSideEffectError,
+    complete_platform_link,
+)
 from app.services.platform_link_service import AccountHasDifferentPlatformError
 from app.utils.errors import AppError
 
@@ -104,6 +107,39 @@ class TestPostLinkMessage:
             user_id="u1",
             outcome="failed",
         )
+
+
+class TestPostCommitFailures:
+    """A failure after the link is written is a different animal from a refusal.
+
+    The link exists; a caller holding a single-use credential must spend it
+    rather than hand it back, or the retry re-runs the greeting against a link
+    that is already there. Reported, never swallowed.
+    """
+
+    async def test_a_broken_first_contact_publish_says_the_link_was_already_written(
+        self, side_effects
+    ) -> None:
+        _, publish, _ = side_effects
+        broker_down = RuntimeError("could not resolve the outbound destination")
+        publish.side_effect = broker_down
+
+        with pytest.raises(PostLinkSideEffectError) as excinfo:
+            await complete_platform_link("u1", "whatsapp", "wa-1", first_contact=BUBBLES)
+
+        assert excinfo.value.__cause__ is broker_down
+
+    async def test_a_refused_link_is_not_dressed_as_a_post_commit_failure(
+        self, side_effects
+    ) -> None:
+        """Nothing was written, so the caller's credential is still good."""
+        _, _, link = side_effects
+        link.side_effect = AccountHasDifferentPlatformError("already has a different account")
+
+        with pytest.raises(AppError) as excinfo:
+            await complete_platform_link("u1", "whatsapp", "wa-2")
+
+        assert not isinstance(excinfo.value, PostLinkSideEffectError)
 
 
 class TestLinkAnalytics:
