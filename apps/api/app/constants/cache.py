@@ -159,6 +159,11 @@ PLATFORM_LINK_TOKEN_TTL = TEN_MINUTES_TTL
 # because the user may sit on the platform-pick screen before tapping through.
 PLATFORM_LINK_CODE_PREFIX = "platform_link_code"  # nosec B105
 PLATFORM_LINK_CODE_TTL = THIRTY_MINUTES_TTL
+# Held for the length of one redemption, not for the code's life: it is what
+# makes a redemption single-use while the record itself survives a refusal. The
+# TTL is the recovery bound — a redeemer that died mid-link frees the code again
+# once it lapses, without anyone having to mint a new one.
+PLATFORM_LINK_CODE_CLAIM_TTL = FIVE_MINUTES_TTL
 # Desktop tool bridge — request ownership keys + per-request result channels.
 # A request key expiring means the desktop never answered; the result endpoint
 # rejects late POSTs whose key is gone.
