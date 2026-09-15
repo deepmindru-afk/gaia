@@ -512,6 +512,10 @@ def _line_block(stripped: str) -> NotionContentBlock:
     if stripped in ["---", "***", "___"]:
         return NotionContentBlock(block_property="paragraph", content="───")
 
+    # Callout (GitHub alert style) — before the "> " quote prefix, which also matches it
+    if stripped.startswith("> [!"):
+        return NotionContentBlock(block_property="callout", content=stripped[2:])
+
     # Headings, quote
     for prefix, block_property in _PREFIX_BLOCK_PROPERTIES:
         if stripped.startswith(prefix):
@@ -532,10 +536,6 @@ def _line_block(stripped: str) -> NotionContentBlock:
     num_match = re.match(r"^(\d+)\. (.+)$", stripped)
     if num_match:
         return NotionContentBlock(block_property="numbered_list_item", content=num_match.group(2))
-
-    # Callout (GitHub alert style)
-    if stripped.startswith("> [!"):
-        return NotionContentBlock(block_property="callout", content=stripped[2:])
 
     # Default: paragraph
     return NotionContentBlock(block_property="paragraph", content=stripped)

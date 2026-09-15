@@ -168,11 +168,12 @@ async def _fetch_sources(
                     f"[Snippet only: full page unavailable]\n\n{snippet}",
                     "; ".join(errors),
                 )
-            return _source(
-                url_info,
-                None,
-                "; ".join(errors),  # pragma: no mutate — deep_research drops contentless sources
+            log.warning(
+                f"{LogTag.TOOL} All fetchers failed and no snippet to fall back on",
+                url=url,
+                error="; ".join(errors),
             )
+            return _source(url_info, None, "; ".join(errors))
 
     return await asyncio.gather(*[_bounded_fetch(u) for u in ranked_urls])
 

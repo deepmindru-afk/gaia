@@ -395,6 +395,7 @@ class TestDeepResearch:
         _mock_cache: AsyncMock,
         _mock_cache_key: MagicMock,
         _mock_uid: MagicMock,
+        _patch_log: MagicMock,
     ) -> None:
         mock_decompose.return_value = ["sub-q1"]
         mock_ddg.return_value = ResearchSearchResult(
@@ -416,6 +417,11 @@ class TestDeepResearch:
         assert result["source_count"] == 0
         # No valid sources means cache is NOT set
         mock_set_cache.assert_not_awaited()
+        _patch_log.warning.assert_called_once_with(
+            f"{LogTag.TOOL} All fetchers failed and no snippet to fall back on",
+            url="https://a.com",
+            error="crawl4ai: fail; httpx: fail",
+        )
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.get_user_id_from_config", return_value="user-123")
