@@ -26,7 +26,7 @@ from app.models.payment_models import PlanType
 from app.models.platform_models import PlatformLinkCompletion, PlatformLinkResult
 from app.models.user_models import OnboardingNeed, OnboardingPreferences
 from app.services.outbound_delivery import OutboundResult
-from app.services.platform_link_code_service import PlatformLinkCodePayload
+from app.services.platform_link_code_service import LinkCodeClaim, PlatformLinkCodePayload
 from app.utils.errors import AppError
 from shared.py.wide_events import log, log_context
 
@@ -295,8 +295,9 @@ BUBBLES = [
     "One tap and that switches on. The link is live for the next hour:",
     "Gmail: https://gaia.test/connect/abc",
 ]
-PEEK_PATCH = "app.api.v1.endpoints.bot_links.peek_platform_link_code"
+CLAIM_PATCH = "app.api.v1.endpoints.bot_links.claim_platform_link_code"
 DISCARD_PATCH = "app.api.v1.endpoints.bot_links.discard_platform_link_code"
+RELEASE_PATCH = "app.api.v1.endpoints.bot_links.release_platform_link_code"
 COMPLETE_PATCH = "app.api.v1.endpoints.bot_links.complete_platform_link"
 USER_PATCH = "app.api.v1.endpoints.bot_links.get_user_by_id"
 CONTACT_PATCH = "app.api.v1.endpoints.bot_links.build_first_contact"
@@ -311,6 +312,11 @@ LINKED_LOOKUP_PATCH = (
 #: Link completion's own module, patched whole when a test needs the real
 #: completion to run (the delivery outcome it reports is what is under test).
 COMPLETION_MODULE = "app.services.platform_link_completion"
+
+
+def _claimed() -> LinkCodeClaim:
+    """A code this request won the claim on."""
+    return LinkCodeClaim(payload=PlatformLinkCodePayload(user_id="user1", preferences=PREFS))
 
 
 def _link_result(is_new_link: bool = True) -> PlatformLinkResult:
@@ -375,9 +381,9 @@ class TestRedeemLinkCode:
     ):
         with (
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
             patch(
@@ -418,9 +424,9 @@ class TestRedeemLinkCode:
         _linked_user.return_value = {"_id": "user1", "name": "Aryan Randeriya"}
         with (
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch(COMPLETE_PATCH, new_callable=AsyncMock, return_value=_completion()),
@@ -444,9 +450,9 @@ class TestRedeemLinkCode:
         _linked_user.return_value = linked_user
         with (
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch(COMPLETE_PATCH, new_callable=AsyncMock, return_value=_completion()),
@@ -471,9 +477,9 @@ class TestRedeemLinkCode:
         """
         with (
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch(
@@ -509,9 +515,9 @@ class TestRedeemLinkCode:
         """Otherwise the bot sends what the outbound queue already sent."""
         with (
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch(
@@ -541,9 +547,9 @@ class TestRedeemLinkCode:
         """The WhatsApp prefill is editable, so the text that arrives is theirs."""
         with (
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch(COMPLETE_PATCH, new_callable=AsyncMock, return_value=_completion()),
@@ -562,7 +568,7 @@ class TestRedeemLinkCode:
         self, _auth: AsyncMock, client: AsyncClient
     ):
         with (
-            patch(PEEK_PATCH, new_callable=AsyncMock, return_value=None),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=LinkCodeClaim()),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch(COMPLETE_PATCH, new_callable=AsyncMock) as mock_complete,
         ):
@@ -577,9 +583,9 @@ class TestRedeemLinkCode:
         self, _auth: AsyncMock, client: AsyncClient
     ):
         """Single-use: the store hands the binding over exactly once."""
-        payload = PlatformLinkCodePayload(user_id="user1", preferences=PREFS)
+        claimed = _claimed()
         with (
-            patch(PEEK_PATCH, new_callable=AsyncMock, side_effect=[payload, None]),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, side_effect=[claimed, LinkCodeClaim()]),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch(COMPLETE_PATCH, new_callable=AsyncMock, return_value=_completion()),
         ):
@@ -603,7 +609,7 @@ class TestRedeemLinkCode:
         tap gave -- being told "that link has expired" under a greeting that is
         still on screen reads as a broken product."""
         with (
-            patch(PEEK_PATCH, new_callable=AsyncMock, return_value=None),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=LinkCodeClaim()),
             patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
             patch(COMPLETE_PATCH, new_callable=AsyncMock) as mock_complete,
             patch(PERSIST_PATCH, new_callable=AsyncMock) as mock_persist,
@@ -626,6 +632,61 @@ class TestRedeemLinkCode:
         mock_discard.assert_not_awaited()
 
     @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
+    async def test_a_twin_redemption_still_running_is_answered_like_a_second_tap(
+        self,
+        _auth: AsyncMock,
+        client: AsyncClient,
+        _already_linked: AsyncMock,
+        _first_contact: AsyncMock,
+    ):
+        """The same second tap, arriving before the first one finished.
+
+        Nothing dedupes the delivery on the bot side, so Telegram resending
+        ``/start`` puts two redemptions of one code in flight at once. The one
+        that lost the claim must stay silent rather than run the link again or
+        answer a live link with "that link has expired"."""
+        with (
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=LinkCodeClaim(in_flight=True)),
+            patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
+            patch(COMPLETE_PATCH, new_callable=AsyncMock) as mock_complete,
+            patch(PERSIST_PATCH, new_callable=AsyncMock) as mock_persist,
+        ):
+            # The twin has not written the link yet — this is exactly what makes
+            # the in-flight case different from a spent code.
+            _already_linked.return_value = None
+            response = await client.post(f"{BOT_BASE}/redeem-link-code", json=REDEEM_BODY)
+
+        assert response.status_code == 200
+        assert response.json() == {"linked": True, "delivered": True, "first_contact": []}
+        mock_complete.assert_not_awaited()
+        _first_contact.assert_not_awaited()
+        mock_persist.assert_not_awaited()
+        mock_discard.assert_not_awaited()
+
+    @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
+    async def test_a_refused_redemption_releases_the_code_for_the_retry(
+        self, _auth: AsyncMock, client: AsyncClient
+    ):
+        """Every refusal here tells the user to tap the same link again, and the
+        code is the only way back — spending it on the refusal would strand
+        them. It is released, never discarded."""
+        with (
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=_claimed()),
+            patch(
+                "app.api.v1.endpoints.bot_links.require_platform_plan",
+                new_callable=AsyncMock,
+                side_effect=AppError(message="needs Pro", status_code=429),
+            ),
+            patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
+            patch(RELEASE_PATCH, new_callable=AsyncMock) as mock_release,
+        ):
+            response = await client.post(f"{BOT_BASE}/redeem-link-code", json=REDEEM_BODY)
+
+        assert response.status_code == 429
+        mock_release.assert_awaited_once_with("CODE123")
+        mock_discard.assert_not_awaited()
+
+    @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
     async def test_a_spent_code_presented_by_an_unlinked_account_still_expires(
         self, _auth: AsyncMock, client: AsyncClient, _already_linked: AsyncMock
     ):
@@ -633,7 +694,7 @@ class TestRedeemLinkCode:
         nobody else: a spent code replayed from a different handle is a bearer
         credential being reused, and must stay a dead link."""
         with (
-            patch(PEEK_PATCH, new_callable=AsyncMock, return_value=None),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=LinkCodeClaim()),
             patch(COMPLETE_PATCH, new_callable=AsyncMock) as mock_complete,
         ):
             _already_linked.return_value = None
@@ -653,7 +714,7 @@ class TestRedeemLinkCode:
 
         with (
             patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
-            patch(PEEK_PATCH, new_callable=AsyncMock, return_value=None),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=LinkCodeClaim()),
             patch(
                 LINKED_LOOKUP_PATCH,
                 new_callable=AsyncMock,
@@ -684,9 +745,9 @@ class TestRedeemLinkCode:
     ):
         with (
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
             patch(
@@ -732,12 +793,12 @@ class TestRedeemLinkCode:
                 "app.api.v1.endpoints.bot_links.require_bot_api_key",
                 new=AsyncMock(side_effect=_mismatched_request),
             ),
-            patch(PEEK_PATCH, new_callable=AsyncMock) as mock_peek,
+            patch(CLAIM_PATCH, new_callable=AsyncMock) as mock_claim,
         ):
             response = await client.post(f"{BOT_BASE}/redeem-link-code", json=REDEEM_BODY)
 
         assert response.status_code == 403
-        mock_peek.assert_not_awaited()
+        mock_claim.assert_not_awaited()
 
     @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
     async def test_a_platform_mismatch_alone_is_enough_to_reject(
@@ -756,12 +817,12 @@ class TestRedeemLinkCode:
                 "app.api.v1.endpoints.bot_links.require_bot_api_key",
                 new=AsyncMock(side_effect=_wrong_platform),
             ),
-            patch(PEEK_PATCH, new_callable=AsyncMock) as mock_peek,
+            patch(CLAIM_PATCH, new_callable=AsyncMock) as mock_claim,
         ):
             response = await client.post(f"{BOT_BASE}/redeem-link-code", json=REDEEM_BODY)
 
         assert response.status_code == 403
-        mock_peek.assert_not_awaited()
+        mock_claim.assert_not_awaited()
 
     @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
     async def test_the_expired_code_body_tells_the_user_what_to_do_next(
@@ -770,7 +831,7 @@ class TestRedeemLinkCode:
         """This body is the whole reply a bot user sees when a one-tap link goes
         stale — the why/fix pair is what turns a dead end into a retry."""
         with (
-            patch(PEEK_PATCH, new_callable=AsyncMock, return_value=None),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=LinkCodeClaim()),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
         ):
             response = await client.post(f"{BOT_BASE}/redeem-link-code", json=REDEEM_BODY)
@@ -815,9 +876,9 @@ class TestRedeemLinkCode:
                 new=AsyncMock(side_effect=_matching_request),
             ),
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch(COMPLETE_PATCH, new_callable=AsyncMock, return_value=_completion()),
@@ -834,10 +895,10 @@ class TestRedeemLinkCode:
         with (
             patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
-            ) as mock_peek,
+                return_value=_claimed(),
+            ) as mock_claim,
             patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
             patch(
                 "app.api.v1.endpoints.bot_links.require_platform_plan", new_callable=AsyncMock
@@ -847,7 +908,7 @@ class TestRedeemLinkCode:
             response = await client.post(f"{BOT_BASE}/redeem-link-code", json=REDEEM_BODY)
 
         assert response.status_code == 200
-        mock_peek.assert_awaited_once_with("CODE123")
+        mock_claim.assert_awaited_once_with("CODE123")
         mock_plan.assert_awaited_once_with("user1", "telegram")
         # Spent exactly once, and only after the link was written.
         mock_discard.assert_awaited_once_with("CODE123")
@@ -860,9 +921,9 @@ class TestRedeemLinkCode:
         be told the link expired: the wall refuses without spending the code."""
         with (
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock) as mock_discard,
             patch(
@@ -890,9 +951,9 @@ class TestRedeemLinkCode:
         with (
             patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
             patch(
-                PEEK_PATCH,
+                CLAIM_PATCH,
                 new_callable=AsyncMock,
-                return_value=PlatformLinkCodePayload(user_id="user1", preferences=PREFS),
+                return_value=_claimed(),
             ),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
             patch("app.api.v1.endpoints.bot_links.require_platform_plan", new=AsyncMock()),
@@ -927,7 +988,7 @@ class TestRedeemLinkCode:
 
         with (
             patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
-            patch(PEEK_PATCH, new_callable=AsyncMock, return_value=None),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=LinkCodeClaim()),
             patch(DISCARD_PATCH, new_callable=AsyncMock),
         ):
             async with log_context("redeem_link_code_test"):

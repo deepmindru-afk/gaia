@@ -6,6 +6,7 @@ from arq.worker import func
 
 from app.constants.email import SIGNUP_EMAIL_TASK
 from app.constants.onboarding import INTELLIGENCE_TASK
+from app.constants.payments import SUBSCRIPTION_WORKFLOW_SYNC_TASK
 
 # The worker runs the executor agent + Composio custom tools, so it needs the
 # same monkey-patches as the API process (main.py). Without this, custom tools
@@ -42,6 +43,7 @@ from app.workers.tasks.device_tasks import warm_device_servers
 from app.workers.tasks.hil_sweep_tasks import sweep_hil_approvals
 from app.workers.tasks.maintenance_sweep_tasks import maintenance_sweep_tracked_todos
 from app.workers.tasks.scheduler_recovery_tasks import rescan_pending_scheduled_tasks
+from app.workers.tasks.subscription_workflow_tasks import sync_workflows_for_subscription_state
 from app.workers.tasks.tracked_todo_tasks import (
     execute_tracked_todo,
     safety_net_check_orphaned_todos,
@@ -98,6 +100,11 @@ _deliver_signup_emails = func(
 )
 _sweep_undelivered_signup_emails = arq_task(sweep_undelivered_signup_emails)
 _warm_device_servers = arq_task(warm_device_servers)
+# Named from the constant the webhook enqueues by, so the two cannot drift.
+_sync_workflows_for_subscription_state = func(
+    arq_task(sync_workflows_for_subscription_state),
+    name=SUBSCRIPTION_WORKFLOW_SYNC_TASK,
+)
 
 WorkerSettings.functions = [
     _sweep_hil_approvals,
@@ -126,6 +133,7 @@ WorkerSettings.functions = [
     _deliver_signup_emails,
     _sweep_undelivered_signup_emails,
     _warm_device_servers,
+    _sync_workflows_for_subscription_state,
 ]
 
 WorkerSettings.cron_jobs = [
