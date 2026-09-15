@@ -94,6 +94,17 @@ class TestExecutorLifecycleFlags:
         mark_executor_spawned("s1")
         assert _spawned("s1") is True
 
+    def test_spawning_resets_the_first_frame_stamp(self) -> None:
+        # A redirect reuses the stream id for the new run, so the spawn must
+        # clear the previous incarnation's first-frame stamp — otherwise the
+        # new run inherits the cancelled run's TTFT start. Asserted by identity
+        # against None: a falsy placeholder (e.g. "") would satisfy a truthiness
+        # check yet still corrupt the measured interval.
+        session = create_session("s1", RunKind.QUEUED)
+        session.executor_first_frame_perf = 123.5
+        mark_executor_spawned("s1")
+        assert session.executor_first_frame_perf is None
+
     def test_signal_executor_done_sets_event(self) -> None:
         session = create_session("s1", RunKind.LIVE)
         assert not session.done_event.is_set()

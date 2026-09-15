@@ -22,6 +22,7 @@ from typing import ParamSpec, TypeVar
 
 from prometheus_client import CollectorRegistry, Counter, Histogram, start_http_server
 
+from app.services.latency_metrics import ALL_COLLECTORS
 from app.services.storage.metrics import (
     _FS_OP_BYTES_TOTAL,
     _FS_OP_DURATION_SECONDS,
@@ -61,6 +62,8 @@ for _collector in (
     _FS_OP_LAST_SEEN,
     _FS_OP_IN_FLIGHT,
     _SANDBOX_POOL_SIZE,
+    # Turn/executor/HIL latency: the sweep and re-dispatched runs emit here.
+    *ALL_COLLECTORS,
 ):
     # Already registered on this registry (re-import under reload).
     with contextlib.suppress(ValueError):

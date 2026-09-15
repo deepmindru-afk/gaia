@@ -5,6 +5,7 @@ avoiding a cyclic dependency.
 """
 
 from dataclasses import dataclass, field
+import time
 from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -54,6 +55,7 @@ from app.models.agent_models import (
 from app.models.stream_events import ReasoningPayload, ToolOutputPayload
 from app.services.chat.chunks import normalize_custom_event
 from app.services.files import FileService
+from app.services.latency_metrics import observe_subagent_run
 from app.utils.agent_utils import IntegrationMetadata, StreamWriterCallable
 from app.utils.multimodal import extract_text_content
 from app.utils.stream_utils import extract_tool_entries_from_update
@@ -442,31 +444,58 @@ async def execute_subagent_stream(
             # finished task — an empty outcome says "nothing to deliver" outright.
             return SubagentOutcome(text="")
 
-    async for event in ctx.subagent_graph.astream(
-        _with_current_time(resume, ctx.configurable) if resume is not None else ctx.initial_state,
-        stream_mode=["messages", "custom", "updates"],
-        # build_agent_config returns an AgentRunnableConfig, but run_config may be
-        # rebuilt above as a dict spread, which mypy widens back to a plain dict.
-        config=cast(RunnableConfig, run_config),
-        # Persist checkpoints only on exit, not every step (default is "async"):
-        # intermediate steps never need to survive a mid-run crash, only the final
-        # state does. Collapses O(steps) writes to one. comms graph keeps "async".
-        durability="exit",
-    ):
-        # Check for cancellation
-        if ctx.stream_id and await stream_manager.is_cancelled(ctx.stream_id):
-            log.info(f"{LogTag.AGENT} Subagent stream cancelled by user", stream_id=ctx.stream_id)
-            break
+    # One span per segment; a pause ends its segment here, so the HIL wait that
+    # follows never counts as active time. Labelled by integration id: per-call
+    # uuids and user-made MCPs would each mint unbounded series.
+    label = (
+        "custom_mcp"
+        if ctx.agent_name.startswith("custom_mcp_")
+        else ctx.integration_id or ctx.agent_name or "unknown"
+    )
+    cancelled = False
+    segment_start = time.perf_counter()
+    try:
+        async for event in ctx.subagent_graph.astream(
+            _with_current_time(resume, ctx.configurable)
+            if resume is not None
+            else ctx.initial_state,
+            stream_mode=["messages", "custom", "updates"],
+            # build_agent_config returns an AgentRunnableConfig, but run_config may be
+            # rebuilt above as a dict spread, which mypy widens back to a plain dict.
+            config=cast(RunnableConfig, run_config),
+            # Persist checkpoints only on exit, not every step (default is "async"):
+            # intermediate steps never need to survive a mid-run crash, only the final
+            # state does. Collapses O(steps) writes to one. comms graph keeps "async".
+            durability="exit",
+        ):
+            # Check for cancellation
+            if ctx.stream_id and await stream_manager.is_cancelled(ctx.stream_id):
+                log.info(
+                    f"{LogTag.AGENT} Subagent stream cancelled by user", stream_id=ctx.stream_id
+                )
+                cancelled = True
+                break
 
-        # Handle 2-tuple format only (no subgraphs)
-        if len(event) != 2:
-            continue
-        # A list `stream_mode` makes astream yield (mode, payload) tuples, which
-        # langgraph's own overload return type does not express.
-        stream_mode, payload = cast(tuple[str, Any], event)
-        await _consume_stream_event(run, stream_mode, payload)
+            # Handle 2-tuple format only (no subgraphs)
+            if len(event) != 2:
+                continue
+            # A list `stream_mode` makes astream yield (mode, payload) tuples, which
+            # langgraph's own overload return type does not express.
+            stream_mode, payload = cast(tuple[str, Any], event)
+            await _consume_stream_event(run, stream_mode, payload)
+    except Exception:
+        observe_subagent_run(time.perf_counter() - segment_start, subagent_id=label, status="error")
+        raise
 
-    return _finalize_run(run)
+    outcome = _finalize_run(run)
+    if outcome.paused:
+        status = "paused"
+    elif cancelled:
+        status = "cancelled"
+    else:
+        status = "success"
+    observe_subagent_run(time.perf_counter() - segment_start, subagent_id=label, status=status)
+    return outcome
 
 
 async def _consume_stream_event(run: _StreamRun, stream_mode: str, payload: object) -> None:

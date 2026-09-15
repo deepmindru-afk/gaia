@@ -9,7 +9,7 @@ subagents' side effects on every real resume.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from langgraph.types import Command
 
@@ -71,3 +71,34 @@ async def test_a_fresh_run_does_not_arm_the_probe() -> None:
 
     assert HIL_RESUME_CONFIG_KEY not in ctx.configurable
     assert HIL_RESUME_CONFIG_KEY not in ctx.config["configurable"]
+
+
+class TestExecuteExecutorWiring:
+    """``_execute_executor`` hands prep the run's own task, config and stream —
+    the call is the only thing that decides which conversation gets executed —
+    and stamps the measured prep time on the executor namespace."""
+
+    async def test_prep_receives_the_run_arguments_and_exact_prep_ms(self) -> None:
+        ctx = _Ctx()
+        prepare = AsyncMock(return_value=(ctx, None))
+        log_mock = MagicMock()
+
+        with (
+            patch(f"{RUNNER}.prepare_executor_execution", prepare),
+            patch(f"{RUNNER}.make_redis_stream_writer", lambda _stream_id: None),
+            patch(
+                f"{RUNNER}.execute_subagent_stream",
+                AsyncMock(return_value=SubagentOutcome(text="done")),
+            ),
+            patch(f"{RUNNER}.log", log_mock),
+            patch(f"{RUNNER}.time.perf_counter", side_effect=[1000.0, 1000.123456]),
+        ):
+            result = await _execute_executor("the task", {"user_id": "u1"}, "stream-1")
+
+        prepare.assert_awaited_once_with(
+            task="the task",
+            configurable={"user_id": "u1"},
+            stream_id="stream-1",
+        )
+        log_mock.set.assert_called_once_with(executor={"prep_ms": 123.46})
+        assert result.text == "done"

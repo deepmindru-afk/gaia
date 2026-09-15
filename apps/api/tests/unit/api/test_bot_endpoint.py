@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from fastapi import HTTPException
 from httpx import AsyncClient
+from prometheus_client import REGISTRY
 import pytest
 
 from app.api.v1.endpoints import bot as bot_module
@@ -630,7 +631,7 @@ class TestBotChatStream:
         mock_capture.assert_called_once_with(
             "uid1",
             AnalyticsEvents.CHAT_MESSAGE_SUBMITTED,
-            {"platform": "discord", "has_files": False},
+            {"source": "discord", "has_files": False},
         )
 
     # The four the body never touches are patched with `new=`, which injects no
@@ -690,7 +691,7 @@ class TestBotChatStream:
         mock_capture.assert_called_once_with(
             "uid1",
             AnalyticsEvents.CHAT_MESSAGE_SUBMITTED,
-            {"platform": "discord", "has_files": True},
+            {"source": "discord", "has_files": True},
         )
 
     @patch("app.api.v1.endpoints.bot.BotService.enforce_rate_limit", new_callable=AsyncMock)
@@ -2149,7 +2150,7 @@ class TestForwarderWiring:
             patch("app.api.v1.endpoints.bot.stream_manager") as sm,
             patch("app.api.v1.endpoints.bot.charge_bot_turn", new=AsyncMock()),
             patch("app.api.v1.endpoints.bot.spawn_background_task", new=MagicMock()),
-            patch("app.api.v1.endpoints.bot.run_chat_stream_background", new=AsyncMock()),
+            patch("app.api.v1.endpoints.bot.run_chat_stream_background", new=MagicMock()) as bg,
             patch(
                 "app.api.v1.endpoints.bot.create_bot_session_token",
                 new=MagicMock(return_value="tok"),
@@ -2158,6 +2159,10 @@ class TestForwarderWiring:
                 "app.api.v1.endpoints.bot._bot_stream_from_redis",
                 new=MagicMock(return_value=nothing()),
             ) as forwarder,
+            # The background turn is handed the same request-accepted clock the
+            # web endpoint passes, so bot TTFT/E2E share the web definition.
+            # Dropped or nulled, every bot latency reports an unbounded duration.
+            patch("app.api.v1.endpoints.bot.time.perf_counter", return_value=123.5),
         ):
             bot_svc.enforce_rate_limit = AsyncMock()
             bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
@@ -2178,6 +2183,115 @@ class TestForwarderWiring:
             "session_token": "tok",
             "platform": "discord",
         }
+        assert bg.call_args.kwargs["t0_perf"] == 123.5
+        assert bg.call_args.kwargs["stream_id"] == started_stream_id
+
+
+class TestBotStreamDeliveryMetrics:
+    """`sse_delivery_seconds` is the only record of how a bot stream ended.
+
+    The observation lives in the forwarder's `finally`, so it fires on every
+    exit — clean completion, a client that dropped (polled or cancelled), the
+    generator being closed, and an error — each under a distinct `status`. The
+    duration is `end - delivery_start`; pinning the clock lands an exact 0.5,
+    so a sign error is hundreds off and a nulled start cannot observe at all.
+    """
+
+    @staticmethod
+    def _observed(status: str) -> float:
+        return REGISTRY.get_sample_value("sse_delivery_seconds_sum", {"status": status}) or 0.0
+
+    @staticmethod
+    def _forwarder(frames: AsyncGenerator[str, None], *, disconnected: bool = False):
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(return_value=disconnected)
+        return bot_module._bot_stream_from_redis(
+            request,
+            stream_id="s1",
+            conversation_id="conv-1",
+            upgrade_url=_never_upgrade,
+            session_token="tok",
+            platform="discord",
+        )
+
+    @staticmethod
+    def _pinned_clock():
+        return patch("app.api.v1.endpoints.bot.time.perf_counter", side_effect=[100.0, 100.5])
+
+    @staticmethod
+    async def _frames(*chunks: str) -> AsyncGenerator[str, None]:
+        for chunk in chunks:
+            yield chunk
+
+    async def test_clean_completion_records_completed(self) -> None:
+        before = self._observed("completed")
+        with patch("app.api.v1.endpoints.bot.stream_manager") as sm, self._pinned_clock():
+            sm.subscribe_stream.return_value = self._frames(
+                'data: {"response": "hi"}\n\n', "data: [DONE]\n\n"
+            )
+            collected = [f async for f in self._forwarder(sm.subscribe_stream.return_value)]
+
+        assert '"done": true' in "".join(collected)
+        assert self._observed("completed") - before == pytest.approx(0.5)
+
+    async def test_client_poll_disconnect_records_disconnected(self) -> None:
+        before = self._observed("disconnected")
+        with patch("app.api.v1.endpoints.bot.stream_manager") as sm, self._pinned_clock():
+            sm.subscribe_stream.return_value = self._frames('data: {"response": "hi"}\n\n')
+            collected = [
+                f
+                async for f in self._forwarder(sm.subscribe_stream.return_value, disconnected=True)
+            ]
+
+        assert '"text"' not in "".join(collected)
+        assert self._observed("disconnected") - before == pytest.approx(0.5)
+
+    async def test_generator_close_records_abandoned(self) -> None:
+        async def frames() -> AsyncGenerator[str, None]:
+            yield 'data: {"response": "hi"}\n\n'
+            await asyncio.Event().wait()
+
+        before = self._observed("abandoned")
+        with patch("app.api.v1.endpoints.bot.stream_manager") as sm, self._pinned_clock():
+            sm.subscribe_stream.return_value = frames()
+            body = self._forwarder(sm.subscribe_stream.return_value)
+            assert await body.__anext__() == 'data: {"session_token": "tok"}\n\n'
+            assert await body.__anext__() == ": keepalive\n\n"
+            assert await body.__anext__() == 'data: {"text": "hi"}\n\n'
+            await body.aclose()
+
+        assert self._observed("abandoned") - before == pytest.approx(0.5)
+
+    async def test_cancellation_records_disconnected(self) -> None:
+        async def frames() -> AsyncGenerator[str, None]:
+            yield 'data: {"response": "hi"}\n\n'
+            await asyncio.Event().wait()
+
+        before = self._observed("disconnected")
+        with patch("app.api.v1.endpoints.bot.stream_manager") as sm, self._pinned_clock():
+            sm.subscribe_stream.return_value = frames()
+            body = self._forwarder(sm.subscribe_stream.return_value)
+            for _ in range(3):
+                await body.__anext__()
+            with pytest.raises(asyncio.CancelledError):
+                await body.athrow(asyncio.CancelledError)
+
+        assert self._observed("disconnected") - before == pytest.approx(0.5)
+
+    async def test_stream_error_records_error(self) -> None:
+        async def frames() -> AsyncGenerator[str, None]:
+            raise RuntimeError("redis down")
+            yield  # pragma: no cover - unreachable; makes this an async generator
+
+        before = self._observed("error")
+        with patch("app.api.v1.endpoints.bot.stream_manager") as sm, self._pinned_clock():
+            sm.subscribe_stream.return_value = frames()
+            collected = [f async for f in self._forwarder(sm.subscribe_stream.return_value)]
+
+        # Exact frame: the client parses this by key, so a renamed key or reworded
+        # value is a real regression, not a cosmetic one.
+        assert 'data: {"error": "Stream error occurred"}\n\n' in collected
+        assert self._observed("error") - before == pytest.approx(0.5)
 
 
 class TestBotStreamFromRedis:

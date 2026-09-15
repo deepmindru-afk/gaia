@@ -384,6 +384,7 @@ async def deactivate_workflow(
             )
 
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.WORKFLOW_DEACTIVATED)
         return WorkflowResponse(
             workflow=as_read_view(workflow), message="Workflow deactivated successfully"
         )
@@ -431,6 +432,13 @@ async def regenerate_workflow_steps(
             )
 
         log.set(outcome="success")
+        capture_context_event(
+            AnalyticsEvents.WORKFLOW_STEPS_REGENERATED,
+            {
+                "force_different_tools": request.force_different_tools,
+                "steps_count": len(workflow.steps) if workflow.steps else 0,
+            },
+        )
         return WorkflowResponse(
             workflow=as_read_view(workflow), message="Workflow regeneration started"
         )
@@ -513,6 +521,10 @@ async def create_workflow_from_todo(
                 steps_count=len(workflow.steps) if workflow.steps else None,
             ),
             outcome="success",
+        )
+        capture_context_event(
+            AnalyticsEvents.WORKFLOW_CREATED,
+            {"from_todo": True},
         )
         return WorkflowResponse(
             workflow=as_read_view(workflow), message="Workflow created from todo successfully"
@@ -638,6 +650,7 @@ async def unpublish_workflow(
             workflow_id=workflow_id,
             user_id=user.user_id,
         )
+        capture_context_event(AnalyticsEvents.WORKFLOW_UNPUBLISHED)
 
         return WorkflowMessageResponse(message="Workflow unpublished successfully")
 
@@ -885,6 +898,7 @@ async def update_workflow(
             )
 
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.WORKFLOW_UPDATED)
         return WorkflowResponse(
             workflow=as_read_view(workflow), message="Workflow updated successfully"
         )
@@ -976,6 +990,7 @@ async def delete_workflow(
             )
 
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.WORKFLOW_DELETED)
         return WorkflowMessageResponse(message="Workflow deleted successfully")
 
     except HTTPException:

@@ -17,7 +17,6 @@ import { useIsPaid } from "@/features/pricing/hooks/useIsPaid";
 import { SettingsPage } from "@/features/settings/components/ui/SettingsPage";
 import { SettingsRow } from "@/features/settings/components/ui/SettingsRow";
 import { SettingsSection } from "@/features/settings/components/ui/SettingsSection";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import { api } from "@/lib/api/typed";
 import { toast } from "@/lib/toast";
 import { useUpgradeModalStore } from "@/stores/upgradeModalStore";
@@ -150,8 +149,6 @@ export default function LinkedAccountsSettings() {
     try {
       setConnectingPlatform(platformId);
 
-      const wasConnected = platformLinks[platformId]?.platformUserId != null;
-
       const data = await api.post("/api/v1/platform-links/{platform}/connect", {
         path: { platform: platformId },
         body: phoneNumber ? { phone: phoneNumber } : {},
@@ -176,15 +173,7 @@ export default function LinkedAccountsSettings() {
         pollTimerRef.current = setInterval(() => {
           if (popup?.closed) {
             clearPollTimer();
-            void fetchPlatformLinks().then((links) => {
-              if (
-                !wasConnected &&
-                links?.[platformId]?.platformUserId != null
-              ) {
-                trackEvent(ANALYTICS_EVENTS.BOT_CONNECTED, {
-                  bot_id: platformId,
-                });
-              }
+            void fetchPlatformLinks().then(() => {
               setConnectingPlatform(null);
             });
           }
@@ -237,7 +226,6 @@ export default function LinkedAccountsSettings() {
         path: { platform: platformId },
         silent: true,
       });
-      trackEvent(ANALYTICS_EVENTS.BOT_DISCONNECTED, { bot_id: platformId });
       toast.success(`Disconnected from ${platformId}`);
       await fetchPlatformLinks();
     } catch {

@@ -7,7 +7,6 @@ import { useState } from "react";
 import { devicesApi } from "@/features/devices/api/devicesApi";
 import { BRIDGE_UP_COMMAND } from "@/features/devices/constants";
 import type { DeviceApprovalRequiredData } from "@/features/devices/types";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 
 interface DeviceApprovalPromptProps {
   device_approval_required: DeviceApprovalRequiredData;
@@ -28,7 +27,6 @@ export function DeviceApprovalPrompt({
       // the approve endpoint as-is — no page navigation, the user confirms here.
       const result = await devicesApi.approve(code);
       setApprovedName(result.name);
-      trackEvent(ANALYTICS_EVENTS.DEVICE_CONNECTED, { source: "chat" });
     } catch {
       // The typed api client already surfaced the error toast.
     } finally {

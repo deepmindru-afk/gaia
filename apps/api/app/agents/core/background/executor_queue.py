@@ -75,6 +75,10 @@ class ExecutorRunItem(TypedDict, total=False):
     #: task's wide event, so a queue pop or HIL resume — rebuilt in some other
     #: context — needs this item to carry it across. Read back into ExecutorRun.
     workflow_execution_id: str | None
+    #: Dispatch stamp from ``RunIdentity``; absent on pre-stamp items.
+    t_dispatch_perf: float | None
+    #: Busy-lock queue origin from ``RunIdentity``; absent on pre-stamp items.
+    queued: bool
 
 
 @dataclass(frozen=True)
@@ -340,6 +344,8 @@ def build_run_item(
         "user_message_id": identity.user_message_id,
         "bot_message_id": identity.bot_message_id,
         "workflow_execution_id": workflow_execution_id or current_workflow_execution_id(),
+        "t_dispatch_perf": identity.t_dispatch_perf,
+        "queued": identity.queued,
     }
 
 
@@ -430,6 +436,8 @@ async def prepare_run_from_item(
             task_id=task_id,
             user_message_id=queued_user_message_id,
             bot_message_id=queued_bot_message_id,
+            t_dispatch_perf=item.get("t_dispatch_perf"),
+            queued=bool(item.get("queued")),
         ),
         workflow_execution_id=item.get("workflow_execution_id"),
     )

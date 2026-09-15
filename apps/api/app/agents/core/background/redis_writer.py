@@ -11,6 +11,7 @@ Usage:
 
 from collections.abc import Callable
 import json
+import time
 from typing import Any
 
 from app.agents.core.background.session import StreamSession, get_session
@@ -67,6 +68,8 @@ def make_redis_stream_writer(stream_id: str) -> Callable[[dict[str, Any]], None]
 
         session = get_session(stream_id)
         if session is not None:
+            if session.executor_first_frame_perf is None:
+                session.executor_first_frame_perf = time.perf_counter()
             _collect(session, data)
 
     return writer
