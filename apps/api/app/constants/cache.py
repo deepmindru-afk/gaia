@@ -85,10 +85,12 @@ TODO_CACHE_PREFIX = "todo"
 PROJECT_CACHE_PREFIX = "project"
 USER_CACHE_PREFIX = "user"
 # A user's device manifest — the paired devices and the servers they expose, as
-# the connected-devices context section renders them. Structural device/server
-# writes clear it explicitly; the day TTL is a backstop. Mutable status (online,
-# sync state, last-seen) is deliberately NOT part of it, so it never goes stale.
-DEVICE_MANIFEST_CACHE_KEY = "devices:manifest:{user_id}"
+# the connected-devices context section renders them. Its keys are generation
+# scoped (see ``CachePolicy``): every structural device/server write bumps the
+# user's generation, which orphans the old query key so a read that stored after
+# the write can never be served. Mutable status (online, sync state, last-seen)
+# is deliberately NOT part of it, so it never goes stale.
+DEVICE_MANIFEST_CACHE_PREFIX = "device_manifest"
 # Redis SET NX EX gate that debounces UserRepository.touch_last_active.
 LAST_ACTIVE_GATE_PREFIX = "last_active_gate"
 

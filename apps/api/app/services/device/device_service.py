@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.constants.cache import DEVICE_MANIFEST_CACHE_KEY, ONE_DAY_TTL
+from app.constants.cache import DEVICE_MANIFEST_CACHE_PREFIX, ONE_DAY_TTL
 from app.constants.device_bridge import (
     DEVICE_CATEGORY,
     DEVICE_CODE_BYTES,
@@ -40,15 +40,9 @@ from app.constants.device_bridge import (
 )
 from app.constants.log_tags import LogTag
 from app.db.postgresql import get_db_session
-from app.db.redis import (
-    delete_cache,
-    get_and_delete_cache,
-    get_cache,
-    redis_cache,
-    set_cache,
-)
+from app.db.redis import get_and_delete_cache, get_cache, redis_cache, set_cache
+from app.db.repositories.cache import CachePolicy, bump_generation, read_generation
 from app.db.repositories.integrations import integration_repository
-from app.decorators.caching import Cacheable
 from app.helpers.integration_helpers import dedup_server_url_key
 from app.helpers.mcp_helpers import get_frontend_url
 from app.models.device import (
@@ -615,19 +609,36 @@ class DeviceManifestEntry(BaseModel):
     servers: list[str]
 
 
-@Cacheable(
-    key_pattern=DEVICE_MANIFEST_CACHE_KEY,
-    ttl=ONE_DAY_TTL,
-    model=list[DeviceManifestEntry],
-)
+#: Generation scoped so a write orphans the previous manifest key instead of
+#: deleting it: a read that computed before the write and stores after it lands
+#: under the old generation and is never served. The TTL bounds orphaned keys; it
+#: is not the invalidation mechanism.
+_DEVICE_MANIFEST_POLICY = CachePolicy(prefix=DEVICE_MANIFEST_CACHE_PREFIX, query_ttl=ONE_DAY_TTL)
+
+
 async def get_device_manifest(user_id: str) -> list[DeviceManifestEntry]:
     """The user's active devices and the servers they expose, cached per user.
 
-    The day-long cache is kept correct by explicit invalidation on every
-    structural device/server write (see ``_invalidate_device_manifest`` call
-    sites), never by the TTL. ``build_connected_devices_manifest`` reads it once
-    per turn instead of paying two Postgres queries.
+    Keys are generation scoped: ``_invalidate_device_manifest`` bumps the user's
+    generation on every structural device/server write, orphaning the old entry.
+    ``build_connected_devices_manifest`` reads this once per turn instead of
+    paying two Postgres queries.
     """
+    policy = _DEVICE_MANIFEST_POLICY
+    generation = await read_generation(policy, user_id)
+    key: str | None = None
+    if generation is not None:
+        key = policy.query_key(user_id, generation, "manifest", "v1")
+        cached = await get_cache(key, model=list[DeviceManifestEntry])
+        if cached is not None:
+            return cached
+    manifest = await _compute_device_manifest(user_id)
+    if key is not None:
+        await set_cache(key, manifest, ttl=policy.query_ttl, model=list[DeviceManifestEntry])
+    return manifest
+
+
+async def _compute_device_manifest(user_id: str) -> list[DeviceManifestEntry]:
     devices = await list_devices(user_id)
     if not devices:
         return []
@@ -644,8 +655,8 @@ async def get_device_manifest(user_id: str) -> list[DeviceManifestEntry]:
 
 
 async def _invalidate_device_manifest(user_id: str) -> None:
-    """Drop ``user_id``'s cached device manifest after a structural write."""
-    await delete_cache(DEVICE_MANIFEST_CACHE_KEY.format(user_id=user_id))
+    """Orphan ``user_id``'s cached device manifest after a structural write."""
+    await bump_generation(_DEVICE_MANIFEST_POLICY, user_id)
 
 
 async def list_devices(user_id: str) -> list[Device]:

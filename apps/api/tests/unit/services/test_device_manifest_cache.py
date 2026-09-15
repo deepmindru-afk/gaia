@@ -68,23 +68,32 @@ def _session_cm(session: _Session):
 
 
 @pytest.fixture
-def cache_store(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-    """In-memory stand-ins for the ``@Cacheable`` Redis seams + ``delete_cache``."""
-    store: dict[str, object] = {}
+def manifest_cache(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """In-memory stand-ins for the generation-scoped Redis seams.
+
+    ``values`` is the query store and ``generations`` the per-user counter — the
+    two things the repository cache primitives read and write.
+    """
+    values: dict[str, object] = {}
+    generations: dict[str, int] = {}
 
     async def _get(key: str, model: object = None) -> object:
-        return store.get(key)
+        return values.get(key)
 
     async def _set(key: str, value: object, ttl: int = 0, model: object = None) -> None:
-        store[key] = value
+        values[key] = value
 
-    async def _delete(key: str) -> None:
-        store.pop(key, None)
+    async def _read_generation(_policy: object, scope: str) -> int:
+        return generations.get(scope, 0)
 
-    monkeypatch.setattr("app.decorators.caching.get_cache", _get)
-    monkeypatch.setattr("app.decorators.caching.set_cache", _set)
-    monkeypatch.setattr(device_service, "delete_cache", _delete)
-    return store
+    async def _bump_generation(_policy: object, scope: str) -> None:
+        generations[scope] = generations.get(scope, 0) + 1
+
+    monkeypatch.setattr(device_service, "get_cache", _get)
+    monkeypatch.setattr(device_service, "set_cache", _set)
+    monkeypatch.setattr(device_service, "read_generation", _read_generation)
+    monkeypatch.setattr(device_service, "bump_generation", _bump_generation)
+    return SimpleNamespace(values=values, generations=generations, set=_set)
 
 
 @pytest.fixture
@@ -100,7 +109,7 @@ def _device(device_id: str, name: str) -> SimpleNamespace:
 
 class TestGetDeviceManifest:
     async def test_lists_devices_and_their_server_names(
-        self, monkeypatch: pytest.MonkeyPatch, cache_store: dict[str, object]
+        self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
     ) -> None:
         monkeypatch.setattr(
             device_service, "list_devices", AsyncMock(return_value=[_device("d1", "MacBook")])
@@ -118,7 +127,7 @@ class TestGetDeviceManifest:
         ]
 
     async def test_a_second_call_is_served_from_the_cache(
-        self, monkeypatch: pytest.MonkeyPatch, cache_store: dict[str, object]
+        self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
     ) -> None:
         list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
         list_servers = AsyncMock(return_value={})
@@ -133,7 +142,7 @@ class TestGetDeviceManifest:
         assert list_servers.await_count == 1
 
     async def test_no_devices_caches_an_empty_manifest(
-        self, monkeypatch: pytest.MonkeyPatch, cache_store: dict[str, object]
+        self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
     ) -> None:
         list_devices = AsyncMock(return_value=[])
         list_servers = AsyncMock(return_value={})
@@ -146,10 +155,10 @@ class TestGetDeviceManifest:
         list_servers.assert_not_awaited()
 
     async def test_invalidation_clears_the_cache(
-        self, monkeypatch: pytest.MonkeyPatch, cache_store: dict[str, object]
+        self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
     ) -> None:
-        """The real invalidator must delete the very key the reader wrote —
-        a key drift would leave every writer clearing nothing."""
+        """The real invalidator must bump the generation the reader keyed on — a
+        drift would leave every writer orphaning nothing."""
         list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
         monkeypatch.setattr(device_service, "list_devices", list_devices)
         monkeypatch.setattr(device_service, "list_device_servers", AsyncMock(return_value={}))
@@ -161,6 +170,31 @@ class TestGetDeviceManifest:
         await device_service._invalidate_device_manifest("u1")
 
         await device_service.get_device_manifest("u1")
+        assert list_devices.await_count == 2
+
+    async def test_a_read_that_stores_after_a_write_cannot_poison_the_cache(
+        self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
+    ) -> None:
+        """The read-through race: a reader computes under generation N, a writer
+        bumps to N+1, then the reader stores. The store lands under the old
+        generation key, so the next read keys on N+1 and recomputes — the stale
+        entry can never be served (the ``device_service`` race Greptile flagged)."""
+        list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
+        monkeypatch.setattr(device_service, "list_devices", list_devices)
+        monkeypatch.setattr(device_service, "list_device_servers", AsyncMock(return_value={}))
+
+        async def _store_after_write(
+            key: str, value: object, ttl: int = 0, model: object = None
+        ) -> None:
+            # The writer commits and bumps between the reader's compute and store.
+            manifest_cache.generations["u1"] = manifest_cache.generations.get("u1", 0) + 1
+            await manifest_cache.set(key, value, ttl, model)
+
+        monkeypatch.setattr(device_service, "set_cache", _store_after_write)
+
+        await device_service.get_device_manifest("u1")  # stores under generation 0
+        await device_service.get_device_manifest("u1")  # generation 1 → recompute
+
         assert list_devices.await_count == 2
 
 

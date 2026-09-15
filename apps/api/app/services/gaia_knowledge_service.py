@@ -5,8 +5,14 @@ The corpus is tiny (a few dozen docs) and production never writes it — the onl
 writers are the offline populate script and an explicit clear. So ``search_knowledge``
 serves from an in-memory snapshot: it loads the corpus once, then ranks locally by
 cosine similarity. A turn pays one query embedding instead of a Chroma round trip
-plus a corpus re-embed, and both writers drop the snapshot so a re-populate is
-picked up on the very next search rather than after the TTL.
+plus a corpus re-embed.
+
+``add_knowledge_batch``/``clear_knowledge`` drop the snapshot, so a write in THIS
+process is visible on the very next search. The populate script runs in a separate
+process, so its writes are picked up at the next TTL refresh
+(``GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS``) rather than immediately — an hour of
+staleness after a manual, deploy-time re-populate, which is why the TTL is the
+cross-process bound and not a signal.
 """
 
 import asyncio

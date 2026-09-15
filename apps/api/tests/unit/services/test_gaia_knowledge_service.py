@@ -19,6 +19,12 @@ from app.services.gaia_knowledge_service import (
 
 _MOD = "app.services.gaia_knowledge_service"
 
+#: A timestamp guaranteed to be older than any TTL. Expiry is `monotonic() -
+#: loaded_at < TTL`, and `monotonic()` is system uptime — so `0.0` only reads as
+#: expired on a host that has been up longer than the TTL. Tests must not depend
+#: on host uptime, so expire with a value no uptime can make look fresh.
+_LONG_AGO = -1e9
+
 
 @pytest.fixture
 def chroma():
@@ -55,7 +61,7 @@ def clean_snapshot():
     service = gaia_knowledge_service
     saved = (service._snapshot, service._loaded_at)
     service._snapshot = None
-    service._loaded_at = 0.0
+    service._loaded_at = _LONG_AGO
     yield
     service._snapshot, service._loaded_at = saved
 
@@ -145,7 +151,7 @@ class TestSearchKnowledge:
         _corpus(chroma, embeddings, ["Doc"], [[1.0, 0.0]])
 
         await gaia_knowledge_service.search_knowledge("q")
-        gaia_knowledge_service._loaded_at = 0.0  # past any TTL
+        gaia_knowledge_service._loaded_at = _LONG_AGO  # past any TTL
         await gaia_knowledge_service.search_knowledge("q")
 
         assert chroma.collection.get.await_count == 2
@@ -157,7 +163,7 @@ class TestSearchKnowledge:
         first = await gaia_knowledge_service.search_knowledge("q")
 
         chroma.collection.get.side_effect = RuntimeError("chroma down")
-        gaia_knowledge_service._loaded_at = 0.0
+        gaia_knowledge_service._loaded_at = _LONG_AGO
         second = await gaia_knowledge_service.search_knowledge("q")
 
         assert second == first
