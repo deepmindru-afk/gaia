@@ -16,6 +16,7 @@ from pydantic import ValidationError
 import pytest
 
 from app.agents.tools.integrations.linkedin_tool import register_linkedin_custom_tools
+from app.constants.log_tags import LogTag
 from app.models.common_models import GatherContextInput
 from app.models.linkedin_models import (
     AddCommentInput,
@@ -530,6 +531,20 @@ class TestAddComment:
 
         assert result["comment_id"] == "urn:li:comment:hdr"
 
+    def test_comment_id_is_empty_when_neither_body_nor_header_carries_one(
+        self,
+        tools: dict[str, Callable[..., Any]],
+        proxy_full: MagicMock,
+        author_urn: MagicMock,
+    ) -> None:
+        result = tools["CUSTOM_ADD_COMMENT"](
+            AddCommentInput(post_urn=POST_URN, comment_text="Nice"),
+            EXECUTE_REQUEST,
+            AUTH_CREDS,
+        )
+
+        assert result["comment_id"] == ""
+
 
 # ---------------------------------------------------------------------------
 # CUSTOM_GET_POST_COMMENTS
@@ -904,7 +919,16 @@ class TestGatherContext:
     ) -> None:
         proxy.side_effect = [_USERINFO, RuntimeError("scope missing")]
 
-        result = tools["CUSTOM_GATHER_CONTEXT"](GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS)
+        with patch(f"{MODULE}.log") as log:
+            result = tools["CUSTOM_GATHER_CONTEXT"](
+                GatherContextInput(), EXECUTE_REQUEST, AUTH_CREDS
+            )
 
         assert result["user"]["id"] == "abc"
         assert result["recent_posts"] == []
+        log.warning.assert_called_once_with(
+            f"{LogTag.TOOL} LinkedIn recent posts fetch failed, returning profile without them",
+            user_id=USER_ID,
+            error="scope missing",
+            error_type="RuntimeError",
+        )
