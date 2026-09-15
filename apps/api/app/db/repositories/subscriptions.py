@@ -1,9 +1,9 @@
-"""Repository for the ``subscriptions`` collection.
+"""Repository for the subscriptions collection.
 
-Global (webhook updates key on ``dodo_subscription_id`` with no user in scope) —
-``user_id`` is a plain field with named finders. Identity is Mongo's ``_id`` so
+Global (webhook updates key on dodo_subscription_id with no user in scope) —
+user_id is a plain field with named finders. Identity is Mongo's _id so
 the status endpoint keeps returning the same id it always did; the Dodo-keyed
-paths are named methods. ``updated_at`` is snake_case, so the base stamps it on
+paths are named methods. updated_at is snake_case, so the base stamps it on
 every write automatically.
 """
 
@@ -63,18 +63,12 @@ class SubscriptionsRepository(MongoRepository[SubscriptionDocument, Subscription
         *,
         if_not_newer_than: datetime,
     ) -> bool:
-        """Apply a ``$set`` patch to the subscription with this Dodo id, returning
-        whether one matched. Only the fields the caller actually set are written
-        (``exclude_unset``), so an untouched field is never overwritten with its
-        default. ``updated_at`` is auto-stamped by the base.
+        """Apply a $set patch to the subscription with this Dodo id, returning whether one matched.
 
-        ``if_not_newer_than`` is the event clock the patch was decided from, and it
-        is part of the filter rather than something the caller re-checks: the write
-        lands only while the stored ``last_event_at`` is no newer, so two deliveries
-        for one subscription cannot both read the same row and have the older one
-        write last. ``False`` therefore means either no such subscription or a newer
-        event applied in between — the caller's patch was computed from a row that
-        no longer exists.
+        Only the fields the caller actually set are written (exclude_unset), so
+        an untouched field is never overwritten with its default. if_not_newer_than
+        is part of the filter: the write lands only while the stored last_event_at
+        is no newer, so False also means a newer event applied in between.
         """
         set_fields = update.model_dump(exclude_unset=True)
         if not set_fields:

@@ -1,14 +1,13 @@
 """Stress: two lifecycle events for one subscription, applied concurrently.
 
-Real code under test: ``apply_subscription_event``
-(``app/services/payments/subscription_events.py``) — the one writer of
-subscription state. It decides staleness by comparing the event's clock against
-the row's ``last_event_at``, which it read moments earlier, so the read and the
-write must be one atomic step: two deliveries in flight for the same
-subscription both pass the in-Python staleness check against the same snapshot,
-and whichever writes last wins.
+Real code under test: apply_subscription_event
+(app/services/payments/subscription_events.py) — the one writer of subscription
+state. It decides staleness by comparing the event's clock against the row's
+last_event_at, which it read moments earlier, so read and write must be one
+atomic step: two deliveries both pass the in-Python staleness check against the
+same snapshot, and whichever writes last wins.
 
-The repository is a stateful in-process fake with the ``find_one_and_update``
+The repository is a stateful in-process fake with the find_one_and_update
 semantics Mongo gives the real one — the guard is part of the filter, so a write
 whose guard no longer matches the stored row touches nothing.
 
@@ -89,9 +88,9 @@ class _RacingSubscriptionRepository:
     """Mongo stand-in that schedules the interleaving instead of hoping for it.
 
     Both reducers read before either writes (the barrier), and the writes land
-    in ``write_order`` — so the test can put the OLDER event's write last, the
-    order in which a lost update rewrites history. ``apply_update_by_dodo_id``
-    reproduces the real filter semantics: ``if_not_newer_than`` is a condition
+    in write_order — so the test can put the OLDER event's write last, the
+    order in which a lost update rewrites history. apply_update_by_dodo_id
+    reproduces the real filter semantics: if_not_newer_than is a condition
     on the stored row, not something the caller re-checks afterwards.
     """
 
@@ -142,12 +141,7 @@ class TestConcurrentSubscriptionEvents:
     async def test_an_older_event_writing_last_cannot_restore_a_lapsed_subscription(
         self, reactivate_workflows: AsyncMock
     ) -> None:
-        """Dodo delivers ``subscription.active`` and ``subscription.expired`` for
-        the same subscription at once. Both reducers read the on-hold row, so
-        both pass the staleness check; the activation writes second. Without the
-        write being conditional on what was read, the expiry is erased and a
-        subscription that ended is Pro again with its automations switched back
-        on."""
+        """Both reducers read the on-hold row and the older activation writes second."""
         repo = _RacingSubscriptionRepository(_lapsed_row(), write_order=[EXPIRED_AT, ACTIVATED_AT])
 
         with patch("app.services.payments.subscription_events.subscription_repository", repo):
@@ -177,9 +171,7 @@ class TestConcurrentSubscriptionEvents:
     async def test_the_newer_event_still_applies_when_it_writes_last(
         self, reactivate_workflows: AsyncMock
     ) -> None:
-        """The mirror image: the older activation lands first, so the expiry that
-        writes after it is not stale and must go through. A guard that refused
-        every second writer would drop it."""
+        """The mirror image: a guard that refused every second writer would drop it."""
         repo = _RacingSubscriptionRepository(_lapsed_row(), write_order=[ACTIVATED_AT, EXPIRED_AT])
 
         with patch("app.services.payments.subscription_events.subscription_repository", repo):
@@ -211,8 +203,7 @@ class TestConcurrentSubscriptionEvents:
 
 @pytest.fixture
 def reactivate_workflows() -> Any:
-    """The workflow resume the reducer reaches on a restored subscription —
-    patched at the source module because the reducer's import is deferred."""
+    """Patch the workflow resume at its source module, since the reducer defers the import."""
     with patch(
         "app.services.workflow.subscription_pause.reactivate_workflows_for_restored_subscription",
         new_callable=AsyncMock,
@@ -223,8 +214,7 @@ def reactivate_workflows() -> Any:
 
 @pytest.fixture
 def _reducer_side_effects() -> Any:
-    """Everything the reducer fires alongside the write: plan cache, analytics,
-    and the workflow pause on a lapse."""
+    """Patch everything the reducer fires alongside the write."""
     with (
         patch(
             "app.services.payments.subscription_events.invalidate_plan_cache",

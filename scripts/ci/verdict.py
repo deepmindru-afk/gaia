@@ -505,7 +505,7 @@ def _matching_lanes(family: str, found: dict[str, VerdictDoc]) -> list[str]:
 
 
 def _missing_members(lane: str, family: str, matched: list[str], planned: str) -> list[Row]:
-    """The row a family owes when fewer members reported than were planned.
+    """Return the row a family owes when fewer members reported than were planned.
 
     `<job>@<family>*<n>` is how the runtime size of a matrix reaches the gate —
     `mutation.sh plan` already emits the shard count it packed the diff into.
