@@ -390,10 +390,23 @@ async def apply_subscription_event(event: SubscriptionEvent) -> SubscriptionEven
         )
         return SubscriptionEventResult(SubscriptionEventOutcome.UNCHANGED, row.user_id)
 
-    await subscription_repository.apply_update_by_dodo_id(
+    # The staleness rule again, this time as a condition on the write: ``row`` is
+    # a snapshot, and a second delivery for the same subscription can apply a
+    # newer event between the read above and this write. Matching on the id alone
+    # would let this older patch land on top of it — the lapsed subscription
+    # restored, or the active one paused, until the next event happened to arrive.
+    if not await subscription_repository.apply_update_by_dodo_id(
         data.subscription_id,
         SubscriptionUpdate.model_validate({**changes, "last_event_at": event.occurred_at}),
-    )
+        if_not_newer_than=event.occurred_at,
+    ):
+        log.warning(
+            f"{LogTag.PAYMENT} Stale subscription event ignored at write time",
+            event_kind=event.kind.value,
+            subscription_id=data.subscription_id,
+            event_at=event.occurred_at.strftime(EVENT_TIME_FORMAT),
+        )
+        return SubscriptionEventResult(SubscriptionEventOutcome.STALE, row.user_id)
     await invalidate_plan_cache(row.user_id)
 
     new_status = changes.get("status")
