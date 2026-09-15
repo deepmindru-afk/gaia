@@ -73,7 +73,7 @@ class _Snapshot:
 def _normalized(vector: Sequence[float]) -> tuple[float, ...]:
     """A unit-length copy of ``vector``; the zero vector is returned unchanged."""
     norm = math.sqrt(sum(component * component for component in vector))
-    if norm == 0.0:
+    if norm <= 0.0:
         return tuple(vector)
     return tuple(component / norm for component in vector)
 
