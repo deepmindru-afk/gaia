@@ -8,10 +8,15 @@ parse back) are the boundaries worth probing.
 from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from pydantic import ValidationError
 import pytest
 
 from app.constants.auth import PLATFORM_LINK_CODE_BYTES
-from app.constants.cache import PLATFORM_LINK_CODE_PREFIX, PLATFORM_LINK_CODE_TTL
+from app.constants.cache import (
+    PLATFORM_LINK_CODE_CLAIM_TTL,
+    PLATFORM_LINK_CODE_PREFIX,
+    PLATFORM_LINK_CODE_TTL,
+)
 from app.models.user_models import OnboardingNeed, OnboardingPreferences
 import app.services.platform_link_code_service as svc
 from app.services.platform_link_code_service import (
@@ -42,7 +47,17 @@ def fake_store() -> Generator[dict[str, tuple[object, int | None]], None, None]:
         if entry is None:
             return None
         value, _ttl = entry
-        return model.model_validate(value) if model else value
+        if model is None:
+            return value
+        try:
+            return model.model_validate(value)
+        except ValidationError:
+            # What get_cache does with a record it cannot validate: log and None.
+            return None
+
+    async def _get_raw(name: str) -> object | None:
+        entry = store.get(name)
+        return None if entry is None else entry[0]
 
     async def _delete(key: str) -> None:
         store.pop(key, None)
@@ -55,6 +70,7 @@ def fake_store() -> Generator[dict[str, tuple[object, int | None]], None, None]:
 
     redis = MagicMock()
     redis.client.set = AsyncMock(side_effect=_set_nx)
+    redis.client.get = AsyncMock(side_effect=_get_raw)
 
     with (
         patch.object(svc, "set_cache", AsyncMock(side_effect=_set)),
@@ -63,6 +79,17 @@ def fake_store() -> Generator[dict[str, tuple[object, int | None]], None, None]:
         patch.object(svc, "redis_cache", redis),
     ):
         yield store
+
+
+def _elapse(store: dict[str, tuple[object, int | None]], seconds: int) -> None:
+    """Drop what Redis would have expired after the given number of seconds."""
+    for key, (value, ttl) in list(store.items()):
+        if ttl is None:
+            continue
+        if ttl <= seconds:
+            del store[key]
+        else:
+            store[key] = (value, ttl - seconds)
 
 
 class TestClaimReleaseDiscard:
@@ -103,11 +130,77 @@ class TestClaimReleaseDiscard:
         await claim_platform_link_code(code)
         await discard_platform_link_code(code)
 
+        # The binding itself goes, rather than sitting out its half hour.
+        assert f"{PLATFORM_LINK_CODE_PREFIX}:{code}" not in fake_store
         spent = await claim_platform_link_code(code)
         # Spent, not in flight: the claim goes with the record, so a later tap
         # is told the code is dead instead of being answered as a twin.
         assert spent.payload is None
         assert spent.in_flight is False
+
+    async def test_a_spend_whose_record_delete_fails_still_kills_the_code(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """delete_cache swallows a failing Redis delete, so a spend cannot rely on it."""
+        code = await mint_platform_link_code("user1", PREFS)
+        await claim_platform_link_code(code)
+        with patch.object(svc, "delete_cache", AsyncMock()):
+            await discard_platform_link_code(code)
+
+        # Past the claim's recovery TTL, which is what would have freed a live
+        # record for a second redemption and repeated the greeting.
+        _elapse(fake_store, PLATFORM_LINK_CODE_CLAIM_TTL)
+        spent = await claim_platform_link_code(code)
+        assert spent.payload is None
+        assert spent.in_flight is False
+
+    async def test_the_claim_carries_the_recovery_ttl(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """A claim without an expiry strands the code if its redeemer dies."""
+        code = await mint_platform_link_code("user1", PREFS)
+        await claim_platform_link_code(code)
+        value, ttl = fake_store[f"{PLATFORM_LINK_CODE_PREFIX}:claim:{code}"]
+        assert value == "1"
+        assert ttl == PLATFORM_LINK_CODE_CLAIM_TTL == 300
+
+    async def test_a_spent_code_is_marked_for_the_records_whole_life(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """The marker outlives the record it replaces, or the spend is not durable."""
+        code = await mint_platform_link_code("user1", PREFS)
+        await claim_platform_link_code(code)
+        await discard_platform_link_code(code)
+        value, ttl = fake_store[f"{PLATFORM_LINK_CODE_PREFIX}:claim:{code}"]
+        assert value == "spent"
+        assert ttl == PLATFORM_LINK_CODE_TTL
+
+    async def test_two_codes_do_not_share_a_claim(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        first = await mint_platform_link_code("user1", PREFS)
+        second = await mint_platform_link_code("user2", PREFS)
+        await claim_platform_link_code(first)
+        assert (await claim_platform_link_code(second)).payload is not None
+
+    async def test_an_unknown_code_stays_unknown_on_the_retry(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """The claim a missing record hands back has to be the one it took."""
+        assert (await claim_platform_link_code("ghost")).in_flight is False
+        second = await claim_platform_link_code("ghost")
+        assert second.payload is None
+        assert second.in_flight is False
+
+    async def test_a_record_that_no_longer_validates_is_a_dead_code(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """Read as the payload model, so a record that fails validation reads as gone."""
+        code = await mint_platform_link_code("user1", PREFS)
+        fake_store[f"{PLATFORM_LINK_CODE_PREFIX}:{code}"] = ({"preferences": {}}, 1_800)
+        claim = await claim_platform_link_code(code)
+        assert claim.payload is None
+        assert claim.in_flight is False
 
     async def test_unknown_code_is_empty(
         self, fake_store: dict[str, tuple[object, int | None]]
