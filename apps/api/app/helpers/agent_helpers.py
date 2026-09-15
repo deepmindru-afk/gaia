@@ -28,6 +28,7 @@ from app.constants.cache import (
 from app.constants.hil import HIL_JUDGE_MAX_TURN_CHARS, HIL_JUDGE_MAX_USER_TURNS
 from app.constants.llm import (
     AGENT_RECURSION_LIMIT,
+    LLM_LABEL_METADATA_KEY,
 )
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import providers
@@ -609,6 +610,10 @@ async def build_agent_config(
         # Lane identity for the TTFT callback, which reads it off run metadata.
         "lane_provider": model_lane.provider.value,
         "lane_model": model_lane.model or "default",
+        # Default TTFT label: this run's agent tier, so the graph's own streaming
+        # calls attribute to comms/executor/subagent instead of "unknown";
+        # ainvoke_llm overrides it for title/follow-up/memory calls.
+        LLM_LABEL_METADATA_KEY: agent_name,
     }
     _stamp_langfuse(
         configurable, metadata, effective_trace_id, effective_tags, user, conversation_id

@@ -104,7 +104,7 @@ async def _queue_workflow_sync(user_id: str, sync: SubscriptionWorkflowSync) -> 
     """Hand an unfinished workflow move to the worker, which owns the retries.
 
     Dodo's own retry cannot recover this: the row above already carries the
-    reported status, so a redelivery reduces to ``UNCHANGED`` and never reaches
+    reported status, so a redelivery reduces to UNCHANGED and never reaches
     the workflows again. The job id is per user and direction, so a second
     billing event for the same move collapses onto the one already queued.
     """
@@ -429,11 +429,9 @@ async def apply_subscription_event(event: SubscriptionEvent) -> SubscriptionEven
         )
         return SubscriptionEventResult(SubscriptionEventOutcome.UNCHANGED, row.user_id)
 
-    # The staleness rule again, this time as a condition on the write: ``row`` is
-    # a snapshot, and a second delivery for the same subscription can apply a
-    # newer event between the read above and this write. Matching on the id alone
-    # would let this older patch land on top of it — the lapsed subscription
-    # restored, or the active one paused, until the next event happened to arrive.
+    # The staleness rule again, as a condition on the write: row is a snapshot, and
+    # a second delivery can apply a newer event between that read and this write.
+    # Matching on the id alone would let this older patch land on top of it.
     if not await subscription_repository.apply_update_by_dodo_id(
         data.subscription_id,
         SubscriptionUpdate.model_validate({**changes, "last_event_at": event.occurred_at}),

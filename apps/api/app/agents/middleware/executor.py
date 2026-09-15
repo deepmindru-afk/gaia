@@ -398,25 +398,33 @@ class MiddlewareExecutor:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            observe_tool_call(
-                time.perf_counter() - chain_start, tool_name=metric_name, status="error"
-            )
             log.error(
                 f"{LogTag.AGENT} Middleware wrap_tool_call chain failed",
                 tool_name=tool_name,
                 error_type=type(e).__name__,
             )
-            # The tool already ran — re-invoking would fire its side effects a
-            # second time (another screen capture, another write). Ship the raw
-            # result and lose only the post-tool middleware's transforms.
+            # The tool already ran and succeeded: re-invoking would repeat its side
+            # effects, so ship the raw result (losing only the post-tool transforms)
+            # and record a success, since the status label is the tool's outcome.
             if tool_result is not None:
-                return tool_result
-            # Nothing ran yet: a pre-tool middleware broke, so invoke directly.
-            if not tool_attempted:
-                return await invoke_fn(tool_call)
-            # The tool itself raised: retrying would run its side effects again,
-            # so let the original failure propagate.
-            raise
+                result = tool_result
+            elif tool_attempted:
+                # The tool itself raised: retrying would run its side effects
+                # again, so record the error and let the failure propagate.
+                observe_tool_call(
+                    time.perf_counter() - chain_start, tool_name=metric_name, status="error"
+                )
+                raise
+            else:
+                # Nothing ran yet: a pre-tool middleware broke, so invoke the
+                # tool directly. Its own outcome is the call's real status.
+                try:
+                    result = await invoke_fn(tool_call)
+                except Exception:
+                    observe_tool_call(
+                        time.perf_counter() - chain_start, tool_name=metric_name, status="error"
+                    )
+                    raise
         observe_tool_call(
             time.perf_counter() - chain_start, tool_name=metric_name, status="success"
         )
