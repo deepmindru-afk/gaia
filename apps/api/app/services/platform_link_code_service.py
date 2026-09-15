@@ -7,12 +7,12 @@ trailing #code in the WhatsApp/iMessage message they send), and the BOT
 redeems it on first contact. Nobody has to type /auth.
 
 Security properties match connect_link_service (128-bit opaque code, the
-binding lives server-side, bounded TTL) except for how the code is spent. There
-it is consumed on first read; here a redemption takes a short-lived claim on the
-code (claim_platform_link_code) and only deletes the record once the link it
-authorised is written (discard_platform_link_code). The claim makes a redemption
-single-use, while a refused or broken redemption releases it
-(release_platform_link_code) and leaves the code usable for the retry.
+binding lives server-side, bounded TTL) except for how the code is spent: a
+redemption takes a short-lived claim (claim_platform_link_code) and deletes the
+record once the link is written (discard_platform_link_code). A redemption
+refused before the link is written releases the claim (release_platform_link_code)
+so the retry can use the same code; one that breaks after spends it, because a
+retry would run the existing link's side effects a second time.
 """
 
 import secrets
