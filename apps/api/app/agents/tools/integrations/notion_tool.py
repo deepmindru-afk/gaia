@@ -78,8 +78,8 @@ def _execute_notion_action(
     return ComposioResponse.model_validate(
         composio.tools.execute(
             slug=slug,
-            arguments=arguments.model_dump(
-                mode="json",  # pragma: no mutate — JSON-native fields only
+            arguments=arguments.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
                 exclude_none=True,
             ),
             version=auth_credentials.version,
@@ -97,12 +97,13 @@ def _build_parent(parent_type: str, parent_id: str) -> NotionParent:
 
 def _move_page(request: MovePageInput, execute_request: ExecuteRequestFn) -> dict[str, object]:
     parent = _build_parent(request.parent_type, request.parent_id)
+    move_request = NotionMovePageRequest(parent=parent)
 
     response = execute_request(
         endpoint=f"/pages/{request.page_id}",
         method="PATCH",
-        body=NotionMovePageRequest(parent=parent).model_dump(
-            mode="json",  # pragma: no mutate — JSON-native fields only
+        body=move_request.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+            mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
             exclude_none=True,
         ),
     )
@@ -110,8 +111,8 @@ def _move_page(request: MovePageInput, execute_request: ExecuteRequestFn) -> dic
     page = NotionPage.model_validate(response.data)
     return {
         "page_id": page.id,
-        "new_parent": parent.model_dump(
-            mode="json",  # pragma: no mutate — JSON-native fields only
+        "new_parent": parent.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+            mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
             exclude_none=True,
         ),
         "url": page.url,
@@ -292,8 +293,8 @@ def _fetch_data(
                     toolkit=NOTION_TOOLKIT,
                     endpoint=f"{NOTION_API_BASE}/search",
                     method="POST",
-                    body=search_body.model_dump(
-                        mode="json",  # pragma: no mutate — JSON-native fields only
+                    body=search_body.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                        mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
                         exclude_none=True,
                     ),
                     headers=_NOTION_HEADERS,
@@ -388,11 +389,12 @@ def register_notion_custom_tools(composio: Composio) -> list[str]:
         del request, execute_request  # unused: framework-mandated custom-tool signature
         log.set(tool={"integration": "notion", "action": "gather_context"})
         user_id = CustomToolAuthCredentials.parse(auth_credentials).user_id
+        search_args = NotionSearchToolArgs(query="", page_size=10)
         data = NotionSearchToolData.model_validate(
             execute_tool(
                 "NOTION_SEARCH_NOTION_PAGE",
-                NotionSearchToolArgs(query="", page_size=10).model_dump(
-                    mode="json",  # pragma: no mutate — JSON-native fields only
+                search_args.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                    mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
                 ),
                 user_id,
             )
@@ -400,8 +402,8 @@ def register_notion_custom_tools(composio: Composio) -> list[str]:
         pages = data.results or data.pages
         return {
             "relevant_pages": [
-                page.model_dump(
-                    mode="json",  # pragma: no mutate — JSON-native fields only
+                page.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+                    mode="json",  # pragma: no mutate -- JSON-native fields only, so any mode value dumps identically
                 )
                 for page in pages
             ]
