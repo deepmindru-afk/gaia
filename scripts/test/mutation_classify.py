@@ -487,7 +487,7 @@ def _unobservable_get_default(
 
 
 def _reads_only_as_boolean(assign: ast.Assign) -> bool:
-    """True when every LOAD of the assigned name collapses all falsy values.
+    """Return True when every LOAD of the assigned name collapses all falsy values.
 
     Unlike ``_only_boolean_uses`` this does not bail when the name is rebound:
     the mutation only changed the initial literal, and if every read of the name
@@ -524,10 +524,10 @@ def _reads_only_as_boolean(assign: ast.Assign) -> bool:
 def _unobservable_falsy_assignment(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
-    """True when the mutation only swapped one falsy literal for another in an
-    assignment whose name nothing can tell apart.
+    """Return True when a falsy-to-falsy literal swap is unobservable.
 
-    The canonical case is ``cancelled = False`` mutated to ``cancelled = None``:
+    The mutation only changed the initial literal of an assignment whose name
+    nothing can tell apart. The canonical case is ``cancelled = False`` mutated to ``cancelled = None``:
     the name is read only by a truthiness test (``elif cancelled:``), and every
     falsy value answers that test identically, so no test can distinguish them —
     the same CONSUMER-based reasoning as the .get()-default rule, applied to a

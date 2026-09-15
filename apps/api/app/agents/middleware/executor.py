@@ -251,7 +251,10 @@ class MiddlewareExecutor:
                 def make_wrapper(
                     middleware: AgentMiddleware, handler: ModelCallHandler
                 ) -> ModelCallHandler:
+                    """Bind this middleware and handler by value, so every link does not close over the loop's last middleware."""
+
                     async def wrapped(req: ModelRequest) -> ModelResponse:
+                        """Run the middleware's async wrap_model_call hook around the rest of the chain."""
                         return cast(ModelResponse, await middleware.awrap_model_call(req, handler))
 
                     return wrapped
@@ -262,7 +265,10 @@ class MiddlewareExecutor:
                 def make_sync_wrapper(
                     middleware: AgentMiddleware, handler: ModelCallHandler
                 ) -> ModelCallHandler:
+                    """Bind a sync-hook middleware by value into the chain, which stays async end to end."""
+
                     async def wrapped(req: ModelRequest) -> ModelResponse:
+                        """Run the sync wrap_model_call hook, awaiting its result when the hook turns out to be a coroutine."""
                         # Sync version - call and await if needed
                         # This bridge is async-only, so the sync hook is handed the
                         # async handler and its awaitable result is awaited below.
@@ -349,7 +355,10 @@ class MiddlewareExecutor:
                 def make_wrapper(
                     middleware: AgentMiddleware, handler: ToolCallHandler
                 ) -> ToolCallHandler:
+                    """Bind this middleware and handler by value, so every link does not close over the loop's last middleware."""
+
                     async def wrapped(req: ToolCallRequest) -> ToolMessage | Command[Any]:
+                        """Run the middleware's async wrap_tool_call hook around the rest of the chain."""
                         return await middleware.awrap_tool_call(req, handler)
 
                     return wrapped
@@ -360,7 +369,10 @@ class MiddlewareExecutor:
                 def make_sync_wrapper(
                     middleware: AgentMiddleware, handler: ToolCallHandler
                 ) -> ToolCallHandler:
+                    """Bind a sync-hook middleware by value into the chain, which stays async end to end."""
+
                     async def wrapped(req: ToolCallRequest) -> ToolMessage | Command[Any]:
+                        """Run the sync wrap_tool_call hook, awaiting its result when the hook turns out to be a coroutine."""
                         # Async handler into the sync hook — see wrap_model_invocation.
                         result: Any = middleware.wrap_tool_call(
                             req,
