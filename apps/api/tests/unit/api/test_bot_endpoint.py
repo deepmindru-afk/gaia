@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 import json
 from unittest.mock import AsyncMock, MagicMock, call, patch
+from uuid import UUID
 
 from fastapi import HTTPException
 from httpx import AsyncClient
@@ -824,7 +825,9 @@ class TestBotChatStream:
         mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
         mock_sm.start_stream = AsyncMock()
 
-        body = BotChatRequest(message="hi", platform="discord", platform_user_id="disc_1")
+        body = BotChatRequest(
+            message="hi", platform="discord", platform_user_id="disc_1", channel_id="chan-9"
+        )
         request = MagicMock()
         request.state = _make_request(
             user={"user_id": "uid_from_middleware", "_id": "uid_from_middleware"},
@@ -838,7 +841,7 @@ class TestBotChatStream:
         mock_bot_svc.get_or_create_session.assert_awaited_once_with(
             "discord",
             "disc_1",
-            None,
+            "chan-9",
             {"user_id": "uid_from_middleware", "_id": "uid_from_middleware"},
             is_dm=False,
         )
@@ -881,6 +884,49 @@ class TestBotChatStream:
             user={"user_id": "uid_from_middleware", "_id": "uid_from_middleware"},
             authenticated=False,
         )
+
+        response = await bot_chat_stream(request, body)
+
+        assert response.status_code == 200
+        mock_get_user.assert_awaited_once_with("discord", "disc_1")
+
+    @patch("app.api.v1.endpoints.bot.spawn_background_task", new=MagicMock())
+    @patch("app.api.v1.endpoints.bot.run_chat_stream_background", new=AsyncMock())
+    @patch(
+        "app.api.v1.endpoints.bot.create_bot_session_token",
+        new=MagicMock(return_value="tok"),
+    )
+    @patch(
+        "app.api.v1.endpoints.bot.PlatformLinkService.get_user_by_platform_id",
+        new_callable=AsyncMock,
+    )
+    @patch("app.api.v1.endpoints.bot.stream_manager")
+    @patch("app.api.v1.endpoints.bot.BotService")
+    @patch(
+        "app.services.bot_service.BotService.load_conversation_history",
+        new=AsyncMock(return_value=[]),
+    )
+    @patch("app.api.v1.endpoints.bot.capture_event", new=MagicMock())
+    @patch("app.api.v1.endpoints.bot.require_bot_api_key", new=AsyncMock())
+    async def test_a_state_with_no_authenticated_attribute_falls_back(
+        self,
+        mock_bot_svc: MagicMock,
+        mock_sm: MagicMock,
+        mock_get_user: AsyncMock,
+    ):
+        """A request no auth middleware touched has no authenticated flag at all; that is the unauthenticated case, not a crash."""
+        mock_get_user.return_value = {"user_id": "uid_from_lookup", "_id": "uid_from_lookup"}
+        mock_bot_svc.enforce_rate_limit = AsyncMock()
+        mock_bot_svc.get_or_create_session = AsyncMock(return_value="conv-1")
+        mock_bot_svc.load_conversation_history = AsyncMock(return_value=[])
+        mock_sm.start_stream = AsyncMock()
+
+        body = BotChatRequest(message="hi", platform="discord", platform_user_id="disc_1")
+        request = MagicMock()
+        request.state = _make_request(
+            user={"user_id": "uid_from_middleware", "_id": "uid_from_middleware"}
+        )
+        del request.state.authenticated
 
         response = await bot_chat_stream(request, body)
 
@@ -935,6 +981,7 @@ class TestBotChatStream:
         mock_sm.start_stream.assert_awaited_once()
         start_stream_call = mock_sm.start_stream.call_args
         stream_id = start_stream_call.args[0]
+        assert str(UUID(stream_id)) == stream_id
         assert start_stream_call.args[1:] == ("conv-77", "uid-1")
 
         run_call = mock_run_background.call_args
