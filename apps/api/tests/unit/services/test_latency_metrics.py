@@ -53,9 +53,7 @@ def test_labelless_histograms_observe_directly():
 
 
 def test_tool_call_histogram_resolves_a_call_that_ran_to_the_timeout():
-    """Tools run for minutes (the generic guard is 120s; handoff/subagent/executor
-    calls are exempt from it entirely). A bucket ceiling below that folds every
-    slow call into +Inf and the p95 stops meaning anything."""
+    """The generic guard is 120s and handoff/subagent/executor calls are exempt, so buckets must reach it."""
     from prometheus_client import REGISTRY
 
     from app.constants.llm import TOOL_EXECUTION_TIMEOUT_SECONDS

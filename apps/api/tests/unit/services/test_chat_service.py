@@ -805,7 +805,7 @@ class TestRunChatStreamBackground:
     async def test_stop_during_executor_wait_is_a_cancelled_turn(
         self, test_user, existing_conv_body
     ):
-        """A stop pressed during the executor wait still counts the turn as cancelled."""
+        """The consume loop's cancel check is long past, so the executor wait itself must notice."""
         labels = {"source": "web", "delegated": "false", "status": "cancelled"}
         before = REGISTRY.get_sample_value("chat_turn_total", labels) or 0.0
         sm = _make_stream_manager_mock()
@@ -844,7 +844,7 @@ class TestRunChatStreamBackground:
         }
 
     async def test_failed_turn_is_observed_with_error_status(self, test_user, existing_conv_body):
-        """A turn that raises lands in chat_turn_total and the E2E histogram as status=error."""
+        """A raising turn lands in chat_turn_total and the E2E histogram as status=error, not nowhere."""
         labels_total = {"source": "web", "delegated": "false", "status": "error"}
         labels_e2e = {
             "source": "web",
@@ -1364,7 +1364,7 @@ class TestRunChatStreamBackground:
     async def test_voice_mode_turn_labels_the_histograms_voice_true(
         self, test_user, existing_conv_body
     ):
-        """voice_mode from the body reaches the terminal histogram labels."""
+        """voice_mode reaches the terminal histogram labels; dropped, voice traffic files as false."""
         labels = {
             "source": "web",
             "voice_mode": "true",
@@ -1396,7 +1396,7 @@ class TestRunChatStreamBackground:
     async def test_delegated_turn_labels_turn_total_delegated_true(
         self, test_user, existing_conv_body
     ):
-        """The delegation label is read from this stream's own session."""
+        """The delegation label is read from this stream's session, not another's."""
         labels = {"source": "web", "delegated": "true", "status": "success"}
         before = REGISTRY.get_sample_value("chat_turn_total", labels) or 0.0
         sm = _make_stream_manager_mock()
@@ -1426,7 +1426,7 @@ class TestRunChatStreamBackground:
         assert REGISTRY.get_sample_value("chat_turn_total", labels) == before + 1
 
     async def test_error_turn_labels_voice_and_delegation(self, test_user, existing_conv_body):
-        """The error path files under its real delegation and voice labels."""
+        """The error path files under its real delegation and voice labels, as the happy path does."""
         labels = {
             "source": "web",
             "voice_mode": "true",
@@ -1463,7 +1463,7 @@ class TestRunChatStreamBackground:
         assert REGISTRY.get_sample_value("chat_e2e_full_seconds_count", labels) == before + 1
 
     async def test_a_non_text_data_chunk_does_not_stamp_ttft(self, test_user, existing_conv_body):
-        """TTFT is first reply text, not first byte: an empty response frame does not open the span."""
+        """TTFT is first reply text, not first byte, so an empty-response frame must not open it."""
 
         async def _empty_response_then_done() -> AsyncGenerator[str, None]:
             yield 'data: {"response": ""}\n\n'
@@ -1491,7 +1491,7 @@ class TestRunChatStreamBackground:
         assert "ttft_ms" not in mock_capture.call_args.args[2]
 
     async def test_pending_approval_turn_stamps_ack_and_ttft(self, test_user, existing_conv_body):
-        """A reply to a pending approval stamps the ack clock and its own TTFT exactly once."""
+        """An approval reply is still a turn: it stamps the ack clock and TTFT exactly once."""
         state = _StreamState()
         state.t0_perf = 50.0
         sm = _make_stream_manager_mock()
@@ -1531,7 +1531,12 @@ def _counter(name: str, labels: dict[str, str]) -> float:
 
 
 class TestTurnLatencyHelpers:
-    """Exact values, labels and None-guards for the deterministic latency helpers."""
+    """The latency helpers are deterministic given fixed stamps.
+
+    Exact values, labels and None-guards are asserted so a mutated subtraction,
+    scaling, rounding, label or guard is caught rather than riding along under a
+    range assertion.
+    """
 
     def test_stream_state_latency_defaults(self) -> None:
         state = _StreamState()

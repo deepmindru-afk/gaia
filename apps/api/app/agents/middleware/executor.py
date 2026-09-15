@@ -53,9 +53,11 @@ ToolCallHandler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[An
 
 
 def _tool_metric_name(tool_name: str, tool: BaseTool | None) -> str:
-    """Prometheus label for a tool call. MCP/dynamic tools carry user-defined
-    names, so they collapse to ``"mcp"``; the adapter class is method-local,
-    so its ``tool_connector`` field is the structural signal.
+    """Return the Prometheus label for a tool call.
+
+    MCP/dynamic tools carry user-defined names, so they collapse to "mcp";
+    the adapter class is method-local, so its tool_connector field is the
+    structural signal.
     """
     if tool is not None and hasattr(tool, "tool_connector"):
         return "mcp"
@@ -319,11 +321,9 @@ class MiddlewareExecutor:
         runtime = self._create_tool_runtime(config, store, tool_name)
         request = create_tool_call_request(tool_call, tool, state, runtime)
 
-        # Holds the tool's own result once it has run, so the fallback below can
-        # tell a middleware that failed *before* the tool from one that failed
-        # after it — only the former is safe to retry. `tool_attempted` covers
-        # the third case: the tool itself raised, so `tool_result` is still None
-        # but re-invoking would fire its side effects a second time.
+        # Set once the tool has run, so the fallback below retries only a middleware
+        # that failed *before* the tool. tool_attempted covers the third case: the
+        # tool raised, so tool_result is still None but a retry re-fires side effects.
         tool_result: ToolMessage | Command[Any] | None = None
         tool_attempted = False
 

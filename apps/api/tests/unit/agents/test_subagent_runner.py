@@ -1570,7 +1570,7 @@ def _subagent_sum(integration_id: str, status: str) -> float:
 
 
 class _FakeClock:
-    """A `time` stub standing in for `subagent_runner.time`, one tick per call."""
+    """A time stub standing in for subagent_runner.time, one tick per call."""
 
     def __init__(self, *values: float) -> None:
         self._values = list(values)
@@ -1601,9 +1601,7 @@ class TestSubagentRunLatency:
 
     @pytest.mark.asyncio
     async def test_per_call_row_id_never_becomes_a_series(self):
-        """The subagent_id argument is the per-call UI row uuid — labelling a
-        series with it would mint unbounded cardinality. The span must carry
-        the registry integration id instead."""
+        """The span carries the registry integration id, not the per-call UI row uuid."""
 
         async def _fake_astream(*args, **kwargs):
             yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
@@ -1674,9 +1672,7 @@ class TestSubagentRunLatency:
 
     @pytest.mark.asyncio
     async def test_stream_is_driven_with_seed_state_config_and_exit_durability(self):
-        """A fake astream that ignores its arguments cannot notice any of the
-        drive contract drifting: the seed state, the three stream modes, the run
-        config, or durability="exit" (the run's one checkpoint write)."""
+        """Pins the seed state, the three stream modes, the run config and durability="exit"."""
         captured: dict[str, Any] = {}
 
         async def _fake_astream(*args, **kwargs):
@@ -1698,9 +1694,7 @@ class TestSubagentRunLatency:
 
     @pytest.mark.asyncio
     async def test_resume_reclocks_the_run_before_streaming_it(self):
-        """A resumed run goes through `_with_current_time(resume, configurable)`
-        — dropping either, or swapping one for the other, hands the graph the
-        wrong command or a stale clock."""
+        """A resume goes through _with_current_time(resume, configurable), in that argument order."""
         captured: dict[str, Any] = {}
         reclocker = MagicMock(return_value=object())
 
@@ -1728,8 +1722,7 @@ class TestSubagentRunLatency:
 
     @pytest.mark.asyncio
     async def test_custom_mcp_label_collapses_to_one_series(self):
-        """A custom MCP integration's user-created name would mint unbounded
-        series; the span labels the literal "custom_mcp" instead."""
+        """A custom MCP integration's user-created name collapses to the literal "custom_mcp"."""
 
         async def _fake_astream(*args, **kwargs):
             yield ("updates", {"agent": {"messages": [AIMessage(content="done")]}})
