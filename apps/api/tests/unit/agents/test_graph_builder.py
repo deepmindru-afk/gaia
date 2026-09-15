@@ -318,10 +318,15 @@ class TestBuildCommsGraph:
             assert kwargs["agent_config"].agent_name == "comms_agent"
             assert kwargs["tools_config"].disable_retrieve_tools is True
             from app.agents.tools import memory_tools
+            from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 
+            # Comms binds these statically: retrieval is off, so a tool absent
+            # from initial_tool_ids is unreachable no matter what it's registered as.
             assert kwargs["tools_config"].initial_tool_ids == [
                 "call_executor",
                 "cancel_executor",
+                web_search_tool.name,
+                fetch_webpages.name,
                 *[memory_tool.name for memory_tool in memory_tools.tools],
             ]
 
@@ -351,6 +356,9 @@ class TestBuildCommsGraph:
             assert "call_executor" in tool_registry
             assert "add_memory" in tool_registry
             assert "search_memory" in tool_registry
+            # Comms runs open-web lookups itself instead of delegating to the executor.
+            assert "web_search_tool" in tool_registry
+            assert "fetch_webpages" in tool_registry
 
     async def test_comms_pre_model_hooks_structure(self):
         with ExitStack() as stack:
@@ -478,13 +486,14 @@ class TestBuildExecutorGraph:
                 "plan_tasks",
                 "update_tasks",
                 "read",
+                "write",
+                "edit",
                 "bash",
                 "deep_research",
                 "wait_for_subagents",
                 "read_manual",
                 "create_tracked_todo",
                 "update_tracked_todo",
-                "update_tracked_todo_canvas",
                 "complete_tracked_todo",
                 "search_todo_context",
                 "list_tracked_todos",
@@ -496,6 +505,10 @@ class TestBuildExecutorGraph:
                 "decline_playbook",
                 "read_playbook",
                 "disable_playbook",
+                "add_device",
+                "approve_device_pairing",
+                "list_devices",
+                "run_on_device",
             ]
 
     async def test_executor_tool_registry_includes_handoff(self):

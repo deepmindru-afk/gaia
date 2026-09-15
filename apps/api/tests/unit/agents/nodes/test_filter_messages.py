@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.graph import END, START, MessagesState, StateGraph
+from prometheus_client import REGISTRY
 
 from app.agents.core.nodes.filter_messages import filter_messages_node
 
@@ -186,6 +188,58 @@ class TestFilterMessages:
         assert "has no attribute 'get'" in kwargs.get("error", ""), (
             f"The swallowed exception must be named in the log, got: {kwargs}"
         )
+
+    async def test_node_emits_latency_span_labelled_by_agent(self):
+        """Driven through a compiled graph, not a hand-built config: LangGraph's
+        ``ensure_config`` relocates GAIA's top-level ``agent_name`` into
+        ``configurable`` before the node runs, and the label must survive that."""
+        config = {
+            "agent_name": "node-test-agent",
+            "configurable": {"user_id": "u1", "thread_id": "t1"},
+        }
+        before = (
+            REGISTRY.get_sample_value(
+                "graph_node_seconds_count",
+                {"node": "filter_messages", "agent": "node-test-agent"},
+            )
+            or 0.0
+        )
+        graph = StateGraph(MessagesState)
+        graph.add_node("filter", filter_messages_node)
+        graph.add_edge(START, "filter")
+        graph.add_edge("filter", END)
+        await graph.compile().ainvoke(
+            self._make_state([HumanMessage(content="hello")]), config=config
+        )
+        assert (
+            REGISTRY.get_sample_value(
+                "graph_node_seconds_count",
+                {"node": "filter_messages", "agent": "node-test-agent"},
+            )
+            == before + 1
+        )
+
+    def test_node_records_the_exact_elapsed_seconds(self):
+        # Two pinned clock reads make the recorded duration deterministic: a
+        # start/end subtraction lands exactly 0.5. A sign error (end + start)
+        # would record 10.5 here instead, so this pins the direction of the
+        # elapsed-time arithmetic, not merely that an observation happened.
+        config = {
+            "agent_name": "span-test-agent",
+            "configurable": {"user_id": "u1", "thread_id": "t1"},
+        }
+        labels = {"node": "filter_messages", "agent": "span-test-agent"}
+        before = REGISTRY.get_sample_value("graph_node_seconds_sum", labels) or 0.0
+
+        with patch(
+            "app.agents.core.nodes.filter_messages.time.perf_counter",
+            side_effect=[5.0, 5.5],
+        ):
+            filter_messages_node(
+                self._make_state([HumanMessage(content="hello")]), config, self._store()
+            )
+
+        assert REGISTRY.get_sample_value("graph_node_seconds_sum", labels) == before + 0.5
 
     def test_cross_message_tool_call_deduplication(self):
         """ToolMessages following ai2 must not affect filtering of ai1's tool_calls."""

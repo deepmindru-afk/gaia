@@ -132,6 +132,12 @@ TOOL_TIMEOUT_EXEMPT_TOOLS = frozenset(
     }
 )
 
+# Run-metadata key under which ``ainvoke_llm``/``invoke_llm`` publish the call's
+# ``label`` so callbacks (TTFT) can attribute a sample to the call that made it —
+# a turn's callback list is shared by the comms call and its title/follow-up/
+# memory side calls, and the run-level agent name cannot tell them apart.
+LLM_LABEL_METADATA_KEY = "llm_label"
+
 # Attempts for the model-level transient-error retry before the caller falls back
 # to the default model (see with_llm_retry in app/agents/llm/client.py).
 LLM_RETRY_MAX_ATTEMPTS = 3
@@ -305,10 +311,14 @@ OPENROUTER_REASONING: dict[str, Any] = {"effort": "medium"}
 PAID_COMMS_REASONING: dict[str, Any] = {"effort": "medium"}
 
 # Output cap for the env-defined custom dev provider (the "custom" entry below;
-# endpoint/key/model all come from the DEV_LLM_* settings). 64k fits under the
-# completion ceilings of the cheap lanes this is meant for (e.g. DeepSeek V4
-# Flash caps at 65,536).
-DEV_LLM_MAX_OUTPUT_TOKENS = 64_000
+# endpoint/key/model all come from the DEV_LLM_* settings). Bounded well under
+# the model's 65,536 completion ceiling on purpose: the cheap lanes this targets
+# RESERVE max_tokens against the account balance per request, so a 64k cap made
+# every call a 64k reservation and the lane started answering 402 ("lower the
+# requested maximum output tokens") the moment the balance dipped below that,
+# while a 256-token probe still succeeded. No agent turn needs anything near
+# 64k of output; the one that ran to it was a narration cut mid-sentence.
+DEV_LLM_MAX_OUTPUT_TOKENS = 16_000
 
 # OpenRouter app attribution (https://openrouter.ai/docs/app-attribution). The
 # OpenRouter client surfaces these as the HTTP-Referer / X-Title /

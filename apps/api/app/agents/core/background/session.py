@@ -18,6 +18,7 @@ cross-process guard for multi-worker deployments.
 """
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -57,6 +58,12 @@ class StreamSession:
     #: work was deferred" without reading the tool's prose.
     executor_queued_task_id: str | None = None
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
+    #: Set with ``done_event`` when the executor's run ended in an error rather
+    #: than a result. The silent path reads it so a fire whose executor died is
+    #: recorded as failed instead of as the apology comms wrote about it.
+    executor_failed: bool = False
+    #: Why, when it failed: the executor's own error text, or the wait's.
+    executor_failure: str | None = None
     tool_events: list[dict[str, Any]] = field(default_factory=list)
     pending_subagents: int = 0
     # Integrations with a background handoff in flight this run. Guards against a
@@ -67,6 +74,9 @@ class StreamSession:
     # Voice-mode streams: the executor's finalize step publishes a TTS-only
     # ``voice_tts`` frame with its narrated answer for the voice agent to speak.
     voice_mode: bool = False
+    # ``perf_counter`` of this stream's first executor frame, set once by the
+    # writer. A redirect's second run must not inherit the cancelled run's.
+    executor_first_frame_perf: float | None = None
     # tool_call_ids whose result has already been streamed on this stream. A
     # subagent handed off to from an executor tool is a *nested* run, and
     # langgraph's "messages" mode replays its chunks into the outer run's stream
@@ -103,6 +113,14 @@ class RunIdentity:
     kind: RunKind = RunKind.QUEUED
     #: The ORIGINAL live turn's bot message id — see ``ExecutorRun.bot_message_id``.
     bot_message_id: str | None = None
+    #: ``perf_counter`` stamped by ``call_executor`` at dispatch. Run start
+    #: minus this is the queue wait. ``None`` on pre-stamp runs; cleared on
+    #: HIL pause re-record (the resume's wait was user time, not queue time).
+    t_dispatch_perf: float | None = None
+    #: Whether the run waited on the per-conversation busy-lock queue before it
+    #: started. Metric-only: a HIL resume is ``RunKind.QUEUED`` (it runs on its
+    #: own stream) but never queued on the lock, so it must not label as queued.
+    queued: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,6 +150,10 @@ class ExecutorRun:
     #: work, matching ``build_agent_config``: the only callers that leave the
     #: source unset are the silent background paths.
     source_category: SourceCategory = SourceCategory.BG
+    #: Dispatch stamp carried from ``RunIdentity`` — see its field comment.
+    t_dispatch_perf: float | None = None
+    #: Busy-lock queue origin, carried from ``RunIdentity`` — see its comment.
+    queued: bool = False
 
     @classmethod
     def from_configurable(
@@ -172,6 +194,8 @@ class ExecutorRun:
             source_category=SourceCategory(
                 configurable.get("source_category") or SourceCategory.BG.value
             ),
+            t_dispatch_perf=identity.t_dispatch_perf,
+            queued=identity.queued,
         )
 
     @property
@@ -184,6 +208,8 @@ class ExecutorRun:
             task_id=self.task_id,
             user_message_id=self.user_message_id,
             bot_message_id=self.bot_message_id,
+            t_dispatch_perf=self.t_dispatch_perf,
+            queued=self.queued,
         )
 
     @property
@@ -228,9 +254,12 @@ _sessions: dict[str, StreamSession] = {}
 
 
 def create_session(stream_id: str, kind: RunKind) -> StreamSession:
-    """Create (or replace) the session for a stream."""
+    """Create (or replace) the session for a stream. A new session is a new
+    run: whatever a previous waiter gave up on under this id is forgotten."""
     session = StreamSession(stream_id=stream_id, kind=kind)
     _sessions[stream_id] = session
+    if stream_id in _abandoned:
+        _abandoned.remove(stream_id)
     return session
 
 
@@ -263,16 +292,18 @@ def teardown_session(stream_id: str) -> None:
 
 # ── Executor lifecycle helpers ───────────────────────────────────────
 
+#: Streams whose waiter gave up on the executor, oldest first. Bounded because
+#: nothing else ever forgets a stream id; a finalize for one of these skips
+#: delivery instead of answering a run that was already closed as failed.
+_ABANDONED_REMEMBERED = 1024
+_abandoned: deque[str] = deque(maxlen=_ABANDONED_REMEMBERED)
+
 
 def mark_executor_spawned(stream_id: str) -> None:
     """Record that call_executor spawned a background task for this stream."""
-    get_or_create_session(stream_id).executor_spawned = True
-
-
-def was_executor_spawned(stream_id: str) -> bool:
-    """Return True if call_executor successfully spawned for this stream."""
-    session = _sessions.get(stream_id)
-    return bool(session and session.executor_spawned)
+    session = get_or_create_session(stream_id)
+    session.executor_spawned = True
+    session.executor_first_frame_perf = None  # new incarnation, new first frame
 
 
 def mark_executor_queued(stream_id: str, task_id: str) -> None:
@@ -295,11 +326,46 @@ def queued_without_run(stream_id: str) -> str | None:
     return session.executor_queued_task_id
 
 
-def signal_executor_done(stream_id: str) -> None:
+def signal_executor_done(
+    stream_id: str, *, failed: bool = False, reason: str | None = None
+) -> None:
     """Wake any waiter blocked on the executor finishing for this stream."""
     session = _sessions.get(stream_id)
     if session is not None:
+        session.executor_failed = failed
+        session.executor_failure = reason if failed else None
         session.done_event.set()
+
+
+def mark_executor_failed(stream_id: str, reason: str) -> None:
+    """Record that the executor failed without finishing (the waiter gave up).
+
+    The stream is also marked abandoned, outside the session: the waiter tears
+    the session down right after, and the executor's own finalize, whenever it
+    comes, has to find out that nobody is listening any more.
+    """
+    session = _sessions.get(stream_id)
+    if session is not None:
+        session.executor_failed = True
+        session.executor_failure = reason
+    _abandoned.append(stream_id)
+
+
+def executor_abandoned(stream_id: str) -> bool:
+    """Whether the run that waited on this executor gave up on it."""
+    return stream_id in _abandoned
+
+
+def executor_failed(stream_id: str) -> bool:
+    """Whether the executor this stream spawned ended in an error."""
+    session = _sessions.get(stream_id)
+    return bool(session and session.executor_failed)
+
+
+def executor_failure(stream_id: str) -> str | None:
+    """Why the executor failed, when it did."""
+    session = _sessions.get(stream_id)
+    return session.executor_failure if session is not None else None
 
 
 # ── Background subagent coordination ─────────────────────────────────

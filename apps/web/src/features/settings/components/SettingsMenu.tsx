@@ -34,7 +34,7 @@ import {
 import { ConfirmationDialog } from "@/components/shared/ConfirmationDialog";
 import { ChevronRight, Github } from "@/components/shared/icons";
 import { getLinkByLabel } from "@/config/appConfig";
-import { useUserSubscriptionStatus } from "@/features/pricing/hooks/usePricing";
+import { useShouldPromptUpgrade } from "@/features/pricing/hooks/usePricing";
 import ContactSupportModal from "@/features/support/components/ContactSupportModal";
 import { WhatsNewTimelineMenu } from "@/features/whats-new/components/WhatsNewTimelineMenu";
 import { useReleases } from "@/features/whats-new/hooks/useReleases";
@@ -250,7 +250,7 @@ export default function SettingsMenu({
     string | undefined
   >();
   const [modalAction, setModalAction] = useState<ModalAction | null>(null);
-  const { data: subscriptionStatus } = useUserSubscriptionStatus();
+  const shouldPromptUpgrade = useShouldPromptUpgrade();
   const openPricingModal = usePricingModalStore((s) => s.openModal);
   const { unseen: unseenReleases } = useReleases();
 
@@ -292,9 +292,8 @@ export default function SettingsMenu({
   };
 
   const menuSections = [
-    ...(subscriptionStatus?.is_subscribed
-      ? []
-      : [
+    ...(shouldPromptUpgrade
+      ? [
           {
             id: "upgrade",
             title: undefined,
@@ -310,7 +309,8 @@ export default function SettingsMenu({
               },
             ],
           },
-        ]),
+        ]
+      : []),
     {
       id: "shortcuts",
       title: undefined,

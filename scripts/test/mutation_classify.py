@@ -90,6 +90,35 @@ def _body(name: str) -> list[str]:
     return []
 
 
+def _first_argument_end(text: str, i: int) -> int:
+    """Index just past the first call argument starting at ``i``: the comma
+    that ends it, or the closing bracket of a one-argument call.
+
+    Bracket/quote balanced: a type arg like ``dict[str, object] | None`` (or a
+    quoted forward ref) holds commas a regex stops at, and a half-blanked cast
+    then reads as a real change.
+    """
+    depth = 0
+    quote: str | None = None
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote and text[i - 1] != "\\":
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif ch == "," and depth == 0:
+            break
+        i += 1
+    return i
+
+
 def _normalized(lines: list[str]) -> list[str]:
     """Blank the TYPE argument of every ``cast()``.
 
@@ -108,29 +137,7 @@ def _normalized(lines: list[str]) -> list[str]:
     out: list[str] = []
     pos = 0
     while (start := joined.find("cast(", pos)) != -1:
-        # Scan the FIRST argument with bracket/quote balancing: a type arg
-        # like ``dict[str, object] | None`` (or a quoted forward ref) holds
-        # commas a regex stops at, and a half-blanked cast then reads as a
-        # real change.
-        i = start + len("cast(")
-        depth = 0
-        quote: str | None = None
-        while i < len(joined):
-            ch = joined[i]
-            if quote:
-                if ch == quote and joined[i - 1] != "\\":
-                    quote = None
-            elif ch in "\"'":
-                quote = ch
-            elif ch in "([{":
-                depth += 1
-            elif ch in ")]}":
-                if depth == 0:
-                    break  # cast with one argument — not ours to touch
-                depth -= 1
-            elif ch == "," and depth == 0:
-                break
-            i += 1
+        i = _first_argument_end(joined, start + len("cast("))
         if i < len(joined) and joined[i] == ",":
             arg = joined[start + len("cast(") : i]
             out.append(joined[pos:start] + "cast(" + "\n" * arg.count("\n") + "_")
@@ -447,6 +454,84 @@ def _unobservable_get_default(
     return False
 
 
+def _reads_only_as_boolean(assign: ast.Assign) -> bool:
+    """True when every LOAD of the assigned name collapses all falsy values.
+
+    Unlike ``_only_boolean_uses`` this does not bail when the name is rebound:
+    the mutation only changed the initial literal, and if every read of the name
+    is a truthiness test then no read can tell one falsy value from another —
+    whatever later assignment overwrote it first. Store reads are the rebinds
+    themselves and carry no value to observe — EXCEPT an ``AugAssign`` target
+    (``x += 1``): augmented assignment reads the previous value first, so
+    ``x = False`` vs ``x = None`` diverges there (``False + 1`` is 1,
+    ``None + 1`` raises) even though both are falsy.
+    """
+    target = assign.targets[0]
+    if not isinstance(target, ast.Name):
+        return False
+    scope = assign
+    while scope is not None and not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+        scope = scope.parent
+    if scope is None:
+        return False
+    for node in ast.walk(scope):
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == target.id:
+                return False
+        if (
+            isinstance(node, ast.Name)
+            and node.id == target.id
+            and node is not target
+            and isinstance(node.ctx, ast.Load)
+            and not (_boolean_consumer(node) or _guarded_by(node, target.id))
+        ):
+            return False
+    return True
+
+
+def _unobservable_falsy_assignment(
+    path: str, line_no: int, col: int, orig_line: str, mut_line: str
+) -> bool:
+    """True when the mutation only swapped one falsy literal for another in an
+    assignment whose name nothing can tell apart.
+
+    The canonical case is ``cancelled = False`` mutated to ``cancelled = None``:
+    the name is read only by a truthiness test (``elif cancelled:``), and every
+    falsy value answers that test identically, so no test can distinguish them —
+    the same CONSUMER-based reasoning as the .get()-default rule, applied to a
+    plain assignment instead of a lookup. A TRUTHY original or replacement stays
+    observable (``cancelled = True`` really does select another branch), so both
+    the original literal and its replacement must be falsy; anything unparseable
+    fails closed.
+    """
+    try:
+        tree = ast.parse(Path(path).read_text())
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        value = node.value
+        if not _falsy_literal(value):
+            continue
+        span = (
+            value.lineno,
+            value.col_offset,
+            value.end_lineno or value.lineno,
+            value.end_col_offset,
+        )
+        if not _within(span, line_no, col):
+            continue
+        return _falsy_replacement(
+            _mutated_token(span, line_no, orig_line, mut_line),
+            removal_stays_falsy=False,
+        ) and _reads_only_as_boolean(node)
+    return False
+
+
 def _unobservable_header_case(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
@@ -557,6 +642,43 @@ def _unobservable_ensure_ascii(
     return False
 
 
+def _unreachable_match_arm(path: str, line_no: int) -> bool:
+    """True when line_no sits in a ``case _: assert_never(...)`` arm.
+
+    That arm exists for mypy, which uses it to prove the match exhaustive over
+    the enum or union it switches on; at runtime no input reaches it. Deleting
+    the arm, or its argument, changes no execution, so no test can kill the
+    mutant — and the arm must stay, since it is what turns a new enum member
+    into a type error instead of a silent fall-through. Seven of these survived
+    as "real" on the playbook lifecycle's three match statements.
+    """
+    try:
+        tree = ast.parse(Path(path).read_text())
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Match):
+            continue
+        for case in node.cases:
+            wildcard = (
+                isinstance(case.pattern, ast.MatchAs)
+                and case.pattern.pattern is None
+                and case.pattern.name is None
+            )
+            if not wildcard or len(case.body) != 1 or not isinstance(case.body[0], ast.Expr):
+                continue
+            call = case.body[0].value
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "assert_never"
+            ):
+                continue
+            if case.pattern.lineno <= line_no <= (case.body[0].end_lineno or line_no):
+                return True
+    return False
+
+
 def _within(span, line_no: int, col: int) -> bool:
     start_line, start_col, end_line, end_col = span
     if line_no < start_line or line_no > end_line:
@@ -592,8 +714,10 @@ for i, (a, b) in enumerate(zip(orig_lines, mut_lines)):
         real_path = f"{workdir}/{module_path}"
         if (
             _unobservable_get_default(real_path, line_no, col, orig_raw[i], mut_raw[i])
+            or _unobservable_falsy_assignment(real_path, line_no, col, orig_raw[i], mut_raw[i])
             or _unobservable_ensure_ascii(real_path, line_no, col, orig_raw[i], mut_raw[i])
             or _unobservable_header_case(real_path, line_no, col, orig_raw[i], mut_raw[i])
+            or _unreachable_match_arm(real_path, line_no)
         ):
             print("EQUIV")
             sys.exit(0)

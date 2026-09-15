@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from prometheus_client import REGISTRY
 import pytest
 
 from app.agents.core.nodes.follow_up_actions_node import (
@@ -126,6 +127,65 @@ class TestFollowUpActionsNode:
 
         assert result is state
         assert {"follow_up_actions": []} in written_values
+
+    @pytest.mark.asyncio
+    async def test_node_emits_latency_span(self):
+        state = _make_state([HumanMessage(content="hi")])
+        config = {
+            "agent_name": "node-test-agent",
+            "configurable": {"user_id": "user-123", "thread_id": "thread-abc"},
+        }
+        before = (
+            REGISTRY.get_sample_value(
+                "graph_node_seconds_count",
+                {"node": "follow_up_actions", "agent": "node-test-agent"},
+            )
+            or 0.0
+        )
+        mock_writer = MagicMock(side_effect=lambda *a, **k: None)
+
+        with patch(
+            "app.agents.core.nodes.follow_up_actions_node.get_stream_writer",
+            return_value=mock_writer,
+        ):
+            await follow_up_actions_node(state, config, _make_store())
+
+        assert (
+            REGISTRY.get_sample_value(
+                "graph_node_seconds_count",
+                {"node": "follow_up_actions", "agent": "node-test-agent"},
+            )
+            == before + 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_node_records_the_exact_elapsed_seconds(self):
+        # Two pinned clock reads make the recorded duration deterministic: a
+        # start/end subtraction lands exactly 0.25. A sign error (end + start)
+        # would record 20.25 here instead, so this pins the direction of the
+        # elapsed-time arithmetic, not merely that an observation happened.
+        state = _make_state([HumanMessage(content="hi")])
+        config = {
+            "agent_name": "span-test-agent",
+            "configurable": {"user_id": "user-123", "thread_id": "thread-abc"},
+        }
+        labels = {"node": "follow_up_actions", "agent": "span-test-agent"}
+        before = REGISTRY.get_sample_value("graph_node_seconds_sum", labels) or 0.0
+        mock_writer = MagicMock(side_effect=lambda *a, **k: None)
+
+        with (
+            patch(
+                "app.agents.core.nodes.follow_up_actions_node.get_stream_writer",
+                return_value=mock_writer,
+            ),
+            patch(
+                "app.agents.core.nodes.follow_up_actions_node.time.perf_counter",
+                side_effect=[10.0, 10.25],
+            ),
+        ):
+            await follow_up_actions_node(state, config, _make_store())
+
+        assert REGISTRY.get_sample_value("graph_node_seconds_sum", labels) == before + 0.25
 
     @pytest.mark.asyncio
     async def test_happy_path_with_user_id_streams_actions(self):
