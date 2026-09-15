@@ -49,11 +49,18 @@ def _gated_jobs(workflow: dict[str, Any]) -> list[str]:
     return [j for j in _gate(workflow)["needs"] if "steps" in workflow["jobs"][j]]
 
 
+def _job_name(entry: str) -> str:
+    """The `needs` entry one `--expect` entry enforces.
+
+    `<job>[@<family>][*<planned members>][=<result>]` — everything after the job
+    name says how it is satisfied, not which job it is.
+    """
+    return entry.partition("=")[0].partition("*")[0].partition("@")[0].strip()
+
+
 def _result_only(workflow: dict[str, Any]) -> set[str]:
     return {
-        entry.partition("=")[0].partition("@")[0].strip()
-        for entry in _expect_arg(workflow).split(",")
-        if f"@{RESULT_ONLY}" in entry
+        _job_name(entry) for entry in _expect_arg(workflow).split(",") if f"@{RESULT_ONLY}" in entry
     }
 
 
@@ -123,10 +130,7 @@ def test_the_gate_consolidates_instead_of_printing_results(workflow: dict[str, A
 def test_the_gate_expects_exactly_the_lanes_it_needs(workflow: dict[str, Any]) -> None:
     # `<job>@<family>` — the job name is what has to match `needs`; the family
     # is which lane ids satisfy it (see `verdict.py consolidate --help`).
-    expected = {
-        entry.partition("=")[0].partition("@")[0].strip()
-        for entry in _expect_arg(workflow).split(",")
-    }
+    expected = {_job_name(entry) for entry in _expect_arg(workflow).split(",")}
     expected.discard("")
     assert expected == set(_gate(workflow)["needs"]), (
         "quality-gate's --expect list and its needs list have drifted; a lane missing "
@@ -141,8 +145,8 @@ def test_the_gate_passes_each_lanes_job_result(workflow: dict[str, Any]) -> None
     # reporting. Conflating them either reds every TS-only PR or hides the bug
     # this whole contract exists to catch.
     for entry in _expect_arg(workflow).split(","):
-        job, _, result = entry.strip().partition("=")
-        lane = job.partition("@")[0]
+        result = entry.strip().partition("=")[2]
+        lane = _job_name(entry)
         if not lane:
             continue
         assert re.fullmatch(r"\$\{\{\s*needs\." + re.escape(lane) + r"\.result\s*\}\}", result), (
@@ -236,6 +240,26 @@ def test_no_workflow_env_block_reads_a_context_it_cannot_see(workflow: dict[str,
                 f"{where} env `{key}` reads the runner context, which is not available "
                 f"there: {value!r}. Resolve it in a step, or from $RUNNER_TEMP."
             )
+
+
+def test_the_mutation_family_declares_how_many_shards_were_planned(
+    workflow: dict[str, Any],
+) -> None:
+    # A family is satisfied by its members, and how many members a matrix has is
+    # known only at runtime — so without the planned count one surviving shard
+    # speaks for every shard that was cancelled before it could upload. The
+    # planner already emits it; `*<count>` is how it reaches the gate.
+    if "test-mutation" not in _gate(workflow)["needs"]:
+        return
+    (entry,) = [e for e in _expect_arg(workflow).split(",") if _job_name(e) == "test-mutation"]
+    members = entry.partition("=")[0].partition("*")[2]
+    assert re.fullmatch(
+        r"\$\{\{\s*needs\.test-mutation-plan\.outputs\.count\s*\}\}", members.strip()
+    ), (
+        f"the mutation entry in --expect declares {members!r} planned members. It must carry "
+        "`*${{ needs.test-mutation-plan.outputs.count }}` — the shard count the plan job packed "
+        "the diff into, and the only thing that makes a missing shard visible to the gate"
+    )
 
 
 def test_the_mutation_shard_declares_the_namespace_it_owns(workflow: dict[str, Any]) -> None:
