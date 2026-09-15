@@ -9,7 +9,7 @@ automation still stops (or a restored subscriber's still resumes) once the
 dependency comes back.
 """
 
-from typing import Any
+from typing import TypedDict
 
 from arq import Retry
 
@@ -24,26 +24,31 @@ from shared.py.wide_events import log
 RETRY_BACKOFF_BASE = 2
 
 
-async def sync_workflows_for_subscription_state(
-    ctx: dict[str, Any], user_id: str, sync: str
-) -> str:
-    """Move ``user_id``'s workflows the way their last billing change said to.
+class ArqJobContext(TypedDict, total=False):
+    """The ARQ job context, narrowed to the key this task reads.
+
+    job_try is absent only when a caller invokes the task with a bare context.
+    """
+
+    job_try: int
+
+
+async def sync_workflows_for_subscription_state(ctx: ArqJobContext, user_id: str, sync: str) -> str:
+    """Move the user's workflows the way their last billing change said to.
 
     Idempotent by construction — each half re-reads only the workflows still in
     the wrong state — so a retry after a partial run picks up just what is left.
     """
     direction = SubscriptionWorkflowSync(sync)
-    job_try: int = ctx.get("job_try", 1)
+    job_try = ctx.get("job_try", 1)
     log.set(user={"id": user_id}, workflow_sync={"direction": direction.value, "try": job_try})
 
     try:
         moved = await SYNC_ACTIONS[direction](user_id)
     except Exception as e:
-        # Broad on purpose: whatever stopped the sync (Composio, Mongo, the
-        # trigger unregister), the workflow is still in the wrong state and this
-        # task is the only thing that will come back for it. ``Retry`` re-raises
-        # rather than swallows, and ARQ's ``max_tries`` bounds the chain — each
-        # individual failure is already logged by the service with its cause.
+        # Broad on purpose: whatever stopped the sync, the workflow is still in
+        # the wrong state and this task is the only thing coming back for it.
+        # Retry re-raises rather than swallows, and max_tries bounds the chain.
         defer = SUBSCRIPTION_WORKFLOW_SYNC_RETRY_DELAY * RETRY_BACKOFF_BASE ** (job_try - 1)
         log.warning(
             f"{LogTag.WORKFLOW} Workflow subscription sync incomplete; retrying",

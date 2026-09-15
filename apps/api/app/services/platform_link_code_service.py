@@ -1,20 +1,18 @@
 """One-tap platform-linking codes, minted by the web during onboarding.
 
-The mirror image of ``platform_link_token`` (``endpoints/bot.py``), which the
+The mirror image of platform_link_token (endpoints/bot.py), which the
 BOT mints and the WEB redeems: here the WEB mints a code bound to the user, the
 user carries it to the platform (invisibly in a Telegram deep link, visibly as a
-trailing ``#code`` in the WhatsApp/iMessage message they send), and the BOT
-redeems it on first contact. Nobody has to type ``/auth``.
+trailing #code in the WhatsApp/iMessage message they send), and the BOT
+redeems it on first contact. Nobody has to type /auth.
 
-Security properties match ``connect_link_service`` (128-bit opaque code, the
+Security properties match connect_link_service (128-bit opaque code, the
 binding lives server-side, bounded TTL) except for how the code is spent. There
-it is consumed on first read; here a redemption takes a short-lived CLAIM on the
-code (``claim_platform_link_code``) and only deletes the record once the link it
-authorised is written (``discard_platform_link_code``). The claim is what makes
-a redemption single-use — two deliveries of the same deep link cannot both run
-the link's side effects — while a refused or broken redemption releases the
-claim (``release_platform_link_code``) and leaves the code usable for the retry
-the refusal asks for.
+it is consumed on first read; here a redemption takes a short-lived claim on the
+code (claim_platform_link_code) and only deletes the record once the link it
+authorised is written (discard_platform_link_code). The claim makes a redemption
+single-use, while a refused or broken redemption releases it
+(release_platform_link_code) and leaves the code usable for the retry.
 """
 
 import secrets
@@ -71,21 +69,21 @@ def _claim_key(code: str) -> str:
 
 
 def build_handoff_text(first_message: str, code: str) -> str:
-    """The exact text a WhatsApp/iMessage user sends: the message plus its code.
+    """Build the exact text a WhatsApp/iMessage user sends: the message plus its code.
 
-    The adapters strip the ``#<code>`` suffix back off before the text reaches
+    The adapters strip the #<code> suffix back off before the text reaches
     the agent, so the trailing separator here is part of the wire format.
     """
     return f"{first_message} #{code}"
 
 
 def build_handoff_links(code: str, first_message: str) -> dict[str, str]:
-    """Deep links that carry ``code`` to each platform the onboarding offers.
+    """Deep links that carry code to each platform the onboarding offers.
 
     iMessage is absent by construction: its number is assigned per user out of
-    Photon's shared pool by ``start_platform_connect``, so no link exists until
+    Photon's shared pool by start_platform_connect, so no link exists until
     the user has registered a phone. The client builds that one from
-    ``handoff_text`` and the ``contact_number`` that call returns.
+    handoff_text and the contact_number that call returns.
     """
     handoff = quote(build_handoff_text(first_message, code))
     links: dict[str, str] = {}
@@ -102,7 +100,7 @@ def build_handoff_links(code: str, first_message: str) -> dict[str, str]:
 
 
 async def mint_platform_link_code(user_id: str, preferences: OnboardingPreferences) -> str:
-    """Bind a fresh single-use code to ``user_id`` and their onboarding answers."""
+    """Bind a fresh single-use code to user_id and their onboarding answers."""
     code = secrets.token_urlsafe(PLATFORM_LINK_CODE_BYTES)
     stored = await set_cache(
         _code_key(code),
@@ -127,16 +125,11 @@ async def mint_platform_link_code(user_id: str, preferences: OnboardingPreferenc
 
 
 async def claim_platform_link_code(code: str) -> LinkCodeClaim:
-    """Take ``code`` for exactly one in-flight redemption.
+    """Take code for exactly one in-flight redemption.
 
-    The claim, not the read, is what makes a redemption single-use. Reading
-    alone left the record live until the link had been written, so two
-    deliveries of the same handoff — Telegram resending ``/start``, a re-fired
-    deep link — both resolved it and both ran the link's side effects: two
-    greetings on the outbound queue, two transcript writes.
-
-    The record itself is untouched here, so a redemption that refuses or breaks
-    can ``release`` the claim and leave the code redeemable.
+    The claim, not the read, makes a redemption single-use: reading alone let two
+    deliveries of the same handoff both run the link's side effects. The record
+    is untouched, so a refused or broken redemption can release the claim.
     """
     claimed = await redis_cache.client.set(
         _claim_key(code), "1", nx=True, ex=PLATFORM_LINK_CODE_CLAIM_TTL
@@ -152,16 +145,15 @@ async def claim_platform_link_code(code: str) -> LinkCodeClaim:
 
 
 async def release_platform_link_code(code: str) -> None:
-    """Hand ``code`` back after a redemption that did not write the link."""
+    """Hand the code back after a redemption that did not write the link."""
     await delete_cache(_claim_key(code))
 
 
 async def discard_platform_link_code(code: str) -> None:
-    """Spend ``code`` once the link it authorised has been written.
+    """Spend code once the link it authorised has been written.
 
-    The claim goes with it: leaving it behind would answer a later tap by a
-    different platform account as an in-flight twin rather than as the dead
-    code it is.
+    The claim goes with it, so a later tap by a different platform account is
+    answered as the dead code it is rather than as an in-flight twin.
     """
     await delete_cache(_code_key(code))
     await release_platform_link_code(code)
