@@ -1061,9 +1061,11 @@ class _GenerationIdCallback(BaseCallbackHandler):
 
 
 def _with_call_label(config: RunnableConfig | None, label: str) -> RunnableConfig:
-    """Return ``config`` with the call's ``label`` published on its run metadata
-    (``LLM_LABEL_METADATA_KEY``), never mutating the caller's object. Callbacks
-    attribute per-call samples (TTFT) by it."""
+    """Copy config with label published under LLM_LABEL_METADATA_KEY in run metadata.
+
+    Never mutates the caller's object; TTFT callbacks attribute per-call
+    samples by that label.
+    """
     merged: dict[str, Any] = dict(config) if config else {}
     merged["metadata"] = {**(merged.get("metadata") or {}), LLM_LABEL_METADATA_KEY: label}
     return cast(RunnableConfig, merged)

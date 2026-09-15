@@ -30,7 +30,7 @@ def _sum(tool_name: str, status: str) -> float:
 
 
 class _RegularTool:
-    """A non-MCP tool: no ``tool_connector``, so it keeps its own name."""
+    """A non-MCP tool: no tool_connector, so it keeps its own name."""
 
 
 class _McpTool:
@@ -93,8 +93,7 @@ async def test_failing_call_observes_error_span() -> None:
 
 
 async def test_mcp_tool_collapses_to_mcp_label() -> None:
-    """User-defined MCP server tool names are unbounded cardinality — the
-    collector sees ``mcp`` while the wide event keeps the real name."""
+    """MCP tool names are unbounded cardinality: the collector sees mcp, the wide event the real name."""
     before = _count("mcp", "success")
     mcp_tool = MagicMock()
     mcp_tool.tool_connector = MagicMock()
@@ -145,8 +144,7 @@ async def test_failing_call_records_exact_seconds() -> None:
 
 
 async def test_hil_pause_is_neither_success_nor_error() -> None:
-    """A gate interrupt is control flow, not a result: it propagates and
-    leaves nospan — the pause is measured as HIL wait, not tool time."""
+    """A gate interrupt propagates and leaves no span: the pause is HIL wait, not tool time."""
     from langchain.agents.middleware import AgentMiddleware
     from langchain.agents.middleware.types import ToolCallRequest
 
@@ -167,9 +165,7 @@ async def test_hil_pause_is_neither_success_nor_error() -> None:
 
 
 async def test_middleware_chain_routes_through_each_wrapper() -> None:
-    """The chain is built by wrapping each middleware around the inner handler:
-    a wrapper wired to None (or a None seed) must route through the middleware,
-    not silently fall back to a direct tool call."""
+    """A wrapper wired to None must still route through the middleware, not call the tool directly."""
     from langchain.agents.middleware import AgentMiddleware
     from langchain.agents.middleware.types import ToolCallRequest
 
@@ -207,8 +203,7 @@ async def test_middleware_chain_routes_through_each_wrapper() -> None:
 
 
 async def test_pre_tool_failure_falls_back_with_the_original_call() -> None:
-    """A middleware that breaks before the tool runs is retried directly — and
-    the retry must carry the original tool_call, not a nulled one."""
+    """The direct retry must carry the original tool_call, not a nulled one."""
     from langchain.agents.middleware import AgentMiddleware
     from langchain.agents.middleware.types import ToolCallRequest
 

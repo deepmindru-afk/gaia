@@ -59,10 +59,8 @@ CARD_NOTE = wrap_agent_payload(AgentTag.RETURNED_TO_FRONTEND, "todo_data (1 todo
 @pytest.fixture(autouse=True)
 def _clean_registry():
     sess._sessions.clear()
-    # Same class of per-test global as _sessions: every test in this file runs
-    # as stream "s1", and a test that tears its session down marks "s1"
-    # abandoned — without this, a later test's finalize silently skips delivery
-    # depending on xdist worker ordering.
+    # Every test here runs as stream "s1", and a torn-down session marks "s1"
+    # abandoned; without this a later test's finalize silently skips delivery.
     sess._abandoned.clear()
     yield
     sess._sessions.clear()
@@ -770,18 +768,19 @@ def _sum(name: str, labels: dict[str, str]) -> float:
 
 
 def _counter(name: str, labels: dict[str, str]) -> float:
-    """A Counter's own sample is its base name, not ``<name>_count``."""
+    """Read a Counter's own sample, which is its base name and not <name>_count."""
     return REGISTRY.get_sample_value(name, labels) or 0.0
 
 
 class TestTerminalRunMetrics:
-    """The terminal labels and the e2e boundary. A run's end status drives alerts
-    and SLOs, so the exact literal on the collector is the contract."""
+    """The terminal labels and the e2e boundary.
+
+    A run's end status drives alerts and SLOs, so the exact literal on the
+    collector is the contract.
+    """
 
     async def test_error_run_records_error_status_and_a_zero_e2e_sample(self, boundaries) -> None:
-        """An error run is labelled ``error`` (not the mixed-case literal), and a
-        dispatch stamp equal to the finalize instant is a real 0.0 sample — the
-        ``>=`` boundary, not the strict ``>`` that would drop it."""
+        """Labelled lowercase error, and a stamp equal to the finalize instant is a real 0.0 sample."""
         boundaries.stream_manager.is_cancelled.return_value = False
         run = replace(_run(RunKind.QUEUED), t_dispatch_perf=1234.5, queued=True)
         create_session("s1", RunKind.QUEUED)
@@ -830,8 +829,11 @@ class TestTerminalRunMetrics:
 
 
 class TestFinalizePausedRun:
-    """A HIL pause holds the lock and signals the stream, but must not deliver or
-    drain the queue. ``observe_executor_run_total`` gets the pause's own label."""
+    """A HIL pause holds the lock and signals the stream.
+
+    It must not deliver or drain the queue, and observe_executor_run_total gets
+    the pause's own label.
+    """
 
     async def _pause(self, *, queued: bool):
         run = replace(_run(RunKind.QUEUED), queued=queued)
@@ -864,9 +866,7 @@ class TestFinalizePausedRun:
 
 class TestRecordPauseIdentityRewrite:
     async def test_the_resume_context_drops_the_stamp_and_the_queue_origin(self) -> None:
-        """A pause re-dispatch is a new incarnation: the stamp goes (so the
-        resume measures no queue wait for the user's decision time) and the queue
-        origin is cleared (it did not wait on the busy lock)."""
+        """The stamp goes (no queue wait for decision time) and the queue origin is cleared."""
         run = replace(_run(RunKind.QUEUED), t_dispatch_perf=1234.5, queued=True)
 
         with patch.object(er, "set_resume_item", new_callable=AsyncMock) as set_item:

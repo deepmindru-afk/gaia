@@ -60,9 +60,11 @@ async def test_a_fresh_run_does_not_arm_the_probe() -> None:
 
 
 class TestExecuteExecutorWiring:
-    """``_execute_executor`` hands prep the run's own task, config and stream —
-    the call is the only thing that decides which conversation gets executed —
-    and stamps the measured prep time on the executor namespace."""
+    """_execute_executor hands prep the run's own task, config and stream.
+
+    That call is the only thing deciding which conversation gets executed, and it
+    stamps the measured prep time on the executor namespace.
+    """
 
     async def test_prep_receives_the_run_arguments_and_exact_prep_ms(self) -> None:
         ctx = _Ctx()
