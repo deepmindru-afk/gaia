@@ -1204,11 +1204,27 @@ def _gh_json(endpoint: str) -> dict[str, Any] | None:
         return None
 
 
-def _gate_conclusion(repo: str, run_id: int, job_name: str) -> str | None:
-    """Return what that run's gate job concluded, or None if it never concluded."""
+def _run_jobs(repo: str, run_id: int) -> list[dict[str, Any]]:
+    """Return that run's jobs, or an empty list when gh or the API fails."""
     jobs = _gh_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
-    for job in (jobs or {}).get("jobs", []):
-        if job.get("name") != job_name:
+    return list((jobs or {}).get("jobs", []))
+
+
+def _is_plain_edit_run(jobs: list[dict[str, Any]], gate_job: str) -> bool:
+    """Say whether this run only republished some other run's verdict.
+
+    Every lane sits behind the same edited-event guard, so a title or body edit
+    skips all of them and leaves the gate mirroring alone. A run with no lane at
+    all fails closed instead: an unreadable job listing is not an edit.
+    """
+    lanes = [job for job in jobs if job.get("name") != gate_job]
+    return bool(lanes) and all(job.get("conclusion") == "skipped" for job in lanes)
+
+
+def _gate_conclusion(jobs: list[dict[str, Any]], gate_job: str) -> str | None:
+    """Return what that run's gate job concluded, or None if it never concluded."""
+    for job in jobs:
+        if job.get("name") != gate_job:
             continue
         conclusion = job.get("conclusion")
         return None if conclusion in NO_VERDICT_CONCLUSIONS else str(conclusion)
@@ -1238,14 +1254,24 @@ def cmd_mirror_previous_gate(args: list[str]) -> int:
         print(f"::error::quality-gate: could not read the runs for {opts.sha} — nothing to mirror")
         return 1
 
-    # Newest first, as the API returns them.
+    # Newest first, as the API returns them. Only the NEWEST substantive run
+    # decides: falling back past one that is still running or was cancelled
+    # would republish a success the latest validation has not confirmed.
     for run in listing.get("workflow_runs", []):
         run_id = int(run["id"])
-        if run_id == opts.run_id or run.get("status") != "completed":
+        if run_id == opts.run_id:
             continue
-        conclusion = _gate_conclusion(opts.repo, run_id, opts.job)
+        jobs = _run_jobs(opts.repo, run_id)
+        if _is_plain_edit_run(jobs, opts.job):
+            continue
+        conclusion = _gate_conclusion(jobs, opts.job)
         if conclusion is None:
-            continue
+            print(
+                f"::error::quality-gate: the latest validation has not concluded — run {run_id} "
+                f"is the newest run deciding {opts.sha} and its gate reached no verdict. "
+                "Re-run this gate once that run finishes."
+            )
+            return 1
         if conclusion == "success":
             print(f"quality-gate: PASSED — mirroring run {run_id}, which concluded success")
             return 0
@@ -1256,8 +1282,8 @@ def cmd_mirror_previous_gate(args: list[str]) -> int:
         return 1
 
     print(
-        f"::error::quality-gate: no completed run of {opts.workflow} has decided {opts.sha} yet, "
-        "so there is no verdict to mirror. Re-run this gate once the lanes finish."
+        f"::error::quality-gate: no run of {opts.workflow} has validated {opts.sha} yet, so there "
+        "is no verdict to mirror. Re-run this gate once the lanes finish."
     )
     return 1
 
