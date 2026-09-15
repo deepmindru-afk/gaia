@@ -20,6 +20,7 @@ from app.services.gaia_knowledge_service import (
     _dot,
     _load_lock,
     _normalized,
+    _Snapshot,
     gaia_knowledge_service,
 )
 from tests.helpers import captured_wide_event
@@ -96,6 +97,11 @@ def _corpus(
 class TestVectorMath:
     def test_normalized_scales_to_unit_length(self):
         assert _normalized([3.0, 4.0]) == (0.6, 0.8)
+
+    def test_normalized_scales_a_short_vector_up(self):
+        """A vector shorter than unit length must still be scaled up — the guard
+        is "is this the zero vector", not "is this already small"."""
+        assert _normalized([0.3, 0.4]) == (0.6, 0.8)
 
     def test_normalized_keeps_the_zero_vector(self):
         assert _normalized([0.0, 0.0]) == (0.0, 0.0)
@@ -320,6 +326,32 @@ class TestSearchKnowledge:
         chroma.collection.get.side_effect = RuntimeError("chroma down")
 
         assert await gaia_knowledge_service.search_knowledge("anything") == []
+
+
+class TestLoadSnapshot:
+    async def test_an_empty_collection_yields_an_empty_snapshot(self, chroma, embeddings):
+        chroma.collection.get.return_value = {"documents": [], "metadatas": []}
+
+        snapshot = await gaia_knowledge_service._load_snapshot()
+
+        assert snapshot == _Snapshot(docs=(), unit_vectors=())
+
+    async def test_it_embeds_every_document(self, chroma, embeddings):
+        _corpus(chroma, embeddings, ["a", "b"], [[1.0, 0.0], [0.0, 1.0]])
+
+        await gaia_knowledge_service._load_snapshot()
+
+        embeddings.aembed_documents.assert_awaited_once_with(["a", "b"])
+
+    async def test_a_document_without_a_metadata_row_gets_empty_metadata(self, chroma, embeddings):
+        """``metadatas`` can be shorter than ``documents``; the guard must not read
+        one row past the end."""
+        chroma.collection.get.return_value = {"documents": ["a", "b"], "metadatas": [{"i": 0}]}
+        embeddings.aembed_documents.return_value = [[1.0, 0.0], [0.0, 1.0]]
+
+        results = await gaia_knowledge_service.search_knowledge("q", limit=5)
+
+        assert [(r.content, r.metadata) for r in results] == [("a", {"i": 0}), ("b", {})]
 
 
 class TestSnapshotInvalidation:
