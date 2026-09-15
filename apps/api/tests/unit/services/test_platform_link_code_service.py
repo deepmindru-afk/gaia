@@ -13,6 +13,7 @@ import pytest
 
 from app.constants.auth import PLATFORM_LINK_CODE_BYTES
 from app.constants.cache import (
+    PLATFORM_LINK_CODE_CLAIM_ATTEMPTS,
     PLATFORM_LINK_CODE_CLAIM_TTL,
     PLATFORM_LINK_CODE_PREFIX,
     PLATFORM_LINK_CODE_TTL,
@@ -112,6 +113,41 @@ class TestClaimReleaseDiscard:
         second = await claim_platform_link_code(code)
         assert second.payload is None
         assert second.in_flight is True
+
+    async def test_a_marker_that_vanishes_after_a_lost_claim_is_retried(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """A twin releasing between the lost SET NX and the read must not make a live code look spent."""
+        code = await mint_platform_link_code("user1", PREFS)
+        real_set = svc.redis_cache.client.set.side_effect
+        lost = {"once": False}
+
+        async def _lose_once(name: str, value: str, *, ex: int | None = None, nx: bool = False):
+            if not lost["once"]:
+                lost["once"] = True
+                return None
+            return await real_set(name, value, ex=ex, nx=nx)
+
+        svc.redis_cache.client.set.side_effect = _lose_once
+
+        claim = await claim_platform_link_code(code)
+
+        assert claim.payload is not None
+        assert claim.in_flight is False
+
+    async def test_a_claim_lost_on_every_attempt_is_answered_as_in_flight(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """Contention that outlasts every retry is a twin still running, never an expired code."""
+        code = await mint_platform_link_code("user1", PREFS)
+        svc.redis_cache.client.set.side_effect = None
+        svc.redis_cache.client.set.return_value = None
+
+        claim = await claim_platform_link_code(code)
+
+        assert claim.payload is None
+        assert claim.in_flight is True
+        assert svc.redis_cache.client.set.await_count == PLATFORM_LINK_CODE_CLAIM_ATTEMPTS
 
     async def test_releasing_leaves_the_code_claimable_again(
         self, fake_store: dict[str, tuple[object, int | None]]
