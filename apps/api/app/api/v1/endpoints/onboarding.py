@@ -97,7 +97,7 @@ def _normalize_example_blocks(
             return None
         return example.model_copy(update={"body": body})
     if isinstance(example, str) and example.strip():
-        return WritingStyleExampleBlocks(greeting="", body=[example.strip()], signoff="", name="")
+        return WritingStyleExampleBlocks(body=[example.strip()])
     return None
 
 

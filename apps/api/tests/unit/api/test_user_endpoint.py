@@ -87,6 +87,22 @@ class TestGetMe:
         new_callable=AsyncMock,
         return_value=ONBOARDING_STATUS,
     )
+    async def test_unset_profile_fields_are_omitted_not_null(
+        self, mock_onboarding: AsyncMock, client: AsyncClient
+    ):
+        # response_model_exclude_none is the only thing keeping nulls off the
+        # wire, and clients have always read a missing key as "not set".
+        response = await client.get(f"{USER_BASE}/me")
+        body = response.json()
+        assert "picture" not in body
+        assert "created_at" not in body
+        assert [key for key, value in body.items() if value is None] == []
+
+    @patch(
+        "app.api.v1.endpoints.user.get_user_onboarding_status",
+        new_callable=AsyncMock,
+        return_value=ONBOARDING_STATUS,
+    )
     async def test_set_auth_path_flags_are_returned_as_true(self, mock_onboarding: AsyncMock):
         user = AuthenticatedUser(
             user_id=FAKE_USER_ID,
