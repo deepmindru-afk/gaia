@@ -284,8 +284,7 @@ class TestSSEDeliveryLatency:
         assert elapsed == pytest.approx(0.5)
 
     async def test_cancelled_delivery_observes_disconnected_span(self) -> None:
-        """Cancellation mid-stream (server shutdown / client task cancel) is a
-        disconnect, not an error — it must not land in the error series."""
+        """Cancellation mid-stream is a disconnect, not an error, so it stays out of that series."""
         before = _delivery_count("disconnected")
         with (
             patch(

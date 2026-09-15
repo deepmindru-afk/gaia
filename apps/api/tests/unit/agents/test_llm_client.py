@@ -1964,15 +1964,7 @@ class TestFallbackRunCarriesTheCallLabel:
 
     @pytest.mark.regression
     def test_the_sync_path_labels_the_call_on_primary_and_fallback(self) -> None:
-        """The sync primary runs under the caller's own config PLUS the label,
-        and the sync fallback under the fallback config PLUS the label.
-
-        Asserting the configurable on both sides pins that labelling ADDS to the
-        config rather than replacing it — a label written onto ``None`` (or onto
-        the wrong base) would silently drop the user/session the call was made
-        for, and a fallback that lost its provider config would run on the
-        primary's dead lane.
-        """
+        """Labelling adds to each config rather than replacing it, on primary and fallback alike."""
         primary_seen: dict[str, Any] = {}
         fallback_seen: dict[str, Any] = {}
 

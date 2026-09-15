@@ -533,9 +533,11 @@ class TestRunItemCarriesWorkflowExecution:
 
 
 class TestRunItemDiscriminatorRoundTrip:
-    """``t_dispatch_perf`` and ``queued`` are the executor metrics' discriminators:
-    they must survive ``build_run_item`` -> ``prepare_run_from_item`` intact, or a
-    dequeued run is measured as a HIL resume (or vice versa)."""
+    """t_dispatch_perf and queued survive build_run_item to prepare_run_from_item.
+
+    They are the executor metrics' discriminators: lose them and a dequeued run
+    is measured as a HIL resume, or the reverse.
+    """
 
     async def test_dispatch_stamp_and_queue_origin_round_trip(self) -> None:
         item = build_run_item(

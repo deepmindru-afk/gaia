@@ -210,10 +210,7 @@ class TestManageSystemPrompts:
         )
 
     def test_node_records_the_exact_elapsed_seconds(self) -> None:
-        """Two pinned clock reads make the recorded duration deterministic: a
-        start/end subtraction lands exactly 0.5. A sign error (end + start)
-        would record 10.5 instead, so this pins the direction of the elapsed
-        arithmetic, not merely that an observation happened."""
+        """Two pinned clock reads land exactly 0.5, pinning the direction of the subtraction."""
         labels = {"node": "manage_system_prompts", "agent": "span-test-agent"}
         before = REGISTRY.get_sample_value("graph_node_seconds_sum", labels) or 0.0
 
@@ -326,10 +323,7 @@ class TestPromptPruningWideEvent:
         assert "hunter2" not in str(pruning["slot_digests"])
 
     def test_reports_the_exact_message_and_prune_counts(self) -> None:
-        """``messages_in``/``messages_out`` and the two drop counters are how a
-        reviewer reads what the prune actually did. A renamed key or a wrong
-        count tells the wrong story, so both the names and the values are part
-        of the contract."""
+        """messages_in, messages_out and the two drop counters are contract in both name and value."""
         msgs = [
             _static("p"),
             _dynamic("stale"),
@@ -359,10 +353,9 @@ def _time_message(content: str, mid: str) -> AnyMessage:
 class TestKeepLatestPerSlot:
     """The prune step, driven directly.
 
-    ``manage_system_prompts_node`` only ever hands the helper one message per
-    slot, so the drop accounting and the returned ``pruned_ids`` are
-    unobservable through it. These feed it stacked slots and assert every
-    ``_KeptPrompts`` field exactly.
+    manage_system_prompts_node only ever hands the helper one message per slot,
+    so the drop accounting and the returned pruned_ids are unobservable through
+    it. These feed it stacked slots and assert every _KeptPrompts field exactly.
     """
 
     def test_singleton_slots_keep_the_last_message_and_count_their_drops(self) -> None:

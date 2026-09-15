@@ -876,8 +876,7 @@ class TestMCPClientCallToolOnServer:
         mock_session.call_tool.assert_awaited_once_with(name="test_tool", arguments={"arg": "val"})
 
     async def test_failed_call_stamps_latency_before_reraising(self):
-        """A raising tool call still stamps success=False and its latency: without
-        it the wide event has no record of the call that just ran."""
+        """A raising tool call still stamps success=False and its latency on the wide event."""
         log.reset()
         client = MCPClient(user_id=USER_ID)
         mock_base = MagicMock()

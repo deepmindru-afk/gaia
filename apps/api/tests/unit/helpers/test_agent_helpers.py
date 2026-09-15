@@ -1465,9 +1465,7 @@ class TestBuildAgentCallbacks:
     @patch("app.helpers.agent_helpers.build_langfuse_callback", return_value=None)
     @patch("app.helpers.agent_helpers.providers")
     def test_every_run_carries_the_provider_ttft_callback(self, mock_providers, _mock_langfuse):
-        """The TTFT callback rides the run's list on every tier — it is the only
-        source of true provider first-token latency. Dropping the append silences
-        that metric everywhere at once, and no other test would see it."""
+        """The callback is the only source of true provider first-token latency, on every tier."""
         mock_providers.is_available.return_value = False
         mock_providers.get.return_value = None
 
@@ -1588,9 +1586,7 @@ class TestBuildAgentConfigLaneResolution:
 class TestBuildAgentConfigLaneMetadata:
     @patch("app.helpers.agent_helpers.providers")
     async def test_metadata_carries_the_lanes_provider_and_model(self, mock_providers):
-        """The TTFT callback reads its labels off run metadata, so the lane must
-        land there exactly: a resolved lane that never reaches metadata meters
-        every sample as the wrong provider/model."""
+        """The TTFT callback reads its labels off run metadata, so the resolved lane must land there."""
         mock_providers.get.return_value = None
         lane = ModelLane(
             provider=LLMProviderName.GEMINI,
@@ -1614,8 +1610,7 @@ class TestBuildAgentConfigLaneMetadata:
 
     @patch("app.helpers.agent_helpers.providers")
     async def test_a_lane_with_no_model_metadata_says_default(self, mock_providers):
-        """The custom dev endpoint pins no model; metadata must read "default"
-        rather than a null, which the callback would render as an unknown label."""
+        """The custom dev endpoint pins no model, so metadata reads "default" rather than a null."""
         mock_providers.get.return_value = None
         lane = ModelLane(
             provider=LLMProviderName.CUSTOM,

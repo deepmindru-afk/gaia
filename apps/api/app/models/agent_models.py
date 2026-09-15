@@ -245,11 +245,11 @@ def read_agent_configurable(config: RunnableConfig | None) -> AgentConfigurableV
 
 
 def config_agent_name(config: RunnableConfig | None) -> str:
-    """Which agent a run belongs to, for metric labels ("unknown" when unstamped).
+    """Return which agent a run belongs to for metric labels, "unknown" when unstamped.
 
-    build_agent_config stamps agent_name at the top level, and LangGraph's
-    ensure_config folds it into configurable before any node sees the config,
-    so configurable is the one place a node can read it.
+    build_agent_config stamps agent_name at the top level, but LangGraph's
+    ensure_config folds every non-standard top-level key into configurable
+    before a node sees the config — so inside a graph the key only exists there.
     """
     configurable: AgentConfigurable = agent_configurable(config)
     return configurable.get("agent_name") or "unknown"
