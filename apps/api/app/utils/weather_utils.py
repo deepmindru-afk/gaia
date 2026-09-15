@@ -1,6 +1,6 @@
 import asyncio
 from collections import defaultdict
-import datetime
+import time
 
 import httpx
 
@@ -57,8 +57,8 @@ async def prepare_weather_data(
         # Create a minimal sys object if it doesn't exist
         weather.sys = OpenWeatherSys(
             country=country if country else "",
-            sunrise=int(datetime.datetime.now(datetime.UTC).timestamp()),
-            sunset=int(datetime.datetime.now(datetime.UTC).timestamp() + 43200),  # +12 hours
+            sunrise=int(time.time()),
+            sunset=int(time.time() + 43200),  # +12 hours
         )
 
     # Make sure the 'name' field (city name) is set

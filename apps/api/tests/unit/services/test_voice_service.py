@@ -181,6 +181,40 @@ class TestFetchSharedVoices:
         assert seen[0].headers["xi-api-key"] == "el-key"
         assert seen[0].url.params["page_size"] == str(SHARED_VOICES_PAGE_SIZE)
 
+    async def test_null_trimmings_become_empty_strings(self, mock_settings, cache_miss):
+        """Every trimmed field is a string in our model; ElevenLabs leaves any of them null."""
+        payload = {
+            "voices": [
+                {
+                    "voice_id": "lib-1",
+                    "public_owner_id": "owner-1",
+                    "name": None,
+                    "gender": None,
+                    "accent": None,
+                    "language": None,
+                    "descriptive": None,
+                    "use_case": None,
+                }
+            ]
+        }
+        with patch(f"{_MOD}.httpx.AsyncClient", _elevenlabs_serving(200, payload, [])):
+            voices = await _fetch_shared_voices()
+
+        assert voices == [
+            ElevenLabsSharedVoice(
+                voice_id="lib-1",
+                name="",
+                preview_url=None,
+                public_owner_id="owner-1",
+                gender="",
+                accent="",
+                language="",
+                descriptive="",
+                use_case="",
+                language_codes=[],
+            )
+        ]
+
 
 class TestGetElevenlabsVoices:
     async def test_empty_when_no_api_key(self):

@@ -137,6 +137,24 @@ class TestTransformGmailMessage:
         assert result["body"] == "Hello there"
         assert result["isThread"] is True
 
+    @pytest.mark.regression
+    def test_composio_format_without_message_text_keeps_its_identity(self) -> None:
+        """verbose=false omits messageText; the message is still Composio-shaped, not Gmail-API."""
+        msg: dict[str, Any] = {
+            "messageId": "msg-123",
+            "threadId": "thread-1",
+            "from": "alice@example.com",
+            "subject": "Test Subject",
+            "snippet": "Hello there",
+            "labelIds": ["INBOX"],
+        }
+        result = transform_gmail_message(msg).model_dump(by_alias=True)
+        assert result["id"] == "msg-123"
+        assert result["threadId"] == "thread-1"
+        assert result["from"] == "alice@example.com"
+        assert result["subject"] == "Test Subject"
+        assert result["snippet"] == "Hello there"
+
     def test_composio_format_snippet_fallback_to_messageText(self) -> None:
         msg: dict[str, Any] = {
             "messageId": "id1",

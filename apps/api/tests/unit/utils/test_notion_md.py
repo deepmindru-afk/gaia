@@ -1143,11 +1143,11 @@ class TestMarkdownToNotionBlocks:
         assert result[0]["block_property"] == "paragraph"
         assert result[0]["content"] == "───"
 
-    def test_callout_github_alert_style_matched_as_quote(self) -> None:
-        """The > prefix matches the quote rule first, so GitHub-style callouts return as quotes."""
+    @pytest.mark.regression
+    def test_callout_github_alert_style_is_a_callout(self) -> None:
         result = _md_blocks("> [!NOTE] Important info")
         assert result[0] == {
-            "block_property": "quote",
+            "block_property": "callout",
             "content": "[!NOTE] Important info",
         }
 
@@ -1238,14 +1238,24 @@ class TestMarkdownToNotionBlocks:
         assert result[0]["block_property"] == "to_do"
         assert result[1]["block_property"] == "bulleted_list_item"
 
-    def test_quote_before_callout(self) -> None:
-        """Plain > quote is matched before > [! callout. Callout check is after quote."""
-        md = "> Normal quote"
-        result = _md_blocks(md)
-        assert result[0]["block_property"] == "quote"
+    def test_plain_quote_is_still_a_quote(self) -> None:
+        result = _md_blocks("> Normal quote")
+        assert result[0] == {"block_property": "quote", "content": "Normal quote"}
 
-    def test_callout_branch_unreachable_due_to_quote_priority(self) -> None:
-        """The > [! callout check (line 625) is unreachable — the > quote check (line 595) matches first."""
-        for md in ["> [!WARNING] Be careful", "> [!TIP] A tip"]:
-            result = _md_blocks(md)
-            assert result[0]["block_property"] == "quote"
+    @pytest.mark.regression
+    @pytest.mark.parametrize("md", ["> [!WARNING] Be careful", "> [!TIP] A tip"])
+    def test_every_alert_kind_is_a_callout_not_a_quote(self, md: str) -> None:
+        assert _md_blocks(md)[0]["block_property"] == "callout"
+
+    @pytest.mark.parametrize("md", ["> [! this is a quote", "> [!UNKNOWN] text"])
+    def test_a_quote_that_only_looks_like_an_alert_stays_a_quote(self, md: str) -> None:
+        block = _md_blocks(md)[0]
+        assert block["block_property"] == "quote"
+        assert block["content"] == md[2:]
+
+    def test_a_line_that_only_ends_with_a_pipe_is_prose(self) -> None:
+        """A table row is pipe-delimited at both ends; one trailing pipe is an ordinary line."""
+        assert _md_blocks("Total: 42|")[0] == {
+            "block_property": "paragraph",
+            "content": "Total: 42|",
+        }

@@ -20,7 +20,7 @@ class AsgiScope(BaseModel):
         """Return the value of a header (lower-case name), if present."""
         for name, value in self.headers:
             if name == key:
-                return value.decode("latin-1")
+                return value.decode("latin-1")  # pragma: no mutate -- case-insensitive codec
         return None
 
 
