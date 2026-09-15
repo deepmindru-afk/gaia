@@ -22,7 +22,6 @@ import { useReceiptPrinterStage } from "@/features/pricing/hooks/useReceiptPrint
 import { buildReceiptDetails } from "@/features/pricing/utils/receiptDetails";
 import { verifyPaymentWithRetry } from "@/features/pricing/utils/verifyPaymentWithRetry";
 import UseCreateConfetti from "@/hooks/ui/useCreateConfetti";
-import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 
 type PaymentStatus = "verifying" | "success" | "error";
 
@@ -67,7 +66,6 @@ export default function PaymentSuccessPage() {
         const result = await verifyPaymentWithRetry(() => verifyPayment());
         if (cancelled) return;
         if (result.payment_completed) {
-          trackEvent(ANALYTICS_EVENTS.SUBSCRIPTION_COMPLETED);
           setStatus("success");
         } else {
           setStatus("error");

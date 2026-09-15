@@ -17,7 +17,7 @@ import { getNavigationShortcut } from "@/config/keyboardShortcutsData";
 import { useNotifications } from "@/features/notification/hooks/useNotifications";
 import {
   usePricing,
-  useUserSubscriptionStatus,
+  useShouldPromptUpgrade,
 } from "@/features/pricing/hooks/usePricing";
 import { usePathname } from "@/i18n/navigation";
 import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
@@ -72,7 +72,7 @@ const buttonData = [
 
 export default function SidebarTopButtons() {
   const pathname = usePathname();
-  const { data: subscriptionStatus } = useUserSubscriptionStatus();
+  const shouldPromptUpgrade = useShouldPromptUpgrade();
   const { plans } = usePricing();
   const openPricingModal = usePricingModalStore((s) => s.openModal);
   const { notifications } = useNotifications({
@@ -98,8 +98,7 @@ export default function SidebarTopButtons() {
 
   return (
     <div className="flex flex-col">
-      {/* Only show Upgrade to Pro button when user doesn't have an active subscription */}
-      {!subscriptionStatus?.is_subscribed && (
+      {shouldPromptUpgrade && (
         <SidebarPromo price={price} onUpgrade={openPricingModal} />
       )}
 

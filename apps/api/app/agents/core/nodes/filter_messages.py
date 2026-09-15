@@ -5,6 +5,7 @@ This module provides functionality to remove unanswered tool calls from AI messa
 while preserving all other message types in their original order.
 """
 
+import time
 from typing import TypeVar
 
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
@@ -13,12 +14,25 @@ from langgraph.graph import MessagesState
 from langgraph.store.base import BaseStore
 
 from app.constants.log_tags import LogTag
+from app.models.agent_models import config_agent_name
+from app.services.latency_metrics import observe_graph_node
 from shared.py.wide_events import log
 
 T = TypeVar("T", bound=MessagesState)
 
 
 def filter_messages_node(state: T, config: RunnableConfig, store: BaseStore) -> T:  # noqa: ARG001 -- execute_hooks() passes state/config/store positionally
+    """Filters out unanswered tool calls from AI messages (timed wrapper)."""
+    start = time.perf_counter()
+    try:
+        return _filter_messages(state)
+    finally:
+        observe_graph_node(
+            time.perf_counter() - start, node="filter_messages", agent=config_agent_name(config)
+        )
+
+
+def _filter_messages(state: T) -> T:
     """
     Filters out unanswered tool calls from AI messages.
 
@@ -29,8 +43,6 @@ def filter_messages_node(state: T, config: RunnableConfig, store: BaseStore) -> 
 
     Args:
         state: The current state containing messages.
-        config: Configuration for the runnable.
-        store: The store for any required data persistence.
 
     Returns:
         The updated state with unanswered tool calls removed from AI messages.

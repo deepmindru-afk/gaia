@@ -206,6 +206,7 @@ async def update_integration_instructions(
             updated_by=InstructionsEditor.USER,
         )
         log.set(outcome="success")
+        capture_context_event(AnalyticsEvents.INTEGRATION_INSTRUCTIONS_UPDATED)
         return IntegrationInstructionsResponse(
             integration_id=record.integration_id,
             content=record.content,

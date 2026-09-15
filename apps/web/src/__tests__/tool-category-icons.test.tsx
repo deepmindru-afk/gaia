@@ -12,6 +12,7 @@ import { getToolCategoryIcon } from "@/features/chat/utils/toolIcons";
 // Keep this list in step with `_add_category(...)` in
 // apps/api/app/agents/tools/core/registry.py.
 const BUILTIN_TOOL_CATEGORIES = [
+  "account",
   "billing",
   "context",
   "creative",

@@ -355,6 +355,7 @@ class TestRunChatStreamTurnDerivations:
         ):
             sm.publish_chunk = AsyncMock()
             sm.complete_stream = AsyncMock()
+            sm.is_cancelled = AsyncMock(return_value=False)
             await chat_stream._run_chat_stream(
                 "stream-1", body, {"user_id": "u1"}, "conv-1", "whatsapp"
             )
