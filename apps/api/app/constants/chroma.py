@@ -16,6 +16,8 @@ Also holds tunables for the ChromaDB-backed LangGraph store.
 
 import os
 
+from app.constants.cache import ONE_HOUR_TTL
+
 CHROMA_COLLECTION_SUFFIX = os.getenv("GAIA_CHROMA_COLLECTION_SUFFIX", "")
 
 # Vector collections not owned by the memory engine (app/constants/memory.py)
@@ -49,3 +51,8 @@ TOOLS_SEED_LOCK_ACQUIRE_TIMEOUT_SECONDS = 120
 # every replica's indexing forever. Well above the real embedding time (the
 # ~1.6k-tool catalog batches in a minute or two).
 TOOLS_SEED_LOCK_MAX_HOLD_SECONDS = 300
+
+# The gaia_knowledge corpus snapshot is reloaded after this long. Its only writers
+# are the offline populate script and an explicit clear, both of which drop the
+# snapshot directly — the TTL is a backstop, never the invalidation mechanism.
+GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS = ONE_HOUR_TTL

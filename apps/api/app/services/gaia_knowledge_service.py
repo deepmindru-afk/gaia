@@ -1,15 +1,26 @@
 """
 Service for managing GAIA self-knowledge in ChromaDB.
 
-This service provides methods to store and search GAIA's self-knowledge
-(capabilities, integrations, architecture, etc.) using ChromaDB as the backend.
+The corpus is tiny (a few dozen docs) and production never writes it — the only
+writers are the offline populate script and an explicit clear. So ``search_knowledge``
+serves from an in-memory snapshot: it loads the corpus once, then ranks locally by
+cosine similarity. A turn pays one query embedding instead of a Chroma round trip
+plus a corpus re-embed, and both writers drop the snapshot so a re-populate is
+picked up on the very next search rather than after the TTL.
 """
 
+import asyncio
 from dataclasses import dataclass
-from typing import Any
+from time import monotonic
+from typing import Any, cast
 
+from langchain_core.embeddings import Embeddings
+import numpy as np
+from numpy.typing import NDArray
 from pydantic import BaseModel, Field, field_validator
 
+from app.constants.chroma import GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS
+from app.core.lazy_loader import providers
 from app.db.chroma.chromadb import ChromaClient
 from shared.py.wide_events import log
 
@@ -38,11 +49,37 @@ class KnowledgeResult:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _CorpusDoc:
+    content: str
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    docs: tuple[_CorpusDoc, ...]
+    #: One L2-normalized row per doc, so a dot product with a normalized query is
+    #: the cosine similarity (Chroma's ``cosine`` space scores by distance).
+    unit_vectors: NDArray[np.float32]
+
+
+def _unit_matrix(vectors: list[NDArray[np.float32]]) -> NDArray[np.float32]:
+    if not vectors:
+        return np.zeros((0, 0), dtype=np.float32)
+    matrix = np.vstack(vectors).astype(np.float32)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    safe_norms = np.where(norms == 0, np.float32(1.0), norms)
+    return (matrix / safe_norms).astype(np.float32)
+
+
 class GaiaKnowledgeService:
     """Service for managing GAIA self-knowledge in ChromaDB"""
 
     def __init__(self) -> None:
         self.collection_name = "gaia_knowledge"
+        self._snapshot: _Snapshot | None = None
+        self._loaded_at = 0.0
+        self._load_lock = asyncio.Lock()
 
     async def search_knowledge(self, query: str, limit: int = 5) -> list[KnowledgeResult]:
         """Search the GAIA knowledge base using semantic similarity."""
@@ -53,26 +90,25 @@ class GaiaKnowledgeService:
             limit=limit,
         )
         try:
-            # Get langchain client for similarity search
-            client = await ChromaClient.get_langchain_client(
-                collection_name=self.collection_name, create_if_not_exists=True
-            )
+            snapshot = await self._snapshot_or_reload()
+            if snapshot is None or not snapshot.docs:
+                return []
 
-            # Perform similarity search with scores
-            results = await client.asimilarity_search_with_score(query=query, k=limit)
-
-            # Convert to KnowledgeResult objects
-            knowledge_results = [
+            query_vector = await self._embed_query(query)
+            scores = snapshot.unit_vectors @ query_vector
+            results = [
                 KnowledgeResult(
-                    content=doc.page_content,
-                    relevance_score=float(score),
-                    metadata=doc.metadata or {},
+                    content=snapshot.docs[int(index)].content,
+                    # Chroma's cosine space reports distance (1 - similarity);
+                    # keep that scale so callers comparing scores still make sense.
+                    relevance_score=float(1.0 - scores[int(index)]),
+                    metadata=snapshot.docs[int(index)].metadata,
                 )
-                for doc, score in results
+                for index in np.argsort(-scores)[:limit]
             ]
 
-            log.info("Found knowledge results for query", result_count=len(knowledge_results))
-            return knowledge_results
+            log.info("Found knowledge results for query", result_count=len(results))
+            return results
 
         except Exception as e:
             log.error("Error searching GAIA knowledge", error=str(e), error_type=type(e).__name__)
@@ -101,6 +137,7 @@ class GaiaKnowledgeService:
             # Add documents in batch
             await client.aadd_texts(texts=texts, metadatas=metadatas)
 
+            self._invalidate()
             log.info("Added knowledge items to ChromaDB", items_count=len(items))
             return len(items)
 
@@ -129,11 +166,84 @@ class GaiaKnowledgeService:
             )
             log.info("Recreated empty collection", collection_name=self.collection_name)
 
+            self._invalidate()
             return True
 
         except Exception as e:
             log.error("Error clearing knowledge", error=str(e), error_type=type(e).__name__)
             return False
+
+    def _invalidate(self) -> None:
+        """Drop the snapshot so the next search reloads the current corpus."""
+        self._snapshot = None
+        self._loaded_at = 0.0
+
+    def _fresh(self) -> bool:
+        return (
+            self._snapshot is not None
+            and (monotonic() - self._loaded_at) < GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS
+        )
+
+    async def _snapshot_or_reload(self) -> _Snapshot | None:
+        """The current snapshot, reloading when missing or past its TTL.
+
+        A reload that fails while a snapshot is held keeps serving the last good
+        corpus and backs off until the next TTL — a corpus is enrichment, and a
+        refresh blip must not blank a section.
+        """
+        if self._fresh():
+            return self._snapshot
+        async with self._load_lock:
+            if self._fresh():
+                return self._snapshot
+            previous = self._snapshot
+            try:
+                snapshot = await self._load_snapshot()
+            except Exception as e:
+                if previous is None:
+                    raise
+                log.warning(
+                    "gaia_knowledge snapshot refresh failed; serving the previous corpus",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                self._loaded_at = monotonic()
+                return previous
+            self._snapshot = snapshot
+            self._loaded_at = monotonic()
+            return snapshot
+
+    async def _load_snapshot(self) -> _Snapshot:
+        client = await ChromaClient.get_client()
+        collection = await client.get_or_create_collection(name=self.collection_name)
+        result = await collection.get(include=["documents", "metadatas"])
+        documents = result.get("documents") or []
+        metadatas = result.get("metadatas") or []
+        if not documents:
+            return _Snapshot(docs=(), unit_vectors=np.zeros((0, 0), dtype=np.float32))
+
+        embeddings = cast(Embeddings, await providers.aget("google_embeddings"))
+        vectors = await embeddings.aembed_documents(list(documents))
+
+        docs: list[_CorpusDoc] = []
+        unit_source: list[NDArray[np.float32]] = []
+        for index, content in enumerate(documents):
+            if not content:
+                continue
+            docs.append(
+                _CorpusDoc(
+                    content=content,
+                    metadata=dict(metadatas[index] if index < len(metadatas) else {}),
+                )
+            )
+            unit_source.append(np.asarray(vectors[index], dtype=np.float32))
+        return _Snapshot(docs=tuple(docs), unit_vectors=_unit_matrix(unit_source))
+
+    async def _embed_query(self, query: str) -> NDArray[np.float32]:
+        embeddings = cast(Embeddings, await providers.aget("google_embeddings"))
+        vector = np.asarray(await embeddings.aembed_query(query), dtype=np.float32)
+        norm = float(np.linalg.norm(vector))
+        return vector / norm if norm else vector
 
 
 # Singleton instance
