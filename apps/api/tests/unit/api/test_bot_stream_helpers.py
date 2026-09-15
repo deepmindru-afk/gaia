@@ -135,6 +135,14 @@ class TestBotStreamPayloadFrame:
         }
         assert stop is False
 
+    async def test_a_rate_limit_card_without_a_feature_names_this_feature(self):
+        data = {"tool_data": {"tool_name": "rate_limit_data", "data": {"current_plan": "pro"}}}
+        frame, _ = await _bot_stream_payload_frame(BotWebStreamPayload.model_validate(data), "u")
+        payload = json.loads(frame[len("data: ") : -2])
+        assert payload["notice"]["text"] == (
+            "⏳ You've reached your this feature limit. Please try again later."
+        )
+
     async def test_rate_limit_card_appends_an_upgrade_link_for_non_pro_users(self):
         data = {
             "tool_data": {

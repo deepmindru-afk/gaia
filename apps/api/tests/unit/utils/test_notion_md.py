@@ -677,6 +677,24 @@ class TestBlockToMarkdown:
         }
         assert block_to_markdown(_block(block)) == "![My caption](https://example.com/img.png)"
 
+    def test_image_caption_joins_every_rich_text_part(self) -> None:
+        block = {
+            "type": "image",
+            "image": {
+                "type": "external",
+                "external": {"url": "https://example.com/img.png"},
+                "caption": [{"plain_text": "My "}, {"plain_text": "caption"}],
+            },
+        }
+        assert block_to_markdown(_block(block)) == "![My caption](https://example.com/img.png)"
+
+    def test_image_with_a_slashless_link_is_titled_image(self) -> None:
+        block = {
+            "type": "image",
+            "image": {"type": "external", "external": {"url": "img.png"}, "caption": []},
+        }
+        assert block_to_markdown(_block(block)) == "![image](img.png)"
+
     def test_divider(self) -> None:
         block = {"type": "divider", "divider": {}}
         assert block_to_markdown(_block(block)) == "---"
@@ -742,6 +760,13 @@ class TestBlockToMarkdown:
         }
         assert block_to_markdown(_block(block)) == "[doc.pdf](https://s3.example.com/doc.pdf)"
 
+    def test_file_with_a_slashless_link_is_titled_by_its_block_type(self) -> None:
+        block = {
+            "type": "file",
+            "file": {"type": "file", "file": {"url": "doc.pdf"}, "caption": []},
+        }
+        assert block_to_markdown(_block(block)) == "[file](doc.pdf)"
+
     def test_bookmark(self) -> None:
         block = {
             "type": "bookmark",
@@ -790,6 +815,10 @@ class TestBlockToMarkdown:
             "child_page": {"title": "My Page"},
         }
         assert block_to_markdown(_block(block)) == "## My Page"
+
+    def test_child_page_without_title_renders_an_empty_heading(self) -> None:
+        block = {"type": "child_page", "child_page": {}}
+        assert block_to_markdown(_block(block)) == "## "
 
     def test_child_database(self) -> None:
         block = {
@@ -1130,6 +1159,27 @@ class TestMarkdownToNotionBlocks:
         assert result[0]["table_width"] == 2
         assert result[0]["has_column_header"] is True
         assert len(result[0]["rows"]) == 2  # header row + 1 data row
+
+    def test_table_keeps_every_consecutive_row_and_the_line_after_it(self) -> None:
+        result = _md_blocks("| A |\n| --- |\n| 1 |\n| 2 |\nAfter")
+        rows = [[cell[0]["text"]["content"] for cell in row["cells"]] for row in result[0]["rows"]]
+        assert rows == [["A"], ["1"], ["2"]]
+        assert result[1] == {"block_property": "paragraph", "content": "After"}
+
+    def test_a_separator_with_doubled_edge_pipes_and_empty_cells_is_dropped(self) -> None:
+        result = _md_blocks("| A | B |\n||---| --- ||\n| 1 | 2 |")
+        rows = [[cell[0]["text"]["content"] for cell in row["cells"]] for row in result[0]["rows"]]
+        assert rows == [["A", "B"], ["1", "2"]]
+
+    def test_table_cells_at_the_row_edges_keep_their_text(self) -> None:
+        result = _md_blocks("|X|Y|\n|---|---|\n|X|X|")
+        rows = [[cell[0]["text"]["content"] for cell in row["cells"]] for row in result[0]["rows"]]
+        assert rows == [["X", "Y"], ["X", "X"]]
+
+    def test_code_block_resumes_parsing_on_the_line_after_its_fence(self) -> None:
+        result = _md_blocks("```\ncode\n```\nAfter")
+        assert result[0]["code"]["rich_text"][0]["text"]["content"] == "code"
+        assert result[1] == {"block_property": "paragraph", "content": "After"}
 
     def test_table_only_separators(self) -> None:
         """A table with only separator rows produces no blocks."""

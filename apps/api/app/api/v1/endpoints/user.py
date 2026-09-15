@@ -82,7 +82,10 @@ async def get_me(
     }
     response = AuthenticatedUserResponse.model_validate(
         {
-            **user.model_dump(exclude_none=True, exclude=set(_AUTH_PATH_FLAGS)),
+            **user.model_dump(
+                exclude_none=True,  # pragma: no mutate -- the route drops None fields on the wire
+                exclude=set(_AUTH_PATH_FLAGS),
+            ),
             **flags,
             "message": "User retrieved successfully",
             "onboarding": onboarding_status,

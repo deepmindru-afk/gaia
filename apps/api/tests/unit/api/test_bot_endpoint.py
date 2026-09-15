@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from fastapi import HTTPException
@@ -131,6 +132,7 @@ class TestResetSession:
         data = response.json()
         assert data["success"] is True
         assert data["conversation_id"] == "new-convo-id"
+        mock_get_user.assert_awaited_once_with("discord", "u1")
         # Bot routes are auth-excluded — the id must be explicit or the event
         # lands on an anonymous profile.
         mock_capture.assert_called_once_with(
@@ -216,6 +218,17 @@ class TestResolveBotCaller:
             assert await _resolve_bot_caller(request, "discord", "u1") is linked
         lookup.assert_awaited_once_with("discord", "u1")
 
+    async def test_a_state_user_with_no_authenticated_flag_falls_back_to_the_platform_link(self):
+        from app.api.v1.endpoints.bot import _resolve_bot_caller
+
+        request = MagicMock()
+        request.state = SimpleNamespace(user=AuthenticatedUser(user_id="uid_from_middleware"))
+        with patch(
+            "app.api.v1.endpoints.bot.resolve_bot_user", new_callable=AsyncMock, return_value=None
+        ) as lookup:
+            assert await _resolve_bot_caller(request, "discord", "u1") is None
+        lookup.assert_awaited_once_with("discord", "u1")
+
     async def test_a_state_value_that_is_not_an_authenticated_user_is_not_trusted(self):
         from app.api.v1.endpoints.bot import _resolve_bot_caller
 
@@ -267,6 +280,7 @@ class TestCheckAuthStatus:
         # The bot keys PostHog on this id. Returning only the boolean is what
         # left bot events on a parallel `discord:<id>` profile.
         assert data["user_id"] == "uid1"
+        mock_get_user.assert_awaited_once_with("discord", "u1")
 
     @patch(
         "app.utils.auth_utils.user_repository.get_by_platform_id",
@@ -348,9 +362,35 @@ class TestGetSettings:
         data = response.json()
         assert data["authenticated"] is True
         assert data["user_name"] == "Alice"
+        assert data["profile_image_url"] == "https://img.example.com/a.png"
+        mock_get_user.assert_awaited_once_with("discord", "u1")
         # Whose integrations were fetched. Unasserted, a null user id here
         # returns another account's settings — or none — and still 200s.
         mock_integrations.assert_awaited_once_with("uid1")
+
+    @patch(
+        "app.api.v1.endpoints.bot.get_user_integration_records",
+        new_callable=AsyncMock,
+        return_value=[],
+    )
+    @patch(
+        "app.utils.auth_utils.user_repository.get_by_platform_id",
+        new_callable=AsyncMock,
+    )
+    @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
+    async def test_settings_report_the_account_creation_time_as_iso(
+        self,
+        mock_auth: AsyncMock,
+        mock_get_user: AsyncMock,
+        mock_integrations: AsyncMock,
+        client: AsyncClient,
+    ):
+        mock_get_user.return_value = UserDocument(
+            id="uid1", created_at=datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC)
+        )
+        response = await client.get(f"{BOT_BASE}/settings/discord/u1")
+        assert response.status_code == 200
+        assert response.json()["account_created_at"] == "2025-01-02T03:04:05+00:00"
 
     @patch("app.api.v1.endpoints.bot.get_integration_details", new_callable=AsyncMock)
     @patch(
@@ -454,6 +494,7 @@ class TestUnlinkAccount:
         )
         assert response.status_code == 200
         assert response.json()["success"] is True
+        mock_get_user.assert_awaited_once_with("discord", "u1")
         # The same event name the web-side unlink emits — one action, one name.
         mock_capture.assert_called_once_with(
             "uid1",
@@ -1398,6 +1439,39 @@ class TestBotTranscribe:
 
         assert response.status_code == 200
         assert mock_log.set.call_args_list[-1].kwargs == {"outcome": "transcribed"}
+
+    @patch("app.api.v1.endpoints.bot.capture_event")
+    @patch(
+        "app.api.v1.endpoints.bot.transcribe_audio",
+        new_callable=AsyncMock,
+        return_value="hello there",
+    )
+    @patch("app.api.v1.endpoints.bot.require_bot_api_key", new_callable=AsyncMock)
+    async def test_a_voice_note_stamps_its_operation_and_caller(
+        self,
+        mock_auth: AsyncMock,
+        mock_transcribe: AsyncMock,
+        mock_capture: MagicMock,
+        client: AsyncClient,
+        fake_user: AuthenticatedUser,
+    ):
+        with (
+            patch(
+                "app.decorators.entitlements.payment_service.get_cached_plan_type",
+                new_callable=AsyncMock,
+                return_value=PlanType.PRO,
+            ),
+            patch("app.api.v1.endpoints.bot.log") as mock_log,
+        ):
+            response = await client.post(
+                f"{BOT_BASE}/transcribe",
+                files={"file": ("voice.ogg", b"fake-audio-bytes", "audio/ogg")},
+            )
+
+        assert response.status_code == 200
+        mock_log.set.assert_any_call(
+            operation="bot_transcribe_audio", user={"id": fake_user.user_id}
+        )
 
     @patch("app.api.v1.endpoints.bot.capture_event")
     @patch(

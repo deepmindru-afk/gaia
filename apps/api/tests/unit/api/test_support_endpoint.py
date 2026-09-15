@@ -88,6 +88,36 @@ class TestSubmitSupportRequest:
             },
         )
 
+    async def test_submit_passes_the_callers_identity_to_the_service(
+        self, client: AsyncClient
+    ) -> None:
+        result = SupportRequestSubmissionResponse(
+            success=True, message="Submitted", ticket_id="T-127"
+        )
+        with (
+            patch(
+                f"{SUPPORT_ENDPOINT}.create_support_request",
+                new_callable=AsyncMock,
+                return_value=result,
+            ) as create,
+            patch(f"{SUPPORT_ENDPOINT}.capture_context_event"),
+        ):
+            resp = await client.post(
+                "/api/v1/support/requests",
+                json={
+                    "type": "support",
+                    "title": "Need help",
+                    "description": "It broke completely",
+                },
+            )
+
+        assert resp.status_code == 200
+        kwargs = create.await_args.kwargs
+        assert kwargs["request_data"].title == "Need help"
+        assert kwargs["user_id"] == "507f1f77bcf86cd799439011"
+        assert kwargs["user_email"] == "test@example.com"
+        assert kwargs["user_name"] == "Test User"
+
     async def test_submit_with_attachments_captures_analytics(self, client: AsyncClient) -> None:
         result = SupportRequestSubmissionResponse(
             success=True, message="Submitted", ticket_id="T-124"
@@ -161,6 +191,8 @@ class TestSubmitSupportRequest:
         assert kwargs["request_data"].title == "New idea"
         assert kwargs["request_data"].description == "Add a thing"
         assert kwargs["user_id"] == "507f1f77bcf86cd799439011"
+        assert kwargs["user_email"] == "test@example.com"
+        assert kwargs["user_name"] == "Test User"
         assert isinstance(kwargs["attachments"], list) and len(kwargs["attachments"]) == 1
 
     async def test_submit_with_attachments_service_error_wraps_as_500_exact_detail(

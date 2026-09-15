@@ -304,7 +304,7 @@ class TestContentPriority:
                 attachments=MessageAttachments(selected_calendar_event=cal_event),
             )
 
-        mock_cal.assert_called_once()
+        mock_cal.assert_called_once_with(cal_event, "what about this")
         assert result[-2].content == "CALENDAR OUTPUT"
 
     @pytest.mark.asyncio
@@ -371,6 +371,13 @@ class TestUserContentExtraction:
         with p["create_system"], p["build_dynamic"], p["format_files"]:
             with pytest.raises(ValueError, match="No human message"):
                 await construct_langchain_messages(messages=[])
+
+    @pytest.mark.asyncio
+    async def test_user_turn_without_content_raises(self) -> None:
+        p = _patches()
+        with p["create_system"], p["build_dynamic"], p["format_files"]:
+            with pytest.raises(ValueError, match="No human message"):
+                await construct_langchain_messages(messages=[{"role": "user"}])
 
     @pytest.mark.asyncio
     async def test_whitespace_only_content_raises(self) -> None:
