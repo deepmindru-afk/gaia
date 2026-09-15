@@ -645,6 +645,19 @@ class TestRerankAndBoost:
         assert [item.row.content for item in scored] == ["high", "low"]
         assert len(scored) == 2
 
+    async def test_rerank_operation_timeout_falls_back_to_retrieval_order(self) -> None:
+        # The whole-operation deadline raises TimeoutError (not an httpx error);
+        # the fallback must catch it too, not just HTTP failures.
+        low, high = make_row("low"), make_row("high")
+        with patch.object(retrieval, "rerank", new=AsyncMock(side_effect=TimeoutError)):
+            scored = await _rerank_and_boost(
+                "q",
+                [low, high],
+                ann_similarity={str(low.id): 0.3, str(high.id): 0.9},
+                fts_ids=set(),
+            )
+        assert [item.row.content for item in scored] == ["high", "low"]
+
     async def test_importance_boost_is_applied_to_the_final_score(self) -> None:
         now = datetime.now(UTC)
         dull = make_row("dull", importance=0.1, mentioned_at=now)

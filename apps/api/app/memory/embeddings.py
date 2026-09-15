@@ -319,29 +319,37 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
     return await _observed("embed", "local", len(texts), asyncio.to_thread(_embed_sync, texts))
 
 
+async def _sidecar_rerank(query: str, documents: list[str], *, interactive: bool) -> list[float]:
+    """POST /rerank in bounded chunks, preserving document order."""
+    scores: list[float] = []
+    # The query is sent with every chunk, so it consumes char budget too.
+    char_budget = EMBEDDING_SIDECAR_MAX_BATCH_CHARS - len(query)
+    for chunk in chunk_texts(documents, EMBEDDING_SIDECAR_MAX_BATCH_TEXTS, char_budget):
+        result = await _observed(
+            "rerank",
+            "sidecar",
+            len(chunk),
+            _sidecar_post("/rerank", {"query": query, "documents": chunk}, interactive=interactive),
+        )
+        scores.extend(cast(RerankResponse, result)["scores"])
+    return scores
+
+
 async def rerank(query: str, documents: list[str], *, interactive: bool = False) -> list[float]:
     """Return relevance scores for documents, aligned with input order.
 
-    ``interactive=True`` (recall on a user turn) uses the fail-fast budget so a
-    slow sidecar raises quickly into the caller's retrieval-order fallback.
+    ``interactive=True`` (recall on a user turn) uses the fail-fast per-request
+    budget AND one deadline across all chunks — a large candidate set splits into
+    several requests, so a per-chunk timeout alone would let the total exceed the
+    turn budget. On expiry it raises into the caller's retrieval-order fallback.
     """
     if not documents:
         return []
     if _sidecar_url():
-        scores: list[float] = []
-        # The query is sent with every chunk, so it consumes char budget too.
-        char_budget = EMBEDDING_SIDECAR_MAX_BATCH_CHARS - len(query)
-        for chunk in chunk_texts(documents, EMBEDDING_SIDECAR_MAX_BATCH_TEXTS, char_budget):
-            result = await _observed(
-                "rerank",
-                "sidecar",
-                len(chunk),
-                _sidecar_post(
-                    "/rerank", {"query": query, "documents": chunk}, interactive=interactive
-                ),
-            )
-            scores.extend(cast(RerankResponse, result)["scores"])
-        return scores
+        if interactive:
+            async with asyncio.timeout(EMBEDDING_SIDECAR_INTERACTIVE_TIMEOUT_SECONDS):
+                return await _sidecar_rerank(query, documents, interactive=True)
+        return await _sidecar_rerank(query, documents, interactive=False)
     return await _observed(
         "rerank", "local", len(documents), asyncio.to_thread(_rerank_sync, query, documents)
     )

@@ -381,7 +381,7 @@ async def _rerank_scores(query: str, documents: list[str]) -> list[float] | None
     """
     try:
         return await rerank(query, documents, interactive=True)
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, TimeoutError) as exc:
         log.warning(
             "memory_rerank_skipped",
             error=str(exc),

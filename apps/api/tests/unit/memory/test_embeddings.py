@@ -494,3 +494,22 @@ class TestInteractiveBudget:
 
         assert len(attempts) == 1  # no retry on the interactive path
         assert sleeps == []
+
+    async def test_interactive_rerank_deadline_spans_all_chunks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A large candidate set splits into several chunks; the interactive
+        # budget must bound the WHOLE rerank, not reset per chunk. Each chunk
+        # sleeps under the deadline, but two of them together exceed it.
+        monkeypatch.setattr(embeddings, "EMBEDDING_SIDECAR_INTERACTIVE_TIMEOUT_SECONDS", 0.1)
+        monkeypatch.setattr(embeddings, "EMBEDDING_SIDECAR_MAX_BATCH_TEXTS", 1)
+        monkeypatch.setattr(embeddings, "_sidecar_url", lambda: "http://sidecar.test")
+
+        async def slow_post(path: str, payload: dict, *, interactive: bool = False) -> dict:
+            await asyncio.sleep(0.06)
+            return {"scores": [0.0] * len(payload["documents"])}
+
+        monkeypatch.setattr(embeddings, "_sidecar_post", slow_post)
+
+        with pytest.raises(TimeoutError):
+            await embeddings.rerank("q", ["a", "b"], interactive=True)
