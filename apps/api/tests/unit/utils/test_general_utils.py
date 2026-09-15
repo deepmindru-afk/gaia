@@ -137,7 +137,6 @@ class TestTransformGmailMessage:
         assert result["body"] == "Hello there"
         assert result["isThread"] is True
 
-    @pytest.mark.regression
     def test_composio_format_without_message_text_keeps_its_identity(self) -> None:
         """verbose=false omits messageText; the message is still Composio-shaped, not Gmail-API."""
         msg: dict[str, Any] = {

@@ -1143,7 +1143,6 @@ class TestMarkdownToNotionBlocks:
         assert result[0]["block_property"] == "paragraph"
         assert result[0]["content"] == "───"
 
-    @pytest.mark.regression
     def test_callout_github_alert_style_is_a_callout(self) -> None:
         result = _md_blocks("> [!NOTE] Important info")
         assert result[0] == {
@@ -1242,7 +1241,6 @@ class TestMarkdownToNotionBlocks:
         result = _md_blocks("> Normal quote")
         assert result[0] == {"block_property": "quote", "content": "Normal quote"}
 
-    @pytest.mark.regression
     @pytest.mark.parametrize("md", ["> [!WARNING] Be careful", "> [!TIP] A tip"])
     def test_every_alert_kind_is_a_callout_not_a_quote(self, md: str) -> None:
         assert _md_blocks(md)[0]["block_property"] == "callout"
