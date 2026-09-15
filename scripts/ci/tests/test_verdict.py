@@ -686,3 +686,135 @@ def test_ci_verdict_still_finds_verdict_py_after_the_caller_changes_directory(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "verdicts" / "probe.json").exists()
+
+
+# --- mirror-previous-gate ---------------------------------------------------
+#
+# The gate cannot skip on a PR edit — a skipped required check counts as
+# PASSING, so skipping would overwrite a RED verdict on that head SHA with a
+# green tick. It cannot re-run the lanes either: nothing changed. So it repeats
+# what the same head SHA already concluded, read back from the API.
+
+MIRROR_REPO = "theexperiencecompany/gaia"
+MIRROR_SHA = "c9d667254c9d667254c9d667254c9d667254c9d6"
+MIRROR_JOB = "quality-gate"
+CURRENT_RUN = 999
+
+
+def _gate_job(conclusion: str | None, *, status: str = "completed") -> dict[str, Any]:
+    return {"name": MIRROR_JOB, "status": status, "conclusion": conclusion}
+
+
+def _stub_api(
+    monkeypatch: pytest.MonkeyPatch,
+    runs: list[dict[str, Any]],
+    jobs: dict[int, list[dict[str, Any]]],
+) -> list[str]:
+    """Stub `gh api` with one runs listing and one job listing per run."""
+    asked: list[str] = []
+
+    def fake(endpoint: str) -> dict[str, Any] | None:
+        asked.append(endpoint)
+        if "/jobs" in endpoint:
+            run_id = int(endpoint.split("/runs/")[1].split("/jobs")[0])
+            return {"jobs": jobs.get(run_id, [])}
+        return {"workflow_runs": runs}
+
+    monkeypatch.setattr(verdict, "_gh_json", fake)
+    return asked
+
+
+def _mirror() -> int:
+    return verdict.cmd_mirror_previous_gate(
+        [
+            "--repo",
+            MIRROR_REPO,
+            "--sha",
+            MIRROR_SHA,
+            "--workflow",
+            "main.yml",
+            "--job",
+            MIRROR_JOB,
+            "--run-id",
+            str(CURRENT_RUN),
+        ]
+    )
+
+
+def test_a_previous_success_on_this_sha_mirrors_as_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked = _stub_api(
+        monkeypatch,
+        [{"id": 7, "status": "completed"}],
+        {7: [_gate_job("success")]},
+    )
+
+    assert _mirror() == 0
+    assert "success" in capsys.readouterr().out
+    # The HEAD sha, not the merge commit: that is what the check runs and branch
+    # protection are attached to.
+    assert f"head_sha={MIRROR_SHA}" in asked[0], asked
+
+
+def test_a_previous_failure_on_this_sha_reds_the_gate_again(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The whole point: a title edit after a RED run must not hand the same head
+    # SHA a green required check.
+    _stub_api(monkeypatch, [{"id": 7, "status": "completed"}], {7: [_gate_job("failure")]})
+
+    assert _mirror() == 1
+    assert "::error::" in capsys.readouterr().out
+
+
+def test_a_cancelled_previous_gate_is_not_a_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_api(monkeypatch, [{"id": 7, "status": "completed"}], {7: [_gate_job("cancelled")]})
+
+    assert _mirror() == 1
+
+
+def test_no_completed_run_on_this_sha_fails_rather_than_assuming(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An edit landing while the only run is still in flight has nothing to
+    # mirror. Failing is recoverable (re-run the gate); a green tick is not.
+    _stub_api(monkeypatch, [{"id": 8, "status": "in_progress"}], {})
+
+    assert _mirror() == 1
+    assert "no completed" in capsys.readouterr().out.lower()
+
+
+def test_the_run_doing_the_mirroring_is_not_its_own_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # This run is itself listed under the same head SHA; reading its own
+    # in-flight gate job would be circular.
+    _stub_api(
+        monkeypatch,
+        [{"id": CURRENT_RUN, "status": "completed"}],
+        {CURRENT_RUN: [_gate_job("success")]},
+    )
+
+    assert _mirror() == 1
+
+
+def test_a_run_whose_gate_never_concluded_is_passed_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Newest first. A run whose gate job was skipped (every run before this fix,
+    # on a plain edit) carries no verdict at all, so the search walks back to
+    # the run that actually decided rather than reading the skip as a pass.
+    _stub_api(
+        monkeypatch,
+        [{"id": 9, "status": "completed"}, {"id": 7, "status": "completed"}],
+        {9: [_gate_job("skipped")], 7: [_gate_job("failure")]},
+    )
+
+    assert _mirror() == 1
+
+
+def test_an_unreachable_api_is_a_failure_not_a_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(verdict, "_gh_json", lambda endpoint: None)
+
+    assert _mirror() == 1

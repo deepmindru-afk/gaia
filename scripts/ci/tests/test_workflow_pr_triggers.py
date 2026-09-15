@@ -78,17 +78,18 @@ def test_an_edit_that_moved_nothing_skips_the_whole_workflow(
     )
 
 
-def test_the_gate_is_skipped_rather_than_decided_for_such_an_edit(
-    workflow: dict[str, Any],
-) -> None:
-    # The gate is the required check, and it runs `always()`. With every lane
-    # skipped it would either fail on a lane that never ran (code-quality) or
-    # announce PASSED having run nothing (main) — a green gate on an untested
-    # tree. Skipped is the honest verdict, and GitHub counts it as passing.
+def test_the_gate_still_decides_such_an_edit(workflow: dict[str, Any]) -> None:
+    # The gate is the required check, and the DAG's guard must NOT reach it.
+    # Skipping looked like the honest answer for a run that checked nothing,
+    # but branch protection counts a skipped required check as PASSING: the
+    # edit run's skipped gate became the head SHA's latest verdict, so editing
+    # the title of a PR whose lanes had just gone red made it mergeable. The
+    # gate runs for every event and mirrors this SHA's last completed verdict
+    # instead — the split lives in its steps (test_workflow_verdicts.py).
     condition = workflow["jobs"]["quality-gate"]["if"]
 
     assert "always()" in condition
-    assert BASE_CHANGE_GUARD in condition
+    assert BASE_CHANGE_GUARD not in condition
 
 
 def test_the_lanes_that_run_on_skipped_ancestors_still_need_their_runner(

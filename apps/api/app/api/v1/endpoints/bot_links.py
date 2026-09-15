@@ -36,7 +36,10 @@ from app.services.platform_link_code_service import (
     discard_platform_link_code,
     release_platform_link_code,
 )
-from app.services.platform_link_completion import complete_platform_link
+from app.services.platform_link_completion import (
+    PostLinkSideEffectError,
+    complete_platform_link,
+)
 from app.services.platform_link_service import PlatformLinkService, require_platform_plan
 from app.services.user_service import get_user_by_id
 from app.utils.errors import create_error
@@ -240,6 +243,12 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
             profile=profile,
             first_contact=bubbles,
         )
+    except PostLinkSideEffectError:
+        # The link is written; only its follow-through failed. Spent, not released:
+        # handed back, the retry would redeem it against the existing link and
+        # publish the first contact a second time. The failure still surfaces.
+        await discard_platform_link_code(body.code)
+        raise
     except Exception:
         # Every refusal asks the user to tap the same link again, and the code is
         # the only way back without redoing onboarding: released, not spent.
