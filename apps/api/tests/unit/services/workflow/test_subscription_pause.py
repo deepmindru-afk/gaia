@@ -127,6 +127,22 @@ class TestDeactivateWorkflowsForLapsedSubscription:
         assert caught.value.user_id == USER_ID
         assert caught.value.failed_workflow_ids == ["wf-1"]
 
+    async def test_the_error_message_counts_the_workflows_left_behind(self) -> None:
+        """The retry's log line quotes this message, so a countless message hides the remainder."""
+        with (
+            patch(f"{MODULE}.workflow_repository") as repo,
+            patch(f"{MODULE}.WorkflowService") as service,
+        ):
+            repo.find_activated_for_user = AsyncMock(
+                return_value=[_workflow("wf-1"), _workflow("wf-2")]
+            )
+            service.deactivate_workflow = AsyncMock(side_effect=RuntimeError("composio down"))
+
+            with pytest.raises(SubscriptionWorkflowSyncIncomplete) as caught:
+                await deactivate_workflows_for_lapsed_subscription(USER_ID)
+
+        assert str(caught.value) == "2 workflow(s) did not follow the subscription change"
+
     async def test_no_activated_workflows_is_a_no_op(self) -> None:
         with (
             patch(f"{MODULE}.workflow_repository") as repo,
@@ -300,6 +316,9 @@ class TestReactivateWorkflowsForRestoredSubscription:
         # A half-applied reactivation beats none: the second workflow still resumed.
         assert service.activate_workflow.await_count == 2
         assert caught.value.failed_workflow_ids == ["wf-1"]
+        # The retry re-runs the resume for whoever the batch was for, so the
+        # owner has to survive the raise.
+        assert caught.value.user_id == USER_ID
 
     async def test_it_never_reactivates_behind_the_service_and_strands_a_composio_trigger(
         self,
