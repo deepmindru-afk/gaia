@@ -75,7 +75,6 @@ async def store_canvas_embedding(
             todo_id=str(todo_id),
             title=title,
             updated_at=datetime.now(UTC).isoformat(),
-            completed=False,
             labels=", ".join(labels) if labels else None,
             revision=revision,
         )

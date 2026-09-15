@@ -124,7 +124,11 @@ async def _fetch_sources(
         url_info: RankedUrl, content: str | None, fetch_error: str | None
     ) -> ResearchSource:
         return ResearchSource(
-            **url_info.model_dump(mode="json"), content=content, fetch_error=fetch_error
+            **url_info.model_dump(
+                mode="json",  # pragma: no mutate — RankedUrl has only str/float/int fields
+            ),
+            content=content,
+            fetch_error=fetch_error,
         )
 
     async def _bounded_fetch(url_info: RankedUrl) -> ResearchSource:
@@ -164,7 +168,11 @@ async def _fetch_sources(
                     f"[Snippet only: full page unavailable]\n\n{snippet}",
                     "; ".join(errors),
                 )
-            return _source(url_info, None, "; ".join(errors))
+            return _source(
+                url_info,
+                None,
+                "; ".join(errors),  # pragma: no mutate — deep_research drops contentless sources
+            )
 
     return await asyncio.gather(*[_bounded_fetch(u) for u in ranked_urls])
 
@@ -289,7 +297,9 @@ async def deep_research(
             failed_sources=failed_count,
             error=None,
             integrity_note=_INTEGRITY_NOTE,
-        ).model_dump(mode="json")
+        ).model_dump(
+            mode="json",  # pragma: no mutate — every ResearchResult field is JSON-native
+        )
 
         # Only cache when we have content — avoid masking transient fetch failures
         if valid_sources:
