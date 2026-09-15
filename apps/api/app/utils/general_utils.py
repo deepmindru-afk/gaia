@@ -93,10 +93,10 @@ def transform_gmail_message(msg: Mapping[str, object]) -> GmailMessageSummary:
 
     Keeps every raw key alongside the derived ones.
     """
-    # Composio documents every header field as nullable and omits ``messageText``
-    # under ``verbose=false``; the derived keys are always strings so the result
-    # validates as ``GmailMessageSummary`` whatever the provider left null.
-    if "messageId" in msg and "messageText" in msg:
+    # messageId is the discriminator: a Gmail API resource carries id, never messageId.
+    # messageText cannot be part of the test: Composio omits it under verbose=false.
+    # Every derived key is a string, so the result validates whatever was left null.
+    if "messageId" in msg:
         composio = ComposioGmailMessage.model_validate(msg)
         labels = composio.label_ids or []
         return GmailMessageSummary.model_validate(

@@ -222,7 +222,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         level = wide_log.get_max_level()
         if status_code >= 500:
             level = "ERROR"
-        elif status_code >= 400 and _LEVEL_ORDER[level] < _LEVEL_ORDER[_WARNING]:
+        elif status_code >= 400 and (
+            _LEVEL_ORDER[level] < _LEVEL_ORDER[_WARNING]  # pragma: no mutate -- <= is a no-op here
+        ):
             level = _WARNING
 
         # Store final_level before get() so it appears in the emitted JSON
