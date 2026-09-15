@@ -23,6 +23,7 @@ from enum import StrEnum
 from functools import partial
 
 from app.constants.log_tags import LogTag
+from app.constants.payments import SUBSCRIPTION_WORKFLOW_SYNC_TASK, SubscriptionWorkflowSync
 from app.db.repositories.subscriptions import subscription_repository
 from app.db.repositories.users import user_repository
 from app.models.payment_models import (
@@ -38,7 +39,9 @@ from app.services.analytics_service import (
 )
 from app.services.email import send_pro_subscription_email
 from app.services.payments.plan_cache import invalidate_plan_cache
+from app.utils.redis_utils import RedisPoolManager
 from app.utils.timezone import as_utc
+from app.workers.queue import enqueue_worker_job
 from shared.py.wide_events import log
 
 CENTS_PER_UNIT = 100
@@ -96,10 +99,37 @@ class SubscriptionEventResult:
     user_id: str | None
 
 
+async def _queue_workflow_sync(user_id: str, sync: SubscriptionWorkflowSync) -> None:
+    """Hand an unfinished workflow move to the worker, which owns the retries.
+
+    Dodo's own retry cannot recover this: the row above already carries the
+    reported status, so a redelivery reduces to ``UNCHANGED`` and never reaches
+    the workflows again. The job id is per user and direction, so a second
+    billing event for the same move collapses onto the one already queued.
+    """
+    job_id = f"{SUBSCRIPTION_WORKFLOW_SYNC_TASK}:{user_id}:{sync.value}"
+    try:
+        pool = await RedisPoolManager.get_pool()
+        await enqueue_worker_job(
+            pool, SUBSCRIPTION_WORKFLOW_SYNC_TASK, user_id, sync.value, _job_id=job_id
+        )
+    except Exception as e:
+        # Nothing is left to fall back on, so this line is the only trace the
+        # stranded workflows leave.
+        log.error(
+            f"{LogTag.PAYMENT} Workflow subscription sync could not be queued",
+            error=str(e),
+            error_type=type(e).__name__,
+            user_id=user_id,
+            workflow_sync=sync.value,
+        )
+
+
 async def reactivate_workflows_safely(user_id: str) -> None:
     """Turn a user's paused automation back on once they're paid again. Never
     raises — a workflow-reactivation failure must not turn an otherwise-successful
-    billing webhook into a "failed" result that Dodo would retry."""
+    billing webhook into a "failed" result that Dodo would retry. It is queued
+    for the worker instead, because that retry would not redo it."""
     # Deferred import: breaks a circular dependency. `app.decorators.entitlements`
     # imports `payment_service`, which imports this module; a top-level import of
     # `subscription_pause` would drag the whole workflow/triggers/composio stack
@@ -117,6 +147,7 @@ async def reactivate_workflows_safely(user_id: str) -> None:
             error_type=type(e).__name__,
             user_id=user_id,
         )
+        await _queue_workflow_sync(user_id, SubscriptionWorkflowSync.RESUME)
 
 
 async def deactivate_workflows_safely(user_id: str) -> None:
@@ -135,6 +166,7 @@ async def deactivate_workflows_safely(user_id: str) -> None:
             error_type=type(e).__name__,
             user_id=user_id,
         )
+        await _queue_workflow_sync(user_id, SubscriptionWorkflowSync.PAUSE)
 
 
 async def send_welcome_email_safely(user_id: str) -> None:
