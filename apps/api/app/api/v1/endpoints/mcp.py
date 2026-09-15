@@ -19,6 +19,7 @@ from app.helpers.mcp_helpers import (
 )
 from app.models.user_models import AuthenticatedUser
 from app.schemas.mcp import MCPConnectionTestResponse
+from app.services.analytics_service import AnalyticsEvents, capture_context_event
 from app.services.integrations.integration_resolver import IntegrationResolver
 from app.services.integrations.user_integrations import invalidate_user_integration_caches
 from app.services.mcp.mcp_client import get_mcp_client
