@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.config.settings import settings
 from app.services import turn_telemetry
 from app.services.turn_telemetry import TurnOutcome, begin_turn_all, end_turn_all
 
@@ -60,6 +61,7 @@ class TestBeginFanOut:
             "source": "web",
             "mode": "interactive",
             "tier": "comms_agent",
+            "env": settings.ENV,
             "voice_mode": True,
         }
         agnost_kwargs = services.agnost.begin_turn.call_args.kwargs
@@ -96,13 +98,23 @@ class TestBeginFanOut:
         )
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
-        assert props == {"source": "web", "mode": "background", "tier": "narrator"}
+        assert props == {
+            "source": "web",
+            "mode": "background",
+            "tier": "narrator",
+            "env": settings.ENV,
+        }
 
     def test_missing_source_defaults_to_background(self, services: MagicMock) -> None:
         begin_turn_all(user_id="u1", conversation_id="c1", user_input="hello")
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
-        assert props == {"source": "background", "mode": "interactive", "tier": "comms_agent"}
+        assert props == {
+            "source": "background",
+            "mode": "interactive",
+            "tier": "comms_agent",
+            "env": settings.ENV,
+        }
 
     def test_empty_source_defaults_to_background(self, services: MagicMock) -> None:
         begin_turn_all(user_id="u1", conversation_id="c1", user_input="hello", source="")
@@ -116,7 +128,7 @@ class TestBeginFanOut:
         )
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
-        assert props == {"source": "web", "mode": "m", "tier": "comms_agent"}
+        assert props == {"source": "web", "mode": "m", "tier": "comms_agent", "env": settings.ENV}
 
     def test_all_none_scopes_logs_once(
         self, services: MagicMock, _reset_disabled_flag: None

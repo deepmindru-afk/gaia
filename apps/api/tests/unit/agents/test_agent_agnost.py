@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.agents.core.agent import AgentRunOptions, call_agent_silent
+from app.config.settings import settings
 from app.models.message_models import MessageRequestWithHistory
 
 
@@ -83,6 +84,7 @@ class TestSilentTelemetry:
             "source": "cron",
             "mode": "background",
             "tier": "comms_agent",
+            "env": settings.ENV,
         }
 
         assert mock_agnost_end.call_args.kwargs["output"] == "done reply"

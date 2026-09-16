@@ -11,6 +11,7 @@ from typing import TypedDict
 
 from agnost import Interaction
 
+from app.config.settings import settings
 from app.constants.agents import COMMS_AGENT_NAME
 from app.services import agnost_service, laminar_service, latitude_service
 from app.services.laminar_service import TurnScope
@@ -57,15 +58,17 @@ def begin_turn_all(
     properties: dict[str, str | bool | None] | None = None,
 ) -> TurnHandles:
     """Open all three vendor scopes. Never raises (each service guards)."""
-    # source/mode/tier are owned here so every caller records them identically
-    # (streaming, silent, narrator); anything else rides in properties.
-    # Reserved keys win by application order alone — a caller key colliding
-    # with one is overwritten below, so no separate filter is needed.
+    # source/mode/tier/env are owned here so every caller records them
+    # identically (streaming, silent, narrator); anything else rides in
+    # properties. Reserved keys win by application order alone — a caller key
+    # colliding with one is overwritten below, so no separate filter is needed.
+    # env splits shared dashboards (one org/project across dev/staging/prod).
     props = {
         **(properties or {}),
         "source": source or "background",
         "mode": mode,
         "tier": tier,
+        "env": settings.ENV,
     }
     handles: TurnHandles = {
         "agnost": agnost_service.begin_turn(
