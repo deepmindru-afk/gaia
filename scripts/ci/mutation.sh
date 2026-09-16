@@ -41,6 +41,29 @@ source "$(dirname "$0")/lib/cpu-slots.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+_nproc() { nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2; }
+
+# How many mutant workers ONE mutmut run forks, and therefore exactly how many
+# host CPU tokens the shard that drives it takes.
+#
+# Half the threads (8 on the 16-thread box), not mutmut's own os.cpu_count()
+# default and not the old nproc-2. Measured 2026-09-17: at nproc-2 = 14 a shard
+# could not fit beside another one in the then 16-token pool, so the shards ran
+# strictly one at a time while 19 listeners waited on an otherwise idle box
+# (loadavg 7). The smaller shard is also what keeps a mutant honest under load:
+# when many un-gated jobs overlapped and the loadavg reached 75, mutants started
+# hitting the then 45 s per-test timeout and one module took 138 s where it
+# takes 29 s without the overload. Eight workers is the size that measured clean
+# — two concurrent shards (16 workers) held the loadavg at 5-10 with no
+# timeouts, while four (32 workers, the GAIA_CPU_TOKENS=32 stopgap) reached
+# loadavg 34 and still timed out (run #1202, shards 1/6 and 3/6). The pool
+# default in lib/cpu-slots.sh (nproc * 3 / 2) is what limits how many overlap.
+_mutant_workers() {
+  local threads
+  threads="$(_nproc)"
+  printf '%s' "$(( threads > 1 ? threads / 2 : 1 ))"
+}
+
 # Emit the mutation-check matrix: every changed app module + its test file.
 #
 # Used by the test-mutation lane (code-quality.yml) to run mutation testing
@@ -206,21 +229,20 @@ for entry in entries:
 
   # This shard's CPU appetite: mutmut forks one mutant worker per child, and its
   # own default is os.cpu_count() — 16 on the box, so four shards at max-parallel
-  # would spawn 64 workers on 16 threads. Bound each shard to nproc-2 (the same
-  # budget cmd_local uses; two cores left for the OS and docker) AND take that
-  # many host tokens for the run, so the mutation shards queue against the box's
-  # physical-core budget instead of thrashing it and the test-python/build lanes.
-  # Fail-open and a no-op off the self-hosted box; MUTMUT_MAX_CHILDREN honours an
-  # explicit override for the local runner.
-  local NPROC BUDGET SLOTS
-  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
-  BUDGET="$(( NPROC > 3 ? NPROC - 2 : 1 ))"
-  export MUTMUT_MAX_CHILDREN="${MUTMUT_MAX_CHILDREN:-$BUDGET}"
-  # Acquire tokens for the workers we will ACTUALLY spawn, not the default
-  # budget: an explicit MUTMUT_MAX_CHILDREN override (e.g. a local runner) can
-  # exceed BUDGET, and taking only BUDGET tokens would let the shard run more
-  # workers than it holds slots for, weakening the host cap.
-  SLOTS="$MUTMUT_MAX_CHILDREN"; [ "$SLOTS" -ge "$BUDGET" ] || SLOTS="$BUDGET"
+  # would spawn 64 workers on 16 threads. Bound each shard to _mutant_workers
+  # (nproc/2) AND take EXACTLY that many host tokens, so the shard's weight in
+  # the governor is the number of workers it really runs — no more (which used
+  # to make two shards mutually exclusive) and no less (which would let it
+  # outrun the tokens it holds). An explicit MUTMUT_MAX_CHILDREN is honoured as
+  # given, in both places: it is a smaller appetite as often as a larger one, and
+  # rounding it back up to a fixed budget is what made a deliberately small local
+  # override still hold 14 tokens.
+  export MUTMUT_MAX_CHILDREN="${MUTMUT_MAX_CHILDREN:-$(_mutant_workers)}"
+  local SLOTS="$MUTMUT_MAX_CHILDREN"
+  # Printed, not implied: how heavy a shard decided to be is otherwise invisible
+  # from the lane's output, and "the shards ran one at a time" took a week to
+  # notice for exactly that reason.
+  echo "mutation shard: $MUTMUT_MAX_CHILDREN mutant worker(s), $SLOTS host CPU token(s)"
   cpu_slots_acquire "$SLOTS"
 
   rc=0
@@ -358,7 +380,7 @@ print(
   # of magnitude and thrash — split one budget between them instead. Two cores
   # are left for the OS and docker. Most runs touch one or two modules, so the
   # weighting favours mutmut's children over module fan-out.
-  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+  NPROC="$(_nproc)"
   BUDGET="${MUTATION_CPU_BUDGET:-$(( NPROC > 3 ? NPROC - 2 : 1 ))}"
   JOBS="${MUTATION_JOBS:-$MODULE_COUNT}"
   [ "$JOBS" -gt 4 ] && JOBS=4
@@ -506,6 +528,11 @@ EOF
     echo "ERROR: mutation.sh module — venv python not found (run nx run api:sync first)." >&2
     exit 1
   fi
+
+  # The same worker budget a shard would hand down, so `mutation.sh module` run
+  # by hand does not silently fall back to mutmut's own os.cpu_count() default
+  # (16 on the box) and swamp whatever else is on the machine.
+  export MUTMUT_MAX_CHILDREN="${MUTMUT_MAX_CHILDREN:-$(_mutant_workers)}"
 
   # Per-invocation workdir: parallel-safe isolation for the config swap, the
   # mutants/ dir, and the pytest run. Absolute path: the trap runs after
