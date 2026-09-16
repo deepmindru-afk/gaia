@@ -116,7 +116,9 @@ async def _core_context(user_id: str | None) -> str:
         task = asyncio.ensure_future(_fetch_core_context(user_id))
         _inflight_core[key] = task
         task.add_done_callback(functools.partial(_forget_inflight, key))
-    return await task
+    # Shielded: cancelling one waiter (a client that disconnected mid-turn)
+    # must not cancel the shared task under the sibling still waiting on it.
+    return await asyncio.shield(task)
 
 
 def _split_core_context(core_context: str) -> tuple[str, str, str]:
