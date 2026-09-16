@@ -125,6 +125,16 @@ def app() -> FastAPI:
     async def _http_list_detail_ragged() -> None:
         raise HTTPException(status_code=400, detail=[{"loc": ("body", 0)}, "plain string", 42])
 
+    @router.get("/http-mapping-raw-errors")
+    async def _http_mapping_raw_errors() -> None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Bad",
+                "errors": ["boom", {"loc": "body", "msg": "m", "type": "t"}],
+            },
+        )
+
     @router.get("/http-bad-meta-types")
     async def _http_bad_meta_types() -> None:
         raise HTTPException(
@@ -255,6 +265,20 @@ class TestOneEnvelope:
             ValidationIssue(loc=["body", 0], msg="", type="value_error"),
             ValidationIssue(loc=[], msg="plain string", type="value_error"),
             ValidationIssue(loc=[], msg="42", type="value_error"),
+        ]
+
+    async def test_a_mapping_detail_with_raw_errors_is_normalized_not_a_500(
+        self, client: AsyncClient
+    ) -> None:
+        """Raw entries would fail validation inside the handler; a string ``loc``
+        is one value, never iterated into its characters."""
+        resp = await client.get("/http-mapping-raw-errors")
+        assert resp.status_code == 400
+        assert _envelope(resp.json()).errors == [
+            ValidationIssue(loc=[], msg="boom", type="value_error"),
+            ValidationIssue(
+                loc=[], msg="{'loc': 'body', 'msg': 'm', 'type': 't'}", type="value_error"
+            ),
         ]
 
     async def test_wrongly_typed_declared_fields_are_dropped_not_a_500(
