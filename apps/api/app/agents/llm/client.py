@@ -30,13 +30,7 @@ from app.agents.llm.exceptions import (
     LLM_RETRYABLE_EXCEPTIONS,
     LLMNotConfiguredError,
 )
-from app.agents.llm.types import (
-    LLMFallback,
-    LLMProvider,
-    LLMProviderKey,
-    LLMProviderName,
-    ProviderLLM,
-)
+from app.agents.llm.types import LLMFallback, LLMProvider, ProviderLLM
 from app.config.settings import settings
 from app.constants.llm import (
     AUX_MODEL_NAME,
@@ -65,6 +59,8 @@ from app.constants.llm import (
     SIM_STUB_MODEL_NAME,
     UNKNOWN_MODEL_NAME,
     VISION_MODEL_NAME,
+    LLMProviderKey,
+    LLMProviderName,
 )
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider, providers
