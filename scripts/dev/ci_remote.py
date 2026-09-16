@@ -1025,11 +1025,22 @@ def render_stack(rows: list[StackRow], current_pr: int) -> None:
     print()
 
 
-def collect_advice(report: dict, branch: str) -> list[str]:
-    advice: list[str] = []
+def lane_advice(report: dict) -> list[str]:
+    """What the lanes themselves said to do, plus the stack's own retargets."""
     failing = [v for v in report["verdicts"] if v.get("status") in VERDICT_BAD]
-    for verdict in drop_content_free_rollups(failing):
-        advice.extend(verdict.get("advice", []))
+    advice = [line for v in drop_content_free_rollups(failing) for line in v.get("advice", [])]
+    advice += [
+        f"Retarget #{row['pr']} onto '{row['expected_base']}': "
+        f"`gh pr edit {row['pr']} --base {row['expected_base']}`."
+        for row in report["stack"]
+        if row["base_mismatch"]
+    ]
+    return advice
+
+
+def state_advice(report: dict, branch: str) -> list[str]:
+    """What the PR's own state says to do — conflicts, threads, reruns, reviews."""
+    advice: list[str] = []
     pr = report["pr"]
     counts = report["counts"]
     if pr["mergeable"] == "CONFLICTING":
@@ -1059,14 +1070,18 @@ def collect_advice(report: dict, branch: str) -> list[str]:
         )
     if pr["review_decision"] == "CHANGES_REQUESTED":
         advice.append("A reviewer requested changes — address them, then re-request review.")
-    for row in report["stack"]:
-        if row["base_mismatch"]:
-            advice.append(
-                f"Retarget #{row['pr']} onto '{row['expected_base']}': "
-                f"`gh pr edit {row['pr']} --base {row['expected_base']}`."
-            )
+    return advice
+
+
+def collect_advice(report: dict, branch: str) -> list[str]:
+    """Every next step, in order, with the repeats dropped.
+
+    Two lanes can carry the same advice line — the mutation shards all point
+    at `mise mutation:replay` — and printing it once per shard buries the
+    others.
+    """
     deduped: list[str] = []
-    for line in advice:
+    for line in lane_advice(report) + state_advice(report, branch):
         if line not in deduped:
             deduped.append(line)
     return deduped

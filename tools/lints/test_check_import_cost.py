@@ -125,7 +125,7 @@ def test_every_tracked_module_in_the_layers_is_measured_without_being_listed(
     class Proc:
         stdout = listed
 
-    monkeypatch.setattr(cost.subprocess, "run", lambda *_a, **_k: Proc())
+    monkeypatch.setattr("check_import_cost.subprocess.run", lambda *_a, **_k: Proc())
     assert cost.tracked_modules() == ["app.constants", "app.constants.brand_new"]
 
 

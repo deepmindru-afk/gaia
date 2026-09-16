@@ -10,6 +10,8 @@ read, not invented.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -49,8 +51,16 @@ RUNNERS_JSON = json.dumps(
 )
 
 
+@dataclass
+class Health:
+    """The probe and the pool it reads, so a test can seed one and run the other."""
+
+    pool: Path
+    run: Callable[..., dict]
+
+
 @pytest.fixture
-def health(tmp_path: Path):
+def health(tmp_path: Path) -> Health:
     """Run `runner.sh health` against a private pool and a stubbed `gh`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -76,27 +86,26 @@ def health(tmp_path: Path):
         )
         return json.loads(proc.stdout)
 
-    run.pool = pool  # type: ignore[attr-defined]
-    return run
+    return Health(pool=pool, run=run)
 
 
-def test_the_listener_pool_is_reported_as_online_busy_and_idle(health) -> None:
-    report = health()
+def test_the_listener_pool_is_reported_as_online_busy_and_idle(health: Health) -> None:
+    report = health.run()
     assert report["listeners"] == {"online": 2, "busy": 1, "idle": 1, "registered": 3}
 
 
-def test_a_gh_that_cannot_answer_leaves_the_pool_null_rather_than_zero(health) -> None:
+def test_a_gh_that_cannot_answer_leaves_the_pool_null_rather_than_zero(health: Health) -> None:
     """Zero online reads as "the box is dead"; unknown must not be mistaken for it."""
-    report = health(gh_body="exit 1")
+    report = health.run(gh_body="exit 1")
     assert report["listeners"] == {"online": None, "busy": None, "idle": None, "registered": None}
     # Everything the box itself knows is still there.
     assert report["threads"] > 0
     assert set(report["loadavg"]) == {"1m", "5m", "15m"}
 
 
-def test_a_live_cpu_slot_grant_is_counted_against_the_pool(health) -> None:
+def test_a_live_cpu_slot_grant_is_counted_against_the_pool(health: Health) -> None:
     (health.pool / "holders" / f"{os.getpid()}.4242").write_text("6")
-    report = health()
+    report = health.run()
     slots = report["cpu_slots"]
     assert slots["total"] == 16
     assert slots["held"] == 6
@@ -106,27 +115,27 @@ def test_a_live_cpu_slot_grant_is_counted_against_the_pool(health) -> None:
     assert holder["alive"] is True
 
 
-def test_a_grant_whose_holder_is_gone_is_shown_but_not_counted(health) -> None:
+def test_a_grant_whose_holder_is_gone_is_shown_but_not_counted(health: Health) -> None:
     """A SIGKILLed job leaks its holder file; reading it as held hides real capacity."""
     (health.pool / "holders" / "999999999.1").write_text("8")
-    report = health()
+    report = health.run()
     slots = report["cpu_slots"]
     assert slots["held"] == 0
     assert slots["available"] == 16
     assert [h["alive"] for h in slots["holders"]] == [False]
 
 
-def test_the_report_counts_the_processes_that_actually_eat_the_box(health) -> None:
-    report = health()
+def test_the_report_counts_the_processes_that_actually_eat_the_box(health: Health) -> None:
+    report = health.run()
     assert set(report["processes"]) == {"mutmut", "pytest", "runner_listeners"}
     # This very test runs under pytest, so the count cannot be zero — which is
     # what proves the count is read rather than defaulted.
     assert report["processes"]["pytest"] >= 1
 
 
-def test_health_never_writes_to_the_pool_it_reads(health) -> None:
+def test_health_never_writes_to_the_pool_it_reads(health: Health) -> None:
     (health.pool / "holders" / f"{os.getpid()}.1").write_text("3")
-    health()
+    health.run()
     assert [p.name for p in (health.pool / "holders").iterdir()] == [f"{os.getpid()}.1"]
 
 
