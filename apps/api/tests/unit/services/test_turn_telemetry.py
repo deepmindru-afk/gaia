@@ -52,6 +52,7 @@ class TestBeginFanOut:
                 conversation_id="c1",
                 user_input="hello",
                 source="web",
+                mode="interactive",
                 properties={"voice_mode": True},
             )
         )
@@ -110,7 +111,7 @@ class TestBeginFanOut:
         }
 
     def test_missing_source_defaults_to_background(self, services: MagicMock) -> None:
-        begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello"))
+        begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", mode="interactive"))
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
         assert props == {
@@ -121,7 +122,7 @@ class TestBeginFanOut:
         }
 
     def test_empty_source_defaults_to_background(self, services: MagicMock) -> None:
-        begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", source=""))
+        begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", source="", mode="interactive"))
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
         assert props["source"] == "background"
@@ -147,8 +148,8 @@ class TestBeginFanOut:
         services.latitude.begin_turn.return_value = None
         services.laminar.begin_turn.return_value = None
         with patch("app.services.turn_telemetry.log") as mock_log:
-            begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello"))
-            begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello"))
+            begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", mode="interactive"))
+            begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", mode="interactive"))
 
             mock_log.info.assert_called_once_with(
                 "turn_telemetry_no_scopes", reason="keys unset or all begins failed"
@@ -162,7 +163,7 @@ class TestBeginFanOut:
         services.laminar.begin_turn.return_value = None
         with patch("app.services.turn_telemetry.log") as mock_log:
             handles = begin_turn_all(
-                TurnSpec(user_id="u1", conversation_id="c1", user_input="hello")
+                TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", mode="m")
             )
 
             assert handles["agnost"] is not None

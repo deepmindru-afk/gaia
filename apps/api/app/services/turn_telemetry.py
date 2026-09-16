@@ -56,13 +56,17 @@ class TurnSpec:
     point — streaming, silent, narrator, executor, HIL-approval — opens its
     turn the same way. ``source``/``mode``/``tier``/``env`` are owned by the
     fan-out (uniformity is the point); anything else rides in ``properties``.
+
+    ``mode`` has deliberately NO default: every turn knows whether a user is
+    waiting on it, and a default would let a future reader (or mutant) blur
+    interactive and background turns into each other silently.
     """
 
     user_id: str
     conversation_id: str
     user_input: str
+    mode: str
     source: str | None = None
-    mode: str = "interactive"
     tier: str = COMMS_AGENT_NAME
     properties: dict[str, str | bool | None] | None = None
 
