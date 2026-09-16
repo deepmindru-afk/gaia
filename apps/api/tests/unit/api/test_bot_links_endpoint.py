@@ -776,6 +776,38 @@ class TestRedeemLinkCode:
         ]
         assert "CODE123" not in str(event)
 
+    async def test_the_in_flight_answer_is_audited_as_a_redemption_already_running(self):
+        """The twin holds the claim, so no user id is known yet -- the bot is the actor."""
+        body = RedeemLinkCodeRequest(platform="telegram", platform_user_id="TG42", code="CODE123")
+        request = MagicMock()
+        request.state = _make_request()
+
+        with (
+            patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
+            patch(
+                CLAIM_PATCH,
+                new_callable=AsyncMock,
+                return_value=LinkCodeClaim(in_flight=True),
+            ),
+            patch(LINKED_LOOKUP_PATCH, new_callable=AsyncMock, return_value=None),
+        ):
+            async with log_context("redeem_link_code_test"):
+                result = await redeem_link_code(request, body)
+                event = dict(log.get())
+
+        assert result.linked is True
+        assert event["outcome"] == "success"
+        assert event["is_new_link"] is False
+        assert event["audit"] == [
+            {
+                "msg": "platform link code already being redeemed by this account",
+                "actor": AUDIT_ACTOR_BOT_API,
+                "resource": "TG42",
+                "provider": "telegram",
+            }
+        ]
+        assert "CODE123" not in str(event)
+
     @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
     async def test_account_linked_elsewhere_returns_409(
         self, _auth: AsyncMock, client: AsyncClient
