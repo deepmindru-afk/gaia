@@ -7,7 +7,6 @@ import type {
 export type {
   ApiCallConfig,
   BulkActionRequest,
-  MarkAllReadSummary,
   ModalConfig,
   NotificationContent,
   NotificationView,

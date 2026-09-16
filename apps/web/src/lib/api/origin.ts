@@ -1,5 +1,5 @@
 /** The schema's own path prefix; every generated `paths` key carries it. */
-export const SCHEMA_PREFIX = "/api/v1";
+const SCHEMA_PREFIX = "/api/v1";
 
 /**
  * The server root the generated `paths` hang off, from a configured base URL.
