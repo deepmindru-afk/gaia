@@ -209,12 +209,14 @@ class TestClaimReleaseDiscard:
     ) -> None:
         code = await mint_platform_link_code("user1", PREFS)
         await claim_platform_link_code(code)
-        svc.redis_cache.client.set.side_effect = RedisError("down")
+        errors = [RedisError(f"down {n}") for n in range(PLATFORM_LINK_CODE_CLAIM_ATTEMPTS)]
+        svc.redis_cache.client.set.side_effect = errors
         svc.redis_cache.client.set.await_count = 0
 
-        with pytest.raises(RedisError):
+        with pytest.raises(RedisError) as excinfo:
             await discard_platform_link_code(code)
 
+        assert excinfo.value is errors[-1]
         assert svc.redis_cache.client.set.await_count == PLATFORM_LINK_CODE_CLAIM_ATTEMPTS
 
     async def test_a_spend_whose_record_delete_fails_still_kills_the_code(
