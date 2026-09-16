@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import UJSONResponse
 from pydantic import BaseModel
 
 from app.constants.memory import (
@@ -28,7 +29,9 @@ from app.constants.memory import (
     EMBEDDING_SIDECAR_MAX_TEXT_CHARS,
     EMBEDDING_SIDECAR_SLOT_WAIT_SECONDS,
 )
+from app.core.exception_handlers import register_exception_handlers
 from app.memory.embeddings import _embed_query_sync, _embed_sync, _rerank_sync
+from app.schemas.errors import ERROR_RESPONSES, error_responses
 from shared.py.wide_events import log
 
 # fastembed is sync and CPU-bound. Running it directly in these async handlers
@@ -64,13 +67,19 @@ async def _inference_slot() -> AsyncIterator[None]:
         _inference_slots.release()
 
 
+# The sidecar is a second FastAPI app, so it needs the envelope declared and
+# its handlers registered explicitly — a hand-rolled responses dict here is how
+# a second error shape gets onto the wire without anyone noticing.
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
-    413: {"description": "A text exceeds EMBEDDING_SIDECAR_MAX_TEXT_CHARS."},
-    503: {
-        "description": "All inference slots stayed busy for the slot-wait budget.",
-        "headers": {"Retry-After": {"schema": {"type": "integer"}}},
-    },
+    **ERROR_RESPONSES,
+    **error_responses(
+        {
+            413: "A text exceeds EMBEDDING_SIDECAR_MAX_TEXT_CHARS.",
+            503: "All inference slots stayed busy for the slot-wait budget.",
+        }
+    ),
 }
+_ERROR_RESPONSES[503]["headers"] = {"Retry-After": {"schema": {"type": "integer"}}}
 
 
 def _reject_oversized(texts: list[str]) -> None:
@@ -115,7 +124,10 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="GAIA Embedding Sidecar", lifespan=_lifespan)
+app = FastAPI(
+    title="GAIA Embedding Sidecar", lifespan=_lifespan, default_response_class=UJSONResponse
+)
+register_exception_handlers(app)
 
 
 @app.get("/health")

@@ -38,11 +38,13 @@ class RequestTimeoutMiddleware:
     def __init__(
         self,
         app: ASGIApp,
-        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        timeout: float | None = None,
         exclude_prefixes: tuple[str, ...] = TIMEOUT_EXCLUDE_PREFIXES,
     ) -> None:
         self.app = app
-        self.timeout = timeout
+        # Resolved here, not as a default argument: a default is bound at class
+        # definition, so the module constant would stop being the live budget.
+        self.timeout = DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
         self.exclude_prefixes = exclude_prefixes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

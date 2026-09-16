@@ -5,6 +5,7 @@ IS its execution order. Two orderings here are load-bearing and neither was
 asserted anywhere; the module had no unit test at all.
 """
 
+import inspect
 from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
@@ -110,12 +111,18 @@ class TestRateLimitHandler:
         configure_middleware(app)
         assert app.exception_handlers[RateLimitExceeded] is rate_limit_handler
 
+    def test_the_handler_is_sync_so_slowapi_cannot_discard_it(self) -> None:
+        """``sync_check_limits`` drops a coroutine handler and emits slowapi's
+        own ``{"error": ...}`` body, taking every default-limit 429 off the envelope."""
+        assert not inspect.iscoroutinefunction(rate_limit_handler)
+
     @staticmethod
-    def _app_that_is_rate_limited(retry_after: int | None) -> FastAPI:
+    def _app_that_is_rate_limited(*, record_window: bool) -> FastAPI:
         app = FastAPI()
         app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
+        item = parse("5/minute")
         limit = Limit(
-            parse("5/minute"),
+            item,
             key_func=lambda: "client",
             scope=None,
             per_method=False,
@@ -127,28 +134,28 @@ class TestRateLimitHandler:
         )
 
         @app.get("/limited")
-        async def limited() -> None:
-            exc = RateLimitExceeded(limit)
-            if retry_after is not None:
-                exc.retry_after = retry_after
-            raise exc
+        async def limited(request: Request) -> None:
+            if record_window:
+                # What Limiter.__evaluate_limits stamps just before it raises.
+                request.state.view_rate_limit = (item, ["client", "/limited"])
+            raise RateLimitExceeded(limit)
 
         return app
 
-    def test_the_429_body_is_the_envelope_with_the_retry_hint(self) -> None:
-        resp = TestClient(self._app_that_is_rate_limited(30)).get("/limited")
+    def test_the_429_body_is_the_envelope_with_a_real_retry_after_header(self) -> None:
+        resp = TestClient(self._app_that_is_rate_limited(record_window=True)).get("/limited")
         assert resp.status_code == 429
         assert resp.json() == {
             "message": "Too many requests, slow down",
             "code": "rate_limit_exceeded",
-            "retry_after": 30,
         }
+        assert 0 < int(resp.headers["retry-after"]) <= 60
 
-    def test_no_retry_hint_is_an_explicit_null(self) -> None:
-        resp = TestClient(self._app_that_is_rate_limited(None)).get("/limited")
+    def test_an_unknown_window_omits_the_header_instead_of_shipping_a_null(self) -> None:
+        resp = TestClient(self._app_that_is_rate_limited(record_window=False)).get("/limited")
         assert resp.status_code == 429
         assert resp.json() == {
             "message": "Too many requests, slow down",
             "code": "rate_limit_exceeded",
-            "retry_after": None,
         }
+        assert "retry-after" not in resp.headers
