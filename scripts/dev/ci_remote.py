@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 import io
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -107,6 +108,11 @@ NO_STATE_MARK = "MUTATION RUN FAILED (no state produced)"
 PYTEST_TIMEOUT_RE = re.compile(r"Timeout >\d+(?:\.\d+)?s")
 # A module outcome that is a test weakness, not an infrastructure casualty.
 MUTATION_WEAKNESS = ("survivors", "gap")
+RUNNER_HEALTH_TIMEOUT_S = 20
+# Load per thread past which the box is thrashing rather than working. The
+# 15-min average was measured at ~18.5 on 16 threads (2.3x) while the same PR
+# took 11.3 min loaded against 3.6 min idle; 1.5x is the shoulder before that.
+OVERSUBSCRIBED_LOAD_RATIO = 1.5
 GREPTILE_SCORE_RE = re.compile(r"Confidence Score:\s*(\d+)\s*/\s*(\d+)")
 GREPTILE_COMMIT_RE = re.compile(r"Last reviewed commit:.*?\]\((\S*?/commit/([0-9a-f]{7,40}))\)")
 
@@ -818,6 +824,59 @@ def build_stack(repo: Repo, payload: dict) -> list[StackRow]:
     return rows
 
 
+# -------------------------------------------------------------------------- runner health
+
+
+def runner_health() -> dict | None:
+    """Ask the box what it is doing, when this IS the box. None everywhere else.
+
+    A queued lane looks identical whether the host is thrashing or the GitHub
+    pool is simply full, and the two have opposite fixes. Silent off the box:
+    a laptop's load average says nothing about CI.
+    """
+    script = Path(__file__).resolve().parents[1] / "ci" / "runner.sh"
+    if not script.exists():
+        return None
+    try:
+        proc = subprocess.run(
+            ["bash", str(script), "health"],
+            capture_output=True,
+            text=True,
+            timeout=RUNNER_HEALTH_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        health = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    return health if health.get("is_runner_host") else None
+
+
+def health_line(health: dict) -> str:
+    """One line naming which of the two queueing causes this box is in."""
+    threads = health["threads"] or 1
+    load = health["loadavg"]["1m"]
+    slots = health["cpu_slots"]
+    listeners = health["listeners"]
+    procs = health["processes"]
+    if load > threads * OVERSUBSCRIBED_LOAD_RATIO:
+        verdict = "BOX OVERSUBSCRIBED"
+    elif listeners["online"] and not listeners["idle"]:
+        verdict = "GITHUB POOL SATURATED — every listener is busy"
+    else:
+        verdict = "box has headroom"
+    return (
+        f"BOX: {verdict} | load {load}/{health['loadavg']['5m']}/{health['loadavg']['15m']} "
+        f"on {threads} threads | cpu slots {slots['held']}/{slots['total']} held | "
+        f"listeners {listeners['idle']} idle of {listeners['online']} online | "
+        f"{procs['mutmut']} mutmut, {procs['pytest']} pytest"
+    )
+
+
 # ---------------------------------------------------------------------------- rendering
 
 
@@ -1015,6 +1074,8 @@ def collect_advice(report: dict, branch: str) -> list[str]:
 
 def render(report: dict, verbose: bool) -> None:
     header(report)
+    if report["runner_health"]:
+        print(f"  {health_line(report['runner_health'])}")
     print()
     render_failures(report, verbose)
     render_pending(report)
@@ -1106,6 +1167,7 @@ def snapshot_once(repo: Repo, pr_number: int, branch: str, with_stack: bool) -> 
         "fallback_tails": tails,
         "sources": sources,
         "stack": stack_rows,
+        "runner_health": runner_health(),
         "unresolved_thread_count": unresolved,
         "thread_count_total": thread_total,
         "threads_truncated": thread_total > 100,

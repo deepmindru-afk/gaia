@@ -173,6 +173,9 @@ def wire(monkeypatch: pytest.MonkeyPatch):
             lambda *_a, **_k: (7, "https://github.com/o/r/pull/7", "abc123"),
         )
         monkeypatch.setattr(ci_remote, "fetch_stack", lambda _repo: stack)
+        # Off the box by default: the real call shells out to runner.sh, and a
+        # suite whose output depends on the host's load average is not a test.
+        monkeypatch.setattr(ci_remote, "runner_health", lambda: None)
         return fake
 
     return install
@@ -1027,6 +1030,7 @@ def rich_stack(wire, monkeypatch: pytest.MonkeyPatch):
         payload = json.dumps(
             {"data": {"repository": {f"p{n}": rich_pr(n, b, h) for n, b, h in prs}}}
         )
+
         def router(
             args: list[str], timeout_s: int, stdin_text: str | None = None
         ) -> tuple[int, str, str]:
@@ -1099,3 +1103,89 @@ def test_stack_mode_refuses_to_be_combined_with_another_mode(
         run_cli(monkeypatch, ["--stack", "--watch"])
     assert exc.value.code == 2
     assert "its own mode" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------------ runner health
+
+
+def health(**over: Any) -> dict[str, Any]:
+    """`runner.sh health` output for a box with room to spare."""
+    base: dict[str, Any] = {
+        "is_runner_host": True,
+        "listeners": {"online": 11, "busy": 3, "idle": 8, "registered": 11},
+        "loadavg": {"1m": 4.0, "5m": 5.0, "15m": 6.0},
+        "threads": 16,
+        "cpu_slots": {"dir": "/run/gaia-ci/cpu-slots", "total": 16, "held": 4, "available": 12},
+        "processes": {"mutmut": 1, "pytest": 2, "runner_listeners": 11},
+    }
+    return {**base, **over}
+
+
+def test_a_queued_lane_on_a_thrashing_box_says_the_box_is_the_problem(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Load far above the thread count is a box to wait for, not a pool to grow."""
+    wire(FakeGh(checks=[PASSED_CHECK]))
+    loaded = health(loadavg={"1m": 31.0, "5m": 28.0, "15m": 24.0})
+    monkeypatch.setattr(ci_remote, "runner_health", lambda: loaded)
+    run_cli(monkeypatch, [])
+    out = capsys.readouterr().out
+    assert "BOX: BOX OVERSUBSCRIBED" in out
+    assert "load 31.0/28.0/24.0 on 16 threads" in out
+    assert "cpu slots 4/16 held" in out
+    assert "1 mutmut, 2 pytest" in out
+
+
+def test_a_quiet_box_with_every_listener_busy_blames_the_github_pool(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The opposite cause, and the opposite fix: more listeners, not less load."""
+    wire(FakeGh(checks=[PASSED_CHECK]))
+    saturated = health(listeners={"online": 11, "busy": 11, "idle": 0, "registered": 11})
+    monkeypatch.setattr(ci_remote, "runner_health", lambda: saturated)
+    run_cli(monkeypatch, [])
+    out = capsys.readouterr().out
+    assert "GITHUB POOL SATURATED" in out
+    assert "BOX OVERSUBSCRIBED" not in out
+
+
+def test_a_box_with_room_says_so_rather_than_implying_a_problem(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wire(FakeGh(checks=[PASSED_CHECK]))
+    monkeypatch.setattr(ci_remote, "runner_health", lambda: health())
+    run_cli(monkeypatch, [])
+    assert "BOX: box has headroom" in capsys.readouterr().out
+
+
+def test_off_the_box_the_line_is_absent_rather_than_empty(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A laptop's load average says nothing about CI, so it says nothing."""
+    wire(FakeGh(checks=[PASSED_CHECK]))
+    run_cli(monkeypatch, [])
+    assert "BOX:" not in capsys.readouterr().out
+
+
+def test_runner_health_stays_silent_when_the_host_is_not_the_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The script answers `is_runner_host: false` off the box; that is a None here."""
+
+    class Proc:
+        returncode = 0
+        stdout = json.dumps(health(is_runner_host=False))
+
+    monkeypatch.setattr(ci_remote.subprocess, "run", lambda *_a, **_k: Proc())
+    assert ci_remote.runner_health() is None
+
+
+def test_a_health_probe_that_fails_is_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A diagnostic must never be able to fail the command it is decorating."""
+
+    class Proc:
+        returncode = 2
+        stdout = "not json"
+
+    monkeypatch.setattr(ci_remote.subprocess, "run", lambda *_a, **_k: Proc())
+    assert ci_remote.runner_health() is None
