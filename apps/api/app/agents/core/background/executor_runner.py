@@ -65,7 +65,6 @@ from app.core.stream_manager import StreamManager
 from app.models.agent_models import AgentConfigurable
 from app.models.chat_models import ToolDataEntry
 from app.services.analytics_service import AnalyticsEvents, capture_event
-from app.services.turn_telemetry import begin_turn_all, end_turn_all
 from app.services.hil.approvals_store import (
     list_parked_subagents_for_conversation,
     set_resume_item,
@@ -79,6 +78,7 @@ from app.services.latency_metrics import (
     observe_executor_ttft,
     span,
 )
+from app.services.turn_telemetry import TurnSpec, begin_turn_all, end_turn_all
 from app.utils.agent_utils import format_sse_data
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import WorkflowContext, get_trace_id, log, wide_task
@@ -165,18 +165,20 @@ async def run_executor_background(
         # three dashboards — live runs only fold coarsely into the parent
         # comms turn, and detached runs orphan entirely.
         telemetry = begin_turn_all(
-            user_id=executor_user_id,
-            conversation_id=run.conversation_id,
-            user_input=task,
-            source=configurable.get("conversation_source"),
-            mode="background",
-            tier=EXECUTOR_TIER_NAME,
+            TurnSpec(
+                user_id=executor_user_id,
+                conversation_id=run.conversation_id,
+                user_input=task,
+                source=configurable.get("conversation_source"),
+                mode="background",
+                tier=EXECUTOR_TIER_NAME,
             properties={
                 "task_id": run.task_id,
                 "queued": run.queued,
                 "workflow_execution_id": run.workflow_execution_id,
             },
         )
+    )
         try:
             with span() as elapsed_active:
                 result = await _execute_executor(task, configurable, run.stream_id, resume)

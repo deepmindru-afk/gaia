@@ -22,7 +22,7 @@ from app.helpers.agent_helpers import (
     execute_graph_silent,
 )
 from app.models.user_models import AuthenticatedUser
-from app.services.turn_telemetry import begin_turn_all, end_turn_all
+from app.services.turn_telemetry import TurnSpec, begin_turn_all, end_turn_all
 from app.utils.agent_utils import strip_internal_agent_tags
 from app.utils.user_preferences_utils import onboarding_preferences
 from shared.py.wide_events import log
@@ -74,12 +74,14 @@ async def narrate_executor_result(
     # parent turn or orphaning spans. Opened only once the graph exists — a
     # missing graph means no turn ran, so there is nothing to record.
     telemetry = begin_turn_all(
-        user_id=user.get("user_id") or "",
-        conversation_id=conversation_id,
-        user_input=result_text,
-        mode="background",
-        tier=NARRATOR_TIER_NAME,
-        properties={"msg_type": msg_type},
+        TurnSpec(
+            user_id=user.get("user_id") or "",
+            conversation_id=conversation_id,
+            user_input=result_text,
+            mode="background",
+            tier=NARRATOR_TIER_NAME,
+            properties={"msg_type": msg_type},
+        )
     )
     try:
         user_preferences, writing_style = onboarding_preferences(user.get("onboarding"))

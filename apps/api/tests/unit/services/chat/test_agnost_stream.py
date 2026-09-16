@@ -159,12 +159,12 @@ class TestTurnTelemetry:
             )
 
         mock_begin_all.assert_called_once()
-        begin_kwargs = mock_begin_all.call_args.kwargs
-        assert begin_kwargs["user_id"] == "user_abc"
-        assert begin_kwargs["conversation_id"] == "conv_existing_123"
-        assert begin_kwargs["user_input"] == "Follow-up"
-        assert begin_kwargs["source"] is None
-        assert begin_kwargs["properties"] == {
+        spec = mock_begin_all.call_args.args[0]
+        assert spec.user_id == "user_abc"
+        assert spec.conversation_id == "conv_existing_123"
+        assert spec.user_input == "Follow-up"
+        assert spec.source is None
+        assert spec.properties == {
             "voice_mode": False,
             "is_new_conversation": False,
             "selected_tool": None,
@@ -242,7 +242,7 @@ class TestTurnTelemetry:
                 _text_then_nostream("Follow", "Follow-up complete"),
             )
 
-        assert mock_begin_all.call_args.kwargs["user_id"] == ""
+        assert mock_begin_all.call_args.args[0].user_id == ""
 
     async def test_telemetry_explosion_never_breaks_the_turn(self, test_user, existing_conv_body):
         """Sabotage below the services: the real fan-out must still not break the turn."""
@@ -368,7 +368,7 @@ class TestTurnTelemetry:
                 source="desktop",
             )
 
-        assert mock_begin_all.call_args.kwargs["source"] == "desktop"
+        assert mock_begin_all.call_args.args[0].source == "desktop"
 
     async def test_error_frame_marks_posthog_completed_with_error(
         self, test_user, existing_conv_body
@@ -472,13 +472,13 @@ class TestApprovalTurnTelemetry:
         ):
             assert await self._resolve(sm, "approve") is True
 
-        begin_kwargs = mock_begin.call_args.kwargs
-        assert begin_kwargs["user_id"] == "user_abc"
-        assert begin_kwargs["conversation_id"] == "conv_hil_1"
-        assert begin_kwargs["user_input"] == "yes do it"
-        assert begin_kwargs["source"] == "telegram"
-        assert begin_kwargs["mode"] == "interactive"
-        assert begin_kwargs["properties"] == {"approval_flow": "hil_classifier"}
+        spec = mock_begin.call_args.args[0]
+        assert spec.user_id == "user_abc"
+        assert spec.conversation_id == "conv_hil_1"
+        assert spec.user_input == "yes do it"
+        assert spec.source == "telegram"
+        assert spec.mode == "interactive"
+        assert spec.properties == {"approval_flow": "hil_classifier"}
         assert mock_end.call_args.args[0] is mock_begin.return_value
         assert mock_end.call_args.kwargs["output"] == HIL_ACK_APPROVED
         assert mock_end.call_args.kwargs.get("error") is None

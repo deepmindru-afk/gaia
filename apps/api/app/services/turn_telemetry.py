@@ -6,6 +6,7 @@ identically in every dashboard: user-cancelled stays separable from failure
 everywhere, errors carry the same exception, properties match.
 """
 
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypedDict
 
@@ -47,48 +48,56 @@ class TurnHandles(TypedDict):
 _disabled_logged = False
 
 
-def begin_turn_all(
-    *,
-    user_id: str,
-    conversation_id: str,
-    user_input: str,
-    source: str | None = None,
-    mode: str = "interactive",
-    tier: str = COMMS_AGENT_NAME,
-    properties: dict[str, str | bool | None] | None = None,
-) -> TurnHandles:
+@dataclass(frozen=True)
+class TurnSpec:
+    """What identifies a turn across all three backends.
+
+    A single value (instead of seven parallel arguments) so every entry
+    point — streaming, silent, narrator, executor, HIL-approval — opens its
+    turn the same way. ``source``/``mode``/``tier``/``env`` are owned by the
+    fan-out (uniformity is the point); anything else rides in ``properties``.
+    """
+
+    user_id: str
+    conversation_id: str
+    user_input: str
+    source: str | None = None
+    mode: str = "interactive"
+    tier: str = COMMS_AGENT_NAME
+    properties: dict[str, str | bool | None] | None = None
+
+
+def begin_turn_all(spec: TurnSpec) -> TurnHandles:
     """Open all three vendor scopes. Never raises (each service guards)."""
-    # source/mode/tier/env are owned here so every caller records them
-    # identically (streaming, silent, narrator); anything else rides in
-    # properties. Reserved keys win by application order alone — a caller key
-    # colliding with one is overwritten below, so no separate filter is needed.
+    # Reserved keys win by application order alone — a caller key colliding
+    # with one is overwritten below, so no separate filter is needed.
     # env splits shared dashboards (one org/project across dev/staging/prod).
     props = {
-        **(properties or {}),
-        "source": source or "background",
-        "mode": mode,
-        "tier": tier,
+        **(spec.properties or {}),
+        "source": spec.source or "background",
+        "mode": spec.mode,
+        "tier": spec.tier,
         "env": settings.ENV,
     }
     handles: TurnHandles = {
         "agnost": agnost_service.begin_turn(
-            user_id=user_id,
-            conversation_id=conversation_id,
-            user_input=user_input,
+            user_id=spec.user_id,
+            conversation_id=spec.conversation_id,
+            user_input=spec.user_input,
             agent_name=COMMS_AGENT_NAME,
             properties=props,
         ),
         "latitude": latitude_service.begin_turn(
-            user_id=user_id,
-            conversation_id=conversation_id,
+            user_id=spec.user_id,
+            conversation_id=spec.conversation_id,
             agent_name=COMMS_AGENT_NAME,
             properties=props,
         ),
         "laminar": laminar_service.begin_turn(
-            user_id=user_id,
-            conversation_id=conversation_id,
+            user_id=spec.user_id,
+            conversation_id=spec.conversation_id,
             agent_name=COMMS_AGENT_NAME,
-            user_input=user_input,
+            user_input=spec.user_input,
             properties=props,
         ),
     }

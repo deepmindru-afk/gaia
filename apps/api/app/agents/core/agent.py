@@ -55,7 +55,7 @@ from app.models.agent_models import (
 from app.models.message_models import MessageRequestWithHistory
 from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents, capture_event
-from app.services.turn_telemetry import begin_turn_all, end_turn_all
+from app.services.turn_telemetry import TurnSpec, begin_turn_all, end_turn_all
 from app.utils.user_preferences_utils import onboarding_preferences
 from shared.py.wide_events import log
 
@@ -384,11 +384,13 @@ async def call_agent_silent(
     stream_id = str(uuid4())
     user_id = user.get("user_id")
     telemetry = begin_turn_all(
-        user_id=user_id or "",
-        conversation_id=conversation_id,
-        user_input=request.message,
-        source=source,
-        mode="background",
+        TurnSpec(
+            user_id=user_id or "",
+            conversation_id=conversation_id,
+            user_input=request.message,
+            source=source,
+            mode="background",
+        )
     )
     try:
         graph, initial_state, config = await _core_agent_logic(

@@ -101,7 +101,7 @@ class TestSilentTelemetry:
                     user={"user_id": ""},
                 )
 
-        assert mock_begin_all.call_args.kwargs["user_id"] == ""
+        assert mock_begin_all.call_args.args[0].user_id == ""
 
     async def test_failure_records_and_still_raises(self, test_user, body):
         with (

@@ -316,13 +316,13 @@ class TestNarratorTelemetry:
                 == "voiced"
             )
 
-        begin_kwargs = mock_begin.call_args.kwargs
-        assert begin_kwargs["user_id"] == "user-1"
-        assert begin_kwargs["conversation_id"] == CONVERSATION_ID
-        assert begin_kwargs["user_input"] == RESULT_TEXT
-        assert begin_kwargs["mode"] == "background"
-        assert begin_kwargs["tier"] == "narrator"
-        assert begin_kwargs["properties"] == {"msg_type": "result"}
+        spec = mock_begin.call_args.args[0]
+        assert spec.user_id == "user-1"
+        assert spec.conversation_id == CONVERSATION_ID
+        assert spec.user_input == RESULT_TEXT
+        assert spec.mode == "background"
+        assert spec.tier == "narrator"
+        assert spec.properties == {"msg_type": "result"}
         assert mock_end.call_args.args[0] is mock_begin.return_value
         end_kwargs = mock_end.call_args.kwargs
         assert end_kwargs["output"] == "voiced"
@@ -382,4 +382,4 @@ class TestNarratorTelemetry:
         ):
             await narrate_executor_result(RESULT_TEXT, "result", CONVERSATION_ID, {"user_id": ""})
 
-        assert mock_begin.call_args.kwargs["user_id"] == ""
+        assert mock_begin.call_args.args[0].user_id == ""

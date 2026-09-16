@@ -295,7 +295,7 @@ class TestInitializeNewConversation:
                 stream_id="s1",
             )
         call_kwargs = mock_create.call_args.kwargs
-        assert call_kwargs.get("generate_description") is False
+        assert call_kwargs["options"].generate_description is False
 
     async def test_uses_provided_conversation_id(self, test_user, basic_body):
         mock_conv = _created_conversation("forced_id", "New Chat")
@@ -312,7 +312,7 @@ class TestInitializeNewConversation:
                 stream_id="s1",
             )
         call_kwargs = mock_create.call_args.kwargs
-        assert call_kwargs.get("conversation_id") == "forced_id"
+        assert call_kwargs["options"].conversation_id == "forced_id"
 
     async def test_description_included_in_init_chunk(self, test_user, basic_body):
         mock_conv = _created_conversation("conv_id", "Chat about the weather")
@@ -677,6 +677,7 @@ class TestRunChatStreamBackground:
         assert props["queued"] is False
         assert props["e2e_ack_ms"] <= props["e2e_full_ms"]
         assert "ttft_ms" not in props
+        assert "source" not in props
 
     async def test_source_is_carried_onto_the_terminal_event(self, test_user, existing_conv_body):
         """`source` is what lets one event name span web, desktop and bots.

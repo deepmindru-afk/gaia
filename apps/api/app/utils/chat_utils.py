@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import cast
 
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
@@ -74,16 +75,27 @@ async def _generate_description_from_message(
         return "New Chat"
 
 
+@dataclass(frozen=True)
+class CreateConversationOptions:
+    """How to create the conversation, beyond the message itself.
+
+    Bundled so the function signature stays reviewable — seven parallel
+    arguments tripped the complexity ratchet, and every one of these rides
+    together from the same call sites.
+    """
+
+    selected_workflow: SelectedWorkflowData | None = None
+    generate_description: bool = True
+    conversation_id: str | None = None
+    is_onboarding_demo: bool = False
+
+
 @traceable(name="Create Conversation")
 async def create_conversation(
     last_message: MessageDict | None,
     user: AuthenticatedUser,
-    selectedTool: str | None | None,
-    *,
-    selectedWorkflow: SelectedWorkflowData | None | None = None,
-    generate_description: bool = True,
-    conversation_id: str | None = None,
-    is_onboarding_demo: bool = False,
+    selectedTool: str | None,
+    options: CreateConversationOptions | None = None,
 ) -> ConversationModel:
     """
     Create a new conversation with optional description generation.
@@ -92,21 +104,20 @@ async def create_conversation(
         last_message: The user's message to generate description from
         user: User information
         selectedTool: Optional tool selection
-        selectedWorkflow: Optional workflow selection
-        generate_description: If False, uses "New Chat" as placeholder
-        conversation_id: Optional pre-generated conversation ID (for background streaming)
+        options: Creation options (workflow, description, id override, demo flag)
     """
+    opts = options or CreateConversationOptions()
     log.set(user_id=user.get("user_id"), selected_tool=selectedTool)
     # Use provided ID or generate new one
-    uuid_value = conversation_id or uuid7str()
+    uuid_value = opts.conversation_id or uuid7str()
 
     description = (
         "New Chat"
-        if not generate_description
+        if not opts.generate_description
         else await _generate_description_from_message(
             last_message,
             selectedTool,
-            selectedWorkflow,
+            opts.selected_workflow,
             user_id=user.get("user_id") or "",
             conversation_id=str(uuid_value),
         )
@@ -115,7 +126,7 @@ async def create_conversation(
     conversation = ConversationModel(
         conversation_id=str(uuid_value),
         description=description,
-        is_onboarding_demo=is_onboarding_demo,
+        is_onboarding_demo=opts.is_onboarding_demo,
     )
 
     await create_conversation_service(conversation, user)

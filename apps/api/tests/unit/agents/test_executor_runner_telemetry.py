@@ -67,14 +67,14 @@ class TestExecutorTurn:
         ):
             await run_executor_background(run, "do the thing", config, None)  # type: ignore[arg-type]
 
-        begin_kwargs = mock_begin.call_args.kwargs
-        assert begin_kwargs["user_id"] == "user-1"
-        assert begin_kwargs["conversation_id"] == "conv-1"
-        assert begin_kwargs["user_input"] == "do the thing"
-        assert begin_kwargs["source"] == "web"
-        assert begin_kwargs["mode"] == "background"
-        assert begin_kwargs["tier"] == "executor"
-        assert begin_kwargs["properties"] == {
+        spec = mock_begin.call_args.args[0]
+        assert spec.user_id == "user-1"
+        assert spec.conversation_id == "conv-1"
+        assert spec.user_input == "do the thing"
+        assert spec.source == "web"
+        assert spec.mode == "background"
+        assert spec.tier == "executor"
+        assert spec.properties == {
             "task_id": "task-1",
             "queued": True,
             "workflow_execution_id": "wfexec-1",
