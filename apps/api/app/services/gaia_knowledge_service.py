@@ -1,18 +1,15 @@
 """
 Service for managing GAIA self-knowledge in ChromaDB.
 
-The corpus is tiny (a few dozen docs) and production never writes it — the only
-writers are the offline populate script and an explicit clear. So ``search_knowledge``
-serves from an in-memory snapshot: it loads the corpus once, then ranks locally by
-cosine similarity. A turn pays one query embedding instead of a Chroma round trip
-plus a corpus re-embed.
+The corpus is tiny and production never writes it, so search_knowledge serves
+from an in-memory snapshot: it loads the corpus once, then ranks locally by
+cosine similarity. A turn pays one query embedding instead of a Chroma round
+trip plus a corpus re-embed.
 
-``add_knowledge_batch``/``clear_knowledge`` drop the snapshot, so a write in THIS
-process is visible on the very next search. The populate script runs in a separate
+add_knowledge_batch and clear_knowledge drop the snapshot, so a write in this
+process is visible on the next search. The offline populate script is a separate
 process, so its writes are picked up at the next TTL refresh
-(``GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS``) rather than immediately — an hour of
-staleness after a manual, deploy-time re-populate, which is why the TTL is the
-cross-process bound and not a signal.
+(GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS); the TTL is the cross-process bound.
 """
 
 import asyncio
@@ -83,11 +80,9 @@ def _dot(left: Sequence[float], right: Sequence[float]) -> float:
     return sum(a * b for a, b in zip(left, right))
 
 
-#: Load locks per event loop: an asyncio.Lock binds to the loop that first awaits
-#: it, and this service is a process singleton. Keyed by the loop object (weakly,
-#: so a finished loop is not retained) — keying by ``id(loop)`` collides when a
-#: short-lived loop is collected and its id reused, handing a new loop a lock
-#: bound to a dead one.
+#: Load locks per event loop, since an asyncio.Lock binds to the loop that first
+#: awaits it and this service is a process singleton. Keyed weakly by the loop
+#: object: keying by id(loop) collides once a dead loop's id is reused.
 _load_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
     weakref.WeakKeyDictionary()
 )

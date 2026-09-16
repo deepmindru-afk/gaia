@@ -82,20 +82,18 @@ async def _fetch_core_context(user_id: str) -> str:
         return ""
 
 
-#: One in-flight core fetch per (event loop, user). The two core-memory sections
-#: run in the same ``asyncio.gather`` and would otherwise each pay the whole
-#: fetch; sharing the task pays it once. Keyed by loop so a task bound to a
-#: closed loop (tests, reloads) is never awaited from another.
+#: One in-flight core fetch per (event loop, user): the two core-memory sections
+#: share the task instead of each paying the fetch. Keyed by loop so a task bound
+#: to a closed loop (tests, reloads) is never awaited from another.
 _inflight_core: dict[tuple[asyncio.AbstractEventLoop, str], asyncio.Task[str]] = {}
 
 
 def _forget_inflight(key: tuple[asyncio.AbstractEventLoop, str], task: asyncio.Task[str]) -> None:
     """Drop the finished fetch, if it is still the registered one.
 
-    Eviction is load-bearing, not cleanup: without it the registry would retain
-    every user's core context for the process's life. Nothing consumes the task's
-    result — ``_fetch_core_context`` catches and returns ``""``, so it never holds
-    an exception to retrieve.
+    Eviction is load-bearing: without it the registry would retain every user's
+    core context for the process's life. The task never holds an exception to
+    retrieve, because _fetch_core_context catches and returns an empty string.
     """
     if _inflight_core.get(key) is task:
         del _inflight_core[key]
@@ -203,11 +201,9 @@ async def build_gaia_knowledge_block(ctx: SectionContext) -> str:
 async def build_tracked_todos_block(ctx: SectionContext) -> str:
     """Active tracked-todo summary, with this run's bound todo pinned.
 
-    The summary is rendered from the user-scoped list the repository caches under
-    the user's generation — cleared by every todo write, so it is never staler
-    than the last write. The pin is applied here because it is per-run binding,
-    not per-user state, and a user-keyed cache of the pinned form would leak one
-    run's binding onto every other turn.
+    Rendered from the list the repository caches under the user's generation, so
+    it is never staler than the last write. The pin is applied here because it is
+    per-run binding; a user-keyed cache of the pinned form would leak across turns.
     """
     if not ctx.user_id:
         return ""
