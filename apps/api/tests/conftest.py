@@ -219,10 +219,22 @@ _rate_limiting_patches = [
 # runner where that port is firewalled the socket hangs to the pytest timeout,
 # and the mutation lane — which runs each module's test files in ISOLATION —
 # has no lucky ordering to mask it. Fence it the way Mongo is: patch the
-# connection seam (app.db.redis._new_client, the app's wrapper around the lazy
-# redis.from_url) so a hermetic run gets an in-process client whose awaited
+# connection seam so a hermetic run gets an in-process client whose awaited
 # commands never touch the network. Under USE_REAL_SERVICES=1 nothing is
 # patched and the real client is reached untouched.
+#
+# The seam is redis.asyncio.from_url, the lowest point that builds a connection
+# pool, NOT the app's _new_client wrapper around it. Patching the wrapper leaves
+# RedisCache's own construction logic unrun and silently defeats the tests of
+# that class, which patch from_url themselves (3 of them in unit/db).
+#
+# Not fakeredis, though it is already a dev dependency. Measured: a module-level
+# FakeServer binds its asyncio primitives to the first event loop that touches
+# it, so pytest-asyncio's per-test loops raise "Queue is bound to a different
+# event loop" (13 tests), and real lock/SET-NX semantics change control flow so
+# downstream calls never happen (39 more) — 121 failures in all. A library that
+# keeps per-loop state cannot back one import-time singleton shared by every
+# loop in the session; this stand-in is stateless, so it can.
 #
 # Benign defaults keep hermetic tests correct: reads report "nothing there"
 # (llen/exists -> 0, get/lpop/getdel -> None, lrange/keys -> [], hgetall -> {}),
@@ -375,7 +387,7 @@ _infra_patches = (
             return_value=MagicMock(),
         ),
         patch(
-            "app.db.redis._new_client",
+            "app.db.redis.redis.from_url",
             return_value=_fence_redis_client,
         ),
     ]
@@ -388,7 +400,7 @@ for p in _patches:
 # Unlike Mongo's _get_mongodb_instance (called lazily on first use), RedisCache
 # builds its client eagerly in __init__ (redis.from_url is lazy, so no socket —
 # but the object is a REAL client), and importing app.models.payment_models
-# above already ran that constructor before the _new_client patch started. The
+# above already ran that constructor before the from_url patch started. The
 # patch fences future construction (the redis_cache.client re-init path and any
 # new RedisCache()); re-point the singleton built at import at the fake too, so
 # every access path — redis_cache.client, redis_cache.redis, and the module-level
