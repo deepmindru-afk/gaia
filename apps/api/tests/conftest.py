@@ -187,6 +187,16 @@ _always_patches = [
     # the settings-module binding too, or every run dials the real vault.
     patch("app.config.settings.inject_infisical_secrets", return_value=None),
     patch("shared.py.secrets.inject_infisical_secrets", return_value=None),
+]
+
+# Started by the _rate_limiting_fence fixture, NOT in the import-time loop
+# below. patch() only resolves its string target when start() runs, and
+# app.decorators.rate_limiting drags in the tiered limiter -> the middleware
+# package -> workos, langgraph and the payment/cost services: ~3 s of import
+# that a process which never rate-limits anything (collection, a unit file, a
+# mutation stats run) has no reason to pay. A session fixture starts them
+# before the first test and the fence is unchanged from a test's point of view.
+_rate_limiting_patches = [
     patch(
         "app.decorators.rate_limiting.payment_service.get_user_subscription_status",
         new_callable=AsyncMock,
@@ -290,6 +300,18 @@ def _hermetic_allowed_keys() -> frozenset[str]:
 _HERMETIC_FAKE_KEYS = {
     "GOOGLE_API_KEY": "sk-hermetic-test-key-not-real",  # pragma: allowlist secret
 }
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _rate_limiting_fence() -> Iterator[None]:
+    """Mock the tiered limiter and the subscription lookup for the whole session."""
+    for p in _rate_limiting_patches:
+        p.start()
+    try:
+        yield
+    finally:
+        for p in reversed(_rate_limiting_patches):
+            p.stop()
 
 
 @pytest.fixture(scope="session", autouse=True)
