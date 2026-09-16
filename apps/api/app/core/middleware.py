@@ -11,12 +11,9 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from workos import AsyncWorkOSClient
 
-from app.api.v1.middleware import (
-    LoggingMiddleware,
-    PostHogRequestContextMiddleware,
-    ProfilingMiddleware,
-    WorkOSAuthMiddleware,
-)
+from app.api.v1.middleware.auth import PostHogRequestContextMiddleware, WorkOSAuthMiddleware
+from app.api.v1.middleware.logging import LoggingMiddleware
+from app.api.v1.middleware.profiling import ProfilingMiddleware
 from app.api.v1.middleware.rate_limiter import limiter
 from app.api.v1.middleware.timeout import RequestTimeoutMiddleware
 from app.api.v1.middleware.websocket_wide_event import WebSocketWideEventMiddleware
