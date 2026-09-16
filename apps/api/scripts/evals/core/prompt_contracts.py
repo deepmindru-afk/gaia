@@ -232,7 +232,7 @@ CLAUSES: tuple[Clause, ...] = (
         name="bubble_splitting",
         source="comms",
         starts_at="## Chat Bubbles",
-        ends_before="## Rich UI Components (OpenUI), CRITICAL",
+        ends_before="TONE IS NOT INTENT:",
         governs="conversational messages split into bubbles; structured data stays in one",
         depends_on=("gate:bubble_boundary", "data/quality/bubbles.yaml"),
     ),
