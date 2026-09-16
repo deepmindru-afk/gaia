@@ -674,8 +674,13 @@ class TestAFailedWorkflowSyncIsOwedToTheWorker:
             await deactivate_workflows_safely(FAKE_USER_ID)
 
         assert mock_log.error.call_count == 2
-        assert mock_log.error.call_args.kwargs["user_id"] == FAKE_USER_ID
-        assert "could not be queued" in mock_log.error.call_args.args[0]
+        mock_log.error.assert_called_with(
+            f"{LogTag.PAYMENT} Workflow subscription sync could not be queued",
+            error="redis down",
+            error_type="ConnectionError",
+            user_id=FAKE_USER_ID,
+            workflow_sync=SubscriptionWorkflowSync.PAUSE.value,
+        )
 
     async def test_the_welcome_mail_names_who_was_mailed_not_where(
         self, mock_webhook_users_collection, mock_webhook_send_email
@@ -820,6 +825,7 @@ class TestResultsNameTheOwnerAndTheRow:
         result = await _apply(SubscriptionEventKind.RENEWED)
 
         assert result == SubscriptionEventResult(SubscriptionEventOutcome.APPLIED, FAKE_USER_ID)
+        mock_webhook_subscription_repository.get_by_dodo_id.assert_awaited_once_with("sub_xyz789")
         dodo_id, update = (
             mock_webhook_subscription_repository.apply_update_by_dodo_id.await_args.args
         )
@@ -872,3 +878,53 @@ class TestResultsNameTheOwnerAndTheRow:
                 "subscription_id": "sub_xyz789",
             }
         ]
+
+
+@pytest.mark.unit
+class TestTheWriteTimeStaleFence:
+    """Fence the write on the event clock, not only the read.
+
+    The row is a snapshot, so a second delivery can apply a newer event between
+    that read and this write, and a write the fence refuses is stale too.
+    """
+
+    async def test_the_update_is_fenced_on_the_events_own_clock(
+        self,
+        mock_webhook_subscription_repository,
+        mock_track_subscription,
+        mock_subscription_plan_cache_drop,
+    ) -> None:
+        mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(return_value=_row())
+
+        await _apply(SubscriptionEventKind.ON_HOLD)
+
+        assert mock_webhook_subscription_repository.apply_update_by_dodo_id.await_args.kwargs == {
+            "if_not_newer_than": NOW
+        }
+
+    async def test_a_refused_write_is_stale_on_the_record_and_fires_nothing(
+        self,
+        mock_webhook_subscription_repository,
+        mock_track_subscription,
+        mock_subscription_plan_cache_drop,
+    ) -> None:
+        row_owner = "507f1f77bcf86cd799439022"
+        mock_webhook_subscription_repository.get_by_dodo_id = AsyncMock(
+            return_value=_row(user_id=row_owner)
+        )
+        mock_webhook_subscription_repository.apply_update_by_dodo_id = AsyncMock(return_value=False)
+
+        async with captured_wide_event() as wide:
+            result = await _apply(SubscriptionEventKind.ON_HOLD)
+
+        assert result == SubscriptionEventResult(SubscriptionEventOutcome.STALE, row_owner)
+        assert wide["warnings"] == [
+            {
+                "msg": f"{LogTag.PAYMENT} Stale subscription event ignored at write time",
+                "event_kind": "on_hold",
+                "subscription_id": "sub_xyz789",
+                "event_at": "2025-03-02T00:00:00Z",
+            }
+        ]
+        mock_subscription_plan_cache_drop.assert_not_awaited()
+        mock_track_subscription.assert_not_called()
