@@ -19,6 +19,7 @@ import { wideLog, withWideEvent } from "../utils/wide-events";
 import {
   type OutboundAttachment,
   type OutboundMessageEnvelope,
+  type OutboundReaction,
   outboundMessageEnvelopeSchema,
 } from "./envelope";
 import {
@@ -50,6 +51,17 @@ type DeliverFileFn = (
   attachment: OutboundAttachment,
 ) => Promise<void>;
 
+/**
+ * Attaches an emoji reaction to an existing platform message. `isChannel`
+ * tells the adapter whether `destinationId` is a channel/group id or a user
+ * id, same as the text path.
+ */
+export type DeliverReactionFn = (
+  destinationId: string,
+  reaction: OutboundReaction,
+  isChannel: boolean,
+) => Promise<void>;
+
 export class OutboundConsumer {
   private conn: Awaited<ReturnType<typeof connect>> | null = null;
   private channel: Channel | null = null;
@@ -57,14 +69,26 @@ export class OutboundConsumer {
   private reconnectDelayMs = RECONNECT_BASE_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly logger: BotLogger;
+  private readonly deliverReaction: DeliverReactionFn;
 
   constructor(
     private readonly platform: PlatformName,
     private readonly url: string,
     private readonly deliver: DeliverFn,
     private readonly deliverFile: DeliverFileFn,
+    deliverReaction?: DeliverReactionFn,
   ) {
     this.logger = createBotLogger(platform, "outbound-consumer");
+    // Platforms without a native reaction path keep the old behavior: the
+    // emoji goes out as a text bubble. Explicit, logged at the call site.
+    this.deliverReaction =
+      deliverReaction ??
+      (async (destinationId, reaction, isChannel) => {
+        wideLog.warning("outbound_reaction_fallback_text", {
+          platform: this.platform,
+        });
+        await this.deliver(destinationId, reaction.emoji, isChannel);
+      });
   }
 
   async start(): Promise<void> {
@@ -210,7 +234,20 @@ export class OutboundConsumer {
         wideLog.set({
           envelope_id: env.id,
           has_attachment: Boolean(env.attachment),
+          has_reaction: Boolean(env.reaction),
         });
+
+        if (env.reaction) {
+          await this.handleReaction(
+            channel,
+            msg,
+            env.id,
+            env.destination_id,
+            env.reaction,
+            env.is_channel,
+          );
+          return;
+        }
 
         if (env.attachment) {
           await this.handleAttachment(
@@ -311,8 +348,37 @@ export class OutboundConsumer {
   }
 
   /**
-   * Text path. The schema's refine guarantees text or text_parts when there is
-   * no attachment; a multi-bubble notification arrives as ordered `text_parts`
+   * Reaction path. One idempotent platform call — attaching the same emoji
+   * twice is a no-op upstream — so unlike the text path there is no partial
+   * state to protect: failure dead-letters for inspection, it never requeues
+   * (a redelivered reaction would double-attach nothing, but the ack already
+   * failed once and spamming retries at the user is worse than a DLQ entry).
+   */
+  private async handleReaction(
+    channel: Channel,
+    msg: ConsumeMessage,
+    id: string,
+    destinationId: string,
+    reaction: OutboundReaction,
+    isChannel: boolean,
+  ): Promise<void> {
+    try {
+      await this.deliverReaction(destinationId, reaction, isChannel);
+      wideLog.set({ redelivered: msg.fields.redelivered });
+      this.settle(channel, () => channel.ack(msg));
+    } catch (err) {
+      wideLog.error(
+        "outbound_reaction_failed",
+        { envelope_id: id, redelivered: msg.fields.redelivered },
+        err,
+      );
+      this.settle(channel, () => channel.nack(msg, false, false));
+    }
+  }
+
+  /**
+   * Text path. The schema's refine guarantees text, text_parts, attachment, or
+   * reaction; a multi-bubble notification arrives as ordered `text_parts`
    * (one logical message) and its bubbles MUST be sent in order, so they are
    * delivered sequentially within this single handle.
    */

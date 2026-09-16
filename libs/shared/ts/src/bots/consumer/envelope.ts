@@ -35,6 +35,17 @@ export const outboundAttachmentSchema = z.object({
   caption: z.string().nullish(),
 });
 
+/**
+ * A native emoji reaction to an existing platform message. Mirrors
+ * ``OutboundReaction`` in ``apps/api/app/schemas/outbound.py``.
+ */
+export const outboundReactionSchema = z.object({
+  /** Platform-native id of the message to react to. */
+  target_platform_message_id: z.string().min(1),
+  /** Single emoji to attach. */
+  emoji: z.string().min(1),
+});
+
 export const outboundMessageEnvelopeSchema = z
   .object({
     /** Unique id (idempotency + tracing). */
@@ -62,14 +73,21 @@ export const outboundMessageEnvelopeSchema = z
     text_parts: z.array(z.string()).nullish(),
     /** A file to deliver (PDF/docx/etc.) — optional. */
     attachment: outboundAttachmentSchema.nullish(),
+    /** A native emoji reaction to an existing platform message — optional. */
+    reaction: outboundReactionSchema.nullish(),
     /** ISO-8601 enqueue timestamp. */
     enqueued_at: z.string(),
   })
   .refine(
     (e) =>
-      Boolean(e.text) || Boolean(e.text_parts?.length) || Boolean(e.attachment),
-    { message: "envelope requires text, text_parts, or attachment" },
+      Boolean(e.text) ||
+      Boolean(e.text_parts?.length) ||
+      Boolean(e.attachment) ||
+      Boolean(e.reaction),
+    { message: "envelope requires text, text_parts, attachment, or reaction" },
   );
+
+export type OutboundReaction = z.infer<typeof outboundReactionSchema>;
 
 export type OutboundAttachment = z.infer<typeof outboundAttachmentSchema>;
 export type OutboundMessageEnvelope = z.infer<

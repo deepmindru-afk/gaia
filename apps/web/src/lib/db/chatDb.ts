@@ -1,6 +1,6 @@
 import Dexie, { type IndexableType, type Table } from "dexie";
 import { EventEmitter } from "events";
-
+import type { MessageReaction } from "@/config/registries/baseMessageRegistry";
 import type { ToolDataEntry } from "@/config/registries/toolRegistry";
 import type { SystemPurpose } from "@/features/chat/api/chatApi";
 import type { SelectedCalendarEventData } from "@/stores/calendarEventSelectionStore";
@@ -75,6 +75,13 @@ export interface IMessage {
     content: string;
     role: "user" | "assistant";
   } | null;
+
+  // Backend message kind ("text" | "emoji_ack").
+  kind?: string | null;
+  // GAIA id of the message an emoji_ack reacts to.
+  reacts_to_message_id?: string | null;
+  // Reactions folded onto this message for render (see foldReactionAcks).
+  reactions?: MessageReaction[] | null;
 }
 
 class MessageQueue {

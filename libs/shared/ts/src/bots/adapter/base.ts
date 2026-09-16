@@ -36,7 +36,10 @@
 import { Analytics, type AnalyticsContext, BOT_EVENTS } from "../../analytics";
 import { GaiaClient } from "../api";
 import { loadConfig } from "../config";
-import type { OutboundAttachment } from "../consumer/envelope";
+import type {
+  OutboundAttachment,
+  OutboundReaction,
+} from "../consumer/envelope";
 import { OutboundConsumer } from "../consumer/outbound-consumer";
 import type {
   AuthStatus,
@@ -268,6 +271,8 @@ export abstract class BaseBotAdapter {
       url,
       (id, text, isChannel) => this.deliverOutbound(id, text, isChannel),
       (id, attachment) => this.deliverOutboundFile(id, attachment),
+      (id, reaction, isChannel) =>
+        this.deliverOutboundReaction(id, reaction, isChannel),
     );
     void this._outboundConsumer.start();
   }
@@ -412,6 +417,25 @@ export abstract class BaseBotAdapter {
       `I created *${attachment.filename}*, but I can't send files on ${this.platform} yet.`,
       false, // the file path only ever targets a DM
     );
+  }
+
+  /**
+   * Attaches an emoji reaction to an existing platform message. Called by the
+   * outbound consumer when an envelope carries a `reaction`. The default sends
+   * the emoji as a text bubble via {@link deliverOutbound}; platforms with a
+   * native reaction API override this to attach it to the target message (and
+   * fall back to the text bubble when the attach call fails, so the ack is
+   * never lost).
+   */
+  protected async deliverOutboundReaction(
+    destinationId: string,
+    reaction: OutboundReaction,
+    isChannel: boolean,
+  ): Promise<void> {
+    wideLog.warning("outbound_reaction_fallback_text", {
+      target_platform_message_id: reaction.target_platform_message_id,
+    });
+    await this.deliverOutbound(destinationId, reaction.emoji, isChannel);
   }
 
   // ---------------------------------------------------------------------------

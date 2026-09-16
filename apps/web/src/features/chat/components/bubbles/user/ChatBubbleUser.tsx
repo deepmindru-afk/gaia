@@ -15,6 +15,7 @@ import type { FileData } from "@/types/shared/fileTypes";
 import { parseDate } from "@/utils/date/dateUtils";
 
 import ChatBubble_Actions from "../actions/ChatBubble_Actions";
+import { MessageReactions } from "../MessageReactions";
 import ChatBubbleFilePreview from "./ChatBubbleFilePreview";
 
 const DEFAULT_FILE_DATA: FileData[] = [];
@@ -116,6 +117,7 @@ export default function ChatBubbleUser({
   replyToMessage,
   queued,
   failed,
+  reactions,
   disableActions = false,
   onRetry,
   isRetrying,
@@ -204,6 +206,12 @@ export default function ChatBubbleUser({
             </div>
           )}
         </div>
+
+        {reactions && reactions.length > 0 && (
+          <div className="flex justify-end pr-1">
+            <MessageReactions reactions={reactions} align="end" />
+          </div>
+        )}
 
         {/* Queued: show a persistent "Queued" label, no date or actions. */}
         {!disableActions && queued && (

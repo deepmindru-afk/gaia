@@ -114,6 +114,8 @@ const mapApiMessagesToStored = (
       selectedWorkflow: message.selectedWorkflow,
       replyToMessageId: message.replyToMessage?.id ?? null,
       replyToMessageData: message.replyToMessage ?? null,
+      kind: message.kind ?? null,
+      reacts_to_message_id: message.reacts_to_message_id ?? null,
     } satisfies IMessage;
   });
 

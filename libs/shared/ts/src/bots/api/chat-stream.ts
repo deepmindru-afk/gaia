@@ -191,6 +191,9 @@ async function streamChatOnce(
         platform_user_id: request.platformUserId,
         channel_id: request.channelId,
         is_dm: request.isDm ?? false,
+        ...(request.platformMessageId
+          ? { platform_message_id: request.platformMessageId }
+          : {}),
         ...(request.fileIds && request.fileIds.length > 0
           ? { file_ids: request.fileIds }
           : {}),
