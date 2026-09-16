@@ -12,10 +12,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from httpx import AsyncClient
 import pytest
+from redis.exceptions import RedisError
 
 from app.config.settings import settings
 from app.constants.auth import AUDIT_ACTOR_BOT_API, AUDIT_ACTOR_UNAUTHENTICATED
-from app.constants.cache import PLATFORM_LINK_TOKEN_PREFIX, PLATFORM_LINK_TOKEN_TTL
+from app.constants.cache import (
+    PLATFORM_LINK_CODE_TTL,
+    PLATFORM_LINK_TOKEN_PREFIX,
+    PLATFORM_LINK_TOKEN_TTL,
+)
 from app.constants.general import NEW_MESSAGE_BREAKER
 from app.models.bot_models import (
     CreateLinkTokenRequest,
@@ -1048,6 +1053,31 @@ class TestRedeemLinkCode:
         assert response.status_code == 402
         mock_complete.assert_not_awaited()
         mock_discard.assert_not_awaited()
+
+    async def test_a_spend_that_fails_after_a_successful_link_still_answers_linked(self):
+        """The link and its greeting already happened; a Redis blip at spend time is logged, not a 500."""
+        request = MagicMock()
+        request.state = _make_request()
+        with (
+            patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
+            patch(CLAIM_PATCH, new_callable=AsyncMock, return_value=_claimed()),
+            patch(DISCARD_PATCH, new_callable=AsyncMock, side_effect=RedisError("down")),
+            patch(RELEASE_PATCH, new_callable=AsyncMock) as mock_release,
+            patch("app.api.v1.endpoints.bot_links.require_platform_plan", new=AsyncMock()),
+            patch(COMPLETE_PATCH, new_callable=AsyncMock, return_value=_completion()),
+            patch("app.api.v1.endpoints.bot_links.log") as mock_log,
+        ):
+            result = await redeem_link_code(request, RedeemLinkCodeRequest(**REDEEM_BODY))
+
+        assert result.linked is True
+        assert result.delivered is True
+        mock_release.assert_not_awaited()
+        mock_log.error.assert_called_once_with(
+            "platform link code could not be spent after the link was written",
+            error_type="RedisError",
+            error="down",
+            replay_window_seconds=PLATFORM_LINK_CODE_TTL,
+        )
 
     async def test_a_successful_redemption_stamps_the_wide_event_and_the_audit_trail(self):
         """Linking a platform account is an auth-grade event: the audit entry is
