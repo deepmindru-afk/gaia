@@ -16,15 +16,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone as _timezone, tzinfo as _tzinfo
 from enum import Enum
+import functools
 import re
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, available_timezones
 
 from langchain_core.runnables import RunnableConfig
 
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
 
+
 # ``±HH:MM`` fixed-offset form (e.g. "+05:30", "-08:00").
+@functools.cache
+def _known_zone_names() -> frozenset[str]:
+    """Read the tz database's key list once; membership never touches the filesystem."""
+    return frozenset(available_timezones())
+
+
 _OFFSET_RE = re.compile(r"^(?P<sign>[+-])(?P<hours>\d{2}):(?P<minutes>\d{2})$")
 
 
@@ -122,14 +130,15 @@ class Timezone:
 
     @classmethod
     def _from_zone_name(cls, candidate: str) -> Timezone | None:
-        """IANA name → zone; None when the tz database does not know it."""
-        try:
-            return cls(candidate, ZoneInfo(candidate))
-        except (ZoneInfoNotFoundError, ValueError, OSError):
-            # Unknown key, a bad shape ("../x") or a name too long for the tz
-            # database to even open: the caller treats None as "no usable
-            # zone" and its own log line says which input.
+        """IANA name to zone; None when the tz database does not list it.
+
+        Membership is checked against the database's key list first, so an
+        unknown name, a bad shape ("../x") or one too long for a path never
+        touches the filesystem, and a read that fails on a real key raises.
+        """
+        if candidate not in _known_zone_names():
             return None
+        return cls(candidate, ZoneInfo(candidate))
 
     @property
     def is_utc(self) -> bool:
