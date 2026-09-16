@@ -1,37 +1,36 @@
+import type {
+  SupportRequestCreate,
+  SupportRequestSubmissionResponse,
+} from "@shared/api/generated";
 import { apiauth } from "@/lib/api/client";
 
-export interface SupportRequest {
-  type: "support" | "feature";
-  title: string;
-  description: string;
-  attachments?: File[];
-}
-
-export interface SupportResponse {
-  success: boolean;
-  message: string;
-  ticket_id?: string;
-}
+export type {
+  SupportRequestCreate,
+  SupportRequestSubmissionResponse,
+} from "@shared/api/generated";
 
 class SupportApiService {
   /**
    * Submit a support or feature request
    */
-  async submitRequest(requestData: SupportRequest): Promise<SupportResponse> {
+  async submitRequest(
+    requestData: SupportRequestCreate,
+    attachments?: File[],
+  ): Promise<SupportRequestSubmissionResponse> {
     try {
       // If there are attachments, use FormData
-      if (requestData.attachments && requestData.attachments.length > 0) {
+      if (attachments && attachments.length > 0) {
         const formData = new FormData();
         formData.append("type", requestData.type);
         formData.append("title", requestData.title);
         formData.append("description", requestData.description);
 
         // Append each attachment
-        requestData.attachments.forEach((file) => {
+        attachments.forEach((file) => {
           formData.append("attachments", file);
         });
 
-        const response = await apiauth.post<SupportResponse>(
+        const response = await apiauth.post<SupportRequestSubmissionResponse>(
           "support/requests/with-attachments",
           formData,
           {
@@ -43,13 +42,9 @@ class SupportApiService {
         return response.data;
       } else {
         // No attachments, use regular JSON
-        const response = await apiauth.post<SupportResponse>(
+        const response = await apiauth.post<SupportRequestSubmissionResponse>(
           "support/requests",
-          {
-            type: requestData.type,
-            title: requestData.title,
-            description: requestData.description,
-          },
+          requestData,
         );
         return response.data;
       }

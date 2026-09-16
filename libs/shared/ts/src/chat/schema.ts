@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ToolDataEntry } from "../api/generated";
 
 /**
  * Zod mirror of the chat SSE event vocabulary. The single source of truth for
@@ -18,6 +19,12 @@ import { z } from "zod";
 // Structured payloads
 // ---------------------------------------------------------------------------
 
+// The one payload here that IS a documented API model. `satisfies
+// z.ZodType<ToolDataEntry>` makes the generator the arbiter: drop a required
+// field or narrow one and the type-check fails instead of the parser silently
+// rejecting live frames. The validator stays deliberately looser than the
+// model (`data: unknown`, extra per-tool keys) — a parse boundary may accept
+// more than the model promises, never less.
 const ToolDataEntrySchema = z
   .object({
     tool_name: z.string(),
@@ -27,7 +34,7 @@ const ToolDataEntrySchema = z
     subagent_id: z.string().optional(),
   })
   // Per-tool variants (tool_calls_data, mcp_app, …) carry extra keys.
-  .loose();
+  .loose() satisfies z.ZodType<ToolDataEntry>;
 
 const ToolOutputPayloadSchema = z.object({
   tool_call_id: z.string(),
