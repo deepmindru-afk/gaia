@@ -37,15 +37,11 @@ export const MAIN_NORMAL_WIDTH = 1400;
 export const MAIN_NORMAL_HEIGHT = 900;
 
 /**
- * Resolve the loader window size for a given work area.
+ * Resolve the loader window size for a given work area, in CSS pixels.
  *
- * Pure (no Electron dependency) so it is unit-testable: 72% of the work area,
- * clamped to the usable bounds, and never larger than the work area itself —
- * so the loader fits on every screen from a tiny 800×600 panel to a 4K
- * display.
- *
- * @param workArea - The display work-area size in CSS pixels.
- * @returns `{ width, height }` in CSS pixels, guaranteed to fit.
+ * 72% of the work area, clamped to the usable bounds and never larger than the
+ * work area itself, so it fits everything from an 800×600 panel to a 4K display.
+ * Kept free of Electron imports so it stays unit-testable.
  */
 export function resolveLoaderSize(workArea: WorkAreaSize): {
   width: number;

@@ -88,10 +88,8 @@ export function reportFailure(
   if (globalThis.window !== undefined) {
     trackEvent(ANALYTICS_EVENTS.API_REQUEST_FAILED, {
       method,
-      // Strip query strings — they can carry search terms, tokens, or other
-      // sensitive values that must never reach PostHog. For the same reason
-      // the reported failure is the envelope's machine-readable code, never
-      // its human-readable message, which can echo the user's own input.
+      // No PII to PostHog: the query string can carry search terms or tokens, and
+      // the envelope's message can echo user input — the machine code cannot.
       url: url.split("?")[0],
       status: error.status,
       error_message:

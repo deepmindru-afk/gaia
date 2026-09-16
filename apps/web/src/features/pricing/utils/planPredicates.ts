@@ -9,14 +9,11 @@ export function isEnterprisePlan(plan: Plan): boolean {
 }
 
 /**
- * Whether a `Plan` row is GAIA's paid (Pro) tier. `PlanResponse`
- * (`apps/api/app/models/payment_models.py`) has no typed `plan_type` field the
- * way a resolved `UserSubscriptionStatus` does — only name/amount/duration — so this is the single place
- * that infers it, shared by `UpgradeModal` and `PricingCards` so they can't disagree.
+ * Whether a Plan row is GAIA's paid (Pro) tier.
  *
- * Uses an exact (trimmed, case-insensitive) name match, not `.includes("pro")`
- * (would also match "Proactive"/"Property"), falling back to "any priced,
- * non-Enterprise plan" since GAIA has no other paid tier today.
+ * PlanResponse carries no plan_type, so this is the single place that infers it.
+ * The name match is exact, not includes("pro") — that matches "Proactive" too —
+ * and falls back to any priced non-Enterprise plan.
  */
 /** GAIA sells one plan, so the card says "GAIA" rather than the tier's
  * internal name. Display only: the backend, webhooks and entitlements keep

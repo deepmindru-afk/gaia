@@ -902,11 +902,10 @@ function cmdApiSchemaTypes(argv) {
 // ---------------------------------------------------------------------------
 // api-client-imports
 // ---------------------------------------------------------------------------
-// The mobile app's raw request engine. Unlike the web's, it has 124 live call
-// sites, so the boundary ships as a ratchet against a baseline rather than as
-// a Biome rule that would have to be switched off to stay green. The web's
-// half of the same boundary IS a Biome rule — `style/noRestrictedImports`,
-// scoped by an override to everything outside `apps/web/src/lib/api`.
+
+// The mobile app's raw request engine, held by a baseline ratchet because its 124
+// live call sites would force a Biome rule off. The web half of the same boundary
+// is a Biome rule (style/noRestrictedImports) scoped outside apps/web/src/lib/api.
 
 
 function cmdApiClientImports(argv) {

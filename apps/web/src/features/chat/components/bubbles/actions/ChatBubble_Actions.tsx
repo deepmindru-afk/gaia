@@ -62,10 +62,8 @@ export default function ChatBubble_Actions({
 
       if (!message_id) return;
 
-      // Pin/unpin the message. Recorded once, server-side, by
-      // chat:message_pinned / chat:message_unpinned in
-      // apps/api/app/services/conversation_service.py — a client emitter
-      // counted attempts (including failures) as successes.
+      // No client analytics here: conversation_service.py already records
+      // chat:message_pinned / chat:message_unpinned once, server-side.
       await chatApi.togglePinMessage(convoIdParam, message_id, !pinned);
 
       toast.success(pinned ? "Message unpinned!" : "Message pinned!");

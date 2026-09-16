@@ -163,23 +163,12 @@ export async function createMainWindow(
 }
 
 /**
- * Show the main window and close the splash screen.
+ * Show the main window, close the splash, and scale up into the full app.
  *
- * Called when the renderer sends the `window-ready` IPC signal,
- * or by the fallback timeout. The window was created at the splash
- * loader's small centered bounds, so it shows at exactly the loader's
- * spot (no jump), the splash closes, and then it maximises — macOS
- * animates the zoom, which reads as the loader scaling up into the
- * full app. `maximize()` runs AFTER `show()` — on macOS maximising a
- * still-hidden window is a no-op. Minimums are raised to the real
- * 1024×700 only after the scale-up so they never force the small
- * boot bounds larger. The boot maximise happened FROM the loader frame,
- * so the first restore would land on the loader size — a one-shot
- * `unmaximize` handler expands it to the real normal frame instead;
- * later restore cycles keep the user's own frame natively.
+ * Driven by the renderer's window-ready IPC signal or by the fallback timeout.
+ * Order is load-bearing: maximize() is a no-op on a still-hidden macOS window.
  *
- * @returns The pending deep-link URL that should be processed
- *   after the window is visible, or `null`.
+ * @returns A deep-link URL to process now that the window is visible, or null.
  */
 export function showMainWindow(): string | null {
   if (windowShown) return null;
@@ -206,11 +195,9 @@ export function showMainWindow(): string | null {
   mainWindow.maximize();
   console.log("[Main] Main window scaled to full size");
 
-  // The zoom above maximised FROM the loader frame, so the first restore
-  // would land on the loader size instead of the real normal frame. Expand
-  // once to the normal bounds on first un-maximise; later cycles keep the
-  // user's own frame natively. The width guard keeps a future programmatic
-  // resize from ever being shrunk by this handler.
+  // The zoom above maximised from the loader frame, so the first restore would
+  // land on the loader size; expand once, then leave later cycles native. The
+  // width guard stops the handler shrinking an already-normal-sized window.
   const win = mainWindow;
   win.once("unmaximize", () => {
     if (win.isDestroyed()) return;

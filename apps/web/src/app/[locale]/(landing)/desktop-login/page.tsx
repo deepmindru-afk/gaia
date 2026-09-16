@@ -37,12 +37,9 @@ export default function DesktopLoginPage() {
     return () => clearTimeout(timeout);
   }, [isElectron, router]);
 
-  // Already signed in? The wos_session cookie persists across launches, so skip
-  // the login screen entirely when the session is still valid. The main process
-  // keeps the app-shell skeleton (splash) on screen for the whole boot, so we
-  // reveal the real window only once there is real content to show: on success
-  // the /c route's ElectronRouteGuard signals ready; on failure we signal here,
-  // since this (landing) page has no guard of its own.
+  // The wos_session cookie persists across launches, so a valid session skips the
+  // login screen. The splash stays up until something signals ready: on success
+  // that is /c's ElectronRouteGuard, on failure here — this page has no guard.
   useEffect(() => {
     if (!isElectron) return;
     let cancelled = false;
