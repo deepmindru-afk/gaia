@@ -125,9 +125,10 @@ def _contains_profanity_wordlist(text: str) -> bool:
 async def contains_profanity(**fields: str | None) -> bool:
     """Return True if any provided field is offensive.
 
-    Pass each user-facing field as a keyword argument; all are sent in one
-    LLM call. Falls back to the offline wordlist if the LLM is unconfigured,
-    errors, or exceeds _MODERATION_TIMEOUT_SECONDS.
+    Pass each user-facing field as a keyword argument (name=..., description=...); all
+    are sent in ONE structured-output LLM call returning one boolean, so a caller pays
+    a single request for any number of fields. Falls back to the offline wordlist if
+    the LLM is unconfigured, errors, or exceeds _MODERATION_TIMEOUT_SECONDS.
     """
     non_empty = {label: value for label, value in fields.items() if value and value.strip()}
     if not non_empty:

@@ -1,4 +1,6 @@
-"""Base Composio response model."""
+"""
+Base Composio response model.
+"""
 
 from typing import Any
 

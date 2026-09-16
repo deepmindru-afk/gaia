@@ -1,4 +1,16 @@
-"""Pin the exact message bytes and bound tool schemas the model receives at the prompt boundary, downstream of every pre-model hook."""
+"""Pin the prompt layer at the model boundary, downstream of every pre-model hook.
+
+construct_langchain_messages assembles the conversation -- static system prompt, dynamic context,
+the user's turn, the clock -- and the graph's pre-model hooks (filter_messages_node,
+executor_status_hook, manage_system_prompts_node) are free to rewrite it before the model sees it.
+The recording model captures the message list right before it produces output, so these tests pin
+the bytes that actually reach the model: a prompt change that looks right in the builder but gets
+mangled by a hook fails here.
+
+Tool declarations do NOT ride the message list -- acall_model hands them to the provider through
+bind_tools -- so the tool surface is asserted on model_bound_tools, the same channel the real
+provider receives schemas on.
+"""
 
 from __future__ import annotations
 

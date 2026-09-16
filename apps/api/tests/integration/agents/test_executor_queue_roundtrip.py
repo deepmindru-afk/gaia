@@ -1,4 +1,16 @@
-"""What a queued or HIL-resumed executor run actually receives."""
+"""What a queued or HIL-resumed executor run actually receives.
+
+test_executor_queue.py proves safe_configurable in isolation. This proves the link that matters to
+a user: a run context written to Redis, read back, and rebuilt through the real inheritance code
+still selects the same model lane and still carries the turns the HIL intent judge grounds
+against.
+
+Scope, stated plainly: this exercises the real JSON boundary (the same json.dumps/loads Redis
+performs) and the real build_agent_config inheritance. It does NOT boot Redis, the stream manager
+or the executor graph -- prepare_run_from_item's lock/stream/websocket machinery is covered by
+TestPopNextQueuedRun, and the bug this pins never lived there. It lived in the serialization
+allowlist and would have survived any amount of lock testing.
+"""
 
 import json
 

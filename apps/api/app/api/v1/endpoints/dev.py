@@ -2,8 +2,8 @@
 
 Mint users, seed deterministic sample data, attach files, and tear them down so
 coding agents can bootstrap a full environment without a WorkOS login. The router
-is mounted by create_app only when ENV == development and
-DEV_AUTH_BYPASS_EMAIL is set, so every route here 404s in production.
+is mounted by ``create_app`` only when ``ENV == development`` and
+``DEV_AUTH_BYPASS_EMAIL`` is set, so every route here 404s in production.
 """
 
 from fastapi import APIRouter, File, Form, Header, UploadFile, status

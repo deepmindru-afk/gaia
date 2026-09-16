@@ -91,10 +91,10 @@ async def deliver_result(
 ) -> tuple[str | None, str | None]:
     """Narrate, persist, and deliver a finished executor run's result.
 
-    Delivers over EXACTLY ONE transport chosen by the conversation's own source
-    (workflow notification, bot platform API, or WebSocket) — keyed on the
-    conversation, not the run, so a scheduled run still reaches a bot chat.
-    Returns (narrated_text, message_id), or (None, None) on failure.
+    Comms is invoked silently; its text becomes the user-visible message, never the executor's
+    terminal text. Returns (narrated_text, message_id), or (None, None) on failure. Delivers
+    over EXACTLY ONE transport chosen by the conversation's source, not the run. tool_data is
+    None for a live run, whose cards the chat stream attaches — passing them here doubles them.
     """
     try:
         return await _narrate_and_deliver(run, result_text, result_type, tool_data, returned_note)

@@ -1,13 +1,14 @@
 """Resolve pending HIL approvals from a bot user's next chat reply.
 
-BUTTON-LESS CHANNELS ONLY: messaging-platform bots (WhatsApp, Telegram, Slack,
-Discord). Web/mobile/desktop resolve via POST /approvals/{id}/decision and never
-run this classifier — a typed reply is the only approval surface a text-only bot has.
+BUTTON-LESS CHANNELS ONLY: the caller, _resolve_pending_approval_turn in
+app/services/chat/stream.py, invokes this for messaging-platform bots alone (WhatsApp,
+Telegram, Slack, Discord). Web/mobile/desktop resolve via POST /approvals/{id}/decision
+and never run this classifier — a typed reply is a text-only bot's only approval surface.
 
 Single pending approval: approve resumes the paused run AS PROPOSED; deny resolves
 it as a refusal carrying any correction as next-turn feedback; unrelated abandons
 it and lets the new message run as a normal turn. An 'approve' never edits args —
-"yes but cc finance" is treated as a deny with the change as feedback.
+"yes but cc finance" is a deny with the change as feedback (enforced by _no_arg_edit).
 A wait_for_subagents batch resolves per-item: "yes"/"no" decide all, a selective
 reply decides only what it names. Unnamed items are DENIED when exclusive and LEFT
 pending when partial, so answering across several messages doesn't force-decline

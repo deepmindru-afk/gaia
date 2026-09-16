@@ -86,8 +86,8 @@ async def _get_similar_documents(
 ) -> list[tuple[Document, float]]:
     """Semantic search over files uploaded in this conversation, scored by similarity.
 
-    Scope is resolved from MongoDB (files carrying this conversation_id, plus
-    legacy unscoped files) and applied as a file_id filter on the vector
+    Scope is resolved from MongoDB (files carrying this ``conversation_id``, plus
+    legacy unscoped files) and applied as a ``file_id`` filter on the vector
     search — so the tool can never surface a file from another conversation,
     regardless of ChromaDB metadata.
     """
@@ -136,7 +136,21 @@ async def _get_similar_documents(
 def _construct_content(
     documents: list[FileDocument], similar_documents: list[tuple[Document, float]]
 ) -> str:
-    """Join MongoDB document metadata with ChromaDB similarity hits, grouped by document and page."""
+    """
+    Helper function to construct a formatted response from similar documents.
+
+    This function takes the document metadata from MongoDB and similar document sections
+    from ChromaDB to build a human-readable response. It handles different document formats
+    and extracts the relevant content, organizing it by document ID and page number.
+
+    Args:
+        documents: List of document metadata from MongoDB
+        similar_documents: List of similar document sections from ChromaDB with similarity scores
+
+    Returns:
+        str: Formatted content string containing relevant document sections with proper
+             attribution and structure for easy reading
+    """
     content = ""
 
     for similar_document, _score in similar_documents:

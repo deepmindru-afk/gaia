@@ -161,9 +161,10 @@ class SubAgentFactory:
     ) -> CompiledStateGraph:
         """Create a specialized sub-agent graph for a specific provider with tool registry.
 
-        include_finish_task=False terminates with a normal AIMessage instead
-        of the finish_task tool — for answer-only subagents (e.g. doc
-        fetchers) where finish_task adds latency without value.
+        auto_bind_tools is always included in initial, regardless of use_direct_tools or
+        disable_retrieve_tools. include_finish_task=False terminates with a normal AIMessage
+        instead of the finish_task tool — for answer-only subagents (e.g. doc fetchers)
+        where finish_task adds latency without value.
         """
         cfg = config or SubAgentToolConfig()
         tool_space = cfg.tool_space

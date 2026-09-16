@@ -11,7 +11,8 @@
  * 3. One identity — the client's send id IS the server's user_message_id and
  *    the turn's idempotency key; never mint a second id.
  * 4. The event log is complete — a mid-turn attach must render from replay
- *    alone, so a new client-visible fact must ride a frame, never tab memory.
+ *    alone, so a new client-visible fact must ride a frame (see
+ *    `apps/api/app/models/stream_events.py`), never tab memory.
  */
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/lib/db/chatDb";

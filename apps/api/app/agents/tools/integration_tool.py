@@ -1,5 +1,5 @@
 """
-Integration Management Tools.
+Integration Management Tools
 
 Tools for listing, connecting, and managing user integrations.
 """

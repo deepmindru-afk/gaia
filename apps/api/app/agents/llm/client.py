@@ -317,8 +317,9 @@ def _build_custom_llm(temperature: float = DEFAULT_LLM_TEMPERATURE) -> ChatOpenR
             base_url=settings.DEV_LLM_BASE_URL,
         )
     )
-    # Fractional-window middleware needs this profile at graph-build time. The
-    # DEV_LLM_* model has no curated registry entry, so pin the default window.
+    # Fractional-window middleware resolves the window from the model profile at
+    # graph-build time and RAISES without it -- the same contract _build_default_llm
+    # and _sim_llm satisfy. DEV_LLM_* has no registry entry, so pin the default window.
     llm.profile = {"max_input_tokens": DEFAULT_MAX_TOKENS}
     return llm
 
@@ -395,10 +396,10 @@ def _get_available_providers() -> dict[LLMProviderName, ProviderLLM]:
 def next_fallback_provider(current: str | None) -> tuple[LLMProviderName, str] | None:
     """Return the highest-priority configured provider other than current, and its model.
 
-    None when nothing else is usable. A provider with no model configured is
-    skipped rather than returned with an empty model: the custom dev endpoint's
-    PROVIDER_MODELS entry is settings.DEV_LLM_MODEL or "", and pinning "" would
-    trade one dead provider for a guaranteed bad request.
+    None when nothing else is usable. The agent graph picks its lane by
+    configurable["provider"] and never fails over itself, so this is what a caller that
+    caught a provider failure retries onto. A provider with no model is skipped, never
+    returned with "": PROVIDER_MODELS[CUSTOM] is DEV_LLM_MODEL or "", a bad request.
     """
     available = _get_available_providers()
     for priority in sorted(PROVIDER_PRIORITY):
@@ -477,10 +478,10 @@ def register_llm_providers() -> None:
 def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
     """Build the single factory for the default model (DEFAULT_MODEL_NAME, over OpenRouter).
 
-    Used by EVERY auxiliary LLM task; the memory pipeline is the one exception
-    (prefers direct Gemini, see :func:ainvoke_structured_gemini). Instances are
-    cached per temperature so hot paths reuse one HTTP client. Raises
-    LLMNotConfiguredError if OpenRouter is not configured.
+    Used by EVERY auxiliary LLM task -- the paid model is reserved for the main chat
+    agent (see lane.py) and helpers never use it. The memory pipeline is the one
+    exception and prefers direct Gemini (ainvoke_structured_gemini). Instances are cached
+    per temperature. Raises LLMNotConfiguredError if OpenRouter is not configured.
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm(temperature)
@@ -492,10 +493,13 @@ def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChat
 def _provider_order_kwargs() -> dict[str, Any]:
     """OpenRouter provider-routing preference, from OPENROUTER_PROVIDER_ORDER.
 
-    allow_fallbacks=False binds the order: OpenRouter still walks the listed
-    slugs on error but raises rather than switch upstream, for with_llm_retry
-    to catch. Keeps one cache warm (measured: 90-99% cached vs. 49/114 threads
-    split and losing it). Opt-in, from a per-provider hit table."""
+    allow_fallbacks=False binds the order: OpenRouter raises rather than switch to an
+    UNLISTED upstream, for with_llm_retry to catch. That pins the cache to the LISTED
+    providers -- not to exactly one: calls in a conversation do split across members, each
+    warming its own chain, so a split costs one cold read per member, once, while an
+    unlisted upstream reads cold every time. Measured: 90-99% cached on a thread that
+    stays on one provider, and 49 of 114 production threads were split. Opt-in, from a
+    measured per-provider hit table, not baked in."""
     raw = settings.OPENROUTER_PROVIDER_ORDER
     if not raw:
         return {}
@@ -529,12 +533,12 @@ def _build_default_llm(temperature: float) -> BaseChatModel:
 
 
 def get_helper_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
-    """:func:get_default_llm, capped to :data:HELPER_MAX_OUTPUT_TOKENS.
+    """Return get_default_llm capped to HELPER_MAX_OUTPUT_TOKENS.
 
-    For one-shot helpers whose output is small. model_copy (not a new
-    ChatOpenRouter) shares the cached instance's client by reference — a
-    .bind(max_tokens=...) wrapper was rejected since neither bind_tools nor
-    with_structured_output preserve bound kwargs.
+    For one-shot helpers whose output is small. The graph-adjacent consumers
+    (create_agent's model fallback, the summarization/compaction middleware) keep the
+    full reservation via get_default_llm -- they legitimately produce long output.
+    model_copy shares the cached client; .bind() loses the cap under bind_tools.
     """
     llm = get_default_llm(temperature=temperature)
     if settings.GAIA_SIM_MODE:
@@ -577,10 +581,12 @@ def aux_lane_available() -> bool:
 def get_memory_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
     """Build the factory for every memory-pipeline call (extraction, categorization, consolidation).
 
-    Runs on direct Gemini (:data:MEMORY_MODEL_NAME), NOT OpenRouter: concurrent
-    requests on one provider's cache store wipe each other's chains mid-read
-    (measured: comms collapses to ~0 under concurrent alias extraction, holds
-    ~99.5% under Gemini). Raises LLMNotConfiguredError when Google is unset.
+    Runs on direct Gemini (MEMORY_MODEL_NAME), NOT OpenRouter, because extraction is a
+    fire-and-forget background task that OVERLAPS the graph's next-turn requests, and
+    concurrent requests on one provider's cache store wipe each other's chains mid-read
+    (measured: comms collapses to ~0 under a concurrent alias-lane extraction and holds
+    ~99.5% under a Gemini one -- a different provider shares no cache store, so the
+    overlap is harmless). Raises LLMNotConfiguredError when Google is not configured.
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm(temperature)
@@ -655,9 +661,9 @@ def _resolve_fallback(
 
     Re-raises primary_error when no fallback is available.
     """
-    # ``session_id`` is bound on the resolved runnable ONLY onto an
-    # OpenRouter-wire fallback: Google's client rejects unknown kwargs
-    # (``GenerateContentConfig`` forbids extra fields) and would raise instead.
+    # ``session_id`` is BOUND, not passed in config: the config value is dropped before
+    # the wire, while a bind survives bind_tools. Only onto an OpenRouter-wire fallback --
+    # Google's client rejects unknown kwargs and would raise on the outage path itself.
     resolved = _materialize_fallback(fallback)
     if resolved is None:
         raise primary_error
@@ -674,8 +680,10 @@ def _resolve_fallback(
 def _sticky_session_id(config: RunnableConfig | None, *, auxiliary: bool) -> str | None:
     """Return the provider's sticky-routing key for this call, or None when unset.
 
-    Auxiliary one-shots get their own suffixed session: sharing the
-    conversation's key re-pins its provider from a background call.
+    Auxiliary one-shots get their own suffixed session: sharing the conversation's key
+    re-pins its provider from a background call. Both the primary bind and the fallback
+    resolve through here, so a fallback cannot quietly drop the suffix and re-pin the
+    conversation.
     """
     session_id = agent_configurable(config).get("session_id")
     if not session_id:
@@ -891,9 +899,9 @@ def invoke_llm(
         )
 
 
-# Marks an internal one-shot LLM call so the chat token stream drops its output
-# instead of rendering it as assistant text. Merges with the ambient run
-# config, so tracing and thread context are preserved.
+# Marks an internal one-shot LLM call so the chat stream drops its output instead of rendering
+# it as assistant text: EVERY structured call made while a graph streams must carry it, or its
+# tokens leak into the chat as a bot message. Merges with the ambient run config, keeping trace.
 SILENT_LLM_CONFIG: RunnableConfig = {
     "silent": True,
     "metadata": {"silent": True},

@@ -230,9 +230,8 @@ export async function dispatchWorkflowSubcommand(
 /**
  * Starts a new conversation for the user, resetting bot session context while preserving the
  * previous conversation (still accessible from the web app) — for when context gets too long
- * or the topic changes completely.
- *
- * @returns Success message explaining that the previous conversation is saved.
+ * or the topic changes completely. Returns a success message explaining that
+ * the previous conversation is saved.
  */
 export async function handleNewConversation(
   gaia: GaiaClient,

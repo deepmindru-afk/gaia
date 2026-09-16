@@ -109,7 +109,8 @@ const ConversationDescriptionFrameSchema = z.object({
 
 /**
  * Live output of one `bash` tool run, emitted top-level (not under `tool_data`) by `safe_emit`
- * in bash_tool.py and passed through unmodified by `process_data_chunk`. One `starting` frame
+ * in `apps/api/app/agents/tools/coding/bash_tool.py` and passed through unmodified by
+ * `process_data_chunk`, which only unwraps tool data. One `starting` frame
  * carries the command, then `running` per stdout/stderr chunk, then one terminal `exited`/`error`
  * — or a single `background_started` for a detached run. Kept loose: shape is per-status.
  */

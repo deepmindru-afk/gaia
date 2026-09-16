@@ -9,8 +9,9 @@ export function isEnterprisePlan(plan: Plan): boolean {
 }
 
 /**
- * Whether a `Plan` row is GAIA's paid (Pro) tier. `PlanResponse` has no typed
- * `plan_type` field (only name/amount/duration), so this is the single place
+ * Whether a `Plan` row is GAIA's paid (Pro) tier. `PlanResponse`
+ * (`apps/api/app/models/payment_models.py`) has no typed `plan_type` field the
+ * way a resolved `UserSubscriptionStatus` does — only name/amount/duration — so this is the single place
  * that infers it, shared by `UpgradeModal` and `PricingCards` so they can't disagree.
  *
  * Uses an exact (trimmed, case-insensitive) name match, not `.includes("pro")`

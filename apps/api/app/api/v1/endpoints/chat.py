@@ -80,9 +80,15 @@ async def _stream_from_redis(
 ) -> AsyncGenerator[str, None]:
     """Forward the stream's event log to the client, following live.
 
-    Replays from last_event_id (or the beginning), so this can attach at any
-    point in the turn's lifetime without losing frames. Needs its own log
-    boundary — it runs after the request's http_request event has emitted.
+    The log replays from ``last_event_id`` (or the beginning), so this can be
+    attached at any point in the turn's lifetime without losing frames.
+
+    The body runs while the response streams — after the request's
+    ``http_request`` event has emitted — so it needs its own boundary or the
+    delivery outcome (disconnects, delivery errors) is silently discarded.
+    The generator body inherits the request's context, so ``get_trace_id()``
+    here still returns the request's trace_id (verified against
+    ``LoggingMiddleware`` + ``StreamingResponse``).
     """
     async with log_context("sse_delivery", trace_id=get_trace_id() or None, stream_id=stream_id):
         if not redis_cache.redis:

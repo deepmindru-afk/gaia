@@ -1,4 +1,15 @@
-"""A subagent's declared tools must resolve to real ones, or the build must warn loudly instead of silently building one short-handed."""
+"""What a specialized subagent is actually built with.
+
+A provider subagent declares the tools it always needs bound up front, via auto_bind_tools and
+extra_initial_tools in oauth_config.py. Gmail declares six Composio tools plus query_json/grep,
+and those declarations are the whole reason a handoff to Gmail can read an inbox without first
+paying for a retrieval round trip.
+
+The build filters those declarations against the tools it actually resolved. The filter is correct
+-- you cannot bind a tool that does not exist -- but a declaration resolving to nothing is a
+configuration or registration fault, not a normal outcome, and it must not pass in silence: a
+Gmail subagent that builds with none of its Gmail tools looks healthy and can do nothing.
+"""
 
 from __future__ import annotations
 

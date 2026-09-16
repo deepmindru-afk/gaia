@@ -174,13 +174,13 @@ class SocialProfileFilterOutput(BaseModel):
 
 
 class ClarifyAnswerRecord(TypedDict, total=False):
-    """users.onboarding.clarify_answers as persisted by the pre-paid-flow
+    """``users.onboarding.clarify_answers`` as persisted by the pre-paid-flow
     onboarding submission. Read-only legacy data — nothing writes it now.
 
-    A TypedDict, not a model (Type Safety item 6): it is read straight off an
+    A ``TypedDict``, not a model (Type Safety item 6): it is read straight off an
     already-persisted subdocument and only ever consumed in-process, so validating
     it would add a new failure mode on historical rows without adding safety, while
-    a TypedDict stays a plain dict at runtime and mypy checks every key.
+    a ``TypedDict`` stays a plain dict at runtime and mypy checks every key.
     """
 
     id: str

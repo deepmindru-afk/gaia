@@ -1,4 +1,12 @@
-"""Real integration tests for the GAIA comms agent."""
+"""Real integration tests for the GAIA comms agent.
+
+Exercises the production build_comms_graph; test_comms_agent_flow.py is the sibling covering
+streaming, edge cases and multi-turn accumulation over the same builder. External I/O (DB
+clients, LLM API calls, the memory service) is
+mocked so the LangGraph routing, the pre_model_hooks (filter_messages_node,
+manage_system_prompts_node), the end_graph_hooks (follow_up_actions_node) and tool registration
+all run for real.
+"""
 
 import asyncio
 import contextlib

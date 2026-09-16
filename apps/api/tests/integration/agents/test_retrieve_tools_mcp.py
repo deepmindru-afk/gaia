@@ -1,4 +1,14 @@
-"""retrieve_tools must surface per-user MCP tools end-to-end."""
+"""retrieve_tools must surface per-user MCP tools end-to-end.
+
+After the resilience rewrite removed per-user mcp_{iid}_{user_id} categories from ToolRegistry,
+MCP tool names stopped appearing in tool_registry.get_tool_names(). retrieve_tools had two filters
+keyed against that set -- one in discovery mode (Chroma post-processing), one in binding mode
+(exact_tool_names validation) -- and both dropped every MCP tool as "unknown".
+
+Exercises the live retrieve_tools factory with the Chroma and MCPClient boundaries mocked:
+discovery mode returns the tool names from a Chroma hit, binding mode validates them directly via
+MCPClient, and user A's tools never leak into user B's results.
+"""
 
 from __future__ import annotations
 

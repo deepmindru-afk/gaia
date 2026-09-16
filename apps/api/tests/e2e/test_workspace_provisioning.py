@@ -1,4 +1,19 @@
-"""Workspace provisioning composed end to end, against a real filesystem."""
+"""Workspace provisioning composed end to end, against a real filesystem.
+
+provision_user_workspace is what a user's /workspace actually is -- system-file symlinks, the
+SKILL.md catalog, the .connected markers the prompt stats, the instructions projection -- and
+nothing else re-runs it, so whatever it leaves on disk is what the agent sees. The unit tier
+covers each writer with the others stubbed; the composition (linker writes symlinks, materializer
+then walks the same dirs with a pruner, a three-marker gate decides whether any of it runs) only
+happens here.
+
+The trap this file exists to avoid: materialize_user_integrations and delete_session_dir open with
+"if not _is_mounted(): return", so a test that calls provision_user_workspace without a mount runs
+nothing, raises nothing, and passes while asserting nothing. Every test runs against the mount
+fixture (a real tmpdir plus a patched _is_mounted) and asserts on a file that is or is not on disk;
+TestWithoutAMount pins the vacuous case so it stays deliberate. No FUSE, no docker, no Mongo -- the
+only stub is get_all_instructions, the single Mongo touch on this path.
+"""
 
 from __future__ import annotations
 

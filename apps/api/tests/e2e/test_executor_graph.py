@@ -1,4 +1,14 @@
-"""Drives the real compiled executor graph, with only the model faked."""
+"""Drive the real compiled executor graph, with only the model faked.
+
+Until now the executor was tested two ways, neither of which runs it: test_graph_builder.py mocks
+create_agent and asserts the kwargs it was called with, and test_real_executor_agent.py compiles a
+graph but never executes a tool. So the tier that owns every tool in the product had no test that
+a tool call changes anything.
+
+The assertions here are about the graph's own contracts: which tools it will run without
+retrieval, what a tool call does to the todos channel, what the pre-model hook puts in front of
+the model, and how the run terminates.
+"""
 
 from __future__ import annotations
 

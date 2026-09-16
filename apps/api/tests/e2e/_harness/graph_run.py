@@ -335,9 +335,11 @@ async def executor_graph(
 ) -> AsyncIterator[Any]:
     """Build the REAL executor graph, with only the model and two I/O seams replaced.
 
-    Patches only get_tools_store (must be a genuine BaseStore, not a
-    MagicMock) and get_checkpointer_manager; get_tool_registry and
-    create_executor_middleware stay real. model overrides script when given.
+    Patches only get_tools_store (retrieve_tools declares it InjectedStore, so
+    pydantic rejects a MagicMock; exact_tool_names never searches it) and
+    get_checkpointer_manager. Deliberately NOT patched: get_tool_registry, and
+    create_executor_middleware, whose stub would silently drop spawn_subagent.
+    model overrides script when given.
     """
     # Registered rather than mocked: format_tool_call_entry and the retrieval
     # validator both resolve real categories through this provider singleton.

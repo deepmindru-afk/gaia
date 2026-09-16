@@ -1,4 +1,6 @@
-"""MCP proxy endpoints for MCP Apps iframe tool call proxying."""
+"""
+MCP proxy endpoints for MCP Apps iframe tool call proxying.
+"""
 
 from __future__ import annotations
 

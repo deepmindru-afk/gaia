@@ -112,7 +112,7 @@ def _todo_filters_applied(query: TodoListQuery) -> list[str]:
 
 
 def _resolve_todo_date_range(query: TodoListQuery) -> tuple[datetime | None, datetime | None]:
-    """Resolve due_today / due_this_week into an explicit date range."""
+    """Resolve ``due_today`` / ``due_this_week`` into an explicit date range."""
     if query.due_today:
         today = datetime.now(UTC).date()
         return (
@@ -494,7 +494,7 @@ async def get_workflow_status(
     Returns the workflow if it exists, otherwise returns None.
     Detects generating state when:
     - Workflow generation is queued (Redis flag)
-    - Workflow exists but has no steps yet.
+    - Workflow exists but has no steps yet
     """
     response.headers["Cache-Control"] = "private, max-age=15"
     log.set(
