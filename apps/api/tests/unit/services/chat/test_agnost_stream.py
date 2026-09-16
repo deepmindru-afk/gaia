@@ -164,6 +164,7 @@ class TestTurnTelemetry:
         assert spec.conversation_id == "conv_existing_123"
         assert spec.user_input == "Follow-up"
         assert spec.source is None
+        assert spec.mode == "interactive"
         assert spec.properties == {
             "voice_mode": False,
             "is_new_conversation": False,
