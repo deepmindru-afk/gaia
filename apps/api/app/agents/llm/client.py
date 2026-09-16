@@ -493,13 +493,10 @@ def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChat
 def _provider_order_kwargs() -> dict[str, Any]:
     """OpenRouter provider-routing preference, from OPENROUTER_PROVIDER_ORDER.
 
-    allow_fallbacks=False binds the order: OpenRouter raises rather than switch to an
-    UNLISTED upstream, for with_llm_retry to catch. That pins the cache to the LISTED
-    providers -- not to exactly one: calls in a conversation do split across members, each
-    warming its own chain, so a split costs one cold read per member, once, while an
-    unlisted upstream reads cold every time. Measured: 90-99% cached on a thread that
-    stays on one provider, and 49 of 114 production threads were split. Opt-in, from a
-    measured per-provider hit table, not baked in."""
+    allow_fallbacks=False binds the order, so OpenRouter raises for with_llm_retry rather than
+    switch to an UNLISTED upstream. That pins the cache to the LISTED providers, NOT to exactly
+    one: calls do split across members, each warming its own chain, so a split costs one cold
+    read per member, once. Measured: 90-99% cached unsplit, 49 of 114 prod threads split."""
     raw = settings.OPENROUTER_PROVIDER_ORDER
     if not raw:
         return {}
@@ -581,12 +578,10 @@ def aux_lane_available() -> bool:
 def get_memory_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChatModel:
     """Build the factory for every memory-pipeline call (extraction, categorization, consolidation).
 
-    Runs on direct Gemini (MEMORY_MODEL_NAME), NOT OpenRouter, because extraction is a
-    fire-and-forget background task that OVERLAPS the graph's next-turn requests, and
-    concurrent requests on one provider's cache store wipe each other's chains mid-read
-    (measured: comms collapses to ~0 under a concurrent alias-lane extraction and holds
-    ~99.5% under a Gemini one -- a different provider shares no cache store, so the
-    overlap is harmless). Raises LLMNotConfiguredError when Google is not configured.
+    Runs on direct Gemini (MEMORY_MODEL_NAME), NOT OpenRouter: extraction is fire-and-forget work
+    that OVERLAPS the graph's next-turn requests, and concurrent requests on ONE provider's cache
+    store wipe each other's chains mid-read (measured: comms ~0 under a concurrent alias-lane
+    extraction, ~99.5% under Gemini). Raises LLMNotConfiguredError when Google is not configured.
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm(temperature)

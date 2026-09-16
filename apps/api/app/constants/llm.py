@@ -314,9 +314,8 @@ MONTHLY_BUDGET_TTL_SECONDS = 32 * 24 * 60 * 60
 REQUEST_TOKEN_COUNTER_TTL_SECONDS = 30 * 60
 
 # --- Tool-loop guardrails (LoopGuardMiddleware) ---------------------------------
-# "Identical": same tool+args; "same_tool": all failures of one tool regardless of args.
-# WARN appends a nudge in-band to the error ToolMessage; STOP (hard_stop runs only) stops
-# executing the tool and returns a synthetic error instead.
+# "Identical" = same tool+args; "same_tool" = any failure of that tool. WARN appends an
+# in-band nudge to the error ToolMessage; STOP skips the call, returning a synthetic error.
 LOOP_GUARD_WARN_IDENTICAL = 2
 LOOP_GUARD_WARN_SAME_TOOL = 3
 LOOP_GUARD_STOP_IDENTICAL = 5
