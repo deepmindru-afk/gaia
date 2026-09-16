@@ -30,6 +30,7 @@ from app.agents.core.background.executor_capture import (
     teardown_executor_capture,
 )
 from app.agents.core.background.session import get_session
+from app.config.langfuse import trace_id_for_message
 from app.constants.artifacts import ARTIFACT_FORWARDER_SUBSCRIBE_TIMEOUT
 from app.constants.cache import EXECUTOR_WAIT_TIMEOUT, VOICE_EXECUTOR_RESULT_TIMEOUT_S
 from app.constants.chat import GENERIC_TURN_ERROR, RECURSION_LIMIT_MESSAGE
@@ -289,7 +290,9 @@ async def _run_chat_stream(
         # row insert: the title LLM can finish first and the ``$set`` description
         # update would silently match zero documents, leaving the title stuck at
         # "New Chat" after a refresh.
-        description_task = _start_description_task(is_new_conversation, body, conversation_id, user)
+        description_task = _start_description_task(
+            is_new_conversation, body, conversation_id, user, state.bot_message_id
+        )
 
         usage_callback = UsageMetadataCallbackHandler()
         description_task = await _consume_agent_stream(
@@ -470,7 +473,15 @@ async def _resolve_pending_approval_turn(
     )
     try:
         history = _recent_history(body.messages)
-        action = await resolve_pending_from_message(conversation_id, user_id, message, history)
+        # Join the classifier's spans to this turn's Langfuse trace: without
+        # the seed they orphan despite firing mid-turn inside its scope.
+        action = await resolve_pending_from_message(
+            conversation_id,
+            user_id,
+            message,
+            history,
+            langfuse_trace_id=trace_id_for_message(state.bot_message_id),
+        )
     except Exception as e:  # see below: chat must survive this
         # This lookup sits on the critical path of EVERY chat message, for a feature most
         # users have switched off. If it fails, the only safe degradation is to run the
@@ -544,6 +555,7 @@ def _start_description_task(
     body: MessageRequestWithHistory,
     conversation_id: str,
     user: AuthenticatedUser,
+    bot_message_id: str,
 ) -> asyncio.Task[str] | None:
     """Create a background task to generate a conversation description if new."""
     if not is_new_conversation:
@@ -556,6 +568,7 @@ def _start_description_task(
             user,
             body.selectedTool or None,
             body.selectedWorkflow or None,
+            bot_message_id,
         )
     )
 

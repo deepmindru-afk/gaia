@@ -395,6 +395,8 @@ class TestApprovalTurnTelemetry:
         )
 
     async def _resolve(self, sm: MagicMock, action: object) -> bool:
+        state = _StreamState()
+        state.bot_message_id = "bot-9"
         with (
             _patch_stream_manager(sm),
             patch(
@@ -402,15 +404,21 @@ class TestApprovalTurnTelemetry:
                 new=AsyncMock(return_value=action),
             ),
             patch("app.services.chat.stream._persist_turn", new=AsyncMock()),
+            patch(
+                "app.services.chat.stream.trace_id_for_message", return_value="trace-seed"
+            ) as mock_seed,
         ):
-            return await _resolve_pending_approval_turn(
+            result = await _resolve_pending_approval_turn(
                 self._approval_body(),
                 {"user_id": "user_abc"},
                 "conv_hil_1",
                 "stream_hil",
-                _StreamState(),
+                state,
                 "telegram",
             )
+
+        mock_seed.assert_called_once_with("bot-9")
+        return result
 
     async def test_approve_opens_and_closes_with_ack(self) -> None:
         sm = _make_stream_manager_mock()
