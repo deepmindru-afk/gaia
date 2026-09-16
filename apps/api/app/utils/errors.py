@@ -1,6 +1,13 @@
 """Structured application errors with rich context for wide event logging.
 
-The AppError exception handler in app_factory.py sets the structured error onto the wide event so it appears in the final log.
+An AppError carries two audiences. The message, why, fix and code fields and
+the public mapping are the contract the client reads; meta is diagnostic
+context for the wide event and never reaches the wire. A provider body, a user
+id or str(e) is therefore safe in meta, and putting one in public is a
+deliberate decision.
+
+The AppError exception handler in app/core/exception_handlers.py sets the
+structured error onto the wide event so it appears in the final log.
 """
 
 from dataclasses import dataclass, field
@@ -15,6 +22,8 @@ class AppError(Exception):
     why: str = ""
     fix: str = ""
     status_code: int = 500
+    code: str = ""
+    public: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
@@ -24,11 +33,15 @@ class AppError(Exception):
         return self.message
 
     def to_dict(self) -> dict[str, Any]:
+        """Render the wide-event payload: everything the error knows, public or not."""
         d: dict[str, Any] = {"message": self.message}
         if self.why:
             d["why"] = self.why
         if self.fix:
             d["fix"] = self.fix
+        if self.code:
+            d["code"] = self.code
+        d.update(self.public)
         d.update(self.meta)
         return d
 
@@ -38,14 +51,18 @@ def create_error(
     why: str = "",
     fix: str = "",
     status_code: int = 500,
+    code: str = "",
+    public: dict[str, Any] | None = None,
     **meta: object,
 ) -> AppError:
-    """Create a structured AppError with optional context metadata."""
+    """Create a structured AppError; keyword extras become wide-event-only meta."""
     return AppError(
         message=message,
         why=why,
         fix=fix,
         status_code=status_code,
+        code=code,
+        public=dict(public) if public else {},
         meta=meta,
     )
 

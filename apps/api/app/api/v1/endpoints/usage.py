@@ -18,7 +18,7 @@ from app.services.usage_service import UsageService
 from app.services.usage_summary import build_usage_summary
 from shared.py.wide_events import log
 
-router = APIRouter(prefix="/usage", tags=["usage"])
+router = APIRouter(prefix="/usage")
 usage_service = UsageService()
 
 

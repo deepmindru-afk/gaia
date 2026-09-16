@@ -5361,6 +5361,26 @@ export interface components {
             redirect?: components["schemas"]["RedirectConfig"] | null;
         };
         /**
+         * ActionExecutionResponse
+         * @description The execute-action envelope, under a name of its own.
+         *
+         *     Parameterising the generic inline exports the component as
+         *     ``NotificationResponse_dict_str__Any__``, a TypeScript type name that
+         *     changes with the type argument; a named subclass exports as itself.
+         *     ``data`` is whatever the matched ``ActionHandler`` returned, which is open
+         *     by design.
+         */
+        ActionExecutionResponse: {
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            } | null;
+            /** Message */
+            message: string;
+            /** Success */
+            success: boolean;
+        };
+        /**
          * ActionStyle
          * @description Visual emphasis for a notification action button.
          * @enum {string}
@@ -6215,9 +6235,7 @@ export interface components {
         /** BulkOperationResponse */
         BulkOperationResponse: {
             /** Failed */
-            failed?: {
-                [key: string]: unknown;
-            }[];
+            failed?: string[];
             /** Message */
             message: string;
             /** Success */
@@ -10201,17 +10219,6 @@ export interface components {
         /** NotificationResponse[BulkActionSummary] */
         NotificationResponse_BulkActionSummary_: {
             data?: components["schemas"]["BulkActionSummary"] | null;
-            /** Message */
-            message: string;
-            /** Success */
-            success: boolean;
-        };
-        /** NotificationResponse[dict[str, Any]] */
-        NotificationResponse_dict_str__Any__: {
-            /** Data */
-            data?: {
-                [key: string]: unknown;
-            } | null;
             /** Message */
             message: string;
             /** Success */
@@ -14521,6 +14528,7 @@ export interface components {
     pathItems: never;
 }
 export type ActionConfig = components['schemas']['ActionConfig'];
+export type ActionExecutionResponse = components['schemas']['ActionExecutionResponse'];
 export type ActionStyle = components['schemas']['ActionStyle'];
 export type ActionType = components['schemas']['ActionType'];
 export type ActivityDay = components['schemas']['ActivityDay'];
@@ -14792,7 +14800,6 @@ export type NotificationContentView = components['schemas']['NotificationContent
 export type NotificationRecord = components['schemas']['NotificationRecord'];
 export type NotificationRequest = components['schemas']['NotificationRequest'];
 export type NotificationResponse_BulkActionSummary_ = components['schemas']['NotificationResponse_BulkActionSummary_'];
-export type NotificationResponse_dict_str__Any__ = components['schemas']['NotificationResponse_dict_str__Any__'];
 export type NotificationResponse_MarkAllReadSummary_ = components['schemas']['NotificationResponse_MarkAllReadSummary_'];
 export type NotificationResponse_NotificationRecord_ = components['schemas']['NotificationResponse_NotificationRecord_'];
 export type NotificationResponse_NotificationView_ = components['schemas']['NotificationResponse_NotificationView_'];
@@ -22355,7 +22362,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NotificationResponse_dict_str__Any__"];
+                    "application/json": components["schemas"]["ActionExecutionResponse"];
                 };
             };
             /** @description Unprocessable Entity */

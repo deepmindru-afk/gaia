@@ -186,7 +186,7 @@ class TestRequestBounds:
         response = await sidecar_client.post("/embed", json={"texts": [oversized]})
 
         assert response.status_code == 413
-        assert "MAX_TEXT_CHARS" in response.json()["detail"]
+        assert "MAX_TEXT_CHARS" in response.json()["message"], "the sidecar speaks the envelope too"
         mock_embed.assert_not_called()
 
     @patch.object(server, "_embed_query_sync", return_value=QUERY_VECTOR)
@@ -252,7 +252,8 @@ class TestSaturationBackpressure:
             response = await sidecar_client.post("/embed", json={"texts": TEXTS})
 
         assert response.status_code == 503
-        assert response.json()["detail"] == "embedding sidecar busy; retry shortly"
+        assert response.json()["message"] == "embedding sidecar busy; retry shortly"
+        assert response.headers["retry-after"] == "5"
 
     async def test_503_exception_carries_exact_backoff_contract(
         self, monkeypatch: pytest.MonkeyPatch

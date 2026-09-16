@@ -552,7 +552,7 @@ class TestDevUserImpersonation:
     async def test_unknown_header_email_401_with_hint(self, probe_client):
         response = await probe_client.get("/probe", headers={"X-Dev-User": "ghost@nope.local"})
         assert response.status_code == 401
-        assert DEV_USER_MISSING_HINT in response.text
+        assert DEV_USER_MISSING_HINT in response.json()["message"]
 
 
 # ---------------------------------------------------------------------------
