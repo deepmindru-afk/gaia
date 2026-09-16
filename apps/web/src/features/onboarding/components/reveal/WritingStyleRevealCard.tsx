@@ -158,7 +158,6 @@ export function WritingStyleRevealCard({
                 showError ? "Style description is too short." : undefined
               }
               classNames={{
-                inputWrapper: "bg-zinc-800 shadow-none",
                 input: "text-sm text-zinc-200 leading-relaxed",
               }}
               autoFocus

@@ -39,7 +39,7 @@ interface TodoModalProps {
   todo?: Todo; // Required when mode is "edit"
   initialProjectId?: string; // Used when mode is "add"
   buttonText?: string;
-  buttonClassName?: string;
+  buttonLayout?: "full" | "icon";
 }
 
 function getChangedFields<T extends object>(
@@ -252,13 +252,13 @@ function useTodoModalForm({
 
 interface TodoModalTriggerProps {
   buttonText: string;
-  buttonClassName: string;
+  buttonLayout: "full" | "icon";
   onOpen: () => void;
 }
 
 function TodoModalTrigger({
   buttonText,
-  buttonClassName,
+  buttonLayout,
   onOpen,
 }: TodoModalTriggerProps) {
   return (
@@ -266,16 +266,21 @@ function TodoModalTrigger({
       content={
         <span className="flex items-center gap-2">
           {buttonText}
-          <Kbd className="text-[10px]">C</Kbd>
+          <Kbd className="text-xs">C</Kbd>
         </span>
       }
       placement="right"
     >
       <Button
-        className={buttonClassName}
         color="primary"
         size="sm"
-        variant="flat"
+        variant={buttonLayout === "icon" ? "light" : "flat"}
+        isIconOnly={buttonLayout === "icon"}
+        className={
+          buttonLayout === "icon"
+            ? undefined
+            : "w-full justify-start text-sm text-primary"
+        }
         startContent={<TaskAddIcon className="h-4 w-4 outline-0" />}
         onPress={onOpen}
         data-keyboard-shortcut="create-todo"
@@ -305,9 +310,7 @@ function TodoTextInputFields({
         placeholder="Title"
         classNames={{
           input:
-            "text-2xl font-semibold bg-transparent border-0 text-zinc-100 placeholder:text-zinc-500",
-          inputWrapper:
-            "border-0 bg-transparent shadow-none hover:bg-transparent focus:bg-transparent data-[focus=true]:bg-transparent",
+            "text-2xl font-semibold text-zinc-100 placeholder:text-zinc-500",
         }}
         value={title}
         variant="underlined"
@@ -325,10 +328,7 @@ function TodoTextInputFields({
         maxRows={5}
         variant="underlined"
         classNames={{
-          input:
-            "bg-transparent border-0 text-zinc-200 placeholder:text-zinc-500",
-          inputWrapper:
-            "border-0 bg-transparent shadow-none hover:bg-transparent focus:bg-transparent data-[focus=true]:bg-transparent",
+          input: "text-zinc-200 placeholder:text-zinc-500",
         }}
       />
     </div>
@@ -341,7 +341,7 @@ export default function TodoModal({
   todo,
   initialProjectId,
   buttonText = "Add Task",
-  buttonClassName = "w-full justify-start text-sm text-primary",
+  buttonLayout = "full",
 }: TodoModalProps) {
   const user = useUser();
   const { isMac, modifierKeyName } = usePlatform();
@@ -389,7 +389,7 @@ export default function TodoModal({
     <>
       <TodoModalTrigger
         buttonText={buttonText}
-        buttonClassName={buttonClassName}
+        buttonLayout={buttonLayout}
         onOpen={onOpen}
       />
 
@@ -404,69 +404,71 @@ export default function TodoModal({
         <ModalContent>
           {(onClose) => (
             <>
-              <ModalBody className="gap-6 pt-6">
-                <TodoTextInputFields
-                  title={formData.title}
-                  description={formData.description || ""}
-                  onTitleChange={handleTitleChange}
-                  onDescriptionChange={handleDescriptionChange}
-                />
-
-                {/* Fields Row with Chips */}
-                <TodoFieldsRow
-                  priority={formData.priority ?? Priority.NONE}
-                  projectId={formData.project_id}
-                  projects={projects}
-                  dueDate={formData.due_date}
-                  dueDateTimezone={formData.due_date_timezone}
-                  labels={formData.labels ?? []}
-                  onPriorityChange={(priority) =>
-                    updateField("priority", priority)
-                  }
-                  onProjectChange={(projectId) =>
-                    updateField("project_id", projectId)
-                  }
-                  onDateChange={handleDateChange}
-                  onLabelsChange={(labels) => updateField("labels", labels)}
-                  userTimezone={userTimezone}
-                />
-
-                {/* Scheduling Row */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <ScheduledFieldChip
-                    value={formData.scheduled_at ?? undefined}
-                    onChange={(scheduledAt) =>
-                      updateField("scheduled_at", scheduledAt)
-                    }
-                    timezone={userTimezone}
+              <ModalBody>
+                <div className="flex flex-col gap-6 pt-6">
+                  <TodoTextInputFields
+                    title={formData.title}
+                    description={formData.description || ""}
+                    onTitleChange={handleTitleChange}
+                    onDescriptionChange={handleDescriptionChange}
                   />
-                  <RecurrenceFieldChip
-                    value={formData.recurrence ?? undefined}
-                    onChange={(val) => updateField("recurrence", val)}
+
+                  {/* Fields Row with Chips */}
+                  <TodoFieldsRow
+                    priority={formData.priority ?? Priority.NONE}
+                    projectId={formData.project_id}
+                    projects={projects}
+                    dueDate={formData.due_date}
+                    dueDateTimezone={formData.due_date_timezone}
+                    labels={formData.labels ?? []}
+                    onPriorityChange={(priority) =>
+                      updateField("priority", priority)
+                    }
+                    onProjectChange={(projectId) =>
+                      updateField("project_id", projectId)
+                    }
+                    onDateChange={handleDateChange}
+                    onLabelsChange={(labels) => updateField("labels", labels)}
+                    userTimezone={userTimezone}
+                  />
+
+                  {/* Scheduling Row */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ScheduledFieldChip
+                      value={formData.scheduled_at ?? undefined}
+                      onChange={(scheduledAt) =>
+                        updateField("scheduled_at", scheduledAt)
+                      }
+                      timezone={userTimezone}
+                    />
+                    <RecurrenceFieldChip
+                      value={formData.recurrence ?? undefined}
+                      onChange={(val) => updateField("recurrence", val)}
+                    />
+                  </div>
+
+                  {/* Expires At (read-only, set by the LLM) */}
+                  {mode === "edit" && todo?.expires_at && (
+                    <div className="flex items-center gap-2 text-sm text-zinc-500">
+                      <AlertCircleIcon width={16} height={16} />
+                      <span>
+                        Expires{" "}
+                        {format(
+                          new Date(todo.expires_at),
+                          "EEE, MMM d 'at' h:mm a",
+                        )}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Subtasks Manager */}
+                  <SubtaskManager
+                    subtasks={formData.subtasks || []}
+                    onSubtasksChange={(subtasks) =>
+                      updateField("subtasks", subtasks)
+                    }
                   />
                 </div>
-
-                {/* Expires At (read-only, set by the LLM) */}
-                {mode === "edit" && todo?.expires_at && (
-                  <div className="flex items-center gap-2 text-sm text-zinc-500">
-                    <AlertCircleIcon width={16} height={16} />
-                    <span>
-                      Expires{" "}
-                      {format(
-                        new Date(todo.expires_at),
-                        "EEE, MMM d 'at' h:mm a",
-                      )}
-                    </span>
-                  </div>
-                )}
-
-                {/* Subtasks Manager */}
-                <SubtaskManager
-                  subtasks={formData.subtasks || []}
-                  onSubtasksChange={(subtasks) =>
-                    updateField("subtasks", subtasks)
-                  }
-                />
               </ModalBody>
 
               <ModalFooter>

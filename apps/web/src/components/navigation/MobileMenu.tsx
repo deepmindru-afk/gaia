@@ -132,29 +132,31 @@ export default function MobileMenu() {
           <Menu01Icon color="foreground" />
         </div>
       </SheetTrigger>
-      <SheetContent className="z-100 w-full overflow-y-auto! border-none bg-zinc-950/50 backdrop-blur-2xl text-foreground dark">
+      <SheetContent className="z-100 w-full overflow-y-auto! dark" side="right">
         <SheetHeader>
           <SheetTitle>
             <VisuallyHidden.Root>Menu</VisuallyHidden.Root>
           </SheetTitle>
-          <SheetDescription className="flex flex-col gap-1 pb-20! pt-8 px-6">
-            {sections.map((section) => (
-              <div key={section.title} className="mt-6 flex flex-col gap-0.5">
-                <p className="mb-2 text-xs tracking-wide text-zinc-500 uppercase">
-                  {section.title}
-                </p>
-                {section.links.map((link) => (
-                  <MobileMenuLink
-                    key={link.href}
-                    link={link}
-                    onNavigate={closeSheet}
-                  />
-                ))}
-              </div>
-            ))}
+          <SheetDescription>
+            <div className="flex flex-col gap-1 px-6 pt-8 pb-20!">
+              {sections.map((section) => (
+                <div key={section.title} className="mt-6 flex flex-col gap-0.5">
+                  <p className="mb-2 text-xs tracking-wide text-zinc-500 uppercase">
+                    {section.title}
+                  </p>
+                  {section.links.map((link) => (
+                    <MobileMenuLink
+                      key={link.href}
+                      link={link}
+                      onNavigate={closeSheet}
+                    />
+                  ))}
+                </div>
+              ))}
 
-            {/* Authentication links */}
-            <div className="mt-8 flex flex-col gap-2">{authLinks}</div>
+              {/* Authentication links */}
+              <div className="mt-8 flex flex-col gap-2">{authLinks}</div>
+            </div>
           </SheetDescription>
         </SheetHeader>
       </SheetContent>

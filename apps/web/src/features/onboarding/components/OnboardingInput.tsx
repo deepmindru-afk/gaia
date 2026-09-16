@@ -36,10 +36,10 @@ function DataPrivacyModal({ open, onOpenChange }: DataPrivacyModalProps) {
     <Modal isOpen={open} onOpenChange={onOpenChange} size="sm">
       <ModalContent>
         <ModalHeader className="text-zinc-100">Your data is yours</ModalHeader>
-        <ModalBody className="pb-6">
-          <div className="space-y-4 text-sm text-zinc-400">
+        <ModalBody>
+          <div className="space-y-4 pb-6 text-sm text-zinc-400">
             <div className="flex gap-3">
-              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-emerald-400/10 text-emerald-400">
+              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-400">
                 <LockPasswordIcon size={16} />
               </div>
               <div>
@@ -54,7 +54,7 @@ function DataPrivacyModal({ open, onOpenChange }: DataPrivacyModalProps) {
               </div>
             </div>
             <div className="flex gap-3">
-              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-400/10 text-blue-400">
+              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-xl bg-blue-400/10 text-blue-400">
                 <LockPasswordIcon size={16} />
               </div>
               <div>
@@ -68,7 +68,7 @@ function DataPrivacyModal({ open, onOpenChange }: DataPrivacyModalProps) {
               </div>
             </div>
             <div className="flex gap-3">
-              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-400/10 text-violet-400">
+              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-xl bg-violet-400/10 text-violet-400">
                 <SourceCodeIcon size={16} />
               </div>
               <div>
@@ -165,7 +165,6 @@ function FreeChatInput({
           variant="faded"
           size="lg"
           disabled={isSending}
-          classNames={{ inputWrapper: "pr-1" }}
           endContent={
             <Button
               isIconOnly
@@ -338,7 +337,7 @@ function GmailInput({ onGmailSkip }: { onGmailSkip: () => void }) {
             setIsConnectingGmail(true);
             void connectIntegration("gmail");
           }}
-          className="w-full text-black!"
+          className="w-full"
           disabled={isConnectingGmail}
         >
           {isConnectingGmail ? (
@@ -409,7 +408,6 @@ function TextSendInput({
       placeholder={placeholder}
       variant="faded"
       size="lg"
-      classNames={{ inputWrapper: "pr-1" }}
       endContent={
         <Button
           isIconOnly

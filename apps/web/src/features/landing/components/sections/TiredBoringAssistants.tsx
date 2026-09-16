@@ -509,8 +509,7 @@ export default function Tired() {
                 delay={200}
                 closeDelay={0}
                 classNames={{
-                  content:
-                    "bg-zinc-900 text-white text-xs px-2.5 py-1 rounded-lg",
+                  content: "text-white text-xs",
                 }}
               >
                 <div className="tool-icon-btn">
@@ -536,7 +535,7 @@ export default function Tired() {
 
       {/* CTA */}
       <Link href="/integrations" className="mt-6 sm:mt-8">
-        <RaisedButton color="#00bbff" className="text-black!">
+        <RaisedButton color="#00bbff">
           See All Integrations
           <CircleArrowRight02Icon width={20} height={20} />
         </RaisedButton>

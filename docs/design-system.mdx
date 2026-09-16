@@ -213,7 +213,7 @@ Inline code gets `border-radius: 10px` and `padding: 4px` globally. Use `font-mo
 
 | Context | Class | Size |
 |---------|-------|------|
-| Dark cards, outer | `rounded-2xl` | 16px |
+| Dark cards, outer | `rounded-3xl` | 24px |
 | Dark cards, inner items | `rounded-2xl` or `rounded-xl` | 12px |
 | Images | `rounded-3xl` | 24px |
 | Buttons, inputs | `rounded-md` | 6px |
@@ -345,7 +345,7 @@ export default function MyCard({ title, items, badge }) {
 | Section divider | `<Divider className="bg-zinc-700/50" />` (HeroUI) |
 | Hoverable list item | `p-4 transition-all hover:bg-white/5` |
 
-**Constraints:** Never `border-`, `ring-`, `outline-` anywhere in the card tree. `rounded-2xl` on outer containers always. `zinc-800` outer → `zinc-900` inner is the entire separation mechanism. Status colors always use `/10` opacity backgrounds.
+**Constraints:** Never `border-`, `ring-`, `outline-` anywhere in the card tree. `rounded-3xl` on outer containers always. `zinc-800` outer → `zinc-900` inner is the entire separation mechanism. Status colors always use `/10` opacity backgrounds.
 
 ---
 
@@ -638,7 +638,7 @@ Global scrollbar is already styled (8px, pill-shaped, zinc-700 thumb). Use `.no-
   <Column>
     **Do**
 
-    - `rounded-2xl` on all outer card containers
+    - `rounded-3xl` on all outer card containers
     - `zinc-800` outer → `zinc-900` inner for card depth
     - `/10` opacity backgrounds for all status colors
     - Import icons from `@icons`

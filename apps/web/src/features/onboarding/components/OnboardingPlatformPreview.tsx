@@ -93,10 +93,7 @@ export function OnboardingPlatformPreview({
   }, [hoveredPlatform, script]);
 
   return (
-    <div
-      className="ml-10.75 flex flex-col rounded-3xl bg-zinc-900 p-2.5"
-      style={{ width: 500, minWidth: 500, maxWidth: 500 }}
-    >
+    <div className="ml-10.75 flex w-[500px] min-w-[500px] max-w-[500px] flex-col rounded-3xl bg-zinc-900 p-2.5">
       <div className="mb-1.5 flex h-6 shrink-0 items-center gap-2 px-1">
         <AnimatePresence mode="wait" initial={false}>
           <m.div
@@ -112,10 +109,10 @@ export function OnboardingPlatformPreview({
               alt=""
               width={18}
               height={18}
-              className="rounded-[4px]"
+              className="rounded"
               aria-hidden
             />
-            <span className="text-[11px] text-zinc-500">
+            <span className="text-xs text-zinc-500">
               Demo via {PLATFORM_LABELS[activePlatform]}
             </span>
           </m.div>
@@ -123,8 +120,7 @@ export function OnboardingPlatformPreview({
       </div>
       <div
         ref={scrollHostRef}
-        className="relative shrink-0 overflow-hidden rounded-2xl"
-        style={{ height: 280, minHeight: 280, maxHeight: 280 }}
+        className="relative h-[280px] min-h-[280px] max-h-[280px] shrink-0 overflow-hidden rounded-2xl"
       >
         {!hasLoaded && <Skeleton className="absolute inset-0 rounded-2xl" />}
         <AnimatePresence mode="wait" initial={false}>

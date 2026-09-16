@@ -42,7 +42,7 @@ export function EnterpriseBar({ plan, ctaHref }: Readonly<EnterpriseBarProps>) {
       </div>
 
       <RaisedButton
-        className="shrink-0 text-black!"
+        className="shrink-0"
         color="#00bbff"
         onClick={() => router.push(ctaHref)}
       >

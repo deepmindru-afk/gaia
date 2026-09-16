@@ -24,7 +24,7 @@ export default function BlurStack({
 }) {
   return (
     <div className={className}>
-      <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+      <div className="absolute inset-0 overflow-hidden">
         {config.map((layer, index) => {
           const [start, solidStart, solidEnd, end] = layer.maskStops;
           const maskImage = `linear-gradient(rgba(0,0,0,0) ${start}%, rgb(0,0,0) ${solidStart}%, rgb(0,0,0) ${solidEnd}%, rgba(0,0,0,0) ${end}%)`;
@@ -33,14 +33,10 @@ export default function BlurStack({
             <div
               // biome-ignore lint/suspicious/noArrayIndexKey: static stack
               key={index}
+              className="pointer-events-none absolute inset-0 rounded-none opacity-100"
               style={{
-                opacity: 1,
-                position: "absolute",
-                inset: 0,
                 zIndex: layer.zIndex,
                 maskImage,
-                borderRadius: 0,
-                pointerEvents: "none",
                 backdropFilter: `blur(${layer.blur}px)`,
                 WebkitBackdropFilter: `blur(${layer.blur}px)`,
               }}

@@ -112,10 +112,7 @@ function IdentitySettingsSection({
           onSelectionChange={handleProfessionChange}
           isDisabled={isUpdating}
           classNames={{
-            trigger:
-              "bg-zinc-800/50 hover:bg-zinc-700/50 cursor-pointer min-h-[36px]",
-            popoverContent: "bg-zinc-800 z-50",
-            listbox: "bg-zinc-800",
+            trigger: "cursor-pointer min-h-[36px]",
             value: "text-white text-sm",
           }}
         >
@@ -142,7 +139,7 @@ function IdentitySettingsSection({
             variant="flat"
             onPress={handleAutoDetectTimezone}
             isDisabled={isUpdating}
-            className="border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50"
+            className="text-zinc-300"
           >
             Auto Detect
           </Button>
@@ -156,10 +153,7 @@ function IdentitySettingsSection({
             onSelectionChange={handleTimezoneChange}
             isDisabled={isUpdating}
             classNames={{
-              trigger:
-                "bg-zinc-800/50 hover:bg-zinc-700/50 cursor-pointer min-h-[36px]",
-              popoverContent: "bg-zinc-800 z-50",
-              listbox: "bg-zinc-800",
+              trigger: "cursor-pointer min-h-[36px]",
               value: "text-white text-sm",
             }}
           >
@@ -357,10 +351,7 @@ export default function PreferencesSettings({
             onSelectionChange={handleResponseStyleChange}
             isDisabled={isUpdating}
             classNames={{
-              trigger:
-                "bg-zinc-800/50 hover:bg-zinc-700/50 cursor-pointer min-h-[36px]",
-              popoverContent: "bg-zinc-800 z-50",
-              listbox: "bg-zinc-800",
+              trigger: "cursor-pointer min-h-[36px]",
               value: "text-white text-sm",
             }}
           >

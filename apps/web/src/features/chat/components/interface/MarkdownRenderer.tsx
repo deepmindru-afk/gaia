@@ -96,7 +96,7 @@ const MarkdownImage: React.FC<MarkdownImageProps> = ({
       width={500}
       height={500}
       alt={alt || "image"}
-      className="mx-auto my-4 cursor-pointer rounded-xl bg-zinc-900 object-contain transition hover:opacity-80"
+      className="mx-auto my-4 h-auto max-h-[320px] w-auto max-w-full cursor-pointer rounded-xl bg-zinc-900 object-contain transition hover:opacity-80"
       src={resolved}
       onClick={() => onOpen(resolved)}
       unoptimized
@@ -162,7 +162,7 @@ function buildMarkdownComponents(
     ),
     blockquote: ({ ...props }) => (
       <blockquote
-        className="my-2 border-gray-300 bg-gray-300/10 py-3 pl-4 italic"
+        className="my-2 border-zinc-300 bg-zinc-300/10 py-3 pl-4 italic"
         {...props}
       />
     ),
@@ -263,10 +263,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   return (
     <div
       className={cn(
-        "prose fadein-style max-w-none",
+        "max-w-none",
         lightBackground
           ? "text-black [--tw-prose-body:#000] [--tw-prose-headings:#000] [--tw-prose-bold:#000] [--tw-prose-links:#000] [--tw-prose-code:#000]"
-          : "dark:prose-invert text-white",
+          : "text-white",
         className,
       )}
     >

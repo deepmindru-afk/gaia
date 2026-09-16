@@ -6,7 +6,7 @@ import { Text } from "@/components/ui/text";
  * Card styling primitives for OpenUI components.
  *
  * Mirrors the web card contract:
- *   outer:  rounded-2xl bg-zinc-800 p-4
+ *   outer:  rounded-3xl bg-zinc-800 p-4
  *   inner:  rounded-2xl bg-zinc-900 p-3
  *   header: text-sm font-semibold text-zinc-100 mb-3
  *   body:   text-sm font-medium text-zinc-200

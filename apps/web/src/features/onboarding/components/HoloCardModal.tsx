@@ -170,8 +170,8 @@ export default function FeatureModal({ isOpen, onClose }: FeatureModalProps) {
       backdrop="blur"
       scrollBehavior="inside"
     >
-      <ModalContent className="flex border-0! bg-zinc-900/50 shadow-none outline-0!">
-        <div className="grid h-full flex-1 grid-cols-1 items-center lg:grid-cols-3">
+      <ModalContent className="flex">
+        <div className="grid h-full flex-1 grid-cols-1 items-center bg-zinc-900/50 lg:grid-cols-3">
           <div className="col-span-2 space-y-4 p-10 pr-0!">
             <SimpleChatBubbleBot>
               {isLoadingPersonalization
@@ -182,10 +182,10 @@ export default function FeatureModal({ isOpen, onClose }: FeatureModalProps) {
             <div className="mt-5 grid w-full grid-cols-3 gap-2 pl-12">
               {isLoadingPersonalization ? (
                 <>
-                  <Skeleton className="h-32 rounded-lg" />
-                  <Skeleton className="h-32 rounded-lg" />
-                  <Skeleton className="h-32 rounded-lg" />
-                  <Skeleton className="h-32 rounded-lg" />
+                  <Skeleton className="h-32 rounded-xl" />
+                  <Skeleton className="h-32 rounded-xl" />
+                  <Skeleton className="h-32 rounded-xl" />
+                  <Skeleton className="h-32 rounded-xl" />
                 </>
               ) : (
                 (personalizationData?.suggested_workflows || []).map(
@@ -209,7 +209,7 @@ export default function FeatureModal({ isOpen, onClose }: FeatureModalProps) {
               }
             </SimpleChatBubbleBot>
             <div className="mt-8 ml-12 space-x-2">
-              <RaisedButton className="font-medium" onClick={handleModalClose}>
+              <RaisedButton onClick={handleModalClose}>
                 Let's Go!
                 <Rocket01Icon width={18} height={18} />
               </RaisedButton>
@@ -236,13 +236,7 @@ export default function FeatureModal({ isOpen, onClose }: FeatureModalProps) {
                   onClick={handleRevealCard}
                 >
                   {/* Shimmer Card Placeholder */}
-                  <div
-                    className="relative overflow-hidden rounded-2xl shadow-2xl bg-linear-to-br from-zinc-800 to-zinc-600"
-                    style={{
-                      height: `${HOLO_CARD_HEIGHT}px`,
-                      width: `${HOLO_CARD_WIDTH}px`,
-                    }}
-                  >
+                  <div className="relative h-[470px] w-[330px] overflow-hidden rounded-2xl bg-linear-to-br from-zinc-800 to-zinc-600">
                     {/* Shimmer effect */}
                     <div className="absolute inset-0 -translate-x-full animate-shimmer bg-linear-to-r from-transparent via-white/10 to-transparent" />
 
@@ -256,8 +250,8 @@ export default function FeatureModal({ isOpen, onClose }: FeatureModalProps) {
 
                       {/* Bottom section skeleton */}
                       <div className="space-y-3">
-                        <Skeleton className="h-10 w-48 rounded-lg" />
-                        <Skeleton className="h-6 w-40 rounded-lg" />
+                        <Skeleton className="h-10 w-48 rounded-xl" />
+                        <Skeleton className="h-6 w-40 rounded-xl" />
                         <div className="mt-8 flex items-center justify-between">
                           <div className="space-y-2">
                             <Skeleton className="h-4 w-24 rounded" />
@@ -269,7 +263,7 @@ export default function FeatureModal({ isOpen, onClose }: FeatureModalProps) {
                     </div>
 
                     {/* Pulsing border effect */}
-                    <div className="pointer-events-none absolute inset-0 rounded-2xl ring-2 ring-primary/50 group-hover:ring-primary/80 animate-pulse" />
+                    <div className="pointer-events-none absolute inset-0 rounded-2xl animate-pulse" />
                   </div>
 
                   {/* Click to Reveal Text */}

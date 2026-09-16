@@ -348,15 +348,7 @@ const HiddenDownloadCards = ({
   height,
   width,
 }: HiddenDownloadCardsProps) => (
-  <div
-    style={{
-      position: "fixed",
-      top: -10000,
-      left: -10000,
-      opacity: 0,
-      pointerEvents: "none",
-    }}
-  >
+  <div className="pointer-events-none fixed top-[-10000px] left-[-10000px] opacity-0">
     <div ref={cardRef} className="flex items-center gap-8 bg-transparent p-8">
       <div style={{ width, height }}>
         <HoloCard

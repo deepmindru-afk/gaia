@@ -28,8 +28,7 @@ export function PricingModal({ isOpen, onClose, plans }: PricingModalProps) {
       scrollBehavior="inside"
       classNames={{
         wrapper: "overflow-hidden",
-        closeButton:
-          "text-zinc-400 hover:text-white hover:bg-zinc-800 top-3 right-3",
+        closeButton: "text-zinc-400 hover:text-white top-3 right-3",
       }}
     >
       <ModalContent>

@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@heroui/button";
 import { Login02Icon, MessageMultiple02Icon } from "@icons";
 import NumberFlow from "@number-flow/react";
 import dynamic from "next/dynamic";
@@ -8,7 +9,6 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronDown, Github, StarFilledIcon } from "@/components/shared/icons";
 import { LinkButton } from "@/components/shared/LinkButton";
-import { Button } from "@/components/ui/button";
 import { appConfig } from "@/config/appConfig";
 import { useUser } from "@/features/auth/hooks/useUser";
 import useMediaQuery from "@/hooks/ui/useMediaQuery";
@@ -178,14 +178,14 @@ export default function Navbar() {
         <div
           className={`navbar_content flex h-14 w-full items-center justify-between rounded-2xl px-3 transition-all duration-300 ${isScrolled || activeDropdown ? "bg-zinc-900/30 backdrop-blur-md" : "bg-transparent"}`}
         >
-          <LogoWithContextMenu className="px-2" />
+          <LogoWithContextMenu />
 
           <div className="hidden items-center gap-1 sm:flex">{navLinks}</div>
 
           {isMobileScreen ? (
             <MobileMenu />
           ) : (
-            <div className="flex items-center gap-1 rounded-lg px-1 py-1">
+            <div className="flex items-center gap-1 rounded-xl px-1 py-1">
               {NAVBAR_ITEMS.map((item) =>
                 item.type === "link" ? (
                   <Link
@@ -261,14 +261,14 @@ export default function Navbar() {
                   });
                 }}
               >
-                <Button className="group rounded-xl border-0! bg-black/60 hover:bg-black/40 text-white">
+                <Button radius="md" variant="flat" className="group text-white">
                   <div className="flex items-center">
                     <Github className="mr-1 size-4 fill-white" />
                     <span className="ml-1 lg:hidden">Star</span>
                     <span className="ml-1 hidden lg:inline">GitHub</span>
                   </div>
                   <div className="flex items-center gap-1 text-sm">
-                    <StarFilledIcon className="relative top-px size-4 text-white group-hover:text-yellow-300" />
+                    <StarFilledIcon className="relative top-px size-4 text-white group-hover:text-yellow-400" />
                     <NumberFlow
                       value={stars}
                       className="font-medium text-white tabular-nums"
@@ -291,7 +291,7 @@ export default function Navbar() {
               <Link href={isAuthenticated ? "/c" : "/signup"}>
                 <RaisedButton
                   size={"sm"}
-                  className="rounded-xl text-black!"
+                  className="rounded-xl"
                   color="#00bbff"
                   onClick={() => {
                     trackEvent(ANALYTICS_EVENTS.NAVIGATION_CTA_CLICKED, {

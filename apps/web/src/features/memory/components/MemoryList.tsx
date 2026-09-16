@@ -159,7 +159,7 @@ export function MemoryList({ onChanged }: MemoryListProps) {
             size="sm"
             color="danger"
             variant="flat"
-            className="rounded-xl"
+            radius="md"
             isLoading={isClearing}
             onPress={handleClearAll}
           >
@@ -169,7 +169,7 @@ export function MemoryList({ onChanged }: MemoryListProps) {
         <Button
           size="sm"
           color="primary"
-          className="rounded-xl"
+          radius="md"
           startContent={<PlusSignIcon className="size-4" />}
           onPress={() => setIsAddModalOpen(true)}
         >
@@ -239,7 +239,7 @@ export function MemoryList({ onChanged }: MemoryListProps) {
             isIconOnly
             size="sm"
             variant="flat"
-            className="rounded-xl"
+            radius="md"
             aria-label="Previous page"
             isDisabled={page <= 1}
             onPress={() => setPage(page - 1)}
@@ -250,7 +250,7 @@ export function MemoryList({ onChanged }: MemoryListProps) {
             isIconOnly
             size="sm"
             variant="flat"
-            className="rounded-xl"
+            radius="md"
             aria-label="Next page"
             isDisabled={page >= totalPages}
             onPress={() => setPage(page + 1)}

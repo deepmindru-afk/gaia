@@ -66,7 +66,7 @@ export default function RateLimitCard({ data }: RateLimitCardProps) {
       <div className="flex items-start justify-between gap-3 p-4 pb-3">
         <div className="flex items-center gap-3">
           <div
-            className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${isUpgradeRequired ? "bg-warning/15" : "bg-red-500/15"}`}
+            className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${isUpgradeRequired ? "bg-warning/10" : "bg-red-500/10"}`}
           >
             {isUpgradeRequired ? (
               <UploadCircle01Icon className="size-5 text-warning-500" />
@@ -94,7 +94,7 @@ export default function RateLimitCard({ data }: RateLimitCardProps) {
           variant="flat"
           color={isUpgradeRequired ? "warning" : "danger"}
           classNames={{
-            base: `shrink-0 ${isUpgradeRequired ? "bg-warning/15" : "bg-red-500/15"}`,
+            base: "shrink-0",
             content: "text-xs font-semibold",
           }}
         >
@@ -102,7 +102,7 @@ export default function RateLimitCard({ data }: RateLimitCardProps) {
         </Chip>
       </div>
 
-      <Divider className="bg-zinc-700/50" />
+      <Divider />
 
       {/* Body */}
       <div className="flex flex-col gap-3 p-4">
@@ -151,7 +151,7 @@ export default function RateLimitCard({ data }: RateLimitCardProps) {
                   <span className="text-xs font-medium text-zinc-200">
                     {resetInfo.label}
                   </span>
-                  <span className="text-[11px] text-zinc-400">
+                  <span className="text-xs text-zinc-400">
                     {resetInfo.detail}
                   </span>
                 </div>
@@ -175,7 +175,7 @@ export default function RateLimitCard({ data }: RateLimitCardProps) {
 
       {showFooter && (
         <>
-          <Divider className="bg-zinc-700/50" />
+          <Divider />
 
           {/* Footer CTA */}
           <div className="p-3">
@@ -184,7 +184,8 @@ export default function RateLimitCard({ data }: RateLimitCardProps) {
               color="primary"
               variant={isUpgradeRequired ? "solid" : "flat"}
               onPress={() => openPricingModal()}
-              className="w-full rounded-xl font-medium"
+              radius="md"
+              className="w-full font-medium"
             >
               {isUpgradeRequired ? `Upgrade to ${planName}` : "View Plans"}
             </Button>

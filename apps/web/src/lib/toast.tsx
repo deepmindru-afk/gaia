@@ -45,21 +45,19 @@ const TITLE_MAX_CHARS = 50;
 
 type ToastState = "success" | "error" | "warning" | "info" | "loading";
 
-// State-tinted classes for the action button — static so Tailwind compiles them
-// and they apply via `className` (HeroUI Button forwards className, not style;
-// and sileo's `--_c` var isn't inherited where we render). Reduced-opacity fill
-// + matching text, like sileo's own buttons. Dismiss stays neutral.
-const ACTION_CLS: Record<ToastState, string> = {
-  success: "bg-green-500/15 text-green-400 data-[hover=true]:bg-green-500/25",
-  error: "bg-red-500/15 text-red-400 data-[hover=true]:bg-red-500/25",
-  warning: "bg-amber-500/15 text-amber-400 data-[hover=true]:bg-amber-500/25",
-  info: "bg-sky-500/15 text-sky-400 data-[hover=true]:bg-sky-500/25",
-  loading: "bg-white/10 text-white data-[hover=true]:bg-white/15",
+// State-tinted action button via flat variant + color prop — theme-owned so
+// no className overrides are needed. Dismiss stays neutral (flat default).
+const ACTION_COLOR: Record<
+  ToastState,
+  "success" | "danger" | "warning" | "primary" | "default"
+> = {
+  success: "success",
+  error: "danger",
+  warning: "warning",
+  info: "primary",
+  loading: "default",
 };
-const DISMISS_CLS = "bg-white/5 text-white/70 data-[hover=true]:bg-white/10";
-// rounded-xl (12px) on the 28px-tall button reads as a rounded rectangle; a
-// larger radius would exceed half the height and clamp into a full pill.
-const BTN_BASE = "h-7 min-w-0 rounded-xl px-3 font-medium text-xs";
+const BTN_BASE = "h-7 min-w-0 font-medium text-xs";
 
 // Control row rendered inside the toast description. Sileo's own `button` slot
 // only fits ONE button, so we render our own: the action is tinted with the
@@ -84,7 +82,9 @@ function ToastControls({
           size="sm"
           variant="flat"
           fullWidth
-          className={`${BTN_BASE} ${ACTION_CLS[state]}`}
+          radius="md"
+          color={ACTION_COLOR[state]}
+          className={BTN_BASE}
           onPress={action.onClick}
         >
           {action.label}
@@ -95,7 +95,8 @@ function ToastControls({
           size="sm"
           variant="flat"
           fullWidth
-          className={`${BTN_BASE} ${DISMISS_CLS}`}
+          radius="md"
+          className={BTN_BASE}
           onPress={() => sileo.dismiss(idRef.id)}
         >
           {DISMISS_LABEL}

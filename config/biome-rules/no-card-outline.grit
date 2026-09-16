@@ -1,0 +1,23 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// Flat-card consistency: outline-1|2 + outline-zinc on bg-zinc-800|900 surfaces
+// must go (flat design, no hairlines). Same overlay exclusions as
+// no-card-borders: *PopoverContent *TooltipContent *ModalContent
+// *DropdownMenu* *ContextMenu* *SheetContent keep hairlines — triage as keeps.
+// Focus/aria outlines are left alone.
+//
+// GritQL notes: matches JsxAttribute() nodes (bare `className=$x` snippets do
+// not match in this engine). Regexes use non-capturing (?:...) groups only.
+JsxAttribute() as $node where {
+  $node <: r"[\s\S]*bg-zinc-(?:800|900)[\s\S]*",
+  $node <: r"[\s\S]*outline-(?:1|2)[\s\S]*",
+  $node <: r"[\s\S]*outline-zinc[\s\S]*",
+  $node <: not r"[\s\S]*focus-visible:[\s\S]*",
+  $node <: not r"[\s\S]*aria-invalid:[\s\S]*",
+  register_diagnostic(
+    span = $node,
+    message = "Flat cards: remove outline-1/2 + outline-zinc from bg-zinc-800/900 surfaces. Overlays (*Content/*Popover/*Tooltip/*Modal/*DropdownMenu/*ContextMenu/*Sheet*) keep hairlines — leave those.",
+    severity = "error"
+  )
+}

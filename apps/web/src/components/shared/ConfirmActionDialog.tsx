@@ -113,9 +113,7 @@ export function ConfirmActionDialog({
       <ModalContent>
         {(onClose) => (
           <>
-            <ModalHeader className="flex flex-col gap-1">
-              {config.title}
-            </ModalHeader>
+            <ModalHeader>{config.title}</ModalHeader>
             <ModalBody>
               <p className="text-sm text-zinc-400">{config.description}</p>
             </ModalBody>
@@ -123,7 +121,7 @@ export function ConfirmActionDialog({
               <Button
                 variant="flat"
                 onPress={onClose}
-                className="bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                className="text-zinc-300"
               >
                 {config.cancelText}
               </Button>

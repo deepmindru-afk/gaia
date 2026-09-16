@@ -101,7 +101,7 @@ function OnboardingTodoCardsImpl({
             >
               {active && (
                 <m.div
-                  className="absolute inset-0 rounded-2xl bg-violet-500/5"
+                  className="absolute inset-0 rounded-2xl bg-violet-400/10"
                   animate={{ opacity: [0.3, 0.6, 0.3] }}
                   transition={{
                     duration: 1.8,
@@ -178,7 +178,7 @@ function OnboardingTodoCardsImpl({
                   onPress={() => handleExecute(todo.id)}
                   aria-hidden={!showRunNow}
                   className={`absolute right-3 top-1/2 -translate-y-1/2 transition-opacity duration-150 ${
-                    showRunNow ? "opacity-100" : "pointer-events-none opacity-0"
+                    showRunNow ? "" : "pointer-events-none opacity-0"
                   }`}
                 >
                   Run now

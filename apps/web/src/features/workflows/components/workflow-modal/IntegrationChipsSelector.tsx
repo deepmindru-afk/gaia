@@ -7,6 +7,7 @@ import { Skeleton } from "@heroui/skeleton";
 import { PlusSignIcon, Search01Icon } from "@icons";
 import * as m from "motion/react-m";
 import {
+  type CSSProperties,
   memo,
   type ReactNode,
   useCallback,
@@ -339,8 +340,12 @@ function IntegrationPillCloud({
     pillCloud = (
       <div
         ref={wrapRef}
-        className="flex flex-wrap gap-2 overflow-hidden transition-[max-height] duration-200"
-        style={clampHeight != null ? { maxHeight: clampHeight } : undefined}
+        className="flex flex-wrap gap-2 overflow-hidden transition-[max-height] duration-200 max-h-[var(--chips-max-height)]"
+        style={
+          clampHeight != null
+            ? ({ "--chips-max-height": clampHeight } as CSSProperties)
+            : undefined
+        }
       >
         {filtered.map((integration, index) => {
           const row = rowByPosition[index] ?? 0;

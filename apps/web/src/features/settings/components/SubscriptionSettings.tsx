@@ -3,6 +3,7 @@
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
 import { Skeleton } from "@heroui/skeleton";
+import { Tick02Icon } from "@icons";
 import { useUserSubscriptionStatus } from "@/features/pricing/hooks/usePricing";
 import {
   convertToUSDCents,
@@ -292,7 +293,7 @@ export function SubscriptionSettings() {
                   key={feature}
                   className="flex items-start gap-2 text-sm text-zinc-400"
                 >
-                  <span className="mt-0.5 text-emerald-400">✓</span>
+                  <Tick02Icon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                   <span>{feature}</span>
                 </li>
               ))}

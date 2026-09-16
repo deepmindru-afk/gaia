@@ -439,7 +439,7 @@ function CTAGroup({
           radius="full"
           aria-label="Previous platform"
           onPress={onPrev}
-          className="min-w-10 h-10 w-10 p-0 text-zinc-500 transition-colors hover:text-zinc-200"
+          className="min-w-10 h-10 w-10 text-zinc-500 transition-colors hover:text-zinc-200"
         >
           <ArrowLeft02Icon size={24} />
         </Button>
@@ -449,7 +449,7 @@ function CTAGroup({
           radius="full"
           aria-label="Next platform"
           onPress={onNext}
-          className="min-w-10 h-10 w-10 p-0 text-zinc-500 transition-colors hover:text-zinc-200"
+          className="min-w-10 h-10 w-10 text-zinc-500 transition-colors hover:text-zinc-200"
         >
           <ArrowRight02Icon size={24} />
         </Button>
@@ -576,7 +576,7 @@ function PhoneFrame({
   messages: ChatMessageItem[];
 }) {
   return (
-    <div className="relative isolate sm:pb-[82px]">
+    <div className="relative isolate sm:pb-20">
       <div
         aria-hidden
         className="-z-10 pointer-events-none absolute -inset-x-[28rem] -inset-y-[20rem]"
@@ -639,7 +639,7 @@ function PrimaryCTA({
     return (
       <RaisedButton
         color="#00bbff"
-        className="text-black! h-10 rounded-full pr-4 pl-1.5 before:rounded-full"
+        className="h-10 rounded-full pr-4 pl-1.5 before:rounded-full"
         onClick={() =>
           window.open(action.href, "_blank", "noopener,noreferrer")
         }
@@ -653,7 +653,7 @@ function PrimaryCTA({
     <Link href={action.href}>
       <RaisedButton
         color="#00bbff"
-        className="text-black! h-10 rounded-full pr-4 pl-1.5 before:rounded-full"
+        className="h-10 rounded-full pr-4 pl-1.5 before:rounded-full"
       >
         {buttonContent}
       </RaisedButton>

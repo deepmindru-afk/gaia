@@ -51,11 +51,11 @@ export default function SendNotificationSection({
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-white">{title}</p>
-          <p className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-zinc-300">
+          <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-zinc-300">
             {message}
           </p>
           {!isDelivered && (
-            <p className="mt-1 text-[11px] text-zinc-500">
+            <p className="mt-1 text-xs text-zinc-500">
               Queued — waiting for a channel to confirm delivery
             </p>
           )}

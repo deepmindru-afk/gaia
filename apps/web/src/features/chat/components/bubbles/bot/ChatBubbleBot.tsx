@@ -157,9 +157,7 @@ export default function ChatBubbleBot(
             </m.div>
           )}
 
-          <div
-            className={`chatbubblebot_parent ${hideAvatar ? "" : "pl-10.75"}`}
-          >
+          <div className={`${hideAvatar ? "" : "pl-10.75"}`}>
             <div className="flex w-full flex-col gap-2">
               {memory_data && onOpenMemoryModal && (
                 <MemoryIndicator
@@ -191,7 +189,7 @@ export default function ChatBubbleBot(
             >
               {date && !disableActions && (
                 <span
-                  className="text-opacity-40 flex flex-col p-1 py-2 text-xs text-nowrap text-zinc-400 select-text"
+                  className="flex flex-col p-1 py-2 text-xs text-nowrap text-zinc-400/40 select-text"
                   suppressHydrationWarning
                 >
                   {parseDate(date)}

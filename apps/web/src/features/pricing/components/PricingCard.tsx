@@ -190,7 +190,7 @@ export function PricingCard({
     if (!isFree) {
       return (
         <RaisedButton
-          className="w-full text-black!"
+          className="w-full"
           color="#00bbff"
           onClick={handleGetStarted}
           disabled={

@@ -130,7 +130,7 @@ export function CoreDocuments() {
           <Button
             size="sm"
             variant="light"
-            className="rounded-xl"
+            radius="md"
             onPress={() => setDraft(null)}
           >
             Cancel
@@ -138,7 +138,7 @@ export function CoreDocuments() {
           <Button
             size="sm"
             color="primary"
-            className="rounded-xl"
+            radius="md"
             onPress={handleSave}
             isLoading={isSaving}
           >
@@ -185,7 +185,7 @@ export function CoreDocuments() {
         {/* Meta row — version + updated timestamp, separated by divider */}
         {document && (
           <>
-            <Divider className="my-3 bg-zinc-700/50" />
+            <Divider className="my-3" />
             <div className="flex items-center justify-between gap-3">
               <p className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <span>v{document.version}</span>
@@ -201,7 +201,8 @@ export function CoreDocuments() {
                 <Button
                   size="sm"
                   variant="flat"
-                  className="shrink-0 rounded-xl"
+                  radius="md"
+                  className="shrink-0"
                   startContent={<PencilEdit02Icon className="size-4" />}
                   onPress={() => setDraft(document.content)}
                 >

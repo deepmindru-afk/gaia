@@ -60,7 +60,7 @@ function BotCard({
             className="object-contain"
           />
         </div>
-        <div className="flex items-center gap-2 justifybet">
+        <div className="flex items-center gap-2 justify-between">
           <h2 className="font-medium text-white text-xl">{name}</h2>
           <Chip size="sm" variant="flat" color={badge.color}>
             {badge.label}

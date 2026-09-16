@@ -114,7 +114,7 @@ const VirtualizedItem: React.FC<VirtualizedItemProps> = ({
                   {formatToolName(match.tool.name)}
                 </span>
                 {selectedCategory === "all" && (
-                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400 outline-1 outline-zinc-700">
+                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
                     {formatToolName(
                       categoryDisplayMap[match.tool.category]?.displayName ||
                         match.tool.category,

@@ -45,8 +45,7 @@ export function FileTypeIcon({
       whileHover="hover"
     >
       <m.div
-        className="pointer-events-none absolute inset-0"
-        style={{ opacity: 0.5 }}
+        className="pointer-events-none absolute inset-0 opacity-50"
         aria-hidden="true"
         variants={{
           idle: {
@@ -64,10 +63,14 @@ export function FileTypeIcon({
         }}
         transition={{ duration: 0.2, ease: "easeOut" }}
       >
-        <svg className="h-full w-full" viewBox="-3 0 32 32" aria-hidden="true">
+        <svg
+          className="h-full w-full text-zinc-300"
+          viewBox="-3 0 32 32"
+          aria-hidden="true"
+        >
           <path
             d={DOCUMENT_PATH}
-            fill="#C7CDD6"
+            fill="currentColor"
             fillRule="evenodd"
             transform="translate(-156 -101)"
           />

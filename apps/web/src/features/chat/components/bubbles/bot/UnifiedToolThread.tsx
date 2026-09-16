@@ -202,7 +202,6 @@ export default function UnifiedToolThread({
             keys === "all" || (keys instanceof Set && keys.has("tools")),
           );
         }}
-        style={{ padding: 0 }}
         itemClasses={{ trigger: "cursor-pointer py-0" }}
       >
         <AccordionItem

@@ -63,10 +63,8 @@ export default function RightSidebar({
       {/* Sheet variant (overlay) — always mounted so translateX(100%) is painted
           before the first open, giving CSS transitions a starting state. */}
       <aside
-        className="absolute top-0 right-0 z-50 flex h-full min-h-0 flex-col overflow-hidden bg-secondary-bg transition-transform duration-300 ease-in-out"
+        className={`absolute top-0 right-0 z-50 flex h-full min-h-0 w-95 flex-col overflow-hidden bg-secondary-bg transition-transform duration-300 ease-in-out ${sheetOpen ? "translate-x-0" : "translate-x-full"}`}
         style={{
-          width: "380px",
-          transform: sheetOpen ? "translateX(0)" : "translateX(100%)",
           pointerEvents: sheetOpen ? "auto" : "none",
         }}
         aria-hidden={!sheetOpen}

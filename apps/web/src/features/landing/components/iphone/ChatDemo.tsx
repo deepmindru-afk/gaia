@@ -136,11 +136,7 @@ function DemoCta({ platform }: { platform: ChatPlatform }) {
   const { label, href, accent, darkText } = DEMO_CTA[platform];
   return (
     <Link href={href} className="chat-bubble-pop mt-1 w-fit">
-      <RaisedButton
-        color={accent}
-        size="sm"
-        className={cn("px-4 text-sm", darkText && "text-black!")}
-      >
+      <RaisedButton color={accent} size="sm" className="px-4">
         <DemoCtaIcon platform={platform} color={darkText ? "#000" : "#fff"} />
         {label}
       </RaisedButton>
@@ -617,7 +613,7 @@ function IMessageDemo({
             >
               <path
                 d="M1 1l4.5 4.5L1 10"
-                stroke="rgba(60,60,67,0.28)"
+                stroke="currentColor"
                 strokeWidth="1.4"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -758,7 +754,7 @@ function IMessageDemo({
               value={composerValue}
               onChange={(e) => onComposerChange(e.target.value)}
               onKeyDown={composerKeyHandler(onComposerSend)}
-              className="chat-demo-input min-w-0 flex-1 border-0 bg-transparent p-0 outline-none placeholder:text-[rgba(60,60,67,0.5)]"
+              className="min-w-0 flex-1 border-0 bg-transparent p-0 outline-none placeholder:text-zinc-500/50"
               style={{
                 fontSize: 15,
                 color: "#000",
@@ -926,7 +922,7 @@ function WhatsAppDemo({
       {/* Chat area — light gray with the WhatsApp doodle pattern */}
       <div
         ref={scrollRef}
-        className="flex flex-1 flex-col overflow-y-auto px-3 pb-3"
+        className="flex flex-1 flex-col overflow-y-auto px-3 pt-2 pb-3"
         style={{
           scrollbarWidth: "none",
           gap: 8,
@@ -934,7 +930,6 @@ function WhatsAppDemo({
           backgroundImage: 'url("/whatsapp-doodle.webp")',
           backgroundRepeat: "repeat",
           backgroundSize: "404px auto",
-          paddingTop: 8,
         }}
       >
         {grouped.map((group, gi) => {
@@ -1030,7 +1025,7 @@ function WhatsAppDemo({
               value={composerValue}
               onChange={(e) => onComposerChange(e.target.value)}
               onKeyDown={composerKeyHandler(onComposerSend)}
-              className="chat-demo-input min-w-0 flex-1 border-0 bg-transparent p-0 outline-none placeholder:text-[#8E8E93]"
+              className="min-w-0 flex-1 border-0 bg-transparent p-0 outline-none placeholder:text-zinc-500"
               style={{
                 fontSize: 15,
                 color: "#000",
@@ -1282,7 +1277,7 @@ function TelegramDemo({
       {/* Chat area: blue overlay + Telegram doodle pattern */}
       <div
         ref={scrollRef}
-        className="flex flex-1 flex-col overflow-y-auto px-3 pb-3"
+        className="flex flex-1 flex-col overflow-y-auto px-3 pt-2 pb-3"
         style={{
           scrollbarWidth: "none",
           gap: 8,
@@ -1291,7 +1286,6 @@ function TelegramDemo({
             'linear-gradient(rgba(43,120,205,0.5), rgba(43,120,205,0.5)), url("/telegram-doodle.png")',
           backgroundSize: "auto, 480px auto",
           backgroundRepeat: "repeat",
-          paddingTop: 8,
         }}
       >
         {grouped.map((group, gi) => {
@@ -1367,7 +1361,7 @@ function TelegramDemo({
               value={composerValue}
               onChange={(e) => onComposerChange(e.target.value)}
               onKeyDown={composerKeyHandler(onComposerSend)}
-              className="chat-demo-input min-w-0 flex-1 border-0 bg-transparent p-0 outline-none placeholder:text-[#858E99]"
+              className="min-w-0 flex-1 border-0 bg-transparent p-0 outline-none placeholder:text-zinc-500"
               style={{
                 fontSize: 15,
                 color: "#000",
@@ -1830,10 +1824,8 @@ function SlackComposer({
           onChange={(e) => onComposerChange(e.target.value)}
           onKeyDown={composerKeyHandler(onComposerSend)}
           className={cn(
-            "chat-demo-input resize-none border-0 bg-transparent outline-none",
-            isDark
-              ? "placeholder:text-[#ABABAD]"
-              : "placeholder:text-[#616061]",
+            "resize-none border-0 bg-transparent outline-none",
+            isDark ? "placeholder:text-zinc-500" : "placeholder:text-zinc-500",
           )}
           style={{
             padding: "10px 12px",
@@ -2300,7 +2292,7 @@ function DiscordDemo({
               value={composerValue}
               onChange={(e) => onComposerChange(e.target.value)}
               onKeyDown={composerKeyHandler(onComposerSend)}
-              className="chat-demo-input min-w-0 flex-1 border-0 bg-transparent p-0 outline-none placeholder:text-[#949BA4]"
+              className="min-w-0 flex-1 border-0 bg-transparent p-0 outline-none placeholder:text-zinc-500"
               style={{
                 fontSize: 15,
                 color: fg,

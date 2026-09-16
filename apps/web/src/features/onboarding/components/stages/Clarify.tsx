@@ -18,9 +18,6 @@ import { EASE_OUT_QUART } from "../../constants/motion";
 import type { Action, OnboardingState } from "../../state/types";
 import type { ClarifyQuestion } from "../../types";
 import {
-  CLARIFY_RADIO_BASE_CLASS,
-  CLARIFY_RADIO_LABEL_CLASS,
-  CLARIFY_RADIO_LABEL_MUTED_CLASS,
   countAnsweredClarify,
   isQuestionAnswered,
   OPTION_VALUE_PREFIX,
@@ -197,7 +194,6 @@ export function ClarifyComposer({ state, dispatch }: ClarifyProps) {
           size="sm"
           variant="solid"
           radius="full"
-          classNames={{ tabList: "bg-zinc-900" }}
         >
           {questions.map((q, idx) => {
             const answered = isQuestionAnswered(
@@ -240,29 +236,47 @@ export function ClarifyComposer({ state, dispatch }: ClarifyProps) {
           <RadioGroup
             value={selectedValue ?? ""}
             onValueChange={handleRadioChange}
-            classNames={{ wrapper: "gap-1.5" }}
           >
-            {activeQuestion.options.map((option, idx) => (
+            {activeQuestion.options.map((option, idx) => {
+              const value = `${OPTION_VALUE_PREFIX}${idx}`;
+              return (
+                <div
+                  key={option}
+                  className={
+                    selectedValue === value
+                      ? "rounded-xl bg-zinc-800 p-2"
+                      : "rounded-xl bg-zinc-800/60 p-2"
+                  }
+                >
+                  <Radio
+                    value={value}
+                    classNames={{
+                      base: "m-0 max-w-none",
+                      label: "text-sm text-zinc-200",
+                    }}
+                  >
+                    {option}
+                  </Radio>
+                </div>
+              );
+            })}
+            <div
+              className={
+                selectedValue === OTHER_VALUE
+                  ? "rounded-xl bg-zinc-800 p-2"
+                  : "rounded-xl bg-zinc-800/60 p-2"
+              }
+            >
               <Radio
-                key={option}
-                value={`${OPTION_VALUE_PREFIX}${idx}`}
+                value={OTHER_VALUE}
                 classNames={{
-                  base: CLARIFY_RADIO_BASE_CLASS,
-                  label: CLARIFY_RADIO_LABEL_CLASS,
+                  base: "m-0 max-w-none",
+                  label: "text-sm text-zinc-200",
                 }}
               >
-                {option}
+                {CLARIFY_OTHER_LABEL}
               </Radio>
-            ))}
-            <Radio
-              value={OTHER_VALUE}
-              classNames={{
-                base: CLARIFY_RADIO_BASE_CLASS,
-                label: CLARIFY_RADIO_LABEL_CLASS,
-              }}
-            >
-              {CLARIFY_OTHER_LABEL}
-            </Radio>
+            </div>
             <AnimatePresence initial={false}>
               {isOtherSelected && (
                 <m.div
@@ -280,23 +294,27 @@ export function ClarifyComposer({ state, dispatch }: ClarifyProps) {
                     onValueChange={handleCustomChange}
                     onBlur={handleCustomCommit}
                     placeholder="Type your answer..."
-                    classNames={{
-                      inputWrapper:
-                        "bg-zinc-800 shadow-none data-[hover=true]:bg-zinc-800 group-data-[focus=true]:bg-zinc-800",
-                    }}
                   />
                 </m.div>
               )}
             </AnimatePresence>
-            <Radio
-              value={SKIP_VALUE}
-              classNames={{
-                base: CLARIFY_RADIO_BASE_CLASS,
-                label: CLARIFY_RADIO_LABEL_MUTED_CLASS,
-              }}
+            <div
+              className={
+                selectedValue === SKIP_VALUE
+                  ? "rounded-xl bg-zinc-800 p-2"
+                  : "rounded-xl bg-zinc-800/60 p-2"
+              }
             >
-              {CLARIFY_SKIP_LABEL}
-            </Radio>
+              <Radio
+                value={SKIP_VALUE}
+                classNames={{
+                  base: "m-0 max-w-none",
+                  label: "text-sm text-zinc-400",
+                }}
+              >
+                {CLARIFY_SKIP_LABEL}
+              </Radio>
+            </div>
           </RadioGroup>
         </m.div>
       </AnimatePresence>

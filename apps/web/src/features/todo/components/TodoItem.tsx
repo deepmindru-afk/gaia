@@ -47,13 +47,6 @@ const priorityColors = {
   [Priority.NONE]: "default",
 } as const;
 
-const priorityRingColors = {
-  [Priority.HIGH]: "border-red-500",
-  [Priority.MEDIUM]: "border-yellow-500",
-  [Priority.LOW]: "border-blue-500",
-  [Priority.NONE]: "border-zinc-500",
-} as const;
-
 // Intl.DateTimeFormat is expensive to build; cache one per timezone instead
 // of rebuilding on every call.
 const scheduledLabelFormatters = new Map<string, Intl.DateTimeFormat>();
@@ -172,13 +165,13 @@ export default memo(function TodoItem({
   return (
     <div
       className={cn(
-        "pointer-events-auto relative w-full rounded-xl p-2 pl-3 mb-0 group",
+        "pointer-events-auto relative w-full rounded-xl p-2 pl-3 mb-0 group [contain-intrinsic-size:0_80px]",
         isSelected ? "bg-zinc-800/50" : "hover:bg-zinc-800/50",
         todo.completed && "opacity-30",
         className,
       )}
-      style={{ contentVisibility: "auto", containIntrinsicSize: "0 80px" }}
       onMouseEnter={() => onPrefetchWorkflow?.(todo.id)}
+      style={{ contentVisibility: "auto" }}
     >
       <button
         type="button"
@@ -194,7 +187,7 @@ export default memo(function TodoItem({
             color={todo.completed ? "default" : priorityColors[todo.priority]}
             radius="full"
             classNames={{
-              wrapper: `mt-1 ${todo.completed ? "" : `${priorityRingColors[todo.priority]} border-dashed! border-1 before:border-0! bg-zinc-900`}`,
+              wrapper: "mt-1",
               label: "w-[30vw]",
             }}
           />
@@ -203,13 +196,7 @@ export default memo(function TodoItem({
         <div className="min-w-0 flex-1">
           <div>
             <h4
-              style={{
-                display: "-webkit-box",
-                WebkitBoxOrient: "vertical",
-                WebkitLineClamp: 2,
-                overflow: "hidden",
-              }}
-              className={`text-base font-normal ${
+              className={`line-clamp-2 text-base font-normal ${
                 todo.completed ? "text-zinc-500 line-through" : ""
               }`}
             >
@@ -231,7 +218,7 @@ export default memo(function TodoItem({
             <div className="mt-2 flex flex-wrap items-center gap-1">
               {todo.due_date && (
                 <Chip
-                  className="flex items-center text-zinc-400 px-1"
+                  className="flex items-center text-zinc-400"
                   size="sm"
                   radius="sm"
                   color={isToday ? "success" : isOverdue ? "danger" : "default"}
@@ -250,7 +237,7 @@ export default memo(function TodoItem({
 
               {todo.scheduled_at && (
                 <Chip
-                  className="flex items-center text-zinc-400 px-1"
+                  className="flex items-center text-zinc-400"
                   size="sm"
                   radius="sm"
                   color="primary"
@@ -265,7 +252,7 @@ export default memo(function TodoItem({
 
               {todo.expires_at && (
                 <Chip
-                  className="flex items-center text-zinc-400 px-1"
+                  className="flex items-center text-zinc-400"
                   size="sm"
                   radius="sm"
                   color="warning"
@@ -283,7 +270,7 @@ export default memo(function TodoItem({
 
               {todo.vfs_path && (
                 <Chip
-                  className="flex items-center text-primary px-1"
+                  className="flex items-center text-primary"
                   size="sm"
                   radius="sm"
                   color="primary"
@@ -300,7 +287,7 @@ export default memo(function TodoItem({
                 <Chip
                   size="sm"
                   variant="flat"
-                  className=" text-zinc-400 px-1"
+                  className="text-zinc-400"
                   radius="sm"
                   style={{ color: todoProject.color }}
                   startContent={
@@ -317,7 +304,7 @@ export default memo(function TodoItem({
                     key={label}
                     size="sm"
                     variant="flat"
-                    className="flex items-center text-zinc-400 px-1"
+                    className="flex items-center text-zinc-400"
                     radius="sm"
                     startContent={
                       <Tag01Icon width={17} height={17} className="mx-1" />
@@ -334,7 +321,15 @@ export default memo(function TodoItem({
                     size="sm"
                     variant="flat"
                     radius="sm"
-                    className={`px-2 ${todo.priority === Priority.HIGH ? "text-red-400 bg-red-400/10" : todo.priority === Priority.MEDIUM ? "text-yellow-400 bg-yellow-400/10" : todo.priority === Priority.LOW ? "text-blue-400 bg-blue-400/10" : "text-zinc-500"}`}
+                    color={
+                      todo.priority === Priority.HIGH
+                        ? "danger"
+                        : todo.priority === Priority.MEDIUM
+                          ? "warning"
+                          : todo.priority === Priority.LOW
+                            ? "primary"
+                            : "default"
+                    }
                     startContent={
                       <Flag02Icon width={15} height={15} className="mx-1" />
                     }
@@ -350,7 +345,7 @@ export default memo(function TodoItem({
                 <Chip
                   size="sm"
                   variant="flat"
-                  className=" text-zinc-400 px-1"
+                  className="text-zinc-400"
                   radius="sm"
                   startContent={
                     <CheckmarkCircle02Icon

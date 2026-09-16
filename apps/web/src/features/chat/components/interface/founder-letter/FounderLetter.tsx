@@ -20,7 +20,6 @@ import { usePricingModalStore } from "@/stores/pricingModalStore";
 import { useUserStore } from "@/stores/userStore";
 
 import {
-  BODY_FONT,
   DISCOUNT_CODE,
   DISCOUNT_PERCENT,
   DISCOUNT_TERMS,
@@ -123,6 +122,7 @@ function PaperBackdrop() {
       style={{ filter: "drop-shadow(0 26px 55px rgba(0,0,0,0.5))" }}
     >
       <title>Decorative letter paper</title>
+      {/* eslint-disable shadcn/no-raw-colors -- parchment artwork uses its own paper palette */}
       <defs>
         {/* Stationery: cool white where the light hits, warming into the
          * shadow at the bottom right, the way a real sheet sits on a desk. */}
@@ -149,6 +149,7 @@ function PaperBackdrop() {
           <stop offset="91%" stopColor="#a98c52" stopOpacity="0" />
           <stop offset="100%" stopColor="#a98c52" stopOpacity="0.14" />
         </linearGradient>
+        {/* eslint-enable shadcn/no-raw-colors */}
 
         {/* The tear: noise displacing the edge of the sheet. */}
         <filter
@@ -353,7 +354,7 @@ export function FounderLetter({ hidden = false }: FounderLetterProps) {
           onClick={openLetter}
           aria-label="A letter from Aryan Randeriya"
           title="A letter from Aryan"
-          className="isolate cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[#00bbff]"
+          className="isolate cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary"
           initial={false}
           whileHover={reduceMotion ? undefined : { scale: 1.06 }}
           whileTap={reduceMotion ? undefined : { scale: 0.94 }}
@@ -390,7 +391,7 @@ export function FounderLetter({ hidden = false }: FounderLetterProps) {
           <button
             type="button"
             onClick={dismissLetter}
-            className="cursor-pointer pr-1 text-[11px] font-normal text-zinc-400 outline-none transition-colors hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-[#00bbff]"
+            className="cursor-pointer pr-1 text-xs font-normal text-zinc-400 outline-none transition-colors hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-primary"
           >
             Don't show again
           </button>
@@ -405,10 +406,10 @@ export function FounderLetter({ hidden = false }: FounderLetterProps) {
         onClose={closeLetter}
         hideCloseButton
         aria-label="A letter from Aryan Randeriya"
+        backdrop="blur"
         classNames={{
-          backdrop: "bg-black/70 backdrop-blur-sm",
-          wrapper: "items-center justify-center p-3 sm:p-6",
-          base: "m-0 max-h-[min(92vh,860px)] w-full max-w-[620px] overflow-y-auto overscroll-contain bg-transparent shadow-none",
+          wrapper: "items-center justify-center",
+          base: "m-3 max-h-[min(92vh,860px)] w-full max-w-[620px] overflow-y-auto overscroll-contain sm:m-6",
         }}
         motionProps={LETTER_MOTION[reduceMotion ? "reduced" : "full"]}
       >
@@ -427,10 +428,7 @@ export function FounderLetter({ hidden = false }: FounderLetterProps) {
             </button>
 
             {/* Letter content */}
-            <div
-              className="relative px-[var(--letter-pad-x)] pt-[var(--letter-pad-t)] pb-[var(--letter-pad-b)]"
-              style={{ fontFamily: BODY_FONT, color: INK }}
-            >
+            <div className="relative px-[var(--letter-pad-x)] pt-[var(--letter-pad-t)] pb-[var(--letter-pad-b)] font-sans text-black">
               {/* Salutation */}
               <p
                 className="font-semibold"
@@ -531,7 +529,7 @@ export function FounderLetter({ hidden = false }: FounderLetterProps) {
                 onClick={() =>
                   trackEvent(ANALYTICS_EVENTS.FOUNDER_LETTER_MEETING_CLICKED)
                 }
-                className="mt-1 inline-flex items-center gap-1.5 text-[calc(var(--letter-small)*1.05)] font-semibold underline decoration-[1.5px] underline-offset-4 outline-none transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-black/60"
+                className="mt-1 inline-flex items-center gap-1.5 text-[calc(var(--letter-small)*1.05)] font-semibold underline decoration-2 underline-offset-4 outline-none transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-black/60"
               >
                 {MEETING_CTA}
               </a>

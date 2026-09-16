@@ -1,6 +1,9 @@
 "use client";
 
+import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
+import { Divider } from "@heroui/divider";
+import { ArrowLeft01Icon, ArrowRight02Icon } from "@icons";
 import Image from "next/image";
 import { notFound } from "next/navigation";
 import { useReducer, useRef, useState } from "react";
@@ -231,21 +234,26 @@ function ProcessingDemo() {
           completedStages={completedStages}
         />
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={advance}
-            disabled={completedStages.size === GMAIL_STAGES.length}
-            className="cursor-pointer rounded-lg bg-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600 disabled:opacity-40"
+          <Button
+            size="sm"
+            variant="flat"
+            onPress={advance}
+            isDisabled={completedStages.size === GMAIL_STAGES.length}
+            endContent={<ArrowRight02Icon className="size-3.5" />}
+            radius="md"
+            className="text-xs text-zinc-200"
           >
-            Complete next stage →
-          </button>
-          <button
-            type="button"
-            onClick={reset}
-            className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-700"
+            Complete next stage
+          </Button>
+          <Button
+            size="sm"
+            variant="flat"
+            onPress={reset}
+            radius="md"
+            className="text-xs text-zinc-400"
           >
             Reset
-          </button>
+          </Button>
         </div>
       </div>
     </DemoSection>
@@ -313,7 +321,7 @@ function PlatformConnectDemo() {
                     alt=""
                     width={16}
                     height={16}
-                    className="h-4 w-4 shrink-0 rounded-[3px]"
+                    className="h-4 w-4 shrink-0 rounded"
                     aria-hidden
                   />
                 }
@@ -323,13 +331,14 @@ function PlatformConnectDemo() {
             );
           })}
           {pinnedPlatform && (
-            <button
-              type="button"
-              className="text-xs text-zinc-500 underline-offset-2 hover:underline"
-              onClick={() => setPinnedPlatform(null)}
+            <Button
+              variant="light"
+              size="sm"
+              onPress={() => setPinnedPlatform(null)}
+              className="h-auto min-w-0 text-xs text-zinc-500"
             >
               clear
-            </button>
+            </Button>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -403,13 +412,15 @@ function MessageBreakStaggerDemo() {
             {sampleText.split("<NEW_MESSAGE_BREAK>").length} bubbles
           </Chip>
         ))}
-        <button
-          type="button"
-          onClick={() => setNonce((n) => n + 1)}
-          className="cursor-pointer rounded-lg bg-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600"
+        <Button
+          size="sm"
+          variant="flat"
+          onPress={() => setNonce((n) => n + 1)}
+          radius="md"
+          className="text-xs text-zinc-200"
         >
           Replay
-        </button>
+        </Button>
       </div>
       <div key={`${activeIdx}-${nonce}`} className="pt-2">
         <ChatBubbleBot {...BOT_BUBBLE_DEFAULTS} text={sample} />
@@ -437,13 +448,15 @@ function ClarifyDemo() {
           <ClarifyComposer state={state} dispatch={dispatch} />
         </div>
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleReset}
-            className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-700"
+          <Button
+            size="sm"
+            variant="flat"
+            onPress={handleReset}
+            radius="md"
+            className="text-xs text-zinc-400"
           >
             Reset
-          </button>
+          </Button>
           <span className="text-xs text-zinc-500">
             {state.clarifySubmitted
               ? "Submitted — answers locked"
@@ -461,10 +474,7 @@ function ProgressDemo() {
   const total = 7;
   return (
     <DemoSection label="OnboardingProgress (top bar + restart)">
-      <div
-        className="relative h-20 overflow-hidden rounded-2xl border border-zinc-800 bg-primary-bg"
-        style={{ transform: "translateZ(0)" }}
-      >
+      <div className="relative h-20 overflow-hidden rounded-2xl bg-primary-bg [transform:translateZ(0)]">
         <OnboardingProgress
           currentStep={step}
           totalSteps={total}
@@ -472,23 +482,29 @@ function ProgressDemo() {
         />
       </div>
       <div className="mt-2 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setStep((s) => Math.max(0, s - 1))}
-          className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-700"
+        <Button
+          size="sm"
+          variant="flat"
+          onPress={() => setStep((s) => Math.max(0, s - 1))}
+          startContent={<ArrowLeft01Icon className="size-3.5" />}
+          radius="md"
+          className="text-xs text-zinc-400"
         >
-          ← Step
-        </button>
+          Step
+        </Button>
         <span className="text-xs text-zinc-500">
           {step} / {total}
         </span>
-        <button
-          type="button"
-          onClick={() => setStep((s) => Math.min(total, s + 1))}
-          className="cursor-pointer rounded-lg bg-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600"
+        <Button
+          size="sm"
+          variant="flat"
+          onPress={() => setStep((s) => Math.min(total, s + 1))}
+          endContent={<ArrowRight02Icon className="size-3.5" />}
+          radius="md"
+          className="text-xs text-zinc-200"
         >
-          Step →
-        </button>
+          Step
+        </Button>
       </div>
     </DemoSection>
   );
@@ -502,13 +518,15 @@ function IntroDemo() {
         The intro mounts a fixed-position overlay with audio. Click play to
         watch the full sequence; it calls <code>onComplete</code> when done.
       </p>
-      <button
-        type="button"
-        onClick={() => setPlaying(true)}
-        className="w-fit cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-black hover:bg-primary/90"
+      <Button
+        size="sm"
+        color="primary"
+        onPress={() => setPlaying(true)}
+        radius="md"
+        className="w-fit text-xs font-medium"
       >
         Play intro
-      </button>
+      </Button>
       {playing && <OnboardingIntro onComplete={() => setPlaying(false)} />}
     </DemoSection>
   );
@@ -517,7 +535,7 @@ function IntroDemo() {
 function CTAComposerDemo() {
   return (
     <DemoSection label="ComposerCTA + OnboardingCTAButton">
-      <div className="rounded-2xl border border-dashed border-zinc-800 bg-primary-bg/40">
+      <div className="rounded-2xl bg-primary-bg/40">
         <ComposerCTA>
           <OnboardingCTAButton
             onClick={() => {
@@ -580,7 +598,7 @@ function OnboardingInputDemo() {
         ))}
       </div>
 
-      <p className="text-[10px] uppercase tracking-widest text-zinc-600">
+      <p className="text-xs uppercase tracking-widest text-zinc-600">
         mode = qa
       </p>
       <OnboardingInput
@@ -600,7 +618,7 @@ function OnboardingInputDemo() {
         }}
       />
 
-      <p className="mt-4 text-[10px] uppercase tracking-widest text-zinc-600">
+      <p className="mt-4 text-xs uppercase tracking-widest text-zinc-600">
         mode = focus
       </p>
       <OnboardingInput
@@ -611,7 +629,7 @@ function OnboardingInputDemo() {
         onInputChange={setFocusDraft}
       />
 
-      <p className="mt-4 text-[10px] uppercase tracking-widest text-zinc-600">
+      <p className="mt-4 text-xs uppercase tracking-widest text-zinc-600">
         mode = freeChat
       </p>
       <OnboardingInput
@@ -661,7 +679,7 @@ function OnboardingMessagesDemo() {
           {showChecklist ? "Hide" : "Show"} processing checklist
         </Chip>
       </div>
-      <div className="rounded-2xl border border-zinc-800 bg-primary-bg/40 p-4">
+      <div className="rounded-2xl bg-primary-bg/40 p-4">
         <OnboardingMessages
           messages={SAMPLE_MESSAGES}
           processingChecklist={
@@ -755,7 +773,7 @@ function RevealWritingStyleStageDemo() {
         </Chip>
       </div>
       <RevealWritingStyle state={state} />
-      <div className="rounded-2xl border border-dashed border-zinc-800 bg-primary-bg/40">
+      <div className="rounded-2xl bg-primary-bg/40">
         <RevealWritingStyleComposer
           state={state}
           dispatch={() => {
@@ -812,11 +830,11 @@ function DemoSection({
 }) {
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-[10px] font-mono uppercase tracking-widest text-zinc-600">
+      <p className="text-xs font-mono uppercase tracking-widest text-zinc-600">
         {label}
       </p>
       {children}
-      <div className="mt-2 border-t border-zinc-800" />
+      <Divider className="mt-2" />
     </section>
   );
 }

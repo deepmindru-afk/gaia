@@ -39,7 +39,6 @@ export function CompletedStageAccordion({
     >
       <Accordion
         variant="light"
-        className="px-0"
         onSelectionChange={(keys) => {
           const set = keys as Set<string | number>;
           setIsOpen(set.size > 0);

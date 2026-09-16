@@ -123,7 +123,12 @@
         "noConsole": {
           "level": "warn",
           "options": {
-            "allow": ["error", "warn", "info", "debug"]
+            "allow": [
+              "error",
+              "warn",
+              "info",
+              "debug"
+            ]
           }
         },
         "useIterableCallbackReturn": "off",
@@ -176,11 +181,21 @@
     "./config/biome-rules/no-chevron-from-icons.grit",
     "./config/biome-rules/no-hugeicons-import.grit",
     "./config/biome-rules/no-motion-react-heavy-imports.grit",
-    "./config/biome-rules/no-motion-full-import.grit"
+    "./config/biome-rules/no-motion-full-import.grit",
+    "./config/biome-rules/no-unicode-symbols.grit",
+    "./config/biome-rules/no-card-borders.grit",
+    "./config/biome-rules/no-card-outline.grit",
+    "./config/biome-rules/status-opacity.grit",
+    "./config/biome-rules/no-card-shadow.grit",
+    "./config/biome-rules/prefer-divider.grit",
+    "./config/biome-rules/rounded-lg-card.grit",
+    "./config/biome-rules/z-index-lint.grit"
   ],
   "overrides": [
     {
-      "includes": ["apps/web/src/features/desktop-popup/desktop-popup.css"],
+      "includes": [
+        "apps/web/src/features/desktop-popup/desktop-popup.css"
+      ],
       "linter": {
         "rules": {
           "complexity": {
@@ -190,7 +205,9 @@
       }
     },
     {
-      "includes": ["apps/web/**"],
+      "includes": [
+        "apps/web/**"
+      ],
       "linter": {
         "domains": {
           "next": "recommended"
@@ -218,7 +235,9 @@
         "apps/web/src/app/**/index.ts",
         "apps/web/src/app/**/index.tsx"
       ],
-      "plugins": ["./config/biome-rules/no-barrel-reexport.grit"]
+      "plugins": [
+        "./config/biome-rules/no-barrel-reexport.grit"
+      ]
     },
     {
       "includes": [
@@ -248,7 +267,12 @@
       }
     },
     {
-      "includes": ["**/types.ts", "**/types/**", "**/*.types.ts", "**/*.d.ts"],
+      "includes": [
+        "**/types.ts",
+        "**/types/**",
+        "**/*.types.ts",
+        "**/*.d.ts"
+      ],
       "linter": {
         "rules": {
           "correctness": {

@@ -111,7 +111,7 @@ export default function ChatBubble_Actions({
           <Tooltip content="Reply" placement="bottom">
             <Button
               isIconOnly
-              className="aspect-square size-7.5 min-w-7.5 rounded-md p-0! text-zinc-500 hover:text-zinc-300"
+              className="aspect-square size-7.5 min-w-7.5 text-zinc-500 hover:text-zinc-300"
               variant="light"
               onPress={handleReply}
             >
@@ -126,7 +126,7 @@ export default function ChatBubble_Actions({
           <Tooltip content="Copy to clipboard" placement="bottom">
             <Button
               isIconOnly
-              className="aspect-square size-7.5 min-w-7.5 rounded-md p-0! text-zinc-500 hover:text-zinc-300"
+              className="aspect-square size-7.5 min-w-7.5 text-zinc-500 hover:text-zinc-300"
               variant="light"
               onPress={copyToClipboard}
             >
@@ -137,7 +137,7 @@ export default function ChatBubble_Actions({
           <Tooltip content="Pin message" placement="bottom">
             <Button
               isIconOnly
-              className="aspect-square size-7.5 min-w-7.5 rounded-md p-0! text-zinc-500 hover:text-zinc-300"
+              className="aspect-square size-7.5 min-w-7.5 text-zinc-500 hover:text-zinc-300"
               variant="light"
               radius="lg"
               onPress={handlePinToggle}
@@ -151,7 +151,7 @@ export default function ChatBubble_Actions({
             <Tooltip content="Helpful response" placement="bottom">
               <Button
                 isIconOnly
-                className="aspect-square size-7.5 min-w-7.5 rounded-md p-0! text-zinc-500 hover:text-zinc-300"
+                className="aspect-square size-7.5 min-w-7.5 text-zinc-500 hover:text-zinc-300"
                 variant="light"
                 radius="lg"
                 onPress={handleThumbsUp}
@@ -169,7 +169,7 @@ export default function ChatBubble_Actions({
             <Tooltip content="Not helpful" placement="bottom">
               <Button
                 isIconOnly
-                className="aspect-square size-7.5 min-w-7.5 rounded-md p-0! text-zinc-500 hover:text-zinc-300"
+                className="aspect-square size-7.5 min-w-7.5 text-zinc-500 hover:text-zinc-300"
                 variant="light"
                 radius="lg"
                 onPress={handleThumbsDown}
@@ -188,7 +188,7 @@ export default function ChatBubble_Actions({
               <Button
                 isIconOnly
                 isDisabled={isRetrying}
-                className="aspect-square size-7.5 min-w-7.5 rounded-md p-0! text-zinc-500 hover:text-zinc-300"
+                className="aspect-square size-7.5 min-w-7.5 text-zinc-500 hover:text-zinc-300"
                 variant="light"
                 radius="lg"
                 onPress={onRetry}

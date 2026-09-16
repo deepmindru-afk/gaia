@@ -334,14 +334,12 @@ export default function WorkflowModal({
         // flex/overflow chain (h-full → min-h-0 → overflow-y-auto) resolves
         // and the Steps panel doesn't clip.
         className={
-          isTwoColumn
-            ? "h-[85vh] max-h-208 max-w-6xl bg-secondary-bg"
-            : "max-h-[90vh] bg-secondary-bg"
+          isTwoColumn ? "h-[85vh] max-h-208 max-w-6xl" : "max-h-[90vh]"
         }
         backdrop="blur"
       >
         <ModalContent>
-          <ModalBody className="flex min-h-0 flex-col gap-0 p-0">
+          <ModalBody className="flex min-h-0 flex-col">
             {creationPhase === "form" ? (
               <WorkflowModalFormView
                 mode={mode}

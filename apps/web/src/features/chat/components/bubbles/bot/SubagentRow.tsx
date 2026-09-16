@@ -31,7 +31,7 @@ const expandTransition = {
 // card below carries the actual approve/deny action).
 function WaitingForApprovalPill() {
   return (
-    <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-amber-400">
+    <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-400">
       <ShieldAlertIcon width={13} height={13} />
       Waiting for approval
     </span>
@@ -58,7 +58,7 @@ function ApprovalOutcomeChip({ status }: Readonly<{ status: ApprovalStatus }>) {
       size="sm"
       variant="flat"
       color={chip.color}
-      className="ml-2 h-5 text-[10px]"
+      className="ml-2 h-5 text-xs"
     >
       {chip.label}
     </Chip>
@@ -184,7 +184,7 @@ function ToolCallRow({
         <div className="min-h-8 min-w-8 flex items-center justify-center shrink-0">
           {skillLabel ? (
             <div className="relative rounded-lg p-1">
-              <div className="absolute inset-0 rounded-lg bg-lime-500/20 backdrop-blur" />
+              <div className="absolute inset-0 rounded-lg bg-lime-400/10 backdrop-blur" />
               <PuzzleIcon
                 width={21}
                 height={21}
@@ -233,7 +233,7 @@ function ToolCallRow({
             {approvalStatus && <ApprovalOutcomeChip status={approvalStatus} />}
           </div>
           {hasCategoryText && (
-            <p className="text-[11px] text-zinc-600 leading-tight">
+            <p className="text-xs text-zinc-600 leading-tight">
               {secondaryLabel}
             </p>
           )}
@@ -249,7 +249,7 @@ function ToolCallRow({
               transition={expandTransition}
               className="overflow-hidden"
             >
-              <div className="mt-2 space-y-2 text-[11px] bg-zinc-800/50 rounded-xl p-3 mb-3 w-fit">
+              <div className="mt-2 space-y-2 text-xs bg-zinc-800/50 rounded-xl p-3 mb-3 w-fit">
                 {hasInputs && (
                   <div className="flex flex-col">
                     <span className="text-zinc-500 font-medium mb-1">
@@ -323,7 +323,7 @@ function ThinkingStepRow({
               transition={expandTransition}
               className="overflow-hidden"
             >
-              <div className="mt-2 mb-3 w-fit rounded-xl bg-zinc-800/50 p-3 text-[11px] text-zinc-400">
+              <div className="mt-2 mb-3 w-fit rounded-xl bg-zinc-800/50 p-3 text-xs text-zinc-400">
                 <CompactMarkdown content={reasoning} />
               </div>
             </m.div>
@@ -469,7 +469,7 @@ export function SubagentRow({
                   handoff call's input), so show it live — don't make the user
                   wait until completion to see what this subagent is doing. */}
               {group.handoff_input && (
-                <div className="mb-2 text-[11px] bg-zinc-800/50 rounded-xl p-3 w-fit">
+                <div className="mb-2 text-xs bg-zinc-800/50 rounded-xl p-3 w-fit">
                   <span className="text-zinc-500 font-medium mb-0.5 block">
                     Task
                   </span>
@@ -520,7 +520,7 @@ export function SubagentRow({
             </span>
             <div className="flex items-center gap-1 ml-4 shrink-0">
               {group.duration_ms != null && (
-                <span className="text-[10px] text-zinc-600 tabular-nums">
+                <span className="text-xs text-zinc-600 tabular-nums">
                   {(group.duration_ms / 1000).toFixed(1)}s
                 </span>
               )}
@@ -531,7 +531,7 @@ export function SubagentRow({
               />
             </div>
           </div>
-          <p className="text-[11px] text-zinc-600 leading-tight">
+          <p className="text-xs text-zinc-600 leading-tight">
             Subagent
             {toolCount > 0 &&
               ` · ${toolCount} tool${toolCount === 1 ? "" : "s"}`}
@@ -550,7 +550,7 @@ export function SubagentRow({
             >
               <div className="mt-1.5 mb-1">
                 {group.handoff_input && (
-                  <div className="mb-2 text-[11px] bg-zinc-800/50 rounded-xl p-3 w-fit">
+                  <div className="mb-2 text-xs bg-zinc-800/50 rounded-xl p-3 w-fit">
                     <span className="text-zinc-500 font-medium mb-0.5 block">
                       Task
                     </span>
@@ -595,7 +595,7 @@ export function SubagentRow({
                 )}
 
                 {group.handoff_output && (
-                  <div className="mt-2 text-[11px] bg-zinc-800/50 rounded-xl p-3 w-fit">
+                  <div className="mt-2 text-xs bg-zinc-800/50 rounded-xl p-3 w-fit">
                     <span className="text-zinc-500 font-medium mb-0.5 block">
                       Result
                     </span>

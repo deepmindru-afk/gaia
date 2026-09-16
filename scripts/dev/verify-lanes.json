@@ -91,6 +91,22 @@
       "command": "bash scripts/dead-code-check.sh --strict --verbose"
     },
     {
+      "name": "design-tokens",
+      "scope": "^DESIGN\\.md$|^config/design\\.tokens\\.json$",
+      "heavy": false,
+      "timeout_s": 120,
+      "require_cmd": [],
+      "command": "pnpm tokens:check"
+    },
+    {
+      "name": "shadcn-lint",
+      "scope": "^apps/web/src/.*\\.(tsx|ts|jsx|js)$",
+      "heavy": false,
+      "timeout_s": 180,
+      "require_cmd": [],
+      "command": "pnpm --filter ./apps/web exec oxlint --max-warnings=55"
+    },
+    {
       "name": "python-ruff",
       "scope": "\\.py$|^pyproject\\.toml$|^ruff\\.toml$",
       "heavy": false,
@@ -175,7 +191,9 @@
       "scope": "^uv\\.lock$|^pyproject\\.toml$",
       "heavy": true,
       "timeout_s": 600,
-      "require_cmd": ["uv"],
+      "require_cmd": [
+        "uv"
+      ],
       "command": "uv export --frozen --no-emit-workspace -o /tmp/gaia-verify-requirements.txt && uvx --no-build pip-audit==2.10.1 --strict --skip-editable --disable-pip --ignore-vuln GHSA-wj6h-64fc-37mp --ignore-vuln PYSEC-2026-1325 -r /tmp/gaia-verify-requirements.txt"
     },
     {
@@ -215,7 +233,10 @@
       "scope": "^tools/alert-rules/|^infra/docker/observability/grafana/provisioning/alerting/|^config/pint\\.hcl$",
       "heavy": true,
       "timeout_s": 600,
-      "require_cmd": ["pint", "promtool"],
+      "require_cmd": [
+        "pint",
+        "promtool"
+      ],
       "command": "uv run --no-build tools/alert-rules/extract_promql.py -o tools/alert-rules/gaia-rules.yaml --test-dir tools/alert-rules/tests && pint --no-color --offline --config config/pint.hcl lint tools/alert-rules/gaia-rules.yaml && promtool check rules tools/alert-rules/gaia-rules.yaml && promtool test rules tools/alert-rules/tests/*.yaml"
     },
     {
@@ -223,7 +244,9 @@
       "scope": ".",
       "heavy": false,
       "timeout_s": 300,
-      "require_cmd": ["gitleaks"],
+      "require_cmd": [
+        "gitleaks"
+      ],
       "command": "gitleaks detect --no-banner --redact -c .gitleaks.toml"
     },
     {
@@ -231,7 +254,9 @@
       "scope": "\\.py$",
       "heavy": true,
       "timeout_s": 900,
-      "require_cmd": ["docker"],
+      "require_cmd": [
+        "docker"
+      ],
       "command": "docker run --rm --volume \"$PWD:/src\" --workdir /src semgrep/semgrep@sha256:b68f9b68483955b85042dac7b4533757779625a02dcf91e470da4c2df1b430be semgrep scan --config tools/semgrep/p-python.yaml apps/api/app --error --metrics=off"
     },
     {
@@ -239,7 +264,9 @@
       "scope": "\\.py$|^apps/api/tests/",
       "heavy": true,
       "timeout_s": 3600,
-      "require_cmd": ["uv"],
+      "require_cmd": [
+        "uv"
+      ],
       "command": "uv sync --frozen --package gaia --group backend --group dev && bash scripts/ci/mutation.sh local"
     },
     {
@@ -255,7 +282,9 @@
       "scope": "\\.py$",
       "heavy": true,
       "timeout_s": 3600,
-      "require_cmd": ["dagger"],
+      "require_cmd": [
+        "dagger"
+      ],
       "command": "mise run test:python"
     }
   ]

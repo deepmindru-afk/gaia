@@ -1,8 +1,8 @@
+import { Avatar } from "@heroui/avatar";
 import { Button } from "@heroui/button";
 import { RedoIcon } from "@icons";
 import Image from "next/image";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useUser } from "@/features/auth/hooks/useUser";
 import SelectedCalendarEventIndicator from "@/features/chat/components/composer/SelectedCalendarEventIndicator";
 import SelectedReplyIndicator from "@/features/chat/components/composer/SelectedReplyIndicator";
@@ -176,7 +176,7 @@ export default function ChatBubbleUser({
                 {isEmojiOnly ? (
                   <div className={textClassName}>{text}</div>
                 ) : (
-                  <div className="max-w-[30vw] select-text text-[15px]">
+                  <div className="max-w-[30vw] select-text text-base">
                     <MarkdownRenderer
                       content={text}
                       isStreaming={loading}
@@ -190,17 +190,22 @@ export default function ChatBubbleUser({
 
           {!hideAvatar && (
             <div className="min-w-10">
-              <Avatar className="rounded-full bg-black">
-                <AvatarImage src={user?.profilePicture} alt="User Avatar" />
-                <AvatarFallback>
+              <Avatar
+                size="sm"
+                radius="full"
+                src={user?.profilePicture}
+                alt="User Avatar"
+                name="User"
+                showFallback
+                fallback={
                   <Image
                     src={"/images/avatars/default.webp"}
                     width={35}
                     height={35}
                     alt="Default profile picture"
                   />
-                </AvatarFallback>
-              </Avatar>
+                }
+              />
             </div>
           )}
         </div>
@@ -225,7 +230,7 @@ export default function ChatBubbleUser({
             </span>
             {onRetry && (
               <Button
-                className="h-7 min-w-0 px-2 text-xs"
+                className="h-7 min-w-0 text-xs"
                 isDisabled={isRetrying}
                 onPress={onRetry}
                 radius="full"

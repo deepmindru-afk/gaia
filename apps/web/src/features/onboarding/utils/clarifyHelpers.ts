@@ -11,12 +11,6 @@ export const OPTION_VALUE_PREFIX = "opt:";
 export const OTHER_VALUE = "__other__";
 export const SKIP_VALUE = "__skip__";
 
-export const CLARIFY_RADIO_BASE_CLASS =
-  "m-0 max-w-none rounded-xl border-0 bg-zinc-800/60 p-2 data-[selected=true]:bg-zinc-800";
-
-export const CLARIFY_RADIO_LABEL_CLASS = "text-sm text-zinc-200";
-export const CLARIFY_RADIO_LABEL_MUTED_CLASS = "text-sm text-zinc-400";
-
 export function radioValueFor(
   question: ClarifyQuestion,
   answer: ClarifyAnswer | undefined,
