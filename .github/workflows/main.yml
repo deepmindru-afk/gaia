@@ -411,7 +411,7 @@ jobs:
         run: |
           bash ../../scripts/ci/pytest.sh flake-gate \
             uv run --frozen pytest tests/integration/real/test_schemathesis.py -q --tb=short \
-            -m schemathesis --override-ini=addopts=--strict-markers --timeout=600
+            -m schemathesis -p schemathesis --override-ini=addopts=--strict-markers --timeout=600
           echo "Schemathesis: OK"
       # ── Record the map (master / dispatch only) ────────────────────────────
       # !cancelled(): a lane with a red test still produced a valid file→test map,

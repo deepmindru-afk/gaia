@@ -630,8 +630,11 @@ replacement = (
     f'do_not_mutate_patterns = ["# pragma: no mutate"]\n'
     f'debug = true\n'
     f'pytest_add_cli_args_test_selection = [{selection}]\n'
+    # The -o addopts REPLACES apps/api/pytest.ini's, so the plugin fence it
+    # carries has to be repeated here or every stats/mutant pytest session pays
+    # opik's ~4s import again. Keep the two lists in step.
     f'pytest_add_cli_args = ["-p", "no:xdist", "-o", '
-    f'\'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers --timeout={mutant_test_timeout}\']\n'
+    f'\'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers -p no:opik -p no:langsmith_plugin -p no:schemathesis --timeout={mutant_test_timeout}\']\n'
 )
 text = re.sub(r"(?ms)^\[tool\.mutmut\].*?(?=^\[|\Z)", replacement, text)
 path.write_text(text)
@@ -755,7 +758,7 @@ sys.exit(proc.returncode)
     # with a reason. Fails there too -> a real breakage, fail loudly.
     if grep -q "Failed to run clean test" "$WORKDIR/mutmut.log"; then
       if "$VENV_PY" -m pytest -q "${TESTFILES[@]}" -p no:randomly -p no:random-order \
-          -o 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers --timeout=300' \
+          -o 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers -p no:opik -p no:langsmith_plugin -p no:schemathesis --timeout=300' \
           > "$WORKDIR/plain-check.log" 2>&1; then
         echo "SKIP: $MODULE — the tests pass in the plain copy but fail under"
         echo "      mutmut's single-process phase transitions. Module-level state"
@@ -778,7 +781,7 @@ sys.exit(proc.returncode)
     if grep -q "BadTestExecutionCommandsException" "$WORKDIR/mutmut.log"; then
       if [ -d "$WORKDIR/mutants" ] && (cd "$WORKDIR/mutants" && "$VENV_PY" -m pytest -q "${TESTFILES[@]}" \
           --rootdir=. -p no:randomly -p no:random-order -p no:xdist \
-          -o 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers --timeout=300' \
+          -o 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers -p no:opik -p no:langsmith_plugin -p no:schemathesis --timeout=300' \
           > "$WORKDIR/mutants-tree-check.log" 2>&1); then
         echo "SKIP: $MODULE — the same pytest run passes on mutmut's instrumented tree"
         echo "      out of process, but fails inside mutmut's in-process stats tracer"
