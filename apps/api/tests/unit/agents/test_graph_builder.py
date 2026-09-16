@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from app.db.postgresql import LANGGRAPH_SETUP_LOCK_ID
+from app.constants.db import LANGGRAPH_SETUP_LOCK_ID
 
 _MOD = "app.agents.core.graph_builder.build_graph"
 _CM_MOD = "app.agents.core.graph_builder.checkpointer_manager"
