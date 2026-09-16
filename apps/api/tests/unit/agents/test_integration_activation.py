@@ -305,6 +305,8 @@ class TestActivateIntegrationTool:
         assert "NOT bound" in text
         assert "## GMAIL_FETCH_MESSAGES" in text
         assert "CTX" in text
+        # Schemas live in the trailing section, never interleaved with context.
+        assert text.index("CTX") < text.index("## GMAIL_FETCH_MESSAGES")
         assert self._bound(result) == ["query_json"]
 
     async def test_unconnected_integration_returns_the_connect_prompt(self) -> None:

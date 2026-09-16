@@ -221,6 +221,10 @@ async def activate_integration(
         }
     )
 
+    # Tool schemas live in exactly one place: the trailing schemas section
+    # (rendered by render_preload_block under its own header) — the same
+    # last-position rule as handoff seeding, which appends them to the end of
+    # the static system message. Never interleaved with the context sections.
     header_parts = [f"Integration '{integration_id}' is now active with {tool_count} tools."]
     if bind:
         header_parts.append(
@@ -229,17 +233,19 @@ async def activate_integration(
         )
     if preloaded and docs:
         header_parts.append(
-            f"{len(preloaded)} integration tool(s) are preloaded below — NOT bound, "
-            "do NOT call them by name. Run them with "
-            'execute(task_description="...", tool_name="<NAME>", data={...}) '
-            "built from these schemas. Only use retrieve_tools if you need "
+            f"{len(preloaded)} integration tool(s) are preloaded in the schemas section "
+            "at the end of this message — NOT bound, do NOT call them by name. Run them "
+            'with execute(task_description="...", tool_name="<NAME>", data={...}) '
+            "built from those schemas. Only use retrieve_tools if you need "
             f"one of the other {max(tool_count - len(bind) - len(preloaded), 0)}."
         )
     elif not bind:
         header_parts.append("Use retrieve_tools to bind the ones this task needs.")
     header_parts.append("Anything you spawn inherits the bound tools.")
     header = " ".join(header_parts) + "\n\n"
-    body = header + (docs + "\n\n" if docs else "") + (context or "(no additional context available)")
+    body = header + (context or "(no additional context available)")
+    if docs:
+        body += "\n\n" + docs
     return _reply(tool_call_id, body, bind)
 
 
