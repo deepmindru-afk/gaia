@@ -16,7 +16,8 @@ import json
 import time
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi.exceptions import WebSocketException
 
 from app.constants.device_bridge import (
     DEVICE_HEARTBEAT_INTERVAL_SECONDS,
@@ -63,6 +64,11 @@ def _extract_token(websocket: WebSocket) -> str | None:
     return None
 
 
+def _rejected(reason: str) -> WebSocketException:
+    """Refuse the dial the same way every other socket does — by raising."""
+    return WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=reason)
+
+
 @router.websocket("/device")
 async def device_ws(websocket: WebSocket) -> None:
     """Device tunnel socket: authenticate the daemon, then relay MCP frames both ways.
@@ -75,8 +81,7 @@ async def device_ws(websocket: WebSocket) -> None:
     info = verify_device_token(token) if token else None
     if not info:
         log.set(disconnect_reason="auth_failure")
-        await websocket.close(code=1008)
-        return
+        raise _rejected("device token missing or invalid")
 
     device_id = info["device_id"]
     user_id = info["user_id"]
@@ -85,8 +90,7 @@ async def device_ws(websocket: WebSocket) -> None:
     # A revoked/deleted device must not be able to reconnect on a still-valid JWT.
     if await get_active_device(device_id) is None:
         log.set(disconnect_reason="device_revoked")
-        await websocket.close(code=1008)
-        return
+        raise _rejected("device revoked")
 
     # Paid-only gate. The HTTP paywall is a middleware that never sees this
     # socket, and the device connect JWT outlives a subscription, so a lapsed
@@ -95,8 +99,7 @@ async def device_ws(websocket: WebSocket) -> None:
     # daemon reconnects, so a downgrade takes effect within one dial.
     if not await is_paid(user_id):
         log.set(disconnect_reason="subscription_required")
-        await websocket.close(code=1008)
-        return
+        raise _rejected("subscription required")
 
     uses_subprotocol = websocket.headers.get("sec-websocket-protocol", "").startswith("Bearer, ")
     await websocket.accept(subprotocol="Bearer" if uses_subprotocol else None)

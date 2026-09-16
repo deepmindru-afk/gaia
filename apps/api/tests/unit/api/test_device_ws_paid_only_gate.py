@@ -8,6 +8,7 @@ handler already rejects a revoked device.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi.exceptions import WebSocketException
 import pytest
 
 from app.api.v1.endpoints.device_ws import device_ws
@@ -32,9 +33,10 @@ async def test_free_user_socket_is_closed_with_policy_violation() -> None:
         patch(f"{MODULE}.get_active_device", new_callable=AsyncMock, return_value={"id": "dev-1"}),
         patch(f"{MODULE}.is_paid", new_callable=AsyncMock, return_value=False),
     ):
-        await device_ws(websocket)
+        with pytest.raises(WebSocketException) as exc:
+            await device_ws(websocket)
 
-    websocket.close.assert_awaited_once_with(code=1008)
+    assert exc.value.code == 1008
     websocket.accept.assert_not_awaited()
 
 
@@ -48,7 +50,8 @@ async def test_gate_runs_before_the_socket_is_accepted() -> None:
         patch(f"{MODULE}.device_connection_manager") as manager,
         patch(f"{MODULE}.mark_online", new_callable=AsyncMock) as mark_online,
     ):
-        await device_ws(websocket)
+        with pytest.raises(WebSocketException):
+            await device_ws(websocket)
 
     manager.add.assert_not_called()
     mark_online.assert_not_awaited()
@@ -65,7 +68,8 @@ async def test_the_close_is_attributed_to_the_paywall_in_the_wide_event() -> Non
         patch(f"{MODULE}.is_paid", new_callable=AsyncMock, return_value=False),
         patch(f"{MODULE}.log") as mock_log,
     ):
-        await device_ws(websocket)
+        with pytest.raises(WebSocketException):
+            await device_ws(websocket)
 
     mock_log.set.assert_any_call(disconnect_reason="subscription_required")
 
@@ -78,7 +82,8 @@ async def test_gate_asks_about_the_tokens_own_user() -> None:
         patch(f"{MODULE}.get_active_device", new_callable=AsyncMock, return_value={"id": "dev-1"}),
         patch(f"{MODULE}.is_paid", is_active),
     ):
-        await device_ws(websocket)
+        with pytest.raises(WebSocketException):
+            await device_ws(websocket)
 
     is_active.assert_awaited_once_with("user-1")
 
