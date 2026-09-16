@@ -174,8 +174,8 @@
           }
         ],
         "message": {
-          "spacing": "Don't restyle {{component}} spacing \u2014 use the {{component}} size prop ({{sizes|none defined}}) or margin here / gap on the parent. See {{file}}.",
-          "default": "Don't restyle {{component}} \u2014 use a variant ({{variants|none defined}}) instead of {{className}}. See {{file}}."
+          "spacing": "Don't restyle {{component}} spacing \u2014 use the {{component}} size prop (sm, md, lg) or {{around}}. See DESIGN.md card contract.",
+          "default": "Don't restyle {{component}} \u2014 use HeroUI variant/color/size props instead of {{className}}. See DESIGN.md (variants: solid, bordered, light, flat, faded, shadow, ghost)."
         }
       }
     ],
@@ -222,7 +222,7 @@
           "text-medium",
           "bg-custom-gradient2"
         ],
-        "message": "Use a theme color for {{className}} ({{suggestions|see DESIGN.md status colors}}). Declared tokens: {{tokens}}. See {{file}}."
+        "message": "Use a theme color for {{className}} ({{suggestions|see DESIGN.md status colors}}). Declared tokens: {{tokens|none found}}. See {{file|your theme CSS}}."
       }
     ],
     "shadcn/no-arbitrary-values": [
@@ -238,18 +238,14 @@
           "transition-[filter,opacity]",
           "transition-[opacity,transform]",
           "transition-[width,min-width]",
-          "duration-[400ms]",
           "lg:pt-[35vh]",
           "pb-[var(--letter-pad-b)]",
           "opacity-[0.34]",
           "rounded-[56px]",
           "rounded-[46px]",
           "rounded-[2.5rem]",
-          "rounded-[2rem]",
           "rounded-[31px]",
           "rounded-[24%]",
-          "rounded-l-[2px]",
-          "rounded-r-[2px]",
           "leading-[1.1]",
           "bg-size-[200%_100%]",
           "text-[calc(var(--letter-small)*1.05)]",
@@ -275,10 +271,15 @@
           "text-[3.2rem]",
           "sm:text-[5.75rem]"
         ],
-        "message": "Stay on the scale for {{className}} \u2014 use {{replacement|sibling scale value}} instead of an arbitrary value. See {{file}}."
+        "message": "Stay on the scale for {{className}} \u2014 use {{replacement|{{suggestions}}|a scale step}} instead. Colors: use a theme token or declare --color-<name> in {{file|your theme CSS}}."
       }
     ],
-    "shadcn/no-inline-styles": "warn",
+    "shadcn/no-inline-styles": [
+      "warn",
+      {
+        "message": "Inline style sets {{property}} \u2014 use classes (DESIGN.md); only measured geometry / dynamic Google-pill colors are allowed, see .oxlintrc.json overrides."
+      }
+    ],
     "shadcn/no-unknown-classes": [
       "warn",
       {

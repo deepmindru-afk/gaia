@@ -22,7 +22,7 @@ interface CardProps {
 
 export function Card({ children, className }: CardProps) {
   return (
-    <View className={`rounded-2xl bg-zinc-800 p-4 w-full ${className ?? ""}`}>
+    <View className={`rounded-3xl bg-zinc-800 p-4 w-full ${className ?? ""}`}>
       {children}
     </View>
   );

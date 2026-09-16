@@ -60,21 +60,21 @@ export const RULE_GUIDE: RuleGuide[] = [
     what: "It catches className overrides on UI components that fight the component's own built-in variants.",
     why: "GAIA cards must all obey the DESIGN.md card contract (outer rounded-3xl bg-zinc-800 p-4, inner rounded-2xl bg-zinc-900 p-3, no borders, status tints at /10) and HeroUI components must be styled through variant and color props, so one fix in the component fixes every surface.",
     params:
-      "Error. Allows layout classes like mt-4 and w-full on any component; Button additionally allows w-full and mt-* / mb-*; everything else on a component must be a variant. Named carve-outs exist for RaisedButton, InputOTP parts, Separator, GrainOverlay, Skeleton, the message scroller, CopyButton, Calendar, ProgressiveImage, and CardTitle / CardContent.",
+      "Error. Allows layout classes like mt-4 and w-full on any component; everything else on a component must be a variant. Named carve-outs exist for RaisedButton, InputOTP parts, Separator, GrainOverlay, Skeleton, the message scroller, CopyButton, Calendar, ProgressiveImage, SidebarInset, SidebarHeader, and ModalBody.",
   },
   {
     rule: "shadcn/no-raw-colors",
     what: "It catches hard-coded colors that are not part of the theme, such as bg-gray-800, text-green-500, or bg-[#1d9bf0].",
     why: "GAIA renders on a zinc foundation with a fixed set of status colors from DESIGN.md (emerald, amber, red, blue and friends at /10 backgrounds with full-color text), so a stray gray or brand-blue hex breaks the dark-room look everywhere it appears.",
     params:
-      "Error. Allows the zinc scale, the status accents (emerald / amber / red / blue / yellow / orange 400-500, violet / lime / purple-400), every semantic theme token (foreground, danger, warning, success, background, popover, muted, accent, ring, destructive, input, card, secondary, default), plus text-pink-400, bg-pink-500 / bg-teal-500 / bg-purple-500, the tiny text sizes, and the custom gradients.",
+      "Error. Allows the zinc scale, the status accents (emerald / amber / red / blue / yellow / orange 400-500, violet / lime / purple-400), every semantic theme token (foreground, danger, warning, success, background, popover, muted, accent, ring, destructive, input, card, secondary, default), plus text-pink-400, the tiny text sizes, and the custom gradient.",
   },
   {
     rule: "shadcn/no-arbitrary-values",
     what: "It catches one-off bracket values like text-[11px] or px-[10px] that dodge the Tailwind scale.",
     why: "The DESIGN.md card contract is built from scale steps (rounded-3xl shells, rounded-xl pills, text-xs detail copy), so arbitrary values let cards drift a pixel at a time until no two cards agree.",
     params:
-      "Error. Allows layout plus a listed set of one-offs: the transition and duration tokens, the letter-art CSS variables, the iPhone hardware radii (56px / 46px), blur, drop-shadow, and hero spacing values. SendNotificationSection additionally allows shape and typography so it can mimic an OS banner.",
+      "Error. Allows layout plus a listed set of one-offs: the transition and duration tokens, the letter-art CSS variables, the iPhone hardware radii (56px / 46px), blur, drop-shadow, and hero spacing values.",
   },
   {
     rule: "shadcn/no-inline-styles",

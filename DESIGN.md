@@ -123,7 +123,7 @@ spacing:
 components:
   card-outer:
     backgroundColor: "{colors.neutral-800}"
-    rounded: "{rounded.xl}"
+    rounded: "{rounded.xxl}"
     padding: "{spacing.lg}"
   card-inner:
     backgroundColor: "{colors.neutral-900}"
@@ -131,11 +131,11 @@ components:
     padding: "{spacing.md}"
   card-glass:
     backgroundColor: "{colors.neutral-800}"
-    rounded: "{rounded.xl}"
+    rounded: "{rounded.xxl}"
     padding: "{spacing.lg}"
   card-hoverable:
     backgroundColor: "{colors.neutral-800}"
-    rounded: "{rounded.xl}"
+    rounded: "{rounded.xxl}"
     padding: "{spacing.lg}"
   button-primary:
     backgroundColor: "{colors.primary}"
@@ -777,7 +777,7 @@ Use `cva` from `class-variance-authority` for components with multiple visual va
 ```typescript
 import { cva } from "class-variance-authority";
 
-const cardVariants = cva("rounded-2xl p-4", {
+const cardVariants = cva("rounded-3xl p-4", {
   variants: {
     depth: {
       outer: "bg-zinc-800",

@@ -11,6 +11,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { RaisedButton } from "@/components/ui/raised-button";
 import { Link } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
+import { getContrastColor, getLuminance, parseColor } from "@/utils/colorUtils";
 
 export type ChatPlatform =
   | "imessage"
@@ -133,11 +134,13 @@ function DemoCtaIcon({
 
 /** Rendered OUTSIDE the message bubble, like a platform inline-keyboard button. */
 function DemoCta({ platform }: { platform: ChatPlatform }) {
-  const { label, href, accent, darkText } = DEMO_CTA[platform];
+  const { label, href, accent } = DEMO_CTA[platform];
+  const rgb = parseColor(accent);
+  const iconColor = rgb ? getContrastColor(getLuminance(rgb)) : "#fff";
   return (
     <Link href={href} className="chat-bubble-pop mt-1 w-fit">
       <RaisedButton color={accent} size="sm" className="px-4">
-        <DemoCtaIcon platform={platform} color={darkText ? "#000" : "#fff"} />
+        <DemoCtaIcon platform={platform} color={iconColor} />
         {label}
       </RaisedButton>
     </Link>
