@@ -41,6 +41,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: lint-imports
+        name: import-linter (app.constants/app.config/app.utils stay leaves)
+        entry: bash -c 'cd apps/api && uvx --no-build --from import-linter==2.6 lint-imports --no-cache'
+        language: system
+        files: '^apps/api/(app/.*\.py|pyproject\.toml)$'
+        pass_filenames: false
+
       - id: openui-gen-prompt
         name: openui generated prompt up to date
         entry: bash -c 'pnpm openui:gen-prompt && git diff --exit-code apps/api/app/agents/prompts/openui_generated.txt'

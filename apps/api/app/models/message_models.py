@@ -4,9 +4,9 @@ from pydantic import BaseModel, Field, StringConstraints
 from typing_extensions import TypedDict
 
 from app.constants.chat import MAX_MESSAGE_LENGTH
+from app.constants.vfs import SAFE_PATH_ID_PATTERN
 from app.models.calendar_models import GoogleCalendarEventDateTime
 from app.models.workflow_models import WorkflowStep
-from app.services.storage import SAFE_PATH_ID_PATTERN
 
 SafePathId = Annotated[str, StringConstraints(pattern=SAFE_PATH_ID_PATTERN)]
 

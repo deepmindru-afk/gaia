@@ -18,13 +18,13 @@ import pytest
 
 from app.agents.llm import lane as lane_module
 from app.agents.llm.lane import ModelLane
-from app.agents.llm.types import LLMProviderName
 from app.constants.general import FINISH_TASK_NAME
 from app.constants.llm import (
     COMPLETION_NUDGE_MESSAGE,
     DEFAULT_MAX_TOKENS,
     LANE_FIELD_ID,
     RECURSION_WRAPUP_THRESHOLD_STEPS,
+    LLMProviderName,
 )
 from app.models.agent_models import AgentConfigurable
 from app.override.langgraph_bigtool.agent_config import (
