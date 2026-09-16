@@ -244,6 +244,19 @@ def _hermetic_environment() -> Iterator[None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _default_rate_limit_off() -> None:
+    """Keep the app-wide slowapi limit off for the whole hermetic run.
+
+    The limiter counts against Redis, which this run never starts, so a request
+    through the real app would 500 on the first count. A test that exercises the
+    middleware builds its own app with a memory-backed Limiter instead.
+    """
+    from app.api.v1.middleware.rate_limiter import limiter
+
+    limiter.enabled = False
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _env_pollution_guard(_hermetic_environment: Iterator[None]) -> Iterator[None]:
     """Fail if any test leaked os.environ mutations.
 
@@ -367,12 +380,6 @@ def _create_test_app() -> FastAPI:
         from app.core.app_factory import create_app
 
         app = create_app()
-
-    # Disable the SlowAPI per-route limiter so payment endpoints don't hit Redis.
-    # This must be done after the app is created (the module is imported then).
-    from app.api.v1.middleware.rate_limiter import limiter
-
-    limiter.enabled = False
 
     from app.api.v1.dependencies.oauth_dependencies import get_current_user
 
