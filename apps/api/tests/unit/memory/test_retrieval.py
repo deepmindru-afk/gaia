@@ -1028,9 +1028,7 @@ class TestBuildEntries:
             return [parent]
 
         with (
-            patch.object(
-                retrieval.pg_store, "get_entities_for_memories", new=slow_entities
-            ),
+            patch.object(retrieval.pg_store, "get_entities_for_memories", new=slow_entities),
             patch.object(retrieval.pg_store, "get_memories_by_ids", new=fast_parents),
         ):
             entries = await _build_entries([(child, 0.9)])
@@ -1180,6 +1178,12 @@ class TestRecall:
             "graph sibling never reached the reranker"
         )
         assert result.memories[0].content == sibling.content
+
+    def test_rerank_pool_cap_is_sixteen(self) -> None:
+        """Pin the ranking workload cap: prod timings show ranking cost is
+        dominated by sidecar load, so the pool stays small while survivors
+        still come from the pool top."""
+        assert RERANK_CANDIDATES == 16
 
     async def test_base_pool_is_still_capped_at_the_rerank_budget(self) -> None:
         base = [make_row(f"base fact {i}") for i in range(RERANK_CANDIDATES + 5)]
