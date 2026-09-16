@@ -5,39 +5,29 @@ This module provides functions to create and configure the FastAPI application.
 """
 
 import secrets
-from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, UJSONResponse
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import UJSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from fastapi.utils import is_body_allowed_for_status_code
 from prometheus_fastapi_instrumentator import Instrumentator
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.endpoints.dev import router as dev_router
 from app.api.v1.endpoints.health import router as health_router
 from app.api.v1.routes import router as api_router
 from app.config.settings import settings
 from app.constants.log_tags import LogTag
-from app.core.lazy_loader import providers
+from app.core.exception_handlers import register_exception_handlers
 from app.core.lifespan import lifespan
 from app.core.middleware import configure_middleware
 from app.core.openapi import api_operation_id
-from app.schemas.errors import (
-    ERROR_RESPONSES,
-    ErrorEnvelope,
-    ValidationIssue,
-    error_response,
-)
+from app.schemas.errors import ERROR_RESPONSES
 from app.services import latency_metrics as _latency_metrics  # noqa: F401 -- side effects
 
 # Eager-import so Prometheus collectors register at startup; otherwise the
 # storage layer lazy-imports on first use and /metrics omits fs_op_* metadata
 # until the first FS-shaped operation runs.
 from app.services.storage import metrics as _fs_metrics  # noqa: F401 -- side effects
-from app.utils.errors import AppError
 from shared.py.wide_events import log as wide_log
 
 
@@ -91,106 +81,7 @@ def create_app() -> FastAPI:
     elif settings.ENV != "production":
         instrumentator.expose(app, include_in_schema=False)
 
-    @app.exception_handler(AppError)
-    async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-        """Convert AppError into a structured JSON response with wide event context.
-
-        Emits an explicit error log so the wide-event final_level flips to ERROR
-        and downstream LogQL filters (e.g. errors!="[]", level="ERROR") catch
-        it. Without this the AppError only showed up in Sentry and was invisible
-        to Loki searches that look for application errors by level.
-        """
-        wide_log.error(
-            "app_error",
-            error=exc.to_dict(),
-            status_code=exc.status_code,
-            path=request.url.path,
-            method=request.method,
-        )
-        return error_response(exc.status_code, ErrorEnvelope.from_app_error(exc))
-
-    @app.exception_handler(RequestValidationError)
-    async def validation_error_handler(
-        request: Request,  # noqa: ARG001 -- Starlette calls exception handlers as handler(conn, exc)
-        exc: RequestValidationError,
-    ) -> JSONResponse:
-        """Log validation errors with field-level detail and return 422."""
-        errors = [
-            ValidationIssue(loc=list(err["loc"]), msg=err["msg"], type=err["type"])
-            for err in exc.errors()
-        ]
-        wide_log.warning(
-            "validation_failed",
-            validation_errors=[issue.model_dump() for issue in errors],
-            error_count=len(errors),
-        )
-        return error_response(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            ErrorEnvelope(
-                message="Request validation failed", code="validation_error", errors=errors
-            ),
-        )
-
-    @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
-        """Record the failure on the wide event, then render it as the envelope.
-
-        Starlette's ExceptionMiddleware converts HTTPException into a response
-        inside call_next, so LoggingMiddleware's except path never sees it —
-        without this, every HTTPException(500) wide event had no errors[] entry.
-        Preserves exc.headers and drops the body for statuses that forbid one (204/304).
-        """
-        failure: dict[str, Any] = {
-            "status_code": exc.status_code,
-            "detail": exc.detail,
-            "path": request.url.path,
-            "method": request.method,
-        }
-        # Only an explicit `raise ... from e` counts: __context__ is set by any
-        # exception raised inside an except block and is usually unrelated.
-        cause = exc.__cause__
-        if cause is not None:
-            failure["error_type"] = type(cause).__name__
-            failure["error"] = str(cause)
-
-        # Mirrors the status -> level mapping the logging middleware applies.
-        record = wide_log.error if exc.status_code >= 500 else wide_log.warning
-        record("http_exception", **failure)
-
-        if not is_body_allowed_for_status_code(exc.status_code):
-            return Response(status_code=exc.status_code, headers=exc.headers)
-        return error_response(
-            exc.status_code, ErrorEnvelope.from_http_exception(exc), headers=exc.headers
-        )
-
-    @app.exception_handler(Exception)
-    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        """Capture uncaught exceptions and return the generic 500 body.
-
-        No wide-event logging happens here: this handler runs in
-        ServerErrorMiddleware, outside the LoggingMiddleware boundary, so those
-        calls would land on an orphan state. The shared PostHog client is
-        initialized during lifespan startup and records the exception centrally.
-        """
-        # Guard like PostHogRequestContextMiddleware: without the production lifespan
-        # (tests, scripts) the provider is never registered, so providers.get raises
-        # KeyError, turning this 500-handler's JSON body into a bare Starlette 500.
-        posthog_client = providers.get("posthog") if providers.is_available("posthog") else None
-        if posthog_client is not None:
-            # Attribute explicitly: PostHogRequestContextMiddleware's identify context
-            # unwinds before an exception reaches this handler in ServerErrorMiddleware,
-            # so every 500 would otherwise land on an anonymous profile.
-            user = getattr(request.state, "user", None)
-            user_id = user.get("user_id") if user else None
-            if user_id:
-                posthog_client.capture_exception(exc, distinct_id=str(user_id))
-            else:
-                posthog_client.capture_exception(exc)
-
-        return error_response(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            ErrorEnvelope(message="Internal server error", code="internal_server_error"),
-        )
+    register_exception_handlers(app)
 
     app.include_router(api_router, prefix="/api/v1", responses=ERROR_RESPONSES)
     app.include_router(health_router, responses=ERROR_RESPONSES)

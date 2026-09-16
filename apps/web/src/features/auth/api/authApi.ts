@@ -4,7 +4,12 @@ import type {
   OnboardingRequest,
   OnboardingStatusResponse,
 } from "@shared/api/generated";
-import { api } from "@/lib/api/typed";
+import {
+  type ApiBody,
+  api,
+  FORM_URLENCODED_HEADERS,
+  formDataSerializer,
+} from "@/lib/api/typed";
 
 /** The onboarding block as `GET /user/me` and the onboarding endpoints return it. */
 export type OnboardingData = OnboardingStatusResponse;
@@ -17,9 +22,10 @@ export const authApi = {
   fetchUserInfo: () => api.get("/api/v1/user/me", { silent: true }),
 
   // Update user profile (name/picture)
-  updateProfile: (formData: FormData) =>
+  updateProfile: (body: ApiBody<"patch", "/api/v1/user/me">) =>
     api.patch("/api/v1/user/me", {
-      body: formData,
+      body,
+      bodySerializer: formDataSerializer,
       successMessage: "Profile updated successfully",
       errorMessage: "Failed to update profile",
     }),
@@ -27,7 +33,8 @@ export const authApi = {
   // Update user name only
   updateName: (name: string) =>
     api.patch("/api/v1/user/name", {
-      body: new URLSearchParams({ name }),
+      body: { name },
+      headers: FORM_URLENCODED_HEADERS,
       successMessage: "Name updated successfully",
       errorMessage: "Failed to update name",
     }),
@@ -69,7 +76,8 @@ export const authApi = {
   // Update user timezone separately
   updateUserTimezone: (timezone: string) =>
     api.patch("/api/v1/user/timezone", {
-      body: new URLSearchParams({ timezone }),
+      body: { timezone },
+      headers: FORM_URLENCODED_HEADERS,
       silent: true,
     }),
 };

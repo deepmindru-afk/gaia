@@ -20,6 +20,7 @@ import {
 import { SettingsPage } from "@/features/settings/components/ui/SettingsPage";
 import { SettingsRow } from "@/features/settings/components/ui/SettingsRow";
 import { SettingsSection } from "@/features/settings/components/ui/SettingsSection";
+import { binaryField } from "@/lib/api/typed";
 import { toast } from "@/lib/toast";
 import type { ModalAction } from "./SettingsMenu";
 
@@ -62,10 +63,9 @@ export default function AccountSection({
       setIsLoading(true);
       toast.loading("Uploading profile picture...", { id: "update-picture" });
 
-      const formData = new FormData();
-      formData.append("picture", file);
-
-      const response = await authApi.updateProfile(formData);
+      const response = await authApi.updateProfile({
+        picture: binaryField(file),
+      });
 
       patchCurrentUser(queryClient, { picture: response.picture });
     } catch (error) {

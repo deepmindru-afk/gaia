@@ -13,6 +13,7 @@ const request = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   apiauth: { request: (...args: unknown[]) => request(...args) },
+  apiOrigin: "http://localhost:8000",
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
@@ -36,14 +37,19 @@ describe("getTodoCanvas", () => {
   beforeEach(() => {
     request.mockReset();
     request.mockResolvedValue({
+      status: 200,
+      headers: {},
       data: { content: "# canvas", activity: "- ran" },
     });
   });
 
-  it("requests the unprefixed canvas path with silent toasts", async () => {
+  it("requests the canvas path exactly once under /api/v1", async () => {
     await getTodoCanvas("todo-1");
     expect(request).toHaveBeenCalledWith(
-      expect.objectContaining({ method: "GET", url: "/todos/todo-1/canvas" }),
+      expect.objectContaining({
+        method: "GET",
+        url: "http://localhost:8000/api/v1/todos/todo-1/canvas",
+      }),
     );
   });
 
