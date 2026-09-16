@@ -770,6 +770,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-uv
+      # The import-cost step below imports the real modules, so it needs the
+      # real dependencies — the composite is how this repo installs them, and
+      # it is the cached path on both runner kinds. No services, no Node, no
+      # 1.3 GB of embedding models: this lane only needs the venv.
+      - uses: ./.github/actions/setup-python-test-env
+        with:
+          services: "false"
+          node: "false"
+          restore-models: "false"
       - name: ruff check + format (PL, RUF, FAST, S, B, A, COM, C4, DTZ, ISC, RET, SIM, ARG, PTH, TRY, PERF, UP, FURB, LOG, G + more)
         id: ruff
         continue-on-error: true
@@ -830,6 +839,23 @@ jobs:
           python3 tools/lints/check_plr_complexity.py
           echo "::endgroup::"
           echo "plr-complexity-ratchet: OK"
+      - name: Import cost of the base layers (trend; not gating yet)
+        id: import-cost
+        continue-on-error: true
+        # Measured 2026-09-17 on the home box: every module under app/utils and
+        # app/models costs 6-15 s to import ALONE, because those layers reach up
+        # into app.agents and app.services (app.utils.chat_utils imports
+        # app.agents.llm.chatbot). Gating at MODULE_BUDGET_MS today would red
+        # ~200 modules on a PR that did not cause any of them, so the step runs
+        # with --report: it measures everything and records the entry points'
+        # cost as a trend. Drop `--report` to gate — that is the whole change —
+        # once the layering is fixed. It is still in the verdict below, so a
+        # step that stops RUNNING is still a red lane.
+        run: |
+          echo "::group::import cost"
+          python3 tools/lints/check_import_cost.py --report
+          echo "::endgroup::"
+          echo "import-cost: measured (trend only until the base layers stop importing upward)"
       - name: Complexity scan (max-absolute F, max-modules E, max-average B)
         id: xenon
         continue-on-error: true
@@ -918,6 +944,7 @@ jobs:
           CUSTOM_LINTS: ${{ steps.custom-lints.outcome }}
           IGNORE_WHYS: ${{ steps.ignore-whys.outcome }}
           PLR_COMPLEXITY: ${{ steps.plr-complexity.outcome }}
+          IMPORT_COST: ${{ steps.import-cost.outcome }}
           XENON: ${{ steps.xenon.outcome }}
           INTERROGATE: ${{ steps.interrogate.outcome }}
           BANDIT: ${{ steps.bandit.outcome }}
@@ -929,6 +956,7 @@ jobs:
             "custom-lints=$CUSTOM_LINTS" \
             "ignore-whys=$IGNORE_WHYS" \
             "plr-complexity=$PLR_COMPLEXITY" \
+            "import-cost=$IMPORT_COST" \
             "xenon=$XENON" \
             "interrogate=$INTERROGATE" \
             "bandit=$BANDIT" \
