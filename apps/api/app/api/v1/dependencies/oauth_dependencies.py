@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from fastapi import Depends, Header, HTTPException, Request, WebSocket, status
+from fastapi.exceptions import WebSocketException
 
 from app.config.settings import settings
 from app.constants.auth import DEV_USER_MISSING_HINT
@@ -102,25 +103,30 @@ async def get_user_id(  # NOSONAR python:S7503
     return str(user_id)
 
 
+def _ws_unauthenticated(reason: str) -> WebSocketException:
+    """Reject the dial with a policy-violation close, so no unauthenticated socket opens."""
+    log.set(disconnect_reason="auth_failure")
+    return WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=reason)
+
+
+def _require_ws_user_id(user: AuthenticatedUser) -> AuthenticatedUser:
+    """Guarantee the caller gets a user it can key on, or no socket at all."""
+    user_id = user.get("user_id")
+    if not user_id or not isinstance(user_id, str):
+        log.warning(f"{LogTag.OAUTH} WebSocket user context carries no string user_id")
+        raise _ws_unauthenticated("authenticated user has no id")
+    return user
+
+
 async def get_current_user_ws(websocket: WebSocket) -> AuthenticatedUser:
-    """
-    Authenticate a user from a WebSocket connection using cookies.
-    This is a special version of get_current_user for WebSocket connections.
+    """Authenticate a WebSocket connection from its cookie or Bearer subprotocol.
 
-    For mobile clients that cannot send cookies, the token is passed via the
-    Sec-WebSocket-Protocol header (subprotocol) for security. This prevents
-    token exposure in server logs and referrers.
+    Mobile clients cannot send cookies, so the token also rides the
+    Sec-WebSocket-Protocol header as ``"Bearer, <token>"``.
 
-    Protocol format: "Bearer, <token>" (client sends ['Bearer', token])
-
-    Args:
-        websocket: The WebSocket connection with cookies
-
-    Returns:
-        User data dictionary with authentication info
-
-    Raises:
-        WebSocketException: Connection will be closed on auth failure
+    Raises WebSocketException on every auth failure. It used to close the
+    socket and return ``{}`` typed as AuthenticatedUser, so every caller held a
+    value whose type was a lie and had to remember to re-check it.
     """
     # Dev auth bypass — WebSockets never pass through WorkOSAuthMiddleware
     # (BaseHTTPMiddleware only handles HTTP), so the bypass is mirrored here,
@@ -131,16 +137,17 @@ async def get_current_user_ws(websocket: WebSocket) -> AuthenticatedUser:
             websocket.headers, websocket.cookies
         )
         if user_data is not None:
-            return build_user_context(
-                user_to_legacy_dict(user_data), auth_provider="workos", dev_bypass=True
+            return _require_ws_user_id(
+                build_user_context(
+                    user_to_legacy_dict(user_data), auth_provider="workos", dev_bypass=True
+                )
             )
         log.error(
             f"{LogTag.OAUTH} Dev bypass target has no Mongo user",
             target_email=target_email,
             fix=DEV_USER_MISSING_HINT,
         )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return {}
+        raise _ws_unauthenticated("dev bypass target has no Mongo user")
 
     # Extract the session cookie from WebSocket
     wos_session = websocket.cookies.get("wos_session")
@@ -155,18 +162,16 @@ async def get_current_user_ws(websocket: WebSocket) -> AuthenticatedUser:
 
     if not wos_session:
         log.info(f"{LogTag.OAUTH} No session cookie or protocol token in WebSocket request")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return {}
+        raise _ws_unauthenticated("no session cookie or protocol token")
 
     # Use shared authentication logic
     user_info, _ = await authenticate_workos_session(session_token=wos_session)
 
     if not user_info:
         log.warning(f"{LogTag.OAUTH} WebSocket authentication failed")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return {}
+        raise _ws_unauthenticated("session token rejected")
 
-    return cast(AuthenticatedUser, user_info)
+    return _require_ws_user_id(cast(AuthenticatedUser, user_info))
 
 
 GET_USER_TZ_TYPE = tuple[str, datetime]

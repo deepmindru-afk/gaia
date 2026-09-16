@@ -9,6 +9,8 @@ before a route runs.
 """
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from http import HTTPStatus
 from typing import Any
 from unittest.mock import patch
 
@@ -23,6 +25,7 @@ from app.schemas.errors import (
     ERROR_RESPONSES,
     HTML_ROUTE_ERROR_RESPONSES,
     ErrorEnvelope,
+    ValidationIssue,
     error_responses,
 )
 from app.utils.errors import AppError, create_error
@@ -58,7 +61,9 @@ def app() -> FastAPI:
             fix="Try another card",
             status_code=402,
             code="card_declined",
+            public={"retry_allowed": True},
             provider="stripe",
+            charge_id="ch_abc123",
         )
 
     @router.get("/http-string")
@@ -85,12 +90,55 @@ def app() -> FastAPI:
     async def _http_non_str_code() -> None:
         raise HTTPException(status_code=409, detail={"code": 409, "message": "Already linked"})
 
-    @router.get("/app-error-meta-message")
-    async def _app_error_meta_message() -> None:
+    @router.get("/app-error-public-message")
+    async def _app_error_public_message() -> None:
         raise AppError(
             message="Payment failed",
             status_code=402,
-            meta={"message": "stale copy", "code": 402, "message_id": "m1"},
+            public={"message": "stale copy", "code": 402, "message_id": "m1"},
+        )
+
+    @router.get("/app-error-non-standard-status")
+    async def _app_error_non_standard_status() -> None:
+        raise AppError(message="Upstream said 499", status_code=499)
+
+    @router.get("/app-error-public-datetime")
+    async def _app_error_public_datetime() -> None:
+        raise AppError(
+            message="Try later",
+            status_code=409,
+            public={"retry_at": datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)},
+        )
+
+    @router.get("/http-list-detail")
+    async def _http_list_detail() -> None:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": ["body", "count"], "msg": "must be an int", "type": "int_parsing"}],
+        )
+
+    @router.get("/http-non-standard-status-no-message")
+    async def _http_non_standard_status_no_message() -> None:
+        raise HTTPException(status_code=499, detail={"code": "client_closed"})
+
+    @router.get("/http-list-detail-ragged")
+    async def _http_list_detail_ragged() -> None:
+        raise HTTPException(status_code=400, detail=[{"loc": ("body", 0)}, "plain string", 42])
+
+    @router.get("/http-mapping-raw-errors")
+    async def _http_mapping_raw_errors() -> None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Bad",
+                "errors": ["boom", {"loc": "body", "msg": "m", "type": "t"}],
+            },
+        )
+
+    @router.get("/http-bad-meta-types")
+    async def _http_bad_meta_types() -> None:
+        raise HTTPException(
+            status_code=400, detail={"message": "Bad", "why": 7, "fix": [], "errors": "nope"}
         )
 
     @router.post("/validate")
@@ -132,7 +180,9 @@ class TestOneEnvelope:
         assert body["code"] == "card_declined"
         assert body["why"] == "Card declined"
         assert body["fix"] == "Try another card"
-        assert body["provider"] == "stripe"
+        assert body["retry_allowed"] is True
+        assert "provider" not in body, "meta is wide-event context, never the wire"
+        assert "charge_id" not in body
 
     async def test_http_exception_string_detail_becomes_message(self, client: AsyncClient) -> None:
         resp = await client.get("/http-string")
@@ -164,10 +214,79 @@ class TestOneEnvelope:
         assert resp.status_code == 409
         assert resp.json() == {"message": "Already linked"}
 
-    async def test_app_error_message_wins_over_meta_and_bad_code(self, client: AsyncClient) -> None:
-        resp = await client.get("/app-error-meta-message")
+    async def test_app_error_message_wins_over_public_and_bad_code(
+        self, client: AsyncClient
+    ) -> None:
+        resp = await client.get("/app-error-public-message")
         assert resp.status_code == 402
         assert resp.json() == {"message": "Payment failed", "message_id": "m1"}
+
+    async def test_a_non_standard_status_renders_instead_of_raising(
+        self, client: AsyncClient
+    ) -> None:
+        """HTTPStatus(499) raises; a forwarded upstream code must still be the envelope."""
+        resp = await client.get("/app-error-non-standard-status")
+        assert resp.status_code == 499
+        assert _envelope(resp.json()).message == "Upstream said 499"
+
+    async def test_public_context_may_carry_a_datetime(self, client: AsyncClient) -> None:
+        resp = await client.get("/app-error-public-datetime")
+        assert resp.status_code == 409
+        assert resp.json()["retry_at"] == "2026-01-02T03:04:05Z"
+
+    async def test_a_list_detail_renders_as_validation_issues(self, client: AsyncClient) -> None:
+        resp = await client.get("/http-list-detail")
+        body = resp.json()
+        assert resp.status_code == 422
+        envelope = _envelope(body)
+        assert envelope.message == HTTPStatus(422).phrase
+        assert envelope.errors is not None
+        assert envelope.errors == [
+            ValidationIssue(loc=["body", "count"], msg="must be an int", type="int_parsing")
+        ]
+
+    async def test_an_unknown_status_with_no_message_has_a_generic_one(
+        self, client: AsyncClient
+    ) -> None:
+        """``HTTPStatus(499)`` has no phrase to fall back to, and raising here
+        would replace the forwarded status with a bare plaintext 500."""
+        resp = await client.get("/http-non-standard-status-no-message")
+        assert resp.status_code == 499
+        assert resp.json() == {"message": "Error", "code": "client_closed"}
+
+    async def test_a_ragged_list_detail_still_renders_every_entry(
+        self, client: AsyncClient
+    ) -> None:
+        """An entry that is not a {loc, msg, type} mapping becomes its own message,
+        never the Python repr a plain str(detail) produced."""
+        resp = await client.get("/http-list-detail-ragged")
+        assert resp.status_code == 400
+        assert _envelope(resp.json()).errors == [
+            ValidationIssue(loc=["body", 0], msg="", type="value_error"),
+            ValidationIssue(loc=[], msg="plain string", type="value_error"),
+            ValidationIssue(loc=[], msg="42", type="value_error"),
+        ]
+
+    async def test_a_mapping_detail_with_raw_errors_is_normalized_not_a_500(
+        self, client: AsyncClient
+    ) -> None:
+        """Raw entries would fail validation inside the handler; a string ``loc``
+        is one value, never iterated into its characters."""
+        resp = await client.get("/http-mapping-raw-errors")
+        assert resp.status_code == 400
+        assert _envelope(resp.json()).errors == [
+            ValidationIssue(loc=[], msg="boom", type="value_error"),
+            ValidationIssue(
+                loc=[], msg="{'loc': 'body', 'msg': 'm', 'type': 't'}", type="value_error"
+            ),
+        ]
+
+    async def test_wrongly_typed_declared_fields_are_dropped_not_a_500(
+        self, client: AsyncClient
+    ) -> None:
+        resp = await client.get("/http-bad-meta-types")
+        assert resp.status_code == 400
+        assert resp.json() == {"message": "Bad"}
 
     async def test_validation_failure_is_the_envelope(self, client: AsyncClient) -> None:
         resp = await client.post("/validate", json={"count": "many"})

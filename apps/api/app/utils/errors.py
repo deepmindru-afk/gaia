@@ -1,15 +1,21 @@
-"""
-Structured application errors with rich context for wide event logging.
+"""Structured application errors with rich context for wide event logging.
+
+An AppError carries two different audiences. ``message``/``why``/``fix``/
+``code`` and the ``public`` mapping are the contract the client reads; ``meta``
+is diagnostic context for the wide event and never reaches the wire. Putting a
+provider body, a user id or a ``str(e)`` in ``meta`` is therefore safe, and
+putting one in ``public`` is a deliberate decision.
 
 Usage:
     from app.utils.errors import AppError, create_error
 
-    # Raise with full context
     raise create_error(
         message="Payment failed",
-        why="Card declined by issuer",
+        why="The card issuer declined the charge",
         fix="Try another card or contact your bank",
         status_code=402,
+        code="card_declined",
+        public={"retry_allowed": True},
         provider="stripe",
         charge_id="ch_abc123",
     )
@@ -30,6 +36,8 @@ class AppError(Exception):
     why: str = ""
     fix: str = ""
     status_code: int = 500
+    code: str = ""
+    public: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
@@ -39,11 +47,15 @@ class AppError(Exception):
         return self.message
 
     def to_dict(self) -> dict[str, Any]:
+        """Render the wide-event payload: everything the error knows, public or not."""
         d: dict[str, Any] = {"message": self.message}
         if self.why:
             d["why"] = self.why
         if self.fix:
             d["fix"] = self.fix
+        if self.code:
+            d["code"] = self.code
+        d.update(self.public)
         d.update(self.meta)
         return d
 
@@ -53,14 +65,18 @@ def create_error(
     why: str = "",
     fix: str = "",
     status_code: int = 500,
+    code: str = "",
+    public: dict[str, Any] | None = None,
     **meta: object,
 ) -> AppError:
-    """Create a structured AppError with optional context metadata."""
+    """Create a structured AppError; keyword extras become wide-event-only meta."""
     return AppError(
         message=message,
         why=why,
         fix=fix,
         status_code=status_code,
+        code=code,
+        public=dict(public) if public else {},
         meta=meta,
     )
 

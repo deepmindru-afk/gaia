@@ -38,6 +38,37 @@
         "title": "ActionConfig",
         "type": "object"
       },
+      "ActionExecutionResponse": {
+        "description": "The execute-action envelope, under a name of its own.\n\nParameterising the generic inline exports the component as\n``NotificationResponse_dict_str__Any__``, a TypeScript type name that\nchanges with the type argument; a named subclass exports as itself.\n``data`` is whatever the matched ``ActionHandler`` returned, which is open\nby design.",
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "ActionExecutionResponse",
+        "type": "object"
+      },
       "ActionStyle": {
         "description": "Visual emphasis for a notification action button.",
         "enum": [
@@ -1966,8 +1997,7 @@
         "properties": {
           "failed": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "type": "string"
             },
             "title": "Failed",
             "type": "array"
@@ -10545,36 +10575,6 @@
           "message"
         ],
         "title": "NotificationResponse[NotificationView]",
-        "type": "object"
-      },
-      "NotificationResponse_dict_str__Any__": {
-        "properties": {
-          "data": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data"
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "success": {
-            "title": "Success",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "message"
-        ],
-        "title": "NotificationResponse[dict[str, Any]]",
         "type": "object"
       },
       "NotificationSourceEnum": {
@@ -19335,8 +19335,7 @@
         },
         "summary": "Post Batch Decision",
         "tags": [
-          "Approvals",
-          "approvals"
+          "Approvals"
         ]
       }
     },
@@ -19388,8 +19387,7 @@
         },
         "summary": "Get Preferences",
         "tags": [
-          "Approvals",
-          "approvals"
+          "Approvals"
         ]
       },
       "put": {
@@ -19449,8 +19447,7 @@
         },
         "summary": "Put Preferences",
         "tags": [
-          "Approvals",
-          "approvals"
+          "Approvals"
         ]
       }
     },
@@ -19523,8 +19520,7 @@
         },
         "summary": "Set Tool Approval",
         "tags": [
-          "Approvals",
-          "approvals"
+          "Approvals"
         ]
       }
     },
@@ -19597,8 +19593,7 @@
         },
         "summary": "Post Approval Decision",
         "tags": [
-          "Approvals",
-          "approvals"
+          "Approvals"
         ]
       }
     },
@@ -29369,7 +29364,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotificationResponse_dict_str__Any__"
+                  "$ref": "#/components/schemas/ActionExecutionResponse"
                 }
               }
             },
@@ -31969,8 +31964,7 @@
         },
         "summary": "List Reminders Endpoint",
         "tags": [
-          "Reminders",
-          "reminders"
+          "Reminders"
         ]
       },
       "post": {
@@ -32044,8 +32038,7 @@
         },
         "summary": "Create Reminder Endpoint",
         "tags": [
-          "Reminders",
-          "reminders"
+          "Reminders"
         ]
       }
     },
@@ -32110,8 +32103,7 @@
         },
         "summary": "Validate Cron Endpoint",
         "tags": [
-          "Reminders",
-          "reminders"
+          "Reminders"
         ]
       }
     },
@@ -32167,8 +32159,7 @@
         },
         "summary": "Cancel Reminder Endpoint",
         "tags": [
-          "Reminders",
-          "reminders"
+          "Reminders"
         ]
       },
       "get": {
@@ -32229,8 +32220,7 @@
         },
         "summary": "Get Reminder Endpoint",
         "tags": [
-          "Reminders",
-          "reminders"
+          "Reminders"
         ]
       },
       "put": {
@@ -32301,8 +32291,7 @@
         },
         "summary": "Update Reminder Endpoint",
         "tags": [
-          "Reminders",
-          "reminders"
+          "Reminders"
         ]
       }
     },
@@ -32365,8 +32354,7 @@
         },
         "summary": "Pause Reminder Endpoint",
         "tags": [
-          "Reminders",
-          "reminders"
+          "Reminders"
         ]
       }
     },
@@ -32429,8 +32417,7 @@
         },
         "summary": "Resume Reminder Endpoint",
         "tags": [
-          "Reminders",
-          "reminders"
+          "Reminders"
         ]
       }
     },
@@ -33062,8 +33049,7 @@
         },
         "summary": "List Skills Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -33115,8 +33101,7 @@
         },
         "summary": "List Builtin Skills Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -33193,8 +33178,7 @@
         },
         "summary": "Discover Skills From Github",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -33313,8 +33297,7 @@
         },
         "summary": "Install Skill With Auto Discover",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -33376,8 +33359,7 @@
         },
         "summary": "Create Inline Skill Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -33429,8 +33411,7 @@
         },
         "summary": "List Skill Targets Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -33486,8 +33467,7 @@
         },
         "summary": "Uninstall Skill Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       },
       "get": {
@@ -33548,8 +33528,7 @@
         },
         "summary": "Get Skill Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       },
       "put": {
@@ -33620,8 +33599,7 @@
         },
         "summary": "Update Skill Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -33684,8 +33662,7 @@
         },
         "summary": "Disable Skill Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -33748,8 +33725,7 @@
         },
         "summary": "Enable Skill Endpoint",
         "tags": [
-          "Skills",
-          "skills"
+          "Skills"
         ]
       }
     },
@@ -36073,8 +36049,7 @@
         },
         "summary": "Get Usage Activity",
         "tags": [
-          "Usage",
-          "usage"
+          "Usage"
         ]
       }
     },
@@ -36164,8 +36139,7 @@
         },
         "summary": "Get Usage History",
         "tags": [
-          "Usage",
-          "usage"
+          "Usage"
         ]
       }
     },
@@ -36217,8 +36191,7 @@
         },
         "summary": "Get Usage Summary",
         "tags": [
-          "Usage",
-          "usage"
+          "Usage"
         ]
       }
     },

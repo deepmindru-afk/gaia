@@ -24,7 +24,7 @@ from app.services.hil.preferences import (
 from app.services.hil.resolution import resolve_approval, resolve_approvals_batch
 from shared.py.wide_events import log
 
-router = APIRouter(prefix="/approvals", tags=["approvals"])
+router = APIRouter(prefix="/approvals")
 
 
 @router.post("/{approval_id}/decision")

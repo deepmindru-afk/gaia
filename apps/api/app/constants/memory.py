@@ -97,6 +97,10 @@ EMBEDDING_SIDECAR_SLOT_WAIT_SECONDS = max(
     0.0, float(os.getenv("MEMORY_SIDECAR_SLOT_WAIT_SECONDS", "20"))
 )
 
+# Retry hint on that 503. Short, because saturation clears as in-flight batches
+# finish rather than needing anything to be fixed.
+EMBEDDING_SIDECAR_RETRY_AFTER_SECONDS = 5
+
 # Persistent on-disk cache for the fastembed model weights. Set in prod (on the
 # embedding sidecar) to a mounted volume so the ~1.85GB download happens ONCE
 # rather than on every restart/redeploy (measured ~148s cold-load). Unset falls

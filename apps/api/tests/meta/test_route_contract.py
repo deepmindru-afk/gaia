@@ -1,50 +1,36 @@
 """The API contract the generated TypeScript types are built from.
 
-Three invariants keep ``apps/api/openapi.json`` (and everything generated from
-it) trustworthy, and each of them silently rots without a test: a route that
-declares no response model documents its body as ``{}``; a body typed ``Any``
-or a bare ``dict`` generates ``unknown`` and every consumer casts; a
-path-derived operation id renames a client type whenever a route moves; and a
-route-level ``responses=`` (or a non-JSON response class) that shadows the
-router's ``ERROR_RESPONSES`` documents an error with no body at all. This is
-the ratchet — a new route that breaks any of them fails here, not in a
-frontend type-check three PRs later.
+A handful of invariants keep ``apps/api/openapi.json`` (and everything
+generated from it) trustworthy, and each of them silently rots without a test:
+a route that declares no response model documents its body as ``{}``; a body
+typed ``Any`` or a bare ``dict`` generates ``unknown`` and every consumer
+casts; a path-derived operation id renames a client type whenever a route
+moves, and a shared id collapses two routes into one type; a serializer option
+drops a field the schema marks required; and a route-level ``responses=`` (or a
+non-JSON response class) that shadows the router's ``ERROR_RESPONSES``
+documents an error with no body at all. This is the ratchet — a new route that
+breaks any of them fails here, not in a frontend type-check three PRs later.
 """
 
 from collections import Counter
-import dataclasses
 import types
 import typing
-from typing import Any
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.datastructures import DefaultPlaceholder
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
-from pydantic import BaseModel
-import pytest
 from starlette import status
 from starlette.responses import Response
 
-from app.core.app_factory import create_app
 from app.core.openapi import api_operation_id
+from app.schemas.common import ResponseModel
+from tests.meta.response_types import walk_response
 
 _SCHEMA_REF_PREFIX = "#/components/schemas/"
 _ENVELOPE_REF = f"{_SCHEMA_REF_PREFIX}ErrorEnvelope"
-
-
-@pytest.fixture(scope="module")
-def app() -> FastAPI:
-    return create_app()
-
-
-@pytest.fixture(scope="module")
-def routes(app: FastAPI) -> list[RouteContext]:
-    return [
-        ctx
-        for ctx in iter_route_contexts(app.routes)
-        if isinstance(ctx.original_route, APIRoute) and ctx.original_route.include_in_schema
-    ]
+_DEFAULTS_REQUIRED = "json_schema_serialization_defaults_required"
+_OMITTING_OPTIONS = ("response_model_exclude_none", "response_model_exclude_unset")
 
 
 def _label(ctx: RouteContext) -> str:
@@ -56,26 +42,6 @@ def _label(ctx: RouteContext) -> str:
 def _returns_response_subclass(route: APIRoute) -> bool:
     annotation = typing.get_type_hints(route.endpoint).get("return")
     return isinstance(annotation, type) and issubclass(annotation, Response)
-
-
-def _is_typed_body(model: Any) -> bool:
-    origin = typing.get_origin(model)
-    if origin in (list, set, tuple, frozenset):
-        return all(_is_typed_body(arg) for arg in typing.get_args(model))
-    if origin is dict:
-        key, value = typing.get_args(model)
-        return key is str and _is_typed_body(value)
-    if origin in (types.UnionType, typing.Union):
-        return all(arg is type(None) or _is_typed_body(arg) for arg in typing.get_args(model))
-    if model is Any or model is object or model in (dict, list):
-        return False
-    if isinstance(model, type):
-        return (
-            issubclass(model, BaseModel)
-            or dataclasses.is_dataclass(model)
-            or model in (str, int, float, bool)
-        )
-    return False
 
 
 def _declares_its_response_class(route: APIRoute) -> bool:
@@ -109,13 +75,17 @@ def test_every_route_declares_its_response_body(routes: list[RouteContext]) -> N
 
 
 def test_no_route_body_is_any_or_a_bare_dict(routes: list[RouteContext]) -> None:
-    """``Any`` and bare ``dict`` generate ``unknown``; every consumer then casts."""
+    """``Any`` and bare ``dict`` generate ``unknown``; every consumer then casts.
+
+    The route's own annotation only; a loose field *inside* a response model is
+    the ratchet in ``test_untyped_response_fields.py``.
+    """
     loose = [
         f"{_label(ctx)} -> {ctx.original_route.response_model}"
         for ctx in routes
         if isinstance(ctx.original_route, APIRoute)
         and ctx.original_route.response_model is not None
-        and not _is_typed_body(ctx.original_route.response_model)
+        and _label(ctx) in walk_response(ctx.original_route.response_model, _label(ctx)).untyped
     ]
     assert loose == [], "routes whose body is untyped:\n  " + "\n  ".join(loose)
 
@@ -136,12 +106,97 @@ def test_operation_ids_are_tag_and_name_not_path(routes: list[RouteContext]) -> 
     assert drifted == [], "operation ids not of the form <tag>_<name>:\n  " + "\n  ".join(drifted)
 
 
-def test_operation_ids_are_unique(routes: list[RouteContext]) -> None:
-    """Two routes sharing an id collapse into one generated type."""
-    ids = Counter(ctx.unique_id for ctx in routes)
+def test_operation_ids_are_unique(all_routes: list[RouteContext]) -> None:
+    """Two routes sharing an id collapse into one generated type.
+
+    Every APIRoute, documented or not: hiding an alias keeps it out of the
+    document but not out of the namespace, so the collision is still there the
+    day someone documents it.
+    """
+    ids = Counter(ctx.unique_id for ctx in all_routes)
     duplicates = sorted(op_id for op_id, count in ids.items() if count > 1)
     assert duplicates == [], (
-        f"duplicate operation ids (rename the handler or hide the alias path): {duplicates}"
+        "duplicate operation ids — give the alias route its own operation_id= "
+        f"(the id is <tag>_<handler name>, so stacked decorators all share one): {duplicates}"
+    )
+
+
+def test_no_route_overrides_its_router_tag(routes: list[RouteContext]) -> None:
+    """A route-level ``tags=`` is a trap: the id is minted from the router's first tag.
+
+    A second tag moves the route in the docs while every generated type keeps
+    the router's name, so the two disagree silently.
+    """
+    overridden = [
+        f"{_label(ctx)} -> {list(ctx.tags)}" for ctx in routes if set(ctx.tags) != {ctx.tags[0]}
+    ]
+    assert overridden == [], (
+        "routes carrying a tag their router did not give them — move the route to a router "
+        "mounted with that tag:\n  " + "\n  ".join(overridden)
+    )
+
+
+def _omitting_options(route: APIRoute) -> list[str]:
+    return [option for option in _OMITTING_OPTIONS if getattr(route, option, False)]
+
+
+def test_no_route_omits_fields_its_schema_marks_required(routes: list[RouteContext]) -> None:
+    """``exclude_none``/``exclude_unset`` are invisible to the schema.
+
+    ``ResponseModel`` marks a defaulted field required in the output schema, so
+    dropping that field on the wire makes the generated TypeScript promise a
+    key the response does not carry.
+    """
+    lying = []
+    for ctx in routes:
+        route = ctx.original_route
+        assert isinstance(route, APIRoute)
+        options = _omitting_options(route)
+        if not options or route.response_model is None:
+            continue
+        forced = sorted(
+            model.__name__
+            for model in walk_response(route.response_model, _label(ctx)).models
+            if model.model_config.get(_DEFAULTS_REQUIRED)
+        )
+        if forced:
+            lying.append(f"{_label(ctx)}: {', '.join(options)} over {', '.join(forced)}")
+    assert lying == [], (
+        "routes that omit fields their own schema marks required — drop the option, or stop "
+        f"deriving the model from ResponseModel ({_DEFAULTS_REQUIRED}):\n  " + "\n  ".join(lying)
+    )
+
+
+async def _probe() -> ResponseModel:
+    return ResponseModel()
+
+
+def test_two_routers_under_one_tag_share_an_id_namespace(all_routes: list[RouteContext]) -> None:
+    """The id is ``<tag>_<handler>``; the module is not in it.
+
+    Two routers carry the ``MCP`` tag, so a handler named the same in either of
+    them mints the same id — caught by the uniqueness test above, which is the
+    only thing standing between that and one collapsed client type.
+    """
+    modules = {
+        ctx.original_route.endpoint.__module__
+        for ctx in all_routes
+        if ctx.tags and str(ctx.tags[0]) == "MCP"
+    }
+    assert len(modules) > 1, f"the MCP routers merged; re-pin this on the survivor: {modules}"
+
+    app = FastAPI(generate_unique_id_function=api_operation_id)
+    for _ in modules:
+        router = APIRouter()
+        router.add_api_route("/probe", _probe, methods=["GET"], name="list_tools")
+        app.include_router(router, tags=["MCP"])
+    ids = [
+        ctx.unique_id
+        for ctx in iter_route_contexts(app.routes)
+        if isinstance(ctx.original_route, APIRoute)
+    ]
+    assert ids == ["mcp_list_tools"] * len(modules), (
+        f"two MCP routers no longer share an id namespace: {ids}"
     )
 
 
