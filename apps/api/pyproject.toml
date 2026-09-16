@@ -121,6 +121,7 @@ dev = [
   "schemathesis>=4.25.0",
   "hypothesis>=6.165.2",
   "mutmut>=3.7.0",
+  "import-linter>=2.6",
 ]
 
 backend = [
@@ -242,7 +243,7 @@ do_not_mutate_patterns = ["# pragma: no mutate"]
 # buys that startup headroom.
 timeout_constant = 60.0
 pytest_add_cli_args_test_selection = []
-pytest_add_cli_args = ["-p", "no:xdist", "-o", 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers --timeout=300']
+pytest_add_cli_args = ["-p", "no:xdist", "-o", 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers -p no:opik -p no:langsmith_plugin -p no:schemathesis --timeout=300']
 
 # coverage.py does not read pytest.ini (only .coveragerc, setup.cfg, tox.ini,
 # pyproject.toml), so the [coverage:*] sections that used to live there were
@@ -262,3 +263,128 @@ source = ["app", "*/apps/api/app"]
 show_missing = true
 fail_under = 80
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "if __name__ == .__main__.:"]
+
+# An app boot and a pytest process both pay every import these low modules
+# reach. Constants and config are leaves by definition, and app.utils is shared
+# by models that every test worker loads at collection; letting any of them
+# reach the model stack cost ~1.5s per process (app.constants.llm imported the
+# langchain-typed llm types; app.utils.timezone imported RunnableConfig to
+# annotate one parameter). Run it with `lint-imports --no-cache` from apps/api:
+# grimp's on-disk cache drops function-scope imports, so a cached run sees a
+# SUBSET of the graph and can go green on a violation the CI lane catches.
+#
+# Every ignore_imports entry below is ONE direct edge with a reason. grimp reads
+# the AST, so it cannot tell a deliberately deferred function-scope import from
+# a module-scope one and counts both; those entries say so. Listing edges one at
+# a time rather than by wildcard is what keeps the contracts able to fail: a NEW
+# import from any of these packages is still red.
+# KNOWN HOLE, stated rather than hidden: app/services/ has no __init__.py, and
+# grimp only walks directories that are real packages — so nothing under
+# app.services is in the graph and no chain THROUGH a service is analysed.
+# "app.services" is therefore absent from the forbidden lists below (naming a
+# module grimp cannot see is an error, not a check). Adding the __init__.py
+# makes ruff's isort re-classify `mcp` as third-party for the six modules under
+# app/services/mcp/, and reformatting those files trips the PLR complexity
+# ratchet on grandfathered debt this change did not create. Worth revisiting
+# with that debt, not alongside it. Direct imports out of app.constants /
+# app.config / app.utils are all still checked, which is where the measured
+# cost actually came from.
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "app.constants is a leaf"
+type = "forbidden"
+source_modules = ["app.constants"]
+forbidden_modules = [
+  "app.agents",
+  "app.api",
+  "app.db",
+  "langchain_core",
+  "langchain",
+  "langgraph",
+  "transformers",
+]
+ignore_imports = [
+  # Same leaf-prompt edge the app.config contract exempts below: the chain from
+  # a constant runs through oauth_config into plain prompt-text modules.
+  "app.config.oauth_config -> app.agents.prompts.memory_prompts",
+  "app.config.oauth_config -> app.agents.prompts.subagent_prompts",
+]
+
+[[tool.importlinter.contracts]]
+name = "app.config is a leaf"
+type = "forbidden"
+source_modules = ["app.config"]
+forbidden_modules = [
+  "app.agents",
+  "app.api",
+  "app.db",
+  "langchain_core",
+  "langchain",
+  "langgraph",
+  "transformers",
+]
+ignore_imports = [
+  # The per-plan limit tables are keyed by PlanType; the enum lives on the
+  # payment model, which is what makes the table and the subscription agree.
+  "app.config.rate_limits -> app.models.payment_models",
+  # token_repository is a Postgres repository that has always lived under
+  # config/ — misfiled, not config reaching downwards. Moving it is a separate
+  # change with its own blast radius.
+  "app.config.token_repository -> app.db.postgresql",
+  "app.config.token_repository -> app.models.db_oauth",
+  # app/agents/prompts/ is prompt TEXT — plain string modules with no imports of
+  # their own. The oauth config names each integration's prompts; the edge is to
+  # a leaf that only happens to live under app/agents/.
+  "app.config.oauth_config -> app.agents.prompts.memory_prompts",
+  "app.config.oauth_config -> app.agents.prompts.subagent_prompts",
+]
+
+[[tool.importlinter.contracts]]
+name = "app.utils never pulls the model stack"
+type = "forbidden"
+source_modules = ["app.utils"]
+forbidden_modules = ["langchain_core", "langchain", "langgraph", "transformers"]
+ignore_imports = [
+  # Utils that genuinely manipulate LangChain messages/runnables or a LangGraph
+  # runtime — for these the import IS the work.
+  "app.utils.agent_utils -> langchain_core",
+  "app.utils.chat_utils -> langchain_core",
+  "app.utils.embedding_utils -> langchain_core",
+  "app.utils.file_utils -> langchain_core",
+  "app.utils.mcp_utils -> langchain_core",
+  "app.utils.multimodal -> langchain_core",
+  "app.utils.notes_utils -> langchain_core",
+  "app.utils.research_utils -> langchain_core",
+  "app.utils.workflow_utils -> langchain_core",
+  "app.utils.workflow_utils -> langgraph",
+  "app.utils.integration_checker -> langgraph",
+  "app.utils.integration_checker -> app.models.agent_models",
+  "app.utils.composio_hooks.gmail_hooks -> langgraph",
+  "app.utils.composio_hooks.reddit_hooks -> langgraph",
+  "app.utils.composio_hooks.twitter_hooks -> langgraph",
+  "app.utils.device_onboarding -> langgraph",
+  "app.utils.device_onboarding -> app.models.agent_models",
+  # Deferred at function scope precisely to keep langchain off this path — the
+  # noqa on the import says so. grimp reads the AST and cannot see the deferral.
+  "app.utils.timezone -> app.models.agent_models",
+  # Reaches a langchain-typed model directly; the stack is below that edge.
+  "app.utils.workflow_utils -> app.models.agent_models",
+  # Utils that call the LLM client / vision helpers / tool registry outright —
+  # same family as the langchain_core entries above, one hop further out.
+  "app.utils.agent_utils -> app.agents.tools.core.registry",
+  "app.utils.chat_utils -> app.agents.llm.chatbot",
+  "app.utils.file_utils -> app.agents.llm.client",
+  "app.utils.file_utils -> app.agents.llm.vision",
+  "app.utils.image_utils -> app.agents.llm.vision",
+  "app.utils.profile_card -> app.agents.llm.client",
+  "app.utils.research_utils -> app.agents.llm.client",
+  "app.utils.notes_utils -> app.db.chroma.chromadb",
+  "app.utils.todo_vector_utils -> app.db.chroma.chromadb",
+  "app.utils.stream_publishers -> app.models.stream_events",
+  "app.utils.agent_utils -> app.models.stream_events",
+  "app.utils.canvas_vector_utils -> app.db.chroma.chromadb",
+  "app.utils.embedding_utils -> app.db.chroma.chromadb",
+]

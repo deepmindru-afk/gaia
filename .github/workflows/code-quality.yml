@@ -705,7 +705,7 @@ jobs:
   # plus the aggregating verdict at the end: one red tool no longer hides the
   # other five, which is the only thing separate jobs bought us here.
   python-static:
-    name: Python static (ruff + custom lints + xenon + interrogate + bandit + pip-audit)
+    name: Python static (ruff + custom lints + import contracts + xenon + interrogate + bandit + pip-audit)
     needs: [select-runner, changes]
     if: needs.changes.outputs.has_python == 'true'
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
@@ -762,6 +762,19 @@ jobs:
           python3 tools/lints/run.py apps/api/app
           echo "::endgroup::"
           echo "Custom lints: OK (4 rules pass)"
+      - name: Import contracts (app.constants / app.config / app.utils stay leaves)
+        id: lint-imports
+        continue-on-error: true
+        # Contracts live in apps/api/pyproject.toml [tool.importlinter]. --no-cache
+        # is load-bearing: grimp's on-disk cache drops function-scope imports, so a
+        # cached run analyses a subset of the graph and can miss a violation.
+        run: |
+          trap 'echo "::error::repro: cd apps/api && uvx --no-build --from import-linter==2.6 lint-imports --no-cache"' ERR
+          echo "::group::lint-imports"
+          cd apps/api && uvx --no-build --from import-linter==2.6 lint-imports --no-cache
+          echo "::endgroup::"
+          echo "### Import contracts — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "lint-imports: OK (the low modules reach no upper layer and no model stack)"
       - name: Ruff escape-hatch whys (ignore / per-file-ignores must be justified)
         id: ignore-whys
         continue-on-error: true
@@ -872,6 +885,7 @@ jobs:
           # no-inline-expansion convention.
           RUFF: ${{ steps.ruff.outcome }}
           CUSTOM_LINTS: ${{ steps.custom-lints.outcome }}
+          LINT_IMPORTS: ${{ steps.lint-imports.outcome }}
           IGNORE_WHYS: ${{ steps.ignore-whys.outcome }}
           PLR_COMPLEXITY: ${{ steps.plr-complexity.outcome }}
           XENON: ${{ steps.xenon.outcome }}
@@ -883,6 +897,7 @@ jobs:
             --findings "$RUNNER_TEMP/findings.jsonl" \
             "ruff=$RUFF" \
             "custom-lints=$CUSTOM_LINTS" \
+            "lint-imports=$LINT_IMPORTS" \
             "ignore-whys=$IGNORE_WHYS" \
             "plr-complexity=$PLR_COMPLEXITY" \
             "xenon=$XENON" \

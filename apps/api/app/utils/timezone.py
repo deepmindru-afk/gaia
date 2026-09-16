@@ -20,6 +20,7 @@ Two distinct concepts (do not cross them):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone as _timezone, tzinfo as _tzinfo
 from enum import Enum
@@ -27,10 +28,15 @@ import functools
 import re
 from zoneinfo import ZoneInfo, available_timezones
 
-from langchain_core.runnables import RunnableConfig
-
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
+
+#: What ``home_timezone_from_config`` actually needs of a LangGraph run config:
+#: a string-keyed mapping it reads ``configurable`` out of. Spelling it
+#: ``RunnableConfig`` pulled langchain_core into every importer of this module —
+#: app.models.user_models, and so every test worker at collection time — to
+#: describe a read of one key. ``RunnableConfig`` is a TypedDict and satisfies it.
+AgentRunConfig = Mapping[str, object]
 
 
 # ``±HH:MM`` fixed-offset form (e.g. "+05:30", "-08:00").
@@ -228,7 +234,7 @@ def resolve_home_timezone(stored: str | None, header: str | None) -> ResolvedTim
     )
 
 
-def home_timezone_from_config(config: RunnableConfig) -> Timezone:
+def home_timezone_from_config(config: AgentRunConfig) -> Timezone:
     """Home timezone from a LangGraph ``configurable`` (agent runs).
 
     The agent config carries a ``±HH:MM`` ``user_timezone`` set at run assembly.
