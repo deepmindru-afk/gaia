@@ -202,7 +202,6 @@ class TestTryParseEdges:
     def test_out_of_range_offset_is_not_a_zone(self, bad: str) -> None:
         assert Timezone.try_parse(bad) is None
 
-    @pytest.mark.regression
     def test_a_name_too_long_for_the_tz_database_is_not_a_zone(self) -> None:
         """ZoneInfo probes the filesystem, which refuses a 300-char name with OSError."""
         assert Timezone.try_parse("A" * 300) is None
