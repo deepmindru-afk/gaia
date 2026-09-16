@@ -126,9 +126,9 @@ class Timezone:
         try:
             return cls(candidate, ZoneInfo(candidate))
         except (ZoneInfoNotFoundError, ValueError, OSError):
-            # Unknown key, a key with a bad shape ("../x"), or one the tz
-            # database cannot open (a name too long for a path): the caller
-            # treats None as "no usable zone" and its own log line says which input.
+            # Unknown key, a bad shape ("../x") or a name too long for the tz
+            # database to even open: the caller treats None as "no usable
+            # zone" and its own log line says which input.
             return None
 
     @property
