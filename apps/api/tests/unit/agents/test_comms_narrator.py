@@ -22,7 +22,7 @@ from app.agents.llm.lane import AgentRole
 from app.agents.prompts.comms_prompts import (
     INTERACTIVE_DELIVERY_NOTE,
     PLATFORM_DELIVERY_NOTE,
-    SILENCE_REACT_NOTE,
+    SILENCE_NOTE,
 )
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.general import NEW_MESSAGE_BREAKER
@@ -66,7 +66,7 @@ class TestNarrateExecutorResult:
         assert message.name == "background_executor"
         assert message.content == (
             INTERACTIVE_DELIVERY_NOTE
-            + SILENCE_REACT_NOTE
+            + SILENCE_NOTE
             + wrap_agent_payload(AgentTag.EXECUTOR_RESULT, RESULT_TEXT)
         )
         config = silent.await_args.args[2]
@@ -110,7 +110,7 @@ class TestNarrateExecutorResult:
         initial = silent.await_args.args[1]
         assert initial["messages"][0].content == (
             INTERACTIVE_DELIVERY_NOTE
-            + SILENCE_REACT_NOTE
+            + SILENCE_NOTE
             + wrap_agent_payload(AgentTag.EXECUTOR_ERROR, "boom")
         )
 
@@ -151,7 +151,7 @@ class TestNarrateExecutorResult:
         assert content == (
             CARD_NOTE
             + INTERACTIVE_DELIVERY_NOTE
-            + SILENCE_REACT_NOTE
+            + SILENCE_NOTE
             + wrap_agent_payload(AgentTag.EXECUTOR_RESULT, RESULT_TEXT)
         )
 
