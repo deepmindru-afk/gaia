@@ -23,8 +23,9 @@ def _request(user: AuthenticatedUser | None) -> Request:
 def _posthog(available: bool) -> tuple[MagicMock, MagicMock]:
     client = MagicMock()
     providers = MagicMock()
-    providers.is_available.return_value = available
-    providers.get.return_value = client if available else None
+    # Key-sensitive: the client lives under exactly one registry key.
+    providers.is_available.side_effect = lambda key: available and key == "posthog"
+    providers.get.side_effect = lambda key: client if available and key == "posthog" else None
     return providers, client
 
 
