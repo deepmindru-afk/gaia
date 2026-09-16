@@ -35,43 +35,51 @@ class ResponseWalk:
 def _walk(annotation: Any, owner: str, out: ResponseWalk) -> None:
     if hasattr(annotation, "__metadata__"):  # Annotated[X, ...] -> X
         annotation = typing.get_args(annotation)[0]
-    origin = typing.get_origin(annotation)
+    if _walk_type_arguments(annotation, owner, out):
+        return
+    if annotation is Any or annotation is object or annotation in _UNPARAMETRIZED:
+        out.untyped.add(owner)
+        return
+    _walk_fields(annotation, owner, out)
 
+
+def _walk_type_arguments(annotation: Any, owner: str, out: ResponseWalk) -> bool:
+    """Walk a container's or union's arguments; False if it has none to walk."""
+    origin = typing.get_origin(annotation)
     if origin in _SEQUENCE_ORIGINS:
         args = [arg for arg in typing.get_args(annotation) if arg is not Ellipsis]
         if not args:
             out.untyped.add(owner)
         for arg in args:
             _walk(arg, owner, out)
-        return
+        return True
     if origin is dict:
         key, value = typing.get_args(annotation)
         if key is not str:
             out.untyped.add(owner)
         _walk(value, owner, out)
-        return
+        return True
     if origin in (types.UnionType, typing.Union):
         for arg in typing.get_args(annotation):
             if arg is not type(None):
                 _walk(arg, owner, out)
-        return
-    if annotation is Any or annotation is object or annotation in _UNPARAMETRIZED:
-        out.untyped.add(owner)
-        return
+        return True
+    return False
 
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        if annotation in out.visited:
-            return
-        out.visited.add(annotation)
-        for name, field in annotation.model_fields.items():
-            _walk(field.annotation, f"{annotation.__name__}.{name}", out)
+
+def _walk_fields(annotation: Any, owner: str, out: ResponseWalk) -> None:
+    """Walk the fields of a model, dataclass or TypedDict, once per type."""
+    if not isinstance(annotation, type) or annotation in out.visited:
         return
-    if dataclasses.is_dataclass(annotation) or typing.is_typeddict(annotation):
-        if annotation in out.visited:
-            return
-        out.visited.add(annotation)
-        for name, hint in typing.get_type_hints(annotation).items():
-            _walk(hint, f"{annotation.__name__}.{name}", out)
+    if issubclass(annotation, BaseModel):
+        fields = {name: field.annotation for name, field in annotation.model_fields.items()}
+    elif dataclasses.is_dataclass(annotation) or typing.is_typeddict(annotation):
+        fields = typing.get_type_hints(annotation)
+    else:
+        return
+    out.visited.add(annotation)
+    for name, hint in fields.items():
+        _walk(hint, f"{annotation.__name__}.{name}", out)
 
 
 def walk_response(annotation: Any, owner: str) -> ResponseWalk:
