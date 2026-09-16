@@ -41,7 +41,8 @@ export default function NotificationSettings() {
           NotificationsAPI.getChannelPreferences(),
         ]);
         setPlatformLinks(linksData.platform_links || {});
-        setChannelPrefs(prefs);
+        // The API has no iMessage channel preference; keep its local default.
+        setChannelPrefs((prev) => ({ ...prev, ...prefs }));
       } catch {
         // silently ignore
       } finally {

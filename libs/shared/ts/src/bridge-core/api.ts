@@ -1,23 +1,32 @@
 // Thin HTTP client for the device-bridge REST endpoints.
 
+import { ApiError, REQUEST_ID_HEADER } from "../api/apiError.js";
 import type {
   DeviceTokenResponse,
-  ErrorEnvelope,
   PollPairingResponse,
   StartPairingResponse,
 } from "../api/generated/index.js";
 import type { ServerConfig } from "./config.types.js";
 
 export type { DeviceTokenResponse, PollPairingResponse, StartPairingResponse };
+export { ApiError };
 
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "ApiError";
+/** Read the response, or raise the API's own words as an ApiError. */
+async function readOrThrow<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const raw = await res.text();
+    let body: unknown = raw;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      // non-JSON error body; the raw text is what the envelope check sees
+    }
+    throw ApiError.fromBody(res.status, body, {
+      fallbackMessage: `${res.status} ${res.statusText}`,
+      requestId: res.headers.get(REQUEST_ID_HEADER) ?? undefined,
+    });
   }
+  return (await res.json()) as T;
 }
 
 async function post<T>(
@@ -34,17 +43,7 @@ async function post<T>(
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    let message = `${res.status} ${res.statusText}`;
-    try {
-      const envelope = (await res.json()) as ErrorEnvelope;
-      if (envelope.message) message = envelope.message;
-    } catch {
-      // non-JSON error body; keep the status line
-    }
-    throw new ApiError(message, res.status);
-  }
-  return (await res.json()) as T;
+  return readOrThrow<T>(res);
 }
 
 async function del<T>(apiUrl: string, path: string, token: string): Promise<T> {
@@ -52,17 +51,7 @@ async function del<T>(apiUrl: string, path: string, token: string): Promise<T> {
     method: "DELETE",
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) {
-    let message = `${res.status} ${res.statusText}`;
-    try {
-      const envelope = (await res.json()) as ErrorEnvelope;
-      if (envelope.message) message = envelope.message;
-    } catch {
-      // non-JSON error body; keep the status line
-    }
-    throw new ApiError(message, res.status);
-  }
-  return (await res.json()) as T;
+  return readOrThrow<T>(res);
 }
 
 export function startPairing(

@@ -2,7 +2,7 @@ import type {
   BulkEmailImportanceSummariesResponse,
   EmailRequest,
 } from "@shared/api/generated";
-import { api } from "@/lib/api/typed";
+import { type ApiBody, api, formDataSerializer } from "@/lib/api/typed";
 import type { EmailActionResponse } from "@/types/api/mailApiTypes";
 import {
   asEmailData,
@@ -186,9 +186,10 @@ export const mailApi = {
   },
 
   // Send email
-  sendEmail: (formData: FormData) =>
+  sendEmail: (body: ApiBody<"post", "/api/v1/gmail/send">) =>
     api.post("/api/v1/gmail/send", {
-      body: formData,
+      body,
+      bodySerializer: formDataSerializer,
       successMessage: "Email sent successfully",
       errorMessage: "Failed to send email",
     }),

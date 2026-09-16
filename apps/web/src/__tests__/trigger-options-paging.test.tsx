@@ -8,6 +8,7 @@ const request = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   apiauth: { request: (...args: unknown[]) => request(...args) },
+  apiOrigin: "http://localhost:8000",
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
@@ -45,9 +46,15 @@ describe("useInfiniteTriggerOptions", () => {
   it("sends page and search to /triggers/options and pages while pages are full", async () => {
     request
       .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
         data: { options: repos(TRIGGER_OPTIONS_PAGE_SIZE, 1) },
       })
-      .mockResolvedValueOnce({ data: { options: repos(3, 2) } });
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        data: { options: repos(3, 2) },
+      });
 
     const { result } = renderHook(
       () =>
@@ -65,14 +72,10 @@ describe("useInfiniteTriggerOptions", () => {
     expect(request).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "GET",
-        url: "/triggers/options",
-        params: expect.objectContaining({
-          integration_id: "github",
-          trigger_slug: "github_commit_event",
-          field_name: "repo",
-          page: 1,
-          search: "repo",
-        }),
+        url:
+          "http://localhost:8000/api/v1/triggers/options" +
+          "?integration_id=github&trigger_slug=github_commit_event" +
+          "&field_name=repo&page=1&search=repo",
       }),
     );
 
@@ -83,7 +86,7 @@ describe("useInfiniteTriggerOptions", () => {
     await waitFor(() => expect(result.current.hasNextPage).toBe(false));
     expect(request).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        params: expect.objectContaining({ page: 2, search: "repo" }),
+        url: expect.stringContaining("page=2&search=repo"),
       }),
     );
     expect(result.current.data?.pages.flat()).toHaveLength(

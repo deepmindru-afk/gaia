@@ -1,6 +1,7 @@
 import { Skeleton } from "@heroui/skeleton";
 import { Tooltip } from "@heroui/tooltip";
 import { GlobalIcon } from "@icons";
+import type { URLResponse } from "@shared/api/generated";
 import Image from "next/image";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -39,14 +40,8 @@ const displayHref = (href: string) =>
 /** `undefined` keeps the link in this tab; `_blank` opens it beside the app. */
 type LinkTarget = "_blank" | undefined;
 
-interface UrlMetadata {
-  title: string | null;
-  description: string | null;
-  favicon: string | null;
-  website_name: string | null;
-  website_image: string | null;
-  url: string;
-}
+/** The link preview as `POST /fetch-url-metadata` returns it. */
+type UrlMetadata = URLResponse;
 
 function EmailPreview({
   email,

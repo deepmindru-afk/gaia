@@ -32,8 +32,10 @@ vi.mock("@/lib/analytics", () => ({
   trackEvent: vi.fn(),
 }));
 
-vi.mock("@/lib/api/service", () => ({
-  apiService: {
+// The component reads its platform links through the path-typed client; a
+// real request here would leave the query pending across the assertions.
+vi.mock("@/lib/api/typed", () => ({
+  api: {
     get: vi.fn().mockResolvedValue({ platform_links: {} }),
     post: vi.fn(),
     delete: vi.fn(),
