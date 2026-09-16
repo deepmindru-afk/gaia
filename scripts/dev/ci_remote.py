@@ -12,9 +12,10 @@ artifact is the preferred source.
 
 A mutation shard gets a third source: its `mutation-log-N` artifact, which is
 the only thing that separates a surviving mutant (a test gap, with a line and
-a change) from mutmut dying with nothing to show while the box killed tests at
-the per-mutant cap. `--rerun-timeouts` re-runs the failed jobs when every
-failure is the second kind, and refuses otherwise.
+a change) from mutmut dying with nothing to show — and, among those, the box
+killing tests at the per-mutant cap (a re-run away from green) from the suite
+simply failing in the mutation workdir (a re-run away from the same assertion
+error). `--rerun-timeouts` acts on the first and refuses the other two.
 
 `--watch` polls until checks go terminal (bounded), printing transitions.
 `--stack` prints the gh stack alone, one line per PR.
@@ -465,11 +466,19 @@ def fetch_run_shards(repo: Repo, run_id: int) -> list[Shard]:
     if rc != 0:
         eprint(f"ci:remote: GET {endpoint} failed:\n{err.strip()[:400]}")
         sys.exit(classify_failure(err, rc))
-    wanted = [
+    found = [
         a
         for a in json.loads(out).get("artifacts", [])
         if a.get("name", "").startswith(MUTATION_LOG_PREFIX) and not a.get("expired")
     ]
+    # `gh run rerun --failed` uploads a SECOND `mutation-log-2` into the same
+    # run, and run 35128539215 carried three generations of four shards — the
+    # older ones with zero modules in them. Reading the first match printed the
+    # empty one, so only the newest upload of each name counts.
+    newest: dict[str, dict] = {}
+    for artifact in sorted(found, key=lambda a: a.get("created_at", "")):
+        newest[artifact["name"]] = artifact
+    wanted = list(newest.values())
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_FETCHES) as pool:
         blobs = list(pool.map(lambda a: fetch_artifact(repo, a["id"]), wanted))
     return [
@@ -531,11 +540,16 @@ def module_line(module: dict, shard: Shard) -> str:
             for s in survivors
         ]
         return f"{name}  survivors: " + "; ".join(shown)
-    if status == "error" and shard["no_state"]:
+    if status == "error" and shard["no_state"] and shard["timeout_hits"]:
         return (
             f"{name}  error — mutmut produced no state "
             f"({plural(shard['timeout_hits'], 'test')} hit the per-test timeout); "
             "no survivors; safe to re-run"
+        )
+    if status == "error" and shard["no_state"]:
+        return (
+            f"{name}  error — mutmut produced no state and no test hit the per-test timeout, "
+            "so the suite itself did not pass in the mutation workdir; a re-run will not help"
         )
     return f"{name}  {status} — {module.get('reason') or 'see shard.log'}"
 
@@ -545,13 +559,16 @@ def failing_modules(shard: Shard) -> list[dict]:
 
 
 def is_timeout_only(shard: Shard) -> bool:
-    """Say whether this shard's only failures are mutmut dying with nothing to show.
+    """Say whether this shard's only failures are the box killing tests at the cap.
 
-    A shard with one surviving mutant is a red lane that a re-run will not
-    turn green, and re-running it burns half an hour of the box to say so.
+    Three things must hold, and the third is the one real data taught: mutmut
+    produced no state, nothing survived, AND at least one test actually hit
+    the per-test timeout. PR #1241's shards satisfied the first two with zero
+    timeouts — their suite simply failed inside the mutation workdir, and
+    re-running that spends half an hour to reach the same assertion error.
     """
     broken = failing_modules(shard)
-    if not broken or not shard["no_state"]:
+    if not broken or not shard["no_state"] or not shard["timeout_hits"]:
         return False
     return all(m.get("status") not in MUTATION_WEAKNESS for m in broken)
 

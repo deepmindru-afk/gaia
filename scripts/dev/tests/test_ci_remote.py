@@ -1189,3 +1189,79 @@ def test_a_health_probe_that_fails_is_not_an_error(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(ci_remote.subprocess, "run", lambda *_a, **_k: Proc())
     assert ci_remote.runner_health() is None
+
+
+# Run 35128539215 (PR #1241): every shard produced "no state", nothing
+# survived, and NOT ONE test hit the per-test timeout — the suite simply
+# failed inside the mutation workdir with an AssertionError. Reading that as
+# "safe to re-run" is a wrong answer that costs half an hour of the box.
+NO_TIMEOUT_LOG = (
+    "MUTATION RUN FAILED (no state produced) — see mutmut's output above.\n"
+    "AssertionError: assert [] == ['unknown']\n"
+)
+
+
+def test_no_state_without_a_single_timeout_is_not_safe_to_rerun(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = wire_shard_record(wire, [ERROR_MODULE], NO_TIMEOUT_LOG)
+    assert run_cli(monkeypatch, []) == 1
+    out = capsys.readouterr().out
+    assert "no test hit the per-test timeout" in out
+    assert "a re-run will not help" in out
+    assert "safe to re-run" not in out
+    assert "--rerun-timeouts" not in out
+    assert fake  # the artifact was read rather than the job log
+
+
+def test_rerun_timeouts_refuses_a_shard_that_never_hit_the_timeout(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = wire_shard_record(wire, [ERROR_MODULE], NO_TIMEOUT_LOG)
+
+    def router(
+        args: list[str], timeout_s: int, stdin_text: str | None = None
+    ) -> tuple[int, str, str]:
+        assert args[0] != "run", "rerun issued for a shard whose suite simply failed"
+        return fake.text(args, timeout_s, stdin_text)
+
+    monkeypatch.setattr(ci_remote, "gh", router)
+    assert run_cli(monkeypatch, ["--rerun-timeouts"]) == 1
+    assert "refusing" in capsys.readouterr().out
+
+
+def test_only_the_newest_upload_of_a_shard_name_is_read(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`gh run rerun --failed` re-uploads the same artifact NAME into the same run.
+
+    Run 35128539215 carried three generations of four shards, the older ones
+    with zero modules; reading the first match printed the empty one.
+    """
+    wire(
+        FakeGh(
+            checks=[SHARD_3_CHECK],
+            artifacts=[
+                {
+                    "id": 1,
+                    "name": "mutation-log-2",
+                    "expired": False,
+                    "created_at": "2026-09-16T19:19:00Z",
+                },
+                {
+                    "id": 2,
+                    "name": "mutation-log-2",
+                    "expired": False,
+                    "created_at": "2026-09-16T21:04:50Z",
+                },
+            ],
+            zip_blobs={
+                1: shard_zip([], ""),
+                2: shard_zip([SURVIVOR_MODULE], SURVIVOR_LOG),
+            },
+        )
+    )
+    run_cli(monkeypatch, [])
+    out = capsys.readouterr().out
+    assert "app/services/y.py  survivors:" in out
+    assert "log tail" not in out, "the stale empty upload won and sent the reader to the log"
