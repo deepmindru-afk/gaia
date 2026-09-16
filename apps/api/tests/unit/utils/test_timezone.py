@@ -5,6 +5,7 @@ on actual behaviour. If a primitive were deleted, the matching test would fail.
 """
 
 from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -205,6 +206,14 @@ class TestTryParseEdges:
     def test_a_name_too_long_for_the_tz_database_is_not_a_zone(self) -> None:
         """ZoneInfo probes the filesystem, which refuses a 300-char name with OSError."""
         assert Timezone.try_parse("A" * 300) is None
+
+    def test_a_read_failure_on_a_real_zone_is_not_hidden_as_unknown(self) -> None:
+        """A broken tz database is an outage, not a user typing an unknown zone."""
+        with (
+            patch("app.utils.timezone.ZoneInfo", side_effect=OSError("tzdata unreadable")),
+            pytest.raises(OSError),
+        ):
+            Timezone.try_parse("Europe/Berlin")
 
     @pytest.mark.parametrize(
         ("raw", "expected"),
