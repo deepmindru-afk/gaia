@@ -53,6 +53,56 @@ source "$(dirname "$0")/lib/cpu-slots.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+_nproc() { nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2; }
+
+# How many mutant workers ONE mutmut run forks, and therefore exactly how many
+# host CPU tokens the shard that drives it takes.
+#
+# Half the threads (8 on the 16-thread box), not mutmut's own os.cpu_count()
+# default and not the old nproc-2. Measured 2026-09-17: at nproc-2 = 14 a shard
+# could not fit beside another one in the then 16-token pool, so the shards ran
+# strictly one at a time while 19 listeners waited on an otherwise idle box
+# (loadavg 7). The smaller shard is also what keeps a mutant honest under load:
+# when many un-gated jobs overlapped and the loadavg reached 75, mutants started
+# hitting the then 45 s per-test timeout and one module took 138 s where it
+# takes 29 s without the overload. Eight workers is the size that measured clean
+# — two concurrent shards (16 workers) held the loadavg at 5-10 with no
+# timeouts, while four (32 workers, the GAIA_CPU_TOKENS=32 stopgap) reached
+# loadavg 34 and still timed out (run #1202, shards 1/6 and 3/6). The pool
+# default in lib/cpu-slots.sh (nproc * 3 / 2) is what limits how many overlap.
+_mutant_workers() {
+  local threads
+  threads="$(_nproc)"
+  printf '%s' "$(( threads > 1 ? threads / 2 : 1 ))"
+}
+
+# Where the disposable copies of app/ + tests/ + scripts/ live.
+#
+# tmpfs when the machine offers one: a module's tree is ~43 MB over 2100 files
+# and mutmut writes a whole mutants/ tree beside it, so on a spinning-disk or
+# busy SSD those writes, not the mutation work, set the pace. Falls back to
+# apps/api on machines without tmpfs (macOS) or when it is nearly full, so a
+# constrained box degrades in speed rather than failing. The shard base and
+# every module workdir MUST resolve here identically — `cp -al` cannot link
+# across filesystems.
+_workdir_base() {
+  if [ -n "${MUTMUT_WORKDIR_BASE:-}" ]; then
+    printf '%s' "$MUTMUT_WORKDIR_BASE"
+    return
+  fi
+  if [ -d /dev/shm ] && [ -w /dev/shm ]; then
+    # Need room for the base copy plus every live mutants/ tree; 1 GiB is a
+    # comfortable ceiling now that the per-module copies are hardlinks.
+    local free_kb
+    free_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2{print $4}')"
+    if [ -n "${free_kb:-}" ] && [ "$free_kb" -gt 1048576 ]; then
+      printf '%s' /dev/shm
+      return
+    fi
+  fi
+  printf '%s' "$REPO_ROOT/apps/api"
+}
+
 # The one test tier that cannot run without live Mongo and Redis, and so the
 # one thing that decides which runner pool a shard belongs to. `plan` groups by
 # it and `shard` re-derives its own pool from it — exported rather than repeated
@@ -125,56 +175,6 @@ print(json.dumps([line for line in sys.stdin.read().splitlines() if line]))')"
     --records "$records" --diffs "$diffs" \
     --testfiles "$testfiles_json" --status "$status" --reason "$reason" \
     --out "${MUTATION_VERDICT_DIR:-$WORKDIR}/$(_record_slug "$MODULE").json" >&2
-}
-
-_nproc() { nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2; }
-
-# How many mutant workers ONE mutmut run forks, and therefore exactly how many
-# host CPU tokens the shard that drives it takes.
-#
-# Half the threads (8 on the 16-thread box), not mutmut's own os.cpu_count()
-# default and not the old nproc-2. Measured 2026-09-17: at nproc-2 = 14 a shard
-# could not fit beside another one in the then 16-token pool, so the shards ran
-# strictly one at a time while 19 listeners waited on an otherwise idle box
-# (loadavg 7). The smaller shard is also what keeps a mutant honest under load:
-# when many un-gated jobs overlapped and the loadavg reached 75, mutants started
-# hitting the then 45 s per-test timeout and one module took 138 s where it
-# takes 29 s without the overload. Eight workers is the size that measured clean
-# — two concurrent shards (16 workers) held the loadavg at 5-10 with no
-# timeouts, while four (32 workers, the GAIA_CPU_TOKENS=32 stopgap) reached
-# loadavg 34 and still timed out (run #1202, shards 1/6 and 3/6). The pool
-# default in lib/cpu-slots.sh (nproc * 3 / 2) is what limits how many overlap.
-_mutant_workers() {
-  local threads
-  threads="$(_nproc)"
-  printf '%s' "$(( threads > 1 ? threads / 2 : 1 ))"
-}
-
-# Where the disposable copies of app/ + tests/ + scripts/ live.
-#
-# tmpfs when the machine offers one: a module's tree is ~43 MB over 2100 files
-# and mutmut writes a whole mutants/ tree beside it, so on a spinning-disk or
-# busy SSD those writes, not the mutation work, set the pace. Falls back to
-# apps/api on machines without tmpfs (macOS) or when it is nearly full, so a
-# constrained box degrades in speed rather than failing. The shard base and
-# every module workdir MUST resolve here identically — `cp -al` cannot link
-# across filesystems.
-_workdir_base() {
-  if [ -n "${MUTMUT_WORKDIR_BASE:-}" ]; then
-    printf '%s' "$MUTMUT_WORKDIR_BASE"
-    return
-  fi
-  if [ -d /dev/shm ] && [ -w /dev/shm ]; then
-    # Need room for the base copy plus every live mutants/ tree; 1 GiB is a
-    # comfortable ceiling now that the per-module copies are hardlinks.
-    local free_kb
-    free_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2{print $4}')"
-    if [ -n "${free_kb:-}" ] && [ "$free_kb" -gt 1048576 ]; then
-      printf '%s' /dev/shm
-      return
-    fi
-  fi
-  printf '%s' "$REPO_ROOT/apps/api"
 }
 
 # Emit the mutation-check matrix: every changed app module + its test file.
@@ -350,10 +350,17 @@ cmd_shard() {
   # which is the one outcome this gate must never produce.
   SHARD_TSV="$(mktemp)"
   SHARD_BASE=""
-  # Explicit ifs, not `&&`: an EXIT trap whose last command returns 1 clobbers
-  # the script's exit status, and this shard's status IS the gate's verdict.
+  SHARD_RCS=""
+  # ONE trap for everything this shard creates, installed before the first of
+  # them exists — a second `trap ... EXIT` later would silently replace this one
+  # and leak whatever it did not name. Explicit ifs, not `&&`: an EXIT trap whose
+  # last command returns 1 clobbers the script's exit status, and this shard's
+  # status IS the gate's verdict.
   _shard_cleanup() {
     rm -f "$SHARD_TSV"
+    if [ -n "$SHARD_RCS" ]; then
+      rm -f "$SHARD_RCS"
+    fi
     if [ -n "$SHARD_BASE" ]; then
       rm -rf "$SHARD_BASE"
     fi
@@ -442,7 +449,6 @@ for name, fallback in (("MONGO_DB", 27017), ("REDIS_URL", 6379)):
   # The exit code is recorded rather than inferred from the log: a module whose
   # log says nothing conclusive but exited non-zero must not merge as a pass.
   SHARD_RCS="$(mktemp)"
-  trap 'rm -f "$SHARD_TSV" "$SHARD_RCS"' EXIT
 
   # timeout(1) bounds a genuine mutmut hang from OUTSIDE the script: bash defers
   # traps while waiting on a foreground child, so an in-script watchdog can never
@@ -1153,6 +1159,23 @@ sys.exit(proc.returncode)
     fi
     if [ ! -f "$WORKDIR/mutants/mutmut-stats.json" ]; then
       echo "MUTATION RUN FAILED (no state produced) — see mutmut's output above." >&2
+      # This path owes the shard a record like every other one. Without it the
+      # module reaches the gate as a bare non-zero exit and reads as "the lane
+      # failed and has not adopted the verdict contract" — the one shape a
+      # reviewer cannot act on. The dominant cause is a per-test timeout inside
+      # the STATS run, which aborts mutmut before a single mutant is graded, so
+      # count those: "the box was slow" and "the suite is weak" are the two
+      # readings of this exit code, and only one of them is ever true here.
+      # The FAILED/ERROR summary form, not every mention: pytest prints the
+      # phrase again inside the failure body, and a doubled count reads as two
+      # slow tests where there was one.
+      TIMED_OUT_TESTS="$(grep -cE '^(FAILED|ERROR) .*Failed: Timeout \(>' "$WORKDIR/mutmut.log" || true)"
+      if [ "${TIMED_OUT_TESTS:-0}" -gt 0 ]; then
+        NO_STATE_REASON="$MODULE reached no verdict: $TIMED_OUT_TESTS test(s) hit the ${MUTANT_TEST_TIMEOUT}s per-test timeout before mutmut graded a mutant, so no survivors were measured"
+      else
+        NO_STATE_REASON="$MODULE reached no verdict: mutmut produced no state and no test hit the ${MUTANT_TEST_TIMEOUT}s per-test timeout, so no mutant was graded and no survivors were measured — see shard.log"
+      fi
+      _write_record error "$NO_STATE_REASON" /dev/null /dev/null
       exit 1
     fi
   fi
