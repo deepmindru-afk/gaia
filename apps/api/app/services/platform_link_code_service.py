@@ -182,13 +182,15 @@ async def discard_platform_link_code(code: str) -> None:
     here is the one failure that turns into a replayed greeting; the last
     RedisError is raised when every attempt fails.
     """
-    for attempt in range(1, PLATFORM_LINK_CODE_CLAIM_ATTEMPTS + 1):
+    failures: list[RedisError] = []
+    for _ in range(PLATFORM_LINK_CODE_CLAIM_ATTEMPTS):
         try:
             await redis_cache.client.set(
                 _claim_key(code), PLATFORM_LINK_CODE_CLAIM_SPENT, ex=PLATFORM_LINK_CODE_TTL
             )
             break
-        except RedisError:
-            if attempt == PLATFORM_LINK_CODE_CLAIM_ATTEMPTS:
-                raise
+        except RedisError as e:
+            failures.append(e)
+    else:
+        raise failures[-1]
     await delete_cache(_code_key(code))
