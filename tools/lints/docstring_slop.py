@@ -15,9 +15,15 @@ pasted PR descriptions:
 
 Docstrings that are runtime data are skipped, never rewritten: ``@tool`` /
 ``@custom_tool`` bodies are the model-facing tool description, ``@with_doc``
-injects them, ``@router.*`` / ``@app.*`` handlers feed OpenAPI, and
+injects them, ``@router.*`` / ``@app.*`` handlers feed OpenAPI,
 ``BaseModel`` / ``BaseSettings`` / ``BaseTool`` class docstrings become schema
-descriptions.
+descriptions, a module docstring is skipped when the file reads its own
+``__doc__`` (argparse's ``description=__doc__``), and a ``BaseModel`` /
+``TypedDict`` whose name is passed to ``with_structured_output`` /
+``bind_tools`` anywhere in the tree is a schema too. The last one only
+catches a literal class name written at the call site — a schema threaded
+through a variable or a wrapper function is invisible to it, same as the
+base-class resolver above.
 
 No allowlist and no ``noqa`` — the cleanup that introduced this rule brought
 ``app/`` and ``tests/`` to zero, and a finding is fixed by shortening.
@@ -59,6 +65,10 @@ _ROUTE_METHODS = frozenset({"get", "post", "put", "patch", "delete", "api_route"
 #: Base classes whose class docstring becomes a schema description. Subclasses
 #: of these defined anywhere in the app (CamelModel, MongoDocument, …) count too.
 _RUNTIME_BASES = frozenset({"BaseModel", "BaseSettings", "BaseTool", "BaseToolkit"})
+#: Calls whose argument is a structured-output/tool schema, not app logic.
+_STRUCTURED_OUTPUT_CALLS = frozenset({"with_structured_output", "bind_tools"})
+#: Base classes a structured-output schema is allowed to be.
+_STRUCTURED_OUTPUT_BASES = frozenset({"BaseModel", "TypedDict"})
 _APP_ROOT = Path(__file__).resolve().parents[2] / "apps" / "api" / "app"
 
 _RST = re.compile(r"``|:param\b|:returns?:|:raises?:|:type\b|:rtype:|\.\. \w+::|^\s*>>>", re.M)
@@ -151,8 +161,8 @@ class _Module(NamedTuple):
     module_aliases: dict[str, str]
 
 
-#: Answers "is this base, as written in this module, a runtime base?".
-RuntimeBase = Callable[[str, str], bool]
+#: Answers "is this base, as written in this module, one of these target bases?".
+RuntimeBase = Callable[[str, str, frozenset[str]], bool]
 
 
 def _module_name(path: Path) -> str:
@@ -196,13 +206,15 @@ def _runtime_base_resolver(files: list[Path]) -> RuntimeBase:
     """Resolve each base through its own module's classes and imports, then walk its chain.
 
     A bare name falls back to the one repo class of that name, and to nothing when two share it.
+    Built once per run and queried against different target-base sets (see ``RuntimeBase``), so
+    the (often large) ``files`` scan happens only once regardless of how many sets are checked.
     """
     modules = {**_app_modules(), **{_module_name(path): _scan(path) for path in files}}
     owners: dict[str, list[str]] = {}
     for module, scanned in modules.items():
         for name in scanned.classes:
             owners.setdefault(name, []).append(module)
-    memo: dict[tuple[str, str], bool] = {}
+    memo: dict[tuple[frozenset[str], str, str], bool] = {}
 
     def module_path(module: str, qualifier: str) -> str | None:
         scanned = modules.get(module)
@@ -236,7 +248,10 @@ def _runtime_base_resolver(files: list[Path]) -> RuntimeBase:
         return (defined_in[0], name) if len(defined_in) == 1 else None
 
     def is_runtime_base(
-        module: str, ref: str, seen: frozenset[tuple[str, str]] = frozenset()
+        module: str,
+        ref: str,
+        target_bases: frozenset[str],
+        seen: frozenset[tuple[str, str]] = frozenset(),
     ) -> bool:
         target = resolve(module, ref)
         if target is None:
@@ -244,28 +259,72 @@ def _runtime_base_resolver(files: list[Path]) -> RuntimeBase:
             name = ref.rpartition(".")[2]
             if "." not in ref and scanned and name in scanned.imports:
                 name = scanned.imports[name][1]
-            return name in _RUNTIME_BASES
-        if target in memo:
-            return memo[target]
+            return name in target_bases
+        key = (target_bases, *target)
+        if key in memo:
+            return memo[key]
         if target in seen:
             return False
         target_module, target_name = target
         reached = any(
-            is_runtime_base(target_module, base, seen | {target})
+            is_runtime_base(target_module, base, target_bases, seen | {target})
             for base in modules[target_module].classes[target_name]
         )
-        memo[target] = reached
+        memo[key] = reached
         return reached
 
     return is_runtime_base
 
 
-def _is_runtime_docstring(node: Documented, module: str, runtime_base: RuntimeBase) -> bool:
+def _reads_own_doc(tree: ast.AST) -> bool:
+    """Return whether the module reads its own ``__doc__`` anywhere (e.g. argparse's help text)."""
+    return any(
+        isinstance(n, ast.Name) and n.id == "__doc__" and isinstance(n.ctx, ast.Load)
+        for n in ast.walk(tree)
+    )
+
+
+def _structured_output_refs(tree: ast.AST) -> Iterator[str]:
+    """Yield each bare class name written as an argument to ``with_structured_output``/``bind_tools``.
+
+    Only a literal ``ast.Name`` argument is caught — a schema threaded through
+    a variable or a wrapper function (this repo's own ``ainvoke_structured``
+    included) is invisible to this, same limit as the base-class resolver.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in _STRUCTURED_OUTPUT_CALLS:
+                for arg in (*node.args, *(kw.value for kw in node.keywords)):
+                    if isinstance(arg, ast.Name):
+                        yield arg.id
+
+
+@cache
+def _app_structured_output_names() -> frozenset[str]:
+    """Return every class name passed to with_structured_output/bind_tools anywhere in the app."""
+    paths = sorted(_APP_ROOT.rglob("*.py")) if _APP_ROOT.is_dir() else []
+    names: set[str] = set()
+    for path in paths:
+        names.update(_structured_output_refs(ast.parse(path.read_text(encoding="utf-8"))))
+    return frozenset(names)
+
+
+def _is_runtime_docstring(
+    node: Documented,
+    module: str,
+    runtime_base: RuntimeBase,
+    structured_names: frozenset[str],
+    reads_own_doc: bool,
+) -> bool:
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return any(_is_runtime_decorator(d) for d in node.decorator_list)
     if isinstance(node, ast.ClassDef):
-        return any(runtime_base(module, _base_ref(b)) for b in node.bases)
-    return False
+        if any(runtime_base(module, _base_ref(b), _RUNTIME_BASES) for b in node.bases):
+            return True
+        return node.name in structured_names and any(
+            runtime_base(module, _base_ref(b), _STRUCTURED_OUTPUT_BASES) for b in node.bases
+        )
+    return reads_own_doc
 
 
 def _args_entries(doc: str) -> Iterator[tuple[str, str | None, str]]:
@@ -361,11 +420,21 @@ def _restatement_findings(doc: str, name: str) -> list[Finding]:
     return findings
 
 
+class _TreeContext(NamedTuple):
+    """Resolvers shared across every file in one ``check()`` invocation."""
+
+    runtime_base: RuntimeBase
+    structured_names: frozenset[str]
+
+
 def _check_node(
-    path: Path, node: Documented, is_test_file: bool, runtime_base: RuntimeBase
+    path: Path, node: Documented, is_test_file: bool, ctx: _TreeContext, reads_own_doc: bool
 ) -> list[Violation]:
     doc = ast.get_docstring(node, clean=True)
-    if not doc or _is_runtime_docstring(node, _module_name(path), runtime_base):
+    module = _module_name(path)
+    if not doc or _is_runtime_docstring(
+        node, module, ctx.runtime_base, ctx.structured_names, reads_own_doc
+    ):
         return []
     line = 1 if isinstance(node, ast.Module) else node.body[0].lineno
     name = getattr(node, "name", path.stem)
@@ -378,12 +447,22 @@ def _check_node(
 
 def check(files: list[Path]) -> list[Violation]:
     """Return docstring-content violations across ``files``."""
-    runtime_base = _runtime_base_resolver(files)
+    # Each file is parsed once and reused for the structured-output scan below
+    # and the node walk — the base resolver still re-scans ``files`` itself
+    # (it also needs each class's bases/imports, not just its tree).
+    trees = {
+        path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path)) for path in files
+    }
+    ctx = _TreeContext(
+        runtime_base=_runtime_base_resolver(files),
+        structured_names=_app_structured_output_names()
+        | {name for tree in trees.values() for name in _structured_output_refs(tree)},
+    )
     violations: list[Violation] = []
-    for path in files:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path, tree in trees.items():
         is_test_file = "tests" in path.parts or path.name.startswith("test_")
+        reads_own_doc = _reads_own_doc(tree)
         for node in ast.walk(tree):
             if isinstance(node, Documented):
-                violations.extend(_check_node(path, node, is_test_file, runtime_base))
+                violations.extend(_check_node(path, node, is_test_file, ctx, reads_own_doc))
     return violations

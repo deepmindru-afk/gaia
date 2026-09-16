@@ -631,6 +631,76 @@ def test_three_line_test_function_docstring_is_ds4(tmp_path: Path) -> None:
     assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == ["DS4"]
 
 
+def test_module_docstring_is_exempt_when_the_file_reads___doc__(tmp_path: Path) -> None:
+    # apps/api/app/scripts/*.py feed the module docstring to argparse as the
+    # CLI's --help text; it is runtime data, not review prose.
+    body = "\n".join(f"line {i} of the CLI help text." for i in range(20))
+    src = (
+        f'"""{body}\n"""\n\n'
+        "import argparse\n\n\n"
+        "def main() -> None:\n"
+        "    argparse.ArgumentParser(description=__doc__)\n"
+    )
+    assert _docstring_codes(tmp_path, "app/scripts/x.py", src) == []
+
+
+def test_module_docstring_is_still_capped_when_the_file_does_not_read___doc__(
+    tmp_path: Path,
+) -> None:
+    body = "\n".join(f"line {i} of the CLI help text." for i in range(20))
+    src = f'"""{body}\n"""\n'
+    assert _docstring_codes(tmp_path, "app/scripts/x.py", src) == ["DS1"]
+
+
+def test_typeddict_referenced_by_with_structured_output_is_exempt(tmp_path: Path) -> None:
+    body = "\n".join(f"    line {i}." for i in range(14))
+    schema = _write(
+        tmp_path,
+        "app/schemas/x.py",
+        f'class FooSchema(TypedDict):\n    """Summary.\n\n{body}\n    """\n',
+    )
+    caller = _write(
+        tmp_path,
+        "app/services/y.py",
+        "from app.schemas.x import FooSchema\n\n\n"
+        "def call(llm):\n    return llm.with_structured_output(FooSchema)\n",
+    )
+    assert docstring_slop.check([schema, caller]) == []
+
+
+def test_typeddict_referenced_by_bind_tools_is_exempt(tmp_path: Path) -> None:
+    body = "\n".join(f"    line {i}." for i in range(14))
+    schema = _write(
+        tmp_path,
+        "app/schemas/x.py",
+        f'class BarSchema(TypedDict):\n    """Summary.\n\n{body}\n    """\n',
+    )
+    caller = _write(
+        tmp_path,
+        "app/services/y.py",
+        "from app.schemas.x import BarSchema\n\n\n"
+        "def call(llm):\n    return llm.bind_tools(BarSchema)\n",
+    )
+    assert docstring_slop.check([schema, caller]) == []
+
+
+def test_typeddict_never_referenced_is_still_checked(tmp_path: Path) -> None:
+    # The rule is precise, not a blanket TypedDict exemption: without a real
+    # with_structured_output/bind_tools reference somewhere in the tree, the
+    # docstring is graded normally.
+    body = "\n".join(f"    line {i}." for i in range(14))
+    src = f'class UnreferencedSchema(TypedDict):\n    """Summary.\n\n{body}\n    """\n'
+    assert _docstring_codes(tmp_path, "app/schemas/x.py", src) == ["DS1"]
+
+
+def test_with_doc_constant_assignment_is_never_a_docstring(tmp_path: Path) -> None:
+    # `NAME = "..."` is an Assign, not an Expr(Constant); ast.get_docstring
+    # never sees it regardless of length, decorator, or file.
+    body = "\n".join(f"line {i} of tool description." for i in range(20))
+    src = f'GATHER_CONTEXT_DOC = """{body}"""\n'
+    assert docstring_slop.check([_write(tmp_path, "app/templates/docstrings/x.py", src)]) == []
+
+
 # --------------------------------------------------------------------------- #
 # comment-content
 # --------------------------------------------------------------------------- #

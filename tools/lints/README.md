@@ -373,7 +373,7 @@ never raise a count.
 | DS1 | longer than 6 lines (function), 12 (class), 15 (module) |
 | DS2 | any backtick |
 | DS3 | RST/Sphinx markup — ` ``x`` `, `:param`, `:returns:`, `:raises:`, `.. note::`, `>>>` |
-| DS4 | a `test_*` docstring longer than one line |
+| DS4 | a `test_*` function/method docstring longer than one line |
 | DS5 | a summary that only restates the function name |
 | DS6 | an `Args:` entry that only restates the argument name |
 | DS7 | a type written inside an `Args:` entry |
@@ -386,11 +386,19 @@ is paid for many times over. The patterns above are what 900+ docstrings in
 changes. The *why* of a change belongs in its PR; the code is the example.
 
 **Scope:** `app/` and `tests/` (this rule opts into the test tree via
-`INCLUDES_TESTS`). Docstrings that are runtime data are never checked:
-`@tool` / `@custom_tool` bodies are the model-facing tool description,
-`@with_doc` injects them, `@router.*` / `@app.*` handlers feed OpenAPI, and
-`BaseModel` / `BaseSettings` / `BaseTool` class docstrings become schema
-descriptions.
+`INCLUDES_TESTS`). DS4 applies to `test_*` functions/methods only — a test
+module or test class docstring is graded by the ordinary DS1 caps (15/12)
+instead, since the test *name* is what DS4's "the name is the doc" reasoning
+is about; a module has no name to carry that. Docstrings that are runtime
+data are never checked: `@tool` / `@custom_tool` bodies are the model-facing
+tool description, `@with_doc` injects them, `@router.*` / `@app.*` handlers
+feed OpenAPI, `BaseModel` / `BaseSettings` / `BaseTool` class docstrings
+become schema descriptions, a module docstring is exempt when the file reads
+its own `__doc__` (argparse's `description=__doc__`), and a `BaseModel` /
+`TypedDict` referenced by name as an argument to `with_structured_output` /
+`bind_tools` anywhere in the tree is a schema too — only a literal class name
+written at the call site is caught, not one threaded through a variable or a
+wrapper function.
 
 **Fix:** shorten. Keep the summary line and the one constraint the name does
 not carry; delete the rest. A test's name is its doc — one line at most, and
