@@ -311,7 +311,9 @@ class BulkMoveRequest(BulkOperationRequest):
 
 class BulkOperationResponse(BaseModel):
     success: list[str] = Field(default_factory=list)
-    failed: list[dict[str, object]] = Field(default_factory=list)
+    # Todo ids, like ``success`` — the bulk repository calls report a modified
+    # count, never a per-todo error, so there is nothing else to carry.
+    failed: list[str] = Field(default_factory=list)
     total: int
     message: str
 

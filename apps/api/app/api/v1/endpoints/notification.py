@@ -1,6 +1,6 @@
 import asyncio
 from html import escape
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import (
     APIRouter,
@@ -31,6 +31,7 @@ from app.models.notification.notification_models import (
     NotificationView,
 )
 from app.models.notification.request_models import (
+    ActionExecutionResponse,
     BulkActionRequest,
     BulkActionSummary,
     MarkAllReadSummary,
@@ -249,7 +250,7 @@ async def execute_action(
     notification_id: str = Path(..., description="Notification ID"),
     action_id: str = Path(..., description="Action ID"),
     current_user: AuthenticatedUser = Depends(get_current_user),
-) -> NotificationResponse[dict[str, Any]]:
+) -> ActionExecutionResponse:
     """Execute a notification action.
 
     ``data`` stays a free-form dict: it is whatever the matched ``ActionHandler``
@@ -276,7 +277,7 @@ async def execute_action(
         log.set(outcome="success")
         log.set_ns("notification", success=True)
         capture_context_event(AnalyticsEvents.NOTIFICATION_ACTION_EXECUTED)
-        return NotificationResponse(
+        return ActionExecutionResponse(
             success=True,
             message=result.message or "Action executed successfully",
             data=result.data,

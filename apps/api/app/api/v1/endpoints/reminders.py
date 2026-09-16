@@ -33,7 +33,7 @@ from shared.py.wide_events import ReminderContext, log
 
 _CRON_PREVIEW_RUNS = 5
 
-router = APIRouter(prefix="/reminders", tags=["reminders"])
+router = APIRouter(prefix="/reminders")
 
 
 def _reminder_context(operation: str, reminder: ReminderModel) -> ReminderContext:
