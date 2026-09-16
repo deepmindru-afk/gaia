@@ -1,8 +1,7 @@
 import type {
-  MarkAllReadSummary,
+  ActionExecutionResponse,
   NotificationActionView,
   NotificationContent,
-  NotificationView,
 } from "@shared/api/generated";
 
 export type {
@@ -200,14 +199,10 @@ export interface NotificationUpdate {
   auto_archive_after?: number; // minutes
 }
 
-export interface ActionResult {
-  success: boolean;
-  message?: string;
-  data?: ActionResultData;
-  next_actions?: NotificationAction[];
-  update_notification?: NotificationUpdate;
-  error_code?: string;
-}
+// The API's action result, with `data` narrowed to what an executed action carries.
+export type ActionResult = Omit<ActionExecutionResponse, "data"> & {
+  data?: ActionResultData | null;
+};
 
 export enum BulkActions {
   MARK_READ = "mark_read",
@@ -223,14 +218,6 @@ export interface SendNotificationData {
   notification_type: string;
   status: string;
   delivered_channels: string[];
-}
-
-// API Request/Response types
-
-export interface NotificationResponse {
-  success: boolean;
-  message: string;
-  data?: ActionResultData | NotificationView | MarkAllReadSummary;
 }
 
 // Hook options
