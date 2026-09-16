@@ -676,11 +676,33 @@ EOF
   # weakness (measured: app/agents/tools/core/retrieval.py reached 186 of 348
   # mutants in CI with 33 timeouts, and completes in 76s with zero on a
   # developer machine). The whole hermetic suite runs in under 300s with xdist,
-  # so a single test in a per-mutant selection needs seconds; 45 leaves ~45x
-  # headroom while capping a hang at a fifteenth of what it used to cost.
+  # so a single test in a per-mutant selection needs seconds.
   # A mutant that times out proves nothing either way and is already excluded
   # from the verdict — this only stops it consuming the module's budget too.
-  MUTANT_TEST_TIMEOUT=45
+  #
+  # 120 and timeout_func_only, not a bare 45. Both come from the same finding:
+  # every abort the lane produced was ONE 45 s pytest-timeout inside the STATS
+  # run of a module whose mapped test files are large endpoint/worker suites
+  # (payment_models.py: "1 failed, 131 passed in 64s"; timezone.py: "1 failed,
+  # 407 passed in 83s"), on a box at load 14 and 54% CPU — not an overloaded one.
+  # A stats-run failure makes mutmut abort with "no state produced", so the whole
+  # module errored with no survivors and the shard was re-run until the box was
+  # quiet. Two distinct forms, and each needs its own half of the fix:
+  #
+  #   ERROR tests/unit/api/test_payments_endpoint.py::TestGetPlans::test_get_plans_returns_200 - Failed: Timeout
+  #     an ERROR, so the cap fired during fixture SETUP — the client fixture
+  #     builds the whole app, 30-40 s when several cold sessions start together.
+  #     timeout_func_only stops charging setup to the test's own budget.
+  #   FAILED ...::test_chat_stream_captures_message_submitted
+  #     a call-phase timeout on a test that waits on streams and retries. Those
+  #     are seconds idle and tens of seconds under real parallelism, so the cap
+  #     itself has to be bigger than a number sized on an idle box.
+  #
+  # Nothing is unguarded by this: a genuinely hung mutant still hits mutmut's own
+  # per-mutant RLIMIT, and the module-level 12-minute cap below is what actually
+  # bounds the lane. A mutant that times out proves nothing either way and is
+  # already excluded from the verdict.
+  MUTANT_TEST_TIMEOUT=120
   python3 - "$MODULE" "$MUTANT_TEST_TIMEOUT" "${TESTFILES[@]}" << 'EOF'
 import json
 import pathlib
@@ -710,7 +732,9 @@ replacement = (
     f'do_not_mutate_patterns = ["# pragma: no mutate"]\n'
     f'debug = true\n'
     f'pytest_add_cli_args_test_selection = [{selection}]\n'
-    f'pytest_add_cli_args = ["-p", "no:xdist", "-o", '
+    # timeout_func_only is ini-only in pytest-timeout — there is no CLI flag for
+    # it, so it needs its own -o rather than a place inside addopts.
+    f'pytest_add_cli_args = ["-p", "no:xdist", "-o", "timeout_func_only=true", "-o", '
     f'\'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers --timeout={mutant_test_timeout}\']\n'
 )
 text = re.sub(r"(?ms)^\[tool\.mutmut\].*?(?=^\[|\Z)", replacement, text)
