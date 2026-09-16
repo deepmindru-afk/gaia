@@ -174,6 +174,18 @@ def test_is_comment_only_change_true_when_only_docstrings_change(
     assert mm._is_comment_only_change("mod.py", base_sha) is True
 
 
+def test_is_comment_only_change_false_when_a_single_quoted_docstring_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-quoted docstring is a mutable string to mutmut, so it is not docs-only."""
+    base_sha = _init_repo_with_commit(tmp_path, 'def f():\n    "Old summary."\n    return 1\n')
+    (tmp_path / "mod.py").write_text('def f():\n    "New summary."\n    return 1\n')
+
+    monkeypatch.chdir(tmp_path)
+
+    assert mm._is_comment_only_change("mod.py", base_sha) is False
+
+
 def test_is_comment_only_change_false_when_a_non_docstring_string_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
