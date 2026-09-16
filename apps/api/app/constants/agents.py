@@ -57,6 +57,13 @@ def wrap_agent_payload(tag: AgentTag, body: str, agent: str | None = None) -> st
 # tracing, and middleware name it identically.
 COMMS_AGENT_NAME = "comms_agent"
 
+# Turn tier for the executor leg: the worker-tier run that does the actual
+# tool-calling work. Recorded as its own turn so per-tier spend and failures
+# stay attributable instead of folding silently into the parent comms turn —
+# which matters most for queued and HIL-resumed runs that have no live
+# parent turn open at all.
+EXECUTOR_TIER_NAME = "executor"
+
 # Turn tier for the narrator leg: the comms re-voicing of an executor result
 # is its own LLM turn, recorded as tier="narrator" so per-tier spend stays
 # attributable instead of inflating the parent turn or orphaning spans.

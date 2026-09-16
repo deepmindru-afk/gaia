@@ -457,6 +457,17 @@ async def _resolve_pending_approval_turn(
     if not user_id or not message:
         return False
 
+    # The classifier call below is a real LLM turn on the most destructive
+    # path (a free-text approve/deny with no button): instrument it as one,
+    # or "why did it approve?" has no turn to open.
+    telemetry = begin_turn_all(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        user_input=message,
+        source=source,
+        mode="interactive",
+        properties={"approval_flow": "hil_classifier"},
+    )
     try:
         history = _recent_history(body.messages)
         action = await resolve_pending_from_message(conversation_id, user_id, message, history)
@@ -473,9 +484,11 @@ async def _resolve_pending_approval_turn(
             error_type=type(e).__name__,
             conversation_id=conversation_id,
         )
+        end_turn_all(telemetry, output=str(e), error=e)
         return False
 
     if action not in ("approve", "deny"):
+        end_turn_all(telemetry, output="")
         return False
 
     ack = HIL_ACK_APPROVED if action == "approve" else HIL_ACK_DENIED
@@ -495,6 +508,7 @@ async def _resolve_pending_approval_turn(
     await _persist_turn(stream_id, body, user, conversation_id, state)
     await stream_manager.publish_chunk(stream_id, "data: [DONE]\n\n")
     await stream_manager.complete_stream(stream_id)
+    end_turn_all(telemetry, output=ack)
     return True
 
 

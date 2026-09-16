@@ -51,6 +51,7 @@ from app.agents.core.subagents.subagent_runner import (
     execute_subagent_stream,
     prepare_executor_execution,
 )
+from app.constants.agents import EXECUTOR_TIER_NAME
 from app.constants.executor import (
     EXECUTOR_APPROVAL_LOST_MESSAGE,
     EXECUTOR_PAUSED,
@@ -64,6 +65,7 @@ from app.core.stream_manager import StreamManager
 from app.models.agent_models import AgentConfigurable
 from app.models.chat_models import ToolDataEntry
 from app.services.analytics_service import AnalyticsEvents, capture_event
+from app.services.turn_telemetry import begin_turn_all, end_turn_all
 from app.services.hil.approvals_store import (
     list_parked_subagents_for_conversation,
     set_resume_item,
@@ -158,6 +160,23 @@ async def run_executor_background(
         if executor_user_id:
             capture_event(executor_user_id, AnalyticsEvents.AGENT_RUN_STARTED, run_props)
 
+        # The executor's own turn: without this, every queued, HIL-resumed,
+        # and replay-fallback run spends its (largest) LLM budget outside all
+        # three dashboards — live runs only fold coarsely into the parent
+        # comms turn, and detached runs orphan entirely.
+        telemetry = begin_turn_all(
+            user_id=executor_user_id,
+            conversation_id=run.conversation_id,
+            user_input=task,
+            source=configurable.get("conversation_source"),
+            mode="background",
+            tier=EXECUTOR_TIER_NAME,
+            properties={
+                "task_id": run.task_id,
+                "queued": run.queued,
+                "workflow_execution_id": run.workflow_execution_id,
+            },
+        )
         try:
             with span() as elapsed_active:
                 result = await _execute_executor(task, configurable, run.stream_id, resume)
@@ -197,6 +216,26 @@ async def run_executor_background(
                 timing_fields=timing_fields,
                 result_type=result_type,
             )
+            # A paused run awaits approval — its segment completed normally;
+            # the resume opens its own turn. Only real errors fail the turn,
+            # mirroring the stream orchestrator's error-dominates rule. The
+            # call shapes mirror it too (error XOR cancelled, never both).
+            if result_type == "error":
+                end_turn_all(telemetry, output=result_text, error=RuntimeError(result_text))
+            else:
+                end_turn_all(telemetry, output=result_text, cancelled=run_cancelled)
+        except Exception as e:
+            # _execute_executor is contracted never to raise, so anything here
+            # is a runner bug rather than a turn failure — still record it as
+            # failed (with what the turn produced, if anything) and propagate.
+            end_turn_all(telemetry, output=result_text or str(e), error=e)
+            raise
+        except BaseException:
+            # Cancellation (worker shutdown mid-run) is not an Exception:
+            # close the scopes as cancelled so the run doesn't vanish, then
+            # propagate — same contract as the streaming and silent paths.
+            end_turn_all(telemetry, output=result_text, cancelled=True)
+            raise
         finally:
             await _finalize_executor_run(run, task, result_text, result_type)
             if resume is not None:

@@ -15,9 +15,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.constants.hil import HIL_ACK_APPROVED, HIL_ACK_DENIED
 from app.models.message_models import MessageRequestWithHistory
 from app.services.analytics_service import AnalyticsEvents
-from app.services.chat.stream import run_chat_stream_background
+from app.services.chat.stream import (
+    _resolve_pending_approval_turn,
+    _StreamState,
+    run_chat_stream_background,
+)
 
 
 @pytest.fixture
@@ -374,3 +379,115 @@ class TestTurnTelemetry:
         ]
         assert len(completed) == 1
         assert completed[0].args[2]["has_error"] is False
+
+
+@pytest.mark.unit
+class TestApprovalTurnTelemetry:
+    """The bot-channel HIL approval fast-path resolves without running the
+    agent — but the classifier call is a real LLM turn on the most
+    destructive path, so it opens and closes its own telemetry."""
+
+    def _approval_body(self) -> MessageRequestWithHistory:
+        return MessageRequestWithHistory(
+            message="yes do it",
+            messages=[{"role": "user", "content": "yes do it"}],
+            conversation_id="conv_hil_1",
+        )
+
+    async def _resolve(self, sm: MagicMock, action: object) -> bool:
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.resolve_pending_from_message",
+                new=AsyncMock(return_value=action),
+            ),
+            patch("app.services.chat.stream._persist_turn", new=AsyncMock()),
+        ):
+            return await _resolve_pending_approval_turn(
+                self._approval_body(),
+                {"user_id": "user_abc"},
+                "conv_hil_1",
+                "stream_hil",
+                _StreamState(),
+                "telegram",
+            )
+
+    async def test_approve_opens_and_closes_with_ack(self) -> None:
+        sm = _make_stream_manager_mock()
+        with (
+            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
+            patch("app.services.chat.stream.end_turn_all") as mock_end,
+        ):
+            assert await self._resolve(sm, "approve") is True
+
+        begin_kwargs = mock_begin.call_args.kwargs
+        assert begin_kwargs["user_id"] == "user_abc"
+        assert begin_kwargs["user_input"] == "yes do it"
+        assert begin_kwargs["source"] == "telegram"
+        assert begin_kwargs["mode"] == "interactive"
+        assert begin_kwargs["properties"] == {"approval_flow": "hil_classifier"}
+        assert mock_end.call_args.args[0] is mock_begin.return_value
+        assert mock_end.call_args.kwargs["output"] == HIL_ACK_APPROVED
+        assert mock_end.call_args.kwargs.get("error") is None
+
+    async def test_deny_closes_with_deny_ack(self) -> None:
+        sm = _make_stream_manager_mock()
+        with (
+            patch("app.services.chat.stream.begin_turn_all"),
+            patch("app.services.chat.stream.end_turn_all") as mock_end,
+        ):
+            assert await self._resolve(sm, "deny") is True
+
+        assert mock_end.call_args.kwargs["output"] == HIL_ACK_DENIED
+
+    async def test_unrelated_message_closes_quietly(self) -> None:
+        sm = _make_stream_manager_mock()
+        with (
+            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
+            patch("app.services.chat.stream.end_turn_all") as mock_end,
+        ):
+            assert await self._resolve(sm, None) is False
+
+        assert mock_end.call_args.args[0] is mock_begin.return_value
+        assert mock_end.call_args.kwargs["output"] == ""
+
+    async def test_classifier_failure_records_error(self) -> None:
+        sm = _make_stream_manager_mock()
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.resolve_pending_from_message",
+                new=AsyncMock(side_effect=RuntimeError("classifier down")),
+            ),
+            patch("app.services.chat.stream.begin_turn_all"),
+            patch("app.services.chat.stream.end_turn_all") as mock_end,
+        ):
+            result = await _resolve_pending_approval_turn(
+                self._approval_body(),
+                {"user_id": "user_abc"},
+                "conv_hil_1",
+                "stream_hil",
+                _StreamState(),
+                "telegram",
+            )
+
+        assert result is False
+        assert isinstance(mock_end.call_args.kwargs["error"], RuntimeError)
+
+    async def test_non_bot_source_opens_no_turn(self) -> None:
+        sm = _make_stream_manager_mock()
+        with (
+            _patch_stream_manager(sm),
+            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
+        ):
+            result = await _resolve_pending_approval_turn(
+                self._approval_body(),
+                {"user_id": "user_abc"},
+                "conv_hil_1",
+                "stream_hil",
+                _StreamState(),
+                None,
+            )
+
+        assert result is False
+        mock_begin.assert_not_called()
