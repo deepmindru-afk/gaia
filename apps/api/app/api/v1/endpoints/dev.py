@@ -9,6 +9,7 @@ is mounted by ``create_app`` only when ``ENV == development`` and
 from fastapi import APIRouter, File, Form, Header, UploadFile, status
 from langgraph.errors import GraphRecursionError
 
+from app.constants.vfs import SAFE_PATH_ID_PATTERN
 from app.models.files_models import FileDocument
 from app.models.user_models import UserDocument
 from app.schemas.dev_schemas import (
@@ -31,7 +32,6 @@ from app.services.dev_service import (
     mint_dev_user,
     seed_dev_data,
 )
-from app.services.storage import SAFE_PATH_ID_PATTERN
 from shared.py.wide_events import log
 
 router = APIRouter(prefix="/dev", tags=["Dev"])
