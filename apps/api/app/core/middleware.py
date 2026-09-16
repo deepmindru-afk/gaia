@@ -107,16 +107,7 @@ def configure_middleware(app: FastAPI) -> None:
     # produced outside the boundary is invisible in Loki, which is how
     # timed-out requests used to produce zero telemetry.
 
-    # Crash catch-all — INNERMOST, which is the whole point of its position.
-    # Starlette answers an uncaught exception in ServerErrorMiddleware, which
-    # wraps everything including CORS, so that 500 envelope carries no
-    # Access-Control-Allow-Origin and a browser cannot read it at all. Converting
-    # the crash here, inside CORS, is what makes the 500 contract real in a
-    # browser; the handler registered on the app stays as a last resort for a
-    # failure in the middlewares outside this one.
-    app.add_middleware(UnhandledExceptionMiddleware)
-
-    # Rate limiting (a 429 flows up through the boundary)
+    # Rate limiting (innermost — a 429 flows up through the boundary)
     app.add_middleware(RouterAwareSlowAPIMiddleware)
 
     # Pyinstrument profiling for detailed call stack analysis
@@ -138,6 +129,17 @@ def configure_middleware(app: FastAPI) -> None:
     # Access-Control-Allow-Origin and the browser would refuse to read the
     # checkout link out of it — the paywall modal would never open.
     app.add_middleware(EntitlementMiddleware)
+
+    # Crash catch-all — the innermost thing inside CORS, and that is the whole
+    # point of its position. Starlette answers an uncaught exception in
+    # ServerErrorMiddleware, which wraps everything INCLUDING CORS, so the 500
+    # envelope it returns carries no Access-Control-Allow-Origin and a browser
+    # refuses to read it — the web app shows a generic network failure instead
+    # of the error. Converting the crash here covers every layer inside CORS
+    # (the gate, the timeout, rate limiting, the router and the handler); the
+    # handler registered on the app stays as the last resort for a failure in
+    # the middlewares outside this one.
+    app.add_middleware(UnhandledExceptionMiddleware)
 
     # CORS (inside Logging so preflight rejections are visible in Loki)
     app.add_middleware(

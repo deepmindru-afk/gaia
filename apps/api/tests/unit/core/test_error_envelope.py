@@ -25,6 +25,7 @@ from app.schemas.errors import (
     ERROR_RESPONSES,
     HTML_ROUTE_ERROR_RESPONSES,
     ErrorEnvelope,
+    ValidationIssue,
     error_responses,
 )
 from app.utils.errors import AppError, create_error
@@ -115,6 +116,14 @@ def app() -> FastAPI:
             status_code=422,
             detail=[{"loc": ["body", "count"], "msg": "must be an int", "type": "int_parsing"}],
         )
+
+    @router.get("/http-non-standard-status-no-message")
+    async def _http_non_standard_status_no_message() -> None:
+        raise HTTPException(status_code=499, detail={"code": "client_closed"})
+
+    @router.get("/http-list-detail-ragged")
+    async def _http_list_detail_ragged() -> None:
+        raise HTTPException(status_code=400, detail=[{"loc": ("body", 0)}, "plain string", 42])
 
     @router.get("/http-bad-meta-types")
     async def _http_bad_meta_types() -> None:
@@ -222,8 +231,31 @@ class TestOneEnvelope:
         envelope = _envelope(body)
         assert envelope.message == HTTPStatus(422).phrase
         assert envelope.errors is not None
-        assert envelope.errors[0].loc == ["body", "count"]
-        assert envelope.errors[0].msg == "must be an int"
+        assert envelope.errors == [
+            ValidationIssue(loc=["body", "count"], msg="must be an int", type="int_parsing")
+        ]
+
+    async def test_an_unknown_status_with_no_message_has_a_generic_one(
+        self, client: AsyncClient
+    ) -> None:
+        """``HTTPStatus(499)`` has no phrase to fall back to, and raising here
+        would replace the forwarded status with a bare plaintext 500."""
+        resp = await client.get("/http-non-standard-status-no-message")
+        assert resp.status_code == 499
+        assert resp.json() == {"message": "Error", "code": "client_closed"}
+
+    async def test_a_ragged_list_detail_still_renders_every_entry(
+        self, client: AsyncClient
+    ) -> None:
+        """An entry that is not a {loc, msg, type} mapping becomes its own message,
+        never the Python repr a plain str(detail) produced."""
+        resp = await client.get("/http-list-detail-ragged")
+        assert resp.status_code == 400
+        assert _envelope(resp.json()).errors == [
+            ValidationIssue(loc=["body", 0], msg="", type="value_error"),
+            ValidationIssue(loc=[], msg="plain string", type="value_error"),
+            ValidationIssue(loc=[], msg="42", type="value_error"),
+        ]
 
     async def test_wrongly_typed_declared_fields_are_dropped_not_a_500(
         self, client: AsyncClient

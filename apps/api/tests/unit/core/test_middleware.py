@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from limits import parse
+from limits.errors import StorageError
 import pytest
 from slowapi.errors import RateLimitExceeded
 from slowapi.wrappers import Limit
@@ -58,6 +59,27 @@ def test_bot_auth_runs_inside_posthog_context(middleware_names: list[str]) -> No
     assert middleware_names.index("PostHogRequestContextMiddleware") < (
         middleware_names.index("BotAuthMiddleware")
     )
+
+
+def test_the_crash_catch_all_runs_inside_cors(middleware_names: list[str]) -> None:
+    """Outside CORS its 500 envelope carries no Access-Control-Allow-Origin and
+    no browser can read it — which is exactly what ServerErrorMiddleware does."""
+    assert middleware_names.index("CORSMiddleware") < middleware_names.index(
+        "UnhandledExceptionMiddleware"
+    )
+
+
+def test_the_crash_catch_all_covers_every_layer_inside_cors(
+    middleware_names: list[str],
+) -> None:
+    """A crash in the paywall gate, the timeout or the limiter is a 500 too."""
+    catch_all = middleware_names.index("UnhandledExceptionMiddleware")
+    for inner in (
+        "EntitlementMiddleware",
+        "RequestTimeoutMiddleware",
+        "RouterAwareSlowAPIMiddleware",
+    ):
+        assert catch_all < middleware_names.index(inner)
 
 
 class TestPostHogContextDoesNotSwallowExceptions:
@@ -150,6 +172,18 @@ class TestRateLimitHandler:
             "code": "rate_limit_exceeded",
         }
         assert 0 < int(resp.headers["retry-after"]) <= 60
+
+    def test_unreadable_storage_falls_back_to_the_whole_window(self) -> None:
+        """Redis can die between the hit that refused the request and this read;
+        the window length is the correct upper bound, and the 429 must still land."""
+        with patch(
+            "app.core.middleware.limiter.limiter.get_window_stats",
+            side_effect=StorageError(RuntimeError("redis gone")),
+        ):
+            resp = TestClient(self._app_that_is_rate_limited(record_window=True)).get("/limited")
+
+        assert resp.status_code == 429
+        assert resp.headers["retry-after"] == "60"
 
     def test_an_unknown_window_omits_the_header_instead_of_shipping_a_null(self) -> None:
         resp = TestClient(self._app_that_is_rate_limited(record_window=False)).get("/limited")

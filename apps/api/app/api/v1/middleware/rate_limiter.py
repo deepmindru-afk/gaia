@@ -34,6 +34,9 @@ def find_route_handler(app: FastAPI, scope: Scope) -> Callable[..., Any] | None:
     returns ``None`` for every included route, ``_should_exempt`` then exempts
     it, and the default limit applied to nothing at all. ``iter_route_contexts``
     is FastAPI's supported way to flatten those wrappers back to real routes.
+
+    Costs one extra routing scan per request — the same scan Starlette's own
+    router performs a layer further in.
     """
     handler = None
     for ctx in iter_route_contexts(app.routes):
