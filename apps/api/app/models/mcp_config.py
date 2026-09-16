@@ -177,6 +177,10 @@ class SubAgentConfig(BaseModel):
     # retrievable/indexed. Use to retire a stock Composio tool that a custom
     # tool supersedes (e.g. GMAIL_FETCH_EMAILS -> GMAIL_FETCH_MESSAGES).
     exclude_tools: list[str] | None = None
+    # Most-used tools available from the run's first step without a
+    # retrieve_tools round trip. Internal names bind into the initial set;
+    # integration (ALLCAPS) names preload as schema docs in context and run
+    # via execute — they are never bound.
     auto_bind_tools: list[str] | None = None
     # Local/general tools (by name) to bind into this subagent's initial set AND
     # its spawned chunk-reader children — e.g. query_json/grep for a subagent

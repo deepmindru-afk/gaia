@@ -26,6 +26,7 @@ from app.agents.middleware import (
 from app.agents.tools.coding import grep, query_json, read
 from app.agents.tools.coding.bash_tool import build_bash_tool
 from app.agents.tools.core.registry import ToolRegistry, get_tool_registry
+from app.agents.tools.core.retrieval import partition_startup_tools
 from app.agents.tools.core.store import get_tools_store
 from app.agents.tools.core.tool_runtime_config import (
     build_create_agent_tool_kwargs,
@@ -56,7 +57,8 @@ def resolve_declared_tools(
     """The declared tools that actually resolved, warning about any that did not.
 
     A subagent's ``auto_bind_tools`` / ``extra_initial_tools`` are a promise that
-    those tools are bound before its first model call. Filtering out names the
+    those tools are available before its first model call — bound, or preloaded
+    as schema docs for ``execute`` when they are integration tools. Filtering out names the
     registry never produced is correct — binding a non-existent tool would fail
     the build — but a name that goes missing is always an upstream fault (a
     provider category that never registered, a renamed slug), never a normal
@@ -166,6 +168,9 @@ class SubAgentToolConfig:
     tool_space: str = "general"
     use_direct_tools: bool = False
     disable_retrieve_tools: bool = False
+    # Startup tools: internal names bind into the initial set; integration
+    # names preload as schema docs in the run's context (see
+    # ``preloaded_startup_docs``, injected at handoff) and run via execute.
     auto_bind_tools: list[str] | None = None
     extra_initial_tools: list[str] | None = None
     include_finish_task: bool = True
@@ -265,24 +270,47 @@ class SubAgentFactory:
             ),
         }
 
-        valid_auto_bind: list[str] | None = (
-            resolve_declared_tools(
+        valid_auto_bind: list[str] | None = None
+        preload_names: list[str] = []
+        # Config-declared startup tools (SubAgentConfig.auto_bind_tools /
+        # extra_initial_tools): local/general tools this subagent always needs
+        # bound up front — for the agent AND the chunk-reader children it
+        # spawns. E.g. gmail declares query_json/grep so triage mines an
+        # offloaded inbox directly instead of falling back to read-whole-file
+        # + bash. Kept per-integration in config (not branched on provider) so
+        # it scales to any subagent that offloads.
+        #
+        # Integration tools among them never bind: they preload as schema docs
+        # in the run's context (injected at handoff) and run via execute, so
+        # only the internal remainder reaches initial binding below.
+        declared_startup = [
+            *resolve_declared_tools(
                 cfg.auto_bind_tools, scoped_tool_dict, provider=provider, kind="auto_bind"
+            ),
+            *resolve_declared_tools(
+                cfg.extra_initial_tools,
+                scoped_tool_dict,
+                provider=provider,
+                kind="extra_initial",
+            ),
+        ]
+        if declared_startup:
+            # Per-user MCP tools live in cfg.mcp_tools, not in any registry the
+            # classifier can see — name them explicitly so they classify as
+            # preloaded rather than falling through to binding. Partitioned
+            # against the registry already held (no second fetch).
+            mcp_names = {t.name for t in cfg.mcp_tools} if cfg.mcp_tools else set()
+            bind_now, preload_names = partition_startup_tools(
+                tool_registry, declared_startup, mcp_names
             )
-            or None
-        )
-
-        # Config-declared extra initial tools (SubAgentConfig.extra_initial_tools):
-        # local/general tools this subagent always needs bound up front — for the
-        # agent AND the chunk-reader children it spawns. E.g. gmail declares
-        # query_json/grep so triage mines an offloaded inbox directly instead of
-        # falling back to read-whole-file + bash. Kept per-integration in config
-        # (not branched on provider) so it scales to any subagent that offloads.
-        extra_initial = resolve_declared_tools(
-            cfg.extra_initial_tools, scoped_tool_dict, provider=provider, kind="extra_initial"
-        )
-        if extra_initial:
-            valid_auto_bind = [*(valid_auto_bind or []), *extra_initial]
+            valid_auto_bind = bind_now or None
+            if preload_names:
+                log.info(
+                    f"{LogTag.AGENT} Preloading tool schemas instead of binding",
+                    tool_count=len(preload_names),
+                    provider=provider,
+                    tool_names=preload_names,
+                )
 
         if valid_auto_bind:
             log.info(

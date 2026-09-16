@@ -80,9 +80,11 @@ class TestActivateTools:
         )
         monkeypatch.setattr(f"{_MOD}.get_tool_registry", AsyncMock(return_value=registry))
 
-        total, bind = await _activate_tools(_subagent())
+        total, bind, preloaded, docs = await _activate_tools(_subagent())
         assert total == 2
         assert bind == []
+        assert preloaded == []
+        assert docs == ""
         registry.get_category.assert_called_once_with("gmail_toolkit")
 
     async def test_no_category_means_no_integration_tools(self, monkeypatch) -> None:
@@ -97,38 +99,85 @@ class TestActivateTools:
         registry.get_tool_meta.return_value = None
         get_registry.return_value = registry
 
-        total, bind = await _activate_tools(_subagent(managed_by="internal"))
-        assert (total, bind) == (0, [])
+        total, bind, preloaded, docs = await _activate_tools(_subagent(managed_by="internal"))
+        assert (total, bind, preloaded, docs) == (0, [], [], "")
         registry.get_category.assert_not_called()
 
 
+def _split_registry(known: set[str], integration_names: set[str]) -> MagicMock:
+    """A registry mock that classifies ``integration_names`` as execute-routed."""
+    registry = MagicMock()
+    registry.get_category.return_value = MagicMock(tools=[MagicMock()] * 40)
+    registry.get_tool_meta.side_effect = lambda n: MagicMock() if n in known else None
+    registry.get_category_of_tool.side_effect = (
+        lambda n: "int_cat" if n in integration_names else "general"
+    )
+
+    def _get_category(name: str) -> MagicMock:
+        category = MagicMock(tools=[MagicMock()] * 40)
+        category.require_integration = name == "int_cat"
+        return category
+
+    registry.get_category.side_effect = _get_category
+    return registry
+
+
+def _resolved_tool(name: str):  # type: ignore[no-untyped-def]
+    """A resolvable fake integration tool with a real renderable schema."""
+    from langchain_core.tools import tool as langchain_tool
+
+    from app.agents.tools.execute.resolver import ResolvedTool
+
+    @langchain_tool
+    def _fake(query: str) -> str:
+        """Run a fake query."""
+        return query
+
+    _fake.name = name
+    return ResolvedTool(name=name, tool=_fake, is_integration=True, in_registry=True)
+
+
 class TestAutoBind:
-    """Parity with the integration's own subagent, which gets these pre-bound at
-    startup. Without them activation costs an extra retrieve_tools turn."""
+    """Parity with the integration's own subagent, which preloads these as
+    schema docs at startup. Activation binds the internal helpers and
+    documents the integration tools — binding an integration tool here would
+    reintroduce the provider-side binding the proxy exists to remove."""
 
     @staticmethod
-    def _registry(known: set[str]) -> MagicMock:
-        registry = MagicMock()
-        registry.get_category.return_value = MagicMock(tools=[MagicMock()] * 40)
-        registry.get_tool_meta.side_effect = lambda n: MagicMock() if n in known else None
-        return registry
+    def _patch_registries(monkeypatch, registry: MagicMock) -> None:
+        monkeypatch.setattr(
+            f"{_MOD}.register_integration_tools", AsyncMock(return_value="GMAIL")
+        )
+        monkeypatch.setattr(f"{_MOD}.get_tool_registry", AsyncMock(return_value=registry))
+        monkeypatch.setattr(
+            "app.agents.tools.core.retrieval.get_tool_registry",
+            AsyncMock(return_value=registry),
+        )
 
-    async def test_binds_auto_bind_plus_extra_initial_tools(self, monkeypatch) -> None:
+    async def test_splits_bind_helpers_from_preloaded_integration_tools(
+        self, monkeypatch
+    ) -> None:
         from app.agents.core.subagents.integration_activation import _activate_tools
 
         subagent = _subagent()
         subagent.config.auto_bind_tools = ["GMAIL_FETCH_MESSAGES", "GMAIL_FETCH_THREAD"]
         subagent.config.extra_initial_tools = ["query_json", "grep"]
         known = {"GMAIL_FETCH_MESSAGES", "GMAIL_FETCH_THREAD", "query_json", "grep"}
+        integration = {"GMAIL_FETCH_MESSAGES", "GMAIL_FETCH_THREAD"}
 
-        monkeypatch.setattr(f"{_MOD}.register_integration_tools", AsyncMock(return_value="GMAIL"))
+        self._patch_registries(monkeypatch, _split_registry(known, integration))
         monkeypatch.setattr(
-            f"{_MOD}.get_tool_registry", AsyncMock(return_value=self._registry(known))
+            "app.agents.tools.core.retrieval._resolve_for_retrieval",
+            AsyncMock(side_effect=lambda _u, n: _resolved_tool(n)),
         )
 
-        total, bind = await _activate_tools(subagent)
+        total, bind, preloaded, docs = await _activate_tools(subagent)
         assert total == 40
-        assert bind == ["GMAIL_FETCH_MESSAGES", "GMAIL_FETCH_THREAD", "query_json", "grep"]
+        assert bind == ["query_json", "grep"]
+        assert preloaded == ["GMAIL_FETCH_MESSAGES", "GMAIL_FETCH_THREAD"]
+        assert "## GMAIL_FETCH_MESSAGES" in docs
+        assert "## GMAIL_FETCH_THREAD" in docs
+        assert "NOT bound" in docs
 
     async def test_drops_names_the_registry_does_not_hold(self, monkeypatch) -> None:
         """An unregistered name is silently ignored at bind time, so reporting it
@@ -140,13 +189,39 @@ class TestAutoBind:
         subagent.config.extra_initial_tools = None
 
         monkeypatch.setattr(f"{_MOD}.register_integration_tools", AsyncMock(return_value="GMAIL"))
+        self._patch_registries(
+            monkeypatch, _split_registry({"GMAIL_FETCH_MESSAGES"}, {"GMAIL_FETCH_MESSAGES"})
+        )
         monkeypatch.setattr(
-            f"{_MOD}.get_tool_registry",
-            AsyncMock(return_value=self._registry({"GMAIL_FETCH_MESSAGES"})),
+            "app.agents.tools.core.retrieval._resolve_for_retrieval",
+            AsyncMock(side_effect=lambda _u, n: _resolved_tool(n)),
         )
 
-        _, bind = await _activate_tools(subagent)
-        assert bind == ["GMAIL_FETCH_MESSAGES"]
+        _, bind, preloaded, _ = await _activate_tools(subagent)
+        assert bind == []
+        assert preloaded == ["GMAIL_FETCH_MESSAGES"]
+
+    async def test_unrenderable_preload_warns_instead_of_binding(self, monkeypatch) -> None:
+        """When docs cannot render, the tool is reported — not silently bound
+        behind the proxy's back."""
+        from app.agents.core.subagents.integration_activation import _activate_tools
+
+        subagent = _subagent()
+        subagent.config.auto_bind_tools = ["GMAIL_FETCH_MESSAGES"]
+        subagent.config.extra_initial_tools = None
+
+        self._patch_registries(
+            monkeypatch, _split_registry({"GMAIL_FETCH_MESSAGES"}, {"GMAIL_FETCH_MESSAGES"})
+        )
+        monkeypatch.setattr(
+            "app.agents.tools.core.retrieval._resolve_for_retrieval",
+            AsyncMock(return_value=None),
+        )
+
+        _, bind, preloaded, docs = await _activate_tools(subagent)
+        assert bind == []
+        assert preloaded == ["GMAIL_FETCH_MESSAGES"]
+        assert docs == ""
 
 
 class TestActivateIntegrationTool:
@@ -196,7 +271,7 @@ class TestActivateIntegrationTool:
         with (
             patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=_subagent())),
             patch(f"{_MOD}.check_integration_connection", new=AsyncMock(return_value=None)),
-            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(7, []))) as activate_tools,
+            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(7, [], [], ""))) as activate_tools,
             patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="PROMPT + SKILLS")),
         ):
             call, run_cfg = self._invoke({"user_id": "u1"}, integration_id="gmail")
@@ -205,6 +280,32 @@ class TestActivateIntegrationTool:
         activate_tools.assert_awaited_once()
         assert "PROMPT + SKILLS" in self._text(result)
         assert "7 tools" in self._text(result)
+
+    async def test_reply_preloads_docs_and_binds_only_helpers(self) -> None:
+        """The reply carries integration schemas as docs while selected_tool_ids
+        holds only the internal helpers — an integration tool must never be
+        both documented-as-unbound and bound."""
+        from app.agents.core.subagents.integration_activation import activate_integration
+
+        docs = "2 integration tool(s) preloaded below.\n## GMAIL_FETCH_MESSAGES"
+        with (
+            patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=_subagent())),
+            patch(f"{_MOD}.check_integration_connection", new=AsyncMock(return_value=None)),
+            patch(
+                f"{_MOD}._activate_tools",
+                new=AsyncMock(return_value=(40, ["query_json"], ["GMAIL_FETCH_MESSAGES"], docs)),
+            ),
+            patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="CTX")),
+        ):
+            call, run_cfg = self._invoke({"user_id": "u1"}, integration_id="gmail")
+            result = await activate_integration.ainvoke(call, run_cfg)
+
+        text = self._text(result)
+        assert "ALREADY BOUND" in text and "query_json" in text
+        assert "NOT bound" in text
+        assert "## GMAIL_FETCH_MESSAGES" in text
+        assert "CTX" in text
+        assert self._bound(result) == ["query_json"]
 
     async def test_unconnected_integration_returns_the_connect_prompt(self) -> None:
         """Activating an unconnected integration must gate on the connection check.
@@ -239,7 +340,7 @@ class TestActivateIntegrationTool:
                 new=AsyncMock(return_value=_subagent(managed_by="internal")),
             ),
             patch(f"{_MOD}.check_integration_connection", new=connect),
-            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(0, []))),
+            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(0, [], [], ""))),
             patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="")),
         ):
             call, run_cfg = self._invoke({"user_id": "u1"}, integration_id="todos")
@@ -294,7 +395,7 @@ class TestActivateIntegrationTool:
                 f"{_MOD}._get_subagent_by_id",
                 new=AsyncMock(return_value=_subagent(managed_by="mcp", requires_auth=False)),
             ),
-            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(3, []))),
+            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(3, [], [], ""))),
             patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="")),
         ):
             call, run_cfg = self._invoke({"user_id": "u1"}, integration_id="deepwiki")

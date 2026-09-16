@@ -29,6 +29,7 @@ from app.agents.core.subagents.registry import get_subagent_by_id
 from app.agents.core.subagents.subagent_helpers import build_subagent_system_prompt
 from app.agents.skills.discovery import get_available_skills_text
 from app.agents.tools.core.registry import get_tool_registry
+from app.agents.tools.core.retrieval import render_preload_block, split_startup_tools
 from app.agents.workspace.system_docs import integration_skills_block
 from app.constants.log_tags import LogTag
 from app.models.agent_models import AgentConfigurable
@@ -46,11 +47,20 @@ def _requires_per_user_tokens(subagent: Subagent) -> bool:
     )
 
 
-async def _activate_tools(subagent: Subagent) -> tuple[int, list[str]]:
-    """Register the integration's tools; return (how many exist, which to bind now).
+async def _activate_tools(
+    subagent: Subagent, user_id: str | None = None
+) -> tuple[int, list[str], list[str], str]:
+    """Register the integration's tools; return ``(total, bind, preloaded, docs)``.
 
-    The bind set is the integration's own ``auto_bind_tools`` + ``extra_initial_tools``
-    — exactly what its subagent gets pre-bound at startup."""
+    ``bind`` is the integration's ``auto_bind_tools`` + ``extra_initial_tools``
+    minus execute-routed tools: internal helpers bound now via
+    ``selected_tool_ids``. ``preloaded`` are the integration tools held back
+    from binding, with their schema docs in ``docs`` for the reply — run via
+    ``execute``, exactly as the integration's own subagent gets them (bound
+    helpers + preloaded schemas in context). ``docs`` is ``""`` when nothing
+    preloaded or nothing rendered; names that render no docs are reported, not
+    silently kept.
+    """
     category_name = await register_integration_tools(subagent)
     tool_registry = await get_tool_registry()
 
@@ -63,8 +73,16 @@ async def _activate_tools(subagent: Subagent) -> tuple[int, list[str]]:
     wanted = [*(config.auto_bind_tools or []), *(config.extra_initial_tools or [])]
     # A name the registry does not hold cannot be bound, and passing it on would
     # only be silently dropped later — drop it here so the reported set is honest.
-    bind = [name for name in dict.fromkeys(wanted) if tool_registry.get_tool_meta(name)]
-    return total, bind
+    known = [name for name in dict.fromkeys(wanted) if tool_registry.get_tool_meta(name)]
+    bind, preload = await split_startup_tools(user_id, known)
+    docs = await render_preload_block(user_id, preload)
+    if preload and not docs:
+        log.warning(
+            f"{LogTag.AGENT} Activation preloaded tools but rendered no docs",
+            integration=subagent.id,
+            preloaded=preload,
+        )
+    return total, bind, preload, docs
 
 
 async def _activation_context(integration_id: str, user_id: str | None) -> str:
@@ -151,9 +169,11 @@ async def activate_integration(
 ) -> Command[Any]:
     """Load an integration's tools and expertise into this conversation.
 
-    Binds its most-used tools immediately (no retrieve_tools needed for those),
-    and returns how it works, which account you are acting as, the user's standing
-    preferences, and its skills. Act on it yourself; `spawn_subagent` inherits it.
+    Preloads its most-used integration tools as schema docs (run them via
+    ``execute`` — no retrieve_tools needed for those), binds its most-used
+    helper tools immediately, and returns how it works, which account you are
+    acting as, the user's standing preferences, and its skills. Act on it
+    yourself; `spawn_subagent` inherits it.
     """
     configurable = cast(AgentConfigurable, config.get("configurable", {}))
     user_id = configurable.get("user_id")
@@ -189,30 +209,38 @@ async def activate_integration(
             log.set(activation={"integration": integration_id, "connected": False})
             return _reply(tool_call_id, connect_prompt)
 
-    tool_count, bind = await _activate_tools(subagent)
+    tool_count, bind, preloaded, docs = await _activate_tools(subagent, user_id)
     context = await _activation_context(integration_id, user_id)
     log.set(
         activation={
             "integration": integration_id,
             "tool_count": tool_count,
             "bound_now": len(bind),
+            "preloaded": len(preloaded),
             "context_length": len(context),
         }
     )
 
+    header_parts = [f"Integration '{integration_id}' is now active with {tool_count} tools."]
     if bind:
-        bound_line = (
-            f"{len(bind)} of them are ALREADY BOUND and callable right now: "
-            f"{', '.join(bind)}. Call those directly; only use retrieve_tools if you need "
-            f"one of the other {max(tool_count - len(bind), 0)}."
+        header_parts.append(
+            f"{len(bind)} helper tool(s) are ALREADY BOUND and callable right now: "
+            f"{', '.join(bind)}. Call those directly."
         )
-    else:
-        bound_line = "Use retrieve_tools to bind the ones this task needs."
-    header = (
-        f"Integration '{integration_id}' is now active with {tool_count} tools. "
-        f"{bound_line} Anything you spawn inherits them.\n\n"
-    )
-    return _reply(tool_call_id, header + (context or "(no additional context available)"), bind)
+    if preloaded and docs:
+        header_parts.append(
+            f"{len(preloaded)} integration tool(s) are preloaded below — NOT bound, "
+            "do NOT call them by name. Run them with "
+            'execute(task_description="...", tool_name="<NAME>", data={...}) '
+            "built from these schemas. Only use retrieve_tools if you need "
+            f"one of the other {max(tool_count - len(bind) - len(preloaded), 0)}."
+        )
+    elif not bind:
+        header_parts.append("Use retrieve_tools to bind the ones this task needs.")
+    header_parts.append("Anything you spawn inherits the bound tools.")
+    header = " ".join(header_parts) + "\n\n"
+    body = header + (docs + "\n\n" if docs else "") + (context or "(no additional context available)")
+    return _reply(tool_call_id, body, bind)
 
 
 tools = [activate_integration]

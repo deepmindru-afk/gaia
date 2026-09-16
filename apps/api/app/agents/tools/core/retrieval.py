@@ -102,6 +102,95 @@ async def _render_proxied_docs(user_id: str | None, names: list[str]) -> list[st
     return docs
 
 
+def partition_startup_tools(
+    tool_registry: ToolRegistry,
+    declared_names: list[str] | None,
+    mcp_tool_names: set[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Partition declared startup tools into ``(bind_now, preload_names)``.
+
+    Pure classification — no I/O, so graph construction reuses the registry
+    it already holds instead of fetching a second one. Integration tools
+    (Composio ``require_integration`` categories and per-user MCP) preload as
+    schema docs for ``execute`` and are never bound; everything else binds as
+    before. Declaration order of each side is preserved.
+    """
+    if not declared_names:
+        return [], []
+    mcp_tool_names = mcp_tool_names or set()
+    bind: list[str] = []
+    preload: list[str] = []
+    for name in dict.fromkeys(declared_names):
+        if _is_execute_routed(tool_registry, name, mcp_tool_names):
+            preload.append(name)
+        else:
+            bind.append(name)
+    return bind, preload
+
+
+async def split_startup_tools(
+    user_id: str | None,
+    declared_names: list[str] | None,
+    mcp_tool_names: set[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """``partition_startup_tools`` with registry and MCP names resolved.
+
+    The seam for run-time callers (handoff seeding, integration activation)
+    that hold no registry. Graph construction uses the pure partition
+    directly against the registry it already fetched.
+    """
+    if not declared_names:
+        return [], []
+    tool_registry = await get_tool_registry()
+    if mcp_tool_names is None:
+        mcp_tool_names = await _user_mcp_tool_names(user_id)
+    return partition_startup_tools(tool_registry, declared_names, mcp_tool_names)
+
+
+async def render_preload_block(user_id: str | None, preload_names: list[str]) -> str:
+    """Schema docs for preloaded tools, for direct injection into context.
+
+    The same docs ``retrieve_tools`` returns in binding mode, under a header
+    saying they are preloaded — NOT bound — and run via ``execute``. Returns
+    ``""`` when nothing renders; unresolvable names degrade per-name inside
+    ``_render_proxied_docs``.
+    """
+    docs = await _render_proxied_docs(user_id, list(preload_names))
+    if not docs:
+        return ""
+    header = (
+        f"{len(docs)} integration tool(s) preloaded below. They are NOT bound as "
+        "callable tools — do NOT call them by name. Build `data` from each schema "
+        "below and call "
+        'execute(task_description="...", tool_name="<NAME>", data={...}):'
+    )
+    return header + "\n\n" + "\n\n".join(docs)
+
+
+async def preloaded_startup_docs(user_id: str | None, integration_id: str) -> str:
+    """One integration's declared startup docs, or ``""`` when there are none.
+
+    The handoff-seeding seam: the caller appends this to the static system
+    message so the run opens with its most-used tools' schemas in context —
+    no ``retrieve_tools`` round trip, no binding. ``use_direct_tools`` graphs
+    bind their space wholesale, so docs there would contradictorily describe
+    bound tools as uncallable — they get none.
+    """
+    subagent = get_subagent_by_id(integration_id)
+    if subagent is None:
+        return ""
+    if subagent.config.use_direct_tools:
+        return ""
+    declared = [
+        *(subagent.config.auto_bind_tools or []),
+        *(subagent.config.extra_initial_tools or []),
+    ]
+    if not declared:
+        return ""
+    _, preload = await split_startup_tools(user_id, declared)
+    return await render_preload_block(user_id, preload)
+
+
 async def _user_mcp_tool_names(user_id: str | None) -> set[str]:
     """Tool names exposed by the user's live MCPClient.
 

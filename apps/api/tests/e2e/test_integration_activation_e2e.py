@@ -6,9 +6,12 @@ seams (store, checkpointer) replaced, plus activate_integration's external
 lookups stubbed so the run is deterministic and offline. What they prove is the
 wiring unit tests cannot:
 
-* activate_integration's Command(selected_tool_ids=...) actually binds the
-  integration's tools for the model's NEXT turn in the compiled graph, so a
-  follow-up call is not rejected as unbound.
+* activate_integration's Command(selected_tool_ids=...) still binds the
+  integration's INTERNAL helpers for the model's NEXT turn in the compiled
+  graph, so a follow-up call is not rejected as unbound.
+* the integration tools themselves are NOT bound — their schemas arrive as
+  docs in the activation reply — so a follow-up direct call IS rejected as
+  unbound (the model must run them via execute).
 * a per-user MCP id is routed to handoff by the tool running inside the graph.
 """
 
@@ -92,7 +95,70 @@ def _tool_message_for(result: dict, call_id: str) -> ToolMessage | None:
 
 @pytest.mark.asyncio
 class TestActivationThroughRealExecutorGraph:
-    async def test_activated_tool_is_bound_for_the_next_turn(self, monkeypatch) -> None:
+    async def test_activated_helper_is_bound_for_the_next_turn(self, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
+
+        model = BindableToolsFakeModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "activate_integration",
+                            "args": {"integration_id": "gmail"},
+                            "id": "a1",
+                        }
+                    ],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "helper_tool", "args": {}, "id": "g1"}],
+                ),
+                AIMessage(content="done"),
+            ]
+        )
+        registry = _stub_registry(extra_tools=("helper_tool",))
+
+        gmail = MagicMock()
+        gmail.managed_by = "composio"
+        gmail.mcp_config = None
+
+        p1, p2, p3, p4 = _run_executor(model, registry)
+        with (
+            p1,
+            p2,
+            p3,
+            p4,
+            patch(f"{_ACTIVATION_MOD}._get_subagent_by_id", new=AsyncMock(return_value=gmail)),
+            patch(
+                f"{_ACTIVATION_MOD}.check_integration_connection", new=AsyncMock(return_value=None)
+            ),
+            patch(
+                f"{_ACTIVATION_MOD}._activate_tools",
+                new=AsyncMock(return_value=(1, ["helper_tool"], [], "")),
+            ),
+            patch(f"{_ACTIVATION_MOD}._activation_context", new=AsyncMock(return_value="")),
+        ):
+            async with build_executor_graph(chat_llm=model, in_memory_checkpointer=True) as graph:
+                result = await graph.ainvoke(
+                    {"messages": [HumanMessage(content="send an email")]},
+                    config={"configurable": {"thread_id": str(uuid4()), "user_id": str(uuid4())}},
+                )
+
+        activation = _tool_message_for(result, "a1")
+        assert activation and "is now active" in activation.text
+
+        # The point: activate_integration bound helper_tool for the next turn via
+        # the real selected_tool_ids channel, so the follow-up call executes
+        # instead of being rejected as unbound.
+        sent = _tool_message_for(result, "g1")
+        assert sent, "helper_tool never ran — the activated helper was not bound for the next turn"
+        assert "is not bound" not in sent.text, sent.text
+        assert "stub:helper_tool" in sent.text
+
+    async def test_activated_integration_tool_is_documented_not_bound(
+        self, monkeypatch
+    ) -> None:
         monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
 
         model = BindableToolsFakeModel(
@@ -120,6 +186,7 @@ class TestActivationThroughRealExecutorGraph:
         gmail.managed_by = "composio"
         gmail.mcp_config = None
 
+        docs = "1 integration tool(s) preloaded below.\n## GMAIL_SEND"
         p1, p2, p3, p4 = _run_executor(model, registry)
         with (
             p1,
@@ -132,7 +199,7 @@ class TestActivationThroughRealExecutorGraph:
             ),
             patch(
                 f"{_ACTIVATION_MOD}._activate_tools",
-                new=AsyncMock(return_value=(1, ["gmail_send"])),
+                new=AsyncMock(return_value=(1, [], ["gmail_send"], docs)),
             ),
             patch(f"{_ACTIVATION_MOD}._activation_context", new=AsyncMock(return_value="")),
         ):
@@ -144,14 +211,15 @@ class TestActivationThroughRealExecutorGraph:
 
         activation = _tool_message_for(result, "a1")
         assert activation and "is now active" in activation.text
+        # The schemas arrive as docs in the reply, marked NOT bound.
+        assert "## GMAIL_SEND" in activation.text
+        assert "NOT bound" in activation.text
 
-        # The point: activate_integration bound gmail_send for the next turn via
-        # the real selected_tool_ids channel, so the follow-up call executes
-        # instead of being rejected as unbound.
+        # And the proxy cutover holds at graph level: a direct call of the
+        # preloaded tool is rejected as unbound — the model must use execute.
         sent = _tool_message_for(result, "g1")
-        assert sent, "gmail_send never ran — the activated tool was not bound for the next turn"
-        assert "is not bound" not in sent.text, sent.text
-        assert "stub:gmail_send" in sent.text
+        assert sent, "gmail_send call vanished instead of being rejected"
+        assert "is not bound" in sent.text, sent.text
 
     async def test_per_user_mcp_is_routed_to_handoff(self, monkeypatch) -> None:
         monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)

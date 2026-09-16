@@ -16,7 +16,7 @@ import time
 from typing import Annotated, Any
 from uuid import uuid4
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from langgraph.config import get_stream_writer
@@ -57,6 +57,7 @@ from app.agents.core.subagents.subagent_runner import (
     resume_for_gate,
     subagent_row_id,
 )
+from app.agents.tools.core.retrieval import preloaded_startup_docs
 from app.constants.cache import SUBAGENT_CACHE_PREFIX, SUBAGENT_CACHE_TTL
 from app.constants.hil import HIL_RESUME_CONFIG_KEY
 from app.constants.log_tags import LogTag
@@ -532,6 +533,23 @@ async def prepare_subagent_execution(
     new_configurable = agent_configurable(subagent_config)
 
     system_message = await create_subagent_system_message(integration_id=integration_id)
+
+    # The integration's declared startup tools load as schema docs appended to
+    # the static prompt — one STATIC message, so the slot stays singleton and
+    # the bytes stay user-independent for the prompt cache. Degrades to no docs
+    # (with a warning) rather than failing the handoff: the agent still has
+    # retrieve_tools + execute to self-serve the same schemas.
+    try:
+        preload_block = await preloaded_startup_docs(user_id, integration_id)
+    except Exception as e:
+        log.warning(
+            f"{LogTag.AGENT} Startup tool docs unavailable; continuing without them",
+            integration_id=integration_id,
+            error_type=type(e).__name__,
+        )
+        preload_block = ""
+    if preload_block:
+        system_message = SystemMessage(content=f"{system_message.content}\n\n{preload_block}")
 
     # Avoid passing Gaia display name as a service username
     provider_meta = None

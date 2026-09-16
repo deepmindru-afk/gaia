@@ -135,6 +135,15 @@ class _DummyRegistry:
     def get_tool_dict(self):
         return dict(self._full_tools)
 
+    def get_category_of_tool(self, tool_name: str):
+        # Every tool this double knows is internal: startup partition must
+        # keep binding them. An integration double belongs in the test that
+        # pins preloading, not here.
+        return "general" if tool_name in self._full_tools else "unknown"
+
+    def get_category(self, name: str):
+        return SimpleNamespace(require_integration=False)
+
 
 class _DummyBuilder:
     def __init__(self, kwargs: dict[str, Any]) -> None:
