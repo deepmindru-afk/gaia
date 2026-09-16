@@ -121,6 +121,9 @@ class TestResolveConnectedAccountId:
         assert exc.value.code == INTEGRATION_NOT_CONNECTED
         assert exc.value.public == {"toolkit": "GMAIL"}
         assert exc.value.meta == {"user_id": "u1"}, "the user id is wide-event context, not a body"
+        assert exc.value.why == "This integration has no active connected account", (
+            "the user reads this; it must not name them or the account"
+        )
 
     def test_returns_active_account_id(self) -> None:
         composio = _make_composio(account_id="acc_xyz")
@@ -229,6 +232,10 @@ class TestProxyRequestSync:
                 )
         assert exc.value.status_code == 404
         assert exc.value.public == {"toolkit": "GMAIL"}
+        assert exc.value.why == "The provider rejected the request", (
+            "the endpoint that failed is internal; the user gets the plain fact"
+        )
+        assert exc.value.code == "", "only a rejected token routes to the reconnect flow"
         assert exc.value.meta == {
             "endpoint": "/x",
             "method": "GET",
