@@ -274,6 +274,11 @@ jobs:
           echo "nx=$NX" >> "$GITHUB_OUTPUT"
           echo "NX parallel=$NX on $(nproc) vCPUs"
       - name: Build (timed, 16c-optimized)
+        id: nx-build
+        # `continue-on-error` behind the verdict step below, which is what fails
+        # the job — the failure has to be READ out of build.time first, and a
+        # step that exits here runs nothing after it.
+        continue-on-error: true
         # Explicit shell = `bash -eo pipefail`. The default `run:` shell is bash -e
         # WITHOUT pipefail, so `cmd | tee` swallowed the flake gate's exit code and
         # a lane with 'FLAKY TESTS DETECTED' reported success.
@@ -296,6 +301,15 @@ jobs:
           # so build.time still measures only the build. No-op off the box.
           bash scripts/ci/runner.sh with-slots "$NX_PARALLEL" -- /usr/bin/time -v bash -c 'pnpm exec nx run-many -t build -p "$AFFECTED_TS_PROJECTS" --parallel="$NX_PARALLEL" --output-style=stream 2>&1 | tail -n 60' 2>&1 | tee "$RUNNER_TEMP/build.time"
           echo "Build: OK (parallel=$NX_PARALLEL)"
+      - name: Verdict (the build's own last error lines, not a pointer to the log)
+        if: always()
+        env:
+          NX_BUILD: ${{ steps.nx-build.outcome }}
+        run: |
+          python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" --fallback nx.json < "$RUNNER_TEMP/build.time" || true
+          python3 scripts/ci/verdict.py step-outcomes --lane build \
+            --findings "$RUNNER_TEMP/findings.jsonl" \
+            "nx-build=$NX_BUILD"
       - name: Upload the verdict
         if: always()
         uses: ./.github/actions/upload-verdict
