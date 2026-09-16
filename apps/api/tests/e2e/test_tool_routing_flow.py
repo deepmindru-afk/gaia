@@ -1,4 +1,17 @@
-"""E2E test: tool-call routing and filter_messages_node in a live GAIA graph."""
+"""E2E test: tool-call routing and filter_messages_node in a live GAIA graph.
+
+This file does NOT cover email sending: the send_email tool below is a local stub standing in
+for "any tool". Real send-email coverage lives in tests/e2e/test_send_email_flow.py, which drives
+the Gmail path through the real HTTP route and app.services.mail.mail_service.
+
+Real here: filter_messages_node wired as a pre-model hook by
+app.override.langgraph_bigtool.create_agent, over the GAIA State schema rather than MessagesState.
+AI messages carrying dangling tool calls (no matching ToolMessage) are injected into graph state
+and the assertion is that the hook strips them before the next model call -- which is the only
+reason the fake LLM can answer turn 2 at all. Doubled: the LLM (FakeMessagesListChatModel), the
+store (InMemoryStore, no ChromaDB), the checkpointer (MemorySaver, no PostgreSQL), and the routed
+tool itself; the graph infrastructure is production code.
+"""
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool

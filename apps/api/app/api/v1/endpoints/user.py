@@ -135,7 +135,9 @@ async def update_user_name(
     name: str = Form(...),
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> UserUpdateResponse:
-    """Update the user's name. This is the consolidated endpoint for name updates."""
+    """
+    Update the user's name. This is the consolidated endpoint for name updates.
+    """
     try:
         user_id = user.get("user_id")
         log.set(user={"id": user_id}, operation="update_user_name")
@@ -287,7 +289,9 @@ async def update_holo_card_colors(
     overlay_opacity: int = Form(..., description="Overlay opacity (0-100)"),
     user_id: str = Depends(get_user_id),
 ) -> UpdateHoloCardColorsResponse:
-    """Update holo card overlay color and opacity."""
+    """
+    Update holo card overlay color and opacity.
+    """
     try:
         log.set(
             user={"id": user_id},
@@ -341,7 +345,9 @@ async def logout(
     response: Response,
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> LogoutResponse:
-    """Logout user and return logout URL for frontend redirection."""
+    """
+    Logout user and return logout URL for frontend redirection.
+    """
     wos_session = request.cookies.get(WOS_SESSION_COOKIE)
 
     if not wos_session:

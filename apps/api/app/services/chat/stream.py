@@ -376,10 +376,10 @@ async def _resolve_pending_approval_turn(
 ) -> bool:
     """Resolve a pending HIL approval from a bot user's free-text chat reply.
 
-    Classifies "yes"/"no"/"do X instead" into approve/deny; runs only for
-    button-less bot channels (WhatsApp/Telegram/Slack/Discord) since UI
-    clients resolve via real buttons and guessing risks misreading a
-    destructive action. Returns True only when a bot reply resolved it.
+    Classifies "yes"/"no"/"do X instead" into approve/deny; runs only for button-less bot
+    channels (WhatsApp/Telegram/Slack/Discord) since UI clients resolve via real buttons and
+    guessing risks misreading a destructive action. Returns True only when a bot reply
+    resolved it — the turn is then fully handled here and the caller must not run the agent.
     """
     if not is_bot_platform(source):
         # UI clients (web/mobile/desktop) and background/workflow runs never

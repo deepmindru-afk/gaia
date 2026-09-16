@@ -4,7 +4,7 @@ Composio webhook endpoint.
 Handles incoming webhooks from Composio and routes them to the appropriate handlers.
 Uses the trigger registry for extensible event handling.
 
-Each trigger handler implements its own process_event() method which handles:
+Each trigger handler implements its own `process_event()` method which handles:
 - Finding matching workflows
 - Queuing workflow execution via WorkflowQueueService
 
@@ -79,7 +79,7 @@ async def _expire_connection(
 ) -> None:
     """Background task: pause the dependent workflows, then run the expiry transition.
 
-    Pausing is the caller's job because integration_expiry cannot import the
+    Pausing is the caller's job because ``integration_expiry`` cannot import the
     workflow layer without closing an import cycle (see its module docstring).
     Both steps share one timeout budget.
     """

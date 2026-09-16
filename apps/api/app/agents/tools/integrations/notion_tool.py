@@ -4,7 +4,7 @@ These tools wrap existing Composio Notion tools and add markdown conversion:
 - FETCH_PAGE_AS_MARKDOWN: Calls NOTION_FETCH_ALL_BLOCK_CONTENTS → converts to markdown
 - INSERT_MARKDOWN: Converts markdown → calls NOTION_ADD_MULTIPLE_PAGE_CONTENT
 - MOVE_PAGE / FETCH_DATA : route through Composio's
-  proxy via proxy_request_sync (no existing Composio equivalent)
+  proxy via `proxy_request_sync` (no existing Composio equivalent)
 
 Note: Errors are raised as exceptions - Composio wraps responses automatically.
 """

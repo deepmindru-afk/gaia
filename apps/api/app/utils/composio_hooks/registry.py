@@ -153,7 +153,10 @@ hook_registry = ComposioHookRegistry()
 def _resolve_call_identity(tool: str, toolkit: str, params: ToolExecuteParams) -> None:
     """Establish the calling user from RunnableConfig metadata, ahead of every hook.
 
-    Runs first because hooks must never see a stale or model-supplied user_id: our injected id wins on conflict (logged), and trigger flows (no metadata) keep the SDK's bound id. __runnable_config__ is popped as transport, not a tool argument; entity_id is set alongside user_id for Composio's legacy connected-account auth.
+    The agent flow binds its tools once with user_id="" and names the real user per
+    invocation through runnable metadata, so identity becomes known here. Hooks must never see
+    a stale or model-supplied user_id: our injected id wins on conflict (logged), trigger flows
+    (no metadata) keep the SDK's bound id, and __runnable_config__ is popped as transport.
     """
     # Typed as object (not the declared arguments shape): real params arrive as
     # plain dicts that may omit keys or carry non-dict values, and each guard
@@ -200,9 +203,12 @@ def master_before_execute_hook(
 def master_after_execute_hook(
     tool: str, toolkit: str, response: ToolExecutionResponse
 ) -> ToolExecutionResponse:
-    """Master after_execute hook that runs all registered tool-specific hooks and global transforms.
+    """Run every registered tool-specific after_execute hook plus global transforms.
 
-    Composio's AfterExecute protocol declares this returns ToolExecutionResponse, but hooks legitimately return a trimmed dict (AfterHookResponse); the cast here matches the SDK's own runtime behavior, which casts to Dict without enforcing the shape either.
+    Composio's AfterExecute protocol declares this returns ToolExecutionResponse, but hooks
+    legitimately return a trimmed dict subset for the LLM (AfterHookResponse). The cast
+    matches the SDK's own runtime behavior, which casts the modifier chain's result straight
+    to Dict without enforcing the shape either.
     """
     result = hook_registry.execute_after_hooks(tool, toolkit, response)
     return cast(ToolExecutionResponse, result)

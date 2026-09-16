@@ -90,10 +90,10 @@ async def publish_outbound_message(
 ) -> OutboundResult:
     """Enqueue text_parts as a single ordered envelope for user_id on platform.
 
-    One envelope (not one-per-part) stops a concurrent consumer reordering
-    bubbles; each part also splits on the bubble-break sentinel, so raw text
-    with <NEW_MESSAGE_BREAK> delivers as separate bubbles. destination_override
-    + is_channel target a channel/group instead of the DM; ttl_seconds caps the wait before dead-lettering.
+    One envelope (not one-per-part) stops a concurrent consumer reordering bubbles; each part
+    also splits on the bubble-break sentinel. destination_override + is_channel target a
+    channel/group instead of the DM; ttl_seconds caps the wait before dead-lettering. Returns
+    PUBLISHED, SKIPPED (unsupported/unlinked/empty) or FAILED; never raises into the caller.
     """
     parts = [bubble for part in text_parts for bubble in split_message_bubbles(part)]
     if not parts:

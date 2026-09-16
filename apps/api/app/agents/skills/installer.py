@@ -126,10 +126,10 @@ async def install_from_github(
 ) -> Skill:
     """Install a skill from a GitHub repository.
 
-    Downloads SKILL.md, parses frontmatter for metadata, writes body-only to
-    VFS, and registers flat metadata in MongoDB. allowed_targets, when given,
-    restricts the effective target — used by the REST endpoint to block
-    scoping to an integration the user hasn't connected.
+    Writes body-only to VFS and flat metadata to MongoDB. allowed_targets, when given,
+    restricts the effective target — the REST endpoint uses it to block scoping to an
+    integration the user hasn't connected. Raises ValueError if the skill is invalid,
+    already installed, or its effective target is not in allowed_targets.
     """
     owner, repo, url_path = _parse_github_url(repo_url)
 
@@ -357,9 +357,10 @@ async def update_skill_inline(
 ) -> Skill | None:
     """Edit an existing skill's description, instructions (body), and/or target.
 
-    Only provided fields change. The skill name is immutable, so the storage
-    path never moves; VFS SKILL.md is rewritten only when the body changes.
-    Returns None if the skill does not exist for this user.
+    Only provided fields change. The skill name is immutable, so the storage path never
+    moves; VFS SKILL.md is rewritten only when the body changes. Returns None if the skill
+    does not exist for this user. Raises ValueError if the new values are invalid, or if
+    retargeting would collide with an existing skill of the same name on that target.
     """
     skill = await get_skill(user_id, skill_id)
     if not skill:

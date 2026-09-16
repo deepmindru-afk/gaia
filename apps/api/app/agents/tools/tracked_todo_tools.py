@@ -3,7 +3,7 @@ Tracked-todo LangChain tools for the executor agent.
 
 Lifecycle and metadata only. The working notes (canvas.md / activity.md) are
 files under /workspace/gaia-tasks/ that the agent reads and edits with the
-ordinary file tools; see app.services.gaia_task_files.
+ordinary file tools; see ``app.services.gaia_task_files``.
 """
 
 from dataclasses import dataclass
@@ -67,9 +67,9 @@ async def _get_user_tz(user_id: str) -> str:
 
 
 def _compute_first_fire_from_cron(cron_expr: str, tz_name: str) -> datetime:
-    """Next fire of a cron in tz_name, returned as UTC.
+    """Next fire of a cron in ``tz_name``, returned as UTC.
 
-    Thin wrapper over the canonical get_next_run_time so todo recurrence and
+    Thin wrapper over the canonical ``get_next_run_time`` so todo recurrence and
     reminder/workflow recurrence share one cron-in-timezone implementation.
     """
     return get_next_run_time(cron_expr, tz=Timezone.parse(tz_name))
@@ -274,7 +274,7 @@ def _build_scheduled_at_update(
 
 
 def _validate_recurrence_format(recurrence: str) -> str | None:
-    """Return a user-facing error if recurrence is neither a valid cron nor a known shortcut.
+    """Return a user-facing error if `recurrence` is neither a valid cron nor a known shortcut.
 
     _is_cron_expression is defined as "not a known shortcut", so the two cases
     are exhaustive: anything that isn't a shortcut is validated as a cron
@@ -357,11 +357,13 @@ async def _apply_field_updates(
     update_fields: dict[str, object],
     notes: list[str],
 ) -> str | None:
-    """Run each field validator in order, short-circuiting on the first error.
+    """Run each field validator in order, short-circuiting on the first error so the
+    async _get_user_tz Mongo lookup in the recurrence validator never runs after an
+    earlier field already failed. Populates update_fields/notes in place.
 
-    Avoids the async _get_user_tz Mongo lookup running after an earlier
-    field already failed. _build_labels_update can't return an error today;
-    kept for shape consistency so adding one later needs no restructuring.
+    _build_labels_update can never actually return an error today (there is no label
+    validation yet); the check is kept for the same shape as the others so adding one
+    later needs no restructuring.
     """
     if error := _build_labels_update(inputs.labels, update_fields):  # pragma: no cover
         return error

@@ -47,10 +47,10 @@ class GooglePassthroughModel(BaseModel):
     def __get_pydantic_json_schema__(
         cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
     ) -> JsonSchemaValue:
-        """The declared fields plus additionalProperties — not the serializer's dict.
+        """The declared fields plus ``additionalProperties`` — not the serializer's ``dict``.
 
         The wrap serializer above only narrows *which* keys are emitted; without
-        this, Pydantic documents the output as its bare dict return type and
+        this, Pydantic documents the output as its bare ``dict`` return type and
         every generated client type loses the fields GAIA declares.
         """
         without_serializer = dict(core_schema)
@@ -59,9 +59,9 @@ class GooglePassthroughModel(BaseModel):
 
 
 class GoogleCalendarEventDateTime(GooglePassthroughModel):
-    """The start/end object of a Google Calendar events resource.
+    """The ``start``/``end`` object of a Google Calendar ``events`` resource.
 
-    An event carries either date (all-day) or dateTime + timeZone; both
+    An event carries either ``date`` (all-day) or ``dateTime`` + ``timeZone``; both
     are declared optional so a single type covers both.
     """
 
@@ -71,10 +71,10 @@ class GoogleCalendarEventDateTime(GooglePassthroughModel):
 
 
 class GoogleCalendarEventResource(GooglePassthroughModel):
-    """A single Google Calendar events resource, forwarded to the client verbatim.
+    """A single Google Calendar ``events`` resource, forwarded to the client verbatim.
 
     Only the fields GAIA itself reads (filtering, sorting, display) or injects
-    (calendarId/calendarTitle) are declared. Google owns the rest of this
+    (``calendarId``/``calendarTitle``) are declared. Google owns the rest of this
     schema and varies it by event type, so everything else passes through untouched
     rather than guessing at a structure that would silently drop fields the web
     client reads.
@@ -107,12 +107,12 @@ class GoogleCalendarEventsPage(BaseModel):
 
 
 class GoogleCalendarListEntry(GooglePassthroughModel):
-    """One entry of Google's calendarList.list payload, forwarded to the client
+    """One entry of Google's ``calendarList.list`` payload, forwarded to the client
     verbatim.
 
     Declared: the fields the service and the web calendar picker read. Everything
     else Google sends rides through as extras and is projected into
-    CalendarSummary where it is needed.
+    ``CalendarSummary`` where it is needed.
     """
 
     id: str
@@ -133,10 +133,10 @@ class CalendarSummary(BaseModel):
 
 
 class CalendarListResponse(ResponseModel):
-    """Response for GET /calendar/list — Google's calendarList.list payload.
+    """Response for ``GET /calendar/list`` — Google's ``calendarList.list`` payload.
 
-    extra="allow" keeps the envelope keys Google sends alongside items
-    (kind, etag, nextSyncToken).
+    ``extra="allow"`` keeps the envelope keys Google sends alongside ``items``
+    (``kind``, ``etag``, ``nextSyncToken``).
     """
 
     model_config = ConfigDict(extra="allow")
@@ -532,8 +532,8 @@ class EventUpdateRequest(BaseModel):
 
 
 class CalendarPreferencesDocument(MongoDocument):
-    """A user's calendar preferences as stored in the calendar collection —
-    the ids of the calendars they have selected. Global, keyed by user_id."""
+    """A user's calendar preferences as stored in the ``calendar`` collection —
+    the ids of the calendars they have selected. Global, keyed by ``user_id``."""
 
     user_id: str
     selected_calendars: list[str] = Field(default_factory=list)

@@ -1,4 +1,4 @@
-"""Persistent bash tool — run shell commands in the user's E2B sandbox."""
+"""Persistent `bash` tool — run shell commands in the user's E2B sandbox."""
 
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ def _emit_bash_error(run_id: str, chunk: str, return_message: str, session_id: s
 def _resolve_cwd(cwd: str, session_id: str | None) -> tuple[str, str | None]:
     """Resolve the working directory for a bash run.
 
-    Returns (cwd, error). error is non-None when the LLM-supplied cwd
+    Returns ``(cwd, error)``. ``error`` is non-None when the LLM-supplied cwd
     escapes the workspace, in which case the caller returns it. Any non-empty
     resolved cwd is guaranteed to be inside the workspace.
     """
@@ -220,11 +220,15 @@ async def bash(
 
 
 async def _publish_artifacts(sbx: object, user_id: str, session_id: str) -> None:
-    """Enumerate the session's artifacts/ in the sandbox and push each file as a real-time event.
+    """Enumerate the session's ``artifacts/`` in the sandbox and push each
+    file as a real-time artifact event (covers cat/python/mv/curl, etc.).
 
-    Used to be N+1 sandbox round-trips (one find plus one base64 per
-    artifact, 6 for a 5-artifact turn); now a single find -exec streams
-    path/size/base64 for every artifact in one round-trip.
+    Implementation note: this used to be N+1 sandbox round-trips (one ``find``
+    plus one ``base64`` per artifact). For a turn that writes 5 artifacts that
+    was 6 envd round-trips. We now collapse to a *single* ``find`` invocation
+    whose ``-exec`` emits the path, size, and base64 body for every artifact in
+    one stream — parsed back here in Python. One round-trip total, regardless
+    of how many artifacts the turn produced.
     """
     artifacts_root = session_artifacts(session_id)
     # NUL-delimited fields AND records (desync-proof, filenames can't contain

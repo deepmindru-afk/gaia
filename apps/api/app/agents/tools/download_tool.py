@@ -1,9 +1,9 @@
-"""download — pull a file off a public URL into the workspace for the agent to read.
+"""`download` — pull a file off a public URL into the workspace for the agent to read.
 
 The general form of the workspace-as-I/O-surface pattern: anything the model needs
-to look at becomes a file, and read is the one lens onto it. This runs host-side
+to look at becomes a file, and `read` is the one lens onto it. This runs host-side
 (straight to JuiceFS, no sandbox spin-up) and hands the SSRF + size guarding to
-url_download; per-lane image delivery is read's job downstream.
+`url_download`; per-lane image delivery is `read`'s job downstream.
 """
 
 from typing import Annotated

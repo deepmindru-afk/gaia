@@ -41,9 +41,9 @@ _OPENROUTER_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
     NoResponseError,
 )
 
-# Transient provider/infra errors — safe to retry. Gemini wraps every 4xx
-# (including 429s) into ``ChatGoogleGenerativeAIError``, hiding the status
-# class, so Gemini 429s are not retried — they fall through to fallback.
+# Transient provider/infra errors — safe to retry; the app rate limiter's
+# LangChainRateLimitError must NOT be. Gemini wraps every 4xx (including 429s) into
+# ChatGoogleGenerativeAIError, hiding the status class, so Gemini 429s fall through to fallback.
 LLM_RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     # Gemini (google-genai SDK)
     GeminiServerError,
@@ -54,9 +54,9 @@ LLM_RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     TimeoutError,
 )
 
-# Fallback triggers once retries are exhausted, or immediately for
-# non-transient errors. ``OpenRouterError`` is the base of every OpenRouter
-# response error; ``NoResponseError`` is the SDK's connection failure.
+# Fallback triggers once retries are exhausted, or immediately for non-transient errors
+# (402 out-of-credits, 401 auth). Curated, NOT a bare Exception: a programming bug must fail
+# loud, not silently downgrade the model. NoResponseError is not an OpenRouterError.
 LLM_FALLBACK_EXCEPTIONS: tuple[type[BaseException], ...] = (
     OpenRouterError,  # every OpenRouter response error, incl. 402 insufficient credits
     NoResponseError,

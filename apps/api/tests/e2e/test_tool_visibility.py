@@ -1,4 +1,18 @@
-"""The tool-call contract of the chat stream, asserted frame by frame."""
+"""The tool-call contract of the chat stream, asserted frame by frame.
+
+Every test drives the real execute_graph_streaming -- the function translating LangGraph's three
+stream modes into the SSE vocabulary the chat UI consumes -- and asserts on a parsed Transcript,
+never on prose. The contract the frontend depends on: a tool call is visible, with its real name
+and arguments, BEFORE it runs (turnAccumulator.ts appends it to the message's tool list); its
+result arrives separately and is joined ONLY by tool_call_id (mergeToolOutputIntoToolData in
+streaming.ts), so a broken id means a tool card that renders forever without a result; and frames
+that must not reach the client (stale replays from pre-model hooks, silent turns, executor-tier
+text, the nostream: marker) do not.
+
+Only the graph is a double (see _harness/graph_double.py); it exists so a test can pin the exact
+LangGraph event sequence, including ones a real run produces only under conditions a test cannot
+arrange.
+"""
 
 from __future__ import annotations
 

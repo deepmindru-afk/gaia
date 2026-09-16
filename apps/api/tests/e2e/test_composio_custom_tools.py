@@ -1,4 +1,17 @@
-"""Runs a Composio custom-tool body through the real dispatch chain (plan §2.8): seam B (execute_tool) must be patched at each importing module or it silently no-ops, and stubbing only seam A still reaches the network unless seam C's auth-credentials fetch is stubbed too."""
+"""Run a Composio custom-tool body through the real dispatch chain.
+
+Nothing in the repo had ever run one: test_send_email_flow mocks the whole service and the unit
+tests stop at registration, so argument validation, the auth-credentials fetch that fires on every
+invocation, and the tool body itself were unexercised.
+
+Three seams must be stubbed to run offline, and the plan (§2.8) is explicit that missing any one
+still reaches the network. A, proxy: proxy_client._get_composio (gmail, calendar, docs, notion).
+B, hosted execute: execute_tool, patched at EACH importing module, because consumers do
+"from ... import execute_tool" and the name is bound at the call site, so patching
+context_utils.execute_tool silently no-ops. C, dispatch: CustomTool.__get_auth_credentials, which
+calls connected_accounts.list before every single tool body runs. Seam C is the one people miss --
+stub A alone and the call still goes out.
+"""
 
 from __future__ import annotations
 

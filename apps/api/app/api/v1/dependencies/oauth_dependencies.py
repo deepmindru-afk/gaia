@@ -95,7 +95,12 @@ async def get_user_id(  # NOSONAR python:S7503
 
 
 async def get_current_user_ws(websocket: WebSocket) -> AuthenticatedUser:
-    """Authenticate a WebSocket connection via cookies or a Sec-WebSocket-Protocol bearer token."""
+    """Authenticate a WebSocket connection via cookies or a Sec-WebSocket-Protocol token.
+
+    Mobile clients that cannot send cookies pass the token as the subprotocol
+    ("Bearer, <token>"; the client sends ['Bearer', token]), which keeps it out of
+    server logs and referrers.
+    """
     # WebSockets skip WorkOSAuthMiddleware (HTTP only), so the dev bypass —
     # including X-Dev-User impersonation — is mirrored here. get_settings()
     # hard-fails if this is set in production.

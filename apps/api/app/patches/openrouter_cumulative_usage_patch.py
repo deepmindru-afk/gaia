@@ -85,9 +85,10 @@ def _normalise(
 def _warn_if_langchain_starts_passing_a_run_manager(run_manager: object) -> None:
     """Warn if langchain ever passes these wrappers a real run_manager.
 
-    It doesn't today (verified across all 4 _stream/_astream call sites). If it
-    ever did, the streamed and billed usage numbers would silently diverge
-    unless this wrapper started forwarding it — worth a log.warning, not just a comment.
+    It doesn't today: langchain-core 1.4.8 calls _stream/_astream as (messages, stop=stop,
+    **kwargs) from all four sites (stream, astream, _generate_with_cache,
+    _agenerate_with_cache). If it ever did, the streamed and billed usage numbers would
+    silently diverge unless this wrapper forwarded it — hence log.warning, not a comment.
     """
     if run_manager is not None:
         log.warning(

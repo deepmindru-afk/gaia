@@ -126,8 +126,8 @@ class MarketplaceResponse(BaseModel):
 
 class MyIntegrationItem(CamelModel, CloneCountMixin):
     """One integration as it pertains to the current user: catalog metadata plus
-    their connection status, without the heavy per-tool schemas (only tool_count).
-    Fetch full tools on demand from GET /integrations/{id}/tools.
+    their connection `status`, without the heavy per-tool schemas (only `tool_count`).
+    Fetch full tools on demand from `GET /integrations/{id}/tools`.
     """
 
     id: str

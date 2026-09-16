@@ -10,8 +10,9 @@ record_fs_op / add_fs_bytes also export fs_op_duration_seconds and fs_op_total
 fs_op_in_flight (operation), and sandbox_pool_size (kind: user|warm, shard). mode is
 the sbx_acquire path label, else "none". These labels are the complete allowed set —
 changing one means updating the fs-metrics-prometheus / fs-metrics-coverage OpenSpec
-capability. The worker mirrors the collectors in app/workers/metrics.py; panels live
-in the grafana fs-ops.json dashboard.
+capability. The worker mirrors the collectors in app/workers/metrics.py; panels live in
+infra/docker/observability/grafana/provisioning/dashboards/fs-ops.json. Bash exit codes
+count separately as tool_bash_exit_code_total in app/agents/tools/coding/bash_tool.py.
 """
 
 from __future__ import annotations

@@ -1,4 +1,10 @@
-"""Integration tests for the GAIA comms agent flow patterns."""
+"""Integration tests for the GAIA comms agent flow patterns.
+
+Exercises the production build_comms_graph, complementing test_real_comms_agent.py with the
+scenarios it does not cover: the streaming interface (astream), edge cases (empty content, minimal
+input), graph structural invariants, the memory tool invocations, and multi-turn accumulation over
+three or more turns.
+"""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4

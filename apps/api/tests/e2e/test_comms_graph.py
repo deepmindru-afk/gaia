@@ -1,4 +1,16 @@
-"""The comms tier as a running graph: its tool surface, delegation, and how a turn carries into the next."""
+"""The comms tier as a running graph.
+
+Comms is the front door and deliberately the NARROWEST agent in the product: delegate to the
+executor, cancel that delegation, remember and recall, plus the read-only discovery three (find an
+integration, search public workflow templates, draw the connect card). No tool retrieval at all,
+every reply routed straight to the user, and nothing on this surface writes to the user's data --
+a comms agent that could reach the executor's tools would act on the user's accounts without any
+of the delegation, approval or streaming machinery in between.
+
+tests/e2e/test_chat_stream.py covers what comms puts on the wire. This file covers the graph:
+which tools exist, what happens to a call for one that does not, the end-of-turn hooks, and how a
+turn carries into the next.
+"""
 
 from __future__ import annotations
 
