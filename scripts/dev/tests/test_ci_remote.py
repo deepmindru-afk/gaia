@@ -443,7 +443,7 @@ def test_the_stack_lists_every_pr_with_its_base_and_marks_the_current_one(
     out = capsys.readouterr().out
     assert "   #6 feat/base" in out
     assert " * #7 feat/thing" in out
-    assert "-> feat/base  1 pass / 0 fail / 0 pending" in out
+    assert "-> feat/base  ?  ?/?  0 threads  1 pass / 0 fail / 0 pending  greptile —" in out
     assert "WARNING" not in out
 
 
@@ -800,3 +800,302 @@ def test_matrix_index_matching_needs_a_shared_word_not_just_a_number() -> None:
     assert ci_remote.verdict_matches(right, "Mutation shard 3/6 (21 modules)")
     assert not ci_remote.verdict_matches(wrong_name, "Mutation shard 3/6 (21 modules)")
     assert not ci_remote.verdict_matches(wrong_index, "Mutation shard 3/6 (21 modules)")
+
+
+# --------------------------------------------------------------- mutation shard records
+
+# What run 34586506166's `mutation-log-2` artifact holds: shard.verdict.json's
+# per-module records beside the shard.log they were read from. The log is the
+# only thing that separates "mutmut died" from "the suite is weak".
+NO_STATE_LOG = (
+    "app/services/x.py\n"
+    "E       Failed: Timeout >45.0s\n"
+    "E       Failed: Timeout >45.0s\n"
+    "MUTATION RUN FAILED (no state produced) — see mutmut's output above.\n"
+)
+SURVIVOR_LOG = "MUTATION FAILED — 1 mutant survived\n"
+
+ERROR_MODULE: dict[str, Any] = {
+    "module": "app/services/x.py",
+    "path": "apps/api/app/services/x.py",
+    "status": "error",
+    "survivors": [],
+    "gap_lines": [],
+    "reason": "app/services/x.py exited 1 without reaching a verdict — see shard.log",
+}
+SURVIVOR_MODULE: dict[str, Any] = {
+    "module": "app/services/y.py",
+    "path": "apps/api/app/services/y.py",
+    "status": "survivors",
+    "survivors": [
+        {
+            "name": "y_ǁCǁm__mutmut_13",
+            "function": "charge",
+            "file": "apps/api/app/services/y.py",
+            "line": 212,
+            "change": "`amount > 0` -> `amount >= 0`",
+            "diff": "",
+        }
+    ],
+    "gap_lines": [],
+    "reason": None,
+}
+
+
+def shard_zip(modules: list[dict[str, Any]], log: str) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("shard.verdict.json", json.dumps({"modules": modules}))
+        archive.writestr("shard.log", log)
+    return buffer.getvalue()
+
+
+def wire_shard_record(wire, modules: list[dict[str, Any]], log: str) -> FakeGh:
+    return wire(
+        FakeGh(
+            checks=[SHARD_3_CHECK],
+            artifacts=[{"id": 88, "name": "mutation-log-2", "expired": False}],
+            zip_blobs={88: shard_zip(modules, log)},
+        )
+    )
+
+
+def test_a_shard_that_produced_no_state_says_so_and_says_it_is_safe_to_rerun(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An errored module used to read like a test gap; it is an oversubscribed box."""
+    fake = wire_shard_record(wire, [ERROR_MODULE], NO_STATE_LOG)
+    assert run_cli(monkeypatch, []) == 1
+    out = capsys.readouterr().out
+    assert "(shard record mutation-log-2)" in out
+    assert (
+        "app/services/x.py  error — mutmut produced no state (2 tests hit the per-test timeout); "
+        "no survivors; safe to re-run" in out
+    )
+    assert "its reason is only in this job's log" not in out
+    assert not any(c.endswith("/logs") for c in fake.calls), "log fetched despite a shard record"
+    assert "--rerun-timeouts" in out
+
+
+def test_a_survivor_names_the_line_and_the_change_rather_than_the_mutant_id(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wire_shard_record(wire, [SURVIVOR_MODULE], SURVIVOR_LOG)
+    run_cli(monkeypatch, [])
+    out = capsys.readouterr().out
+    assert (
+        "app/services/y.py  survivors: apps/api/app/services/y.py:212 — "
+        "`amount > 0` -> `amount >= 0`" in out
+    )
+    # A survivor is never safe to re-run, so the offer must not appear.
+    assert "--rerun-timeouts" not in out
+
+
+def test_a_passing_module_stays_out_of_the_shard_record_section(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    passed = dict(ERROR_MODULE, module="app/core/ok.py", status="pass")
+    wire_shard_record(wire, [passed, ERROR_MODULE], NO_STATE_LOG)
+    run_cli(monkeypatch, [])
+    assert "app/core/ok.py" not in capsys.readouterr().out
+
+
+def test_rerun_timeouts_reruns_the_failed_jobs_when_nothing_survived(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = wire_shard_record(wire, [ERROR_MODULE], NO_STATE_LOG)
+    reruns: list[list[str]] = []
+
+    def router(
+        args: list[str], timeout_s: int, stdin_text: str | None = None
+    ) -> tuple[int, str, str]:
+        if args[0] == "run":
+            reruns.append(args)
+            return 0, "", ""
+        return fake.text(args, timeout_s, stdin_text)
+
+    monkeypatch.setattr(ci_remote, "gh", router)
+    assert run_cli(monkeypatch, ["--rerun-timeouts"]) == 0
+    assert reruns == [["run", "rerun", "99", "--failed"]]
+    assert "re-ran the failed jobs of run 99" in capsys.readouterr().out
+
+
+def test_rerun_timeouts_refuses_when_a_mutant_actually_survived(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A re-run cannot turn a surviving mutant green; it only spends the box."""
+    fake = wire_shard_record(wire, [SURVIVOR_MODULE], SURVIVOR_LOG)
+
+    def router(
+        args: list[str], timeout_s: int, stdin_text: str | None = None
+    ) -> tuple[int, str, str]:
+        assert args[0] != "run", "rerun issued for a surviving mutant"
+        return fake.text(args, timeout_s, stdin_text)
+
+    monkeypatch.setattr(ci_remote, "gh", router)
+    assert run_cli(monkeypatch, ["--rerun-timeouts"]) == 1
+    out = capsys.readouterr().out
+    assert "refusing" in out
+    assert "Mutation shard 3/6 (21 modules)" in out
+
+
+def test_rerun_timeouts_refuses_when_one_module_died_and_another_had_a_survivor(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A shard can produce no state for one module and still prove a test gap in another."""
+    fake = wire_shard_record(wire, [ERROR_MODULE, SURVIVOR_MODULE], NO_STATE_LOG)
+
+    def router(
+        args: list[str], timeout_s: int, stdin_text: str | None = None
+    ) -> tuple[int, str, str]:
+        assert args[0] != "run", "rerun issued for a shard that also had a survivor"
+        return fake.text(args, timeout_s, stdin_text)
+
+    monkeypatch.setattr(ci_remote, "gh", router)
+    assert run_cli(monkeypatch, ["--rerun-timeouts"]) == 1
+    assert "refusing" in capsys.readouterr().out
+
+
+def test_rerun_timeouts_on_a_green_pr_reruns_nothing(
+    wire, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wire(FakeGh(checks=[PASSED_CHECK]))
+    assert run_cli(monkeypatch, ["--rerun-timeouts"]) == 0
+    assert "nothing is failing" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- stack mode
+
+GREPTILE_BODY = (
+    '<h2><a href="https://app.greptile.com/api/retrigger?id=1">x</a>Confidence Score: 4/5</h2>\n'
+    "<sub>Reviews (1) · Last reviewed commit: "
+    '["feat: a thing"](https://github.com/o/r/commit/abc123def4567890)</sub>'
+)
+
+
+def rich_pr(number: int, base: str, head: str) -> dict[str, Any]:
+    """One stack PR as the enriched GraphQL returns it."""
+    return {
+        "number": number,
+        "baseRefName": base,
+        "headRefOid": head,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "BLOCKED",
+        "reviewThreads": {"nodes": [{"isResolved": False}, {"isResolved": True}]},
+        "comments": {
+            "nodes": [
+                {"author": {"login": "coderabbitai"}, "body": "Confidence Score: 1/5"},
+                {"author": {"login": "greptile-apps"}, "body": GREPTILE_BODY},
+            ]
+        },
+        "commits": {
+            "nodes": [
+                {
+                    "commit": {
+                        "statusCheckRollup": {
+                            "contexts": {
+                                "nodes": [
+                                    {
+                                        "__typename": "CheckRun",
+                                        "name": "biome",
+                                        "status": "COMPLETED",
+                                        "conclusion": "FAILURE",
+                                    },
+                                    {
+                                        "__typename": "CheckRun",
+                                        "name": "dead-code",
+                                        "status": "COMPLETED",
+                                        "conclusion": "SUCCESS",
+                                    },
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+    }
+
+
+@pytest.fixture
+def rich_stack(wire, monkeypatch: pytest.MonkeyPatch):
+    """Set up a two-PR stack whose rollup carries merge state, threads, lanes and Greptile."""
+
+    def install(*prs: tuple[int, str, str]) -> FakeGh:
+        fake = FakeGh(checks=[PASSED_CHECK])
+        wire(fake, stack=STACK)
+        payload = json.dumps(
+            {"data": {"repository": {f"p{n}": rich_pr(n, b, h) for n, b, h in prs}}}
+        )
+        def router(
+            args: list[str], timeout_s: int, stdin_text: str | None = None
+        ) -> tuple[int, str, str]:
+            # The stack query is the one asking for mergeStateStatus; the PR-state
+            # query never does. Counting calls would mis-route --stack, which
+            # makes no PR-state call at all.
+            if args[1] == "graphql" and "mergeStateStatus" in (stdin_text or ""):
+                return 0, payload, ""
+            return fake.text(args, timeout_s, stdin_text)
+
+        monkeypatch.setattr(ci_remote, "gh", router)
+        return fake
+
+    return install
+
+
+def test_stack_mode_prints_one_line_per_pr_with_everything_needed_to_pick_one(
+    rich_stack, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rich_stack((6, "master", "abc123def4567890"), (7, "feat/base", "abc123def4567890"))
+    assert run_cli(monkeypatch, ["--stack"]) == 1  # biome is red on both
+    out = capsys.readouterr().out
+    assert " * #7 feat/thing" in out
+    assert "abc123def" in out
+    assert "MERGEABLE/BLOCKED" in out
+    assert "1 thread" in out
+    assert "1 pass / 1 fail / 0 pending" in out
+    assert "greptile 4/5 @abc123def" in out
+    assert "failing: biome" in out
+    # Stack mode is the stack and nothing else.
+    assert "PR #7 feat: a thing" not in out
+    assert "ADVICE" not in out
+
+
+def test_a_greptile_score_against_an_older_commit_is_marked_stale(
+    rich_stack, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A 4/5 on a sha two pushes old says nothing about the head."""
+    rich_stack((6, "master", "0000000000000000"), (7, "feat/base", "0000000000000000"))
+    run_cli(monkeypatch, ["--stack"])
+    assert "greptile 4/5 @abc123def STALE" in capsys.readouterr().out
+
+
+def test_stack_json_carries_the_same_fields_the_line_shows(
+    rich_stack, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rich_stack((6, "master", "abc123def4567890"), (7, "feat/base", "abc123def4567890"))
+    run_cli(monkeypatch, ["--stack", "--json"])
+    report = json.loads(capsys.readouterr().out)
+    row = next(r for r in report["stack"] if r["pr"] == 7)
+    assert row["head_sha"] == "abc123def4567890"
+    assert row["mergeable"] == "MERGEABLE"
+    assert row["merge_state_status"] == "BLOCKED"
+    assert row["unresolved_threads"] == 1
+    assert row["counts"]["passed"] == 1
+    assert row["counts"]["failed"] == 1
+    assert row["failing_lanes"] == ["biome"]
+    assert row["greptile"] == {
+        "score": 4,
+        "out_of": 5,
+        "commit": "abc123def4567890",
+        "commit_url": "https://github.com/o/r/commit/abc123def4567890",
+    }
+
+
+def test_stack_mode_refuses_to_be_combined_with_another_mode(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        run_cli(monkeypatch, ["--stack", "--watch"])
+    assert exc.value.code == 2
+    assert "its own mode" in capsys.readouterr().err
