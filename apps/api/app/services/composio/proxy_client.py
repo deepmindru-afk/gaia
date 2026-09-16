@@ -173,14 +173,13 @@ def _resolve_connected_account_id(user_id: str, toolkit: str) -> str:
         # /calendar/events). 403 routes to the "reconnect integration" path.
         raise AppError(
             message=f"No active {toolkit} connection",
-            why=f"User {user_id} has no active connected account for {toolkit}",
+            why="This integration has no active connected account",
             fix=f"Reconnect the {toolkit} integration",
             status_code=403,
-            meta={
-                "toolkit": toolkit,
-                "user_id": user_id,
-                "code": INTEGRATION_NOT_CONNECTED,
-            },
+            code=INTEGRATION_NOT_CONNECTED,
+            # The web interceptor keys its reconnect toast on `toolkit`.
+            public={"toolkit": toolkit},
+            meta={"user_id": user_id},
         )
 
     log.info(
@@ -279,20 +278,20 @@ def _proxy_call(request: ProxyRequest) -> ProxyResponse:
         if status == 401:
             invalidate_connected_account_cache(user_id=request.user_id, toolkit=request.toolkit)
         gaia_status = 403 if status == 401 else (status if 400 <= status < 600 else 502)
-        meta: dict[str, Any] = {
-            "toolkit": request.toolkit,
-            "endpoint": request.endpoint,
-            "method": request.method,
-            "provider_status": status,
-            "provider_response": response.data,
-        }
-        if status == 401:
-            meta["code"] = INTEGRATION_NOT_CONNECTED
         raise AppError(
             message=f"{request.toolkit} API error ({status})",
-            why=f"Provider returned non-2xx for {request.method} {request.endpoint}",
+            why="The provider rejected the request",
             status_code=gaia_status,
-            meta=meta,
+            code=INTEGRATION_NOT_CONNECTED if status == 401 else "",
+            public={"toolkit": request.toolkit},
+            # The endpoint, the provider's status and its raw body are
+            # diagnostics: the wide event gets them, the caller never does.
+            meta={
+                "endpoint": request.endpoint,
+                "method": request.method,
+                "provider_status": status,
+                "provider_response": response.data,
+            },
         )
 
     # Normalize header keys to lowercase. Upstream APIs return mixed casing

@@ -118,7 +118,9 @@ class TestResolveConnectedAccountId:
             with pytest.raises(AppError) as exc:
                 _resolve_connected_account_id("u1", "GMAIL")
         assert exc.value.status_code == 403
-        assert exc.value.meta["code"] == INTEGRATION_NOT_CONNECTED
+        assert exc.value.code == INTEGRATION_NOT_CONNECTED
+        assert exc.value.public == {"toolkit": "GMAIL"}
+        assert exc.value.meta == {"user_id": "u1"}, "the user id is wide-event context, not a body"
 
     def test_returns_active_account_id(self) -> None:
         composio = _make_composio(account_id="acc_xyz")
@@ -226,13 +228,13 @@ class TestProxyRequestSync:
                     )
                 )
         assert exc.value.status_code == 404
+        assert exc.value.public == {"toolkit": "GMAIL"}
         assert exc.value.meta == {
-            "toolkit": "GMAIL",
             "endpoint": "/x",
             "method": "GET",
             "provider_status": 404,
             "provider_response": {"err": "missing"},
-        }
+        }, "the provider's own body never reaches the client"
 
     def test_provider_401_is_surfaced_as_403_with_the_not_connected_code(self) -> None:
         # A rejected token means the *integration* needs reconnecting, not the
@@ -244,13 +246,13 @@ class TestProxyRequestSync:
                     ProxyRequest(user_id="u1", toolkit="GMAIL", endpoint="/x", method="GET")
                 )
         assert exc.value.status_code == 403
+        assert exc.value.code == INTEGRATION_NOT_CONNECTED
+        assert exc.value.public == {"toolkit": "GMAIL"}
         assert exc.value.meta == {
-            "toolkit": "GMAIL",
             "endpoint": "/x",
             "method": "GET",
             "provider_status": 401,
             "provider_response": {"error": "invalid_grant"},
-            "code": INTEGRATION_NOT_CONNECTED,
         }
 
     def test_provider_401_evicts_only_that_users_toolkit_from_the_cache(self) -> None:

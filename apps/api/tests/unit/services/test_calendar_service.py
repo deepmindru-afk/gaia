@@ -201,7 +201,8 @@ class TestListCalendars:
         mock_proxy.side_effect = AppError(
             message="Google Calendar is not connected",
             status_code=403,
-            meta={"code": INTEGRATION_NOT_CONNECTED, "toolkit": "googlecalendar"},
+            code=INTEGRATION_NOT_CONNECTED,
+            public={"toolkit": "googlecalendar"},
         )
         with pytest.raises(HTTPException) as exc:
             await list_calendars(USER_ID)
