@@ -1,11 +1,10 @@
-"""The ratchet on response fields that generate ``unknown`` in the TypeScript.
+"""The ratchet on response fields that generate unknown in the TypeScript.
 
-The route-level check only ever saw the outermost annotation, so a typed
-response model could still hand every consumer a ``dict[str, Any]`` field to
-cast. This walks the whole tree and grandfathers the fields that were already
-loose when the walk was added — listed one per line, each with a dated
-deferral, in ``untyped_response_fields_baseline.txt``. A new one is never
-grandfathered: type the field, or argue for a line in that file.
+The route-level check only saw the outermost annotation, so a typed response
+model could still hand every consumer a dict[str, Any] field to cast. This walks
+the whole tree; fields already loose when the walk was added are listed, each
+with a dated deferral, in untyped_response_fields_baseline.txt. A new one is
+never grandfathered: type the field, or argue for a line in that file.
 """
 
 from dataclasses import dataclass
@@ -71,7 +70,7 @@ def _label(ctx: RouteContext) -> str:
 def test_no_new_untyped_response_field(
     untyped: set[str], baseline: dict[str, Deferral | None]
 ) -> None:
-    """A field the baseline does not already carry may not export as ``unknown``."""
+    """A field the baseline does not already carry may not export as unknown."""
     new = sorted(untyped - baseline.keys())
     assert new == [], (
         "response fields that generate `unknown` for every TypeScript consumer — give the "

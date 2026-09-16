@@ -39,15 +39,10 @@ RATE_LIMIT_EXCEEDED_CODE = "rate_limit_exceeded"
 def _retry_after_seconds(request: Request) -> int | None:
     """Whole seconds until the window that refused this request reopens.
 
-    ``RateLimitExceeded`` carries no retry hint of its own — the old handler's
-    ``getattr(exc, "retry_after", None)`` was always ``None`` and shipped that
-    null as a contract. The limiter records the window it hit on
-    ``request.state`` just before raising, so ask that; if the storage cannot
-    answer, the full window length is the correct upper bound.
-
-    The limiter comes off ``request.app.state`` like slowapi's own handler reads
-    it, not from this module: the app is what owns the counters, and asking the
-    module-level one queries a storage that never saw the request.
+    RateLimitExceeded carries no retry hint; the limiter records the window on
+    request.state just before raising, and the full window length is the correct
+    upper bound when storage cannot answer. Read the limiter off request.app.state
+    — the module-level one queries a storage that never saw the request.
     """
     current_limit: tuple[RateLimitItem, list[str]] | None = getattr(
         request.state, "view_rate_limit", None
@@ -64,12 +59,11 @@ def _retry_after_seconds(request: Request) -> int | None:
 
 
 def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> UJSONResponse:
-    """Render a rate-limit refusal as the envelope, with a real ``Retry-After``.
+    """Render a rate-limit refusal as the envelope, with a real Retry-After.
 
-    Deliberately sync. ``SlowAPIMiddleware`` answers the default limit through
-    ``sync_check_limits``, which discards a coroutine handler and falls back to
-    slowapi's own ``{"error": ...}`` body — so an async handler here took every
-    default-limit 429 off the envelope without any signal that it had.
+    Deliberately sync: SlowAPIMiddleware answers the default limit through
+    sync_check_limits, which discards a coroutine handler and silently falls
+    back to slowapi's own error body.
     """
     retry_after = _retry_after_seconds(request)
     wide_log.warning(
@@ -119,15 +113,9 @@ def configure_middleware(app: FastAPI) -> None:
     # Access-Control-Allow-Origin, so the browser couldn't read the checkout link.
     app.add_middleware(EntitlementMiddleware)
 
-    # Crash catch-all — the innermost thing inside CORS, and that is the whole
-    # point of its position. Starlette answers an uncaught exception in
-    # ServerErrorMiddleware, which wraps everything INCLUDING CORS, so the 500
-    # envelope it returns carries no Access-Control-Allow-Origin and a browser
-    # refuses to read it — the web app shows a generic network failure instead
-    # of the error. Converting the crash here covers every layer inside CORS
-    # (the gate, the timeout, rate limiting, the router and the handler); the
-    # handler registered on the app stays as the last resort for a failure in
-    # the middlewares outside this one.
+    # Crash catch-all, innermost inside CORS: Starlette's ServerErrorMiddleware
+    # wraps CORS, so the 500 it returns carries no Access-Control-Allow-Origin
+    # and a browser cannot read it. The app-level handler is the last resort.
     app.add_middleware(UnhandledExceptionMiddleware)
 
     # CORS (inside Logging so preflight rejections are visible in Loki)

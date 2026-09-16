@@ -29,14 +29,10 @@ limiter = Limiter(
 def find_route_handler(app: FastAPI, scope: Scope) -> Callable[..., Any] | None:
     """Find the endpoint a request will reach, seeing through FastAPI's lazy routers.
 
-    FastAPI 0.139 defers router inclusion: ``app.routes`` holds ``_IncludedRouter``
-    wrappers with no ``.endpoint``, so slowapi's own ``_find_route_handler``
-    returns ``None`` for every included route, ``_should_exempt`` then exempts
-    it, and the default limit applied to nothing at all. ``iter_route_contexts``
-    is FastAPI's supported way to flatten those wrappers back to real routes.
-
-    Costs one extra routing scan per request — the same scan Starlette's own
-    router performs a layer further in.
+    FastAPI 0.139 defers router inclusion, so app.routes holds wrappers with no
+    .endpoint and slowapi's own lookup returns None for every included route —
+    _should_exempt then exempts it and the default limit applies to nothing.
+    Costs one extra routing scan per request.
     """
     handler = None
     for ctx in iter_route_contexts(app.routes):
@@ -50,11 +46,11 @@ def find_route_handler(app: FastAPI, scope: Scope) -> Callable[..., Any] | None:
 
 
 class RouterAwareSlowAPIMiddleware(SlowAPIMiddleware):
-    """``SlowAPIMiddleware`` with handler lookup that sees through lazy routers.
+    """SlowAPIMiddleware with handler lookup that sees through lazy routers.
 
-    Identical to the upstream dispatch apart from ``find_route_handler``; the
-    limit check stays ``sync_check_limits``, which is what makes an async
-    exception handler silently lose the envelope, so the handler must be sync.
+    Identical to the upstream dispatch apart from find_route_handler; the limit
+    check stays sync_check_limits, which is what makes an async exception
+    handler silently lose the envelope, so that handler must be sync.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:

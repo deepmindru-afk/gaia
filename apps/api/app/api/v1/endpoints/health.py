@@ -36,8 +36,7 @@ _DEGRADED_RESPONSE_SCHEMA: dict[int | str, dict[str, Any]] = {
 
 # One documented operation; the other paths are probe aliases kept out of the
 # schema. Hiding a route keeps it out of the document but not out of the id
-# namespace, so each alias names its own id -- the generated id is
-# <tag>_<handler name>, identical for all five.
+# namespace (<tag>_<handler name> for all five), so each alias names its own id.
 @router.get(
     "/", responses=_DEGRADED_RESPONSE_SCHEMA, include_in_schema=False, operation_id="health_root"
 )

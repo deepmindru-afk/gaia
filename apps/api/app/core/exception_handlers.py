@@ -1,7 +1,7 @@
 """The exception handlers that turn every raised failure into the envelope.
 
-Registered by ``register_exception_handlers`` on every FastAPI app this repo
-serves — the main API and the embedding sidecar — so a second app cannot ship a
+Registered by register_exception_handlers on every FastAPI app this repo serves
+— the main API and the embedding sidecar — so a second app cannot ship a
 different error shape by omission.
 """
 
@@ -21,10 +21,9 @@ from shared.py.wide_events import log as wide_log
 async def app_error_handler(request: Request, exc: AppError) -> Response:
     """Convert AppError into a structured JSON response with wide event context.
 
-    Emits an explicit error log so the wide-event final_level flips to ERROR
-    and downstream LogQL filters (e.g. `errors!="[]"`, `level="ERROR"`) catch
-    it. Without this the AppError only showed up in Sentry and was invisible
-    to Loki searches that look for application errors by level.
+    Emits an explicit error log so the wide-event final_level flips to ERROR and
+    the Loki level/errors filters catch it; without it an AppError is visible
+    only in Sentry.
     """
     wide_log.error(
         "app_error",
@@ -59,12 +58,8 @@ async def validation_error_handler(
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
     """Record the failure on the wide event, then render it as the envelope.
 
-    Starlette's ExceptionMiddleware converts an HTTPException into a response
-    INSIDE call_next, so LoggingMiddleware's except path never sees it: every
-    `raise HTTPException(500, ...)` emitted a wide event whose `errors` key was
-    absent entirely.
-
-    Like FastAPI's default handler this preserves `exc.headers`
+    Starlette's ExceptionMiddleware converts an HTTPException inside call_next,
+    so LoggingMiddleware's except path never sees it. Preserves exc.headers
     (WWW-Authenticate on 401, Retry-After on 429) and drops the body for
     statuses that may not carry one (204/304).
     """
@@ -95,22 +90,20 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> Response:
     """Last-resort 500 envelope for a crash that escaped every middleware.
 
-    This runs in ServerErrorMiddleware, OUTSIDE CORSMiddleware, so a browser
-    cannot read the body it returns. ``UnhandledExceptionMiddleware`` sits
-    inside CORS and converts crashes first; this only fires for a failure in
-    the middlewares outside it, and stays because a bare Starlette plaintext
-    500 is worse than an unreadable envelope.
+    Runs in ServerErrorMiddleware, OUTSIDE CORSMiddleware, so a browser cannot
+    read the body it returns. UnhandledExceptionMiddleware sits inside CORS and
+    converts crashes first; this only fires for the middlewares outside it.
     """
     capture_unhandled_exception(request, exc)
     return internal_error_response()
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Give ``app`` the one error envelope for every kind of raised failure.
+    """Give app the one error envelope for every kind of raised failure.
 
-    The decorator form, not ``add_exception_handler``: the latter is typed
-    ``Callable[[Request, Exception], ...]`` and rejects a handler that names
-    the exception it is registered for.
+    The decorator form, not add_exception_handler: the latter is typed
+    Callable[[Request, Exception], ...] and rejects a handler that names the
+    exception it is registered for.
     """
     app.exception_handler(AppError)(app_error_handler)
     app.exception_handler(RequestValidationError)(validation_error_handler)

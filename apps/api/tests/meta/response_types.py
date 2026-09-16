@@ -1,12 +1,10 @@
-"""Walk a response annotation for the parts that generate ``unknown``.
+"""Walk a response annotation for the parts that generate unknown.
 
-``Any``, a bare ``dict``/``list`` and a ``dict[str, Any]`` value all export as
-an unconstrained schema, which openapi-typescript renders as ``unknown`` — so
-every consumer casts. The walk is recursive because the annotation on the route
-is only the outermost layer: a perfectly typed ``GmailThreadResponse`` can still
-carry a ``dict[str, Any]`` field, and that field is what the client has to cast.
-The models it passes through are reported too — a serializer option set on the
-route applies to all of them, not just the outermost one.
+Any, a bare dict/list and a dict[str, Any] value all export as an unconstrained
+schema, which openapi-typescript renders as unknown. The walk is recursive
+because the route's annotation is only the outermost layer: a perfectly typed
+model can still carry a loose field. The models it passes through are reported
+too — a serializer option set on the route applies to all of them.
 """
 
 import dataclasses
@@ -22,7 +20,7 @@ _SEQUENCE_ORIGINS = (list, set, tuple, frozenset)
 
 @dataclasses.dataclass
 class ResponseWalk:
-    """What one annotation reaches: loose ``Model.field`` paths, and every model."""
+    """What one annotation reaches: loose Model.field paths, and every model."""
 
     untyped: set[str] = dataclasses.field(default_factory=set)
     visited: set[type] = dataclasses.field(default_factory=set)
@@ -83,11 +81,11 @@ def _walk_fields(annotation: Any, owner: str, out: ResponseWalk) -> None:
 
 
 def walk_response(annotation: Any, owner: str) -> ResponseWalk:
-    """Everything ``annotation`` reaches, with ``owner`` naming the annotation itself.
+    """Everything the annotation reaches, with owner naming the annotation itself.
 
     A nested model's own name owns every field below it, so one loose field is
-    reported once however many routes reach it; ``owner`` shows up only when
-    the route's own annotation is the loose one.
+    reported once however many routes reach it; owner shows up only when the
+    route's own annotation is the loose one.
     """
     walk = ResponseWalk()
     _walk(annotation, owner, walk)

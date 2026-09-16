@@ -98,12 +98,7 @@ def test_operation_ids_are_tag_and_name_not_path(routes: list[RouteContext]) -> 
 
 
 def test_operation_ids_are_unique(all_routes: list[RouteContext]) -> None:
-    """Two routes sharing an id collapse into one generated type.
-
-    Every APIRoute, documented or not: hiding an alias keeps it out of the
-    document but not out of the namespace, so the collision is still there the
-    day someone documents it.
-    """
+    """Two routes sharing an id collapse into one generated type, hidden alias included."""
     ids = Counter(ctx.unique_id for ctx in all_routes)
     duplicates = sorted(op_id for op_id, count in ids.items() if count > 1)
     assert duplicates == [], (
@@ -113,11 +108,7 @@ def test_operation_ids_are_unique(all_routes: list[RouteContext]) -> None:
 
 
 def test_no_route_overrides_its_router_tag(routes: list[RouteContext]) -> None:
-    """A route-level ``tags=`` is a trap: the id is minted from the router's first tag.
-
-    A second tag moves the route in the docs while every generated type keeps
-    the router's name, so the two disagree silently.
-    """
+    """A second tag moves the route in the docs while the id keeps the router's first tag."""
     overridden = [
         f"{_label(ctx)} -> {list(ctx.tags)}" for ctx in routes if set(ctx.tags) != {ctx.tags[0]}
     ]
@@ -132,12 +123,7 @@ def _omitting_options(route: APIRoute) -> list[str]:
 
 
 def test_no_route_omits_fields_its_schema_marks_required(routes: list[RouteContext]) -> None:
-    """``exclude_none``/``exclude_unset`` are invisible to the schema.
-
-    ``ResponseModel`` marks a defaulted field required in the output schema, so
-    dropping that field on the wire makes the generated TypeScript promise a
-    key the response does not carry.
-    """
+    """Omitting a field ResponseModel marks required promises a key the response lacks."""
     lying = []
     for ctx in routes:
         route = ctx.original_route
@@ -163,12 +149,7 @@ async def _probe() -> ResponseModel:
 
 
 def test_two_routers_under_one_tag_share_an_id_namespace(all_routes: list[RouteContext]) -> None:
-    """The id is ``<tag>_<handler>``; the module is not in it.
-
-    Two routers carry the ``MCP`` tag, so a handler named the same in either of
-    them mints the same id — caught by the uniqueness test above, which is the
-    only thing standing between that and one collapsed client type.
-    """
+    """The id is <tag>_<handler> with the module left out, so same-named handlers collide."""
     modules = {
         ctx.original_route.endpoint.__module__
         for ctx in all_routes

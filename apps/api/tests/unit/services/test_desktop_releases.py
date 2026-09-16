@@ -1,8 +1,8 @@
 """Resolving the newest desktop release, and what the download page is told when it fails.
 
-``why`` is shown to the person trying to download GAIA, so it says what they
-can act on; the transport error that actually happened is wide-event context
-and stays off the wire.
+The envelope's why is shown to the person trying to download GAIA, so it says
+what they can act on; the transport error that actually happened is wide-event
+context and stays off the wire.
 """
 
 from unittest.mock import patch
