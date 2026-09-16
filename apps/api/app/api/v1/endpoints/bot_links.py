@@ -10,11 +10,16 @@ from datetime import UTC, datetime, timedelta
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request
+from redis.exceptions import RedisError
 
 from app.api.v1.endpoints.bot import require_bot_api_key
 from app.config.settings import settings
 from app.constants.auth import AUDIT_ACTOR_BOT_API, AUDIT_ACTOR_UNAUTHENTICATED
-from app.constants.cache import PLATFORM_LINK_TOKEN_PREFIX, PLATFORM_LINK_TOKEN_TTL
+from app.constants.cache import (
+    PLATFORM_LINK_CODE_TTL,
+    PLATFORM_LINK_TOKEN_PREFIX,
+    PLATFORM_LINK_TOKEN_TTL,
+)
 from app.constants.general import NEW_MESSAGE_BREAKER
 from app.db.redis import redis_cache
 from app.models.bot_models import (
@@ -246,14 +251,14 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
         # The link is written; only its follow-through failed. Spent, not released:
         # handed back, the retry would redeem it against the existing link and
         # publish the first contact a second time. The failure still surfaces.
-        await discard_platform_link_code(body.code)
+        await _spend_code_after_link(body.code)
         raise
     except Exception:
         # Every refusal asks the user to tap the same link again, and the code is
         # the only way back without redoing onboarding: released, not spent.
         await release_platform_link_code(body.code)
         raise
-    await discard_platform_link_code(body.code)
+    await _spend_code_after_link(body.code)
     log.audit(
         "platform account linked via one-tap code",
         actor=payload.user_id,
@@ -268,6 +273,25 @@ async def redeem_link_code(request: Request, body: RedeemLinkCodeRequest) -> Red
     return RedeemLinkCodeResponse(
         linked=True, delivered=delivered, first_contact=[] if delivered else bubbles
     )
+
+
+async def _spend_code_after_link(code: str) -> None:
+    """Spend the code behind a link that is already written.
+
+    A spend that Redis refuses after every retry is logged, not raised: the
+    link and its first contact already happened, and a 500 here would have the
+    bot tell the user that linking failed. The claim marker keeps holding the
+    code for its recovery TTL; the error names how long the record stays live.
+    """
+    try:
+        await discard_platform_link_code(code)
+    except RedisError as e:
+        log.error(
+            "platform link code could not be spent after the link was written",
+            error_type=type(e).__name__,
+            error=str(e),
+            replay_window_seconds=PLATFORM_LINK_CODE_TTL,
+        )
 
 
 async def _persist_first_contact(
