@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from httpx import ASGITransport, AsyncClient
 import pytest
+from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.types import Receive, Scope, Send
 
@@ -66,15 +67,52 @@ async def test_a_crash_after_the_status_line_propagates_instead_of_double_sendin
             await client.get("/x")
 
 
-async def test_a_websocket_scope_is_not_intercepted() -> None:
-    seen: list[str] = []
+async def test_a_websocket_scope_is_handed_on_untouched() -> None:
+    """A socket needs its own receive and send; a wrapped or dropped one would
+    break every frame in both directions."""
+    seen: list[tuple[Any, Any, Any]] = []
+    receive, send = MagicMock(), MagicMock()
 
-    async def _ws_app(scope: Scope, receive: Receive, send: Send) -> None:
-        seen.append(scope["type"])
+    async def _ws_app(scope: Scope, ws_receive: Receive, ws_send: Send) -> None:
+        seen.append((scope["type"], ws_receive, ws_send))
 
-    await UnhandledExceptionMiddleware(_ws_app)({"type": "websocket"}, MagicMock(), MagicMock())
+    await UnhandledExceptionMiddleware(_ws_app)({"type": "websocket"}, receive, send)
 
-    assert seen == ["websocket"]
+    assert seen == [("websocket", receive, send)]
+
+
+async def test_the_request_body_still_reaches_the_app() -> None:
+    """The app reads it off ``receive``; without it every POST would hang or
+    arrive empty, and nothing about the 500 path would say so."""
+    received: list[bytes] = []
+
+    async def _echo_app(scope: Scope, receive: Receive, send: Send) -> None:
+        received.append(await Request(scope, receive).body())
+        await PlainTextResponse("read")(scope, receive, send)
+
+    async with _client(_echo_app) as client:
+        response = await client.post("/x", content=b"payload")
+
+    assert response.status_code == 200
+    assert received == [b"payload"]
+
+
+async def test_a_scope_without_a_path_still_records_the_crash() -> None:
+    """A raw ASGI scope need not carry ``path``; reading it must not raise
+    inside the handler that exists to stop things raising."""
+    sent: list[dict[str, Any]] = []
+
+    async def _send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    async def _receive() -> dict[str, Any]:
+        return {"type": "http.request"}
+
+    with patch("app.api.v1.middleware.unhandled_exception.log") as mock_log:
+        await UnhandledExceptionMiddleware(_boom_app)({"type": "http"}, _receive, _send)
+
+    assert mock_log.error.call_args.kwargs["path"] == ""
+    assert sent[0]["status"] == 500
 
 
 async def test_the_crash_is_recorded_on_the_wide_event() -> None:

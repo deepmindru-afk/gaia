@@ -80,7 +80,9 @@ async def test_the_default_limit_applies_to_an_included_route() -> None:
 
     assert second.status_code == 429
     assert second.json()["code"] == "rate_limit_exceeded"
-    assert int(second.headers["retry-after"]) > 0
+    # The hint is the window the caller's own key actually hit, not a floor:
+    # a minute window opened moments ago has essentially all of it left.
+    assert 55 <= int(second.headers["retry-after"]) <= 60
 
 
 async def test_a_disabled_limiter_never_refuses() -> None:

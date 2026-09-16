@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from limits import parse
 from limits.errors import StorageError
 import pytest
+from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.wrappers import Limit
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -142,6 +143,10 @@ class TestRateLimitHandler:
     def _app_that_is_rate_limited(*, record_window: bool) -> FastAPI:
         app = FastAPI()
         app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
+        # The handler reads the counters off the app, as slowapi's own does.
+        app.state.limiter = Limiter(
+            key_func=lambda: "client", default_limits=["5/minute"], storage_uri="memory://"
+        )
         item = parse("5/minute")
         limit = Limit(
             item,
@@ -165,22 +170,26 @@ class TestRateLimitHandler:
         return app
 
     def test_the_429_body_is_the_envelope_with_a_real_retry_after_header(self) -> None:
+        """An already-closed window still owes the caller a positive hint, not a
+        zero or a negative one — this route never actually spent its budget."""
         resp = TestClient(self._app_that_is_rate_limited(record_window=True)).get("/limited")
         assert resp.status_code == 429
         assert resp.json() == {
             "message": "Too many requests, slow down",
             "code": "rate_limit_exceeded",
         }
-        assert 0 < int(resp.headers["retry-after"]) <= 60
+        assert resp.headers["retry-after"] == "1"
 
     def test_unreadable_storage_falls_back_to_the_whole_window(self) -> None:
         """Redis can die between the hit that refused the request and this read;
         the window length is the correct upper bound, and the 429 must still land."""
-        with patch(
-            "app.core.middleware.limiter.limiter.get_window_stats",
+        app = self._app_that_is_rate_limited(record_window=True)
+        with patch.object(
+            app.state.limiter.limiter,
+            "get_window_stats",
             side_effect=StorageError(RuntimeError("redis gone")),
         ):
-            resp = TestClient(self._app_that_is_rate_limited(record_window=True)).get("/limited")
+            resp = TestClient(app).get("/limited")
 
         assert resp.status_code == 429
         assert resp.headers["retry-after"] == "60"
@@ -193,3 +202,55 @@ class TestRateLimitHandler:
             "code": "rate_limit_exceeded",
         }
         assert "retry-after" not in resp.headers
+
+    def test_the_refusal_is_recorded_with_who_was_refused_and_where(self) -> None:
+        """Every field here is queried in Loki when someone reports being
+        throttled; a missing or renamed one makes the event unanswerable."""
+        with patch("app.core.middleware.wide_log") as mock_log:
+            TestClient(self._app_that_is_rate_limited(record_window=True)).get("/limited")
+
+        mock_log.warning.assert_called_once_with(
+            "rate_limit_exceeded",
+            client_ip="testclient",
+            path="/limited",
+            method="GET",
+            retry_after=1,
+        )
+
+    @pytest.mark.parametrize(
+        ("headers", "expected_ip"),
+        [({"x-forwarded-for": "203.0.113.7"}, "203.0.113.7"), ({}, "unknown")],
+    )
+    def test_a_proxied_caller_without_a_socket_peer_is_still_identified(
+        self, headers: dict[str, str], expected_ip: str
+    ) -> None:
+        """Behind a load balancer the ASGI scope carries no client tuple, and an
+        unattributable throttle is the one that cannot be investigated."""
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/limited",
+                "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+                "query_string": b"",
+            }
+        )
+        exc = RateLimitExceeded(
+            Limit(
+                parse("5/minute"),
+                key_func=lambda: "client",
+                scope=None,
+                per_method=False,
+                methods=None,
+                error_message="Too many requests, slow down",
+                exempt_when=None,
+                cost=1,
+                override_defaults=False,
+            )
+        )
+
+        with patch("app.core.middleware.wide_log") as mock_log:
+            response = rate_limit_handler(request, exc)
+
+        assert response.status_code == 429
+        assert mock_log.warning.call_args.kwargs["client_ip"] == expected_ip

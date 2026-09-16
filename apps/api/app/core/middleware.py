@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import UJSONResponse
 from limits import RateLimitItem
 from limits.errors import StorageError
+from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from workos import AsyncWorkOSClient
 
@@ -27,6 +28,7 @@ from app.api.v1.middleware.timeout import RequestTimeoutMiddleware
 from app.api.v1.middleware.unhandled_exception import UnhandledExceptionMiddleware
 from app.api.v1.middleware.websocket_wide_event import WebSocketWideEventMiddleware
 from app.config.settings import settings
+from app.constants.http import RETRY_AFTER_HEADER
 from app.core.bot_auth_middleware import BotAuthMiddleware
 from app.schemas.errors import ErrorEnvelope, error_response
 from shared.py.wide_events import log as wide_log
@@ -42,15 +44,20 @@ def _retry_after_seconds(request: Request) -> int | None:
     null as a contract. The limiter records the window it hit on
     ``request.state`` just before raising, so ask that; if the storage cannot
     answer, the full window length is the correct upper bound.
+
+    The limiter comes off ``request.app.state`` like slowapi's own handler reads
+    it, not from this module: the app is what owns the counters, and asking the
+    module-level one queries a storage that never saw the request.
     """
     current_limit: tuple[RateLimitItem, list[str]] | None = getattr(
         request.state, "view_rate_limit", None
     )
     if current_limit is None:
         return None
+    request_limiter: Limiter = request.app.state.limiter
     window, identifiers = current_limit
     try:
-        reset_time, _remaining = limiter.limiter.get_window_stats(window, *identifiers)
+        reset_time, _remaining = request_limiter.limiter.get_window_stats(window, *identifiers)
     except StorageError:
         return window.get_expiry()
     return max(1, math.ceil(reset_time - time.time()))
@@ -77,7 +84,7 @@ def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> UJSONRespons
     return error_response(
         429,
         ErrorEnvelope(message=str(exc.detail), code=RATE_LIMIT_EXCEEDED_CODE),
-        headers=None if retry_after is None else {"Retry-After": str(retry_after)},
+        headers=None if retry_after is None else {RETRY_AFTER_HEADER: str(retry_after)},
     )
 
 

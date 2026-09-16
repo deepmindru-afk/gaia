@@ -13,6 +13,7 @@ from typing import Any
 import anyio
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.constants.http import RETRY_AFTER_HEADER
 from app.constants.log_tags import LogTag
 from app.schemas.errors import ErrorEnvelope, error_response
 from shared.py.wide_events import log
@@ -26,6 +27,10 @@ TIMEOUT_EXCLUDE_PREFIXES: tuple[str, ...] = (
 )
 
 DEFAULT_TIMEOUT_SECONDS: float = 300.0  # 5 minutes — enough for long agent runs
+
+#: Long enough that an immediate retry does not re-queue behind the same slow
+#: work, short enough that a user who waits beats it.
+TIMEOUT_RETRY_AFTER_SECONDS: int = 60
 
 
 class RequestTimeoutMiddleware:
@@ -75,7 +80,7 @@ class RequestTimeoutMiddleware:
                     ErrorEnvelope(
                         message=f"Request exceeded {self.timeout}s timeout", code="request_timeout"
                     ),
-                    headers={"Retry-After": "60"},
+                    headers={RETRY_AFTER_HEADER: str(TIMEOUT_RETRY_AFTER_SECONDS)},
                 )
                 await response(scope, receive, send)
             else:

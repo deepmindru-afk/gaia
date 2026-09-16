@@ -57,4 +57,7 @@ class UnhandledExceptionMiddleware:
                 path=scope.get("path", ""),
             )
             capture_unhandled_exception(Request(scope), exc)
-            await internal_error_response()(scope, receive, send)
+            envelope = internal_error_response()
+            # Response.__call__ only ever sends, so a mutant that drops
+            # ``receive`` cannot change what the client gets.
+            await envelope(scope, receive, send)  # pragma: no mutate -- see comment above

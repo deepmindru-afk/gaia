@@ -24,9 +24,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import UJSONResponse
 from pydantic import BaseModel
 
+from app.constants.http import RETRY_AFTER_HEADER
 from app.constants.memory import (
     EMBEDDING_SIDECAR_MAX_CONCURRENCY,
     EMBEDDING_SIDECAR_MAX_TEXT_CHARS,
+    EMBEDDING_SIDECAR_RETRY_AFTER_SECONDS,
     EMBEDDING_SIDECAR_SLOT_WAIT_SECONDS,
 )
 from app.core.exception_handlers import register_exception_handlers
@@ -59,7 +61,7 @@ async def _inference_slot() -> AsyncIterator[None]:
         raise HTTPException(
             status_code=503,
             detail="embedding sidecar busy; retry shortly",
-            headers={"Retry-After": "5"},
+            headers={RETRY_AFTER_HEADER: str(EMBEDDING_SIDECAR_RETRY_AFTER_SECONDS)},
         ) from exc
     try:
         yield
@@ -79,7 +81,7 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         }
     ),
 }
-_ERROR_RESPONSES[503]["headers"] = {"Retry-After": {"schema": {"type": "integer"}}}
+_ERROR_RESPONSES[503]["headers"] = {RETRY_AFTER_HEADER: {"schema": {"type": "integer"}}}
 
 
 def _reject_oversized(texts: list[str]) -> None:
