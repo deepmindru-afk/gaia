@@ -619,6 +619,18 @@ def test_pydantic_model_docstring_is_never_checked(tmp_path: Path) -> None:
     assert _docstring_codes(tmp_path, "app/x.py", src) == []
 
 
+def test_ten_line_test_module_docstring_is_clean(tmp_path: Path) -> None:
+    # A cross-file map lives on the module, not on any one test function.
+    body = "\n".join(f"line {i} of the map." for i in range(9))
+    src = f'"""{body}\n"""\n\n\ndef test_x():\n    pass\n'
+    assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == []
+
+
+def test_three_line_test_function_docstring_is_ds4(tmp_path: Path) -> None:
+    src = 'def test_x():\n    """Summary.\n\n    More.\n    """\n'
+    assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == ["DS4"]
+
+
 # --------------------------------------------------------------------------- #
 # comment-content
 # --------------------------------------------------------------------------- #
