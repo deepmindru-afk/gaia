@@ -256,15 +256,18 @@ class TestGetCurrentUserWs:
         monkeypatch.setattr(oauth_dependencies.settings, "DEV_AUTH_BYPASS_EMAIL", "dev@gaia.local")
         user_doc = MagicMock()
         bypass_user = AuthenticatedUser(user_id="u1", dev_bypass=True)
+        websocket = _websocket()
         with (
             patch(
                 _WS_DEV_BYPASS, new_callable=AsyncMock, return_value=("dev@gaia.local", user_doc)
-            ),
+            ) as resolve_target,
             patch(f"{_DEPS}.build_user_context", return_value=bypass_user) as build_context,
         ):
-            user = await get_current_user_ws(_websocket())
+            user = await get_current_user_ws(websocket)
 
         assert user is bypass_user
+        # The X-Dev-User header and the bypass cookie live on this connection.
+        resolve_target.assert_awaited_once_with(websocket)
         # The flags are the whole point of the bypass context: anything that
         # reads them must be able to tell this session from a real login.
         build_context.assert_called_once_with(user_doc, auth_provider="workos", dev_bypass=True)
