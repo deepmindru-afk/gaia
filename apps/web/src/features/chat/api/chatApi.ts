@@ -306,11 +306,8 @@ export const chatApi = {
         if (response.status === HTTP_CONFLICT) {
           throw new DuplicateTurnError();
         }
-        // Paid-only gate: the user isn't on Pro. This is the core gated
-        // endpoint, so this is the request most likely to hit it — the
-        // axios interceptor never sees this request (it isn't axios), so
-        // the paywall has to be opened here directly. Throw typed so
-        // failure handling (turnSession.ts) skips its generic error toast.
+        // The axios interceptor never sees this request, so the paywall opens
+        // here. Typed so turnSession.ts skips its generic error toast.
         if (response.status === HTTP_PAYMENT_REQUIRED) {
           const data: unknown = await response.json().catch(() => undefined);
           const detail = getSubscriptionRequiredDetail(data);

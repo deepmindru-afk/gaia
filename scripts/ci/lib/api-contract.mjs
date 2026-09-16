@@ -22,10 +22,9 @@ const GENERATED_DIR = "libs/shared/ts/src/api/generated/";
 // a twin declared in one drifts exactly like a twin declared in a `.ts`.
 const DTS_IGNORE_PATTERN = /\.d\.ts$/;
 
-// The four directories whose whole job is to name the API contract. A
-// declaration there is a twin whatever it is called, so the name check is not
-// enough: every `interface`/`type` must be a re-export or an alias of a
-// generated name (the two forms in .claude/rules/general.md).
+// The directories whose whole job is to name the API contract: a declaration
+// there is a twin whatever it is called, so every interface/type must be a
+// re-export or an alias of a generated name (.claude/rules/general.md).
 const API_TYPE_DIRS = [
   /^apps\/web\/src\/features\/[^/]+\/api\//,
   /^apps\/web\/src\/types\/api\//,
@@ -43,10 +42,9 @@ const normaliseField = (field) => field.replace(/_/g, "").toLowerCase();
 
 const BASELINES = "scripts/ci/baselines/";
 
-// A baseline is the ratchet: every line is a known violation this branch did
-// not introduce. New violations fail; a line whose violation is gone is
-// reported as removable but does not fail, so emptying a baseline never reds
-// somebody else's PR.
+// A baseline lists the known violations this branch did not introduce. New ones
+// fail; a line whose violation is gone is only reported as removable, so emptying
+// a baseline never reds somebody else's PR.
 function readBaseline(name) {
   const file = BASELINES + name;
   if (!existsSync(file)) return new Set();
@@ -72,11 +70,9 @@ function reportBaseline(name, baseline, seen) {
 // `type Foo,` line of a multi-line `import type` list.
 const TYPE_DECLARATION =
   /^\s*(?:export\s+)?(?:declare\s+)?(?:interface|type)\s+([A-Za-z0-9_]+)\s*(?:<|\{|=|extends\b)/gm;
-// `export type Workflow = WorkflowWithIntegrations;` names a generated type
-// for a feature's consumers — zero fields of its own, so it cannot drift.
-// Anything else with the name is a twin. The right-hand side is a schema
-// name, or a local name bound to one by `import type { X as Y }` (the form a
-// type-plus-`const` pair like `Priority` needs).
+// A bare alias of a generated type has no fields of its own, so it cannot drift;
+// anything else bearing a schema name is a twin. The right-hand side may also be
+// a local name bound by `import type { X as Y }`.
 const GENERATED_IMPORT = /^import type \{([^}]*)\} from "[^"]*generated";/gm;
 function generatedBindings(src, names) {
   const bound = new Set();
