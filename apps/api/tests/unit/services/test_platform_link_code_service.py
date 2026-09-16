@@ -135,18 +135,23 @@ class TestClaimReleaseDiscard:
         assert claim.payload is not None
         assert claim.in_flight is False
 
-    async def test_a_claim_lost_on_every_attempt_is_answered_as_in_flight(
+    async def test_a_claim_lost_on_every_attempt_fails_loud_instead_of_claiming_success(
         self, fake_store: dict[str, tuple[object, int | None]]
     ) -> None:
-        """Contention that outlasts every retry is a twin still running, never an expired code."""
+        """Contention that outlasts every retry must not be answered as linked; the user taps again."""
         code = await mint_platform_link_code("user1", PREFS)
         svc.redis_cache.client.set.side_effect = None
         svc.redis_cache.client.set.return_value = None
 
-        claim = await claim_platform_link_code(code)
+        with pytest.raises(AppError) as exc:
+            await claim_platform_link_code(code)
 
-        assert claim.payload is None
-        assert claim.in_flight is True
+        assert exc.value.status_code == 503
+        assert exc.value.to_dict() == {
+            "message": "The link is busy. Please tap it again.",
+            "why": "the one-tap code was claimed and released by concurrent redemptions on every attempt",
+            "fix": "tap the link again; the code is still valid",
+        }
         assert svc.redis_cache.client.set.await_count == PLATFORM_LINK_CODE_CLAIM_ATTEMPTS
 
     async def test_releasing_leaves_the_code_claimable_again(

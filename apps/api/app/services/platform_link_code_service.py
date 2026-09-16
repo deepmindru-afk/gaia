@@ -150,7 +150,14 @@ async def claim_platform_link_code(code: str) -> LinkCodeClaim:
         if held is not None:
             return LinkCodeClaim(in_flight=held == PLATFORM_LINK_CODE_CLAIM_HELD)
     else:
-        return LinkCodeClaim(in_flight=True)
+        # Answering this as linked would tell the bot a link nobody wrote went
+        # through; the honest answer is a retryable failure.
+        raise create_error(
+            message="The link is busy. Please tap it again.",
+            why="the one-tap code was claimed and released by concurrent redemptions on every attempt",
+            fix="tap the link again; the code is still valid",
+            status_code=503,
+        )
 
     payload = await get_cache(_code_key(code), PlatformLinkCodePayload)
     if payload is None:
