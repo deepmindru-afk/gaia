@@ -1156,6 +1156,23 @@ sys.exit(proc.returncode)
     fi
     if [ ! -f "$WORKDIR/mutants/mutmut-stats.json" ]; then
       echo "MUTATION RUN FAILED (no state produced) — see mutmut's output above." >&2
+      # This path owes the shard a record like every other one. Without it the
+      # module reaches the gate as a bare non-zero exit and reads as "the lane
+      # failed and has not adopted the verdict contract" — the one shape a
+      # reviewer cannot act on. The dominant cause is a per-test timeout inside
+      # the STATS run, which aborts mutmut before a single mutant is graded, so
+      # count those: "the box was slow" and "the suite is weak" are the two
+      # readings of this exit code, and only one of them is ever true here.
+      # The FAILED/ERROR summary form, not every mention: pytest prints the
+      # phrase again inside the failure body, and a doubled count reads as two
+      # slow tests where there was one.
+      TIMED_OUT_TESTS="$(grep -cE '^(FAILED|ERROR) .*Failed: Timeout \(>' "$WORKDIR/mutmut.log" || true)"
+      if [ "${TIMED_OUT_TESTS:-0}" -gt 0 ]; then
+        NO_STATE_REASON="$MODULE reached no verdict: $TIMED_OUT_TESTS test(s) hit the ${MUTANT_TEST_TIMEOUT}s per-test timeout before mutmut graded a mutant, so no survivors were measured"
+      else
+        NO_STATE_REASON="$MODULE reached no verdict: mutmut produced no state and no test hit the ${MUTANT_TEST_TIMEOUT}s per-test timeout, so no mutant was graded and no survivors were measured — see shard.log"
+      fi
+      _write_record error "$NO_STATE_REASON" /dev/null /dev/null
       exit 1
     fi
   fi
