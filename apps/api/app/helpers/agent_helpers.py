@@ -22,7 +22,7 @@ from app.agents.llm.lane import AgentRole, ModelLane, resolve_lane
 from app.agents.llm.ttft import LLMTtftCallback
 from app.agents.llm.types import DevModelOption
 from app.config.langfuse import build_langfuse_callback
-from app.config.posthog import POSTHOG_PROVIDER_KEY
+from app.constants.analytics import POSTHOG_PROVIDER_KEY
 from app.constants.cache import (
     CUSTOM_INT_METADATA_TTL,
     HANDOFF_METADATA_CACHE_PREFIX,

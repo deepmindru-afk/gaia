@@ -1,10 +1,8 @@
 from posthog import Posthog
 
 from app.config.settings import settings
+from app.constants.analytics import POSTHOG_PROVIDER_KEY
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
-
-#: The lazy-provider registry key of the shared PostHog client.
-POSTHOG_PROVIDER_KEY = "posthog"
 
 
 @lazy_provider(

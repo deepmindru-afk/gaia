@@ -9,8 +9,8 @@ from starlette.types import ASGIApp
 from workos import AsyncWorkOSClient
 
 from app.api.v1.middleware.agent_auth import verify_agent_token
-from app.config.posthog import POSTHOG_PROVIDER_KEY
 from app.config.settings import settings
+from app.constants.analytics import POSTHOG_PROVIDER_KEY
 from app.constants.auth import DEV_USER_HEADER, DEV_USER_MISSING_HINT
 from app.constants.error_codes import NOT_AUTHENTICATED
 from app.constants.log_tags import LogTag

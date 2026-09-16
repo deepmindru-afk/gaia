@@ -11,7 +11,7 @@ import pytest
 from app.agents.llm.lane import AgentRole, ModelLane
 from app.agents.llm.ttft import LLMTtftCallback
 from app.agents.llm.types import LLMProviderName
-from app.config.posthog import POSTHOG_PROVIDER_KEY
+from app.constants.analytics import POSTHOG_PROVIDER_KEY
 from app.constants.cache import CUSTOM_INT_METADATA_TTL, HANDOFF_METADATA_CACHE_PREFIX
 from app.constants.llm import LLM_LABEL_METADATA_KEY
 from app.constants.log_tags import LogTag
