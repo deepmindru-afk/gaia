@@ -9,12 +9,7 @@ Graph calls deliberately get no second event, which would double-count cost.
 
 from app.config.model_pricing import has_rate_card
 from app.models.chat_models import SourceCategory
-from app.services.analytics_service import (
-    LABEL_FEATURES,
-    AIFeature,
-    AnalyticsEvents,
-    capture_event,
-)
+from app.services.analytics_service import AIFeature, AnalyticsEvents, capture_event
 from app.services.llm_metering import TokenUsage
 from shared.py.wide_events import log
 
@@ -42,7 +37,7 @@ def feature_for_label(label: str) -> AIFeature:
     """Which capability an auxiliary call served, from the label it already carries."""
     if label.startswith(_MEMORY_LABEL_PREFIX):
         return AIFeature.MEMORY
-    return LABEL_FEATURES.get(label, AIFeature.UNATTRIBUTED)
+    return AIFeature.for_label(label)
 
 
 def graph_call_properties(

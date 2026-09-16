@@ -228,65 +228,86 @@ class AnalyticsEvents(StrEnum):
 class AIFeature(StrEnum):
     """The product capability a metered model call was made on behalf of.
 
-    Coarser than the call's ``label`` on purpose: many one-shots roll up to one
-    member while keeping their own labels. Which integration ran is ``agent_name``.
+    Each member owns the auxiliary ``label`` values that roll up to it — the
+    label every one-shot already passes for its log line. Keeping the labels on
+    the member rather than in a second table means there is nothing to keep in
+    sync: adding a member without labels is visible right here, and
+    ``test_every_feature_is_reachable`` fails on it.
+
+    Coarser than the labels on purpose: eight onboarding one-shots roll up to
+    ``ONBOARDING`` while keeping their own labels. Which integration ran is
+    ``agent_name``, an open string, because that set is not ours to close.
     """
 
+    _labels: tuple[str, ...]
+
+    def __new__(cls, value: str, labels: tuple[str, ...] = ()) -> "AIFeature":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member._labels = labels
+        return member
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """The auxiliary call labels booked to this feature."""
+        return self._labels
+
+    @classmethod
+    def for_label(cls, label: str) -> "AIFeature":
+        """The feature a one-shot's ``label`` belongs to, or ``UNATTRIBUTED``."""
+        return _FEATURE_BY_LABEL.get(label, cls.UNATTRIBUTED)
+
+    # Graph-tier spend; attributed from the agent, not from a label.
     CHAT = "chat"
-    WORKFLOW = "workflow"
     INTEGRATION = "integration"
-    MEMORY = "memory"
-    VISION = "vision"
-    MAIL = "mail"
-    HIL = "hil"
-    ONBOARDING = "onboarding"
-    PROFILE = "profile"
-    INTEGRATION_INFERENCE = "integration_inference"
-    WORKFLOW_GENERATION = "workflow_generation"
-    FILE_EXTRACTION = "file_extraction"
-    FOLLOW_UPS = "follow_ups"
-    RESEARCH = "research"
-    MODERATION = "moderation"
-    TITLE_GENERATION = "title_generation"
-    # A caller whose label has no LABEL_FEATURES entry.
+
+    WORKFLOW = "workflow", ("playbook_ask_fill", "playbook_narration")
+    MEMORY = "memory", ("profile_extraction",)
+    VISION = "vision", ("image_to_text", "tool_media_vision", "vision_fallback")
+    MAIL = "mail", ("mail_compose",)
+    HIL = (
+        "hil",
+        (
+            "hil_conversational_resolve",
+            "hil_conversational_resolve_batch",
+            "hil_intent_judge",
+            "hil_tool_classification",
+        ),
+    )
+    ONBOARDING = (
+        "onboarding",
+        (
+            "onboarding_clarify",
+            "onboarding_first_message",
+            "onboarding_focus_todos",
+            "onboarding_inbox_triage",
+            "onboarding_social_profile",
+            "onboarding_todos_from_emails",
+            "onboarding_workflow_suggestions",
+            "onboarding_writing_style",
+            "onboarding_writing_style_example",
+        ),
+    )
+    PROFILE = "profile", ("holo_card",)
+    INTEGRATION_INFERENCE = (
+        "integration_inference",
+        (
+            "integration_category",
+            "integration_content",
+        ),
+    )
+    WORKFLOW_GENERATION = "workflow_generation", ("workflow_generation", "workflow_prompt")
+    FILE_EXTRACTION = "file_extraction", ("file_image_summary", "file_text_summary")
+    FOLLOW_UPS = "follow_ups", ("follow_up_actions",)
+    RESEARCH = "research", ("research_queries",)
+    MODERATION = "moderation", ("profanity",)
+    TITLE_GENERATION = "title_generation", ("chatbot",)
+    # A caller whose label no member claims.
     UNATTRIBUTED = "unattributed"
 
 
-#: Which capability each auxiliary ``label`` belongs to, keyed on the ``label``
-#: every one-shot already passes for its log line. Kept beside ``AIFeature`` so
-#: the two cannot drift; ``test_every_feature_is_reachable`` enforces it.
-LABEL_FEATURES: dict[str, AIFeature] = {
-    "chatbot": AIFeature.TITLE_GENERATION,
-    "file_image_summary": AIFeature.FILE_EXTRACTION,
-    "file_text_summary": AIFeature.FILE_EXTRACTION,
-    "follow_up_actions": AIFeature.FOLLOW_UPS,
-    "hil_conversational_resolve": AIFeature.HIL,
-    "hil_conversational_resolve_batch": AIFeature.HIL,
-    "hil_intent_judge": AIFeature.HIL,
-    "hil_tool_classification": AIFeature.HIL,
-    "holo_card": AIFeature.PROFILE,
-    "image_to_text": AIFeature.VISION,
-    "integration_category": AIFeature.INTEGRATION_INFERENCE,
-    "integration_content": AIFeature.INTEGRATION_INFERENCE,
-    "mail_compose": AIFeature.MAIL,
-    "onboarding_clarify": AIFeature.ONBOARDING,
-    "onboarding_first_message": AIFeature.ONBOARDING,
-    "onboarding_focus_todos": AIFeature.ONBOARDING,
-    "onboarding_inbox_triage": AIFeature.ONBOARDING,
-    "onboarding_social_profile": AIFeature.ONBOARDING,
-    "onboarding_todos_from_emails": AIFeature.ONBOARDING,
-    "onboarding_workflow_suggestions": AIFeature.ONBOARDING,
-    "onboarding_writing_style": AIFeature.ONBOARDING,
-    "onboarding_writing_style_example": AIFeature.ONBOARDING,
-    "playbook_ask_fill": AIFeature.WORKFLOW,
-    "playbook_narration": AIFeature.WORKFLOW,
-    "profanity": AIFeature.MODERATION,
-    "profile_extraction": AIFeature.MEMORY,
-    "research_queries": AIFeature.RESEARCH,
-    "tool_media_vision": AIFeature.VISION,
-    "vision_fallback": AIFeature.VISION,
-    "workflow_generation": AIFeature.WORKFLOW_GENERATION,
-    "workflow_prompt": AIFeature.WORKFLOW_GENERATION,
+_FEATURE_BY_LABEL: dict[str, AIFeature] = {
+    label: feature for feature in AIFeature for label in feature.labels
 }
 
 

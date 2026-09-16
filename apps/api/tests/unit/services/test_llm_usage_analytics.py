@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.constants.llm import DEFAULT_MODEL_NAME
-from app.services.analytics_service import LABEL_FEATURES, AIFeature, AnalyticsEvents
+from app.services.analytics_service import AIFeature, AnalyticsEvents
 from app.services.llm_metering import TokenUsage
 from app.services.llm_usage_analytics import (
     _MEMORY_LABEL_PREFIX,
@@ -156,15 +156,15 @@ def test_every_label_the_codebase_passes_has_a_feature() -> None:
                     if feature_for_label(kw.value.value) is AIFeature.UNATTRIBUTED:
                         unmapped.add(kw.value.value)
 
-    assert not unmapped, f"labels with no LABEL_FEATURES entry: {sorted(unmapped)}"
+    assert not unmapped, f"labels no AIFeature member claims: {sorted(unmapped)}"
 
 
-def test_the_table_has_no_entry_for_a_label_nothing_passes() -> None:
-    """A stale row makes the taxonomy claim a capability the code no longer has."""
+def test_no_member_claims_a_label_nothing_passes() -> None:
+    """A stale label makes the taxonomy claim a capability the code no longer has."""
     app = Path(__file__).resolve().parents[3] / "app"
     used: set[str] = set()
     for path in app.rglob("*.py"):
-        # Skip the table's own module, or every row would count as used.
+        # Skip the enum's own module, or every label would count as used.
         if path.name == "analytics_service.py":
             continue
         try:
@@ -175,9 +175,8 @@ def test_the_table_has_no_entry_for_a_label_nothing_passes() -> None:
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 used.add(node.value)
 
-    assert not (set(LABEL_FEATURES) - used), (
-        f"LABEL_FEATURES rows no call site uses: {sorted(set(LABEL_FEATURES) - used)}"
-    )
+    claimed = {label for feature in AIFeature for label in feature.labels}
+    assert not (claimed - used), f"labels no call site passes: {sorted(claimed - used)}"
 
 
 # --- capture_auxiliary_llm_call ----------------------------------------------- #
@@ -240,7 +239,7 @@ def test_the_skip_says_which_call_it_dropped(posthog: Any) -> None:
 
 
 def test_an_unmapped_label_raises_an_error_line_naming_itself(posthog: Any) -> None:
-    """The error line is what makes a forgotten LABEL_FEATURES entry greppable."""
+    """The error line is what makes a label no member claims greppable."""
     with patch("app.services.llm_usage_analytics.log") as mock_log:
         _capture(label="helper_added_without_a_table_entry")
 
@@ -299,9 +298,9 @@ def test_the_event_carries_no_message_content(posthog: Any) -> None:
 def test_every_feature_is_reachable() -> None:
     """No ``AIFeature`` member may exist with no way to produce it.
 
-    Sitting beside ``LABEL_FEATURES`` does not by itself prevent drift: an
-    unreachable member reads on a chart as zero spend rather than as a wiring
-    bug. This caught ``IMAGE``.
+    Owning its own labels does not by itself make a member producible: one
+    declared with none, reached by no graph rule, reads on a chart as zero
+    spend rather than as the wiring bug it is. This caught ``IMAGE``.
     """
     graph_reachable = {
         llm_feature("comms_agent", None),
@@ -309,7 +308,7 @@ def test_every_feature_is_reachable() -> None:
         llm_feature("comms_agent", "wf-1"),
     }
     reachable = (
-        set(LABEL_FEATURES.values())
+        {f for f in AIFeature if f.labels}
         | graph_reachable
         | {feature_for_label(f"{_MEMORY_LABEL_PREFIX}store")}
         | {AIFeature.UNATTRIBUTED}
