@@ -2,27 +2,27 @@
 """Reconstruct what OpenRouter *actually* charged, per user per UTC day.
 
 GAIA prices every model call from a flat per-model table
-(app/config/model_pricing.py), but OpenRouter routes the same model to
+(``app/config/model_pricing.py``), but OpenRouter routes the same model to
 different providers at rates that differ by up to 10x. Measured over 1,486
 calls, logged spend came out 44% below the real invoice — so the durable
-history in usage_daily understates COGS by an amount nobody can see.
+history in ``usage_daily`` understates COGS by an amount nobody can see.
 
 This rebuilds the real number from two sources that are already there:
 
-- **Loki** holds one llm_call wide event per call (30-day retention) with
-  the generation_id OpenRouter issued.
-- **OpenRouter** answers GET /api/v1/generation?id=<id> with the true
-  total_cost and the provider_name that served it.
+- **Loki** holds one ``llm_call`` wide event per call (30-day retention) with
+  the ``generation_id`` OpenRouter issued.
+- **OpenRouter** answers ``GET /api/v1/generation?id=<id>`` with the true
+  ``total_cost`` and the ``provider_name`` that served it.
 
 A call with no generation id, or one OpenRouter has already dropped (404 —
 unverifiable, not an error), keeps its logged cost and counts *against* that
 user-day's coverage, so a low coverage number is visible rather than a
 silently optimistic total.
 
-Nothing overwrites cost/aux_cost: budget enforcement already acted on
+Nothing overwrites ``cost``/``aux_cost``: budget enforcement already acted on
 those, and rewriting them would retroactively change what a user was charged.
-The actuals land beside them in cost_actual/aux_cost_actual, with
-cost_actual_coverage, cost_actual_provider_mix and cost_actual_at.
+The actuals land beside them in ``cost_actual``/``aux_cost_actual``, with
+``cost_actual_coverage``, ``cost_actual_provider_mix`` and ``cost_actual_at``.
 
 Run from the api directory (or /app inside the container)::
 
@@ -30,9 +30,9 @@ Run from the api directory (or /app inside the container)::
     python scripts/backfill_true_cost.py --days 7 --dry-run
     python scripts/backfill_true_cost.py --apply
 
-Environment: LOKI_URL (default http://loki:3100) and
-OPENROUTER_API_KEY. Generation lookups are cached per day under
---cache-dir, so a re-run only asks about ids it has not resolved yet — a
+Environment: ``LOKI_URL`` (default ``http://loki:3100``) and
+``OPENROUTER_API_KEY``. Generation lookups are cached per day under
+``--cache-dir``, so a re-run only asks about ids it has not resolved yet — a
 long backfill is resumable and an interrupted one costs nothing to restart.
 """
 

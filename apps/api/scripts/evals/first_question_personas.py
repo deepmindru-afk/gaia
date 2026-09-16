@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
 # mypy: ignore-errors -- dev eval script; typing not maintained here
 """
-Run compose_first_question over the onboarding answers we actually see.
+Run `compose_first_question` over the onboarding answers we actually see.
 
-Not a test: it calls a real model, so it reads red when the provider is
-down. Reads the copy for ten personas — question, chips, and whether the
-validator used the model's answer or fell back to the static line.
+Not a test: it calls a real model, so it goes red when the provider is down and
+that would be a useless CI signal. It exists to read the copy — ten personas,
+their question, their chips, and whether the validator let the model's answer
+through or fell back to the static line.
 
-Usage: uv run python scripts/evals/first_question_personas.py [--follow]
-[--turns N]. --follow sends each chip of the first five personas to the
-LOCALLY RUNNING API (needs mise dev --agent/DEV_AUTH_BYPASS_EMAIL) and reads
-GAIA's reply; --turns 2 (default) answers "yes" in the same conversation to
-catch an offer nobody can accept. Every reply is then scored 0/1 by an LLM
-judge against the new-user prompt's rules and reported per-reply/per-criterion.
+Usage (from apps/api/):
+    uv run python scripts/evals/first_question_personas.py
+    uv run python scripts/evals/first_question_personas.py --follow
+
+`--follow` takes each chip of the first five personas and sends it as the user's
+next message to the LOCALLY RUNNING API, so you can read GAIA's actual reply and
+judge whether a chip leads anywhere concrete. It needs `mise dev --agent` (or any
+boot with `DEV_AUTH_BYPASS_EMAIL` set); it mints one dev user per persona, which
+must be able to pass the paid-only gate.
+
+`--turns 2` (the default) keeps going: it answers GAIA's offer with "yes" in the
+SAME conversation and captures whether a tool actually ran on that turn. An offer
+nobody can accept is the failure mode a single-turn read cannot see.
+
+Every reply is then scored 0/1 by an LLM judge on the same lane against the rules
+the new-user prompt block actually ships, and the script prints a per-reply table,
+per-criterion totals, and the worst replies verbatim.
 """
 
 import argparse

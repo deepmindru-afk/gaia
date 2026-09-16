@@ -1,19 +1,37 @@
 #!/usr/bin/env python3
 """Repair a user's memory store after the extraction/reconciliation fixes.
 
-The fixes only change what's written from now on; existing rows are the
-problem: (1) EXTENDS wrote a child alongside its still-live parent — 329 live
-rows (36%) in production were EXTENDS children of a live parent, and this
-retires each covered parent into its child; (2) the extractor almost never
-set an expiry (19 of 1,028 rows), so stale state facts (counts, statuses)
-stay live — rows already tagged shelf_life='state' retire on age, older ones
-fall back to a phrase heuristic; (3) user.md/people.md/agenda.md, derived
-from the corrupted rows, get re-rendered once they're gone.
+The fixes change what gets written from now on. They do not touch what is
+already there, and what is already there is the problem:
 
-Usage: uv run python -m app.scripts.repair_memory_store --user <id> [--apply].
-Flags are on --help, not repeated here (this docstring IS the parser
-description). --retire-ids forgets a memory id outright for a row a human
-judged wrong; nothing writes without --apply.
+- **Coexisting EXTENDS pairs.** EXTENDS used to write a child alongside its
+  still-live parent, so both versions of one subject-attribute stayed in
+  recall. In the production store 329 live rows (36%) were EXTENDS children of
+  a live parent. This retires each such parent into its child's chain.
+- **State rows that never expire.** The extractor almost never set an expiry
+  (19 of 1,028 rows), so counts, balances, connection statuses and deployment
+  states are still live months later. Rows already carrying
+  ``shelf_life='state'`` are retired past the window; older rows all read as
+  'durable' because the column post-dates them, so those fall back to a
+  phrase heuristic ("as of", "currently", "is failing", "disconnected",
+  "pending").
+- **Documents written from a corrupted draft.** user.md and people.md are
+  re-derived from every live durable fact once the rows above are gone, and
+  agenda.md is re-rendered from its rows.
+
+Usage::
+
+    cd apps/api
+    uv run python -m app.scripts.repair_memory_store --user <id>            # dry run
+    uv run python -m app.scripts.repair_memory_store --user <id> --apply    # commit
+
+Run ``--help`` for the flags: this docstring IS the parser's description, so a
+second copy of them here renders twice and drifts from the one argparse builds.
+
+``--retire-ids`` is the one that needs more than its one-liner: it forgets a
+memory id outright, for rows a human has read and judged wrong.
+
+Every mode prints the full plan first. Nothing is written without ``--apply``.
 """
 
 from __future__ import annotations
