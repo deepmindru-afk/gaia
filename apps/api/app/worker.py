@@ -3,6 +3,7 @@ from typing import cast
 from arq import cron
 from arq.typing import WorkerCoroutine
 from arq.worker import func
+import stackprinter
 
 from app.constants.onboarding import INTELLIGENCE_TASK
 from app.constants.payments import SUBSCRIPTION_WORKFLOW_SYNC_TASK
@@ -47,6 +48,11 @@ from app.workers.tasks.tracked_todo_tasks import (
 )
 from app.workers.tasks.trigger_dispatch_tasks import dispatch_todo_subscriptions
 from app.workers.tasks.workflow_dormancy_tasks import sweep_dormant_user_workflows
+
+# Rich tracebacks for anything that escapes to the top of this process, the same
+# way main.py sets them for the API process. Process policy, so it lives in the
+# entrypoint and not in app/__init__.py.
+stackprinter.set_excepthook(style="darkbg2")
 
 # Wrap every task in the standard envelope (wide event + Prometheus histogram)
 # so arq-worker.json can show real p50/p95/p99 latency per task name and every

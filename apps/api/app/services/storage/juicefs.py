@@ -11,6 +11,7 @@ import time
 
 from app.config.settings import settings
 from app.constants.log_tags import LogTag
+from app.constants.vfs import SAFE_PATH_ID_PATTERN
 from app.services.storage.metrics import FsOps, add_fs_bytes, fs_timer, record_fs_op
 from shared.py.wide_events import log
 
@@ -19,7 +20,6 @@ class JuiceFSUnavailable(Exception):
     """Raised when the host-side JuiceFS mount is not available."""
 
 
-SAFE_PATH_ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 _SAFE_ID_RE = re.compile(SAFE_PATH_ID_PATTERN)
 
 

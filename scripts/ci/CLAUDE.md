@@ -11,7 +11,7 @@ lane without grepping the workflow first.
 
 | Concept | Script | Subcommands |
 | --- | --- | --- |
-| Where and how hard a job runs | `runner.sh` | `select`, `watchdog`, `cancel-superseded`, `prime-archive`, `parallel`, `dep-marker`, `with-slots` |
+| Where and how hard a job runs | `runner.sh` | `select`, `watchdog`, `cancel-superseded`, `prime-archive`, `parallel`, `dep-marker`, `with-slots`, `health` |
 | The service containers a suite talks to | `test-services.sh` | `up`, `prepare`, `reset`, `down`, `janitor` |
 | The embedding sidecar | `embedding-sidecar.sh` | `start`, `stop` |
 | Running the Python suite | `pytest.sh` | `slice`, `flake-gate`, `regression-proof` |
@@ -24,6 +24,12 @@ lane without grepping the workflow first.
 | Publishing what a green master produced | `release.sh` | `resolve-image-tags`, `promote-latest`, `dispatch-cli-publish`, `disable-cf-builds` |
 | The release-metadata guards | `release.mjs` | `validate-manifest`, `verify-cli` |
 | Shipping to production | `deploy.sh` | `plan`, `stack`, `verify`, `retag`, `notify` |
+
+`runner.sh health` is the read half of the governor below: a lane stuck in
+`queued` is either a thrashing BOX or a full GitHub POOL, and the two have
+opposite fixes, so it prints both — listener counts, load average, thread
+count, who holds CPU slots, and how many mutmut/pytest processes are running.
+`mise ci:remote` prints one line of it when run on the box.
 
 Release and deploy are two concepts, not one: `release.sh` publishes artifacts
 (image tags, `:latest`, the CLI on npm); `deploy.sh` puts them on the Swarm.
@@ -75,7 +81,7 @@ parallelism independently and land together: the four `test-python` slices alone
 budget ~16 threads (unit-a=5, unit-b=7, integration=4, bridge serial), and on the
 SAME cores at the same time run main.yml's `build` (nx `--parallel 6`),
 `test-typescript`, `docker-image`, and all of code-quality.yml — including
-`mutation.sh shard` four at a time, each wanting nproc-2. Two overlapping pushes
+`mutation.sh shard` four at a time, each wanting nproc/2. Two overlapping pushes
 double it. The 15-min load average was measured at ~18.5 (~2.3x oversubscription);
 the same PR ran 3.6 min on an idle box vs 11.3 min loaded.
 
@@ -85,14 +91,25 @@ across every runner instance because they share `$HOME`; deliberately NOT
 `RUNNER_LOCAL_CACHE`, which is per-instance and would give each runner its own
 budget). A lane takes tokens equal to its real thread appetite and releases them
 at the end, so the concurrent heavy work is capped at the pool size and lanes
-queue instead of thrash. Pool size is `GAIA_CPU_TOKENS`, defaulting to the
-thread count (`nproc`, 16 on the box). That default is measured, not assumed:
-the test-python slices' static worker shares (5+7+4) sum to the 16 threads by
-design for a single run, so a smaller pool would serialise a lone run's own
-slices and regress the single-push case; at `nproc` a single run is unaffected
-while two overlapping runs still halve the oversubscription (measured: two
-concurrent `main.yml` dispatches drove the 1-min loadavg peak to 59 with the
-governor off vs 32 with the pool at 16, per-run wall 6.4/6.1 min -> 5.5/4.8 min).
+queue instead of thrash. Pool size is `GAIA_CPU_TOKENS`, defaulting to one and a
+half times the thread count (`nproc * 3 / 2`, 24 on the box).
+
+That default is measured, not assumed, and it has been three values. The floor
+is the test-python slices' static worker shares (5+7+4 = the 16 threads by
+design for a single run), so a pool below `nproc` would serialise a lone run's
+own slices; `nproc` itself also halved the oversubscription of two overlapping
+runs (two concurrent `main.yml` dispatches: 1-min loadavg peak 59 with the
+governor off vs 32 at pool 16, per-run wall 6.4/6.1 min -> 5.5/4.8 min). But at
+`nproc` the mutation lane had nothing left — measured 2026-09-17, a shard taking
+`nproc-2` = 14 could not fit beside another, so exactly ONE shard ran at a time
+while 19 listeners waited and the loadavg sat at 7 on an idle box; and when
+un-gated jobs did overlap to loadavg 75, mutants hit the per-test timeout and a
+module took 138 s against 29 s unloaded. `2 * nproc` overshot: with the
+`GAIA_CPU_TOKENS=32` / `MUTMUT_MAX_CHILDREN=8` stopgap four shards ran at once
+(32 mutant workers on 16 threads), loadavg reached 34 and shards still timed out
+(run #1202, shards 1/6 and 3/6, 2 timeouts each, 0 survivors), while two shards
+(16 workers) held the loadavg at 5-10 with none. `nproc * 3 / 2` is three
+8-worker shards plus headroom for a test slice.
 
 Two rules make it safe to have in the gate at all:
 
@@ -107,11 +124,16 @@ Two rules make it safe to have in the gate at all:
   that is older than `GAIA_CPU_SLOTS_TTL` (3600s) is reclaimed by the next
   acquirer.
 
-Wiring: `pytest.sh slice` takes `XDIST_N` tokens, `mutation.sh shard` takes its
-`nproc-2` budget (and bounds `MUTMUT_MAX_CHILDREN` to match), and the nx `build`
+Wiring: `pytest.sh slice` takes `XDIST_N` tokens, `mutation.sh shard` takes
+EXACTLY its `MUTMUT_MAX_CHILDREN` mutant-worker count (defaulting to `nproc/2`
+via `_mutant_workers`, and printed as `mutation shard: N mutant worker(s), N
+host CPU token(s)` so a shard's weight is never invisible), and the nx `build`
 step takes `NX_PARALLEL` via `runner.sh with-slots N -- <cmd>` (the wrapper exists
-so a scriptless lane's step stays one command line). The lib lives in the repo
-checkout and is sourced like `log.sh`; no `setup.sh` re-run is needed on the box.
+so a scriptless lane's step stays one command line). A lane must ask for what it
+really runs: the shard used to floor its request at `nproc-2` even when
+`MUTMUT_MAX_CHILDREN` was smaller, which is what made two shards mutually
+exclusive in the pool. The lib lives in the repo checkout and is sourced like
+`log.sh`; no `setup.sh` re-run is needed on the box.
 
 ## Conventions every script here follows
 
