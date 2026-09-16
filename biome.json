@@ -123,12 +123,7 @@
         "noConsole": {
           "level": "warn",
           "options": {
-            "allow": [
-              "error",
-              "warn",
-              "info",
-              "debug"
-            ]
+            "allow": ["error", "warn", "info", "debug"]
           }
         },
         "useIterableCallbackReturn": "off",
@@ -202,10 +197,7 @@
               "options": {
                 "paths": {
                   "@/lib/api/client": {
-                    "importNames": [
-                      "apiauth",
-                      "api"
-                    ],
+                    "importNames": ["apiauth", "api"],
                     "message": "The axios instances belong to apps/web/src/lib/api. Use `api` from \"@/lib/api/typed\", whose paths and response shapes are checked against openapi.json; apiBaseUrl/clientHeaders/registerApiErrorHandler stay importable."
                   },
                   "@/lib/api/service": "apiService is the untyped request engine behind the typed client. Use `api` from \"@/lib/api/typed\" instead.",
@@ -228,9 +220,7 @@
       }
     },
     {
-      "includes": [
-        "apps/web/src/features/desktop-popup/desktop-popup.css"
-      ],
+      "includes": ["apps/web/src/features/desktop-popup/desktop-popup.css"],
       "linter": {
         "rules": {
           "complexity": {
@@ -240,9 +230,7 @@
       }
     },
     {
-      "includes": [
-        "apps/web/**"
-      ],
+      "includes": ["apps/web/**"],
       "linter": {
         "domains": {
           "next": "recommended"
@@ -270,9 +258,7 @@
         "apps/web/src/app/**/index.ts",
         "apps/web/src/app/**/index.tsx"
       ],
-      "plugins": [
-        "./config/biome-rules/no-barrel-reexport.grit"
-      ]
+      "plugins": ["./config/biome-rules/no-barrel-reexport.grit"]
     },
     {
       "includes": [
@@ -302,12 +288,7 @@
       }
     },
     {
-      "includes": [
-        "**/types.ts",
-        "**/types/**",
-        "**/*.types.ts",
-        "**/*.d.ts"
-      ],
+      "includes": ["**/types.ts", "**/types/**", "**/*.types.ts", "**/*.d.ts"],
       "linter": {
         "rules": {
           "correctness": {
