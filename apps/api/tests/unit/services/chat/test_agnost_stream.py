@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.constants.hil import HIL_ACK_APPROVED, HIL_ACK_DENIED
-from app.models.message_models import MessageRequestWithHistory
+from app.models.message_models import FileData, MessageRequestWithHistory
 from app.services.analytics_service import AnalyticsEvents
 from app.services.chat.stream import (
     _resolve_pending_approval_turn,
@@ -421,6 +421,73 @@ class TestTurnTelemetry:
         ]
         assert len(completed) == 1
         assert completed[0].args[2]["has_error"] is False
+        assert completed[0].kwargs["dedupe_key"] == "stream_agnost"
+
+    async def test_new_conversation_uploads_are_seeded(self, test_user):
+        sm = _make_stream_manager_mock()
+        files = [
+            FileData(fileId="f1", url="https://x/y", filename="a.pdf"),
+        ]
+        new_body = MessageRequestWithHistory(
+            message="see attached",
+            messages=[{"role": "user", "content": "see attached"}],
+            conversation_id=None,
+            fileData=files,
+        )
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_done_only_stream()),
+            ),
+            patch(
+                "app.services.chat.stream.save_conversation_async",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.stream.initialize_new_conversation",
+                new=AsyncMock(return_value="data: init\n\n"),
+            ),
+            patch("app.services.chat.stream._wait_for_artifact_forwarder", new=AsyncMock()),
+            patch("app.services.chat.stream.FileService") as mock_files,
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+        ):
+            mock_files.seed_uploads = AsyncMock()
+            await run_chat_stream_background(
+                stream_id="stream_seed",
+                body=new_body,
+                user=test_user,
+                conversation_id="new_conv_files",
+            )
+
+        mock_files.seed_uploads.assert_awaited_once_with(files, "user_abc", "new_conv_files")
+
+    async def test_existing_conversation_seeds_nothing(self, test_user, existing_conv_body):
+        sm = _make_stream_manager_mock()
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_done_only_stream()),
+            ),
+            patch(
+                "app.services.chat.stream.save_conversation_async",
+                new=AsyncMock(),
+            ),
+            patch("app.services.chat.stream._wait_for_artifact_forwarder", new=AsyncMock()) as mock_wait,
+            patch("app.services.chat.stream.FileService") as mock_files,
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+        ):
+            mock_files.seed_uploads = AsyncMock()
+            await run_chat_stream_background(
+                stream_id="stream_noseed",
+                body=existing_conv_body,
+                user=test_user,
+                conversation_id="conv_existing_123",
+            )
+
+        mock_wait.assert_not_awaited()
+        mock_files.seed_uploads.assert_not_awaited()
 
 
 @pytest.mark.unit
@@ -547,3 +614,44 @@ class TestApprovalTurnTelemetry:
 
         assert result is False
         mock_begin.assert_not_called()
+    async def test_description_task_receives_identity(self, test_user):
+        """The detached title task gets the conversation, user, and bot
+        message id — without them its spans orphan and its spend unattributed."""
+        sm = _make_stream_manager_mock()
+        new_body = MessageRequestWithHistory(
+            message="Hello GAIA",
+            messages=[{"role": "user", "content": "Hello GAIA"}],
+            conversation_id=None,
+        )
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_done_only_stream()),
+            ),
+            patch(
+                "app.services.chat.stream.save_conversation_async",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.stream.initialize_new_conversation",
+                new=AsyncMock(return_value="data: init\n\n"),
+            ),
+            patch(
+                "app.services.chat.stream.generate_and_update_description",
+                new=AsyncMock(return_value="Hello GAIA"),
+            ) as mock_generate,
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+        ):
+            await run_chat_stream_background(
+                stream_id="stream_desc",
+                body=new_body,
+                user=test_user,
+                conversation_id="new_conv_id",
+            )
+
+        mock_generate.assert_awaited_once()
+        args = mock_generate.call_args.args
+        assert args[0] == "new_conv_id"
+        assert args[2] == test_user
+        assert isinstance(args[5], str) and args[5]

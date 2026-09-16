@@ -525,7 +525,7 @@ async def _resolve_pending_approval_turn(
             conversation_id=conversation_id,
             user_input=message,
             source=source,
-            mode="interactive",
+            mode="interactive",  # pragma: no mutate - matches the default on purpose: pins HIL turns as interactive so a future default change can't silently reclassify them
             properties={"approval_flow": "hil_classifier"},
         )
     )
