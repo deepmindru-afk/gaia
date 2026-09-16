@@ -64,6 +64,33 @@ _mutant_workers() {
   printf '%s' "$(( threads > 1 ? threads / 2 : 1 ))"
 }
 
+# Where the disposable copies of app/ + tests/ + scripts/ live.
+#
+# tmpfs when the machine offers one: a module's tree is ~43 MB over 2100 files
+# and mutmut writes a whole mutants/ tree beside it, so on a spinning-disk or
+# busy SSD those writes, not the mutation work, set the pace. Falls back to
+# apps/api on machines without tmpfs (macOS) or when it is nearly full, so a
+# constrained box degrades in speed rather than failing. The shard base and
+# every module workdir MUST resolve here identically — `cp -al` cannot link
+# across filesystems.
+_workdir_base() {
+  if [ -n "${MUTMUT_WORKDIR_BASE:-}" ]; then
+    printf '%s' "$MUTMUT_WORKDIR_BASE"
+    return
+  fi
+  if [ -d /dev/shm ] && [ -w /dev/shm ]; then
+    # Need room for the base copy plus every live mutants/ tree; 1 GiB is a
+    # comfortable ceiling now that the per-module copies are hardlinks.
+    local free_kb
+    free_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2{print $4}')"
+    if [ -n "${free_kb:-}" ] && [ "$free_kb" -gt 1048576 ]; then
+      printf '%s' /dev/shm
+      return
+    fi
+  fi
+  printf '%s' "$REPO_ROOT/apps/api"
+}
+
 # Emit the mutation-check matrix: every changed app module + its test file.
 #
 # Used by the test-mutation lane (code-quality.yml) to run mutation testing
@@ -192,7 +219,16 @@ cmd_shard() {
   # to iterate and the shard would exit 0 having mutated nothing — a false green,
   # which is the one outcome this gate must never produce.
   SHARD_TSV="$(mktemp)"
-  trap 'rm -f "$SHARD_TSV"' EXIT
+  SHARD_BASE=""
+  # Explicit ifs, not `&&`: an EXIT trap whose last command returns 1 clobbers
+  # the script's exit status, and this shard's status IS the gate's verdict.
+  _shard_cleanup() {
+    rm -f "$SHARD_TSV"
+    if [ -n "$SHARD_BASE" ]; then
+      rm -rf "$SHARD_BASE"
+    fi
+  }
+  trap _shard_cleanup EXIT
   if ! GROUP="$GROUP" python3 -c '
 import json
 import os
@@ -244,6 +280,26 @@ for entry in entries:
   # notice for exactly that reason.
   echo "mutation shard: $MUTMUT_MAX_CHILDREN mutant worker(s), $SLOTS host CPU token(s)"
   cpu_slots_acquire "$SLOTS"
+
+  # ONE real copy of app/ + tests/ + scripts/ for the whole shard; each module
+  # below gets a `cp -al` hardlink copy of it. A 40-module shard used to copy
+  # those 43 MB / 2100 files 40 times over (and mutmut copied them a second time
+  # into mutants/, which mutmut_hardlink_copy now links as well).
+  # Named .mutation-* so apps/api/.gitignore covers a SIGKILLed run's leftovers.
+  SHARD_BASE="$(_workdir_base)/.mutation-base-$$"
+  rm -rf "$SHARD_BASE"
+  mkdir -p "$SHARD_BASE"
+  if ( cd "$REPO_ROOT/apps/api" &&
+       cp -r app tests scripts "$SHARD_BASE/" &&
+       cp -f pyproject.toml pytest.ini "$SHARD_BASE/" ); then
+    export MUTMUT_SHARD_BASE="$SHARD_BASE"
+  else
+    # Not fatal: cmd_module copies for itself when it is handed no base. Loud,
+    # because the shard then pays the old per-module copy and nothing else says so.
+    echo "::warning::mutation shard could not stage its base copy in $SHARD_BASE — each module will copy for itself"
+    rm -rf "$SHARD_BASE"
+    SHARD_BASE=""
+  fi
 
   rc=0
   failed_modules=()
@@ -538,34 +594,8 @@ EOF
   # mutants/ dir, and the pytest run. Absolute path: the trap runs after
   # `cd "$WORKDIR"`, so a relative path would delete the wrong directory.
   #
-  # Placed on tmpfs when the machine offers one. Each invocation copies ~65 MB
-  # of app + tests + scripts and then has mutmut write a whole mutants/ tree
-  # beside it; with several modules in flight those writes, not the mutation
-  # work, set the pace. /dev/shm keeps all of it in RAM. Falls back to the
-  # working directory on machines without tmpfs (macOS) or when it is nearly
-  # full, so a constrained box degrades in speed rather than failing.
-  #
-  # Real copies, not hardlinks (`cp -al`): the changed-line scoping below
-  # rewrites $MODULE in place, and a hardlink shares its inode with the file in
-  # the developer's checkout — the pragma stamping would edit the real source.
-  # Not symlinks either: a symlinked workdir/app resolves to the SAME inode as
-  # apps/api/app — if both ever land on sys.path, CPython raises "cannot load
-  # module more than once per process" when the same file is imported under two
-  # paths (observed in CI for app.db.chroma).
-  WORKDIR_BASE="${MUTMUT_WORKDIR_BASE:-}"
-  if [ -z "$WORKDIR_BASE" ]; then
-    WORKDIR_BASE="$(pwd)"
-    if [ -d /dev/shm ] && [ -w /dev/shm ]; then
-      # Need room for the copy plus mutmut's mutants/ tree; 1 GiB is a
-      # comfortable ceiling for a single module.
-      SHM_FREE_KB="$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2{print $4}')"
-      if [ -n "${SHM_FREE_KB:-}" ] && [ "$SHM_FREE_KB" -gt 1048576 ]; then
-        WORKDIR_BASE=/dev/shm
-      fi
-    fi
-  fi
   # Named .mutation-$$ so apps/api/.gitignore covers a SIGKILLed run's leftovers.
-  WORKDIR="$WORKDIR_BASE/.mutation-$$"
+  WORKDIR="$(_workdir_base)/.mutation-$$"
 
   # Phase tracking.
   #
@@ -603,15 +633,38 @@ EOF
   # is what .mutation-*/ in apps/api/.gitignore covers.)
   trap 'exit 143' TERM INT
   _phase "copy workdir"
-  mkdir -p "$WORKDIR"
-  cp -r app "$WORKDIR/app"
-  cp -r tests "$WORKDIR/tests"
-  cp -r scripts "$WORKDIR/scripts"
-  cp -f pyproject.toml "$WORKDIR/pyproject.toml"
-  # pytest.ini carries asyncio_mode=auto. Under apps/api the workdir found it by
-  # walking up; under /dev/shm there is nothing above, and without it every
-  # async test fails with "async def functions are not natively supported".
-  cp -f pytest.ini "$WORKDIR/pytest.ini"
+  # A shard stages ONE real copy and every module hardlinks it (`cp -al`), which
+  # costs directories and inodes instead of 43 MB per module. Run standalone
+  # there is no base, and the real copy happens here as it always did.
+  #
+  # Never symlinks: a symlinked workdir/app resolves to the SAME inode as
+  # apps/api/app — if both ever land on sys.path, CPython raises "cannot load
+  # module more than once per process" when the same file is imported under two
+  # paths (observed in CI for app.db.chroma).
+  if [ -n "${MUTMUT_SHARD_BASE:-}" ] && [ -d "${MUTMUT_SHARD_BASE:-}" ] &&
+     mkdir -p "$WORKDIR" && cp -al "$MUTMUT_SHARD_BASE/." "$WORKDIR/" 2> /dev/null; then
+    # The two files this run WRITES must not be shared with the shard's base:
+    # pyproject.toml is rewritten just below with this module's [tool.mutmut],
+    # and the module under test is the mutation target. Writing through a
+    # hardlink would hand every other module in the shard this module's config
+    # and a mutated source file. rm-then-cp, not `cp --remove-destination`
+    # (GNU-only) and not plain `cp -f` (which writes straight through the link).
+    for private in pyproject.toml "$MODULE"; do
+      rm -f "$WORKDIR/$private"
+      cp "$private" "$WORKDIR/$private"
+    done
+  else
+    rm -rf "$WORKDIR"
+    mkdir -p "$WORKDIR"
+    cp -r app "$WORKDIR/app"
+    cp -r tests "$WORKDIR/tests"
+    cp -r scripts "$WORKDIR/scripts"
+    cp -f pyproject.toml "$WORKDIR/pyproject.toml"
+    # pytest.ini carries asyncio_mode=auto. Under apps/api the workdir found it
+    # by walking up; under /dev/shm there is nothing above, and without it every
+    # async test fails with "async def functions are not natively supported".
+    cp -f pytest.ini "$WORKDIR/pytest.ini"
+  fi
   cd "$WORKDIR"
 
   # mutmut 3.x scopes mutation and test selection only via config — point both
@@ -685,7 +738,9 @@ EOF
   # macOS, and the process-group kill takes mutmut's mutant children with it.
   # The decorated-function patch (mutmut_decorated_patch.py) is imported
   # first so endpoints and other decorated functions become mutation targets,
-  # and mutmut_diff_scope.py scopes generation to the PR's changed lines.
+  # mutmut_diff_scope.py scopes generation to the PR's changed lines, and
+  # mutmut_hardlink_copy.py links the also_copy tree into mutants/ rather than
+  # duplicating the workdir a second time.
   MUTMUT_PATCH_DIR="$REPO_ROOT/scripts/test"
   # Absolute: the run cd's into $WORKDIR, so a relative path resolves nowhere.
   CLASSIFIER="$REPO_ROOT/scripts/test/mutation_classify.py"
@@ -716,6 +771,7 @@ run_args = ['run'] + (['--max-children', max_children] if max_children else [])
 child_code = (
     'import mutmut_decorated_patch; '
     'import mutmut_diff_scope; '
+    'import mutmut_hardlink_copy; '
     'import sys as _sys; '
     f'_sys.argv += {run_args!r}; '
     'from mutmut.__main__ import cli; cli()'
