@@ -886,13 +886,15 @@ class TestGraphSiblings:
 class TestBuildEntries:
     async def test_maps_rows_to_entries_with_rounded_scores(self) -> None:
         row = make_row("mapped")
-        with patch.object(
-            retrieval.pg_store, "get_entities_for_memories", new=AsyncMock(return_value={})
-        ):
+        fetch_entities = AsyncMock(return_value={})
+        with patch.object(retrieval.pg_store, "get_entities_for_memories", new=fetch_entities):
             entries = await _build_entries([(row, 0.123456789)])
         assert entries[0].content == "mapped"
         assert entries[0].id == str(row.id)
         assert entries[0].relevance_score == 0.1235
+        # Entities must be fetched for exactly these rows: an unscoped fetch
+        # returns nothing and every entry silently loses its entity refs.
+        assert fetch_entities.await_args.args == ([row.id],)
 
     async def test_updated_entry_carries_the_superseded_content(self) -> None:
         parent = make_row("lives in Bengaluru")
@@ -904,7 +906,7 @@ class TestBuildEntries:
         with (
             patch.object(
                 retrieval.pg_store, "get_entities_for_memories", new=AsyncMock(return_value={})
-            ),
+            ) as fetch_entities,
             patch.object(
                 retrieval.pg_store, "get_memories_by_ids", new=AsyncMock(return_value=[parent])
             ) as fetch_parents,
@@ -915,6 +917,10 @@ class TestBuildEntries:
         # unscoped (None) it returns nothing and every parent silently reads
         # as deleted, dropping previous_content across the board.
         assert fetch_parents.await_args.args[0] == child.user_id
+        # Both lookups must target exactly these rows: an unscoped fetch
+        # silently drops every parent and every entity ref.
+        assert fetch_parents.await_args.args == (child.user_id, [str(parent.id)])
+        assert fetch_entities.await_args.args == ([child.id],)
         assert entries[0].previous_content == "lives in Bengaluru"
 
     async def test_no_parent_lookup_when_nothing_superseded_anything(self) -> None:
@@ -1184,6 +1190,37 @@ class TestRecall:
         dominated by sidecar load, so the pool stays small while survivors
         still come from the pool top."""
         assert RERANK_CANDIDATES == 16
+
+    async def test_recall_reports_per_stage_timings(self) -> None:
+        """Every pipeline stage must report its own timing bucket.
+
+        The dashboard splits recall by stage key; a renamed or dropped key
+        silently merges two stages and hides the next bottleneck.
+        """
+        best = make_row("the answer")
+        harness = _RecallHarness()
+        harness.rerank_scores = {"the answer": 5.0}
+        async with captured_wide_event() as event:
+            await _run_recall(
+                harness,
+                harness.patches(
+                    ann=[(str(best.id), 0.9)],
+                    fts=[],
+                    rows=[best],
+                ),
+                include_graph_expansion=False,
+            )
+        assert set(event["memory"]["timings"]) == {
+            "embed_ms",
+            "ann_ms",
+            "fts_ms",
+            "fusion_ms",
+            "hydrate_ms",
+            "siblings_ms",
+            "rerank_ms",
+            "build_ms",
+            "total_ms",
+        }
 
     async def test_base_pool_is_still_capped_at_the_rerank_budget(self) -> None:
         base = [make_row(f"base fact {i}") for i in range(RERANK_CANDIDATES + 5)]
