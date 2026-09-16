@@ -15,20 +15,13 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.schema import DDL
 
 from app.config.settings import settings
+from app.constants.db import SCHEMA_BOOTSTRAP_LOCK_ID
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider, providers
 from shared.py.wide_events import log
 
 # Create a SQLAlchemy base class for declarative models
 Base = declarative_base()
-
-# Serializes schema bootstrap: concurrent create_all calls (API replicas, xdist
-# workers) race on CREATE TYPE for enum columns and fail on pg_type's unique index.
-SCHEMA_BOOTSTRAP_LOCK_ID = 743_001_993
-
-# Same race in langgraph's checkpointer/store setup(): its CREATE TABLE IF NOT EXISTS
-# collides on pg_type ("checkpoint_migrations") when two starters run it at once.
-LANGGRAPH_SETUP_LOCK_ID = 743_001_994
 
 # Datetime columns that must store tz-aware instants (timestamptz). The schema
 # is bootstrapped with create_all, which only CREATEs missing tables and never

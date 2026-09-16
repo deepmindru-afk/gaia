@@ -29,7 +29,7 @@ from typing import TypeVar
 
 from langchain_core.messages import AnyMessage, BaseMessage
 
-from app.agents.llm.types import LLMProviderName
+from app.constants.llm import LLMProviderName
 
 #: ``mark`` returns the message it was given, so it must preserve the concrete
 #: type — a caller stamping a ``SystemMessage`` gets a ``SystemMessage`` back,

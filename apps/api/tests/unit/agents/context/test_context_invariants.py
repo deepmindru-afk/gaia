@@ -45,7 +45,7 @@ from app.agents.context.slots import (
     slot_of,
 )
 from app.agents.context.text import VOLATILE_BLOCK_TRUNC_MARKER
-from app.agents.llm.types import LLMProviderName
+from app.constants.llm import LLMProviderName
 from app.constants.log_tags import LogTag
 
 RICH_SOURCES = ContextSources(

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from langchain_core.runnables import RunnableConfig
 import pytest
 
-from app.agents.llm.types import LLMProviderName
 from app.agents.llm.vision.capability import (
     MediaDelivery,
     active_lane,
@@ -24,6 +23,7 @@ from app.constants.llm import (
     GEMINI_PROVIDER,
     LANE_FIELD_ID,
     OPENROUTER_PROVIDER,
+    LLMProviderName,
 )
 
 _MOD = "app.agents.llm.vision.capability"
