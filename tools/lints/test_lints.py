@@ -701,6 +701,91 @@ def test_with_doc_constant_assignment_is_never_a_docstring(tmp_path: Path) -> No
     assert docstring_slop.check([_write(tmp_path, "app/templates/docstrings/x.py", src)]) == []
 
 
+def test_pyproject_per_file_ignore_with_d_exempts_the_whole_file(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[tool.ruff.lint.per-file-ignores]\n"some/dir/**" = ["D"]\n',
+    )
+    body = "\n".join(f"    line {i} with ``markup``." for i in range(14))
+    exempt = _write(tmp_path, "some/dir/x.py", f'"""Summary.\n\n{body}\n"""\n')
+    checked = _write(tmp_path, "other/y.py", f'"""Summary.\n\n{body}\n"""\n')
+    violations = docstring_slop.check([exempt, checked])
+    assert [v for v in violations if v.path == exempt] == []
+    checked_codes = {v.detail.split(":")[0] for v in violations if v.path == checked}
+    assert {"DS1", "DS2"} <= checked_codes
+
+
+def test_pyproject_per_file_ignore_without_d_does_not_exempt(tmp_path: Path) -> None:
+    _write(
+        tmp_path, "pyproject.toml", '[tool.ruff.lint.per-file-ignores]\n"some/dir/**" = ["DOC"]\n'
+    )
+    body = "\n".join(f"    line {i}." for i in range(14))
+    src = f'"""Summary.\n\n{body}\n"""\n'
+    assert _docstring_codes(tmp_path, "some/dir/x.py", src) == ["DS1"]
+
+
+def test_pyproject_per_file_ignore_literal_path_exempts_that_file_only(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[tool.ruff.lint.per-file-ignores]\n"some/dir/models.py" = ["D"]\n',
+    )
+    body = "\n".join(f"    line {i}." for i in range(14))
+    src = f'"""Summary.\n\n{body}\n"""\n'
+    exempt = _write(tmp_path, "some/dir/models.py", src)
+    other = _write(tmp_path, "some/dir/other.py", src)
+    violations = docstring_slop.check([exempt, other])
+    assert [v for v in violations if v.path == exempt] == []
+    assert [v for v in violations if v.path == other] != []
+
+
+def test_pyproject_per_file_ignore_basename_pattern_matches_anywhere(tmp_path: Path) -> None:
+    # A bare pattern (no "/") matches the basename anywhere in the tree --
+    # ruff's documented "single-path pattern" rule.
+    _write(tmp_path, "pyproject.toml", '[tool.ruff.lint.per-file-ignores]\n"models.py" = ["D"]\n')
+    body = "\n".join(f"    line {i}." for i in range(14))
+    exempt = _write(tmp_path, "deep/nested/models.py", f'"""Summary.\n\n{body}\n"""\n')
+    assert docstring_slop.check([exempt]) == []
+
+
+def test_set_repo_root_overrides_auto_detection(tmp_path: Path) -> None:
+    # Auto-detection walks UP and stops at the nearest ruff-configured
+    # pyproject.toml (one with no per-file-ignores, here) -- an explicit
+    # override reaches the outer one instead, matched against ITS root,
+    # proving the override takes precedence rather than merely filling a gap
+    # auto-detection would have left empty anyway.
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[tool.ruff.lint.per-file-ignores]\n"scan/some/dir/**" = ["D"]\n',
+    )
+    _write(tmp_path, "scan/pyproject.toml", "[tool.ruff]\n")
+    body = "\n".join(f"    line {i}." for i in range(14))
+    exempt = _write(tmp_path, "scan/some/dir/x.py", f'"""Summary.\n\n{body}\n"""\n')
+    assert docstring_slop.check([exempt]) != []
+    try:
+        docstring_slop.set_repo_root(tmp_path)
+        assert docstring_slop.check([exempt]) == []
+    finally:
+        docstring_slop.set_repo_root(None)
+
+
+def test_runner_repo_root_flag_reaches_docstring_content(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[tool.ruff.lint.per-file-ignores]\n"scan/some/dir/**" = ["D"]\n',
+    )
+    body = "\n".join(f"    line {i}." for i in range(14))
+    scan_dir = tmp_path / "scan"
+    _write(scan_dir, "some/dir/x.py", f'"""Summary.\n\n{body}\n"""\n')
+    try:
+        assert lint_runner.main(["--repo-root", str(tmp_path), str(scan_dir)]) == 0
+    finally:
+        docstring_slop.set_repo_root(None)
+
+
 # --------------------------------------------------------------------------- #
 # comment-content
 # --------------------------------------------------------------------------- #

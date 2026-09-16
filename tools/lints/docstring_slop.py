@@ -13,17 +13,22 @@ pasted PR descriptions:
   DS7  a type inside an Args entry — the signature already carries it
   DS8  an Examples section — prose code rots; the call sites are the examples
 
-Docstrings that are runtime data are skipped, never rewritten: ``@tool`` /
-``@custom_tool`` bodies are the model-facing tool description, ``@with_doc``
-injects them, ``@router.*`` / ``@app.*`` handlers feed OpenAPI,
-``BaseModel`` / ``BaseSettings`` / ``BaseTool`` class docstrings become schema
-descriptions, a module docstring is skipped when the file reads its own
-``__doc__`` (argparse's ``description=__doc__``), and a ``BaseModel`` /
-``TypedDict`` whose name is passed to ``with_structured_output`` /
-``bind_tools`` anywhere in the tree is a schema too. The last one only
-catches a literal class name written at the call site — a schema threaded
-through a variable or a wrapper function is invisible to it, same as the
-base-class resolver above.
+Docstrings that are runtime data are skipped, never rewritten. Two sources,
+never duplicated against each other:
+
+- The ONE source of truth for "this whole file's docstrings are runtime
+  data, not prose" is root pyproject.toml's own
+  ``[tool.ruff.lint.per-file-ignores]`` -- whichever globs already carry
+  ``"D"`` (route handlers feeding OpenAPI, ``@tool`` bodies, pydantic
+  models/schemas, argparse ``--help`` scripts, …). A file matched by one of
+  those globs is skipped entirely here too, so the two never drift.
+- What ruff's per-file config cannot see, because it is not file-shaped:
+  ``@tool`` / ``@custom_tool`` / ``@with_doc``-decorated functions,
+  ``@router.*`` handlers, ``BaseModel``/``BaseSettings``/``BaseTool``
+  subclasses anywhere, and a ``BaseModel``/``TypedDict`` whose name is
+  passed to ``with_structured_output``/``bind_tools`` anywhere in the tree
+  (a literal class name only -- a schema threaded through a variable or a
+  wrapper function is invisible to this).
 
 No allowlist and no ``noqa`` — the cleanup that introduced this rule brought
 ``app/`` and ``tests/`` to zero, and a finding is fixed by shortening.
@@ -38,7 +43,7 @@ from pathlib import Path
 import re
 from typing import NamedTuple
 
-from _common import Violation
+from _common import Violation, find_repo_root, ruff_exempt_files
 
 Documented = ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
 
@@ -69,7 +74,29 @@ _RUNTIME_BASES = frozenset({"BaseModel", "BaseSettings", "BaseTool", "BaseToolki
 _STRUCTURED_OUTPUT_CALLS = frozenset({"with_structured_output", "bind_tools"})
 #: Base classes a structured-output schema is allowed to be.
 _STRUCTURED_OUTPUT_BASES = frozenset({"BaseModel", "TypedDict"})
-_APP_ROOT = Path(__file__).resolve().parents[2] / "apps" / "api" / "app"
+#: Used only when no pyproject.toml is found above the scanned files (e.g. an
+#: isolated tmp_path test tree) -- this file's own repo, not a hardcoded fact
+#: about whichever tree is actually being scanned.
+_DEFAULT_APP_ROOT = Path(__file__).resolve().parents[2] / "apps" / "api" / "app"
+#: Set by run.py's ``--repo-root`` when auto-detection (walking up from the
+#: scanned files to a pyproject.toml) can't find the right tree.
+_REPO_ROOT_OVERRIDE: Path | None = None
+
+
+def set_repo_root(path: Path | None) -> None:
+    """Override repo-root auto-detection, for scanning a tree other than this file's own."""
+    global _REPO_ROOT_OVERRIDE
+    _REPO_ROOT_OVERRIDE = path
+
+
+def _repo_root_for(files: list[Path]) -> Path | None:
+    return _REPO_ROOT_OVERRIDE or find_repo_root(files)
+
+
+def _app_root_for(files: list[Path]) -> Path:
+    repo_root = _repo_root_for(files)
+    return (repo_root / "apps" / "api" / "app") if repo_root else _DEFAULT_APP_ROOT
+
 
 _RST = re.compile(r"``|:param\b|:returns?:|:raises?:|:type\b|:rtype:|\.\. \w+::|^\s*>>>", re.M)
 _EXAMPLES = re.compile(r"^\s*Examples?\s*:\s*$", re.M)
@@ -196,20 +223,20 @@ def _scan(path: Path) -> _Module:
 
 
 @cache
-def _app_modules() -> dict[str, _Module]:
+def _app_modules(app_root: Path) -> dict[str, _Module]:
     """Return every app module's classes and imports, so a single-file run sees indirect bases."""
-    paths = sorted(_APP_ROOT.rglob("*.py")) if _APP_ROOT.is_dir() else []
+    paths = sorted(app_root.rglob("*.py")) if app_root.is_dir() else []
     return {_module_name(path): _scan(path) for path in paths}
 
 
-def _runtime_base_resolver(files: list[Path]) -> RuntimeBase:
+def _runtime_base_resolver(files: list[Path], app_root: Path) -> RuntimeBase:
     """Resolve each base through its own module's classes and imports, then walk its chain.
 
     A bare name falls back to the one repo class of that name, and to nothing when two share it.
     Built once per run and queried against different target-base sets (see ``RuntimeBase``), so
     the (often large) ``files`` scan happens only once regardless of how many sets are checked.
     """
-    modules = {**_app_modules(), **{_module_name(path): _scan(path) for path in files}}
+    modules = {**_app_modules(app_root), **{_module_name(path): _scan(path) for path in files}}
     owners: dict[str, list[str]] = {}
     for module, scanned in modules.items():
         for name in scanned.classes:
@@ -305,9 +332,9 @@ def _module_signals(tree: ast.AST) -> _ModuleSignals:
 
 
 @cache
-def _app_structured_output_names() -> frozenset[str]:
+def _app_structured_output_names(app_root: Path) -> frozenset[str]:
     """Return every class name passed to with_structured_output/bind_tools anywhere in the app."""
-    paths = sorted(_APP_ROOT.rglob("*.py")) if _APP_ROOT.is_dir() else []
+    paths = sorted(app_root.rglob("*.py")) if app_root.is_dir() else []
     names: set[str] = set()
     for path in paths:
         names.update(
@@ -454,6 +481,9 @@ def _check_node(
 
 def check(files: list[Path]) -> list[Violation]:
     """Return docstring-content violations across ``files``."""
+    repo_root = _repo_root_for(files)
+    app_root = _app_root_for(files)
+    pyproject_exempt = ruff_exempt_files(files, "D", repo_root)
     # Each file is parsed and walked for its runtime signals once, then reused
     # for the node walk below — the base resolver still re-scans ``files``
     # itself (it also needs each class's bases/imports, not just its tree).
@@ -462,12 +492,14 @@ def check(files: list[Path]) -> list[Violation]:
     }
     signals = {path: _module_signals(tree) for path, tree in trees.items()}
     ctx = _TreeContext(
-        runtime_base=_runtime_base_resolver(files),
-        structured_names=_app_structured_output_names()
+        runtime_base=_runtime_base_resolver(files, app_root),
+        structured_names=_app_structured_output_names(app_root)
         | frozenset().union(*(s.structured_output_refs for s in signals.values())),
     )
     violations: list[Violation] = []
     for path, tree in trees.items():
+        if path in pyproject_exempt:
+            continue
         is_test_file = "tests" in path.parts or path.name.startswith("test_")
         reads_own_doc = signals[path].reads_own_doc
         for node in ast.walk(tree):
