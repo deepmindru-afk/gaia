@@ -136,6 +136,9 @@ async def recall(
     candidates = await _hydrate_candidates(
         user_id, fused_ids, fts_hits, category_prefix=category_prefix, kinds=kinds
     )
+    timings["hydrate_ms"] = _elapsed_ms(stage)
+
+    stage = time.perf_counter()
     siblings = (
         await _graph_siblings(user_id, candidates, kinds=kinds)
         if include_graph_expansion and candidates
@@ -146,7 +149,7 @@ async def recall(
     # retrieval alone fills the budget — silently disabling graph expansion for
     # exactly the corpus sizes where it matters.
     candidates = candidates[:RERANK_CANDIDATES] + siblings
-    timings["hydrate_ms"] = _elapsed_ms(stage)
+    timings["siblings_ms"] = _elapsed_ms(stage)
 
     stage = time.perf_counter()
     # Rerank the combined base+sibling pool together so siblings compete on real
@@ -159,7 +162,9 @@ async def recall(
     timings["rerank_ms"] = _elapsed_ms(stage)
 
     kept = _cap_weak_results(_drop_below_relevance(scored))[:limit]
+    stage = time.perf_counter()
     entries = await _build_entries(kept)
+    timings["build_ms"] = _elapsed_ms(stage)
 
     timings["total_ms"] = _elapsed_ms(started)
     log.set(
@@ -495,7 +500,6 @@ async def _build_entries(scored: list[tuple[MemoryRecord, float]]) -> list[Memor
     explicitly forgot (or whose ``forget_after`` expired) is excluded — deleted
     content must never ride back into the prompt via its successor.
     """
-    entities_by_memory = await pg_store.get_entities_for_memories([row.id for row, _ in scored])
     parent_ids = [
         str(row.parent_id)
         for row, _ in scored
@@ -505,12 +509,19 @@ async def _build_entries(scored: list[tuple[MemoryRecord, float]]) -> list[Memor
     if parent_ids:
         user_id = scored[0][0].user_id
         now = datetime.now(UTC)
+        # Independent lookups: gather them into one round instead of two.
+        entities_by_memory, parent_rows = await asyncio.gather(
+            pg_store.get_entities_for_memories([row.id for row, _ in scored]),
+            pg_store.get_memories_by_ids(user_id, parent_ids),
+        )
         parents = {
             str(parent.id): parent
-            for parent in await pg_store.get_memories_by_ids(user_id, parent_ids)
+            for parent in parent_rows
             if not parent.is_forgotten
             and (parent.forget_after is None or parent.forget_after > now)
         }
+    else:
+        entities_by_memory = await pg_store.get_entities_for_memories([row.id for row, _ in scored])
     entries = []
     for row, score in scored:
         entry = row_to_entry(

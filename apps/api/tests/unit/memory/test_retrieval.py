@@ -4,6 +4,7 @@ Every external boundary (Chroma, Postgres, the embedding/rerank models, Redis)
 is mocked; the fusion, filtering, scoring and assembly logic under test is real.
 """
 
+import asyncio
 from datetime import UTC, date as date_type, datetime, timedelta
 from fnmatch import fnmatch
 import math
@@ -1002,6 +1003,38 @@ class TestBuildEntries:
             retrieval.pg_store, "get_entities_for_memories", new=AsyncMock(return_value={})
         ):
             assert await _build_entries([]) == []
+
+    async def test_entity_and_parent_fetches_overlap(self) -> None:
+        """The entity and parent lookups must run concurrently, not in sequence.
+
+        They are independent (parent ids derive from the scored rows alone),
+        so awaiting one before starting the other holds the turn for an extra
+        Postgres roundtrip on every recall that carries a superseded memory.
+        """
+        parent = make_row("parent content")
+        child = make_row(
+            "child content",
+            parent_id=parent.id,
+            relation_type=MemoryRelationType.UPDATES.value,
+        )
+        parents_started = asyncio.Event()
+
+        async def slow_entities(_ids: object) -> dict:
+            await asyncio.wait_for(parents_started.wait(), timeout=5)
+            return {}
+
+        async def fast_parents(_user_id: object, _ids: object) -> list:
+            parents_started.set()
+            return [parent]
+
+        with (
+            patch.object(
+                retrieval.pg_store, "get_entities_for_memories", new=slow_entities
+            ),
+            patch.object(retrieval.pg_store, "get_memories_by_ids", new=fast_parents),
+        ):
+            entries = await _build_entries([(child, 0.9)])
+        assert entries[0].previous_content == "parent content"
 
 
 # ---------------------------------------------------------------------------
