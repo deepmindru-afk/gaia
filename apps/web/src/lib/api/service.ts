@@ -20,7 +20,7 @@ export type QueryParams = Record<string, unknown>;
  * ./typed. This exists for `@shared/todos`, whose client is also mobile's and
  * so keeps its routes as strings.
  */
-export async function request<T = unknown>(
+async function request<T = unknown>(
   method: HttpMethod,
   url: string,
   data?: unknown,
