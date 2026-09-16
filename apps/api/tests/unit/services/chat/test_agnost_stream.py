@@ -266,6 +266,48 @@ class TestTurnTelemetry:
         published = [call.args[1] for call in sm.publish_chunk.call_args_list]
         assert "data: [DONE]\n\n" in published
 
+    async def test_description_task_receives_identity(self, test_user):
+        """The detached title task gets the conversation, user, and bot
+        message id — without them its spans orphan and its spend unattributed."""
+        sm = _make_stream_manager_mock()
+        new_body = MessageRequestWithHistory(
+            message="Hello GAIA",
+            messages=[{"role": "user", "content": "Hello GAIA"}],
+            conversation_id=None,
+        )
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_done_only_stream()),
+            ),
+            patch(
+                "app.services.chat.stream.save_conversation_async",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.stream.initialize_new_conversation",
+                new=AsyncMock(return_value="data: init\n\n"),
+            ),
+            patch(
+                "app.services.chat.stream.generate_and_update_description",
+                new=AsyncMock(return_value="Hello GAIA"),
+            ) as mock_generate,
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+        ):
+            await run_chat_stream_background(
+                stream_id="stream_desc",
+                body=new_body,
+                user=test_user,
+                conversation_id="new_conv_id",
+            )
+
+        mock_generate.assert_awaited_once()
+        args = mock_generate.call_args.args
+        assert args[0] == "new_conv_id"
+        assert args[2] == test_user
+        assert isinstance(args[5], str) and args[5]
+
     async def test_init_failure_still_surfaces_original_error(self, test_user):
         """If init raises before telemetry opens, the turn must report the init
         failure — not an UnboundLocalError from the telemetry close path."""
@@ -402,7 +444,7 @@ class TestApprovalTurnTelemetry:
             patch(
                 "app.services.chat.stream.resolve_pending_from_message",
                 new=AsyncMock(return_value=action),
-            ),
+            ) as mock_resolve,
             patch("app.services.chat.stream._persist_turn", new=AsyncMock()),
             patch(
                 "app.services.chat.stream.trace_id_for_message", return_value="trace-seed"
@@ -418,6 +460,8 @@ class TestApprovalTurnTelemetry:
             )
 
         mock_seed.assert_called_once_with("bot-9")
+        assert mock_resolve.call_args.args == ("conv_hil_1", "user_abc", "yes do it", [])
+        assert mock_resolve.call_args.kwargs == {"langfuse_trace_id": "trace-seed"}
         return result
 
     async def test_approve_opens_and_closes_with_ack(self) -> None:
