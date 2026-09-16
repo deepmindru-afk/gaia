@@ -132,9 +132,10 @@ class Timezone:
         """IANA name → zone; ``None`` when the tz database does not know it."""
         try:
             return cls(candidate, ZoneInfo(candidate))
-        except (ZoneInfoNotFoundError, ValueError):
-            # Unknown key or a key with a bad shape ("../x"): the caller treats
-            # None as "no usable zone" and its own log line says which input.
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            # Unknown key, a bad shape ("../x") or a name too long for the tz
+            # database to even open: the caller treats None as "no usable
+            # zone" and its own log line says which input.
             return None
 
     @property
