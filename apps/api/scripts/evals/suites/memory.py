@@ -123,9 +123,8 @@ async def _bootstrap_dbs() -> None:
     the suite run without the API server. Replicated here (not imported)
     because the benchmark's copy still clears the pre-refactor
     ``chroma_store._collections`` attribute, which no longer exists — the
-    collection cache is now per event loop (``_loop_collections`` /
-    ``_loop_locks``) and is what must be cleared so lookups re-bind to the
-    patched client.
+    collection cache is now per event loop (``_loop_states``) and is what
+    must be cleared so lookups re-bind to the patched client.
     """
 
     import chromadb
@@ -170,8 +169,7 @@ async def _bootstrap_dbs() -> None:
         return chroma_client
 
     ChromaClient.get_client = _get_client
-    chroma_store._loop_collections.clear()
-    chroma_store._loop_locks.clear()
+    chroma_store._loop_states.clear()
     print("  [bootstrap] ChromaDB client ready", flush=True)
 
     from redis.asyncio import Redis
