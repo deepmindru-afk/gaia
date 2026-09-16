@@ -202,3 +202,6 @@ apps/api/.test-impact/
 
 # Private prod infra checked out by CI (theexperiencecompany/gaia-infra)
 /.infra/
+
+# import-linter/grimp module graph cache (scripts/ci lint-imports lane)
+apps/api/.grimp_cache/
