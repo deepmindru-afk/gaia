@@ -301,8 +301,13 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
         ]
         return await self._aggregate(pipeline, TodoLabelCount)
 
+    @cached_query(list[TodoDocument])
     async def list_active_tracked(self, user_id: str, *, limit: int) -> list[TodoDocument]:
-        """Return a user's active (incomplete) tracked todos, most-recently-updated first."""
+        """Return a user's active (incomplete) tracked todos, most-recently-updated first.
+
+        Cached under the user's generation, so context assembly reads Mongo once
+        per write rather than once per turn.
+        """
         return await self._find(
             {"user_id": user_id, "labels": GAIA_TRACKED_LABEL, "completed": False},
             sort=[("updated_at", -1)],

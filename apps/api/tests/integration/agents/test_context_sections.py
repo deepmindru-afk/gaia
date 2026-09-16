@@ -18,8 +18,9 @@ from app.models.todo_models import TodoDocument
 def user() -> str:
     """Build a user nobody has cached anything for.
 
-    Both sections sit behind a per-user cache; a fixed id would make the
-    result depend on whatever Redis happened to be holding.
+    The integrations manifest sits behind a per-user @Cacheable and these tests
+    mock the store one layer below that; a fixed id would make the result depend
+    on whatever Redis happened to be holding.
     """
     return f"user-ctx-{uuid4()}"
 
@@ -130,21 +131,21 @@ class TestTrackedTodosSummary:
 
         assert block == ""
 
-    async def test_a_pinned_view_bypasses_the_cache(self, user: str) -> None:
-        """The pin is per-run, but the cache is keyed by user; serving it from cache would leak."""
-        cached = AsyncMock(return_value="STALE SUMMARY")
-
-        with (
-            self._todos(self._todo("t1", "Fresh todo", user)),
-            patch("app.agents.context.fetchers._cached_tracked_todos_summary", cached),
-        ):
-            pinned = await _section("tracked_todos").fetch(
-                SectionContext(tier=AgentTier.COMMS, user_id=user, active_todo_id="t1")
+    async def test_the_summary_reads_the_current_list_each_turn(self, user: str) -> None:
+        """The summary renders from the active list each turn, with no user-keyed cache over it."""
+        with self._todos(self._todo("t1", "First state", user)):
+            first = await _section("tracked_todos").fetch(
+                SectionContext(tier=AgentTier.COMMS, user_id=user)
+            )
+        with self._todos(self._todo("t2", "Second state", user)):
+            second = await _section("tracked_todos").fetch(
+                SectionContext(tier=AgentTier.COMMS, user_id=user)
             )
 
-        assert "Fresh todo" in pinned
-        assert "STALE SUMMARY" not in pinned
-        cached.assert_not_awaited()
+        assert "First state" in first
+        assert "Second state" not in first
+        assert "Second state" in second
+        assert "First state" not in second
 
     async def test_the_summary_is_a_volatile_section(self) -> None:
         """It changes as the agent works, so it must not sit in the prefix."""
