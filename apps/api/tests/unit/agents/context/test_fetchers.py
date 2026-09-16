@@ -650,6 +650,25 @@ class TestCoreContextSingleFlight:
 
         assert calls == 2
 
+    @pytest.mark.regression
+    async def test_cancelling_one_waiter_leaves_the_shared_fetch_running(self) -> None:
+        """A cancelled assembly must not abort the sibling awaiting the same core fetch."""
+        started = asyncio.Event()
+
+        async def _core(user_id: str) -> str:
+            started.set()
+            await asyncio.sleep(0.05)
+            return "Docs."
+
+        with patch("app.memory.engine.memory_engine.get_core_context", _core):
+            first = asyncio.ensure_future(build_core_memory_block(ctx()))
+            second = asyncio.ensure_future(build_core_memory_block(ctx()))
+            await started.wait()
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert await second == f"{CORE_MEMORY_HEADER}\nDocs."
+
     async def test_the_inflight_entry_is_evicted_on_completion(self) -> None:
         """Eviction is what bounds the registry — a leak would retain every user's
         core context in memory forever."""
