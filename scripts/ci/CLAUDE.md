@@ -11,7 +11,7 @@ lane without grepping the workflow first.
 
 | Concept | Script | Subcommands |
 | --- | --- | --- |
-| Where and how hard a job runs | `runner.sh` | `select`, `watchdog`, `cancel-superseded`, `prime-archive`, `parallel`, `dep-marker`, `with-slots` |
+| Where and how hard a job runs | `runner.sh` | `select`, `watchdog`, `cancel-superseded`, `prime-archive`, `parallel`, `dep-marker`, `with-slots`, `health` |
 | The service containers a suite talks to | `test-services.sh` | `up`, `prepare`, `reset`, `down`, `janitor` |
 | The embedding sidecar | `embedding-sidecar.sh` | `start`, `stop` |
 | Running the Python suite | `pytest.sh` | `slice`, `flake-gate`, `regression-proof` |
@@ -24,6 +24,12 @@ lane without grepping the workflow first.
 | Publishing what a green master produced | `release.sh` | `resolve-image-tags`, `promote-latest`, `dispatch-cli-publish`, `disable-cf-builds` |
 | The release-metadata guards | `release.mjs` | `validate-manifest`, `verify-cli` |
 | Shipping to production | `deploy.sh` | `plan`, `stack`, `verify`, `retag`, `notify` |
+
+`runner.sh health` is the read half of the governor below: a lane stuck in
+`queued` is either a thrashing BOX or a full GitHub POOL, and the two have
+opposite fixes, so it prints both — listener counts, load average, thread
+count, who holds CPU slots, and how many mutmut/pytest processes are running.
+`mise ci:remote` prints one line of it when run on the box.
 
 Release and deploy are two concepts, not one: `release.sh` publishes artifacts
 (image tags, `:latest`, the CLI on npm); `deploy.sh` puts them on the Swarm.

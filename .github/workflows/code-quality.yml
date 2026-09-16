@@ -293,6 +293,8 @@ jobs:
       - uses: ./.github/actions/setup-node-pnpm
       - name: Lint and format check across all TS/JS/JSON/CSS files
         run: |
+          # shellcheck source=scripts/ci/lib/log.sh
+          source scripts/ci/lib/log.sh
           echo "::group::Biome check"
           # Drop top-level paths that biome.json explicitly excludes via `!!`
           # negation (apps/api, apps/voice-agent, apps/web/public, infra, docs,
@@ -306,8 +308,9 @@ jobs:
             FILES="."
           fi
           if [ -z "$FILES" ]; then
-            echo "No matching changed files — skipping."
             echo "::endgroup::"
+            ci_verdict --lane biome --status skip \
+              --summary "no changed TS/JS/JSON/CSS file biome.json includes"
             exit 0
           fi
           # One run, captured then inspected — never `biome | grep -q`: grep
@@ -324,13 +327,26 @@ jobs:
           # non-blocking — except this one category. A suppression comment that
           # no longer masks anything is exactly the rot the suppression-hygiene
           # lane exists to prevent; grep biome's own verdict for it.
+          # biome's own `path:line:col rule/name` lines are one of collect's
+          # patterns, so the verdict carries the file AND the rule for free.
+          printf '%s\n' "$BIOME_OUT" \
+            | python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/biome.jsonl"
+          FINDINGS=$(wc -l < "$RUNNER_TEMP/biome.jsonl" 2>/dev/null || echo 0)
           case "$BIOME_OUT" in
             *"suppressions/unused"*)
-              echo "::error::dead biome-ignore found — delete it or fix what it suppressed"
-              exit 1 ;;
+              ci_verdict_die --lane biome --status fail \
+                --summary "a dead biome-ignore no longer masks anything" \
+                --findings "$RUNNER_TEMP/biome.jsonl" \
+                --advice "Delete the suppression comment, or fix what it was suppressing." ;;
           esac
-          [ "$BIOME_STATUS" -eq 0 ] || exit "$BIOME_STATUS"
-          echo "Biome: OK (0 errors; dead-suppression gate passed)"
+          if [ "$BIOME_STATUS" -ne 0 ]; then
+            ci_verdict_die --lane biome --status fail \
+              --summary "biome reported $FINDINGS diagnostic(s) (exit $BIOME_STATUS)" \
+              --findings "$RUNNER_TEMP/biome.jsonl" \
+              --advice "Reproduce and auto-fix what is safe: pnpm exec biome check --write <paths>."
+          fi
+          ci_verdict --lane biome --status pass \
+            --summary "biome: 0 errors, and no dead biome-ignore"
       - name: Upload the verdict
         if: always()
         uses: ./.github/actions/upload-verdict
@@ -359,30 +375,58 @@ jobs:
           fetch-depth: ${{ runner.environment == 'self-hosted' && '0' || '1' }}
           persist-credentials: false
       - uses: ./.github/actions/setup-node-pnpm
+      # The three tools are independent, so each is `continue-on-error` behind
+      # the aggregating verdict below — a red syncpack must not hide a red
+      # manypkg. None of them prints a line number (they name a PACKAGE), so
+      # each tees its output and `collect --fallback` pins it to the manifest
+      # the reader has to open anyway.
       - name: All workspace packages agree on dep versions (syncpack)
+        id: syncpack
+        continue-on-error: true
         run: |
-          trap 'echo "::error::repro: pnpm exec syncpack lint --config config/.syncpackrc.json"' ERR
           echo "::group::syncpack lint"
-          pnpm exec syncpack lint --config config/.syncpackrc.json
+          pnpm exec syncpack lint --config config/.syncpackrc.json 2>&1 | tee "$RUNNER_TEMP/syncpack.out"; _rc=${PIPESTATUS[0]}
           echo "::endgroup::"
+          test $_rc -eq 0 || python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" --fallback package.json < "$RUNNER_TEMP/syncpack.out"
+          test $_rc -eq 0
           echo "### Deps (syncpack) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "syncpack: OK (dep versions and semver ranges consistent)"
       - name: Workspace topology is valid (manypkg)
+        id: manypkg
+        continue-on-error: true
         run: |
-          trap 'echo "::error::repro: pnpm exec manypkg check"' ERR
           echo "::group::manypkg check"
-          pnpm exec manypkg check
+          pnpm exec manypkg check 2>&1 | tee "$RUNNER_TEMP/manypkg.out"; _rc=${PIPESTATUS[0]}
           echo "::endgroup::"
+          test $_rc -eq 0 || python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" --fallback pnpm-workspace.yaml < "$RUNNER_TEMP/manypkg.out"
+          test $_rc -eq 0
           echo "### Deps (manypkg) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "manypkg: OK (workspace structure valid)"
       - name: package.json shape conforms (npm-package-json-lint)
+        id: pkg-json
+        continue-on-error: true
         run: |
-          trap 'echo "::error::repro: pnpm run quality:pkg-json"' ERR
           echo "::group::package.json lint"
-          pnpm run quality:pkg-json
+          pnpm run quality:pkg-json 2>&1 | tee "$RUNNER_TEMP/pkg-json.out"; _rc=${PIPESTATUS[0]}
           echo "::endgroup::"
+          test $_rc -eq 0 || python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" --fallback package.json < "$RUNNER_TEMP/pkg-json.out"
+          test $_rc -eq 0
           echo "### Deps (pkg-json) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "pkg-json: OK (all package.json files conform to schema)"
+      - name: Verdict (every tool above ran; this fails if any of them did not pass)
+        if: always()
+        env:
+          # Step outcomes passed through env to match the quality gate's
+          # no-inline-expansion convention.
+          SYNCPACK: ${{ steps.syncpack.outcome }}
+          MANYPKG: ${{ steps.manypkg.outcome }}
+          PKG_JSON: ${{ steps.pkg-json.outcome }}
+        run: |
+          python3 scripts/ci/verdict.py step-outcomes --lane deps \
+            --findings "$RUNNER_TEMP/findings.jsonl" \
+            "syncpack=$SYNCPACK" \
+            "manypkg=$MANYPKG" \
+            "pkg-json=$PKG_JSON"
       - name: Upload the verdict
         if: always()
         uses: ./.github/actions/upload-verdict
@@ -726,6 +770,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-uv
+      # The import-cost step below imports the real modules, so it needs the
+      # real dependencies — the composite is how this repo installs them, and
+      # it is the cached path on both runner kinds. No services, no Node, no
+      # 1.3 GB of embedding models: this lane only needs the venv.
+      - uses: ./.github/actions/setup-python-test-env
+        with:
+          services: "false"
+          node: "false"
+          restore-models: "false"
       - name: ruff check + format (PL, RUF, FAST, S, B, A, COM, C4, DTZ, ISC, RET, SIM, ARG, PTH, TRY, PERF, UP, FURB, LOG, G + more)
         id: ruff
         continue-on-error: true
@@ -799,6 +852,23 @@ jobs:
           python3 tools/lints/check_plr_complexity.py
           echo "::endgroup::"
           echo "plr-complexity-ratchet: OK"
+      - name: Import cost of the base layers (trend; not gating yet)
+        id: import-cost
+        continue-on-error: true
+        # Measured 2026-09-17 on the home box: every module under app/utils and
+        # app/models costs 6-15 s to import ALONE, because those layers reach up
+        # into app.agents and app.services (app.utils.chat_utils imports
+        # app.agents.llm.chatbot). Gating at MODULE_BUDGET_MS today would red
+        # ~200 modules on a PR that did not cause any of them, so the step runs
+        # with --report: it measures everything and records the entry points'
+        # cost as a trend. Drop `--report` to gate — that is the whole change —
+        # once the layering is fixed. It is still in the verdict below, so a
+        # step that stops RUNNING is still a red lane.
+        run: |
+          echo "::group::import cost"
+          python3 tools/lints/check_import_cost.py --report
+          echo "::endgroup::"
+          echo "import-cost: measured (trend only until the base layers stop importing upward)"
       - name: Complexity scan (max-absolute F, max-modules E, max-average B)
         id: xenon
         continue-on-error: true
@@ -888,6 +958,7 @@ jobs:
           LINT_IMPORTS: ${{ steps.lint-imports.outcome }}
           IGNORE_WHYS: ${{ steps.ignore-whys.outcome }}
           PLR_COMPLEXITY: ${{ steps.plr-complexity.outcome }}
+          IMPORT_COST: ${{ steps.import-cost.outcome }}
           XENON: ${{ steps.xenon.outcome }}
           INTERROGATE: ${{ steps.interrogate.outcome }}
           BANDIT: ${{ steps.bandit.outcome }}
@@ -900,6 +971,7 @@ jobs:
             "lint-imports=$LINT_IMPORTS" \
             "ignore-whys=$IGNORE_WHYS" \
             "plr-complexity=$PLR_COMPLEXITY" \
+            "import-cost=$IMPORT_COST" \
             "xenon=$XENON" \
             "interrogate=$INTERROGATE" \
             "bandit=$BANDIT" \

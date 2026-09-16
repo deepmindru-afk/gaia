@@ -10,7 +10,15 @@ Verdict artifacts are downloadable while the run is still in progress; job logs
 are not ("logs will be available when it is complete"), which is why the
 artifact is the preferred source.
 
+A mutation shard gets a third source: its `mutation-log-N` artifact, which is
+the only thing that separates a surviving mutant (a test gap, with a line and
+a change) from mutmut dying with nothing to show — and, among those, the box
+killing tests at the per-mutant cap (a re-run away from green) from the suite
+simply failing in the mutation workdir (a re-run away from the same assertion
+error). `--rerun-timeouts` acts on the first and refuses the other two.
+
 `--watch` polls until checks go terminal (bounded), printing transitions.
+`--stack` prints the gh stack alone, one line per PR.
 `--verbose` adds full finding details, passing lanes, and the source used.
 `--json` emits the same report as one object.
 
@@ -28,6 +36,7 @@ from datetime import UTC, datetime
 import io
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -85,6 +94,28 @@ SLUG_RE = re.compile(r"[^a-z0-9]+")
 MATRIX_POSITION_RE = re.compile(r"\b(\d+)\s*/\s*(\d+)\b")
 # "verdict-test-mutation-2" — the uploader folds the 0-based matrix value in.
 ARTIFACT_INDEX_RE = re.compile(r"-(\d+)$")
+# Greptile edits ONE comment per PR, so the newest of its comments is the whole
+# review. 20 is enough for its comment to be inside the window on a PR that has
+# also collected coderabbit, sonar, cloudflare and github-actions chatter.
+STACK_COMMENT_WINDOW = 20
+# The mutation shards' second artifact: shard.log beside shard.verdict.json,
+# which carries every module's outcome and every survivor's line and change.
+MUTATION_LOG_PREFIX = "mutation-log-"
+SHARD_RECORD_MEMBER = "shard.verdict.json"
+SHARD_LOG_MEMBER = "shard.log"
+# What mutmut prints when it produced no result at all (scripts/ci/mutation.sh).
+NO_STATE_MARK = "MUTATION RUN FAILED (no state produced)"
+# pytest-timeout's own line, one per test killed at MUTANT_TEST_TIMEOUT.
+PYTEST_TIMEOUT_RE = re.compile(r"Timeout >\d+(?:\.\d+)?s")
+# A module outcome that is a test weakness, not an infrastructure casualty.
+MUTATION_WEAKNESS = ("survivors", "gap")
+RUNNER_HEALTH_TIMEOUT_S = 20
+# Load per thread past which the box is thrashing rather than working. The
+# 15-min average was measured at ~18.5 on 16 threads (2.3x) while the same PR
+# took 11.3 min loaded against 3.6 min idle; 1.5x is the shoulder before that.
+OVERSUBSCRIBED_LOAD_RATIO = 1.5
+GREPTILE_SCORE_RE = re.compile(r"Confidence Score:\s*(\d+)\s*/\s*(\d+)")
+GREPTILE_COMMIT_RE = re.compile(r"Last reviewed commit:.*?\]\((\S*?/commit/([0-9a-f]{7,40}))\)")
 
 
 class Finding(TypedDict, total=False):
@@ -104,6 +135,17 @@ class Verdict(TypedDict, total=False):
     run_id: int
 
 
+class Shard(TypedDict):
+    """One mutation shard's replay artifact, plus what its log says about why."""
+
+    artifact: str
+    run_id: int
+    index: int | None
+    modules: list[dict]
+    timeout_hits: int
+    no_state: bool
+
+
 class Check(TypedDict):
     name: str
     app: str
@@ -115,13 +157,28 @@ class Check(TypedDict):
     completed_at: str | None
 
 
+class Greptile(TypedDict):
+    """The last Greptile review on a PR, and the commit it actually read."""
+
+    score: int | None
+    out_of: int | None
+    commit: str | None
+    commit_url: str | None
+
+
 class StackRow(TypedDict):
     branch: str
     pr: int | None
+    head_sha: str | None
     base: str | None
     expected_base: str
     is_current: bool
+    mergeable: str | None
+    merge_state_status: str | None
+    unresolved_threads: int
     counts: dict[str, int]
+    failing_lanes: list[str]
+    greptile: Greptile
     base_mismatch: bool
 
 
@@ -149,6 +206,8 @@ class Options:
     verbose: bool
     watch: bool
     with_stack: bool
+    stack_only: bool
+    rerun_timeouts: bool
     interval: int
     max_wait: int
     timeout_s: int
@@ -391,6 +450,129 @@ def drop_content_free_rollups(matched: list[Verdict]) -> list[Verdict]:
     return [v for v in matched if v.get("findings") or v.get("artifact") not in informative]
 
 
+# ------------------------------------------------------------------- mutation shard records
+
+
+def fetch_run_shards(repo: Repo, run_id: int) -> list[Shard]:
+    """Every `mutation-log-*` artifact on a run, read for its per-module outcomes.
+
+    The per-module verdicts say a module failed; only this artifact says
+    whether that was a surviving mutant (a real test gap, with a line and a
+    change to go read) or mutmut dying with nothing to show — two failures
+    that need opposite reactions and read identically in a job log.
+    """
+    endpoint = repo.api(f"actions/runs/{run_id}/artifacts")
+    rc, out, err = gh(["api", f"{endpoint}?per_page=100"], repo.timeout_s)
+    if rc != 0:
+        eprint(f"ci:remote: GET {endpoint} failed:\n{err.strip()[:400]}")
+        sys.exit(classify_failure(err, rc))
+    found = [
+        a
+        for a in json.loads(out).get("artifacts", [])
+        if a.get("name", "").startswith(MUTATION_LOG_PREFIX) and not a.get("expired")
+    ]
+    # `gh run rerun --failed` uploads a SECOND `mutation-log-2` into the same
+    # run, and run 35128539215 carried three generations of four shards — the
+    # older ones with zero modules in them. Reading the first match printed the
+    # empty one, so only the newest upload of each name counts.
+    newest: dict[str, dict] = {}
+    for artifact in sorted(found, key=lambda a: a.get("created_at", "")):
+        newest[artifact["name"]] = artifact
+    wanted = list(newest.values())
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_FETCHES) as pool:
+        blobs = list(pool.map(lambda a: fetch_artifact(repo, a["id"]), wanted))
+    return [
+        read_shard(artifact["name"], run_id, blob)
+        for artifact, blob in zip(wanted, blobs, strict=True)
+    ]
+
+
+def read_shard(name: str, run_id: int, blob: bytes) -> Shard:
+    """Unzip one `mutation-log-N` artifact into its modules and its log's evidence."""
+    modules: list[dict] = []
+    log = ""
+    with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+        for member in archive.namelist():
+            if member.endswith(SHARD_RECORD_MEMBER):
+                modules = json.loads(archive.read(member)).get("modules", [])
+            elif member.endswith(SHARD_LOG_MEMBER):
+                log = archive.read(member).decode("utf-8", "replace")
+    suffix = name[len(MUTATION_LOG_PREFIX) :]
+    return Shard(
+        artifact=name,
+        run_id=run_id,
+        index=int(suffix) if suffix.isdigit() else None,
+        modules=modules,
+        timeout_hits=len(PYTEST_TIMEOUT_RE.findall(log)),
+        no_state=NO_STATE_MARK in log,
+    )
+
+
+def shard_for_check(check: Check, shards: list[Shard]) -> Shard | None:
+    """Return the shard record belonging to a check, matched by matrix position.
+
+    `Mutation shard 3/6` is matrix value 2 and uploads `mutation-log-2`; the
+    check's display name carries no other token the artifact shares.
+    """
+    index = matrix_index(check["name"])
+    if index is None:
+        return None
+    return next((s for s in shards if s["run_id"] == check["run_id"] and s["index"] == index), None)
+
+
+def module_line(module: dict, shard: Shard) -> str:
+    """One module's outcome in the vocabulary a reader acts on.
+
+    A survivor names the line and the change. An error names what actually
+    happened instead — and when the log shows mutmut produced no state while
+    tests were being killed at the per-mutant cap, that is an oversubscribed
+    box and not a test weakness, so it says so and says it is safe to re-run.
+    """
+    name = module.get("module", "?")
+    status = module.get("status", "?")
+    if status in MUTATION_WEAKNESS:
+        survivors = module.get("survivors") or []
+        if not survivors:
+            lines = " ".join(str(line) for line in module.get("gap_lines") or [])
+            return f"{name}  {status} — no test reaches line(s) {lines or '?'}"
+        shown = [
+            f"{s.get('file', name)}:{s.get('line', '?')} — {s.get('change', '?')}"
+            for s in survivors
+        ]
+        return f"{name}  survivors: " + "; ".join(shown)
+    if status == "error" and shard["no_state"] and shard["timeout_hits"]:
+        return (
+            f"{name}  error — mutmut produced no state "
+            f"({plural(shard['timeout_hits'], 'test')} hit the per-test timeout); "
+            "no survivors; safe to re-run"
+        )
+    if status == "error" and shard["no_state"]:
+        return (
+            f"{name}  error — mutmut produced no state and no test hit the per-test timeout, "
+            "so the suite itself did not pass in the mutation workdir; a re-run will not help"
+        )
+    return f"{name}  {status} — {module.get('reason') or 'see shard.log'}"
+
+
+def failing_modules(shard: Shard) -> list[dict]:
+    return [m for m in shard["modules"] if m.get("status") not in ("pass", "skip")]
+
+
+def is_timeout_only(shard: Shard) -> bool:
+    """Say whether this shard's only failures are the box killing tests at the cap.
+
+    Three things must hold, and the third is the one real data taught: mutmut
+    produced no state, nothing survived, AND at least one test actually hit
+    the per-test timeout. PR #1241's shards satisfied the first two with zero
+    timeouts — their suite simply failed inside the mutation workdir, and
+    re-running that spends half an hour to reach the same assertion error.
+    """
+    broken = failing_modules(shard)
+    if not broken or not shard["no_state"] or not shard["timeout_hits"]:
+        return False
+    return all(m.get("status") not in MUTATION_WEAKNESS for m in broken)
+
+
 # ----------------------------------------------------------------------------- job logs
 
 
@@ -451,19 +633,26 @@ def fetch_job_tail(repo: Repo, job_id: int) -> list[str]:
 
 def diagnose(
     repo: Repo, checks: list[Check]
-) -> tuple[list[Verdict], dict[str, list[str]], dict[str, str]]:
-    """For every failing check: its verdict, else its job-log tail.
+) -> tuple[list[Verdict], list[Shard], dict[str, list[str]], dict[str, str]]:
+    """For every failing check: its verdict, its shard record, else its job-log tail.
 
-    Returns (verdicts, fallback tails by check name, source label by check name).
+    Returns (verdicts, shards, fallback tails by check name, source by check name).
     """
     failing = [c for c in checks if c["status"] in FAILING]
     if not failing:
-        return [], {}, {}
+        return [], [], {}, {}
 
     run_ids = sorted({c["run_id"] for c in failing if c["run_id"] is not None})
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_FETCHES) as pool:
         batches = list(pool.map(lambda r: fetch_run_verdicts(repo, r), run_ids))
     verdicts = [v for batch in batches for v in batch]
+
+    # Only a matrix job can own a shard record, so a PR whose red lanes are all
+    # plain jobs never pays for the listing.
+    shard_runs = sorted({c["run_id"] for c in failing if matrix_index(c["name"]) is not None})
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_FETCHES) as pool:
+        shard_batches = list(pool.map(lambda r: fetch_run_shards(repo, r or 0), shard_runs))
+    shards = [s for batch in shard_batches for s in batch]
 
     # No run-level fallback: "some lane on this run failed" is not an answer to
     # "why is THIS check red". Pointing six mutation shards at python-static's
@@ -474,9 +663,12 @@ def diagnose(
     needs_log: list[Check] = []
     for check in failing:
         explaining = explaining_verdicts(check, verdicts)
+        shard = shard_for_check(check, shards)
         if explaining:
             artifacts = sorted({v.get("artifact", "?") for v in explaining})
             sources[check["name"]] = f"verdict artifact {', '.join(artifacts)}"
+        elif shard is not None and failing_modules(shard):
+            sources[check["name"]] = f"shard record {shard['artifact']}"
         elif check["job_id"] is None:
             sources[check["name"]] = (
                 f"external check ({check['app'] or 'unknown app'}) — open the URL"
@@ -496,7 +688,7 @@ def diagnose(
                 if check["run_id"] in {v.get("run_id") for v in verdicts}
                 else "lane uploaded no verdict artifact — log tail"
             )
-    return verdicts, tails, sources
+    return verdicts, shards, tails, sources
 
 
 # -------------------------------------------------------------------------------- stack
@@ -524,13 +716,17 @@ def fetch_stack(repo: Repo) -> dict | None:
 
 
 def fetch_stack_states(repo: Repo, numbers: list[int]) -> dict[int, dict]:
-    """One GraphQL for every stack PR's base branch + check rollup."""
+    """One GraphQL for every stack PR's merge state, threads, checks and reviews."""
     if not numbers:
         return {}
     aliases = " ".join(
-        f"p{n}: pullRequest(number:{n}){{ number baseRefName "
+        f"p{n}: pullRequest(number:{n}){{ number baseRefName headRefOid "
+        "mergeable mergeStateStatus "
+        "reviewThreads(first:100){nodes{isResolved}} "
+        f"comments(last:{STACK_COMMENT_WINDOW}){{nodes{{author{{login}} body}}}} "
         "commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{"
-        "__typename ... on CheckRun{conclusion status} ... on StatusContext{state}"
+        "__typename ... on CheckRun{name conclusion status} "
+        "... on StatusContext{context state}"
         "}}}}}} }"
         for n in numbers
     )
@@ -550,21 +746,64 @@ def fetch_stack_states(repo: Repo, numbers: list[int]) -> dict[int, dict]:
     return {pr["number"]: pr for pr in repository.values() if pr is not None}
 
 
-def rollup_counts(pr_state: dict) -> dict[str, int]:
-    counts = empty_counts()
+def rollup_contexts(pr_state: dict) -> list[tuple[str, str]]:
+    """Return the PR's checks as (lane name, normalised status) pairs.
+
+    One walk for both the counts and the failing names: deriving them twice
+    from the same payload is how the two drift into disagreeing.
+    """
     commits = (pr_state.get("commits") or {}).get("nodes") or []
     if not commits:
-        return counts
+        return []
     rollup = commits[0]["commit"].get("statusCheckRollup") or {}
+    pairs: list[tuple[str, str]] = []
     for node in (rollup.get("contexts") or {}).get("nodes", []):
         if node.get("__typename") == "CheckRun":
+            name = node.get("name") or "?"
             raw = node.get("conclusion") if node.get("status") == "COMPLETED" else None
         else:
+            name = node.get("context") or "?"
             raw = {"SUCCESS": "success", "FAILURE": "failure", "ERROR": "failure"}.get(
                 node.get("state", "")
             )
-        counts[CONCLUSION_MAP.get((raw or "").lower(), "pending") if raw else "pending"] += 1
+        pairs.append(
+            (name, CONCLUSION_MAP.get((raw or "").lower(), "pending") if raw else "pending")
+        )
+    return pairs
+
+
+def rollup_counts(pairs: list[tuple[str, str]]) -> dict[str, int]:
+    counts = empty_counts()
+    for _, status in pairs:
+        counts[status] += 1
     return counts
+
+
+def parse_greptile(pr_state: dict) -> Greptile:
+    """Read the newest Greptile review comment for its score and the commit it saw.
+
+    Greptile re-reviews on each push but comments once, editing the body, so
+    the score is only trustworthy next to the commit it names: a 4/5 against a
+    sha two pushes old says nothing about the head.
+    """
+    blank = Greptile(score=None, out_of=None, commit=None, commit_url=None)
+    nodes = (pr_state.get("comments") or {}).get("nodes") or []
+    bodies = [
+        n.get("body") or ""
+        for n in nodes
+        if "greptile" in ((n.get("author") or {}).get("login") or "").lower()
+    ]
+    if not bodies:
+        return blank
+    body = bodies[-1]
+    score = GREPTILE_SCORE_RE.search(body)
+    commit = GREPTILE_COMMIT_RE.search(body)
+    return Greptile(
+        score=int(score.group(1)) if score else None,
+        out_of=int(score.group(2)) if score else None,
+        commit=commit.group(2) if commit else None,
+        commit_url=commit.group(1) if commit else None,
+    )
 
 
 def build_stack(repo: Repo, payload: dict) -> list[StackRow]:
@@ -578,18 +817,81 @@ def build_stack(repo: Repo, payload: dict) -> list[StackRow]:
         number = entry["pr"]["number"] if entry.get("pr") else None
         state = states.get(number) if number else None
         base = (state or {}).get("baseRefName")
+        pairs = rollup_contexts(state) if state else []
+        threads = ((state or {}).get("reviewThreads") or {}).get("nodes") or []
         rows.append(
             StackRow(
                 branch=entry["name"],
                 pr=number,
+                head_sha=(state or {}).get("headRefOid"),
                 base=base,
                 expected_base=expected,
                 is_current=bool(entry.get("isCurrent")),
-                counts=rollup_counts(state) if state else empty_counts(),
+                mergeable=(state or {}).get("mergeable"),
+                merge_state_status=(state or {}).get("mergeStateStatus"),
+                unresolved_threads=sum(1 for t in threads if not t["isResolved"]),
+                counts=rollup_counts(pairs),
+                failing_lanes=sorted(name for name, status in pairs if status in FAILING),
+                greptile=parse_greptile(state)
+                if state
+                else Greptile(score=None, out_of=None, commit=None, commit_url=None),
                 base_mismatch=bool(base and base != expected),
             )
         )
     return rows
+
+
+# -------------------------------------------------------------------------- runner health
+
+
+def runner_health() -> dict | None:
+    """Ask the box what it is doing, when this IS the box. None everywhere else.
+
+    A queued lane looks identical whether the host is thrashing or the GitHub
+    pool is simply full, and the two have opposite fixes. Silent off the box:
+    a laptop's load average says nothing about CI.
+    """
+    script = Path(__file__).resolve().parents[1] / "ci" / "runner.sh"
+    if not script.exists():
+        return None
+    try:
+        proc = subprocess.run(
+            ["bash", str(script), "health"],
+            capture_output=True,
+            text=True,
+            timeout=RUNNER_HEALTH_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        health = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    return health if health.get("is_runner_host") else None
+
+
+def health_line(health: dict) -> str:
+    """One line naming which of the two queueing causes this box is in."""
+    threads = health["threads"] or 1
+    load = health["loadavg"]["1m"]
+    slots = health["cpu_slots"]
+    listeners = health["listeners"]
+    procs = health["processes"]
+    if load > threads * OVERSUBSCRIBED_LOAD_RATIO:
+        verdict = "BOX OVERSUBSCRIBED"
+    elif listeners["online"] and not listeners["idle"]:
+        verdict = "GITHUB POOL SATURATED — every listener is busy"
+    else:
+        verdict = "box has headroom"
+    return (
+        f"BOX: {verdict} | load {load}/{health['loadavg']['5m']}/{health['loadavg']['15m']} "
+        f"on {threads} threads | cpu slots {slots['held']}/{slots['total']} held | "
+        f"listeners {listeners['idle']} idle of {listeners['online']} online | "
+        f"{procs['mutmut']} mutmut, {procs['pytest']} pytest"
+    )
 
 
 # ---------------------------------------------------------------------------- rendering
@@ -643,11 +945,20 @@ def render_log_tail(report: dict, check: Check, source: str, verbose: bool) -> N
         print(f"  {check['url']}")
 
 
+def render_shard(check: Check, shard: Shard, source: str) -> None:
+    print(f"FAIL  {check['name']}  [{check['status']}]  ({source})")
+    for module in failing_modules(shard):
+        print(f"  {module_line(module, shard)}")
+
+
 def render_failing_check(report: dict, check: Check, verbose: bool) -> set[str]:
     """Render one red check. Returns the lane slugs it accounted for."""
     source = report["sources"].get(check["name"], "")
     matched = explaining_verdicts(check, report["verdicts"])
-    if not matched:
+    shard = shard_for_check(check, report["shards"])
+    if not matched and shard is not None and failing_modules(shard):
+        render_shard(check, shard, source)
+    elif not matched:
         render_log_tail(report, check, source, verbose)
     else:
         print(f"FAIL  {check['name']}  [{check['status']}]  ({source})")
@@ -686,6 +997,21 @@ def render_pending(report: dict) -> None:
         print()
 
 
+def stack_greptile_text(row: StackRow) -> str:
+    """Render the Greptile score next to the commit it read — the score alone can be stale."""
+    greptile = row["greptile"]
+    if greptile["score"] is None:
+        return "greptile —"
+    reviewed = greptile["commit"]
+    if reviewed is None:
+        mark = "@?"
+    elif row["head_sha"] and reviewed.startswith(row["head_sha"][: len(reviewed)]):
+        mark = f"@{reviewed[:9]}"
+    else:
+        mark = f"@{reviewed[:9]} STALE"
+    return f"greptile {greptile['score']}/{greptile['out_of']} {mark}"
+
+
 def render_stack(rows: list[StackRow], current_pr: int) -> None:
     if not rows:
         return
@@ -694,13 +1020,19 @@ def render_stack(rows: list[StackRow], current_pr: int) -> None:
     for row in rows:
         counts = row["counts"]
         marker = "*" if row["pr"] == current_pr else " "
-        summary = (
-            f"{counts['passed']} pass / {counts['failed']} fail / {counts['pending']} pending"
+        number = f"#{row['pr']}" if row["pr"] else "#----"
+        head = (row["head_sha"] or "?")[:9]
+        merge = f"{row['mergeable'] or '?'}/{row['merge_state_status'] or '?'}"
+        state = (
+            f"{head}  {merge}  {plural(row['unresolved_threads'], 'thread')}  "
+            f"{counts['passed']} pass / {counts['failed'] + counts['error'] + counts['timeout']}"
+            f" fail / {counts['pending']} pending  {stack_greptile_text(row)}"
             if row["pr"]
             else "no PR"
         )
-        number = f"#{row['pr']}" if row["pr"] else "#----"
-        print(f" {marker} {number} {row['branch']:<{width}}  -> {row['base'] or '?'}  {summary}")
+        print(f" {marker} {number} {row['branch']:<{width}}  -> {row['base'] or '?'}  {state}")
+        if row["failing_lanes"]:
+            print(f"     failing: {', '.join(row['failing_lanes'])}")
         if row["base_mismatch"]:
             print(
                 f"     WARNING: GitHub base is '{row['base']}' but the stack parent is "
@@ -710,11 +1042,22 @@ def render_stack(rows: list[StackRow], current_pr: int) -> None:
     print()
 
 
-def collect_advice(report: dict, branch: str) -> list[str]:
-    advice: list[str] = []
+def lane_advice(report: dict) -> list[str]:
+    """What the lanes themselves said to do, plus the stack's own retargets."""
     failing = [v for v in report["verdicts"] if v.get("status") in VERDICT_BAD]
-    for verdict in drop_content_free_rollups(failing):
-        advice.extend(verdict.get("advice", []))
+    advice = [line for v in drop_content_free_rollups(failing) for line in v.get("advice", [])]
+    advice += [
+        f"Retarget #{row['pr']} onto '{row['expected_base']}': "
+        f"`gh pr edit {row['pr']} --base {row['expected_base']}`."
+        for row in report["stack"]
+        if row["base_mismatch"]
+    ]
+    return advice
+
+
+def state_advice(report: dict, branch: str) -> list[str]:
+    """What the PR's own state says to do — conflicts, threads, reruns, reviews."""
+    advice: list[str] = []
     pr = report["pr"]
     counts = report["counts"]
     if pr["mergeable"] == "CONFLICTING":
@@ -729,6 +1072,12 @@ def collect_advice(report: dict, branch: str) -> list[str]:
             f"{plural(counts['pending'], 'check')} still running: "
             f"`mise ci:remote --watch {branch}`."
         )
+    if any(is_timeout_only(s) for s in report["shards"]):
+        advice.append(
+            "A mutation shard failed with no survivors — mutmut produced no state while tests "
+            "were being killed at the per-mutant cap. `mise ci:remote --rerun-timeouts` re-runs "
+            "the failed jobs."
+        )
     red = [c["name"] for c in report["checks"] if c["status"] in FAILING]
     if red and not any(v.get("status") in VERDICT_BAD for v in report["verdicts"]):
         advice.append(
@@ -738,14 +1087,18 @@ def collect_advice(report: dict, branch: str) -> list[str]:
         )
     if pr["review_decision"] == "CHANGES_REQUESTED":
         advice.append("A reviewer requested changes — address them, then re-request review.")
-    for row in report["stack"]:
-        if row["base_mismatch"]:
-            advice.append(
-                f"Retarget #{row['pr']} onto '{row['expected_base']}': "
-                f"`gh pr edit {row['pr']} --base {row['expected_base']}`."
-            )
+    return advice
+
+
+def collect_advice(report: dict, branch: str) -> list[str]:
+    """Every next step, in order, with the repeats dropped.
+
+    Two lanes can carry the same advice line — the mutation shards all point
+    at `mise mutation:replay` — and printing it once per shard buries the
+    others.
+    """
     deduped: list[str] = []
-    for line in advice:
+    for line in lane_advice(report) + state_advice(report, branch):
         if line not in deduped:
             deduped.append(line)
     return deduped
@@ -753,6 +1106,8 @@ def collect_advice(report: dict, branch: str) -> list[str]:
 
 def render(report: dict, verbose: bool) -> None:
     header(report)
+    if report["runner_health"]:
+        print(f"  {health_line(report['runner_health'])}")
     print()
     render_failures(report, verbose)
     render_pending(report)
@@ -774,13 +1129,50 @@ def render(report: dict, verbose: bool) -> None:
 # ------------------------------------------------------------------------------- driver
 
 
+def stack_snapshot(repo: Repo) -> tuple[dict, int]:
+    """Fetch the whole stack and nothing else — one row per PR, no per-check diagnosis.
+
+    Red when any PR carries a failing check or targets the wrong base: the
+    question `--stack` answers is "which PR in this stack do I go fix", and a
+    zero exit has to mean none of them.
+    """
+    t0 = time.monotonic()
+    payload = fetch_stack(repo)
+    rows = build_stack(repo, payload) if payload else []
+    red = any(
+        row["base_mismatch"]
+        or row["counts"]["failed"] + row["counts"]["error"] + row["counts"]["timeout"]
+        for row in rows
+    )
+    report = {
+        "schema_version": SCHEMA_VERSION,
+        "repo": repo.slug,
+        "stack": rows,
+        "fetched_at": datetime.now(UTC).isoformat(),
+        "durationMs": int((time.monotonic() - t0) * 1000),
+    }
+    return report, (1 if red else 0)
+
+
+def render_stack_only(report: dict) -> None:
+    rows: list[StackRow] = report["stack"]
+    if not rows:
+        print(
+            "ci:remote --stack: this branch is not in a gh stack "
+            "(or the `gh stack` extension is not installed)."
+        )
+        return
+    current = next((row["pr"] for row in rows if row["is_current"]), 0)
+    render_stack(rows, current or 0)
+
+
 def snapshot_once(repo: Repo, pr_number: int, branch: str, with_stack: bool) -> tuple[dict, int]:
     t0 = time.monotonic()
     pr_meta = fetch_pr_state(repo, pr_number)
     runs, truncated = fetch_check_runs(repo, pr_meta["headRefOid"])
     checks = normalize(runs)
     counts = {k: sum(1 for c in checks if c["status"] == k) for k in COUNT_KEYS}
-    verdicts, tails, sources = diagnose(repo, checks)
+    verdicts, shards, tails, sources = diagnose(repo, checks)
 
     stack_payload = fetch_stack(repo) if with_stack else None
     stack_rows = build_stack(repo, stack_payload) if stack_payload else []
@@ -803,9 +1195,11 @@ def snapshot_once(repo: Repo, pr_number: int, branch: str, with_stack: bool) -> 
         },
         "checks": checks,
         "verdicts": verdicts,
+        "shards": shards,
         "fallback_tails": tails,
         "sources": sources,
         "stack": stack_rows,
+        "runner_health": runner_health(),
         "unresolved_thread_count": unresolved,
         "thread_count_total": thread_total,
         "threads_truncated": thread_total > 100,
@@ -819,6 +1213,42 @@ def snapshot_once(repo: Repo, pr_number: int, branch: str, with_stack: bool) -> 
     return report, (1 if (red or pr_meta["mergeable"] == "CONFLICTING") else 0)
 
 
+def rerun_timeouts(repo: Repo, report: dict) -> int:
+    """Re-run the failed jobs of a run whose only mutation failures are timeouts.
+
+    Refuses on anything else. A surviving mutant is a red lane a re-run will
+    not turn green, and asking the box to prove that again costs half an hour.
+    """
+    failing = [c for c in report["checks"] if c["status"] in FAILING]
+    if not failing:
+        print("--rerun-timeouts: nothing is failing on this PR — nothing to re-run.")
+        return 0
+
+    runs: set[int] = set()
+    blockers: list[str] = []
+    for check in failing:
+        shard = shard_for_check(check, report["shards"])
+        if shard is not None and is_timeout_only(shard) and check["run_id"] is not None:
+            runs.add(check["run_id"])
+        else:
+            blockers.append(check["name"])
+    if blockers:
+        print("--rerun-timeouts: refusing. These failures are not per-test timeouts, so a")
+        print("re-run would spend the box to reach the same answer:")
+        for name in blockers:
+            print(f"  - {name}")
+        return 1
+
+    for run_id in sorted(runs):
+        rc, _, err = gh(["run", "rerun", str(run_id), "--failed"], repo.timeout_s)
+        if rc != 0:
+            eprint(f"ci:remote: gh run rerun {run_id} --failed failed:\n{err.strip()[:400]}")
+            return classify_failure(err, rc)
+        print(f"--rerun-timeouts: re-ran the failed jobs of run {run_id} (gh run rerun --failed).")
+    print(f"--rerun-timeouts: {plural(len(runs), 'run')} re-queued. `--watch` to follow them.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Why this PR is red, in one command.")
     parser.add_argument(
@@ -830,6 +1260,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--watch", action="store_true", help="poll until checks are terminal")
     parser.add_argument("--no-stack", action="store_true", help="skip the gh stack section")
+    parser.add_argument(
+        "--stack",
+        action="store_true",
+        help="the gh stack alone: one line per PR, no per-check diagnosis",
+    )
+    parser.add_argument(
+        "--rerun-timeouts",
+        action="store_true",
+        help="re-run the failed jobs when every failure is a mutation per-test timeout",
+    )
     parser.add_argument(
         "--interval",
         default=os.environ.get("GAIA_CI_INTERVAL", "30"),
@@ -865,11 +1305,16 @@ def parse_options(args: argparse.Namespace) -> Options:
         if parsed[label] <= 0:
             eprint(f"usage error: {label} must be >= 1")
             sys.exit(2)
+    if args.stack and (args.no_stack or args.watch or args.rerun_timeouts):
+        eprint("usage error: --stack is its own mode — it takes no other mode flag")
+        sys.exit(2)
     return Options(
         as_json=args.json,
         verbose=args.verbose,
         watch=args.watch,
         with_stack=not args.no_stack,
+        stack_only=args.stack,
+        rerun_timeouts=args.rerun_timeouts,
         interval=parsed["--interval"],
         max_wait=parsed["--max-wait"],
         timeout_s=parsed["--timeout"],
@@ -906,8 +1351,16 @@ def main() -> int:
     options = parse_options(args)
     owner, name = parse_repo()
     repo = Repo(owner, name, options.timeout_s)
-    branch = args.branch or current_branch()
 
+    if options.stack_only:
+        report, exit_code = stack_snapshot(repo)
+        if options.as_json:
+            print(json.dumps(report, indent=2))
+        else:
+            render_stack_only(report)
+        return exit_code
+
+    branch = args.branch or current_branch()
     resolved = resolve_pr(repo.slug, branch, options.timeout_s)
     if resolved is None:
         print(f"ci:remote: no open PR for '{branch}' — push first or check the branch name.")
@@ -919,6 +1372,8 @@ def main() -> int:
     else:
         report, exit_code = snapshot_once(repo, pr_number, branch, options.with_stack)
 
+    if options.rerun_timeouts:
+        return rerun_timeouts(repo, report)
     if options.as_json:
         print(json.dumps(report, indent=2))
     else:
