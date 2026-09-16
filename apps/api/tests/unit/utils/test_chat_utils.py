@@ -6,7 +6,11 @@ from langchain_core.messages import AIMessage
 import pytest
 
 from app.models.message_models import MessageDict
-from app.utils.chat_utils import _generate_description_from_message, do_prompt_no_stream
+from app.utils.chat_utils import (
+    _generate_description_from_message,
+    do_prompt_no_stream,
+    generate_and_update_description,
+)
 
 
 class TestGenerateDescriptionFromMessage:
@@ -88,6 +92,8 @@ class TestDescriptionAttribution:
         assert config["metadata"]["langfuse_session_id"] == "conv-1"
         assert config["metadata"]["langfuse_trace_id"] == "trace-9"
         mock_trace.assert_called_once_with("bot-7")
+        sent = mock_ainvoke.call_args.args[1]
+        assert "plan my week" in sent[0].content
 
     @patch("app.agents.llm.chatbot.get_helper_llm")
     @patch("app.agents.llm.chatbot.ainvoke_llm", new_callable=AsyncMock)
@@ -109,8 +115,6 @@ class TestDescriptionAttribution:
     async def test_forwards_identity_to_generation(
         self, mock_generate: AsyncMock, mock_persist: AsyncMock
     ) -> None:
-        from app.utils.chat_utils import generate_and_update_description
-
         mock_generate.return_value = "Weekly planning"
         user: dict = {"user_id": "u-1"}
 
@@ -126,3 +130,21 @@ class TestDescriptionAttribution:
         assert mock_generate.call_args.kwargs["user_id"] == "u-1"
         assert mock_generate.call_args.kwargs["conversation_id"] == "conv-1"
         assert mock_generate.call_args.kwargs["bot_message_id"] == "bot-7"
+
+    @patch("app.utils.chat_utils.update_conversation_description", new_callable=AsyncMock)
+    @patch("app.utils.chat_utils._generate_description_from_message", new_callable=AsyncMock)
+    async def test_empty_user_forwards_empty_string(
+        self, mock_generate: AsyncMock, mock_persist: AsyncMock
+    ) -> None:
+        mock_generate.return_value = "Weekly planning"
+
+        await generate_and_update_description(
+            "conv-1",
+            {"role": "user", "content": "hi"},
+            {},
+            None,
+            None,
+            "bot-7",
+        )
+
+        assert mock_generate.call_args.kwargs["user_id"] == ""
