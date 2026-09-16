@@ -123,7 +123,12 @@
         "noConsole": {
           "level": "warn",
           "options": {
-            "allow": ["error", "warn", "info", "debug"]
+            "allow": [
+              "error",
+              "warn",
+              "info",
+              "debug"
+            ]
           }
         },
         "useIterableCallbackReturn": "off",
@@ -187,22 +192,7 @@
         "!apps/web/src/**/__tests__/**",
         "!apps/web/src/**/*.test.ts",
         "!apps/web/src/**/*.test.tsx",
-        "!apps/web/src/features/blog/api/blogApi.ts",
-        "!apps/web/src/features/download/api/desktopApi.ts",
-        "!apps/web/src/features/onboarding/api/holoCardApi.ts",
-        "!apps/web/src/features/team/api/teamApi.ts",
-        "!apps/web/src/app/**/login/page.tsx",
-        "!apps/web/src/app/**/signup/page.tsx",
-        "!apps/web/src/features/auth/hooks/handleAuthLogin.ts",
-        "!apps/web/src/features/chat/api/mcpProxyApi.ts",
-        "!apps/web/src/features/chat/api/sessionFilesApi.ts",
-        "!apps/web/src/features/chat/hooks/useUrlMetadata.ts",
-        "!apps/web/src/features/pricing/lib/serverPricingApi.ts",
-        "!apps/web/src/features/settings/api/usageApi.ts",
-        "!apps/web/src/features/support/api/supportApi.ts",
-        "!apps/web/src/hooks/api/useAxiosInterceptor.ts",
-        "!apps/web/src/services/api/notifications.ts",
-        "!apps/web/src/components/layout/StatusBanner.tsx"
+        "!apps/web/src/features/team/api/teamApi.ts"
       ],
       "linter": {
         "rules": {
@@ -211,7 +201,13 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "@/lib/api/client": "The axios instances belong to apps/web/src/lib/api. Use `api` from \"@/lib/api/typed\", whose paths and response shapes are checked against openapi.json.",
+                  "@/lib/api/client": {
+                    "importNames": [
+                      "apiauth",
+                      "api"
+                    ],
+                    "message": "The axios instances belong to apps/web/src/lib/api. Use `api` from \"@/lib/api/typed\", whose paths and response shapes are checked against openapi.json; apiBaseUrl/clientHeaders/registerApiErrorHandler stay importable."
+                  },
                   "@/lib/api/service": "apiService is the untyped request engine behind the typed client. Use `api` from \"@/lib/api/typed\" instead.",
                   "axios": {
                     "allowImportNames": [
@@ -232,7 +228,9 @@
       }
     },
     {
-      "includes": ["apps/web/src/features/desktop-popup/desktop-popup.css"],
+      "includes": [
+        "apps/web/src/features/desktop-popup/desktop-popup.css"
+      ],
       "linter": {
         "rules": {
           "complexity": {
@@ -242,7 +240,9 @@
       }
     },
     {
-      "includes": ["apps/web/**"],
+      "includes": [
+        "apps/web/**"
+      ],
       "linter": {
         "domains": {
           "next": "recommended"
@@ -270,7 +270,9 @@
         "apps/web/src/app/**/index.ts",
         "apps/web/src/app/**/index.tsx"
       ],
-      "plugins": ["./config/biome-rules/no-barrel-reexport.grit"]
+      "plugins": [
+        "./config/biome-rules/no-barrel-reexport.grit"
+      ]
     },
     {
       "includes": [
@@ -300,7 +302,12 @@
       }
     },
     {
-      "includes": ["**/types.ts", "**/types/**", "**/*.types.ts", "**/*.d.ts"],
+      "includes": [
+        "**/types.ts",
+        "**/types/**",
+        "**/*.types.ts",
+        "**/*.d.ts"
+      ],
       "linter": {
         "rules": {
           "correctness": {

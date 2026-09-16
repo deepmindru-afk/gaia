@@ -1,6 +1,7 @@
 import { getUserTimezone } from "@shared/api/timezone";
 import type { AxiosError, InternalAxiosRequestConfig } from "axios";
 import axios from "axios";
+import { toApiOrigin } from "./origin";
 
 /**
  * API Client Configuration
@@ -40,17 +41,8 @@ export const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL.replace(
   "",
 );
 
-/** The schema's own path prefix, which `apiBaseUrl` already carries. */
-const SCHEMA_PREFIX = "/api/v1";
-
-/**
- * The server root the generated `paths` hang off. Schema paths carry their own
- * `/api/v1`, and routes like `/health` sit outside it, so the typed client
- * joins them to the origin rather than to the prefixed base.
- */
-export const apiOrigin = apiBaseUrl.endsWith(SCHEMA_PREFIX)
-  ? apiBaseUrl.slice(0, -SCHEMA_PREFIX.length)
-  : apiBaseUrl;
+/** The server root the generated `paths` hang off (see toApiOrigin). */
+export const apiOrigin = toApiOrigin(apiBaseUrl);
 
 /** The headers every request carries, for callers that cannot use axios. */
 export const clientHeaders = (): Record<string, string> => ({

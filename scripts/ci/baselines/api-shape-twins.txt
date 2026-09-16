@@ -133,7 +133,6 @@ apps/web/src/features/workflows/triggers/handlers/GoogleSheetsSettings.tsx:Googl
 apps/web/src/features/workflows/triggers/handlers/SlackSettings.tsx:SlackTriggerData=SlackNewMessageConfig
 apps/web/src/features/workflows/utils/creator.ts:ResolvableCreator=AuthorDetails
 # Owned by the concurrent lib/api migration, which deletes ErrorBody outright.
-apps/web/src/lib/api/errors.ts:ErrorBody=ErrorEnvelope
 apps/web/src/lib/blog.types.ts:Author=AuthorDetails
 apps/web/src/lib/blog.types.ts:BlogContentPost=BlogPost
 apps/web/src/lib/db/chatDb.ts:IConversation=ConversationDocument
