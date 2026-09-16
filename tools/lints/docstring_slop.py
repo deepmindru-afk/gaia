@@ -276,27 +276,32 @@ def _runtime_base_resolver(files: list[Path]) -> RuntimeBase:
     return is_runtime_base
 
 
-def _reads_own_doc(tree: ast.AST) -> bool:
-    """Return whether the module reads its own ``__doc__`` anywhere (e.g. argparse's help text)."""
-    return any(
-        isinstance(n, ast.Name) and n.id == "__doc__" and isinstance(n.ctx, ast.Load)
-        for n in ast.walk(tree)
-    )
+class _ModuleSignals(NamedTuple):
+    """The two runtime-consumption facts this rule needs from one pass over a tree."""
+
+    reads_own_doc: bool
+    #: Bare class names written as an argument to with_structured_output/bind_tools.
+    structured_output_refs: frozenset[str]
 
 
-def _structured_output_refs(tree: ast.AST) -> Iterator[str]:
-    """Yield each bare class name written as an argument to ``with_structured_output``/``bind_tools``.
+def _module_signals(tree: ast.AST) -> _ModuleSignals:
+    """Scan a tree once for ``__doc__`` reads and structured-output/bind_tools schema references.
 
-    Only a literal ``ast.Name`` argument is caught — a schema threaded through
-    a variable or a wrapper function (this repo's own ``ainvoke_structured``
+    A literal ``ast.Name`` argument only — a schema threaded through a
+    variable or a wrapper function (this repo's own ``ainvoke_structured``
     included) is invisible to this, same limit as the base-class resolver.
     """
+    reads_own_doc = False
+    refs: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if isinstance(node, ast.Name) and node.id == "__doc__" and isinstance(node.ctx, ast.Load):
+            reads_own_doc = True
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in _STRUCTURED_OUTPUT_CALLS:
                 for arg in (*node.args, *(kw.value for kw in node.keywords)):
                     if isinstance(arg, ast.Name):
-                        yield arg.id
+                        refs.add(arg.id)
+    return _ModuleSignals(reads_own_doc, frozenset(refs))
 
 
 @cache
@@ -305,7 +310,9 @@ def _app_structured_output_names() -> frozenset[str]:
     paths = sorted(_APP_ROOT.rglob("*.py")) if _APP_ROOT.is_dir() else []
     names: set[str] = set()
     for path in paths:
-        names.update(_structured_output_refs(ast.parse(path.read_text(encoding="utf-8"))))
+        names.update(
+            _module_signals(ast.parse(path.read_text(encoding="utf-8"))).structured_output_refs
+        )
     return frozenset(names)
 
 
@@ -447,21 +454,22 @@ def _check_node(
 
 def check(files: list[Path]) -> list[Violation]:
     """Return docstring-content violations across ``files``."""
-    # Each file is parsed once and reused for the structured-output scan below
-    # and the node walk — the base resolver still re-scans ``files`` itself
-    # (it also needs each class's bases/imports, not just its tree).
+    # Each file is parsed and walked for its runtime signals once, then reused
+    # for the node walk below — the base resolver still re-scans ``files``
+    # itself (it also needs each class's bases/imports, not just its tree).
     trees = {
         path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path)) for path in files
     }
+    signals = {path: _module_signals(tree) for path, tree in trees.items()}
     ctx = _TreeContext(
         runtime_base=_runtime_base_resolver(files),
         structured_names=_app_structured_output_names()
-        | {name for tree in trees.values() for name in _structured_output_refs(tree)},
+        | frozenset().union(*(s.structured_output_refs for s in signals.values())),
     )
     violations: list[Violation] = []
     for path, tree in trees.items():
         is_test_file = "tests" in path.parts or path.name.startswith("test_")
-        reads_own_doc = _reads_own_doc(tree)
+        reads_own_doc = signals[path].reads_own_doc
         for node in ast.walk(tree):
             if isinstance(node, Documented):
                 violations.extend(_check_node(path, node, is_test_file, ctx, reads_own_doc))
