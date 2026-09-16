@@ -249,10 +249,11 @@ class TestPrepareInjectsPreloadDocs:
     retrieve_tools round trip."""
 
     async def test_system_message_carries_preloaded_schemas(self) -> None:
+        from langchain_core.tools import tool as langchain_tool
+
         from app.agents.core.subagents import handoff_tools
         from app.agents.tools.core import retrieval
         from app.agents.tools.execute.resolver import ResolvedTool
-        from langchain_core.tools import tool as langchain_tool
 
         captured: dict = {}
 

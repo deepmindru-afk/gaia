@@ -19,7 +19,7 @@ Pattern deletion:
     await delete_cache("user:*")  # Delete all user keys
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Set as AbstractSet
 from typing import Any, Protocol, TypeVar, cast, overload
 
 from pydantic import TypeAdapter
@@ -223,6 +223,14 @@ class AsyncRedisCommands(Protocol):
 
     async def hdel(self, name: str, *keys: str) -> int:
         """HDEL — returns how many named fields were removed."""
+        ...
+
+    async def sadd(self, name: str, *values: str) -> int:
+        """SADD — returns how many members were newly added."""
+        ...
+
+    async def smembers(self, name: str) -> AbstractSet[str]:
+        """SMEMBERS — empty set for a missing key."""
         ...
 
     async def publish(self, channel: str, message: str) -> int:

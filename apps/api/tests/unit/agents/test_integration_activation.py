@@ -406,6 +406,67 @@ class TestActivateIntegrationTool:
         assert "3 tools" in self._text(result)
 
 
+    async def test_successful_activation_stamps_the_conversation(self) -> None:
+        """Discovery searches activated namespaces, so a success that yields
+        tools must stamp — otherwise retrieve_tools stays blind to them."""
+        from app.agents.core.subagents.integration_activation import activate_integration
+
+        mark = AsyncMock()
+        with (
+            patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=_subagent())),
+            patch(f"{_MOD}.check_integration_connection", new=AsyncMock(return_value=None)),
+            patch(
+                f"{_MOD}._activate_tools",
+                new=AsyncMock(return_value=(40, ["query_json"], ["GMAIL_X"], "DOCS")),
+            ),
+            patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="")),
+            patch(f"{_MOD}.mark_active", new=mark),
+        ):
+            call, run_cfg = self._invoke(
+                {"user_id": "u1", "conversation_id": "c9"}, integration_id="gmail"
+            )
+            await activate_integration.ainvoke(call, run_cfg)
+
+        mark.assert_awaited_once_with("c9", "gmail")
+
+    async def test_empty_activation_does_not_stamp(self) -> None:
+        """Nothing became available — stamping would add a fruitless namespace
+        search to every later discovery call in the conversation."""
+        from app.agents.core.subagents.integration_activation import activate_integration
+
+        mark = AsyncMock()
+        with (
+            patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=_subagent())),
+            patch(f"{_MOD}.check_integration_connection", new=AsyncMock(return_value=None)),
+            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(0, [], [], ""))),
+            patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="")),
+            patch(f"{_MOD}.mark_active", new=mark),
+        ):
+            call, run_cfg = self._invoke({"user_id": "u1"}, integration_id="todos")
+            await activate_integration.ainvoke(call, run_cfg)
+
+        mark.assert_not_awaited()
+
+    async def test_missing_conversation_id_skips_stamp(self) -> None:
+        from app.agents.core.subagents.integration_activation import activate_integration
+
+        mark = AsyncMock()
+        with (
+            patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=_subagent())),
+            patch(f"{_MOD}.check_integration_connection", new=AsyncMock(return_value=None)),
+            patch(
+                f"{_MOD}._activate_tools",
+                new=AsyncMock(return_value=(40, [], ["GMAIL_X"], "DOCS")),
+            ),
+            patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="")),
+            patch(f"{_MOD}.mark_active", new=mark),
+        ):
+            call, run_cfg = self._invoke({"user_id": "u1"}, integration_id="gmail")
+            await activate_integration.ainvoke(call, run_cfg)
+
+        mark.assert_not_awaited()
+
+
 def test_tool_exports() -> None:
     from app.agents.core.subagents import integration_activation
 

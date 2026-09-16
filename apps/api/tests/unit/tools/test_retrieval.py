@@ -759,6 +759,7 @@ class TestRetrieveToolsDiscovery:
             "per_namespace_hits": {"general": 2},
             "candidates_after_filter": 1,
             "chroma_preview": ["('general',)::TOOL_A", "('general',)::TOOL_B"],
+            "active_namespaces": [],
         }
 
     @pytest.mark.asyncio
@@ -828,3 +829,118 @@ class TestRetrieveToolsDiscovery:
         # user_id should have been resolved from metadata
         mock_ctx.assert_called_once()
         assert mock_ctx.call_args[0][0] == "from_metadata"
+
+
+# ---------------------------------------------------------------------------
+# Activated-namespace discovery
+# ---------------------------------------------------------------------------
+
+
+class TestActivatedNamespaceDiscovery:
+    def _github_hit(self):
+        item = MagicMock()
+        item.key = "GITHUB_LIST_PULL_REQUESTS"
+        item.score = 0.9
+        item.namespace = ("github",)
+        return item
+
+    @pytest.mark.asyncio
+    async def test_active_integration_namespace_is_searched(self):
+        """An activated integration's tools must be discoverable from the
+        activating run: discovery searches its namespace, so the "use
+        retrieve_tools for the rest" the activation reply promises works."""
+        from app.agents.tools.core import retrieval
+
+        seen: list = []
+
+        async def fake_asearch(namespace, query="", limit=25):
+            seen.append(namespace)
+            if namespace == ("github",):
+                return [self._github_hit()]
+            return []
+
+        store = MagicMock()
+        store.asearch = fake_asearch
+        config: dict = {"configurable": {"user_id": "u1", "conversation_id": "c1"}}
+
+        registry = MagicMock()
+        registry.get_tool_names.return_value = ["GITHUB_LIST_PULL_REQUESTS"]
+        category = MagicMock()
+        category.is_delegated = False
+        registry.get_category_of_tool.return_value = "github_cat"
+        registry.get_category.return_value = category
+
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval._get_user_context",
+                new_callable=AsyncMock,
+                return_value=({"general"}, {}, set()),
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.get_active",
+                new_callable=AsyncMock,
+                return_value={"github"},
+            ),
+        ):
+            fn = retrieval.get_retrieve_tools_function(tool_space="general")
+            result = await fn(store=store, config=config, query="list pull requests", exact_tool_names=[])
+
+        assert ("github",) in seen
+        assert "GITHUB_LIST_PULL_REQUESTS" in result["response"]
+
+    @pytest.mark.asyncio
+    async def test_no_active_integrations_searches_no_extra_namespace(self):
+        from app.agents.tools.core import retrieval
+
+        seen: list = []
+
+        async def fake_asearch(namespace, query="", limit=25):
+            seen.append(namespace)
+            return []
+
+        store = MagicMock()
+        store.asearch = fake_asearch
+        config: dict = {"configurable": {"user_id": "u1", "conversation_id": "c1"}}
+
+        registry = MagicMock()
+        registry.get_tool_names.return_value = []
+
+        with (
+            patch(
+                "app.agents.tools.core.retrieval.get_tool_registry",
+                new_callable=AsyncMock,
+                return_value=registry,
+            ),
+            patch(
+                "app.agents.tools.core.retrieval._get_user_context",
+                new_callable=AsyncMock,
+                return_value=({"general"}, {}, set()),
+            ),
+            patch(
+                "app.agents.tools.core.retrieval.get_active",
+                new_callable=AsyncMock,
+                return_value=set(),
+            ),
+        ):
+            fn = retrieval.get_retrieve_tools_function(tool_space="general")
+            await fn(store=store, config=config, query="list pull requests", exact_tool_names=[])
+
+        assert ("github",) not in seen
+        assert set(seen) <= {("general",), ("subagents",)}
+
+    @pytest.mark.asyncio
+    async def test_unknown_active_id_is_dropped_with_warning(self):
+        """A stamped id the registry no longer knows never reaches the store."""
+        from app.agents.tools.core import retrieval
+
+        with patch(
+            "app.agents.tools.core.retrieval.get_active",
+            new_callable=AsyncMock,
+            return_value={"deleted_integration"},
+        ):
+            assert await retrieval._active_tool_spaces("c1") == set()

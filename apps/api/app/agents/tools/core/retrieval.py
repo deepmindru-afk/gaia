@@ -25,6 +25,7 @@ from langgraph.prebuilt import InjectedStore
 from langgraph.store.base import BaseStore, SearchItem
 from pydantic import Field
 
+from app.agents.core.subagents.active_integrations import get_active
 from app.agents.core.subagents.registry import all_subagents, get_subagent_by_id
 from app.agents.tools.core.registry import (
     DESKTOP_TOOL_CATEGORY,
@@ -457,6 +458,28 @@ async def _get_user_context(
     return user_namespaces, connected_integrations, internal_subagents
 
 
+async def _active_tool_spaces(conversation_id: str | None) -> set[str]:
+    """Tool spaces activated in this conversation, or empty when none.
+
+    Maps stamped integration ids through the registry; an id the registry no
+    longer knows is dropped with a warning rather than searched blind.
+    """
+    active = await get_active(conversation_id)
+    if not active:
+        return set()
+    spaces: set[str] = set()
+    for integration_id in active:
+        subagent = get_subagent_by_id(integration_id)
+        if subagent is not None and subagent.config.tool_space:
+            spaces.add(subagent.config.tool_space)
+        else:
+            log.warning(
+                f"{LogTag.TOOL} Activated integration unknown to the registry; not searching it",
+                integration_id=integration_id,
+            )
+    return spaces
+
+
 def _build_search_tasks(
     store: BaseStore,
     query: str,
@@ -465,6 +488,7 @@ def _build_search_tasks(
     include_subagents: bool,
     limit: int,
     include_desktop: bool = False,
+    active_namespaces: set[str] | None = None,
 ) -> list[Awaitable[SearchTaskResult]]:
     """Build list of search tasks to execute.
 
@@ -496,6 +520,17 @@ def _build_search_tasks(
     if tool_space != "general":
         log.info(f"{LogTag.TOOL} Adding search for general namespace (limited to 5 for core tools)")
         search_tasks.append(store.asearch(("general",), query=query, limit=5))
+
+    # Integrations this conversation activated in-context: their namespaces
+    # join the search so tools beyond the preloaded subset are discoverable
+    # from the activating run. Stamped only after a connection-checked
+    # activation, so membership implies entitlement (see active_integrations)
+    # and the user_namespaces gate above does not apply to them.
+    for namespace in sorted(active_namespaces or ()):
+        if namespace in {tool_space, "general", "subagents"}:
+            continue
+        log.info(f"{LogTag.TOOL} Adding search for activated namespace", namespace=namespace)
+        search_tasks.append(store.asearch((namespace,), query=query, limit=limit))
 
     # Desktop-executed tools are only discoverable for desktop-app sessions
     # (include_desktop is derived from conversation_source upstream).
@@ -1097,6 +1132,9 @@ def get_retrieve_tools_function(
         ) = await _get_user_context(user_id, tool_space, include_subagents)
 
         # Build and execute search tasks
+        active_namespaces = await _active_tool_spaces(
+            agent_configurable(config).get("conversation_id")
+        )
         search_tasks = _build_search_tasks(
             store,
             query or "",
@@ -1105,6 +1143,7 @@ def get_retrieve_tools_function(
             include_subagents,
             limit,
             include_desktop=desktop_enabled,
+            active_namespaces=active_namespaces,
         )
 
         results = await asyncio.gather(*search_tasks, return_exceptions=True)
@@ -1193,6 +1232,7 @@ def get_retrieve_tools_function(
                 "tool_space": tool_space,
                 "user_id": user_id,
                 "namespaces_searched": sorted(user_namespaces),
+                "active_namespaces": sorted(active_namespaces),
                 "tools_discovered": len(final_tools),
                 "chroma_hits": chroma_hits,
                 "public_hits": public_hits,

@@ -20,6 +20,7 @@ from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command
 
 from app.agents.context.fetchers import build_provider_metadata_block
+from app.agents.core.subagents.active_integrations import mark_active
 from app.agents.core.subagents.handoff_tools import (
     _get_subagent_by_id,
     check_integration_connection,
@@ -221,6 +222,19 @@ async def activate_integration(
         }
     )
 
+    # Stamp the conversation while the activation is known good: later
+    # retrieve_tools discovery searches this namespace too, so the tools
+    # beyond the preloaded subset stay reachable from this run.
+    if bind or preloaded or tool_count:
+        conversation_id = configurable.get("conversation_id")
+        if conversation_id:
+            await mark_active(conversation_id, integration_id)
+        else:
+            log.warning(
+                f"{LogTag.AGENT} Activation stamp skipped: no conversation_id",
+                integration=integration_id,
+            )
+
     # Tool schemas live in exactly one place: the trailing schemas section
     # (rendered by render_preload_block under its own header) — the same
     # last-position rule as handoff seeding, which appends them to the end of
@@ -236,7 +250,8 @@ async def activate_integration(
             f"{len(preloaded)} integration tool(s) are preloaded in the schemas section "
             "at the end of this message — NOT bound, do NOT call them by name. Run them "
             'with execute(task_description="...", tool_name="<NAME>", data={...}) '
-            "built from those schemas. Only use retrieve_tools if you need "
+            "built from those schemas. retrieve_tools searches "
+            f"{integration_id} too, so use it if you need "
             f"one of the other {max(tool_count - len(bind) - len(preloaded), 0)}."
         )
     elif not bind:
