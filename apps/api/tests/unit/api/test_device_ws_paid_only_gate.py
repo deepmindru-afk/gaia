@@ -37,6 +37,9 @@ async def test_free_user_socket_is_closed_with_policy_violation() -> None:
             await device_ws(websocket)
 
     assert exc.value.code == 1008
+    assert exc.value.reason == "subscription required", (
+        "the daemon's own log needs this told apart from a revoke or a bad token"
+    )
     websocket.accept.assert_not_awaited()
 
 

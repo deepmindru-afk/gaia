@@ -7,6 +7,7 @@ and the 500-vs-4xx split is what ``level="ERROR"`` searches rely on. None of it
 was asserted anywhere, so any of it could be renamed or dropped silently.
 """
 
+import json
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -60,6 +61,17 @@ async def test_an_app_error_names_the_failure_and_where_it_happened() -> None:
         path="/api/v1/todos",
         method="POST",
     )
+
+
+async def test_an_error_that_names_no_code_ships_none() -> None:
+    """Clients narrow on ``code``; inventing one for an error that declared
+    nothing would route the caller down a branch the raiser never chose."""
+    with patch(HANDLERS_LOG):
+        response = await app_error_handler(
+            _request(), create_error(message="Nope", status_code=400)
+        )
+
+    assert json.loads(response.body) == {"message": "Nope"}
 
 
 async def test_validation_failures_are_counted_and_listed() -> None:

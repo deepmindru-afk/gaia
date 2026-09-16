@@ -27,7 +27,13 @@ class _Payload(BaseModel):
     count: int
 
 
-def _app(limit: str = "1/minute", *, enabled: bool = True) -> FastAPI:
+def _app(
+    limit: str = "1/minute",
+    *,
+    enabled: bool = True,
+    key_style: str = "url",
+    headers_enabled: bool = False,
+) -> FastAPI:
     app = FastAPI()
     app.add_middleware(RouterAwareSlowAPIMiddleware)
     app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
@@ -36,6 +42,8 @@ def _app(limit: str = "1/minute", *, enabled: bool = True) -> FastAPI:
         default_limits=[limit],
         storage_uri="memory://",
         enabled=enabled,
+        key_style=key_style,
+        headers_enabled=headers_enabled,
     )
 
     router = APIRouter(prefix="/included")
@@ -89,6 +97,25 @@ async def test_a_disabled_limiter_never_refuses() -> None:
     async with _client(_app(enabled=False)) as client:
         for _ in range(3):
             assert (await client.get("/included/thing")).status_code == 200
+
+
+async def test_the_handler_is_what_identifies_an_endpoint_keyed_limit() -> None:
+    """With ``key_style="endpoint"`` the limit is keyed by the handler's name;
+    hand slowapi no handler and it has nothing to key on, so nothing is counted."""
+    async with _client(_app(key_style="endpoint")) as client:
+        assert (await client.get("/included/thing")).status_code == 200
+        assert (await client.get("/included/thing")).status_code == 429
+
+
+async def test_rate_limit_headers_are_injected_on_a_successful_response() -> None:
+    """The counters ride on ``request.state``; losing them leaves a client with
+    no idea how much budget it has left."""
+    async with _client(_app("5/minute", headers_enabled=True)) as client:
+        response = await client.get("/included/thing")
+
+    assert response.status_code == 200
+    assert response.headers["x-ratelimit-limit"] == "5"
+    assert response.headers["x-ratelimit-remaining"] == "4"
 
 
 async def test_an_unrouted_path_is_exempt_rather_than_counted() -> None:
