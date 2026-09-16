@@ -422,7 +422,7 @@ never raise a count.
 | DS1 | longer than 6 lines (function), 12 (class), 15 (module) |
 | DS2 | any backtick |
 | DS3 | RST/Sphinx markup — ` ``x`` `, `:param`, `:returns:`, `:raises:`, `.. note::`, `>>>` |
-| DS4 | a `test_*` docstring longer than one line |
+| DS4 | a `test_*` function/method docstring longer than one line |
 | DS5 | a summary that only restates the function name |
 | DS6 | an `Args:` entry that only restates the argument name |
 | DS7 | a type written inside an `Args:` entry |
@@ -435,11 +435,32 @@ is paid for many times over. The patterns above are what 900+ docstrings in
 changes. The *why* of a change belongs in its PR; the code is the example.
 
 **Scope:** `app/` and `tests/` (this rule opts into the test tree via
-`INCLUDES_TESTS`). Docstrings that are runtime data are never checked:
-`@tool` / `@custom_tool` bodies are the model-facing tool description,
-`@with_doc` injects them, `@router.*` / `@app.*` handlers feed OpenAPI, and
-`BaseModel` / `BaseSettings` / `BaseTool` class docstrings become schema
-descriptions.
+`INCLUDES_TESTS`). DS4 applies to `test_*` functions/methods only — a test
+module or test class docstring is graded by the ordinary DS1 caps (15/12)
+instead, since the test *name* is what DS4's "the name is the doc" reasoning
+is about; a module has no name to carry that.
+
+Docstrings that are runtime data are never checked, from two sources that
+never drift against each other:
+
+- **The ONE source of truth for "this whole file is runtime data"** is root
+  `pyproject.toml`'s own `[tool.ruff.lint.per-file-ignores]` — any glob whose
+  ignore list already contains `"D"` (route handlers feeding OpenAPI,
+  `@tool` bodies, pydantic models/schemas, argparse `--help` scripts, …)
+  exempts the whole file here too, parsed straight from that table rather
+  than a second hardcoded path list. The repo root is auto-detected by
+  walking up from the scanned files to the nearest `pyproject.toml` that
+  actually configures ruff (skipping one like `apps/api/pyproject.toml`
+  that exists only for `uv`/mypy/coverage); `run.py --repo-root PATH`
+  overrides that for the rare case a scan targets a tree where
+  auto-detection can't find it.
+- **What ruff's per-file config cannot see**, because it is not file-shaped:
+  `@tool` / `@custom_tool` / `@with_doc`-decorated functions, `@router.*`
+  handlers, `BaseModel` / `BaseSettings` / `BaseTool` subclasses anywhere,
+  and a `BaseModel` / `TypedDict` referenced by name as an argument to
+  `with_structured_output` / `bind_tools` anywhere in the tree — only a
+  literal class name written at the call site is caught, not one threaded
+  through a variable or a wrapper function.
 
 **Fix:** shorten. Keep the summary line and the one constraint the name does
 not carry; delete the rest. A test's name is its doc — one line at most, and

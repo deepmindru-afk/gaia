@@ -19,12 +19,14 @@ from __future__ import annotations
 import ast
 from collections.abc import Sequence
 from functools import cache
+import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tokenize
 
 APP_DIR = Path("apps/api/app")
 TESTS_DIR = Path("apps/api/tests")
@@ -94,11 +96,36 @@ def _merge_base() -> str:
     return ""
 
 
-def _code_without_docs(source: str) -> str | None:
-    """Return ``source``'s AST dump with docstrings removed, or None if it fails to parse.
+def _is_triple_quoted(source: str, node: ast.expr) -> bool:
+    """Return True when every string literal in node's source segment is triple-quoted.
 
-    Comments never reach the AST and mutmut skips triple-quoted strings, so two
-    sources with equal dumps differ only in text that cannot produce a mutant.
+    mutmut's operator_string (mutmut/mutation/mutators.py) skips a SimpleString only
+    when it is triple-quoted, so a single-quoted leading string IS mutated. Implicit
+    concatenation is several SimpleStrings to mutmut but one Constant here, hence the
+    tokenize walk rather than a check of the first quote alone.
+    """
+    segment = ast.get_source_segment(source, node)
+    if segment is None:
+        return False
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(segment).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return False
+    literals = [token.string for token in tokens if token.type == tokenize.STRING]
+    if not literals:
+        return False
+    return all(
+        literal[len(literal) - len(literal.lstrip("rRbBuUfF")) :].startswith(('"""', "'''"))
+        for literal in literals
+    )
+
+
+def _code_without_docs(source: str) -> str | None:
+    """Return source's AST dump with triple-quoted docstrings removed, or None on a parse error.
+
+    Comments never reach the AST, so two sources with equal dumps differ only in
+    text that cannot produce a mutant. Only TRIPLE-quoted leading strings are
+    dropped, matching exactly what mutmut refuses to mutate.
     """
     try:
         tree = ast.parse(source)
@@ -112,6 +139,7 @@ def _code_without_docs(source: str) -> str | None:
                 and isinstance(body[0], ast.Expr)
                 and isinstance(body[0].value, ast.Constant)
                 and isinstance(body[0].value.value, str)
+                and _is_triple_quoted(source, body[0].value)
             ):
                 del body[0]
     return ast.dump(tree)

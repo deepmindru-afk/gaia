@@ -1,4 +1,18 @@
-"""What the user sees across a HIL pause — the frames on the stream, not the approval semantics (see test_hil_barrier_e2e.py / test_hil_spawn_e2e.py for those)."""
+"""Pin what the user sees across a HIL pause: the stream frames, not the semantics.
+
+Approval semantics are proven in tests/e2e/test_hil_barrier_e2e.py and test_hil_spawn_e2e.py,
+neither of which opens a stream; that LangGraph keeps writes from tasks completing in an
+interrupting step is pinned in tests/unit/agents/test_pause_checkpointing.py. Asserted here:
+the resumed result reaches the stream exactly once carrying real output -- claim_tool_output
+in app/agents/core/background/session.py claims each tool_call_id once per stream, so assert
+on a LIST of ids, never Transcript.result_for, which returns the first match and is blind to
+duplication; a cancelled run leaves no answerable approval behind; expiry settles the card
+and tells the model the action did not happen, while a not-yet-stale approval survives the
+same sweep; always_allow publishes no approval frame AND runs the tool inline; a turn that
+pauses twice keeps every approval answerable in both approve/deny orders. Doubles are
+external services only -- Mongo, the notifier, the narration LLM -- and are listed on
+hil_world.
+"""
 
 from __future__ import annotations
 

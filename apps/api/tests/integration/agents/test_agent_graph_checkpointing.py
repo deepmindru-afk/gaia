@@ -1,4 +1,12 @@
-"""Integration tests for Agent Graph with Real PostgreSQL Checkpointing."""
+"""Integration tests for Agent Graph with Real PostgreSQL Checkpointing.
+
+Requires PostgreSQL running at localhost:5432 with database gaia_test.
+
+The LLM is replaced with BindableToolsFakeModel to avoid external API calls; graph compilation,
+state management, the pre-model hooks (filter_messages_node, manage_system_prompts_node), the
+production build_comms_graph and CheckpointerManager, and PostgreSQL checkpointing itself all run
+for real, so deleting any of them fails these tests immediately.
+"""
 
 from collections.abc import Callable, Iterator
 import contextlib

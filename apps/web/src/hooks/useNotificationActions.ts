@@ -129,11 +129,11 @@ export function useNotificationActions(
 
       if (result.success) {
         toast.success(result.message);
-        // Convert NotificationResponse to ActionResult format for callback
+        // The API types `data` as an open record; an executed action's payload is ActionResultData.
         const actionResult: ActionResult = {
           success: result.success,
           message: result.message,
-          data: result.data as ActionResultData, // Type assertion since we know it's ActionResultData for API calls
+          data: result.data as ActionResultData | null,
         };
         options.onSuccess?.(actionResult);
       } else {

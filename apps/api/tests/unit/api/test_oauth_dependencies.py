@@ -10,19 +10,25 @@ import asyncio
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
+from fastapi.exceptions import WebSocketException
 import pytest
 
+from app.api.v1.dependencies import oauth_dependencies
 from app.api.v1.dependencies.oauth_dependencies import (
     get_current_user,
+    get_current_user_ws,
     get_user_timezone,
     get_user_timezone_from_preferences,
 )
 from app.constants.error_codes import NOT_AUTHENTICATED
 from app.models.user_models import AuthenticatedUser
 
-_BACKFILL = "app.api.v1.dependencies.oauth_dependencies._backfill_user_timezone"
-_LOG = "app.api.v1.dependencies.oauth_dependencies.log"
+_DEPS = "app.api.v1.dependencies.oauth_dependencies"
+_BACKFILL = f"{_DEPS}._backfill_user_timezone"
+_LOG = f"{_DEPS}.log"
+_WS_AUTH = f"{_DEPS}.authenticate_workos_session"
+_WS_DEV_BYPASS = f"{_DEPS}.resolve_dev_bypass_user"
 
 
 class TestGetUserTimezoneFromPreferences:
@@ -177,3 +183,99 @@ class TestGetCurrentUser:
         mock_log.set.assert_called_once_with(
             auth={"user_id": "u1", "email": "a@b.c", "method": method, "is_agent_token": True}
         )
+
+
+def _websocket(cookies: dict[str, str] | None = None, protocol: str = "") -> MagicMock:
+    websocket = MagicMock()
+    websocket.cookies = cookies or {}
+    websocket.headers = {"sec-websocket-protocol": protocol}
+    return websocket
+
+
+class TestGetCurrentUserWs:
+    """Cover the dependency that used to return an empty dict typed as a user.
+
+    Every caller held a value whose type was a lie and had to re-check it.
+    """
+
+    async def test_a_session_cookie_yields_the_authenticated_user(self) -> None:
+        session_user = AuthenticatedUser(user_id="u1")
+        with patch(_WS_AUTH, new_callable=AsyncMock, return_value=(session_user, None)):
+            user = await get_current_user_ws(_websocket({"wos_session": "cookie"}))
+
+        assert user is session_user
+
+    async def test_a_mobile_client_may_carry_the_token_as_a_subprotocol(self) -> None:
+        """Cookies are unavailable there, so the token rides the handshake header."""
+        session_user = AuthenticatedUser(user_id="u1")
+        auth = AsyncMock(return_value=(session_user, None))
+        with patch(_WS_AUTH, auth):
+            user = await get_current_user_ws(_websocket(protocol="Bearer, mobile.jwt"))
+
+        assert user is session_user
+        auth.assert_awaited_once_with(session_token="mobile.jwt")
+
+    async def test_no_credential_at_all_is_a_policy_violation(self) -> None:
+        with patch(f"{_DEPS}.log") as mock_log:
+            with pytest.raises(WebSocketException) as exc:
+                await get_current_user_ws(_websocket())
+
+        assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+        assert exc.value.reason == "no session cookie or protocol token"
+        # The connection's wide event is where a refused dial is counted.
+        mock_log.set.assert_called_once_with(disconnect_reason="auth_failure")
+
+    async def test_a_rejected_session_is_a_policy_violation(self) -> None:
+        with patch(_WS_AUTH, new_callable=AsyncMock, return_value=(None, None)):
+            with pytest.raises(WebSocketException) as exc:
+                await get_current_user_ws(_websocket({"wos_session": "stale"}))
+
+        assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+        assert exc.value.reason == "session token rejected"
+
+    async def test_a_user_without_an_id_never_yields_a_socket(self) -> None:
+        """Callers key connection bookkeeping on the id, so a user without one yields no socket."""
+        with (
+            patch(
+                _WS_AUTH, new_callable=AsyncMock, return_value=(AuthenticatedUser(user_id=""), None)
+            ),
+            patch(f"{_DEPS}.log") as mock_log,
+        ):
+            with pytest.raises(WebSocketException) as exc:
+                await get_current_user_ws(_websocket({"wos_session": "cookie"}))
+
+        assert exc.value.reason == "authenticated user has no id"
+        assert mock_log.warning.call_args.args[0].endswith(
+            "WebSocket user context carries no user_id"
+        )
+
+    async def test_the_dev_bypass_resolves_its_target_without_a_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(oauth_dependencies.settings, "ENV", "development")
+        monkeypatch.setattr(oauth_dependencies.settings, "DEV_AUTH_BYPASS_EMAIL", "dev@gaia.local")
+        user_doc = MagicMock()
+        bypass_user = AuthenticatedUser(user_id="u1", dev_bypass=True)
+        with (
+            patch(
+                _WS_DEV_BYPASS, new_callable=AsyncMock, return_value=("dev@gaia.local", user_doc)
+            ),
+            patch(f"{_DEPS}.build_user_context", return_value=bypass_user) as build_context,
+        ):
+            user = await get_current_user_ws(_websocket())
+
+        assert user is bypass_user
+        # The flags are the whole point of the bypass context: anything that
+        # reads them must be able to tell this session from a real login.
+        build_context.assert_called_once_with(user_doc, auth_provider="workos", dev_bypass=True)
+
+    async def test_a_bypass_target_with_no_user_is_refused_not_impersonated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(oauth_dependencies.settings, "ENV", "development")
+        monkeypatch.setattr(oauth_dependencies.settings, "DEV_AUTH_BYPASS_EMAIL", "dev@gaia.local")
+        with patch(_WS_DEV_BYPASS, new_callable=AsyncMock, return_value=("ghost@x", None)):
+            with pytest.raises(WebSocketException) as exc:
+                await get_current_user_ws(_websocket())
+
+        assert exc.value.reason == "dev bypass target has no Mongo user"

@@ -1,5 +1,7 @@
 export type { ApiClientConfig } from "./apiClient";
-export { ApiError, buildUrl, createApiHeaders } from "./apiClient";
+export { buildUrl, createApiHeaders } from "./apiClient";
+export type { ErrorEnvelope } from "./apiError";
+export { ApiError, REQUEST_ID_HEADER, toErrorEnvelope } from "./apiError";
 export type {
   BatchSyncConversationsParams,
   ChatStreamFileData,

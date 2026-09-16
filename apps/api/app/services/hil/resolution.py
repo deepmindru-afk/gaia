@@ -188,9 +188,10 @@ async def abandon_conversation_approvals(
 async def cancel_conversation_approvals(conversation_id: str, user_id: str) -> list[str]:
     """Close a cancelled run's pending approvals so nothing can restart it.
 
-    Left pending, a later "Approve" or the timeout sweep would re-dispatch the very
-    run the user stopped, on a fresh stream the cancel flag doesn't cover. Deliberately
-    does NOT resume (unlike abandon_conversation_approvals) since the run is already gone.
+    Left pending, a later "Approve" or the timeout sweep would re-dispatch the very run the
+    user stopped, on a fresh stream the cancel flag doesn't cover. Deliberately does NOT
+    resume (unlike abandon_conversation_approvals) since the run is already gone. mark_decided
+    runs first: it is the exactly-once mutex, so only its winner may clear resume_item.
     """
     cancelled: list[str] = []
     for record in await list_pending_for_conversation(conversation_id):
@@ -259,9 +260,9 @@ async def _resolve_record(
     """Authorize, transition exactly once, and resume — from an already-loaded record."""
     if record.user_id != user_id:
         raise ApprovalRequestForbiddenError()
-    # Checked BEFORE the decided-transition so an unactionable decision fails the
-    # request rather than reporting false success. Exception: a parked-subagent record
-    # decided before its executor's join needs no resume context, but only while the busy lock proves a collector is still alive to read it.
+    # Checked BEFORE the decided-transition so an unactionable decision fails the request
+    # rather than reporting false success. Exception: a parked-subagent record decided before
+    # its executor's join needs none, but only while the busy lock proves a collector is alive.
     if record.resume_item is None:
         collector_alive = record.subagent_thread_id is not None and await is_executor_busy(
             record.conversation_id
@@ -318,10 +319,10 @@ async def _dispatch_resume(
 ) -> None:
     """Re-dispatch the executor thread this approval paused.
 
-    At most one resume runs per conversation, since two decisions landing close
-    together on a shared executor thread must not start two concurrent LangGraph
-    runs (checkpoint corruption); the loser skips dispatch since its decision is
-    already durable on the record.
+    At most one resume runs per conversation: two decisions landing close together on a
+    shared executor thread must not start concurrent LangGraph runs (checkpoint corruption),
+    and the loser's decision is already durable on the record. mark_resumed stamps the
+    record, so a crash before it is re-dispatched by the sweep from resume_item.
     """
     if not await claim_resume_dispatch(record.conversation_id):
         log.info(

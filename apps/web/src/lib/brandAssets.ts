@@ -3,8 +3,9 @@
  * (`/brand/sitemap.xml`) — the single source of truth for marks under
  * `/public/brand` that should be discoverable in image search.
  *
- * The interactive download UI additionally offers per-format variants (e.g.
- * `.svg` alongside `.png`); search engines only index raster, so this list points at the canonical raster of each mark.
+ * The interactive download UI (`brand/components/BrandAssets.tsx`) additionally
+ * offers per-format variants (e.g. `.svg` alongside `.png`); search engines only
+ * index raster, so this list points at the canonical raster of each mark.
  */
 export interface BrandImageAsset {
   /** Path under `/public`. */

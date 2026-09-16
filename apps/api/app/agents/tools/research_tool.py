@@ -46,8 +46,7 @@ class ResearchSource(RankedUrl):
 
 
 class ResearchResult(BaseModel):
-    """The research_data frame — also what gets cached and what the tool
-    returns (plus cached/instructions, added per call site)."""
+    """The research_data frame: what gets cached and what the tool returns."""
 
     model_config = ConfigDict(extra="forbid")
 

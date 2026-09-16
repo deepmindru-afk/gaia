@@ -294,10 +294,10 @@ def create_subagent_middleware(
 ) -> AgentMiddlewareStack:
     """Create middleware stack for provider subagents.
 
-    SubagentMiddleware, WorkspaceCompactionMiddleware, and summarization —
-    without which a run grows unbounded up to EXECUTOR_RECURSION_LIMIT steps
-    (once averaged 91k input tokens/call vs 43k for comms/executor).
-    agent_name attributes llm_call events per subagent (~35 integrations).
+    SubagentMiddleware, WorkspaceCompactionMiddleware, and summarization — without which a
+    run grows unbounded up to EXECUTOR_RECURSION_LIMIT steps (once averaged 91k input
+    tokens/call vs 43k for comms/executor); trimming is safe because the result is read from
+    finish_task, never replayed history. Spawned sub-subagents get no SubagentMiddleware.
     """
     return create_middleware_stack(
         agent_name=agent_name,

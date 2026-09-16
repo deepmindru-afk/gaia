@@ -31,13 +31,20 @@
  *                       3 // lines, or a banner inside a body. The TS half of
  *                       tools/lints/docstring_slop.py + comment_slop.py;
  *                       implementation in lib/doc-comments.mjs.
- *   api-schema-types    Fail when a .ts/.tsx file outside the generated dir
- *                       hand-writes a type that mirrors an API model, or when
- *                       web feature code calls the untyped `apiService`
- *                       declares an interface/type named after an
- *                       openapi.json component schema — the hand-written
- *                       twin of a Pydantic model. `type X = Schema<"X">` is
- *                       the one allowed form.
+ *   api-schema-types    Four rules over every .ts/.tsx outside the generated
+ *                       dir, each failing on the hand-written twin of a
+ *                       Pydantic model: a declaration NAMED after a component
+ *                       schema; any declaration at all inside an API-type
+ *                       directory (API_TYPE_DIRS) that is not a re-export or
+ *                       an alias of a generated name; a declaration whose
+ *                       FIELDS are a component schema's fields under another
+ *                       name; and an untyped `apiService` call in web feature
+ *                       code. The last two ratchet against the baselines in
+ *                       scripts/ci/baselines.
+ *   api-client-imports  Fail when a file outside apps/mobile/src/lib imports
+ *                       the raw mobile API client, ratcheted against a
+ *                       baseline. The web half of that boundary is Biome's
+ *                       style/noRestrictedImports, scoped by an override.
  *
  * Env contract: CHANGED_FILES (see lib/explicit-file-list.mjs) scopes the
  * file-walking gates to a lane's changed files; empty means full scan.
@@ -51,6 +58,26 @@ import { join } from "node:path";
 import { checkDocComments } from "./lib/doc-comments.mjs";
 import { explicitFileList } from "./lib/explicit-file-list.mjs";
 import { runEvlogMapBots } from "./lib/evlog-map-bots.mjs";
+import {
+  BASELINES,
+  DTS_IGNORE_PATTERN,
+  GENERATED_DIR,
+  MOBILE_API_LIB,
+  MOBILE_IMPORTS_BASELINE,
+  MOBILE_SRC,
+  handWrittenDeclsIn,
+  isApiTypeDir,
+  isTestFile,
+  isWebFeatureFile,
+  rawClientImportLines,
+  readBaseline,
+  reportBaseline,
+  schemaComponents,
+  schemaFieldSets,
+  schemaTwinsIn,
+  shapeTwinsIn,
+  untypedCallLines,
+} from "./lib/api-contract.mjs";
 
 // ---------------------------------------------------------------------------
 // file-sizes
@@ -746,85 +773,87 @@ function cmdApiSchema(argv) {
 // api-schema-types
 // ---------------------------------------------------------------------------
 
-const GENERATED_DIR = "libs/shared/ts/src/api/generated/";
-// `export interface TodoResponse {`, `type Workflow<T> =`, `declare interface X extends`.
-// The trailing `{ < = extends` is what separates a declaration from the
-// `type Foo,` line of a multi-line `import type` list.
-const TYPE_DECLARATION =
-  /^\s*(?:export\s+)?(?:declare\s+)?(?:interface|type)\s+([A-Za-z0-9_]+)\s*(?:<|\{|=|extends\b)/gm;
-// An alias onto a generated type (directly, or via `import type { X as Y }`)
-// has no fields of its own and cannot drift; anything else with the name is a twin.
-const GENERATED_IMPORT = /^import type \{([^}]*)\} from "[^"]*generated";/gm;
-function generatedBindings(src, names) {
-  const bound = new Set();
-  for (const [, list] of src.matchAll(GENERATED_IMPORT)) {
-    for (const entry of list.split(",")) {
-      const [imported, local = imported] = entry.trim().split(/\s+as\s+/);
-      if (names.has(imported)) bound.add(local);
-    }
-  }
-  return bound;
-}
-const schemaAliasIn = (src, name, names) => {
-  const alias = src.match(
-    new RegExp(`^\\s*(?:export\\s+)?type\\s+${name}\\s*=\\s*([A-Za-z0-9_]+);`, "m"),
+// The size gates ignore every `.d.ts`; this gate must not. The generated file
+// is already exempt by GENERATED_DIR, so every other `.d.ts` is hand-written
+// and a twin declared in one drifts exactly like a twin declared in a `.ts`.
+const apiTypesShouldIgnore = (p) =>
+  IGNORE_PATTERNS.some(
+    (rx) => rx.source !== DTS_IGNORE_PATTERN.source && rx.test(p),
   );
-  return alias !== null && (names.has(alias[1]) || generatedBindings(src, names).has(alias[1]));
-};
 
-function schemaComponentNames() {
-  const doc = JSON.parse(readFileSync(OPENAPI_JSON, "utf8"));
-  return new Set(Object.keys(doc.components?.schemas ?? {}));
-}
-
-function schemaTwinsIn(file, names) {
-  const src = readFileSync(file, "utf8");
-  return [...src.matchAll(TYPE_DECLARATION)]
-    .map((m) => m[1])
-    .filter((name) => names.has(name) && !schemaAliasIn(src, name, names));
-}
-
-// The web's API layer. `apiService` is the untyped request engine behind the
-// path-typed client (`lib/api/typed.ts`); only this directory may touch it.
-const WEB_API_LIB = "apps/web/src/lib/api/";
-const WEB_SRC = "apps/web/src/";
-const UNTYPED_CALL = /\bapiService\b/;
-
-function untypedCallLines(file) {
-  const lines = readFileSync(file, "utf8").split("\n");
-  return lines
-    .map((line, index) => (UNTYPED_CALL.test(line) ? index + 1 : 0))
-    .filter(Boolean);
-}
-
-function isWebFeatureFile(file) {
-  return (
-    file.startsWith(WEB_SRC) &&
-    !file.startsWith(WEB_API_LIB) &&
-    !file.includes("/__tests__/") &&
-    !/\.test\.tsx?$/.test(file)
-  );
-}
+const DECLARED_BASELINE = "api-declared-types.txt";
+const SHAPE_BASELINE = "api-shape-twins.txt";
 
 function cmdApiSchemaTypes(argv) {
-  const names = schemaComponentNames();
+  const schemas = schemaComponents(OPENAPI_JSON);
+  const names = new Set(Object.keys(schemas));
+  const fieldSets = schemaFieldSets(schemas);
+  const declaredBaseline = readBaseline(DECLARED_BASELINE);
+  const shapeBaseline = readBaseline(SHAPE_BASELINE);
   // existsSync: `git ls-files` still lists a file deleted but not yet staged.
   const scanned = typesFiles(argv).filter(
     (file) =>
-      !file.startsWith(GENERATED_DIR) && !shouldIgnore(file) && existsSync(file),
+      !file.startsWith(GENERATED_DIR) &&
+      !apiTypesShouldIgnore(file) &&
+      existsSync(file),
   );
 
   const violations = [];
   const untyped = [];
+  const declared = [];
+  const shaped = [];
+  const declaredSeen = new Set();
+  const shapeSeen = new Set();
   for (const file of scanned) {
-    const found = schemaTwinsIn(file, names);
+    const src = readFileSync(file, "utf8");
+    const found = schemaTwinsIn(src, names);
     if (found.length > 0) violations.push({ file, names: found });
+    if (isApiTypeDir(file) && !isTestFile(file)) {
+      for (const name of handWrittenDeclsIn(src, names)) {
+        const entry = `${file}:${name}`;
+        declaredSeen.add(entry);
+        if (!declaredBaseline.has(entry)) declared.push(entry);
+      }
+    }
+    if (!isTestFile(file)) {
+      for (const twin of shapeTwinsIn(src, fieldSets)) {
+        const entry = `${file}:${twin.name}=${twin.schema}`;
+        shapeSeen.add(entry);
+        if (!shapeBaseline.has(entry)) shaped.push({ entry, ...twin });
+      }
+    }
     if (isWebFeatureFile(file)) {
       const lines = untypedCallLines(file);
       if (lines.length > 0) untyped.push({ file, lines });
     }
   }
 
+  if (declared.length > 0) {
+    console.log(
+      `\n❌ api-schema-types: ${declared.length} hand-declared type(s) in an API-type directory:\n`,
+    );
+    for (const entry of declared) console.log(`  ${entry}`);
+    console.log(
+      "\nWhy: these directories name the API contract and nothing else, so every type there" +
+        ' must be `export type { X } from "@gaia/shared/api/generated"` or `export type Y = X`' +
+        " naming a generated type. A declaration with fields of its own is a copy that drifts.",
+    );
+  }
+  if (shaped.length > 0) {
+    console.log(
+      `\n❌ api-schema-types: ${shaped.length} type(s) have the fields of an API model under another name:\n`,
+    );
+    for (const twin of shaped) {
+      console.log(
+        `  ${twin.entry} — ${twin.shared}/${twin.of} fields match ${twin.schema}`,
+      );
+    }
+    console.log(
+      "\nWhy: renaming a Pydantic model's shape does not make it a different type — it makes it" +
+        " a twin the generator cannot update. Import the generated type, or say why the shapes" +
+        ` genuinely differ by adding the line to ${BASELINES}${SHAPE_BASELINE}.`,
+    );
+  }
   if (violations.length > 0) {
     console.log(
       `\n❌ api-schema-types: ${violations.length} file(s) hand-write a type that mirrors an API model:\n`,
@@ -855,9 +884,65 @@ function cmdApiSchemaTypes(argv) {
         " guessed response shape compiles; the typed client checks both against openapi.json.",
     );
   }
-  if (violations.length > 0 || untyped.length > 0) process.exit(1);
+  reportBaseline(DECLARED_BASELINE, declaredBaseline, declaredSeen);
+  reportBaseline(SHAPE_BASELINE, shapeBaseline, shapeSeen);
+  if (
+    violations.length > 0 ||
+    untyped.length > 0 ||
+    declared.length > 0 ||
+    shaped.length > 0
+  ) {
+    process.exit(1);
+  }
   console.log(
     "✅ No hand-written twins of API schema types; every web API call is path-typed.",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// api-client-imports
+// ---------------------------------------------------------------------------
+
+// The mobile app's raw request engine, held by a baseline ratchet because its 124
+// live call sites would force a Biome rule off. The web half of the same boundary
+// is a Biome rule (style/noRestrictedImports) scoped outside apps/web/src/lib/api.
+
+
+function cmdApiClientImports(argv) {
+  const baseline = readBaseline(MOBILE_IMPORTS_BASELINE);
+  const scanned = typesFiles(argv).filter(
+    (file) =>
+      file.startsWith(MOBILE_SRC) &&
+      !file.startsWith(MOBILE_API_LIB) &&
+      !isTestFile(file) &&
+      existsSync(file),
+  );
+
+  const violations = [];
+  const seen = new Set();
+  for (const file of scanned) {
+    const lines = rawClientImportLines(file, readFileSync(file, "utf8"));
+    if (lines.length === 0) continue;
+    seen.add(file);
+    if (!baseline.has(file)) violations.push({ file, lines });
+  }
+
+  if (violations.length > 0) {
+    console.log(
+      `\n❌ api-client-imports: ${violations.length} file(s) import the raw mobile API client outside apps/mobile/src/lib:\n`,
+    );
+    for (const v of violations) {
+      console.log(`  ${v.file}:${v.lines.join(",")}`);
+    }
+    console.log(
+      "\nWhy: apiService takes any URL and any type argument, so a typo in the path or a guessed" +
+        " response shape compiles. Route the call through a typed client in apps/mobile/src/lib.",
+    );
+  }
+  reportBaseline(MOBILE_IMPORTS_BASELINE, baseline, seen);
+  if (violations.length > 0) process.exit(1);
+  console.log(
+    `✅ No new raw mobile API client imports (${seen.size} baselined call site file(s) left).`,
   );
 }
 
@@ -879,6 +964,7 @@ function usage() {
       "  api-schema [--write]                   regenerate openapi.json + TS types, fail on drift",
       "  api-schema-types                       no hand-written twin of an API schema type, no untyped apiService call in web features",
       "  doc-comments                           no narrating / restating JSDoc, comment runs, or in-body banners",
+      "  api-client-imports                     no raw mobile API client import outside apps/mobile/src/lib",
     ].join("\n"),
   );
 }
@@ -910,6 +996,8 @@ function main() {
       break;
     case "doc-comments":
       cmdDocComments(rest);
+    case "api-client-imports":
+      cmdApiClientImports(rest);
       break;
     default:
       console.error(`checks.mjs: unknown subcommand '${sub ?? ""}'`);

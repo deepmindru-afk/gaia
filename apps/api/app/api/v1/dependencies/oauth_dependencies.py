@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import Depends, Header, HTTPException, Request, WebSocket, status
+from fastapi.exceptions import WebSocketException
 
 from app.config.settings import settings
 from app.constants.auth import DEV_USER_MISSING_HINT
@@ -91,10 +92,26 @@ async def get_user_id(  # NOSONAR python:S7503
     return user.user_id
 
 
-async def get_current_user_ws(websocket: WebSocket) -> AuthenticatedUser | None:
-    """Authenticate a WebSocket connection via cookies or a Sec-WebSocket-Protocol bearer token.
+def _ws_unauthenticated(reason: str) -> WebSocketException:
+    """Reject the dial with a policy-violation close, so no unauthenticated socket opens."""
+    log.set(disconnect_reason="auth_failure")
+    return WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=reason)
 
-    Returns None after closing the socket on failure.
+
+def _require_ws_user_id(user: AuthenticatedUser) -> AuthenticatedUser:
+    """Guarantee the caller gets a user it can key on, or no socket at all."""
+    if not user.user_id:
+        log.warning(f"{LogTag.OAUTH} WebSocket user context carries no user_id")
+        raise _ws_unauthenticated("authenticated user has no id")
+    return user
+
+
+async def get_current_user_ws(websocket: WebSocket) -> AuthenticatedUser:
+    """Authenticate a WebSocket connection from its cookie or Bearer subprotocol.
+
+    Mobile clients cannot send cookies, so the token also rides the
+    Sec-WebSocket-Protocol header as "Bearer, <token>". Every auth failure
+    raises WebSocketException instead of returning an empty user.
     """
     # WebSockets skip WorkOSAuthMiddleware (HTTP only), so the dev bypass —
     # including X-Dev-User impersonation — is mirrored here. get_settings()
@@ -102,14 +119,15 @@ async def get_current_user_ws(websocket: WebSocket) -> AuthenticatedUser | None:
     if settings.ENV == "development" and settings.DEV_AUTH_BYPASS_EMAIL:
         target_email, user_data = await resolve_dev_bypass_user(websocket)
         if user_data is not None:
-            return build_user_context(user_data, auth_provider="workos", dev_bypass=True)
+            return _require_ws_user_id(
+                build_user_context(user_data, auth_provider="workos", dev_bypass=True)
+            )
         log.error(
             f"{LogTag.OAUTH} Dev bypass target has no Mongo user",
             target_email=target_email,
             fix=DEV_USER_MISSING_HINT,
         )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return None
+        raise _ws_unauthenticated("dev bypass target has no Mongo user")
 
     # Extract the session cookie from WebSocket
     wos_session = websocket.cookies.get("wos_session")
@@ -124,18 +142,16 @@ async def get_current_user_ws(websocket: WebSocket) -> AuthenticatedUser | None:
 
     if not wos_session:
         log.info(f"{LogTag.OAUTH} No session cookie or protocol token in WebSocket request")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return None
+        raise _ws_unauthenticated("no session cookie or protocol token")
 
     # Use shared authentication logic
     user_info, _ = await authenticate_workos_session(session_token=wos_session)
 
     if user_info is None:
         log.warning(f"{LogTag.OAUTH} WebSocket authentication failed")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return None
+        raise _ws_unauthenticated("session token rejected")
 
-    return user_info
+    return _require_ws_user_id(user_info)
 
 
 GET_USER_TZ_TYPE = tuple[str, datetime]

@@ -1,9 +1,9 @@
-"""Persistent read tool — read files from the user's workspace.
+"""Persistent `read` tool — read files from the user's workspace.
 
-Reads go straight to the host-side JuiceFS mount (/mnt/jfs/users/<id>, the
-same volume the sandbox bind-mounts at /workspace) so they do NOT pay an
+Reads go straight to the host-side JuiceFS mount (``/mnt/jfs/users/<id>``, the
+same volume the sandbox bind-mounts at ``/workspace``) so they do NOT pay an
 E2B sandbox spin-up/resume — the sandbox is reserved for execution, not reading.
-When the host mount is absent (native dev without mise dev:vm) the tool
+When the host mount is absent (native dev without ``mise dev:vm``) the tool
 falls back to reading through the sandbox so file reads still work.
 """
 
@@ -178,7 +178,7 @@ async def _read_image(
 
     Always returns the pixels. Fitting them to the active lane — actual image, or
     a text description on a lane that can't see — happens at tool-execution time
-    in MediaDescriptionMiddleware / describe_tool_media, for every media
+    in `MediaDescriptionMiddleware` / `describe_tool_media`, for every media
     producer, not here.
     """
     try:
@@ -235,9 +235,16 @@ def _format_text_read(
     """Split full text into lines, slice the requested page, and format.
 
     Shared by the in-memory system-file path and the sandbox-fallback read so
-    their line numbering matches the host read_user_file, which opens in TEXT
-    mode (universal-newline translation). Collapse \\r\\n/\\r to \\n and split
-    on \\n only — not str.splitlines, which also breaks on \\f, \\v, etc.
+    their line numbering stays consistent with each other and with the host
+    ``read_user_file``.
+
+    ``read_user_file`` opens the file in TEXT mode, so Python's universal-newline
+    translation collapses ``\\r\\n`` and a lone ``\\r`` to ``\\n`` before lines are
+    counted. Mirror that here (the sandbox path decodes raw bytes, the memory
+    path holds an untranslated string), THEN split on ``\\n`` only — matching
+    universal newlines, which do NOT treat ``\\f``, ``\\v``, ``\\x85``, U+2028 etc.
+    as breaks (``str.splitlines`` would, and diverge). A trailing newline does
+    not start a new line, so drop a trailing "" element.
     """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     all_lines = text.split("\n")

@@ -1,4 +1,18 @@
-"""What the provider actually receives: the real HTTP request body, not the configurable dict."""
+"""What the provider actually receives: the real HTTP request body, not the configurable dict.
+
+Every other lane test asserts on the configurable, a dict GAIA controls. This one asserts on the
+body the real ChatOpenRouter builds from it, the only place a provider-routing pin either exists
+or does not. The gap it closes: a pinned lane must route to the provider it names AND an unpinned
+one must carry no routing at all, since the default and paid lanes rely on OpenRouter's own sticky
+routing being left alone and a stray pin would override it. Nothing proved either survived the
+trip from ModelLane through LangChain's ConfigurableField layer onto the wire, which is also where
+the provider-failover bug lived -- two individually-correct pieces composing wrong, invisible to
+any test one layer above the request.
+
+No network: a loopback sink stands in for OpenRouter and records the body. Its canned response
+deliberately does not satisfy the SDK's response schema; the request is captured before the
+response is parsed, and the request is the subject.
+"""
 
 from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, HTTPServer

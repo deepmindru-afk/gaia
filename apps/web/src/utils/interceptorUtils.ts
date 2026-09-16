@@ -1,3 +1,4 @@
+import { toErrorEnvelope } from "@shared/api";
 import type { SubscriptionRequiredDetail } from "@shared/types/subscription";
 import { getSubscriptionRequiredDetail } from "@shared/types/subscription";
 import type { AxiosError } from "axios";
@@ -9,7 +10,6 @@ import {
   showTokenLimitToast,
 } from "@/components/shared/RateLimitToast";
 import { API_ERROR_CODES } from "@/lib/api/errorCodes";
-import { getErrorCode, getErrorMessage } from "@/lib/api/errors";
 import { toast } from "@/lib/toast";
 import { useLoginModalStore } from "@/stores/loginModalStore";
 import type { UpgradeOffer } from "@/stores/upgradeModal.types";
@@ -41,7 +41,7 @@ export const processAxiosError = (
     case 401:
       // Only a genuine auth failure prompts re-login. Integration/permission
       // problems come back as 403, never 401.
-      if (getErrorCode(data) === API_ERROR_CODES.NOT_AUTHENTICATED) {
+      if (toErrorEnvelope(data)?.code === API_ERROR_CODES.NOT_AUTHENTICATED) {
         useLoginModalStore.getState().openModal();
       }
       error.handled = true;
@@ -79,8 +79,9 @@ const handleForbiddenError = (
   errorData: unknown,
   router: AppRouterInstance,
 ): void => {
-  const code = getErrorCode(errorData);
-  const message = getErrorMessage(errorData);
+  const envelope = toErrorEnvelope(errorData);
+  const code = envelope?.code;
+  const message = envelope?.message;
 
   if (code === "UPGRADE_REQUIRED") {
     return;
@@ -144,7 +145,7 @@ const handleSubscriptionRequiredError = (errorData: unknown): boolean => {
  * Shared by the axios interceptor and the chat-stream client.
  */
 export const handleRateLimitError = (errorData: unknown): boolean => {
-  if (getErrorCode(errorData) !== "rate_limit_exceeded") {
+  if (toErrorEnvelope(errorData)?.code !== "rate_limit_exceeded") {
     return false;
   }
 

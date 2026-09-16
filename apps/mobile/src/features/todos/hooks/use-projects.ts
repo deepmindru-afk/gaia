@@ -1,4 +1,5 @@
 import type { ProjectCreate } from "@gaia/shared/api/generated";
+import type { ProjectUpdate } from "@gaia/shared/types";
 
 export type { ProjectCreate } from "@gaia/shared/api/generated";
 
@@ -6,12 +7,6 @@ import { useCallback, useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useTodoStore } from "../store/todo-store";
 import type { Project } from "../types/todo-types";
-
-interface ProjectUpdate {
-  name?: string;
-  color?: string;
-  description?: string;
-}
 
 /**
  * React hook over the shared todo store, scoped to projects.

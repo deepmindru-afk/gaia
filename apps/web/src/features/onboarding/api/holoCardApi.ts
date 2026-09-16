@@ -2,8 +2,7 @@ import type {
   PersonalizationResponse,
   PublicHoloCardResponse,
 } from "@shared/api/generated";
-import { api } from "@/lib/api/client";
-import { api as typedApi } from "@/lib/api/typed";
+import { api, FORM_URLENCODED_HEADERS } from "@/lib/api/typed";
 
 export type HoloCardData = PersonalizationResponse;
 
@@ -11,30 +10,18 @@ export type PublicHoloCardData = PublicHoloCardResponse;
 
 export const holoCardApi = {
   // Get current user's holo card data (authenticated) - includes workflows
-  getMyHoloCard: async () => {
-    return typedApi.get("/api/v1/onboarding/personalization", { silent: true });
-  },
+  getMyHoloCard: () =>
+    api.get("/api/v1/onboarding/personalization", { silent: true }),
 
   // Get public holo card data by card ID (no auth required) - no workflows
-  getPublicHoloCard: async (cardId: string): Promise<PublicHoloCardData> => {
-    const response = await api.get<PublicHoloCardData>(
-      `/user/holo-card/${cardId}`,
-    );
-    return response.data;
-  },
+  getPublicHoloCard: (cardId: string) =>
+    api.get("/api/v1/user/holo-card/{card_id}", { path: { card_id: cardId } }),
 
   // Update holo card colors (authenticated)
-  updateHoloCardColors: async (
-    overlayColor: string,
-    overlayOpacity: number,
-  ) => {
-    const body = new URLSearchParams({
-      overlay_color: overlayColor,
-      overlay_opacity: overlayOpacity.toString(),
-    });
-    return typedApi.patch("/api/v1/user/holo-card/colors", {
-      body,
+  updateHoloCardColors: (overlayColor: string, overlayOpacity: number) =>
+    api.patch("/api/v1/user/holo-card/colors", {
+      body: { overlay_color: overlayColor, overlay_opacity: overlayOpacity },
+      headers: FORM_URLENCODED_HEADERS,
       errorMessage: "Failed to update holo card colors",
-    });
-  },
+    }),
 };

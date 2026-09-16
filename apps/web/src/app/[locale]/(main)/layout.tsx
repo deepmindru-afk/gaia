@@ -153,23 +153,17 @@ export default function MainLayout({ children }: { children: ReactNode }) {
                   needs no click handler of its own here. */}
                 <header
                   className={cn(
-                    // Desktop title bar: 44px band centres the 36px controls at
-                    // y=22, exactly the macOS `hiddenInset` traffic-light centre
-                    // (trafficLightPosition y=16, 12px tall). Web keeps its own
-                    // padding — this title-bar treatment is desktop-only.
+                    // Desktop only: the 44px band centres the 36px controls at y=22,
+                    // the macOS hiddenInset traffic-light centre (y=16, 12px tall).
                     isElectron
                       ? "flex h-11 shrink-0 items-center justify-between px-2"
                       : "flex shrink-0 items-center justify-between p-2",
                     clearTrafficLights && "pl-20",
-                    // Desktop only: sidebar collapsed → the top bar becomes a
-                    // full-width bordered bar (the sidebar no longer supplies the
-                    // visual separation); expanded → no border. Matches the
-                    // Docker Desktop title-bar behaviour the design references.
+                    // Collapsed sidebar no longer supplies the visual separation,
+                    // so the top bar takes the border itself.
                     isElectron && !currentOpen && "border-b border-zinc-800",
-                    // macOS `hiddenInset` chrome: make the top bar the draggable
-                    // title bar so the window can be moved from here and
-                    // double-clicking it zooms (Apple standard). Buttons opt out
-                    // via the descendant rule in globals.css (.electron-drag).
+                    // Makes the top bar the macOS hiddenInset drag region; buttons
+                    // opt back out via the .electron-drag descendant rule in globals.css.
                     isElectron && isMac && "electron-drag",
                   )}
                 >

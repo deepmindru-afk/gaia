@@ -1,4 +1,19 @@
-"""SSE transport tests against real endpoint functions and a real StreamManager over fakeredis; only the turn itself (run_chat_stream_background) is doubled."""
+"""The SSE transport itself: ownership, replay, turn dedup, client disconnect.
+
+Everything rides the real endpoint functions over a real StreamManager backed by fakeredis --
+Redis Streams semantics (XADD/XREAD, cursors, entry ids) are the subject, so mocking them away
+would leave nothing. Only the turn itself (run_chat_stream_background) is doubled; what the agent
+produces is covered elsewhere.
+
+Four seams, none of which had a test before: GET /api/v1/stream/{id}, its 400/404/403 and the
+already-complete short-circuit, where the 403 is the only thing stopping one user from reading
+another user's stream; Last-Event-ID, where a reconnect must resume AFTER the cursor (replay and
+live attach share subscribe_stream and differ only in start cursor, so attach/drop/re-attach and
+diff the bytes is exact -- lose the header and every reconnect replays from 0-0); the turn_id
+SETNX claim, the only guard against a retried POST persisting the same user+bot message pair
+twice; and client disconnect, the apps/api/CLAUDE.md claim that the turn is decoupled from the
+HTTP request and still runs to completion and persists.
+"""
 
 from __future__ import annotations
 
@@ -197,7 +212,18 @@ async def seed_completed_turn(user_id: str, frames: list[str]) -> str:
 
 
 class TestAlreadyCompleteShortCircuit:
-    """is_complete alone isn't reason to hang up — a HIL resume can close in ~100ms, so gating on is_complete stranded resumed runs on "Waiting for your approval" forever; the short-circuit now keys on the log being gone, which this tier runs for real where unit/api/test_chat_stream_endpoint.py mocks it."""
+    """is_complete alone is not a reason to hang up.
+
+    A HIL resume publishes its frames and closes inside ~100ms, quicker than the client's
+    websocket-to-fetch round trip, so a short-circuit keyed on is_complete threw away nearly every
+    resumed run: the next approval card never arrived and the turn sat on "Waiting for your
+    approval" forever. The log outliving the turn is what makes the late attach recoverable, so
+    the short-circuit is keyed on the log being GONE, not on the turn being over.
+
+    unit/api/test_chat_stream_endpoint.py pins the same two branches with has_events and
+    subscribe_stream mocked -- precisely the code the fix leans on. This is the tier that runs
+    them for real, over a real event log.
+    """
 
     async def test_a_completed_turn_replays_its_whole_log_then_closes_once(
         self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]

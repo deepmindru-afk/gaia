@@ -1,4 +1,18 @@
-"""E2E tests: workflow execution, plus the agent-graph lifecycle it runs on."""
+"""E2E tests: workflow execution, plus the agent-graph lifecycle it runs on.
+
+Sibling: tests/integration/test_workflow_execution.py covers the workflow service layer in
+isolation with mocked I/O; this file drives the real compiled agent graphs end to end.
+
+Real: execute_workflow_by_id / execute_workflow_as_chat in app.workers.tasks.workflow_tasks (the
+entry point a workflow fire goes through) over app.services.workflow.execution_service -- a step
+that fails partway must surface as a failed execution record naming the failing step plus a user
+notification, never a silent success; build_comms_graph / build_executor_graph compiled with the
+real middleware stack, whose hooks run and whose tools are bound; the todos and selected_tool_ids
+channels of the GAIA State; MemorySaver accumulating state across turns; and thread isolation,
+where separate thread_ids keep independent state. Doubled at I/O edges only: the LLM, the store
+(InMemoryStore), the checkpointer (MemorySaver), Mongo repositories, the Redis-backed scheduler
+and notification delivery.
+"""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4

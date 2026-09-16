@@ -619,6 +619,173 @@ def test_pydantic_model_docstring_is_never_checked(tmp_path: Path) -> None:
     assert _docstring_codes(tmp_path, "app/x.py", src) == []
 
 
+def test_ten_line_test_module_docstring_is_clean(tmp_path: Path) -> None:
+    # A cross-file map lives on the module, not on any one test function.
+    body = "\n".join(f"line {i} of the map." for i in range(9))
+    src = f'"""{body}\n"""\n\n\ndef test_x():\n    pass\n'
+    assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == []
+
+
+def test_three_line_test_function_docstring_is_ds4(tmp_path: Path) -> None:
+    src = 'def test_x():\n    """Summary.\n\n    More.\n    """\n'
+    assert _docstring_codes(tmp_path, "tests/unit/test_x.py", src) == ["DS4"]
+
+
+def test_module_docstring_is_exempt_when_the_file_reads___doc__(tmp_path: Path) -> None:
+    # apps/api/app/scripts/*.py feed the module docstring to argparse as the
+    # CLI's --help text; it is runtime data, not review prose.
+    body = "\n".join(f"line {i} of the CLI help text." for i in range(20))
+    src = (
+        f'"""{body}\n"""\n\n'
+        "import argparse\n\n\n"
+        "def main() -> None:\n"
+        "    argparse.ArgumentParser(description=__doc__)\n"
+    )
+    assert _docstring_codes(tmp_path, "app/scripts/x.py", src) == []
+
+
+def test_module_docstring_is_still_capped_when_the_file_does_not_read___doc__(
+    tmp_path: Path,
+) -> None:
+    body = "\n".join(f"line {i} of the CLI help text." for i in range(20))
+    src = f'"""{body}\n"""\n'
+    assert _docstring_codes(tmp_path, "app/scripts/x.py", src) == ["DS1"]
+
+
+def test_typeddict_referenced_by_with_structured_output_is_exempt(tmp_path: Path) -> None:
+    body = "\n".join(f"    line {i}." for i in range(14))
+    schema = _write(
+        tmp_path,
+        "app/schemas/x.py",
+        f'class FooSchema(TypedDict):\n    """Summary.\n\n{body}\n    """\n',
+    )
+    caller = _write(
+        tmp_path,
+        "app/services/y.py",
+        "from app.schemas.x import FooSchema\n\n\n"
+        "def call(llm):\n    return llm.with_structured_output(FooSchema)\n",
+    )
+    assert docstring_slop.check([schema, caller]) == []
+
+
+def test_typeddict_referenced_by_bind_tools_is_exempt(tmp_path: Path) -> None:
+    body = "\n".join(f"    line {i}." for i in range(14))
+    schema = _write(
+        tmp_path,
+        "app/schemas/x.py",
+        f'class BarSchema(TypedDict):\n    """Summary.\n\n{body}\n    """\n',
+    )
+    caller = _write(
+        tmp_path,
+        "app/services/y.py",
+        "from app.schemas.x import BarSchema\n\n\n"
+        "def call(llm):\n    return llm.bind_tools(BarSchema)\n",
+    )
+    assert docstring_slop.check([schema, caller]) == []
+
+
+def test_typeddict_never_referenced_is_still_checked(tmp_path: Path) -> None:
+    # The rule is precise, not a blanket TypedDict exemption: without a real
+    # with_structured_output/bind_tools reference somewhere in the tree, the
+    # docstring is graded normally.
+    body = "\n".join(f"    line {i}." for i in range(14))
+    src = f'class UnreferencedSchema(TypedDict):\n    """Summary.\n\n{body}\n    """\n'
+    assert _docstring_codes(tmp_path, "app/schemas/x.py", src) == ["DS1"]
+
+
+def test_with_doc_constant_assignment_is_never_a_docstring(tmp_path: Path) -> None:
+    # `NAME = "..."` is an Assign, not an Expr(Constant); ast.get_docstring
+    # never sees it regardless of length, decorator, or file.
+    body = "\n".join(f"line {i} of tool description." for i in range(20))
+    src = f'GATHER_CONTEXT_DOC = """{body}"""\n'
+    assert docstring_slop.check([_write(tmp_path, "app/templates/docstrings/x.py", src)]) == []
+
+
+def test_pyproject_per_file_ignore_with_d_exempts_the_whole_file(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[tool.ruff.lint.per-file-ignores]\n"some/dir/**" = ["D"]\n',
+    )
+    body = "\n".join(f"    line {i} with ``markup``." for i in range(14))
+    exempt = _write(tmp_path, "some/dir/x.py", f'"""Summary.\n\n{body}\n"""\n')
+    checked = _write(tmp_path, "other/y.py", f'"""Summary.\n\n{body}\n"""\n')
+    violations = docstring_slop.check([exempt, checked])
+    assert [v for v in violations if v.path == exempt] == []
+    checked_codes = {v.detail.split(":")[0] for v in violations if v.path == checked}
+    assert {"DS1", "DS2"} <= checked_codes
+
+
+def test_pyproject_per_file_ignore_without_d_does_not_exempt(tmp_path: Path) -> None:
+    _write(
+        tmp_path, "pyproject.toml", '[tool.ruff.lint.per-file-ignores]\n"some/dir/**" = ["DOC"]\n'
+    )
+    body = "\n".join(f"    line {i}." for i in range(14))
+    src = f'"""Summary.\n\n{body}\n"""\n'
+    assert _docstring_codes(tmp_path, "some/dir/x.py", src) == ["DS1"]
+
+
+def test_pyproject_per_file_ignore_literal_path_exempts_that_file_only(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[tool.ruff.lint.per-file-ignores]\n"some/dir/models.py" = ["D"]\n',
+    )
+    body = "\n".join(f"    line {i}." for i in range(14))
+    src = f'"""Summary.\n\n{body}\n"""\n'
+    exempt = _write(tmp_path, "some/dir/models.py", src)
+    other = _write(tmp_path, "some/dir/other.py", src)
+    violations = docstring_slop.check([exempt, other])
+    assert [v for v in violations if v.path == exempt] == []
+    assert [v for v in violations if v.path == other] != []
+
+
+def test_pyproject_per_file_ignore_basename_pattern_matches_anywhere(tmp_path: Path) -> None:
+    # A bare pattern (no "/") matches the basename anywhere in the tree --
+    # ruff's documented "single-path pattern" rule.
+    _write(tmp_path, "pyproject.toml", '[tool.ruff.lint.per-file-ignores]\n"models.py" = ["D"]\n')
+    body = "\n".join(f"    line {i}." for i in range(14))
+    exempt = _write(tmp_path, "deep/nested/models.py", f'"""Summary.\n\n{body}\n"""\n')
+    assert docstring_slop.check([exempt]) == []
+
+
+def test_set_repo_root_overrides_auto_detection(tmp_path: Path) -> None:
+    # Auto-detection walks UP and stops at the nearest ruff-configured
+    # pyproject.toml (one with no per-file-ignores, here) -- an explicit
+    # override reaches the outer one instead, matched against ITS root,
+    # proving the override takes precedence rather than merely filling a gap
+    # auto-detection would have left empty anyway.
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[tool.ruff.lint.per-file-ignores]\n"scan/some/dir/**" = ["D"]\n',
+    )
+    _write(tmp_path, "scan/pyproject.toml", "[tool.ruff]\n")
+    body = "\n".join(f"    line {i}." for i in range(14))
+    exempt = _write(tmp_path, "scan/some/dir/x.py", f'"""Summary.\n\n{body}\n"""\n')
+    assert docstring_slop.check([exempt]) != []
+    try:
+        docstring_slop.set_repo_root(tmp_path)
+        assert docstring_slop.check([exempt]) == []
+    finally:
+        docstring_slop.set_repo_root(None)
+
+
+def test_runner_repo_root_flag_reaches_docstring_content(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[tool.ruff.lint.per-file-ignores]\n"scan/some/dir/**" = ["D"]\n',
+    )
+    body = "\n".join(f"    line {i}." for i in range(14))
+    scan_dir = tmp_path / "scan"
+    _write(scan_dir, "some/dir/x.py", f'"""Summary.\n\n{body}\n"""\n')
+    try:
+        assert lint_runner.main(["--repo-root", str(tmp_path), str(scan_dir)]) == 0
+    finally:
+        docstring_slop.set_repo_root(None)
+
+
 # --------------------------------------------------------------------------- #
 # comment-content
 # --------------------------------------------------------------------------- #

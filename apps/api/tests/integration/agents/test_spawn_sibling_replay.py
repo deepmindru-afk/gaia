@@ -1,4 +1,18 @@
-"""A finished spawn is recovered, not re-run, when a later sibling pauses the node."""
+"""A finished spawn is recovered, not re-run, when a later sibling pauses the node.
+
+One AI message carries two spawn_subagent calls. The tool node runs them sequentially: spawn A
+finishes (side effect done), spawn B pauses on an approval interrupt(). LangGraph re-runs the
+WHOLE node on resume, so spawn A's tool function is entered a second time; A's checkpoint thread,
+deliberately retained instead of deleted at finish, is what tells that replay A already ran, via
+recover_from_checkpoint.
+
+Real: SubagentMiddleware._run_spawn/_drive, the compiled spawn graph, LangGraph interrupt/resume
+on a checkpointer, and recover_from_checkpoint. Replaced, and only these: the LLM (message-driven
+fake, so it behaves identically on a replay), the dynamic-context message (external retrieval I/O)
+and the checkpointer manager (InMemorySaver). The pause is a tool calling interrupt() before its
+side effect -- the HIL gate's exact shape, covered on its own in tests/unit/services/hil/ -- but
+the claim under test here is node-replay recovery, not the gate's policy.
+"""
 
 from types import SimpleNamespace
 from typing import Any

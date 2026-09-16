@@ -55,9 +55,12 @@ WEBPAGE_TOOLS = [web_search_tool.name, fetch_webpages.name, deep_research.name]
 async def _user_mcp_tool_names(user_id: str | None) -> set[str]:
     """Tool names exposed by the user's live MCPClient.
 
-    The resilience rewrite moved per-user MCP tools out of the global
-    ToolRegistry, so this reads straight from the live MCPClient connectors
-    instead. Returns an empty set on any failure, degrading cleanly.
+    The resilience rewrite moved per-user MCP tool storage out of the global
+    ToolRegistry, so `retrieve_tools` can't rely on `get_tool_names()` alone
+    for discovery filtering or binding validation. This helper supplies the
+    missing slice — read straight from the MCPClient that owns the live
+    connectors for `user_id`. Returns an empty set on any failure so the
+    surrounding logic degrades cleanly.
     """
     if not user_id:
         return set()
@@ -77,11 +80,16 @@ async def _user_mcp_tool_names(user_id: str | None) -> set[str]:
 
 
 def _is_platform_tool_space(tool_space: str) -> bool:
-    """True if tool_space belongs to a hardcoded platform integration.
+    """True if `tool_space` belongs to a hardcoded platform integration.
 
-    Platform integrations (github, gmail, slack, ...) have fixed, non-user-owned
-    tool_spaces, safe to search without a user_namespaces check. Custom MCPs and
-    user-added integrations have dynamic, user-owned namespaces that MUST stay gated.
+    Platform integrations (github, gmail, slack, ...) are defined in
+    OAUTH_INTEGRATIONS and have a fixed `subagent_config.tool_space`.
+    Their tool descriptions are not user-owned, so it is safe to search
+    them without checking that the caller's `user_namespaces` lists them.
+
+    Custom MCPs and user-added integrations have dynamic, user-owned
+    namespaces (e.g. URL-derived). Those MUST stay gated by user_namespaces
+    so one user cannot search another user's MCP tools.
     """
     return any(
         integration.available is True
@@ -203,7 +211,7 @@ Discovery may also return subagent tools alongside regular tools.
 class ScoredToolHit(TypedDict):
     """One ranked discovery hit, threaded from a search result to the final list.
 
-    id is either a tool name or a subagent:<id> (Name) key; score is
+    ``id`` is either a tool name or a ``subagent:<id> (Name)`` key; ``score`` is
     the backing store's relevance, absent on stores that don't rank.
     """
 
@@ -250,8 +258,11 @@ async def _get_user_context(
     """Get user's available namespaces and connected integrations.
 
     When include_subagents is False, skips computing subagent-related data
-    entirely. Returns (user_namespaces, connected_integrations, internal_subagents);
-    connected_integrations maps canonical integration id to display name.
+    entirely — no integration queries, no internal subagent resolution.
+
+    Returns:
+        Tuple of (user_namespaces, connected_integrations, internal_subagents)
+        where connected_integrations maps canonical integration id -> display name.
     """
     # "general" is always available; tool_space is seeded only for platform
     # integrations (OAUTH_INTEGRATIONS) — a custom MCP's namespace is user-scoped
@@ -304,9 +315,12 @@ def _build_search_tasks(
 ) -> list[Awaitable[SearchTaskResult]]:
     """Build list of search tasks to execute.
 
-    tool_space in user_namespaces is the security boundary against searching
-    another user's custom MCP tools. Never bypassed here — _get_user_context
-    ensures user_namespaces contains tool_space whenever the caller is entitled.
+    The `tool_space in user_namespaces` gate is the security boundary that
+    keeps a user from searching another user's custom MCP tools. We never
+    bypass it here — _get_user_context is responsible for ensuring
+    user_namespaces contains tool_space whenever the caller is entitled
+    to search it (always for platform integrations, only when the user
+    has the integration connected for custom MCPs).
     """
     search_tasks: list[Awaitable[SearchTaskResult]] = []
 
@@ -524,7 +538,7 @@ def _render_discovery_response(
     """Render discovery hits as JSON in three buckets: bind, handoff, connect.
 
     Availability is the only axis that changes what the model may do next, so it
-    is the top-level split. internal_subagents is required to tell a built-in
+    is the top-level split. ``internal_subagents`` is required to tell a built-in
     capability (always usable) from an integration the user has not connected —
     without it every built-in was reported as needing a connection it has none of.
     """
@@ -606,9 +620,12 @@ def _inject_available_subagents(
 ) -> list[str]:
     """Inject available subagents that user has access to.
 
-    Every entry renders as subagent:<id> (Name) whenever a name is known, so the
-    model can tell what subagent:<uuid> is. Names come from connected-integrations
-    first, then the registry; unnamed hits get upgraded and deduped by canonical id.
+    Every subagent entry is rendered as ``subagent:<id> (Name)`` whenever a name
+    is known, so the model can tell what ``subagent:<uuid>`` actually is. Names
+    come from the connected-integrations map first, then the in-memory registry.
+    Semantic-search hits often arrive unnamed (a ``subagent:`` key from a tool
+    namespace, or a store that didn't return the value); they get upgraded here
+    and deduped by canonical id so the named and unnamed forms collapse to one.
     """
     if not include_subagents:
         return discovered_tools
@@ -669,10 +686,28 @@ def get_retrieve_tools_function(
 ) -> Callable[..., Awaitable[RetrieveToolsResult]]:
     """Get a retrieve_tools function configured for specific context.
 
-    Handles both discovery (query -> tool names, unbound) and binding
-    (exact_tool_names -> validated, bound names). bindable_tool_names scopes
-    binding validation to what the agent's graph can actually execute (provider
-    subagents); None validates against the global registry (main executor/comms).
+    The ``...`` in the return type is deliberate (Type Safety items 11/14): the
+    result is handed to ``create_agent(retrieve_tools_coroutine=...)``, which
+    wraps it in a ``StructuredTool``. LangGraph then calls it by keyword with
+    ``store``/``config`` injected and the rest supplied by the model, so pinning
+    a parameter list here would describe a call shape that never happens.
+
+    This unified function handles both tool discovery (semantic search) and tool binding.
+    - When `query` is provided: Returns tool names for discovery (not bound)
+    - When `exact_tool_names` is provided: Binds and returns validated tool names
+
+    Args:
+        tool_space: Namespace to search for tools
+        include_subagents: Whether to include subagent results in search
+        limit: Maximum number of tool results for semantic search
+        bindable_tool_names: The set of tool names this agent's graph can actually
+            bind and execute. When set (scoped agents like provider subagents),
+            binding validates against it instead of the global registry, so a tool
+            the graph can't execute is never reported as a successful bind. None ->
+            validate against the global registry (main executor/comms carry it).
+
+    Returns:
+        Configured retrieve_tools coroutine that returns RetrieveToolsResult
     """
 
     async def retrieve_tools(

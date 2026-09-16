@@ -4,6 +4,8 @@ The Chroma collection is mocked at the _get_collection seam; the id-prefix
 selection logic under test is real.
 """
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock, patch
 
 from chromadb.errors import ChromaError
@@ -91,8 +93,7 @@ class TestGetCollectionConcurrentCreate:
         existing = AsyncMock()
         server = _RacyChromaServer({name: existing})
         # Drop the per-loop cache so _get_collection actually queries the client.
-        chroma_store._loop_collections.clear()
-        chroma_store._loop_locks.clear()
+        chroma_store._loop_states.clear()
 
         with patch.object(ChromaClient, "get_client", AsyncMock(return_value=server)):
             collection = await chroma_store._get_collection(name)
@@ -121,10 +122,32 @@ class TestGetCollectionEmbeddingConflictFallback:
         name = CHROMA_CONVERSATION_CHUNKS_COLLECTION
         existing = AsyncMock()
         server = _ConflictingChromaServer({name: existing})
-        chroma_store._loop_collections.clear()
-        chroma_store._loop_locks.clear()
+        chroma_store._loop_states.clear()
 
         with patch.object(ChromaClient, "get_client", AsyncMock(return_value=server)):
             collection = await chroma_store._get_collection(name)
 
         assert collection is existing
+
+
+@pytest.mark.unit
+class TestLoopStateEviction:
+    async def test_a_closed_loops_state_is_dropped_on_next_access(self) -> None:
+        seen: list[int] = []
+
+        def _use_and_close() -> None:
+            async def _main() -> None:
+                seen.append(id(asyncio.get_running_loop()))
+                chroma_store._loop_state()
+
+            asyncio.run(_main())
+
+        thread = threading.Thread(target=_use_and_close)
+        thread.start()
+        thread.join()
+        (loop_id,) = seen
+        assert loop_id in chroma_store._loop_states
+        collections, lock = chroma_store._loop_state()
+        assert chroma_store._loop_state()[0] is collections
+        assert chroma_store._loop_state()[1] is lock
+        assert loop_id not in chroma_store._loop_states

@@ -91,6 +91,7 @@ async def construct_langchain_messages(
 
     # Static per-channel main prompt, byte-identical across users on this
     # channel so the provider's implicit prompt cache matches across users.
+    # Web/mobile/desktop get the OpenUI variant; text-only platforms get theirs.
     system_msg = create_system_message(
         user_id=user_id,
         user_name=user_name,

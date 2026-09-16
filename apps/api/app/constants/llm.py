@@ -124,9 +124,9 @@ STICKY_ROUTING_PROVIDERS = frozenset({LLMProviderName.OPENROUTER, LLMProviderNam
 # conversation's key re-pinned its provider from a background call (measured).
 AUX_SESSION_SUFFIX = "-aux"
 
-# Total wall-clock ceiling for one ainvoke_llm call, backstopping a provider that
-# accepts the connection and never answers. Sized for the slowest legitimate
-# caller, not a per-caller budget: pass a tighter value on a user-blocking path.
+# Total wall-clock ceiling for one ainvoke_llm call, backstopping a provider that accepts
+# the connection and never answers. Sized for the slowest legitimate caller, not a per-caller
+# budget: pass a tighter value on a user-blocking path, or timeout=None to opt out entirely.
 LLM_INVOKE_TIMEOUT_SECONDS = 300
 
 # Near-deterministic default for every LLM call; creative tasks opt into more
@@ -313,8 +313,8 @@ MONTHLY_BUDGET_TTL_SECONDS = 32 * 24 * 60 * 60
 REQUEST_TOKEN_COUNTER_TTL_SECONDS = 30 * 60
 
 # --- Tool-loop guardrails (LoopGuardMiddleware) ---------------------------------
-# "Identical": same tool+args; "same_tool": all failures of one tool regardless
-# of args. STOP (hard_stop runs only) blocks the tool with a synthetic error.
+# "Identical" = same tool+args; "same_tool" = any failure of that tool. WARN appends an
+# in-band nudge to the error ToolMessage; STOP skips the call, returning a synthetic error.
 LOOP_GUARD_WARN_IDENTICAL = 2
 LOOP_GUARD_WARN_SAME_TOOL = 3
 LOOP_GUARD_STOP_IDENTICAL = 5

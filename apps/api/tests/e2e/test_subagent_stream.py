@@ -1,4 +1,17 @@
-"""Drives the real execute_subagent_stream driver every handoff and subagent runs through."""
+"""Pin what a subagent puts on the chat stream, and what it hands back to its parent.
+
+Drives the real execute_subagent_stream, the driver every handoff and provider subagent runs
+through. It is not an SSE producer: it calls a stream_writer with plain dicts that
+background/redis_writer.py serializes verbatim, so the writer payloads ARE the frames and
+Transcript asserts on them the same way.
+
+Two contracts live here and nothing else covers either. Subagent routing: every frame a subagent
+emits must carry its subagent_id, because the frontend reducer routes on that key alone
+(updateSubagentInToolData in turnAccumulator.ts) and an untagged frame does not land in the wrong
+group, it lands at the ROOT of the turn, so the card appears outside the subagent it belongs to.
+The return value: a subagent that only narrated and never ran a tool has not done the work, and
+must tell its parent to re-issue the handoff rather than pass planning text off as a result.
+"""
 
 from __future__ import annotations
 

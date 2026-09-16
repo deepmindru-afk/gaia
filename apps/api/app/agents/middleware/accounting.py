@@ -9,7 +9,7 @@ or per-request token ceiling is exhausted — self-sufficient on every path
 (chat, workflows, bots, voice, subagents) since get_budget_stop_reason
 derives plan_type from the cached tier if a path never stamped it.
 
-Runs as a LangChain :class:AgentMiddleware via create_agent(middleware=...).
+Runs as a LangChain AgentMiddleware via create_agent(middleware=...).
 """
 
 from collections.abc import Awaitable, Callable
@@ -79,7 +79,7 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
     fires recursion_high_water_mark once per thread past
     RECURSION_HWM_FRACTION; awrap_model_call is the budget wall, short-
     circuiting the call when budget/token ceilings are exhausted (see
-    :func:get_budget_stop_reason) and injecting a wrap-up notice near the limit.
+    get_budget_stop_reason) and injecting a wrap-up notice near the limit.
     """
 
     def __init__(self, agent_name: str, recursion_limit: int = AGENT_RECURSION_LIMIT) -> None:
@@ -164,7 +164,7 @@ class LLMAccountingMiddleware(AgentMiddleware[AgentState[Any], Any]):
         Budget GATING does not live here — a before_model return can only
         merge state; the custom graph loop (create_agent.acall_model) never
         routes on jump_to, so it would not stop the call. Enforcement is
-        in :meth:awrap_model_call, which can short-circuit the invocation.
+        in awrap_model_call, which can short-circuit the invocation.
         """
         del state, runtime  # state not consulted in this pre-call hook yet
         config = current_run_config()

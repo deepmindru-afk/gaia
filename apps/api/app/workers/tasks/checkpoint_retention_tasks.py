@@ -8,11 +8,11 @@ checkpoints/checkpoint_writes/checkpoint_blobs (AsyncPostgresSaver):
 2. Stale spawn sweep — reclaims a spawned subagent's thread once past the
    retention window; the orphan sweep can't catch it because the thread
    embeds a live conversation's uuid.
-3. Version prune — keeps the contiguous parent chain from each thread's head
-   back to (and including) the nearest full messages snapshot, deleting only
-   the strictly-older ancestors — dropping anything in between would silently
-   reconstruct the channel as empty. Threads with pending writes on the head
-   are skipped so a resuming run never loses ancestors it needs.
+3. Version prune — DeltaChannel (app/override/langgraph_bigtool/utils.py) stores only
+   per-step deltas between snapshots and reconstruction walks back to the nearest one
+   (BaseCheckpointSaver.aget_delta_channel_history), so this keeps the contiguous parent
+   chain from each head back to that snapshot and deletes only strictly-older ancestors;
+   dropping anything between reconstructs it as empty. Heads with pending writes are skipped.
 """
 
 from __future__ import annotations

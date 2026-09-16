@@ -67,9 +67,10 @@ def _tool_metric_name(tool_name: str, tool: BaseTool | None) -> str:
 def _apply_state_update(current_state: dict[str, Any], update: Mapping[str, Any]) -> None:
     """Merge a middleware hook's return into current_state, in place.
 
-    A hook returns a LangGraph *state update* resolved through each
-    channel's reducer — a plain dict.update on "messages" would erase the
-    conversation instead of appending. Other channels are last-write-wins.
+    A hook returns a LangGraph state update resolved through each channel's reducer, so a
+    plain dict.update erases "messages" instead of appending and lets SummarizationMiddleware's
+    RemoveMessage(REMOVE_ALL_MESSAGES) tombstone reach the model, 500ing the run. Every other
+    channel is last-write-wins, which plain assignment already does.
     """
     for key, value in update.items():
         if key == "messages":

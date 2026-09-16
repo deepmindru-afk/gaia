@@ -21,6 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1.middleware.auth import get_current_user
 from app.api.v1.middleware.entitlement_allowlist import is_free_path
+from app.constants.http import RETRY_AFTER_HEADER
 from app.decorators.entitlements import (
     SubscriptionRequiredException,
     require_active_subscription,
@@ -101,5 +102,5 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
         return error_response(
             503,
             ErrorEnvelope(message=ENTITLEMENT_UNAVAILABLE_MESSAGE, code="entitlement_unavailable"),
-            headers={"Retry-After": str(ENTITLEMENT_RETRY_AFTER_SECONDS)},
+            headers={RETRY_AFTER_HEADER: str(ENTITLEMENT_RETRY_AFTER_SECONDS)},
         )

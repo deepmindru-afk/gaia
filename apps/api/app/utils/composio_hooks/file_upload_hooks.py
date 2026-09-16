@@ -1,6 +1,13 @@
 """File-upload capability for every Composio tool, not one toolkit.
 
-Composio's native file param (an {name, mimetype, s3key} object the model cannot produce) is unusable by an agent. A schema modifier finds any tool whose schema carries the file_uploadable marker and swaps that param for a friendly attachments list, recording the swap per tool; a before-hook then uploads referenced attachments and writes them back under the tool's original param name before it runs, leaving unswapped tools untouched. New toolkits need zero per-toolkit code — the marker, not the param name, decides what gets swapped. Per-surface hooks (Gmail's compose card) reuse resolve_tool_attachments for the shared resolution.
+Composio's native file param (an {name, mimetype, s3key} object the model cannot
+produce) is unusable by an agent. A schema modifier finds any tool whose schema carries
+the file_uploadable marker and swaps that param for a friendly attachments list,
+recording the swap per tool; a before-hook then uploads referenced attachments and writes
+them back under the tool's own native param name before it runs, leaving a tool that was
+never swapped completely alone even if it takes an attachments argument of its own. New
+toolkits need zero per-toolkit code — the marker, not the param name, decides what gets
+swapped. Per-surface hooks (Gmail's compose card) reuse resolve_tool_attachments.
 """
 
 from typing import TypedDict
@@ -55,9 +62,12 @@ class _UploadedFile(BaseModel):
 
 
 def _is_file_upload_node(node: JsonSchemaNode) -> bool:
-    """Return True if node itself, an anyOf/oneOf/allOf variant, or its items carry the file_uploadable marker.
+    """Return True if node, an anyOf/oneOf/allOf variant, or its items carry file_uploadable.
 
-    Deliberately does not descend into properties: a composite param that merely contains a file field can't be swapped without deleting a shape the tool still needs.
+    FileUploadable emits the marker onto the field's own schema node. Deliberately does not
+    descend into properties: the modifier deletes the whole property it claims and the
+    before-hook writes a bare {name, mimetype, s3key} back under it, so claiming a composite
+    like message: {text, file} would delete a param the tool needs and hand it a bad shape.
     """
     if node.file_uploadable:
         return True
@@ -149,9 +159,12 @@ def _display_from_native(native: object) -> list[AttachmentDisplay]:
 def resolve_tool_attachments(
     tool: str, toolkit: str, params: ToolExecuteParams, *, native_param: str
 ) -> list[AttachmentDisplay]:
-    """Turn friendly attachments references into the tool's native upload arg, rewriting arguments in place.
+    """Turn friendly attachments references into the tool's native upload arg, in place.
 
-    Collapses a single file to a bare object (Composio accepts one FileUploadable or a list). Callers must already know attachments is the param this module injected, since anything unexpected aborts with HookAbortError instead of silently sending attachment-less. Order-independent: whichever hook runs first consumes attachments, the other derives display from the resolved native arg.
+    Collapses a single file to a bare object (Composio accepts one FileUploadable or a list).
+    Raises HookAbortError rather than running the tool with a missing file — a silently
+    attachment-less send is data loss — so callers must already know attachments is the param
+    this module injected. Order-independent: whichever hook runs first consumes attachments.
     """
     call = ComposioToolCall.model_validate(params)
     arguments = call.arguments

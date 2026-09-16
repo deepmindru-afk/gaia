@@ -240,12 +240,12 @@ class GmailAttachmentMetadata(TypedDict):
 
 
 class GmailParsedAttachment(TypedDict, total=False):
-    """An attachment as reported by GmailMessageParser.attachments.
+    """An attachment as reported by ``GmailMessageParser.attachments``.
 
-    total=False because the two extraction paths report different key sets:
-    the raw-payload fallback carries attachmentId (the id used to fetch the
+    ``total=False`` because the two extraction paths report different key sets:
+    the raw-payload fallback carries ``attachmentId`` (the id used to fetch the
     bytes later), while the parsed-MIME path already holds the decoded
-    content.
+    ``content``.
     """
 
     filename: str | None
@@ -310,7 +310,7 @@ class GmailProfile(BaseModel):
 
 
 class GmailReadRange(TypedDict):
-    """A read(offset, limit) call over an offloaded JSONL file."""
+    """A ``read(offset, limit)`` call over an offloaded JSONL file."""
 
     offset: int
     limit: int
@@ -334,9 +334,9 @@ class GmailReadPlan(TypedDict):
 
 
 class GmailBatchModifyResult(TypedDict):
-    """Outcome of a chunked users.messages.batchModify run.
+    """Outcome of a chunked ``users.messages.batchModify`` run.
 
-    partial/error appear only when some chunks succeeded before a later
+    ``partial``/``error`` appear only when some chunks succeeded before a later
     one failed; a clean run reports counts alone.
     """
 
@@ -350,7 +350,7 @@ class GmailLabelCounts(TypedDict):
     """Per-label message counts reported by the unread-count tool.
 
     The camelCase keys are the agent-facing contract, matching Gmail's own
-    messagesUnread/messagesTotal naming.
+    ``messagesUnread``/``messagesTotal`` naming.
     """
 
     label_id: str

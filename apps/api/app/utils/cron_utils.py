@@ -1,7 +1,7 @@
 """
 Cron utilities for reminder and workflow scheduling.
 
-Timezone handling is delegated entirely to :class:app.utils.timezone.Timezone
+Timezone handling is delegated entirely to app.utils.timezone.Timezone
 — this module never parses a timezone string itself.
 """
 
@@ -18,6 +18,7 @@ class CronError(Exception):
 
 
 def validate_cron_expression(cron_expr: str) -> bool:
+    """Return True if cron_expr is a valid cron expression."""
     try:
         croniter(cron_expr)
         return True
@@ -32,7 +33,10 @@ def get_next_run_time(
 ) -> datetime:
     """Get the next scheduled run time for a cron expression, returned in UTC.
 
-    The cron fields are interpreted as wall-clock time in tz (the schedule's own timezone); when tz is omitted the cron is interpreted in base_time's own zone instead of being silently reinterpreted in UTC — only a naive/absent base falls back to UTC. base_time defaults to now. Raises CronError if cron_expr is invalid.
+    The cron fields are wall-clock time in tz, the schedule's own timezone, so "0 9 * * *"
+    with tz=Timezone.parse("Asia/Kolkata") fires at 09:00 IST. With tz omitted the cron is
+    read in base_time's OWN zone rather than silently reinterpreted in UTC; only a naive or
+    absent base falls back to UTC. base_time defaults to now. Raises CronError on a bad expr.
     """
     if not validate_cron_expression(cron_expr):
         raise CronError(f"Invalid cron expression: {cron_expr}")
@@ -63,7 +67,10 @@ def get_next_run_time(
 def calculate_next_occurrences(
     cron_expr: str, count: int, base_time: datetime | None = None
 ) -> list[datetime]:
-    """Calculate the next count occurrences of a cron expression, in UTC; raises CronError if cron_expr is invalid."""
+    """Calculate the next count occurrences of a cron expression, returned in UTC.
+
+    Raises CronError if cron_expr is invalid.
+    """
     if not validate_cron_expression(cron_expr):
         raise CronError(f"Invalid cron expression: {cron_expr}")
 

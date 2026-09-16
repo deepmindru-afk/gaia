@@ -11,6 +11,7 @@ import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import WebSocketDisconnect
+from fastapi.exceptions import WebSocketException
 import pytest
 
 from app.api.v1.endpoints import device_ws as ws_module
@@ -180,3 +181,28 @@ async def test_relay_without_redis_still_signals_ready():
     with patch.object(ws_module.redis_cache, "redis", None):
         await ws_module._down_relay(_socket(), "d1", ready)
     assert ready.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token_info", "active_device", "expected_reason"),
+    [
+        (None, object(), "device token missing or invalid"),
+        ({"device_id": "d1", "user_id": "u1"}, None, "device revoked"),
+    ],
+)
+async def test_a_refused_dial_raises_with_the_reason_the_daemon_is_told(
+    token_info, active_device, expected_reason
+):
+    """The close reason is the only clue the daemon's own log gets about why it was cut off."""
+    ws = _socket()
+    with (
+        patch.object(ws_module, "verify_device_token", return_value=token_info),
+        patch.object(ws_module, "get_active_device", AsyncMock(return_value=active_device)),
+    ):
+        with pytest.raises(WebSocketException) as exc:
+            await ws_module.device_ws(ws)
+
+    assert exc.value.code == 1008
+    assert exc.value.reason == expected_reason
+    ws.accept.assert_not_awaited()

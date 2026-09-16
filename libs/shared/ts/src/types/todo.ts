@@ -4,6 +4,7 @@ import type {
   TodoModel,
   TodoResponse,
   TodoUpdateRequest,
+  UpdateProjectRequest,
 } from "../api/generated";
 
 export type {
@@ -107,11 +108,7 @@ export enum WorkflowStatus {
 
 export type TodoCreate = TodoModel;
 
-export interface ProjectUpdate {
-  name?: string;
-  description?: string;
-  color?: string;
-}
+export type ProjectUpdate = UpdateProjectRequest;
 
 export interface TodoLabel {
   name: string;

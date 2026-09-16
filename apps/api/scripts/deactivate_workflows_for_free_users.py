@@ -6,7 +6,7 @@ This is the backfill for the cutover: every user who already has an activated
 workflow but no active Dodo subscription gets those workflows turned off, the
 same way the webhook handler now does it live for a subscription that lapses.
 
-Goes through the same deactivate_workflows_for_lapsed_subscription service
+Goes through the same ``deactivate_workflows_for_lapsed_subscription`` service
 function as the webhook path, so triggers are unregistered upstream exactly
 like a real cancellation — not a bulk repository write that would leave a
 Composio webhook armed.

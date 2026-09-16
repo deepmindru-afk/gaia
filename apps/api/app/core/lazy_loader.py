@@ -651,7 +651,7 @@ class ProviderRegistry:
     async def aget(self, name: str) -> Any | None:  # noqa: ANN401 -- framework contract
         """Get a provider instance by name asynchronously - works for both sync and async providers.
 
-        Returns Any for the same reason as :meth:get; narrow with cast.
+        Returns Any for the same reason as get(); narrow with cast.
         """
         if name not in self._providers:
             raise KeyError(f"Provider '{name}' not found in registry")

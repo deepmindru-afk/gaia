@@ -1,4 +1,16 @@
-"""Real executor graph tests; binding by exact_tool_names must never search the vector store, keeping retrieval deterministic without embeddings."""
+"""How the executor gets its tools: retrieval, binding, and what happens when binding fails.
+
+The executor is bound to fourteen tools at build time (build_graph.py, initial_tool_ids) and must
+retrieve every other one before it can call it. That retrieve-bind-call loop is the hinge the
+whole executor tier turns on: a break in it means the agent cannot do anything it was not born
+knowing, and the failure mode is not an exception, it is the model being handed an empty list and
+trying again.
+
+These run the REAL executor graph (see _harness/graph_run.executor_graph). The vector store is a
+real InMemoryStore with no index, which is the point rather than a limitation: binding by
+exact_tool_names must never search it, so a test that starts depending on embeddings fails here
+instead of silently becoming non-deterministic.
+"""
 
 from __future__ import annotations
 

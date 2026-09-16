@@ -390,6 +390,8 @@ export abstract class BaseBotAdapter {
    * back to the user.
    *
    * @param name - Command name, without the leading slash.
+   * @param target - The message target replies are sent to.
+   * @param args - Parsed arguments keyed by option name.
    * @param rawText - Raw text input, for free-form commands.
    */
   protected async dispatchCommand(

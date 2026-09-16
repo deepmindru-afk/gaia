@@ -117,10 +117,10 @@ async def record_model_call_usage(
 ) -> None:
     """Record one model call's spend and tokens in a single Redis round trip.
 
-    charge_to_budget decides whether spend counts against the user's allowance:
-    the agent middleware charges, aux one-shot calls do not (booked only under
-    aux_cost for COGS). The durable rollup still records token counts at
-    cost_usd=0, since a pricing-lookup failure must not lose the data needed to re-price the call later.
+    charge_to_budget decides whether spend counts against the user's allowance: the agent
+    middleware charges, aux one-shot calls do not (booked only under aux_cost for COGS). The
+    durable rollup still records token counts at cost_usd=0, since a pricing-lookup failure
+    must not lose the data needed to re-price the call later.
     """
     # The request ceiling bounds runaway loops, not cache economics: a cached
     # prefix rides nearly every call in a turn, so counting it trips the wall

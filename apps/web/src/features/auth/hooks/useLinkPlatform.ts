@@ -1,5 +1,6 @@
 "use client";
 
+import { ApiError } from "@shared/api";
 import { useIsRestoring } from "@tanstack/react-query";
 import confetti from "canvas-confetti";
 import { useEffect, useState } from "react";
@@ -10,7 +11,6 @@ import {
   isBotPlatform,
 } from "@/config/botPlatforms";
 import { useAuth } from "@/features/auth/hooks/useAuth";
-import { getErrorFix, getErrorMessage } from "@/lib/api/errors";
 import { api } from "@/lib/api/typed";
 import { toast } from "@/lib/toast";
 
@@ -24,18 +24,17 @@ function fallbackMessage(status: number | undefined): string {
 }
 
 /**
- * The backend's own words for a failed link, read through the shared
- * extractor: `AppError` serialises `{ message, why, fix }` at the top level of
- * the body, so a hand-rolled `data.detail` read finds nothing and every
- * failure degrades to generic copy. The `fix` is appended because it is the
- * half that tells the user what to do next.
+ * The backend's own words for a failed link, read off the error envelope.
+ *
+ * `AppError` serialises `{ message, why, fix }` at the top level of the body;
+ * the `fix` is appended because it is the half that tells the user what to do
+ * next.
  */
 function resolveError(err: unknown): string {
-  const response = (err as { response?: { status?: number; data?: unknown } })
-    ?.response;
+  const apiError = err instanceof ApiError ? err : undefined;
   const message =
-    getErrorMessage(response?.data) ?? fallbackMessage(response?.status);
-  const fix = getErrorFix(response?.data);
+    apiError?.envelope?.message ?? fallbackMessage(apiError?.status);
+  const fix = apiError?.envelope?.fix;
   return fix ? `${message} ${fix}` : message;
 }
 

@@ -2,8 +2,9 @@
 
 OpenRouter's body carries provider (e.g. "OpenAI"), naming the real upstream,
 but the SDK models drop it (no extra="allow") and ChatOpenRouter never reads
-it, always stamping model_provider="openrouter" instead. This patch declares
-the field at runtime and stamps it onto
+it, always stamping model_provider="openrouter" instead. extra="allow" alone
+would NOT be enough: both models' serialize_model wrap serializer rebuilds its
+output from model_fields only, so the field is declared at runtime and stamped onto
 response_metadata[PROVIDER_NAME_METADATA_KEY] — never model_provider, which
 is LangChain's own integration-name field for ls_provider/tracing.
 
@@ -123,10 +124,10 @@ def _convert_chunk_to_message_chunk(
 def _keep_first_response_key(chunk: ChatGenerationChunk, key: str, kept_so_far: int) -> int:
     """Drop key from every chunk after the first; return 1 if this one kept it.
 
-    merge_dicts concatenates repeated string keys, so provider/finish_reason
-    would double (e.g. "BaiduBaidu", "stopstop") without this. generation_info
-    is stripped too because BaseChatModel.stream re-merges it back over the
-    message right after this runs, silently undoing a metadata-only delete.
+    merge_dicts concatenates repeated string keys, so provider and finish_reason double
+    ("BaiduBaidu", "stopstop"); a live 8-chunk answer carried two finish events, so
+    first-one-wins reports the earlier one if they disagree. generation_info is stripped
+    too: BaseChatModel.stream _gen_info_and_msg_metadata (chat_models.py:781/914) re-merges it.
     """
     if not isinstance(chunk.message, AIMessageChunk):
         return 0

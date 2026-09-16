@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ToolDataEntry } from "../api/generated";
 
 /**
  * Zod mirror of the chat SSE event vocabulary; the source of truth is the backend at
@@ -14,6 +15,9 @@ import { z } from "zod";
 // Structured payloads
 // ---------------------------------------------------------------------------
 
+// The one payload here that is a documented API model, so the satisfies-check
+// makes the generated type the arbiter. It stays looser than the model on
+// purpose: a parse boundary may accept more than the model promises, never less.
 const ToolDataEntrySchema = z
   .object({
     tool_name: z.string(),
@@ -23,7 +27,7 @@ const ToolDataEntrySchema = z
     subagent_id: z.string().optional(),
   })
   // Per-tool variants (tool_calls_data, mcp_app, …) carry extra keys.
-  .loose();
+  .loose() satisfies z.ZodType<ToolDataEntry>;
 
 const ToolOutputPayloadSchema = z.object({
   tool_call_id: z.string(),
@@ -109,7 +113,8 @@ const ConversationDescriptionFrameSchema = z.object({
 
 /**
  * Live output of one `bash` tool run, emitted top-level (not under `tool_data`) by `safe_emit`
- * in bash_tool.py and passed through unmodified by `process_data_chunk`. One `starting` frame
+ * in `apps/api/app/agents/tools/coding/bash_tool.py` and passed through unmodified by
+ * `process_data_chunk`, which only unwraps tool data. One `starting` frame
  * carries the command, then `running` per stdout/stderr chunk, then one terminal `exited`/`error`
  * — or a single `background_started` for a detached run. Kept loose: shape is per-status.
  */
