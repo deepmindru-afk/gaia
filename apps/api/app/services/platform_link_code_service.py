@@ -19,6 +19,7 @@ import secrets
 from urllib.parse import quote
 
 from pydantic import BaseModel
+from redis.exceptions import RedisError
 
 from app.config.settings import settings
 from app.constants.auth import PLATFORM_LINK_CODE_BYTES
@@ -177,9 +178,17 @@ async def discard_platform_link_code(code: str) -> None:
     The claim becomes a spent marker outliving the record, written first: a
     delete that fails is swallowed by delete_cache, and a claim lapsing after
     five minutes would leave a live record to redeem a second time, repeating
-    the greeting. Its value answers the next tap with the dead code it is.
+    the greeting. The marker write is retried like the claim, because a blip
+    here is the one failure that turns into a replayed greeting; the last
+    RedisError is raised when every attempt fails.
     """
-    await redis_cache.client.set(
-        _claim_key(code), PLATFORM_LINK_CODE_CLAIM_SPENT, ex=PLATFORM_LINK_CODE_TTL
-    )
+    for attempt in range(1, PLATFORM_LINK_CODE_CLAIM_ATTEMPTS + 1):
+        try:
+            await redis_cache.client.set(
+                _claim_key(code), PLATFORM_LINK_CODE_CLAIM_SPENT, ex=PLATFORM_LINK_CODE_TTL
+            )
+            break
+        except RedisError:
+            if attempt == PLATFORM_LINK_CODE_CLAIM_ATTEMPTS:
+                raise
     await delete_cache(_code_key(code))

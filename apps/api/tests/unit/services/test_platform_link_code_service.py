@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import ValidationError
 import pytest
+from redis.exceptions import RedisError
 
 from app.constants.auth import PLATFORM_LINK_CODE_BYTES
 from app.constants.cache import (
@@ -178,6 +179,43 @@ class TestClaimReleaseDiscard:
         # is told the code is dead instead of being answered as a twin.
         assert spent.payload is None
         assert spent.in_flight is False
+
+    async def test_a_transient_failure_writing_the_spent_marker_is_retried(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        """One Redis blip at spend time must not leave a live record to redeem again."""
+        code = await mint_platform_link_code("user1", PREFS)
+        await claim_platform_link_code(code)
+        real_set = svc.redis_cache.client.set.side_effect
+        calls = 0
+
+        async def _blip_once(*args: object, **kwargs: object) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RedisError("connection reset")
+            return await real_set(*args, **kwargs)
+
+        svc.redis_cache.client.set.side_effect = _blip_once
+        await discard_platform_link_code(code)
+
+        _elapse(fake_store, PLATFORM_LINK_CODE_CLAIM_TTL)
+        spent = await claim_platform_link_code(code)
+        assert spent.payload is None
+        assert spent.in_flight is False
+
+    async def test_a_spend_that_fails_every_attempt_raises_the_last_error(
+        self, fake_store: dict[str, tuple[object, int | None]]
+    ) -> None:
+        code = await mint_platform_link_code("user1", PREFS)
+        await claim_platform_link_code(code)
+        svc.redis_cache.client.set.side_effect = RedisError("down")
+        svc.redis_cache.client.set.await_count = 0
+
+        with pytest.raises(RedisError):
+            await discard_platform_link_code(code)
+
+        assert svc.redis_cache.client.set.await_count == PLATFORM_LINK_CODE_CLAIM_ATTEMPTS
 
     async def test_a_spend_whose_record_delete_fails_still_kills_the_code(
         self, fake_store: dict[str, tuple[object, int | None]]
