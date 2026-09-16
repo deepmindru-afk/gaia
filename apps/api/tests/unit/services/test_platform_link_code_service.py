@@ -147,6 +147,11 @@ class TestClaimReleaseDiscard:
             await claim_platform_link_code(code)
 
         assert exc.value.status_code == 503
+        assert exc.value.to_dict() == {
+            "message": "The link is busy. Please tap it again.",
+            "why": "the one-tap code was claimed and released by concurrent redemptions on every attempt",
+            "fix": "tap the link again; the code is still valid",
+        }
         assert svc.redis_cache.client.set.await_count == PLATFORM_LINK_CODE_CLAIM_ATTEMPTS
 
     async def test_releasing_leaves_the_code_claimable_again(
