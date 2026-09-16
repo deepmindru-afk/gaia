@@ -650,7 +650,6 @@ class TestCoreContextSingleFlight:
 
         assert calls == 2
 
-    @pytest.mark.regression
     async def test_cancelling_one_waiter_leaves_the_shared_fetch_running(self) -> None:
         """A cancelled assembly must not abort the sibling awaiting the same core fetch."""
         started = asyncio.Event()
