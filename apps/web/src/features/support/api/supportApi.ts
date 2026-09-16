@@ -2,57 +2,32 @@ import type {
   SupportRequestCreate,
   SupportRequestSubmissionResponse,
 } from "@shared/api/generated";
-import { apiauth } from "@/lib/api/client";
+import { api, binaryField, formDataSerializer } from "@/lib/api/typed";
 
 export type {
   SupportRequestCreate,
   SupportRequestSubmissionResponse,
 } from "@shared/api/generated";
 
-class SupportApiService {
+export const supportApi = {
   /**
-   * Submit a support or feature request
+   * Submit a support or feature request.
+   *
+   * Attachments go to the multipart route; the body is the schema's own type
+   * either way, so a renamed field fails to compile instead of at runtime.
    */
-  async submitRequest(
+  submitRequest: (
     requestData: SupportRequestCreate,
     attachments?: File[],
-  ): Promise<SupportRequestSubmissionResponse> {
-    try {
-      // If there are attachments, use FormData
-      if (attachments && attachments.length > 0) {
-        const formData = new FormData();
-        formData.append("type", requestData.type);
-        formData.append("title", requestData.title);
-        formData.append("description", requestData.description);
-
-        // Append each attachment
-        attachments.forEach((file) => {
-          formData.append("attachments", file);
-        });
-
-        const response = await apiauth.post<SupportRequestSubmissionResponse>(
-          "support/requests/with-attachments",
-          formData,
-          {
-            headers: {
-              "Content-Type": "multipart/form-data",
-            },
-          },
-        );
-        return response.data;
-      } else {
-        // No attachments, use regular JSON
-        const response = await apiauth.post<SupportRequestSubmissionResponse>(
-          "support/requests",
-          requestData,
-        );
-        return response.data;
-      }
-    } catch (error) {
-      console.error("Error submitting support request:", error);
-      throw new Error("Failed to submit support request");
-    }
-  }
-}
-
-export const supportApi = new SupportApiService();
+  ): Promise<SupportRequestSubmissionResponse> =>
+    attachments && attachments.length > 0
+      ? api.post("/api/v1/support/requests/with-attachments", {
+          body: { ...requestData, attachments: attachments.map(binaryField) },
+          bodySerializer: formDataSerializer,
+          errorMessage: "Failed to submit support request",
+        })
+      : api.post("/api/v1/support/requests", {
+          body: requestData,
+          errorMessage: "Failed to submit support request",
+        }),
+};

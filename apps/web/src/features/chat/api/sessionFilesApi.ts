@@ -1,14 +1,20 @@
-import { apiauth } from "@/lib/api/client";
+import type { PathSerializer } from "openapi-fetch";
+import { apiBaseUrl } from "@/lib/api/client";
 import { api } from "@/lib/api/typed";
-
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(
-  /\/$/,
-  "",
-);
 
 function encodePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
+
+/**
+ * `{path}` is a FastAPI path converter: its slashes separate segments rather
+ * than being data, so it is encoded per segment instead of whole.
+ */
+const nestedPathSerializer: PathSerializer = (pathname, pathParams) =>
+  pathname.replace(/\{(\w+)\}/g, (_match, name: string) => {
+    const value = String(pathParams[name]);
+    return name === "path" ? encodePath(value) : encodeURIComponent(value);
+  });
 
 /**
  * Rewrite bot-emitted artifact paths (./artifacts/foo, /artifacts/foo,
@@ -60,21 +66,19 @@ export const sessionFilesApi = {
     }),
 
   artifactUrl: (conversationId: string, path: string) =>
-    `${API_BASE}/sessions/${conversationId}/artifacts/${encodePath(path)}`,
+    `${apiBaseUrl}/sessions/${conversationId}/artifacts/${encodePath(path)}`,
 
   uploadUrl: (conversationId: string, path: string) =>
-    `${API_BASE}/sessions/${conversationId}/uploads/${encodePath(path)}`,
+    `${apiBaseUrl}/sessions/${conversationId}/uploads/${encodePath(path)}`,
 
-  fetchArtifact: async (
-    conversationId: string,
-    path: string,
-  ): Promise<string> => {
-    const res = await apiauth.get<string>(
-      `/sessions/${conversationId}/artifacts/${encodePath(path)}`,
-      { responseType: "text" },
-    );
-    return res.data;
-  },
+  // The route serves the file itself, so the schema declares no response body;
+  // `api.text` says what comes back instead.
+  fetchArtifact: (conversationId: string, path: string): Promise<string> =>
+    api.text("/api/v1/sessions/{conv_id}/artifacts/{path}", {
+      path: { conv_id: conversationId, path },
+      pathSerializer: nestedPathSerializer,
+      silent: true,
+    }),
 
   pin: (conversationId: string, path: string, targetName?: string) =>
     api.post("/api/v1/sessions/{conv_id}/pin", {

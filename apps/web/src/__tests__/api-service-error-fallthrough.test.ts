@@ -4,6 +4,7 @@ const request = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   apiauth: { request: (...args: unknown[]) => request(...args) },
+  apiOrigin: "http://localhost:8000",
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -21,6 +22,7 @@ import { toast } from "@/lib/toast";
 /** What the interceptor hands back for a 402 it recognised and acted on. */
 const handledPaywall = () =>
   Object.assign(new Error("Request failed with status code 402"), {
+    isAxiosError: true,
     handled: true,
     response: {
       status: 402,
@@ -32,6 +34,7 @@ const handledPaywall = () =>
  *  recognise, or a request made from a page that mounts no interceptor. */
 const unhandledPaywall = () =>
   Object.assign(new Error("Request failed with status code 402"), {
+    isAxiosError: true,
     response: { status: 402, data: { message: "Wallet balance too low" } },
   });
 

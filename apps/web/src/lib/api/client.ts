@@ -1,13 +1,15 @@
 import { getUserTimezone } from "@shared/api/timezone";
-import axios, { type InternalAxiosRequestConfig } from "axios";
+import type { AxiosError, InternalAxiosRequestConfig } from "axios";
+import axios from "axios";
 
 /**
  * API Client Configuration
  *
- * This module sets up axios instances for API communication with the backend.
- * It provides two main clients:
- * - api: Basic client with caching for public endpoints
- * - apiauth: Authenticated client with credentials for protected endpoints
+ * The one axios instance every request in the app goes through — directly for
+ * the URL-string `apiService`, and as the transport under the path-typed
+ * client in ./typed. Nothing outside lib/api imports the instance: error UI
+ * registers through `registerApiErrorHandler`, and the SSE helpers read their
+ * URL and headers from `apiBaseUrl` / `clientHeaders` here.
  */
 
 // Validate required environment variables
@@ -32,45 +34,68 @@ axios.defaults.timeout =
     ? parsedApiTimeoutMs
     : DEFAULT_API_TIMEOUT_MS;
 
+/** The configured base, without a trailing slash: `https://api.…/api/v1`. */
+export const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL.replace(
+  /\/+$/,
+  "",
+);
+
+/** The schema's own path prefix, which `apiBaseUrl` already carries. */
+const SCHEMA_PREFIX = "/api/v1";
+
 /**
- * Base axios instance for public API calls
- * Used for endpoints that don't require authentication
+ * The server root the generated `paths` hang off. Schema paths carry their own
+ * `/api/v1`, and routes like `/health` sit outside it, so the typed client
+ * joins them to the origin rather than to the prefixed base.
  */
-const baseInstance = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL,
-  headers: {
-    "x-timezone": getUserTimezone(),
-  },
+export const apiOrigin = apiBaseUrl.endsWith(SCHEMA_PREFIX)
+  ? apiBaseUrl.slice(0, -SCHEMA_PREFIX.length)
+  : apiBaseUrl;
+
+/** The headers every request carries, for callers that cannot use axios. */
+export const clientHeaders = (): Record<string, string> => ({
+  "x-timezone": getUserTimezone(),
 });
 
 /**
- * Authenticated axios instance for protected API calls
- * Includes credentials (cookies) for authentication
- * Used for endpoints that require user authentication
+ * Authenticated axios instance for API calls.
+ * Includes credentials (cookies) for authentication.
  */
 export const apiauth = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL,
+  baseURL: apiBaseUrl,
   withCredentials: true,
-  headers: {
-    "x-timezone": getUserTimezone(),
-  },
+  headers: clientHeaders(),
 });
 
-// Add request interceptor to dynamically update timezone header
-// This ensures the timezone is current even if it changes during the session
+// Keep the timezone header current even if it changes during the session.
 const updateTimezoneHeader = (config: InternalAxiosRequestConfig) => {
-  // Always set the current timezone
   config.headers["x-timezone"] = getUserTimezone();
 
   return config;
 };
 
-// Apply the interceptor to both instances
-baseInstance.interceptors.request.use(updateTimezoneHeader);
 apiauth.interceptors.request.use(updateTimezoneHeader);
 
+/** Surfaces API error UI (login modal, paywall, rate-limit toasts). */
+export type ApiErrorHandler = (
+  error: AxiosError & { handled?: boolean },
+) => void;
+
 /**
- * API client for public endpoints - NO CACHING
- * Direct access to the base instance without caching
+ * Mount the app shell's error UI on every response.
+ *
+ * Returns the eject function; only the (main) provider tree registers one, so
+ * landing pages never surface background-fetch toasts to anonymous visitors.
  */
-export const api = baseInstance;
+export function registerApiErrorHandler(handle: ApiErrorHandler): () => void {
+  const interceptor = apiauth.interceptors.response.use(
+    (response) => response,
+    (error: AxiosError) => {
+      handle(error);
+      return Promise.reject(error);
+    },
+  );
+  return () => {
+    apiauth.interceptors.response.eject(interceptor);
+  };
+}

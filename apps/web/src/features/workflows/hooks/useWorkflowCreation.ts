@@ -1,6 +1,6 @@
+import { ApiError } from "@shared/api";
 import { useState } from "react";
 
-import { getErrorMessage } from "@/lib/api/errors";
 import {
   type CreateWorkflowRequest,
   type Workflow,
@@ -28,39 +28,25 @@ export const useWorkflowCreation = (): UseWorkflowCreationReturn => {
     } catch (err) {
       console.error("useWorkflowCreation: API call failed:", err);
 
-      // Check if this is a network error vs server error
-      const error = err as Error & {
-        response?: {
-          status?: number;
-          data?: { workflow?: Workflow; detail?: string };
-        };
-      };
-      const statusCode = error?.response?.status;
-      const responseData = error?.response?.data;
-
-      console.error("Error status code:", statusCode);
-      console.error("Error response data:", responseData);
+      const envelope = err instanceof ApiError ? err.envelope : undefined;
 
       // Sometimes the workflow is created but returns an error status
       // Check if we have a workflow in the error response
-      if (responseData?.workflow) {
+      const createdDespiteError = envelope?.workflow as Workflow | undefined;
+      if (createdDespiteError) {
         console.warn(
           "Workflow was created despite error status, treating as success",
         );
-        setCreatedWorkflow(responseData.workflow);
+        setCreatedWorkflow(createdDespiteError);
         // Note: Store updates are handled by the caller (WorkflowModal)
 
-        return { success: true, workflow: responseData.workflow };
+        return { success: true, workflow: createdDespiteError };
       }
 
-      let errorMessage = "Failed to create workflow";
-      const apiMessage = getErrorMessage(responseData);
-      if (apiMessage) {
-        errorMessage = apiMessage;
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-      setError(errorMessage);
+      setError(
+        envelope?.message ??
+          (err instanceof Error ? err.message : "Failed to create workflow"),
+      );
       return { success: false };
     } finally {
       setIsCreating(false);
