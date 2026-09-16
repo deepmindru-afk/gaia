@@ -175,12 +175,9 @@ async def release_platform_link_code(code: str) -> None:
 async def discard_platform_link_code(code: str) -> None:
     """Spend code once the link it authorised has been written.
 
-    The claim becomes a spent marker outliving the record, written first: a
-    delete that fails is swallowed by delete_cache, and a claim lapsing after
-    five minutes would leave a live record to redeem a second time, repeating
-    the greeting. The marker write is retried like the claim, because a blip
-    here is the one failure that turns into a replayed greeting; the last
-    RedisError is raised when every attempt fails.
+    The claim becomes a spent marker outliving the record, written first and
+    retried like the claim: a blip here is the one failure that becomes a
+    replayed greeting. The last RedisError is raised when every attempt fails.
     """
     failures: list[RedisError] = []
     for _ in range(PLATFORM_LINK_CODE_CLAIM_ATTEMPTS):
