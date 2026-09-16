@@ -18,6 +18,8 @@ from starlette.requests import Request
 from app.core.exception_handlers import (
     app_error_handler,
     http_exception_handler,
+    register_exception_handlers,
+    unhandled_exception_handler,
     validation_error_handler,
 )
 from app.utils.errors import AppError, create_error
@@ -88,6 +90,25 @@ async def test_validation_failures_are_counted_and_listed() -> None:
         ],
         error_count=1,
     )
+    assert json.loads(response.body) == {
+        "message": "Request validation failed",
+        "code": "validation_error",
+        "errors": [{"loc": ["body", "count"], "msg": "must be an int", "type": "int_parsing"}],
+    }
+
+
+async def test_a_challenge_header_survives_the_envelope() -> None:
+    """A 401 without WWW-Authenticate is a different contract, not a shorter one."""
+    exc = StarletteHTTPException(
+        status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"}
+    )
+
+    with patch(HANDLERS_LOG):
+        response = await http_exception_handler(_request(method="GET"), exc)
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert json.loads(response.body) == {"message": "Not authenticated"}
 
 
 async def test_a_4xx_http_exception_is_a_warning_with_its_detail() -> None:
@@ -156,10 +177,17 @@ async def test_a_bodiless_status_keeps_its_headers_and_is_still_recorded() -> No
 
 async def test_the_registration_covers_every_kind_of_failure() -> None:
     """An unregistered handler silently reverts that path to Starlette's own body."""
-    from app.core.exception_handlers import register_exception_handlers
-
     app = MagicMock()
     register_exception_handlers(app)
 
     registered = [call.args[0] for call in app.exception_handler.call_args_list]
     assert registered == [AppError, RequestValidationError, StarletteHTTPException, Exception]
+    # The decorator form returns the handler it was given, so each registration
+    # must hand the real function over, not a placeholder.
+    handlers = [call.args[0] for call in app.exception_handler.return_value.call_args_list]
+    assert handlers == [
+        app_error_handler,
+        validation_error_handler,
+        http_exception_handler,
+        unhandled_exception_handler,
+    ]
