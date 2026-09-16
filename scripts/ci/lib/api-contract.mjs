@@ -237,14 +237,12 @@ function rawClientImportLines(file, src) {
 }
 
 export {
-  API_TYPE_DIRS,
   BASELINES,
   DTS_IGNORE_PATTERN,
   GENERATED_DIR,
   MOBILE_API_LIB,
   MOBILE_IMPORTS_BASELINE,
   MOBILE_SRC,
-  generatedBindings,
   handWrittenDeclsIn,
   isApiTypeDir,
   isTestFile,
@@ -252,7 +250,6 @@ export {
   rawClientImportLines,
   readBaseline,
   reportBaseline,
-  schemaAliasIn,
   schemaComponents,
   schemaFieldSets,
   schemaTwinsIn,
