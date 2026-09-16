@@ -448,7 +448,9 @@ class TestTurnTelemetry:
                 "app.services.chat.stream.initialize_new_conversation",
                 new=AsyncMock(return_value="data: init\n\n"),
             ),
-            patch("app.services.chat.stream._wait_for_artifact_forwarder", new=AsyncMock()),
+            patch(
+                "app.services.chat.stream._wait_for_artifact_forwarder", new=AsyncMock()
+            ) as mock_wait,
             patch("app.services.chat.stream.FileService") as mock_files,
             patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
         ):
@@ -460,10 +462,59 @@ class TestTurnTelemetry:
                 conversation_id="new_conv_files",
             )
 
+        waiter_args = mock_wait.call_args.args
+        assert isinstance(waiter_args[0], asyncio.Event)
+        assert waiter_args[1] == "stream_seed"
         mock_files.seed_uploads.assert_awaited_once_with(files, "user_abc", "new_conv_files")
+
+    async def test_anonymous_uploads_are_not_seeded(self):
+        """No user, no seed — even with files on a new conversation."""
+        sm = _make_stream_manager_mock()
+        files = [
+            FileData(fileId="f1", url="https://x/y", filename="a.pdf"),
+        ]
+        new_body = MessageRequestWithHistory(
+            message="see attached",
+            messages=[{"role": "user", "content": "see attached"}],
+            conversation_id=None,
+            fileData=files,
+        )
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_done_only_stream()),
+            ),
+            patch(
+                "app.services.chat.stream.save_conversation_async",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.stream.initialize_new_conversation",
+                new=AsyncMock(return_value="data: init\n\n"),
+            ),
+            patch(
+                "app.services.chat.stream._wait_for_artifact_forwarder", new=AsyncMock()
+            ) as mock_wait,
+            patch("app.services.chat.stream.FileService") as mock_files,
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+        ):
+            mock_files.seed_uploads = AsyncMock()
+            await run_chat_stream_background(
+                stream_id="stream_anon",
+                body=new_body,
+                user={"user_id": ""},
+                conversation_id="new_conv_anon",
+            )
+
+        mock_wait.assert_not_awaited()
+        mock_files.seed_uploads.assert_not_awaited()
 
     async def test_existing_conversation_seeds_nothing(self, test_user, existing_conv_body):
         sm = _make_stream_manager_mock()
+        existing_conv_body.fileData = [
+            FileData(fileId="f1", url="https://x/y", filename="a.pdf"),
+        ]
         with (
             _patch_stream_manager(sm),
             patch(
