@@ -422,6 +422,7 @@ class TestApprovalTurnTelemetry:
 
         begin_kwargs = mock_begin.call_args.kwargs
         assert begin_kwargs["user_id"] == "user_abc"
+        assert begin_kwargs["conversation_id"] == "conv_hil_1"
         assert begin_kwargs["user_input"] == "yes do it"
         assert begin_kwargs["source"] == "telegram"
         assert begin_kwargs["mode"] == "interactive"
@@ -433,11 +434,12 @@ class TestApprovalTurnTelemetry:
     async def test_deny_closes_with_deny_ack(self) -> None:
         sm = _make_stream_manager_mock()
         with (
-            patch("app.services.chat.stream.begin_turn_all"),
+            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
             patch("app.services.chat.stream.end_turn_all") as mock_end,
         ):
             assert await self._resolve(sm, "deny") is True
 
+        assert mock_end.call_args.args[0] is mock_begin.return_value
         assert mock_end.call_args.kwargs["output"] == HIL_ACK_DENIED
 
     async def test_unrelated_message_closes_quietly(self) -> None:
@@ -459,7 +461,7 @@ class TestApprovalTurnTelemetry:
                 "app.services.chat.stream.resolve_pending_from_message",
                 new=AsyncMock(side_effect=RuntimeError("classifier down")),
             ),
-            patch("app.services.chat.stream.begin_turn_all"),
+            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
             patch("app.services.chat.stream.end_turn_all") as mock_end,
         ):
             result = await _resolve_pending_approval_turn(
@@ -472,7 +474,9 @@ class TestApprovalTurnTelemetry:
             )
 
         assert result is False
+        assert mock_end.call_args.args[0] is mock_begin.return_value
         assert isinstance(mock_end.call_args.kwargs["error"], RuntimeError)
+        assert mock_end.call_args.kwargs["output"] == "classifier down"
 
     async def test_non_bot_source_opens_no_turn(self) -> None:
         sm = _make_stream_manager_mock()

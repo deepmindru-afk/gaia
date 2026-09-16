@@ -58,21 +58,27 @@ def _quiet_runner(execute_result: Any = None, execute_error: Any = None, cancell
 @pytest.mark.unit
 class TestExecutorTurn:
     async def test_success_opens_and_closes_executor_turn(self) -> None:
+        run = _run(workflow_execution_id="wfexec-1")
+        config: dict[str, object] = {"conversation_source": "web"}
         with (
             _quiet_runner(),
             patch(f"{MODULE}.begin_turn_all") as mock_begin,
             patch(f"{MODULE}.end_turn_all") as mock_end,
         ):
-            await run_executor_background(_run(), "do the thing", {}, None)
+            await run_executor_background(run, "do the thing", config, None)  # type: ignore[arg-type]
 
         begin_kwargs = mock_begin.call_args.kwargs
         assert begin_kwargs["user_id"] == "user-1"
         assert begin_kwargs["conversation_id"] == "conv-1"
         assert begin_kwargs["user_input"] == "do the thing"
+        assert begin_kwargs["source"] == "web"
         assert begin_kwargs["mode"] == "background"
         assert begin_kwargs["tier"] == "executor"
-        assert begin_kwargs["properties"]["queued"] is True
-        assert begin_kwargs["properties"]["task_id"] == "task-1"
+        assert begin_kwargs["properties"] == {
+            "task_id": "task-1",
+            "queued": True,
+            "workflow_execution_id": "wfexec-1",
+        }
         assert mock_end.call_args.args[0] is mock_begin.return_value
         end_kwargs = mock_end.call_args.kwargs
         assert end_kwargs["output"] == "did the thing"
@@ -81,23 +87,27 @@ class TestExecutorTurn:
     async def test_error_result_fails_the_turn(self) -> None:
         with (
             _quiet_runner(execute_result=_ExecutorResult("it broke", "error", None)),
-            patch(f"{MODULE}.begin_turn_all"),
+            patch(f"{MODULE}.begin_turn_all") as mock_begin,
             patch(f"{MODULE}.end_turn_all") as mock_end,
         ):
             await run_executor_background(_run(), "do the thing", {}, None)
 
+        assert mock_end.call_args.args[0] is mock_begin.return_value
         assert mock_end.call_args.kwargs["output"] == "it broke"
-        assert isinstance(mock_end.call_args.kwargs["error"], RuntimeError)
+        error = mock_end.call_args.kwargs["error"]
+        assert isinstance(error, RuntimeError) and str(error) == "it broke"
 
     async def test_runner_bug_records_failed_and_propagates(self) -> None:
         with (
             _quiet_runner(execute_error=RuntimeError("runner bug")),
-            patch(f"{MODULE}.begin_turn_all"),
+            patch(f"{MODULE}.begin_turn_all") as mock_begin,
             patch(f"{MODULE}.end_turn_all") as mock_end,
             pytest.raises(RuntimeError, match="runner bug"),
         ):
             await run_executor_background(_run(), "do the thing", {}, None)
 
+        assert mock_end.call_args.args[0] is mock_begin.return_value
+        assert mock_end.call_args.kwargs["output"] == "runner bug"
         assert mock_end.call_args.kwargs["error"] is not None
 
     async def test_cancel_closes_as_cancelled_and_propagates(self) -> None:
@@ -115,10 +125,12 @@ class TestExecutorTurn:
     async def test_hard_cancel_propagates_cancelled(self) -> None:
         with (
             _quiet_runner(execute_error=asyncio.CancelledError("shutdown")),
-            patch(f"{MODULE}.begin_turn_all"),
+            patch(f"{MODULE}.begin_turn_all") as mock_begin,
             patch(f"{MODULE}.end_turn_all") as mock_end,
             pytest.raises(asyncio.CancelledError),
         ):
             await run_executor_background(_run(), "do the thing", {}, None)
 
+        assert mock_end.call_args.args[0] is mock_begin.return_value
+        assert mock_end.call_args.kwargs["output"] == ""
         assert mock_end.call_args.kwargs["cancelled"] is True
