@@ -1,10 +1,12 @@
 <div align="center">
 
+<img src="apps/desktop/resources/icons/512x512.png" alt="GAIA" width="96" />
+
 # GAIA
 
 **The open-source AI assistant that doesn't wait to be asked.**
 
-[![Documentation](https://img.shields.io/badge/Documentation-00bbff?style=flat&logo=gitbook&logoColor=white)](https://docs.heygaia.io) [![Discord](https://discord-live-members-count-badge.vercel.app/api/discord-members?guildId=585464664650022914&color=5c6af3&label=Discord)](https://discord.heygaia.io) [![WhatsApp](https://img.shields.io/badge/WhatsApp-25D366?logo=whatsapp&logoColor=fff&style=flat)](https://whatsapp.heygaia.io) [![Status](https://uptime.betterstack.com/status-badges/v3/monitor/1zjmp.svg)](https://uptime.betterstack.com/?utm_source=status_badge) [![License](https://img.shields.io/badge/license-PolyForm%20NC-121212?style=flat)](LICENSE.md)
+[![Documentation](https://img.shields.io/badge/Documentation-00bbff?style=flat&logo=gitbook&logoColor=white)](https://docs.heygaia.io) [![Discord](https://discord-live-members-count-badge.vercel.app/api/discord-members?guildId=585464664650022914&color=5c6af3&label=Discord)](https://discord.heygaia.io) [![WhatsApp](https://img.shields.io/badge/WhatsApp-25D366?logo=whatsapp&logoColor=fff&style=flat)](https://whatsapp.heygaia.io)
 
 <a href="https://heygaia.io"><img src="apps/web/public/images/readme/cta-try-gaia-free.png" alt="Try GAIA Free" height="48" /></a>
 <a href="https://docs.heygaia.io/self-hosting/overview"><img src="apps/web/public/images/readme/cta-self-host.png" alt="Self-host" height="48" /></a>
@@ -30,10 +32,11 @@ Gmail, Calendar, Slack, Notion, Linear — different tools, same problem: your d
 - **Memory** — learns people, projects and preferences as you talk; edit, export or delete any of it
 - **Voice** — real-time calls, plus a "Hey GAIA" wake word that runs [on your device](libs/wake-word)
 - **Multi-platform** — iMessage, WhatsApp, Telegram, Slack, Discord, web, desktop and mobile, on one account
-- **Integrations** — 32 services one click away, or anything with an MCP server
+- **Integrations** — services one click away, or anything with an MCP server
 - **Code execution** — a sandboxed workspace that hands back real PDFs, decks and spreadsheets
 - **Deep research** — multi-source web research with structured output
-- **Skills** — 37 built in, on the open [Agent Skills spec](https://agentskills.io); install more from GitHub
+- **Browser-use** — drives a real browser to log in, fill forms, click through and finish tasks on any website
+- **Skills** — built on the open [Agent Skills spec](https://agentskills.io); install more from GitHub
 - **One workspace** — inbox, calendar, todos and notifications in a single app
 - **Self-hostable** — open source, your keys, your models, no caps
 
@@ -146,7 +149,7 @@ Workflows run on their own. This is what you ask it directly.
 
 ## Integrations
 
-- **32 services, one click.** Gmail, Calendar, Slack, Notion, Linear, GitHub, Sheets, Todoist, Trello, HubSpot and more. Each gets its own specialist agent.
+- **One click.** Gmail, Calendar, Slack, Notion, Linear, GitHub, Sheets, Todoist, Trello, HubSpot and more. Each gets its own specialist agent.
 - **Anything else, via MCP.** [Model Context Protocol](https://modelcontextprotocol.io) is the open standard for plugging tools into AI models. Point GAIA at any MCP server and its tools work immediately — no fixed catalogue, no waiting on us.
 - **A marketplace.** Browse what the community published, or publish your own.
 - **Tools on your own computer.** `gaia bridge` links your laptop over one outgoing connection — nothing to forward, no ports to open.
@@ -294,14 +297,6 @@ GAIA is built on the shoulders of giants. Full credits at **[heygaia.io/thanks](
 <div align="center">
 
 If GAIA saves you an hour this week, a ⭐ helps someone else find it.
-
-<a href="https://www.star-history.com/#theexperiencecompany/gaia&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=theexperiencecompany/gaia&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=theexperiencecompany/gaia&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=theexperiencecompany/gaia&type=Date" />
- </picture>
-</a>
 
 <br /><br />
 
