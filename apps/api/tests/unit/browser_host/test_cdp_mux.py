@@ -101,7 +101,9 @@ async def test_a_forwarded_frame_goes_out_on_the_muxs_id_and_comes_back_on_the_c
     seen: list[dict[str, Any]] = []
     mux.subscribe(seen.append)
 
-    await mux.forward({"id": 77, "method": "Page.navigate", "params": {"url": "https://a.test"}})
+    await mux.forward(
+        {"id": 77, "method": "Page.navigate", "params": {"url": "https://a.test"}}, seen.append
+    )
     outbound = ws.sent[-1]
     ws.deliver({"id": outbound["id"], "result": {"frameId": "f1"}})
     await asyncio.sleep(0)
@@ -123,7 +125,7 @@ async def test_an_id_shared_by_a_control_call_and_a_client_frame_still_routes_to
     call = asyncio.create_task(mux.send_raw("Target.getTargets"))
     control = await _next_write(ws)
     # The client picks the very id the mux just used for its own call.
-    await mux.forward({"id": control["id"], "method": "Page.enable"})
+    await mux.forward({"id": control["id"], "method": "Page.enable"}, seen.append)
     forwarded = ws.sent[-1]
     ws.deliver(
         {"id": control["id"], "result": {"targetInfos": [{"targetId": "t1"}]}},
@@ -132,8 +134,8 @@ async def test_an_id_shared_by_a_control_call_and_a_client_frame_still_routes_to
 
     assert await asyncio.wait_for(call, timeout=1.0) == {"targetInfos": [{"targetId": "t1"}]}
     await asyncio.sleep(0)
-    # The control reply went to the caller alone; only the client's reply fans out,
-    # wearing the colliding id the client itself chose.
+    # The control reply went to the caller alone; the client's reply went back to
+    # the sink that forwarded it, wearing the colliding id the client chose.
     assert seen == [{"id": control["id"], "result": {"enabled": True}}]
     assert forwarded["id"] != control["id"]
     await mux.close()
@@ -386,4 +388,30 @@ async def test_the_engine_hanging_up_marks_the_mux_closed_and_fails_later_calls(
     with pytest.raises(CdpConnectionClosed):
         await asyncio.wait_for(mux.send_raw("Target.getTargets"), timeout=1.0)
     with pytest.raises(CdpConnectionClosed):
-        await asyncio.wait_for(mux.forward({"id": 1, "method": "Page.enable"}), timeout=1.0)
+        await asyncio.wait_for(
+            mux.forward({"id": 1, "method": "Page.enable"}, lambda _frame: None), timeout=1.0
+        )
+
+
+@pytest.mark.unit
+async def test_a_forwarded_reply_goes_to_its_sender_even_when_another_sink_owns_the_session() -> (
+    None
+):
+    """A reply belongs to whoever asked, not to whoever owns the session it names."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    agent: list[dict[str, Any]] = []
+    viewer: list[dict[str, Any]] = []
+    mux.subscribe(agent.append)
+    mux.subscribe(viewer.append, owns_session="page-1-session-1")
+
+    await mux.forward(
+        {"id": 5, "method": "Page.enable", "sessionId": "page-1-session-1"}, agent.append
+    )
+    outbound = ws.sent[-1]
+    ws.deliver({"id": outbound["id"], "sessionId": "page-1-session-1", "result": {}})
+    await asyncio.sleep(0)
+
+    assert agent == [{"id": 5, "sessionId": "page-1-session-1", "result": {}}]
+    assert viewer == []
+    await mux.close()

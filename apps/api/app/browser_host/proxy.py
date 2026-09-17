@@ -215,7 +215,7 @@ async def run_cdp_proxy(host: ChromiumHost, session: HostSession, client_ws: Web
             elif message.get("method") == "Target.createTarget":
                 host.note_page_created(session.session_id)
             await session.mux.forward(
-                _rewrite_upstream(message, session.context_id, gettargets_ids)
+                _rewrite_upstream(message, session.context_id, gettargets_ids), enqueue
             )
 
     async def engine_to_client() -> None:

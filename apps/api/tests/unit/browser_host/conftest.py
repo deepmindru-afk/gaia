@@ -94,6 +94,8 @@ class FakeMux:
         self.send_error: Exception | None = None
         self.calls: list[tuple[str, dict[str, Any] | None, str | None]] = []
         self.forwarded: list[dict[str, Any]] = []
+        # The sink each forwarded frame named as the owner of its reply.
+        self.reply_sinks: list[Callable[[dict[str, Any]], None]] = []
         self.urls: list[str] = []
         # Each entry is a sink and the CDP session it claims, mirroring the real
         # mux: a claimed session's frames reach its owner and nobody else.
@@ -162,8 +164,11 @@ class FakeMux:
             return queue.pop(0)
         return self.responses.get(method, {})
 
-    async def forward(self, frame: dict[str, Any]) -> None:
+    async def forward(
+        self, frame: dict[str, Any], reply_to: Callable[[dict[str, Any]], None]
+    ) -> None:
         self.forwarded.append(frame)
+        self.reply_sinks.append(reply_to)
 
     @property
     def owned_sessions(self) -> list[str | None]:

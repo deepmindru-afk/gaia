@@ -75,8 +75,8 @@ class CdpMux:
         self._next_id = _FIRST_MESSAGE_ID
         # id -> future, for calls this mux made on a consumer's behalf.
         self._pending: dict[int, asyncio.Future[CdpFrame]] = {}
-        # our id -> the client's own id, for frames forwarded verbatim.
-        self._forwarded: dict[int, int | None] = {}
+        # our id -> (the client's own id, the sink its reply belongs to).
+        self._forwarded: dict[int, tuple[int | None, FrameSink]] = {}
         self._sinks: list[Subscription] = []
         self._closed = asyncio.Event()
 
@@ -149,13 +149,18 @@ class CdpMux:
             raise RuntimeError(f"malformed CDP result for {method}: {result!r}")
         return result
 
-    async def forward(self, frame: CdpFrame) -> None:
-        """Send a client's own frame, remembering its id so the reply can wear it again."""
+    async def forward(self, frame: CdpFrame, reply_to: FrameSink) -> None:
+        """Send a client's own frame; its reply returns to reply_to wearing the client's id.
+
+        A reply belongs to whoever asked, never to whoever owns the CDP session it
+        names. The live view claims a session of its own, so routing a reply by
+        session id could hand it an answer the agent is still waiting for.
+        """
         client_id = frame.get("id")
         outbound = dict(frame)
         mux_id = self._allocate()
         outbound["id"] = mux_id
-        self._forwarded[mux_id] = client_id if isinstance(client_id, int) else None
+        self._forwarded[mux_id] = (client_id if isinstance(client_id, int) else None, reply_to)
         await self._write(outbound)
 
     async def _send_tracked(self, message: CdpFrame) -> CdpFrame:
@@ -213,25 +218,32 @@ class CdpMux:
                 if not pending.done():
                     pending.set_result(frame)
                 return
-            if message_id in self._forwarded:
-                client_id = self._forwarded.pop(message_id)
+            forwarded = self._forwarded.pop(message_id, None)
+            if forwarded is not None:
+                client_id, reply_to = forwarded
                 # Hand the reply back wearing the id its sender chose, so the
                 # client's own routing still recognises it.
                 if client_id is None:
                     frame.pop("id", None)
                 else:
                     frame["id"] = client_id
+                self._deliver(reply_to, frame)
+                return
         self._fan_out(frame)
 
     def _fan_out(self, frame: CdpFrame) -> None:
         for sink in sinks_for(self._sinks, frame):
-            try:
-                sink(frame)
-            except Exception as exc:
-                log.warning(
-                    f"{LogTag.BROWSER} browser session frame sink failed",
-                    error_type=type(exc).__name__,
-                )
+            self._deliver(sink, frame)
+
+    def _deliver(self, sink: FrameSink, frame: CdpFrame) -> None:
+        """Hand one frame to one sink; a sink that raises must not starve the others."""
+        try:
+            sink(frame)
+        except Exception as exc:
+            log.warning(
+                f"{LogTag.BROWSER} browser session frame sink failed",
+                error_type=type(exc).__name__,
+            )
 
     def _mark_closed(self, exc: BaseException) -> None:
         """Release every waiter: the connection is over and nothing more will arrive."""
