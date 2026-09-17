@@ -79,6 +79,22 @@ async def test_resolve_live_code_returns_none_when_cache_misses(monkeypatch):
 
 
 @pytest.mark.unit
+async def test_remaining_seconds_is_the_codes_ttl(monkeypatch):
+    ttl = AsyncMock(return_value=120)
+    monkeypatch.setattr(live_code.redis_cache, "ttl_seconds", ttl)
+
+    assert await live_code.live_code_remaining_seconds("abc") == 120.0
+    ttl.assert_awaited_once_with(f"{BROWSER_LIVE_CODE_KEY_PREFIX}abc")
+
+
+@pytest.mark.unit
+async def test_remaining_seconds_is_zero_once_the_code_is_gone(monkeypatch):
+    monkeypatch.setattr(live_code.redis_cache, "ttl_seconds", AsyncMock(return_value=None))
+
+    assert await live_code.live_code_remaining_seconds("abc") == 0.0
+
+
+@pytest.mark.unit
 async def test_link_is_bare_slug_when_a_vhost_is_configured(monkeypatch):
     monkeypatch.setattr(live_view, "mint_live_code", AsyncMock(return_value="Xk3p9qR2mN4t"))
     monkeypatch.setattr(

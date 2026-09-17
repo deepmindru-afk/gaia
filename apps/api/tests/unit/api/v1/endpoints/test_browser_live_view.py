@@ -249,11 +249,16 @@ class TestAuthorizeWs:
 
 
 class TestResolveTargetWs:
-    async def test_via_code_returns_no_ttl(self) -> None:
+    async def test_via_code_is_bounded_by_the_codes_remaining_life(self) -> None:
         rec = LiveCodeRecord(session_id="sess1", user_id="u1")
-        with patch.object(blv, "resolve_live_code", new=AsyncMock(return_value=rec)):
+        remaining = AsyncMock(return_value=1800.0)
+        with (
+            patch.object(blv, "resolve_live_code", new=AsyncMock(return_value=rec)),
+            patch.object(blv, "live_code_remaining_seconds", new=remaining),
+        ):
             result = await blv._resolve_target_ws(_make_ws(), "code123", None)
-            assert result == ("sess1", "u1", None)
+        assert result == ("sess1", "u1", 1800.0)
+        remaining.assert_awaited_once_with("code123")
 
     async def test_via_token(self) -> None:
         with (
@@ -787,9 +792,10 @@ class TestResolveTargetWsArgs:
         with (
             patch.object(blv, "resolve_live_code", new=AsyncMock(return_value=rec)),
             patch.object(blv, "_authorize_ws", new=AsyncMock()) as mock_auth,
+            patch.object(blv, "live_code_remaining_seconds", new=AsyncMock(return_value=30.0)),
         ):
             result = await blv._resolve_target_ws(_make_ws(), "code123", "tok")
-            assert result == ("sess1", "u1", None)
+            assert result == ("sess1", "u1", 30.0)
             mock_auth.assert_not_called()
 
     async def test_resolve_live_code_called_with_exact_code(self) -> None:

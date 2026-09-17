@@ -35,6 +35,10 @@ def _conv_key(conversation_id: str) -> str:
     return f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}{conversation_id}"
 
 
+def _settled_key(handoff_id: str) -> str:
+    return f"{BROWSER_HANDOFF_KEY_PREFIX}{handoff_id}:settled"
+
+
 async def create_pending_handoff(
     handoff_id: str, user_id: str, conversation_id: str, reason: str = ""
 ) -> None:
@@ -50,17 +54,19 @@ async def create_pending_handoff(
         await redis_cache.set(_conv_key(conversation_id), handoff_id, ttl=HANDOFF_KEY_TTL_SECONDS)
 
 
+def _storage_unavailable(handoff_id: str) -> BrowserUnavailableError:
+    # A handoff that was never persisted can never be resolved by the other
+    # process (the run would stall for the full timeout), so fail loudly; the
+    # runner's unexpected-failure path resolves the card.
+    return BrowserUnavailableError(f"Could not persist handoff {handoff_id} (storage unavailable).")
+
+
 async def _store(handoff_id: str, record: HandoffRecord) -> None:
     stored = await redis_cache.set(
         _key(handoff_id), record, ttl=HANDOFF_KEY_TTL_SECONDS, model=HandoffRecord
     )
     if not stored:
-        # A handoff that was never persisted can never be resolved by the other
-        # process (the run would stall for the full timeout), so fail loudly; the
-        # runner's unexpected-failure path resolves the card.
-        raise BrowserUnavailableError(
-            f"Could not persist handoff {handoff_id} (storage unavailable)."
-        )
+        raise _storage_unavailable(handoff_id)
 
 
 async def get_handoff(handoff_id: str) -> HandoffRecord | None:
@@ -81,7 +87,8 @@ async def resolve_handoff(
 
     Returns the new status, or None if it does not exist or expired. Raises
     BrowserHandoffNotOwned if the caller does not own it. One-time: a settled
-    handoff keeps its original status.
+    handoff keeps its original status, and when the card, a chat reply and the
+    login auto-resolver race, the first decision to land is the one kept.
     """
     record = await get_handoff(handoff_id)
     if record is None:
@@ -96,6 +103,15 @@ async def resolve_handoff(
         HandoffStatus.COMPLETED if decision == HandoffDecision.CONTINUE else HandoffStatus.CANCELLED
     )
     note = (message or "").strip() or None
+    if not await redis_cache.set_if_absent(
+        _settled_key(handoff_id), new_status.value, ttl=HANDOFF_KEY_TTL_SECONDS
+    ):
+        # Another resolver settled it first: report that decision, never a second,
+        # conflicting one. No marker at all means the write itself failed.
+        settled = await redis_cache.get(_settled_key(handoff_id), model=str)
+        if settled is None:
+            raise _storage_unavailable(handoff_id)
+        return HandoffStatus(settled)
     await _store(handoff_id, record.model_copy(update={"status": new_status, "message": note}))
     if record.conversation_id:
         await redis_cache.delete(_conv_key(record.conversation_id))

@@ -411,6 +411,66 @@ class TestRedisCacheSet:
 # ---------------------------------------------------------------------------
 
 
+class TestRedisCacheSetIfAbsent:
+    """RedisCache.set_if_absent — the one first-writer-wins primitive."""
+
+    async def test_creates_the_key_with_nx_and_ttl(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.set = AsyncMock(return_value=True)
+
+        assert await cache.set_if_absent("handoff:1:settled", "cancelled", ttl=900) is True
+
+        cache.redis.set.assert_awaited_once_with(
+            "handoff:1:settled", '"cancelled"', ex=900, nx=True
+        )
+
+    async def test_reports_false_when_the_key_already_existed(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.set = AsyncMock(return_value=None)
+
+        assert await cache.set_if_absent("k", "v", ttl=10) is False
+
+    async def test_reports_false_when_redis_is_down_or_the_write_fails(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = None
+        assert await cache.set_if_absent("k", "v", ttl=10) is False
+
+        cache.redis = AsyncMock()
+        cache.redis.set = AsyncMock(side_effect=ConnectionError("boom"))
+        assert await cache.set_if_absent("k", "v", ttl=10) is False
+
+
+class TestRedisCacheTtlSeconds:
+    """RedisCache.ttl_seconds — remaining life, or None when there is none to report."""
+
+    async def test_returns_the_remaining_seconds(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.ttl = AsyncMock(return_value=42)
+
+        assert await cache.ttl_seconds("k") == 42
+        cache.redis.ttl.assert_awaited_once_with("k")
+
+    async def test_absent_and_persistent_keys_have_no_ttl(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.ttl = AsyncMock(return_value=-2)
+        assert await cache.ttl_seconds("gone") is None
+        cache.redis.ttl = AsyncMock(return_value=-1)
+        assert await cache.ttl_seconds("forever") is None
+
+    async def test_none_when_redis_is_down_or_the_read_fails(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = None
+        assert await cache.ttl_seconds("k") is None
+
+        cache.redis = AsyncMock()
+        cache.redis.ttl = AsyncMock(side_effect=ConnectionError("boom"))
+        assert await cache.ttl_seconds("k") is None
+
+
 class TestRedisCacheDelete:
     """Tests for RedisCache.delete() method."""
 

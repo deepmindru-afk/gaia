@@ -27,6 +27,7 @@ class _FakeRedisCache:
         self.set_calls: list[tuple[str, object, int | None, type[Any] | None]] = []
         self.get_calls: list[tuple[str, type[Any] | None]] = []
         self.delete_calls: list[str] = []
+        self.set_if_absent_calls: list[tuple[str, object, int | None]] = []
 
     async def get(self, key, model=None):
         self.get_calls.append((key, model))
@@ -41,12 +42,24 @@ class _FakeRedisCache:
         self.delete_calls.append(key)
         self.store.pop(key, None)
 
+    async def set_if_absent(self, key, value, ttl=None, model=None):
+        self.set_if_absent_calls.append((key, value, ttl))
+        if key in self.store:
+            return False
+        self.store[key] = value
+        return True
+
 
 @pytest.fixture
-def fake_redis(monkeypatch):
+def fake_cache(monkeypatch):
     fake = _FakeRedisCache()
     monkeypatch.setattr(handoff_mod, "redis_cache", fake)
-    return fake.store
+    return fake
+
+
+@pytest.fixture
+def fake_redis(fake_cache):
+    return fake_cache.store
 
 
 async def test_continue(fake_redis):
@@ -331,6 +344,33 @@ async def test_resolve_handoff_logs_resolution_with_id_and_status(fake_redis, mo
     assert logged["status"] == HandoffStatus.CANCELLED.value
 
 
+async def test_resolve_handoff_settles_with_one_nx_write_for_the_handoffs_lifetime(fake_cache):
+    await handoff_mod.create_pending_handoff("h20", "user-1", "conv-h20")
+
+    await handoff_mod.resolve_handoff("h20", HandoffDecision.CANCEL, "user-1")
+
+    assert fake_cache.set_if_absent_calls == [
+        (handoff_mod._settled_key("h20"), "cancelled", HANDOFF_KEY_TTL_SECONDS)
+    ]
+
+
+async def test_resolve_handoff_lost_race_reports_the_decision_that_landed_first(
+    fake_redis, fake_cache
+):
+    """Card, chat reply and auto-resolver can all see PENDING; only the first write settles it."""
+    await handoff_mod.create_pending_handoff("h19", "user-1", "conv-h19")
+    fake_redis[handoff_mod._settled_key("h19")] = HandoffStatus.CANCELLED.value
+
+    status = await handoff_mod.resolve_handoff("h19", HandoffDecision.CONTINUE, "user-1", "late")
+
+    record = await handoff_mod.get_handoff("h19")
+    assert status == HandoffStatus.CANCELLED
+    assert (handoff_mod._settled_key("h19"), str) in fake_cache.get_calls
+    assert record is not None
+    assert record.status == HandoffStatus.PENDING  # the loser wrote nothing
+    assert record.message is None
+
+
 async def test_resolve_handoff_already_settled_keeps_original_status_and_note(fake_redis):
     await handoff_mod.create_pending_handoff("h18", "user-1", "conv-h18")
     first = await handoff_mod.resolve_handoff("h18", HandoffDecision.CANCEL, "user-1", "first note")
@@ -406,6 +446,14 @@ async def test_resolve_persistence_failure_fails_loud(monkeypatch: pytest.Monkey
 
         async def delete(self, key: str) -> None:
             self.store.pop(key, None)
+
+        async def set_if_absent(
+            self, key: str, value: object, ttl: int = 3600, model: object = None
+        ) -> bool:
+            if self.fail_writes or key in self.store:
+                return False
+            self.store[key] = value
+            return True
 
     fake = _FlakyRedis()
     monkeypatch.setattr(handoff_mod, "redis_cache", fake)

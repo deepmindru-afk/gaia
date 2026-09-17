@@ -28,7 +28,7 @@ from app.api.v1.dependencies.oauth_dependencies import get_current_user, get_cur
 from app.browser_host.pumps import pump_until_first_close
 from app.constants.log_tags import LogTag
 from app.services.browser import registry
-from app.services.browser.live_code import resolve_live_code
+from app.services.browser.live_code import live_code_remaining_seconds, resolve_live_code
 from app.services.browser.live_view import render_live_view_page
 from app.services.browser.replay import render_replay_page, resolve_replay_code
 from app.services.browser.takeover_token import (
@@ -128,12 +128,12 @@ async def _resolve_target_page(code: str, request: Request, token: str | None) -
 async def _resolve_target_ws(
     websocket: WebSocket, code: str, token: str | None
 ) -> tuple[str, str, float | None] | None:
-    """``(session_id, user_id, ttl_seconds)`` for a WS, or ``None`` (socket closed). The
-    code path has no per-connection deadline — the session reaper bounds it; the token
-    path keeps the token's remaining lifetime."""
+    """``(session_id, user_id, ttl_seconds)`` for a WS, or ``None`` (socket closed). Both
+    paths bound the connection to what authorised it: the code's remaining life, or
+    the token's."""
     record = await resolve_live_code(code)
     if record is not None:
-        return record.session_id, record.user_id, None
+        return record.session_id, record.user_id, await live_code_remaining_seconds(code)
     resolved = await _authorize_ws(websocket, code, token)
     if resolved is None:
         return None

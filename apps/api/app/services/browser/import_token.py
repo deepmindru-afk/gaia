@@ -39,12 +39,10 @@ async def mint_import_token(user_id: str) -> str:
 async def consume_import_token(token: str) -> str | None:
     """Return the user a code authorises, or None if unknown/expired/already used.
 
-    Single-use: the code is deleted before the user id is returned, so two
-    concurrent redemptions cannot both succeed.
+    Single-use: one GETDEL reads and removes the code, so two concurrent
+    redemptions cannot both succeed.
     """
-    key = _key(token)
-    record = await redis_cache.get(key, model=ImportTokenRecord)
-    if record is None:
-        return None
-    await redis_cache.delete(key)
-    return record.user_id
+    record: ImportTokenRecord | None = await redis_cache.get_and_delete(
+        _key(token), model=ImportTokenRecord
+    )
+    return None if record is None else record.user_id

@@ -40,6 +40,11 @@ class _FakeRedis:
         self.store.pop(key, None)
         self.ttls.pop(key, None)
 
+    async def get_and_delete(self, key: str, model: type[Any] | None = None) -> object:
+        record = await self.get(key, model)
+        await self.delete(key)
+        return record
+
 
 @pytest.fixture
 def fake_redis(monkeypatch: pytest.MonkeyPatch) -> _FakeRedis:

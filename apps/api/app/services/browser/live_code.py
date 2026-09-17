@@ -38,3 +38,9 @@ async def mint_live_code(session_id: str, user_id: str) -> str:
 async def resolve_live_code(code: str) -> LiveCodeRecord | None:
     """Return the session + owner a code opens, or None if unknown/expired."""
     return await redis_cache.get(_key(code), model=LiveCodeRecord)
+
+
+async def live_code_remaining_seconds(code: str) -> float:
+    """Seconds the code stays valid; 0 once it has lapsed, so a socket bound to it closes at once."""
+    remaining = await redis_cache.ttl_seconds(_key(code))
+    return float(remaining) if remaining is not None else 0.0

@@ -65,6 +65,39 @@ async def test_save_then_load_round_trips_encrypted(monkeypatch: pytest.MonkeyPa
     assert loaded["cookies"][0]["name"] == "sid"
 
 
+def test_domain_candidates_walk_up_to_the_registrable_pair() -> None:
+    assert sp._domain_candidates("www.a.example.com") == [
+        "www.a.example.com",
+        "a.example.com",
+        "example.com",
+    ]
+    assert sp._domain_candidates("example.com") == ["example.com"]
+    assert sp._domain_candidates("localhost") == ["localhost"]
+
+
+async def test_load_falls_back_to_the_parent_domains_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An imported .example.com cookie is saved under example.com; a task at www still gets it."""
+    store: dict = {}
+    monkeypatch.setattr(
+        sp.browser_profile_repository,
+        "upsert_storage_state_blob",
+        AsyncMock(side_effect=lambda u, d, b, prov=None: store.__setitem__((u, d), b)),
+    )
+    get_for_domain = AsyncMock(
+        side_effect=lambda u, d: (
+            MagicMock(storage_state_blob=store[(u, d)]) if (u, d) in store else None
+        )
+    )
+    monkeypatch.setattr(sp.browser_profile_repository, "get_for_domain", get_for_domain)
+    await save_storage_state("u1", "example.com", _storage_state())
+
+    loaded = await load_storage_state("u1", "www.example.com")
+
+    assert loaded is not None
+    assert loaded["cookies"][0]["name"] == "sid"
+    assert [c.args[1] for c in get_for_domain.await_args_list] == ["www.example.com", "example.com"]
+
+
 async def test_load_none_when_nothing_saved(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         sp.browser_profile_repository, "get_for_domain", AsyncMock(return_value=None)

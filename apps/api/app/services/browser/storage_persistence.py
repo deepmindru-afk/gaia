@@ -22,7 +22,7 @@ from app.config.settings import settings
 from app.constants.browser import BrowserLoginSource
 from app.constants.log_tags import LogTag
 from app.db.repositories.browser_profiles import browser_profile_repository
-from app.models.browser_models import BrowserLoginProvenance
+from app.models.browser_models import BrowserLoginProvenance, BrowserProfileDocument
 from app.services.browser.storage_state_types import OriginState
 from shared.py.wide_events import log
 
@@ -75,8 +75,26 @@ def _decrypt_state(blob: str) -> StorageState:
     return decrypted
 
 
+def _domain_candidates(domain: str) -> list[str]:
+    """Return the host, then each parent domain down to the registrable pair (www.a.example.com -> a.example.com -> example.com).
+
+    An imported profile lands under a cookie's own domain, so a task starting at a
+    subdomain finds the parent-domain login it applies to.
+    """
+    labels = domain.lower().split(".")
+    return [".".join(labels[i:]) for i in range(max(len(labels) - 1, 1))]
+
+
+async def _saved_profile_for(user_id: str, domain: str) -> BrowserProfileDocument | None:
+    for candidate in _domain_candidates(domain):
+        record = await browser_profile_repository.get_for_domain(user_id, candidate)
+        if record is not None:
+            return record
+    return None
+
+
 async def load_storage_state(user_id: str, domain: str | None) -> StorageState | None:
-    """Load and decrypt the saved storage_state for user_id+domain.
+    """Load and decrypt the saved storage_state for user_id+domain, or the nearest parent domain.
 
     Returns None when there's nothing to seed with (no user, no domain, or
     no saved record) rather than an empty dict, so callers can distinguish
@@ -84,7 +102,7 @@ async def load_storage_state(user_id: str, domain: str | None) -> StorageState |
     """
     if not user_id or not domain:
         return None
-    record = await browser_profile_repository.get_for_domain(user_id, domain)
+    record = await _saved_profile_for(user_id, domain)
     if record is None:
         return None
     state: StorageState = _decrypt_state(record.storage_state_blob)
