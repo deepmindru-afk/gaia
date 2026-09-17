@@ -82,10 +82,9 @@ async def _read_special(
             mime_type=mime_type,
             session_id=target.session_id,
         )
-    # System-owned files (INDEX.md, the GUIDE.md docs, builtin skills) are
-    # authored by GAIA and held in process memory — serve them without touching
-    # the sandbox OR JuiceFS. The per-user on-disk copy (a symlink, once the
-    # _system mount lands) exists only so in-sandbox `bash` can see them.
+    # System-owned files (INDEX.md, GUIDE.md docs, builtin skills) are held in
+    # process memory and served without touching the sandbox or JuiceFS; the
+    # per-user on-disk symlink (once the _system mount lands) is only for bash.
     body = system_file_body(target.rel)
     if body is not None and not await user_owns_regular_file(target.user_id, target.rel):
         log.set(read_via="memory")
@@ -290,11 +289,9 @@ def _format_read(
 
 
 async def _read_sandbox_bytes(sbx: AsyncSandbox, abs_path: str, max_bytes: int) -> bytes:
-    # Native-dev fallback (host JuiceFS absent): read through the sandbox with
-    # the native filesystem API. There's no server-side range read, so we slurp
-    # the whole file — fine for this dev-only path, but cap the size first via
-    # get_info so a huge file can't OOM the worker (the host path streams
-    # line-by-line and needs no such guard).
+    # Native-dev fallback (host JuiceFS absent): no server-side range read, so
+    # slurp the whole file — cap the size first via get_info so a huge file
+    # can't OOM the worker.
     try:
         info = await sbx.files.get_info(abs_path)
     except NotFoundException:

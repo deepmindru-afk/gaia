@@ -7,7 +7,38 @@ import posthog from "posthog-js";
  * Provides type-safe event tracking with consistent naming conventions.
  */
 
-// Client-owned events only. Server-owned actions live in the API.
+/**
+ * Which surface put the paid-only wall on screen — the `source` property of
+ * `paywall:modal_viewed`. A closed union, not a free string: every member is
+ * a call site this repo owns, so a typo is a compile error, not a silent
+ * bucket. Every `openModal` call must name one; add a member when a new surface starts raising the wall.
+ */
+export type PaywallSource =
+  // Blocked actions — the gate refusing something the user tried to do.
+  | "composer_submit"
+  | "voice_mode"
+  | "workflow_autosend"
+  | "workflow_activation"
+  // A 402 from the server, on any gated request.
+  | "api_402"
+  | "chat_stream_402"
+  // Standing invitations — the user chose to look at plans.
+  | "composer_notice"
+  | "rate_limit_card"
+  | "rate_limit_toast"
+  | "founder_letter"
+  | "sidebar"
+  | "settings_menu"
+  | "settings_subscription"
+  | "settings_upsell"
+  | "settings_linked_accounts"
+  | "settings_usage"
+  // Not a surface: the desktop popup's feed window mirrors the composer
+  // window's wall, carrying whatever source that window recorded. Appears only
+  // if a snapshot arrives without one — a bug in the mirror, not a real gate — named explicitly so it can't hide inside a real bucket.
+  | "desktop_popup_mirror";
+
+// Event name constants for consistent tracking
 export const ANALYTICS_EVENTS = {
   // Desktop-only and deliberately its own name: Electron IPC (app icon, popup
   // shortcut) that never reaches the API, so no server event exists for it.
@@ -15,10 +46,30 @@ export const ANALYTICS_EVENTS = {
   USER_SESSION_RESUMED: "user:session_resumed",
 
   ONBOARDING_STARTED: "onboarding:started",
+  // Client-owned: the wizard's UI stages never reach the API as individual
+  // steps (it only sees phase completions), so `trackOnboardingStep` is the
+  // sole emitter.
+  ONBOARDING_STEP_COMPLETED: "onboarding:step_completed",
   ONBOARDING_SKIPPED: "onboarding:skipped",
+  // Wiping the wizard and starting over. Client-only: the server sees the
+  // reset request, but only the browser knows it came from the restart modal
+  // rather than from a support action.
+  ONBOARDING_RESTARTED: "onboarding:restarted",
+  // The user came back from a failed/stalled Dodo checkout and asked for the
+  // plans again. No request leaves the browser, so nothing else can see it.
+  ONBOARDING_CHECKOUT_RETRIED: "onboarding:checkout_retried",
 
   SUBSCRIPTION_PAGE_VIEWED: "subscription:page_viewed",
   SUBSCRIPTION_PLAN_VIEWED: "subscription:plan_viewed",
+  // `payment:checkout_started` and `subscription:activated` are API-owned (no
+  // client copy here) — POST /payments/* and the Dodo webhook capture them.
+  // SUBSCRIPTION_FAILED stays client-side (`useCheckoutReturn`): a declined charge or missing webhook produces no server event, so this is the only capture — not a duplicate of an API refusal.
+  SUBSCRIPTION_FAILED: "subscription:failed",
+
+  // The paid-only wall appeared on screen. Client-only by necessity: the
+  // server captures the causing 402 (`paywall:blocked`), but only the browser
+  // knows the modal rendered. Carries `source` — a count of walls shown means nothing without knowing which surface produced them.
+  PAYWALL_MODAL_VIEWED: "paywall:modal_viewed",
 
   CHAT_VOICE_MODE_TOGGLED: "chat:voice_mode_toggled",
 
@@ -34,6 +85,11 @@ export const ANALYTICS_EVENTS = {
 
   // Feature discovery events
   FEATURE_DISCOVERED: "feature:discovered",
+
+  // A row of the activation checklist was clicked. Client-only: completion
+  // and dismissal are derived/owned by the server, but the click that sent
+  // the user off to do the step never reaches it.
+  FIRST_STEPS_STEP_CLICKED: "first_steps:step_clicked",
 
   WORKFLOW_CARD_NAVIGATE: "workflow_card:navigate",
   USE_CASES_PROMPT_INSERTED: "use_cases:prompt_inserted",
@@ -139,6 +195,60 @@ interface EventProperties {
 }
 
 /**
+ * `posthog.init` is deferred to browser idle (`instrumentation-client.ts`), and
+ * `posthog.capture` before init is silently *dropped* — `onboarding:started`
+ * on mount missed the head of the funnel this way for quick users.
+ *
+ * Calls made before init are buffered here and replayed in order by
+ * `flushPendingAnalytics`; capped, since no project token (local dev) means the queue never flushes and would grow for the tab's life.
+ */
+type PendingCall =
+  | { kind: "identify"; userId: string; properties: Record<string, unknown> }
+  | { kind: "capture"; event: string; properties: Record<string, unknown> }
+  | { kind: "person"; properties: UserProperties };
+
+const MAX_PENDING_CALLS = 50;
+const pendingCalls: PendingCall[] = [];
+
+function isPostHogReady(): boolean {
+  return posthog.__loaded;
+}
+
+function enqueue(call: PendingCall): void {
+  if (pendingCalls.length >= MAX_PENDING_CALLS) return;
+  pendingCalls.push(call);
+}
+
+function send(call: PendingCall): void {
+  switch (call.kind) {
+    case "identify":
+      posthog.identify(call.userId, call.properties);
+      break;
+    case "capture":
+      posthog.capture(call.event, call.properties);
+      break;
+    case "person":
+      posthog.setPersonProperties(call.properties);
+      break;
+  }
+}
+
+function dispatch(call: PendingCall): void {
+  if (!isPostHogReady()) {
+    enqueue(call);
+    return;
+  }
+  send(call);
+}
+
+/** Replays everything captured before `posthog.init` finished, in order. */
+export function flushPendingAnalytics(): void {
+  if (!isPostHogReady()) return;
+  const queued = pendingCalls.splice(0, pendingCalls.length);
+  for (const call of queued) send(call);
+}
+
+/**
  * Identify a user in PostHog.
  * Call this when a user logs in or signs up.
  */
@@ -148,10 +258,14 @@ export function identifyUser(
 ): void {
   if (!userId) return;
 
-  posthog.identify(userId, {
-    ...properties,
-    $set_once: {
-      first_seen: new Date().toISOString(),
+  dispatch({
+    kind: "identify",
+    userId,
+    properties: {
+      ...properties,
+      $set_once: {
+        first_seen: new Date().toISOString(),
+      },
     },
   });
 }
@@ -170,9 +284,12 @@ export function trackEvent(
   event: AnalyticsEvent | string,
   properties?: EventProperties,
 ): void {
-  posthog.capture(event, {
-    ...properties,
-    timestamp: new Date().toISOString(),
+  dispatch({
+    kind: "capture",
+    event,
+    // Stamped at call time, not at flush time: a buffered event must keep the
+    // moment it actually happened.
+    properties: { ...properties, timestamp: new Date().toISOString() },
   });
 }
 
@@ -180,5 +297,22 @@ export function trackEvent(
  * Set user properties without tracking an event.
  */
 export function setUserProperties(properties: UserProperties): void {
-  posthog.setPersonProperties(properties);
+  dispatch({ kind: "person", properties });
+}
+
+/**
+ * Track onboarding progress. Client-owned: the wizard's UI stages (each
+ * question, the payment reveal, the platform pick) never reach the API as
+ * individual steps — the server only sees phase completions.
+ */
+export function trackOnboardingStep(
+  step: number,
+  stepName: string,
+  properties?: EventProperties,
+): void {
+  trackEvent(ANALYTICS_EVENTS.ONBOARDING_STEP_COMPLETED, {
+    step_number: step,
+    step_name: stepName,
+    ...properties,
+  });
 }

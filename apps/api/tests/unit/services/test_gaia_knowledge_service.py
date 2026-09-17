@@ -35,7 +35,7 @@ _LONG_AGO = -1e9
 
 @pytest.fixture
 def chroma():
-    """The raw Chroma client + the langchain client ``add_knowledge_batch`` uses."""
+    """Fake the raw Chroma client and the langchain client add_knowledge_batch uses."""
     collection = MagicMock()
     collection.get = AsyncMock(return_value={"documents": [], "metadatas": []})
     client = MagicMock()
@@ -52,7 +52,7 @@ def chroma():
 
 @pytest.fixture
 def embeddings():
-    """The google_embeddings provider, returning whatever the test declares."""
+    """Fake the google_embeddings provider, returning whatever the test declares."""
     fake = SimpleNamespace(
         aembed_documents=AsyncMock(return_value=[]),
         aembed_query=AsyncMock(return_value=[1.0, 0.0]),
@@ -68,7 +68,7 @@ def embeddings():
 
 @pytest.fixture(autouse=True)
 def clean_snapshot():
-    """The service is a process singleton — never let a snapshot cross tests."""
+    """Reset the process-singleton service so no snapshot crosses tests."""
     service = gaia_knowledge_service
     saved = (service._snapshot, service._loaded_at)
     service._snapshot = None
@@ -99,8 +99,7 @@ class TestVectorMath:
         assert _normalized([3.0, 4.0]) == (0.6, 0.8)
 
     def test_normalized_scales_a_short_vector_up(self):
-        """A vector shorter than unit length must still be scaled up — the guard
-        is "is this the zero vector", not "is this already small"."""
+        """A short vector is scaled up too; the guard is for the zero vector only."""
         assert _normalized([0.3, 0.4]) == (0.6, 0.8)
 
     def test_normalized_keeps_the_zero_vector(self):
@@ -127,8 +126,7 @@ class TestLoadLock:
         assert locks[0] is locks[1]
 
     def test_a_new_loop_gets_a_new_lock(self):
-        """A short-lived loop's id is reused by the next one — keying on the id
-        hands the second loop a lock bound to the dead first loop."""
+        """A dead loop's id is reused; keying on the id alone would hand over a stale lock."""
         locks: list[asyncio.Lock] = []
 
         async def _grab() -> None:
@@ -209,8 +207,7 @@ class TestKnowledgeItemValidation:
 
 class TestSearchKnowledge:
     async def test_ranks_by_local_cosine_similarity(self, chroma, embeddings):
-        """Query [1,0] against an aligned doc ([1,0]) and an orthogonal one
-        ([0,1]) — nearest first, cosine distance (1 - similarity) as the score."""
+        """Query [1,0] against [1,0] and [0,1]: nearest first, cosine distance as the score."""
         _corpus(
             chroma,
             embeddings,
@@ -272,8 +269,7 @@ class TestSearchKnowledge:
         assert results[0].metadata == {"i": 1}
 
     async def test_a_second_search_reuses_the_snapshot(self, chroma, embeddings):
-        """The point of the snapshot: the per-turn cost is the query embedding
-        alone — no Chroma read, no re-embedding of the corpus."""
+        """A second search costs the query embedding alone: no Chroma read, no re-embedding."""
         _corpus(chroma, embeddings, ["Doc"], [[1.0, 0.0]])
 
         first = await gaia_knowledge_service.search_knowledge("q", limit=5)
@@ -294,9 +290,7 @@ class TestSearchKnowledge:
         assert chroma.collection.get.await_count == 2
 
     async def test_a_failed_refresh_serves_the_previous_snapshot(self, chroma, embeddings):
-        """A corpus for a section is enrichment: a refresh blip must degrade to
-        the last good snapshot, not to an empty knowledge block — and the blip
-        must keep serving it on later turns, not just the failing one."""
+        """A refresh blip serves the last good snapshot, on this turn and the later ones."""
         _corpus(chroma, embeddings, ["Doc"], [[1.0, 0.0]])
         first = await gaia_knowledge_service.search_knowledge("q")
 
@@ -344,8 +338,7 @@ class TestLoadSnapshot:
         embeddings.aembed_documents.assert_awaited_once_with(["a", "b"])
 
     async def test_a_document_without_a_metadata_row_gets_empty_metadata(self, chroma, embeddings):
-        """``metadatas`` can be shorter than ``documents``; the guard must not read
-        one row past the end."""
+        """The metadatas list can be shorter than documents; never read past its end."""
         chroma.collection.get.return_value = {"documents": ["a", "b"], "metadatas": [{"i": 0}]}
         embeddings.aembed_documents.return_value = [[1.0, 0.0], [0.0, 1.0]]
 
@@ -355,8 +348,11 @@ class TestLoadSnapshot:
 
 
 class TestSnapshotInvalidation:
-    """The writers are the only way the corpus changes; each must drop the
-    snapshot so the next search reflects it rather than serving an hour stale."""
+    """Pin that every writer drops the snapshot.
+
+    The writers are the only way the corpus changes; each must drop the snapshot
+    so the next search reflects it rather than serving an hour stale.
+    """
 
     async def test_add_knowledge_batch_invalidates(self, chroma, embeddings):
         _corpus(chroma, embeddings, ["Doc"], [[1.0, 0.0]])

@@ -26,11 +26,12 @@ from app.agents.prompts.comms_prompts import (
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.general import NEW_MESSAGE_BREAKER
 from app.constants.log_tags import LogTag
+from app.models.user_models import AuthenticatedUser, OnboardingSubdocument
 from tests.helpers import captured_wide_event
 
 MODULE = "app.agents.core.background.comms_narrator"
 
-USER: dict = {"user_id": "user-1", "email": "u@gaia.local"}
+USER = AuthenticatedUser(user_id="user-1", email="u@gaia.local")
 CONVERSATION_ID = "conv-1"
 RESULT_TEXT = f"Downloaded the report.{NEW_MESSAGE_BREAKER}It has 3 pages."
 CARD_NOTE = wrap_agent_payload(AgentTag.RETURNED_TO_FRONTEND, "a card is on screen")
@@ -70,21 +71,21 @@ class TestNarrateExecutorResult:
         assert config["configurable"]["conversation_id"] == CONVERSATION_ID
 
     async def test_the_users_onboarding_data_reaches_build_agent_config(self) -> None:
-        """``build_agent_config`` runs for real here (unmocked) — proves the
-        (preferences, writing_style) pair extracted from ``user["onboarding"]``
-        actually lands on the configurable this narration run carries, not just
-        that the extraction call doesn't crash."""
-        user_with_onboarding = {
-            **USER,
-            "onboarding": {
-                "preferences": {"profession": "engineer"},
-                "writing_style": {"summary": "terse"},
-            },
-        }
+        """The (preferences, writing_style) pair from user.onboarding must reach the configurable, unmocked."""
+        user_with_onboarding = USER.model_copy(
+            update={
+                "onboarding": OnboardingSubdocument.model_validate(
+                    {
+                        "preferences": {"profession": "engineer"},
+                        "writing_style": {"summary": "terse"},
+                    }
+                )
+            }
+        )
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -99,7 +100,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result("boom", "error", CONVERSATION_ID, USER)
@@ -113,7 +114,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -133,7 +134,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -150,8 +151,7 @@ class TestNarrateExecutorResult:
         )
 
     async def test_parroted_internal_tags_are_stripped(self) -> None:
-        """A weak model that echoes the whole framed block back keeps its words
-        and loses the plumbing — both the open and the close tag."""
+        """A parroting model keeps the words but strips both the open and close tag."""
         parroted = wrap_agent_payload(AgentTag.EXECUTOR_RESULT, "done")
         with (
             _patch_graph(_fake_comms_graph()),
@@ -191,10 +191,7 @@ class TestRecordExecutorCancellation:
         assert call.kwargs["as_node"] == "tools"
         messages = call.args[1]["messages"]
         assert len(messages) == 1
-        # The whole record, not a fragment of it: this text is the only thing
-        # that stops comms claiming a cancelled task finished, so every clause
-        # of the denial is load-bearing and a test that matched one phrase let
-        # the rest of the sentence be rewritten unnoticed.
+        # Full text, not a fragment: every clause is load-bearing.
         assert messages[0].content == wrap_agent_payload(
             AgentTag.EXECUTOR_CANCELLED,
             "The background task task-42 ('send the email') was cancelled by the user "
@@ -230,10 +227,8 @@ class TestRecordPlatformDelivery:
         graph.aupdate_state.assert_awaited_once()
         call = graph.aupdate_state.await_args
         assert call.args[0] == {"configurable": {"thread_id": CONVERSATION_ID}}
-        # as_node="tools", not "agent": writing as the agent node makes
-        # aupdate_state evaluate should_continue, which needs a store it cannot
-        # inject, so the write raises and is lost. The tools->agent edge needs no
-        # store. Proven against the real graph in the e2e recording test.
+        # as_node="tools": as "agent" makes aupdate_state evaluate should_continue,
+        # which needs a store it cannot inject, so the write raises and is lost.
         assert call.kwargs["as_node"] == "tools"
         messages = call.args[1]["messages"]
         assert len(messages) == 1
@@ -248,9 +243,7 @@ class TestRecordPlatformDelivery:
         graph.aupdate_state.assert_not_called()
 
     async def test_failure_to_record_is_swallowed_and_reported_on_the_wide_event(self) -> None:
-        """The message is already sent, so a checkpoint failure must not break
-        the caller — but it must be observable: log.error lands in the wide
-        event's errors[], and that entry is all an operator gets."""
+        """A checkpoint failure must not break the caller, but log.error must land in the wide event's errors[]."""
         graph = _fake_comms_graph()
         graph.aupdate_state = AsyncMock(side_effect=RuntimeError("checkpoint down"))
         with _patch_graph(graph):
@@ -279,7 +272,7 @@ class TestNarrationResolvesItsOwnCommsLane:
         with (
             _patch_graph(graph),
             patch(f"{MODULE}.build_agent_config", built),
-            patch(f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("narrated", {}))),
+            patch(f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("narrated", []))),
         ):
             await narrate_executor_result(
                 result_text=RESULT_TEXT,

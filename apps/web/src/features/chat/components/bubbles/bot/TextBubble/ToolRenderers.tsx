@@ -8,6 +8,7 @@ import type {
 } from "@/config/registries/toolRegistry";
 import CalendarListCard from "@/features/calendar/components/CalendarListCard";
 import CalendarListFetchCard from "@/features/calendar/components/CalendarListFetchCard";
+import ConnectOptions from "@/features/chat/components/bubbles/bot/ConnectOptions";
 import DeepResearchResultsTabs from "@/features/chat/components/bubbles/bot/DeepResearchResultsTabs";
 import { DeviceApprovalPrompt } from "@/features/chat/components/bubbles/bot/DeviceApprovalPrompt";
 import { DeviceOnboardingPrompt } from "@/features/chat/components/bubbles/bot/DeviceOnboardingPrompt";
@@ -31,7 +32,7 @@ import type {
   EmailFetchData,
   EmailSentData,
 } from "@/types/features/mailTypes";
-import type { NotificationRecord } from "@/types/features/notificationTypes";
+import type { NotificationView } from "@/types/features/notificationTypes";
 import type {
   RedditCommentCreatedData,
   RedditCommentData,
@@ -80,10 +81,9 @@ export function getTypedData<K extends ToolName>(
     : undefined;
 }
 
-// Map of tool_name -> renderer function for unified tool_data rendering.
-// Renderers return ONE card per tool_data entry; sibling identity is owned by
-// the keyed <React.Fragment> wrapper at the renderTool() call site (TextBubble),
-// so renderers neither take nor set keys.
+// Map of tool_name -> renderer for unified tool_data rendering. Renderers
+// return ONE card per entry; sibling identity is owned by the keyed
+// <React.Fragment> at renderTool()'s call site (TextBubble) — no keys here.
 type RendererMap = {
   [K in ToolName]: (data: ToolDataMap[K]) => React.ReactNode;
 };
@@ -203,7 +203,7 @@ const TOOL_RENDERERS: Partial<RendererMap> = {
     <NotificationListSection
       notifications={
         (data as { notifications: unknown[] })
-          .notifications as NotificationRecord[]
+          .notifications as NotificationView[]
       }
       title="Your Notifications"
     />
@@ -211,6 +211,7 @@ const TOOL_RENDERERS: Partial<RendererMap> = {
   send_notification_data: (data) => (
     <SendNotificationSection send_notification_data={data} />
   ),
+  connect_options: (data) => <ConnectOptions connect_options={data} />,
   integration_connection_required: (data) => {
     // Data can be a single item or an array (when grouped)
     const items = (
@@ -374,11 +375,9 @@ const TOOL_RENDERERS: Partial<RendererMap> = {
     return <MemoryCard items={items} />;
   },
 
-  // HIL approval — grouped so a run needing many decisions doesn't stack a full
-  // card each: pending ones show side by side, settled ones are removed (the
-  // assistant's reply already reflects them). Each approval_id is a single entry
-  // (pending→resolved replaced in place via upsertApprovalToolData); grouping
-  // collects them into the array.
+  // HIL approval — grouped so many decisions don't stack a full card each:
+  // pending show side by side, settled are removed (reply reflects them).
+  // Each approval_id is one entry, replaced in place via upsertApprovalToolData.
   approval_request: (data) => {
     const raw = (Array.isArray(data) ? data : [data]) as ApprovalRequestData[];
     // A resumed stream replays the gate-time PENDING frame after the decision

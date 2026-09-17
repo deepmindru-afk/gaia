@@ -131,14 +131,11 @@ class Tool:
         self.tool = tool
         self.name = name or tool.name
         self.is_core = is_core
-        # HIL destructive flag — the single source of truth for tool risk.
-        # None = unclassified (custom/MCP tools until the LLM classifier decides);
-        # True/False = reviewed (internal tools + curated integration slugs).
+        # HIL destructive flag: None = unclassified (LLM classifier decides
+        # later); True/False = reviewed (internal tools + curated slugs).
         self.destructive = destructive
-        # Forced-ask stamp: this tool pauses for user approval in EVERY HIL mode,
-        # ignoring ``always_allow`` and per-tool overrides. Stronger than
-        # ``destructive`` (which only shapes auto-mode judging). For settings on
-        # the user's own account and similar product invariants.
+        # Forced-ask stamp: pauses for approval in EVERY HIL mode, ignoring
+        # ``always_allow`` — for account settings and similar invariants.
         self.always_gate = always_gate
 
 
@@ -264,10 +261,8 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._categories: dict[str, ToolCategory] = {}
-        # name -> (category_name, Tool) index. Tool names are globally unique
-        # (the executor's tool dict is keyed by name), so a flat map is safe;
-        # it serves the per-tool-call lookups on the HIL gate path without
-        # scanning every category.
+        # name -> (category_name, Tool) index. Tool names are globally unique,
+        # so this serves per-tool-call lookups without scanning every category.
         self._tools_by_name: dict[str, tuple[str, Tool]] = {}
 
     def setup(self) -> None:
@@ -402,11 +397,8 @@ class ToolRegistry:
             tools=[*notification_tool.tools],
             risk=CategoryRisk(destructive_tools={"send_notification"}),
         )
-        # Account-center mutations: settings on the user's own account. The
-        # settings tools are forced-ask — they change state the user owns
-        # outright, so no approval mode or per-tool override may wave them
-        # through. manage_linked_account is argument-gated instead (disconnect
-        # asks, generate_link doesn't) — see hil/policy.ARGUMENT_GATED_TOOLS.
+        # Account-center mutations are forced-ask; manage_linked_account is
+        # argument-gated instead — see hil/policy.ARGUMENT_GATED_TOOLS.
         self._add_category(
             "account",
             tools=[*account_tools.tools],
@@ -496,10 +488,9 @@ class ToolRegistry:
             tools=integration_tool.tools,
             risk=CategoryRisk(
                 destructive_tools={"connect_integration"},
-                # add_custom_mcp_server: adds an untrusted, LLM-resolved MCP server.
-                # approve_device_pairing: surfaces the link that links a device to the
-                # account. Both always confirm with the user, in every HIL mode, so the
-                # human consciously gates the action (see hil/policy).
+                # add_custom_mcp_server: untrusted, LLM-resolved MCP server. approve_device_pairing:
+                # links a device to the account. Both always confirm with the user in every
+                # HIL mode (see hil/policy).
                 always_gate_tools={"add_custom_mcp_server", "approve_device_pairing"},
             ),
         )

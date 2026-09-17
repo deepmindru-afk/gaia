@@ -29,6 +29,7 @@ from app.agents.core.background.session import (
 )
 from app.models.chat_models import ConversationModel
 from app.models.message_models import MessageRequestWithHistory
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 from app.services.chat.chunks import (
     extract_response_text as _extract_response_text,
@@ -50,28 +51,28 @@ from app.services.chat.stream import (
     run_chat_stream_background,
     stream_manager as _stream_manager,
 )
+from app.utils.stream_publishers import ExtractedToolData
 from shared.py.wide_events import log as _log
 
 
 def _created_conversation(conversation_id: str, description: str) -> ConversationModel:
-    """The real `create_conversation` return value — mock it with nothing looser."""
+    """Return the real create_conversation value; mock it with nothing looser."""
     return ConversationModel(conversation_id=conversation_id, description=description)
 
 
 def _usage_callback_class() -> MagicMock:
-    """Stand-in for LangChain's `UsageMetadataCallbackHandler`.
+    """Stand-in for LangChain's UsageMetadataCallbackHandler.
 
-    The real handler exposes `usage_metadata` as a dict, and the stream feeds it
-    straight into `MainResponseCompleteFrame`. A bare `MagicMock()` would hand the
+    The real handler exposes usage_metadata as a dict, and the stream feeds it
+    straight into MainResponseCompleteFrame. A bare MagicMock() would hand the
     frame a Mock instead, so the stand-in must carry the real attribute type.
     """
     return MagicMock(return_value=MagicMock(usage_metadata={}))
 
 
-# Each module does `from app.core.stream_manager import stream_manager`,
-# so the patch target is each module's binding. This helper rebinds all
-# five at once so a single mock intercepts calls from stream.py, chunks.py,
-# state.py, artifact_forwarder.py, and stream_publishers.py.
+# Each module does `from app.core.stream_manager import stream_manager`, so the patch
+# target is each module's own binding. This rebinds all five at once: stream.py,
+# chunks.py, state.py, artifact_forwarder.py, and stream_publishers.py.
 @contextlib.contextmanager
 def _patch_stream_manager(sm: MagicMock) -> Iterator[MagicMock]:
     with contextlib.ExitStack() as stack:
@@ -92,13 +93,13 @@ def _patch_stream_manager(sm: MagicMock) -> Iterator[MagicMock]:
 
 
 @pytest.fixture
-def test_user() -> dict:
-    return {"user_id": "user_abc", "email": "tester@example.com"}
+def test_user() -> AuthenticatedUser:
+    return AuthenticatedUser(user_id="user_abc", email="tester@example.com")
 
 
 @pytest.fixture
 def basic_body() -> MessageRequestWithHistory:
-    """A minimal request body with a single user message."""
+    """Build a minimal request body with a single user message."""
     return MessageRequestWithHistory(
         message="Hello GAIA",
         messages=[{"role": "user", "content": "Hello GAIA"}],
@@ -108,7 +109,7 @@ def basic_body() -> MessageRequestWithHistory:
 
 @pytest.fixture
 def existing_conv_body() -> MessageRequestWithHistory:
-    """A request body referencing an already-existing conversation."""
+    """Build a request body referencing an already-existing conversation."""
     return MessageRequestWithHistory(
         message="Follow-up",
         messages=[{"role": "user", "content": "Follow-up"}],
@@ -128,7 +129,7 @@ async def _done_only_stream() -> AsyncGenerator[str, None]:
 
 
 async def _text_then_nostream(text: str, complete: str) -> AsyncGenerator[str, None]:
-    """Yields a text chunk, then a nostream marker, then DONE."""
+    """Yield a text chunk, then a nostream marker, then DONE."""
     yield f"data: {json.dumps({'response': text})}\n\n"
     yield f"nostream: {json.dumps({'complete_message': complete})}"
     yield "data: [DONE]\n\n"
@@ -140,13 +141,13 @@ async def _text_then_nostream(text: str, complete: str) -> AsyncGenerator[str, N
 
 
 class TestExtractToolData:
-    def test_returns_empty_dict_on_invalid_json(self):
+    def test_returns_an_empty_result_on_invalid_json(self):
         result = extract_tool_data("not json{{")
-        assert result == {}
+        assert result == ExtractedToolData()
 
-    def test_returns_empty_dict_for_plain_response(self):
+    def test_returns_an_empty_result_for_plain_response(self):
         result = extract_tool_data(json.dumps({"response": "hello"}))
-        assert result == {}
+        assert result == ExtractedToolData()
 
     def test_extracts_unified_tool_data_list(self):
         payload = json.dumps(
@@ -161,8 +162,9 @@ class TestExtractToolData:
             }
         )
         result = extract_tool_data(payload)
-        assert "tool_data" in result
-        assert result["tool_data"][0]["tool_name"] == "search_results"
+        assert result.tool_data == [
+            {"tool_name": "search_results", "data": {"items": []}, "timestamp": "t"}
+        ]
 
     def test_extracts_unified_tool_data_single_dict(self):
         """tool_data as a single dict (not a list) should be wrapped in a list."""
@@ -170,15 +172,14 @@ class TestExtractToolData:
             {"tool_data": {"tool_name": "weather_data", "data": {}, "timestamp": "t"}}
         )
         result = extract_tool_data(payload)
-        assert isinstance(result["tool_data"], list)
-        assert result["tool_data"][0]["tool_name"] == "weather_data"
+        assert result.tool_data == [{"tool_name": "weather_data", "data": {}, "timestamp": "t"}]
 
     def test_extracts_legacy_tool_field(self):
         payload = json.dumps({"calendar_options": [{"id": 1, "title": "Meeting"}]})
         result = extract_tool_data(payload)
-        assert "tool_data" in result
-        assert result["tool_data"][0]["tool_name"] == "calendar_options"
-        assert result["tool_data"][0]["data"] == [{"id": 1, "title": "Meeting"}]
+        assert len(result.tool_data) == 1
+        assert result.tool_data[0]["tool_name"] == "calendar_options"
+        assert result.tool_data[0]["data"] == [{"id": 1, "title": "Meeting"}]
 
     def test_extracts_multiple_legacy_tool_fields(self):
         payload = json.dumps(
@@ -188,36 +189,37 @@ class TestExtractToolData:
             }
         )
         result = extract_tool_data(payload)
-        tool_names = {e["tool_name"] for e in result["tool_data"]}
-        assert "search_results" in tool_names
-        assert "weather_data" in tool_names
+        tool_names = {e["tool_name"] for e in result.tool_data}
+        assert tool_names == {"search_results", "weather_data"}
 
     def test_extracts_follow_up_actions_into_other_data(self):
         payload = json.dumps({"follow_up_actions": ["Do X", "Do Y"]})
         result = extract_tool_data(payload)
-        assert "other_data" in result
-        assert result["other_data"]["follow_up_actions"] == ["Do X", "Do Y"]
+        assert result.other_data is not None
+        assert result.other_data.follow_up_actions == ["Do X", "Do Y"]
 
     def test_extracts_tool_output(self):
         payload = json.dumps({"tool_output": {"tool_call_id": "call_1", "output": "result text"}})
         result = extract_tool_data(payload)
-        assert "tool_output" in result
-        assert result["tool_output"]["tool_call_id"] == "call_1"
+        assert result.tool_output is not None
+        assert result.tool_output.tool_call_id == "call_1"
+        assert result.tool_output.output == "result text"
 
     def test_ignores_none_valued_legacy_fields(self):
         payload = json.dumps({"calendar_options": None})
         result = extract_tool_data(payload)
-        assert "tool_data" not in result
+        assert result.tool_data == []
 
     def test_unknown_fields_produce_no_tool_data(self):
         payload = json.dumps({"completely_unknown_key": "value"})
         result = extract_tool_data(payload)
-        assert "tool_data" not in result
+        assert result.is_empty()
 
     def test_timestamp_is_iso_string(self):
         payload = json.dumps({"search_results": {"items": []}})
         result = extract_tool_data(payload)
-        ts = result["tool_data"][0]["timestamp"]
+        ts = result.tool_data[0]["timestamp"]
+        assert ts is not None
         # Verify it's a parseable ISO timestamp
         parsed = datetime.fromisoformat(ts)
         assert parsed.tzinfo is not None
@@ -518,9 +520,9 @@ class TestRunChatStreamBackground:
     def _no_pending_approval(self) -> Iterator[None]:
         """Stub conversational HIL resolution to "nothing pending".
 
-        ``run_chat_stream_background`` now checks Mongo for a pending approval at
+        run_chat_stream_background now checks Mongo for a pending approval at
         the top of each turn. These tests exercise the normal turn and don't stub
-        Redis, so without this the real ``redis_cache`` singleton is reached and
+        Redis, so without this the real redis_cache singleton is reached and
         raises "Event loop is closed" under xdist's per-test event loops.
         """
         with patch(
@@ -531,19 +533,12 @@ class TestRunChatStreamBackground:
 
     @pytest.fixture(autouse=True)
     def _no_live_artifact_forwarder(self) -> Iterator[None]:
-        """Force ``ArtifactForwarder`` onto its "Redis unavailable" fast path.
+        """Force ArtifactForwarder onto its "Redis unavailable" fast path.
 
-        ``run_chat_stream_background`` spawns ``forward_artifact_events`` as a
-        background task for every turn with a ``user_id``. Its ``run()`` reads
-        the process-wide ``redis_cache`` singleton directly (not ``stream_manager``,
-        which the tests below already mock) — in a hermetic dev/test env
-        ``redis_cache.redis`` is ``None`` and it no-ops, but under CI's live-services
-        job (real Redis running, ``REDIS_URL`` pointing at it) it subscribes to a
-        real pub/sub channel and blocks in ``pubsub.listen()`` for the rest of the
-        turn, relying entirely on ``_finalize_stream``'s ``artifact_task.cancel()``
-        landing before test/CI timeouts to unblock it. ``tests/unit/`` must be fully
-        mocked and I/O-free (see ``tests/CLAUDE.md``), so pin the fast path here
-        instead of depending on ambient Redis connectivity/scheduling.
+        forward_artifact_events reads the process-wide redis_cache singleton directly (not
+        the mocked stream_manager); under CI's live-services job it would otherwise block in
+        pubsub.listen() until artifact_task.cancel() lands. tests/unit/ must stay fully
+        mocked and I/O-free, so pin the fast path here instead of depending on Redis.
         """
         with patch("app.services.chat.artifact_forwarder.redis_cache.redis", None):
             yield
@@ -678,11 +673,7 @@ class TestRunChatStreamBackground:
         assert "ttft_ms" not in props
 
     async def test_source_is_carried_onto_the_terminal_event(self, test_user, existing_conv_body):
-        """`source` is what lets one event name span web, desktop and bots.
-
-        Every other test leaves it None, so the branch that attaches it never
-        ran with a value — key and value were both free to drift.
-        """
+        """Every other test leaves source None, so the branch that attaches it never ran with a value."""
         sm = _make_stream_manager_mock()
         with (
             _patch_stream_manager(sm),
@@ -814,9 +805,7 @@ class TestRunChatStreamBackground:
     async def test_stop_during_executor_wait_is_a_cancelled_turn(
         self, test_user, existing_conv_body
     ):
-        """Comms has already acked when the user presses stop while the turn waits
-        on the executor. The consume loop's cancel check is long past, so the
-        wait itself must notice — otherwise the turn is counted as completed."""
+        """The consume loop's cancel check is long past, so the executor wait itself must notice."""
         labels = {"source": "web", "delegated": "false", "status": "cancelled"}
         before = REGISTRY.get_sample_value("chat_turn_total", labels) or 0.0
         sm = _make_stream_manager_mock()
@@ -855,9 +844,7 @@ class TestRunChatStreamBackground:
         }
 
     async def test_failed_turn_is_observed_with_error_status(self, test_user, existing_conv_body):
-        """A turn that raises is exactly the slow/broken one the SLOs exist for: it
-        must land in ``chat_turn_total`` and the E2E histogram as ``status=error``,
-        not vanish from both."""
+        """A raising turn lands in chat_turn_total and the E2E histogram as status=error, not nowhere."""
         labels_total = {"source": "web", "delegated": "false", "status": "error"}
         labels_e2e = {
             "source": "web",
@@ -896,8 +883,7 @@ class TestRunChatStreamBackground:
         mock_capture.assert_not_called()
 
     async def test_error_chunk_published_before_set_error(self, test_user, existing_conv_body):
-        """set_error() sends STREAM_ERROR_SIGNAL which breaks the subscriber.
-        The human-readable error JSON must be published first."""
+        """set_error() sends STREAM_ERROR_SIGNAL, which breaks the subscriber — publish the error JSON first."""
         sm = _make_stream_manager_mock()
         sm.get_progress = AsyncMock(return_value=None)
         publish_calls: list[str] = []
@@ -1215,8 +1201,7 @@ class TestRunChatStreamBackground:
     async def test_complete_message_recovered_from_redis_when_empty(
         self, test_user, existing_conv_body
     ):
-        """If nostream: marker never arrives (e.g. cancellation), complete_message
-        should be recovered from Redis progress data."""
+        """If the nostream: marker never arrives (e.g. cancellation), recover it from Redis progress."""
         sm = _make_stream_manager_mock()
         sm.get_progress = AsyncMock(
             return_value={"complete_message": "recovered text", "tool_data": {}}
@@ -1379,8 +1364,7 @@ class TestRunChatStreamBackground:
     async def test_voice_mode_turn_labels_the_histograms_voice_true(
         self, test_user, existing_conv_body
     ):
-        """`voice_mode` is carried from the body into the terminal histogram labels;
-        a turn that dropped it would file voice traffic under voice_mode=false."""
+        """voice_mode reaches the terminal histogram labels; dropped, voice traffic files as false."""
         labels = {
             "source": "web",
             "voice_mode": "true",
@@ -1412,8 +1396,7 @@ class TestRunChatStreamBackground:
     async def test_delegated_turn_labels_turn_total_delegated_true(
         self, test_user, existing_conv_body
     ):
-        """The delegation label is read from THIS stream's session; a mis-read id
-        would count a delegated turn as direct."""
+        """The delegation label is read from this stream's session, not another's."""
         labels = {"source": "web", "delegated": "true", "status": "success"}
         before = REGISTRY.get_sample_value("chat_turn_total", labels) or 0.0
         sm = _make_stream_manager_mock()
@@ -1443,8 +1426,7 @@ class TestRunChatStreamBackground:
         assert REGISTRY.get_sample_value("chat_turn_total", labels) == before + 1
 
     async def test_error_turn_labels_voice_and_delegation(self, test_user, existing_conv_body):
-        """The error path carries the same stream id and voice_mode as the happy
-        one — a turn that fails must file under its real delegation/voice labels."""
+        """The error path files under its real delegation and voice labels, as the happy path does."""
         labels = {
             "source": "web",
             "voice_mode": "true",
@@ -1481,8 +1463,7 @@ class TestRunChatStreamBackground:
         assert REGISTRY.get_sample_value("chat_e2e_full_seconds_count", labels) == before + 1
 
     async def test_a_non_text_data_chunk_does_not_stamp_ttft(self, test_user, existing_conv_body):
-        """TTFT is first *reply text*, not first byte: an empty-response data frame
-        before any real text must not open the span."""
+        """TTFT is first reply text, not first byte, so an empty-response frame must not open it."""
 
         async def _empty_response_then_done() -> AsyncGenerator[str, None]:
             yield 'data: {"response": ""}\n\n'
@@ -1510,8 +1491,7 @@ class TestRunChatStreamBackground:
         assert "ttft_ms" not in mock_capture.call_args.args[2]
 
     async def test_pending_approval_turn_stamps_ack_and_ttft(self, test_user, existing_conv_body):
-        """A bot reply that answers a pending approval is still a turn: it stamps
-        the ack clock and measures its own TTFT (the ack text) exactly once."""
+        """An approval reply is still a turn: it stamps the ack clock and TTFT exactly once."""
         state = _StreamState()
         state.t0_perf = 50.0
         sm = _make_stream_manager_mock()
@@ -1551,9 +1531,12 @@ def _counter(name: str, labels: dict[str, str]) -> float:
 
 
 class TestTurnLatencyHelpers:
-    """The latency helpers are deterministic given fixed stamps; assert exact
-    values, labels and None-guards so a mutated subtraction, scaling, rounding,
-    label or guard is caught rather than riding along under a range assertion."""
+    """The latency helpers are deterministic given fixed stamps.
+
+    Exact values, labels and None-guards are asserted so a mutated subtraction,
+    scaling, rounding, label or guard is caught rather than riding along under a
+    range assertion.
+    """
 
     def test_stream_state_latency_defaults(self) -> None:
         state = _StreamState()

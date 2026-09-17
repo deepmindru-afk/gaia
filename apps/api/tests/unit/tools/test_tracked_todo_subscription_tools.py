@@ -5,7 +5,7 @@ fields leaves the model guessing again, and guessing is what the whole
 matchable-fields layer exists to stop — so the catalog rides along on every
 refusal, not only on the happy path.
 
-Split from ``test_tracked_todo_tools.py`` (already 1300 lines) because watching a
+Split from test_tracked_todo_tools.py (already 1300 lines) because watching a
 trigger is a separate responsibility from todo CRUD, not because it is a separate
 module.
 """
@@ -33,8 +33,8 @@ from app.models.trigger_subscription_models import (
     SubscriptionAction,
     SubscriptionCondition,
     SubscriptionResolution,
-    SubscriptionStatus,
     TriggerSubscription,
+    TriggerSubscriptionStatus,
 )
 from app.services.triggers.matchable_fields import MATCHABLE_TRIGGERS
 from app.services.triggers.subscription_service import (
@@ -410,7 +410,7 @@ class TestSubscriptionsAreVisibleOnTheTodo:
         assert "when any event" in _format_tracked_todo_full(doc, datetime.now(UTC))
 
     def test_a_paused_watch_says_the_integration_is_disconnected(self) -> None:
-        doc = _todo(trigger_subscriptions=[_subscription(status=SubscriptionStatus.PAUSED)])
+        doc = _todo(trigger_subscriptions=[_subscription(status=TriggerSubscriptionStatus.PAUSED)])
 
         assert "PAUSED" in _format_tracked_todo_full(doc, datetime.now(UTC))
 
@@ -419,8 +419,7 @@ class TestSubscriptionsAreVisibleOnTheTodo:
 
 
 class TestFormatSubscriptionLines:
-    """The exact watch line: the join word encodes AND vs OR semantics, and the
-    paused marker tells the user their watch is dead — both must be verbatim."""
+    """The exact watch line: the join word encodes AND vs OR semantics, and the paused marker tells the user their watch is dead — both must be verbatim."""
 
     @staticmethod
     def _two_conditions() -> list[SubscriptionCondition]:
@@ -454,7 +453,7 @@ class TestFormatSubscriptionLines:
         )
 
     def test_a_paused_watch_ends_with_the_disconnected_marker(self) -> None:
-        sub = _subscription(status=SubscriptionStatus.PAUSED)
+        sub = _subscription(status=TriggerSubscriptionStatus.PAUSED)
         (line,) = _format_subscription_lines(_todo(trigger_subscriptions=[sub]))
 
         assert line.endswith(" (PAUSED: integration disconnected)")

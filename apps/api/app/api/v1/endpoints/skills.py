@@ -50,11 +50,11 @@ from app.services.analytics_service import AnalyticsEvents, capture_context_even
 from app.services.integrations.user_integrations import get_connected_integration_ids
 from shared.py.wide_events import log
 
-router = APIRouter(prefix="/skills", tags=["skills"])
+router = APIRouter(prefix="/skills")
 
 
 def _get_user_id(user: AuthenticatedUser = Depends(get_current_user)) -> str:
-    user_id = user.get("user_id")
+    user_id = user.user_id
     if not user_id:
         raise HTTPException(
             status_code=http_status.HTTP_401_UNAUTHORIZED,
