@@ -28,8 +28,6 @@ class ConversationSource(str, Enum):
         Returns None for blank or unrecognised values so callers can compare on
         enum members instead of raw strings.
         """
-        if value is None or isinstance(value, cls):
-            return value
         try:
             return cls(value)
         except ValueError:
