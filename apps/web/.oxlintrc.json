@@ -39,7 +39,8 @@
               "duration-150",
               "duration-200",
               "duration-300",
-              "hover:bg-transparent"
+              "hover:bg-transparent",
+              "bg-zinc-700"
             ]
           },
           {
@@ -130,6 +131,16 @@
           {
             "pattern": "^ModalBody$",
             "allow": ["layout", "spacing"]
+          },
+          {
+            "pattern": "^SheetContent$",
+            "allow": [
+              "layout",
+              "border-none",
+              "bg-zinc-950/50",
+              "text-foreground",
+              "backdrop-blur-2xl"
+            ]
           }
         ],
         "message": {
@@ -228,7 +239,9 @@
           "sm:pt-[30vh]",
           "text-[40vw]",
           "text-[3.2rem]",
-          "sm:text-[5.75rem]"
+          "sm:text-[5.75rem]",
+          "pt-[12vh]",
+          "tracking-[0.2em]"
         ],
         "message": "Stay on the scale for {{className}} \u2014 use {{replacement|{{suggestions}}|a scale step}} instead. Colors: use a theme token or declare --color-<name> in {{file|your theme CSS}}."
       }

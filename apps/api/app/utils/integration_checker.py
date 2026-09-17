@@ -11,18 +11,15 @@ the link inline because there is no card to click.
 
 It also depends on whether the user *had* this connected and the grant died,
 versus never connected it at all — "sign in again" and "connect this" are
-different asks. Only the stored record tells the two apart, so this module reads
-it rather than taking it as an argument; a caller that has to remember to pass it
-is a caller that will eventually forget.
+different asks. Only the stored record tells the two apart, so this module
+reads it rather than taking it as an argument.
 """
-
-from typing import cast
 
 from langgraph.config import get_config, get_stream_writer
 
 from app.config.settings import settings
 from app.db.repositories.user_integrations import user_integration_repository
-from app.models.agent_models import agent_configurable
+from app.models.agent_models import read_agent_configurable
 from app.models.chat_models import SourceCategory
 from app.services.connect_link_service import build_connect_link_url
 
@@ -30,14 +27,14 @@ from app.services.connect_link_service import build_connect_link_url
 def _current_source_category() -> str | None:
     """Read the generalized source category (ui/bot/bg) from the active graph run.
 
-    Uses LangGraph's ambient config (same mechanism as ``get_stream_writer``), so
+    Uses LangGraph's ambient config (same mechanism as get_stream_writer), so
     no config threading is needed. Returns None outside a runnable context.
     """
     try:
         config = get_config()
     except RuntimeError:
         return None
-    return cast(str | None, agent_configurable(config).get("source_category"))
+    return read_agent_configurable(config).source_category
 
 
 async def request_integration_connection(
@@ -45,11 +42,10 @@ async def request_integration_connection(
 ) -> str:
     """Show the (re)connect card for an unusable integration and return the agent's instruction.
 
-    The single source of both. On UI clients the card carries the connect flow, so
-    the returned text stays URL-free. On bot/background (text-only) clients there is
-    no UI, so the agent relays the single-use login-free link (valid for 1 hour)
-    directly; when no link could be minted (Redis down) the user is pointed at the
-    integrations page, which requires a normal GAIA login.
+    On UI clients the card carries the connect flow, so the text stays
+    URL-free. On text-only clients the agent relays the single-use,
+    login-free link (valid for 1 hour), or the login-required integrations
+    page if none could be minted.
     """
     # Only Composio grants ever reach the ``expired`` status, so MCP integrations
     # fall through to the never-connected wording without needing a special case.

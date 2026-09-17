@@ -1,10 +1,4 @@
-"""Integration tests for the dev-only identity + seeding layer.
-
-Covers three surfaces:
-- the ``/api/v1/dev`` router (mounted only when the bypass is configured),
-- ``dev_service`` seeding/mint logic against mocked real services,
-- the ``X-Dev-User`` per-request impersonation in the real WorkOSAuthMiddleware.
-"""
+"""Integration tests for the dev-only identity + seeding layer."""
 
 from contextlib import asynccontextmanager, contextmanager
 import io
@@ -21,7 +15,7 @@ import httpx
 import pytest
 
 from app.constants.auth import DEV_USER_MISSING_HINT
-from app.models.user_models import UserDocument
+from app.models.user_models import AuthenticatedUser, UserDocument
 from app.schemas.dev_schemas import DevAgentRunResponse, SeedDevDataResponse
 
 DEV_EMAIL = "dev@gaia.local"
@@ -105,10 +99,10 @@ _XLSX_PARTS = {
 
 
 def _minimal_xlsx() -> bytes:
-    """A genuine OOXML spreadsheet, built inline (this repo ships no xlsx writer).
+    """Build a genuine OOXML spreadsheet inline (this repo ships no xlsx writer).
 
-    Real bytes matter: the point of the attachment tests is that anydoc actually
-    parses them, so a fake payload would defeat the test.
+    Real bytes matter: the point of the attachment tests is that anydoc
+    actually parses them, so a fake payload would defeat the test.
     """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -172,11 +166,7 @@ def _ingestion_edges_stubbed(capture_metadata=None):
 @pytest.mark.integration
 class TestDevRouterMounting:
     async def test_dev_routes_absent_without_bypass(self, monkeypatch):
-        """With no DEV_AUTH_BYPASS_EMAIL, the router is never mounted → 404.
-
-        Explicitly clears the bypass rather than relying on the developer's
-        ambient .env, which legitimately sets it in local dev.
-        """
+        """With no DEV_AUTH_BYPASS_EMAIL, the router is never mounted → 404."""
         from app.config.settings import settings as app_settings
 
         monkeypatch.setattr(app_settings, "DEV_AUTH_BYPASS_EMAIL", None)
@@ -209,13 +199,9 @@ class TestDevRouterMounting:
         assert response.json()["email"] == DEV_EMAIL
         mock_mint.assert_awaited_once_with(DEV_EMAIL, None)
 
-    # The direct agent-invocation routes run the executor / a subagent with the
-    # full tool registry as any impersonated user — the highest-blast-radius
-    # surface on the router. Nothing but the mount condition keeps them off a
-    # prod deployment, so pin every one of them to 404-when-unmounted. A future
-    # refactor that registers any of these on a router assembled outside the
-    # ENV+bypass gate (e.g. a stray include_router at import time) fails here
-    # instead of silently exposing account-takeover-grade endpoints.
+    # These direct agent-invocation routes run as any impersonated user with the
+    # full tool registry — the highest-blast-radius surface on the router — so
+    # every one must 404-when-unmounted; nothing else keeps them off prod.
     HIGH_BLAST_RADIUS_ROUTES: ClassVar[list[tuple[str, str, dict[str, str] | None]]] = [
         ("POST", "/api/v1/dev/executor", {"email": DEV_EMAIL, "task": "noop"}),
         ("POST", "/api/v1/dev/subagents/some_agent", {"email": DEV_EMAIL, "task": "noop"}),
@@ -242,9 +228,7 @@ class TestDevRouterMounting:
         assert response.status_code == 404
 
     async def test_privileged_routes_mounted_with_bypass(self, monkeypatch):
-        """With the bypass set, the executor + subagent routes are registered and
-        reach their service layer (200) — proving the 404s above are the mount
-        gate, not a typo'd path that would 404 in every environment."""
+        """With the bypass set, the executor + subagent routes must be registered and reach 200."""
         from app.config.settings import settings as app_settings
 
         monkeypatch.setattr(app_settings, "DEV_AUTH_BYPASS_EMAIL", DEV_EMAIL)
@@ -354,6 +338,64 @@ class TestDevServiceLogic:
         assert first.id == second.id == str(oid)
         assert first.email == DEV_EMAIL
 
+    async def test_mint_passes_an_explicit_name_through_untouched(self):
+        """A caller-supplied name reaches the signup path verbatim."""
+        from app.services import dev_service
+
+        created: list[UserDocument] = []
+
+        async def capture_create(document: UserDocument) -> UserDocument:
+            stored = document.model_copy(update={"id": str(ObjectId())})
+            created.append(stored)
+            return stored
+
+        async def load_created(user_id: str) -> UserDocument:
+            return created[-1]
+
+        with (
+            patch.object(
+                dev_service.user_repository,
+                "get_by_email",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(dev_service.user_repository, "create", side_effect=capture_create),
+            patch.object(dev_service.user_repository, "get", side_effect=load_created),
+        ):
+            user = await dev_service.mint_dev_user(DEV_EMAIL, name="Ada Lovelace")
+
+        assert created[0].name == "Ada Lovelace"
+        assert user.name == "Ada Lovelace"
+
+    async def test_mint_without_a_name_uses_the_signup_path_derivation(self):
+        """An unnamed mint gets the capitalised name real signup derives, not the raw email local part."""
+        from app.services import dev_service
+
+        created: list[UserDocument] = []
+
+        async def capture_create(document: UserDocument) -> UserDocument:
+            stored = document.model_copy(update={"id": str(ObjectId())})
+            created.append(stored)
+            return stored
+
+        async def load_created(user_id: str) -> UserDocument:
+            return created[-1]
+
+        with (
+            patch.object(
+                dev_service.user_repository,
+                "get_by_email",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(dev_service.user_repository, "create", side_effect=capture_create),
+            patch.object(dev_service.user_repository, "get", side_effect=load_created),
+        ):
+            user = await dev_service.mint_dev_user("ada.lovelace@gaia.local")
+
+        assert created[0].name == "Ada Lovelace"
+        assert user.name == "Ada Lovelace"
+
     async def test_seed_creates_expected_counts(self):
         """Seed calls the real create paths exactly N times each."""
         from app.services import dev_service
@@ -392,6 +434,16 @@ class TestDevServiceLogic:
         # Seeding marks onboarding complete via the gated repository method.
         assert mock_complete.await_args.args[0] == str(oid)
         assert mock_complete.await_args.kwargs["phase"] == dev_service.OnboardingPhase.COMPLETED
+        # The seeded preferences are the contract: a profession and a response style,
+        # with the Q2 need fields explicitly unset (seeding answers no questions for
+        # the user) so a seeded account cannot masquerade as one that picked needs.
+        assert mock_complete.await_args.kwargs["preferences"] == dev_service.OnboardingPreferences(
+            profession="Developer",
+            needs=None,
+            other_need=None,
+            response_style="casual",
+            custom_instructions=None,
+        )
 
     async def test_seed_rejects_unknown_platform_before_writing(self):
         """An invalid platform aborts with 400 and writes nothing."""
@@ -438,7 +490,7 @@ class TestDevServiceLogic:
 
 
 def _build_bypass_probe_app() -> FastAPI:
-    """A minimal app running the real bypass middleware plus a probe route."""
+    """Build a minimal app running the real bypass middleware plus a probe route."""
     from app.api.v1.middleware.auth import WorkOSAuthMiddleware
 
     app = FastAPI()
@@ -446,11 +498,9 @@ def _build_bypass_probe_app() -> FastAPI:
     @app.get("/probe")
     async def probe(request: Request) -> JSONResponse:
         user = getattr(request.state, "user", None)
-        if not user:
+        if not isinstance(user, AuthenticatedUser):
             return JSONResponse(status_code=401, content={"detail": "no user"})
-        return JSONResponse(
-            content={"email": user.get("email"), "dev_bypass": user.get("dev_bypass")}
-        )
+        return JSONResponse(content={"email": user.email, "dev_bypass": user.dev_bypass})
 
     app.add_middleware(WorkOSAuthMiddleware, workos_client=MagicMock())
     return app
@@ -500,7 +550,7 @@ class TestDevUserImpersonation:
     async def test_unknown_header_email_401_with_hint(self, probe_client):
         response = await probe_client.get("/probe", headers={"X-Dev-User": "ghost@nope.local"})
         assert response.status_code == 401
-        assert DEV_USER_MISSING_HINT in response.text
+        assert DEV_USER_MISSING_HINT in response.json()["message"]
 
 
 # ---------------------------------------------------------------------------

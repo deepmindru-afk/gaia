@@ -19,6 +19,8 @@ language js(typescript, jsx)
 // - rounded-[22px]: SendNotificationSection OS-banner (unique radius)
 // - pointer-events-none + whitespace-nowrap: UsageHeatmap hover tip (tooltips
 //   are non-interactive; real cards never combine both with shadow-xl)
+// - fixed: floating overlay widgets (FirstStepsWidget bottom-right dock — the
+//   only fixed+zinc+shadow site in src; in-flow cards never use fixed)
 // Left firing (no clean marker — triage as keeps, do NOT strip):
 // - MemoryGraphDemo Card tooltip (border-zinc-600 also in real fixes)
 //
@@ -38,6 +40,7 @@ or {
     $attrs <: not r"[\s\S]*max-h-\[90vh\][\s\S]*",
     $attrs <: not r"[\s\S]*rounded-\[22px\][\s\S]*",
     $attrs <: not r"[\s\S]*pointer-events-none[\s\S]*whitespace-nowrap[\s\S]*",
+    $attrs <: not r"[\s\S]*\bfixed\b[\s\S]*",
     register_diagnostic(
       span = $node,
       message = "Flat cards: remove shadow-md/lg/xl/2xl from bg-zinc-800/900 surfaces. Overlays (popovers, tooltips, dropdowns, modals, sheets, chart tooltips) keep shadows — leave those.",
@@ -57,6 +60,7 @@ or {
     $attrs <: not r"[\s\S]*max-h-\[90vh\][\s\S]*",
     $attrs <: not r"[\s\S]*rounded-\[22px\][\s\S]*",
     $attrs <: not r"[\s\S]*pointer-events-none[\s\S]*whitespace-nowrap[\s\S]*",
+    $attrs <: not r"[\s\S]*\bfixed\b[\s\S]*",
     register_diagnostic(
       span = $node,
       message = "Flat cards: remove shadow-md/lg/xl/2xl from bg-zinc-800/900 surfaces. Overlays (popovers, tooltips, dropdowns, modals, sheets, chart tooltips) keep shadows — leave those.",

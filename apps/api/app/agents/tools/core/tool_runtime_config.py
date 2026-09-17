@@ -77,10 +77,9 @@ def build_provider_parent_tool_runtime_config(
             "bash",
         ]
     else:
-        # Dynamic mode: provider tools are NOT pre-bound (they're retrieved on
-        # demand via retrieve_tools).  Include auto_bind_tool_names in full so
-        # latency-critical tools are immediately available at agent startup
-        # regardless of whether they're provider-space tools.
+        # Dynamic mode: provider tools are retrieved on demand via retrieve_tools.
+        # Include auto_bind_tool_names in full so latency-critical tools are
+        # available at agent startup regardless of provider-space status.
         extra_auto_bind = list(auto_bind_tool_names or [])
         initial = [
             "search_memory",

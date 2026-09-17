@@ -41,8 +41,6 @@ const GALLERY_MAX_W: Record<
 
 export function ImageGalleryView(props: z.infer<typeof imageGallerySchema>) {
   const images = props.images;
-  // aspectRatio is accepted in the schema for backwards compat but ignored:
-  // images render at natural aspect so the whole image stays visible.
   const cols = props.columns ?? defaultGalleryCols(images.length);
   const gridCols = GALLERY_COLS[cols] ?? "grid-cols-2";
   const gap = GALLERY_GAP[props.gap ?? "md"];

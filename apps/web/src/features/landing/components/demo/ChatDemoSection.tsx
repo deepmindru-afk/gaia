@@ -660,7 +660,7 @@ function ChatDemoWindow() {
                           <div className="imessage-bubble imessage-from-me">
                             {uc.userMessage}
                           </div>
-                          <div className="invisible pointer-events-none flex flex-col items-end justify-end gap-1 pb-3 opacity-0 transition-all group-hover:visible group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:visible group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                          <div className="invisible pointer-events-none flex flex-col items-end justify-end gap-1 pb-3 opacity-0 transition-opacity group-hover:visible group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:visible group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                             <span className="flex flex-col text-xs text-zinc-400 select-text">
                               just now
                             </span>
@@ -759,7 +759,7 @@ function ChatDemoWindow() {
 
                       {/* Bot hover actions — always last, after all content */}
                       {showResponse && (
-                        <div className="ml-10.75 invisible flex flex-col opacity-0 transition-all duration-200 group-hover:visible group-hover:opacity-100">
+                        <div className="ml-10.75 invisible flex flex-col opacity-0 transition-opacity duration-200 group-hover:visible group-hover:opacity-100">
                           <span className="p-1 py-2 text-xs text-nowrap text-zinc-400 select-text">
                             just now
                           </span>

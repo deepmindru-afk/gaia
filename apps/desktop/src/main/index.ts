@@ -60,12 +60,9 @@ import {
 // Pre-ready setup (must run before app.ready)
 // ---------------------------------------------------------------------------
 
-// A GUI app must never die because a log write failed. When stdout/stderr is a
-// pipe whose reader has gone away (launched from a terminal that was closed, or
-// a parent process that exited), the main process's own console.* writes emit
-// EPIPE/EIO on the stream — and with no listener that becomes an uncaught
-// exception that crashes the app with a dialog (seen from console.error in
-// loadRoute). Swallow those benign pipe-gone errors; let anything else surface.
+// A console.* write to a pipe whose reader has gone away (terminal closed, parent
+// exited) emits EPIPE/EIO, which without a listener crashes the app with a dialog.
+// Only those two codes are benign; anything else still surfaces.
 const ignoreBrokenPipe = (err: NodeJS.ErrnoException): void => {
   if (err.code === "EPIPE" || err.code === "EIO") return;
   throw err;
@@ -277,14 +274,9 @@ if (!gotTheLock) {
 
     fixSessionCookies();
 
-    // Boot the splash + Next server + main window FIRST — before the bridge/tray
-    // setup below, which does synchronous disk reads (tray icon, stored bridge
-    // credentials) and a macOS login-item system call. Those are independent of
-    // the window (createBridgeTray only stores the openMainSurface callback), so
-    // running them after boot lets the splash paint and the server spawn sooner.
-    //
-    // A `--hidden` login launch stays tray-only: no splash, no window, no Next
-    // server, and (macOS) no Dock icon until the user opens GAIA.
+    // Boot before the bridge/tray setup below: that does synchronous disk reads and
+    // a macOS login-item call, and nothing in it is needed to paint the window.
+    // A --hidden login launch stays tray-only: no splash, window, server or Dock icon.
     if (launchedHidden()) {
       if (process.platform === "darwin") app.dock?.hide();
     } else {

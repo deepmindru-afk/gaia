@@ -39,6 +39,7 @@ from app.models.memory_models import (
     UpdateMemoryRequest,
 )
 from app.models.user_models import AuthenticatedUser
+from app.schemas.errors import error_responses
 from app.services.analytics_service import AnalyticsEvents, capture_context_event
 from shared.py.wide_events import MemoryContext, UserContext, log
 
@@ -49,7 +50,7 @@ router = APIRouter()
 
 def _require_user_id(user: AuthenticatedUser) -> str:
     """Extract the authenticated user's ID or fail the request."""
-    user_id: str | None = user.get("user_id")
+    user_id: str | None = user.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID not found")
     return user_id
@@ -168,9 +169,9 @@ async def get_memory_graph(
 
 @router.get(
     "/episodes",
-    responses={
-        400: {"description": "Invalid date range (start after end, or range exceeds limit)"}
-    },
+    responses=error_responses(
+        {400: "Invalid date range (start after end, or range exceeds limit)"}
+    ),
 )
 async def get_memory_episodes(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
@@ -321,7 +322,7 @@ async def get_memory_history(
 
 @router.patch(
     "/{memory_id}",
-    responses={404: {"description": "Memory not found or already superseded"}},
+    responses=error_responses({404: "Memory not found or already superseded"}),
 )
 @tiered_rate_limit("memory")
 async def update_memory(
@@ -347,7 +348,7 @@ async def update_memory(
 
 @router.delete(
     "/{memory_id}",
-    responses={404: {"description": "Memory not found"}},
+    responses=error_responses({404: "Memory not found"}),
 )
 @tiered_rate_limit("memory")
 async def delete_memory(

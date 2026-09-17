@@ -638,7 +638,7 @@ function IMessageDemo({
       )}
       <div
         ref={scrollRef}
-        className="flex flex-1 flex-col overflow-y-auto px-3 pb-3"
+        className="chat-demo-thread flex flex-1 flex-col overflow-y-auto px-3 pb-3"
         style={{ scrollbarWidth: "none", gap: 8 }}
       >
         {grouped.map((group, gi) => {
@@ -925,7 +925,7 @@ function WhatsAppDemo({
       {/* Chat area — light gray with the WhatsApp doodle pattern */}
       <div
         ref={scrollRef}
-        className="flex flex-1 flex-col overflow-y-auto px-3 pt-2 pb-3"
+        className="chat-demo-thread flex flex-1 flex-col overflow-y-auto px-3 pt-2 pb-3"
         style={{
           scrollbarWidth: "none",
           gap: 8,
@@ -1280,7 +1280,7 @@ function TelegramDemo({
       {/* Chat area: blue overlay + Telegram doodle pattern */}
       <div
         ref={scrollRef}
-        className="flex flex-1 flex-col overflow-y-auto px-3 pt-2 pb-3"
+        className="chat-demo-thread flex flex-1 flex-col overflow-y-auto px-3 pt-2 pb-3"
         style={{
           scrollbarWidth: "none",
           gap: 8,
@@ -1496,7 +1496,7 @@ function SlackDemo({
       )}
       <div
         ref={scrollRef}
-        className="flex flex-1 flex-col overflow-y-auto py-3"
+        className="chat-demo-thread flex flex-1 flex-col overflow-y-auto py-3"
         style={{ scrollbarWidth: "none", gap: 12 }}
       >
         {groups.map((g, gi) => (
@@ -2153,7 +2153,7 @@ function DiscordDemo({
       )}
       <div
         ref={scrollRef}
-        className="flex flex-1 flex-col overflow-y-auto py-3"
+        className="chat-demo-thread flex flex-1 flex-col overflow-y-auto py-3"
         style={{ scrollbarWidth: "none", gap: 18 }}
       >
         {groups.map((g, gi) => (

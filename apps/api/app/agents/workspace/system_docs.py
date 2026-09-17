@@ -1,14 +1,14 @@
 """On-disk workspace docs (INDEX.md + per-category GUIDE.md).
 
 These are the projections materialized into each user's workspace so the
-filesystem is self-describing for anyone who `ls`/`cat`s it. The *canonical*
-prose now lives in ``operational_docs.py`` (the single source of truth the
-agent also receives by injection / ``read_manual``); this module is a thin
-on-disk view over it, plus ``INDEX_MD`` (the FS map) and the per-subagent
+filesystem is self-describing for anyone who ls/cats it. The *canonical*
+prose now lives in operational_docs.py (the single source of truth the
+agent also receives by injection / read_manual); this module is a thin
+on-disk view over it, plus INDEX_MD (the FS map) and the per-subagent
 skills listing.
 
 One source of truth: the per-category guide bodies below are re-exported from
-``operational_docs`` so the on-disk copy never diverges from what the agent is
+operational_docs so the on-disk copy never diverges from what the agent is
 told in-context.
 """
 
@@ -123,11 +123,19 @@ the user's approval first — even when they normally auto-approve actions.
 ACCOUNT_PREFERENCES_GUIDE_MD = """# preferences
 
 `account/preferences.json` carries the response style (brief / detailed /
-casual / professional or a custom label) and home timezone (IANA name).
+casual / professional or a custom label), home timezone (IANA name), and the
+persona the user gave at signup: `profession` (what they do) and `needs` (what
+they asked GAIA for — inbox, calendar, briefings, todos, memory, research,
+automation, reach).
+
+Let profession and needs shape every turn: pitch examples at their job, and
+lead with the areas they picked instead of ones they never asked about. They
+are context, not permission — never treat a missing need as a refusal.
 
 TO CHANGE: `update_preferences(response_style=..., timezone=...)`. It asks the
 user to confirm before applying. Timezone must be an IANA identifier such as
-'Asia/Kolkata' or 'America/New_York'.
+'Asia/Kolkata' or 'America/New_York'. Profession and needs come from
+onboarding — there is no tool for them.
 """
 
 ACCOUNT_CUSTOM_INSTRUCTIONS_GUIDE_MD = """# custom-instructions

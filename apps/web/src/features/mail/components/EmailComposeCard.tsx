@@ -496,9 +496,8 @@ export default function EmailComposeCard({
     : emailData;
 
   // A card carrying a draft id is sent as that stored draft, verbatim — the only
-  // path that keeps its attachments, since an edited copy would have to be
-  // recomposed without them. Offering edits it cannot apply would be a lie, so
-  // the card renders read-only.
+  // path that keeps its attachments (an edited copy would drop them). Offering
+  // edits it can't apply would be a lie, so the card renders read-only.
   const isLocked = !!emailData.draft_id;
 
   const recipientSelection = useRecipientSelection({
@@ -558,21 +557,15 @@ export default function EmailComposeCard({
         }
       } else {
         // Send email directly (existing logic)
-        const formData = new FormData();
-        formData.append("to", recipients.to.join(", "));
-        formData.append("subject", editData.subject);
-        formData.append("body", editData.body);
-        if (recipients.cc.length > 0) {
-          formData.append("cc", recipients.cc.join(", "));
-        }
-        if (recipients.bcc.length > 0) {
-          formData.append("bcc", recipients.bcc.join(", "));
-        }
-        if (emailData.thread_id) {
-          formData.append("thread_id", emailData.thread_id);
-        }
-
-        await mailApi.sendEmail(formData);
+        await mailApi.sendEmail({
+          to: recipients.to.join(", "),
+          subject: editData.subject,
+          body: editData.body,
+          cc: recipients.cc.length > 0 ? recipients.cc.join(", ") : undefined,
+          bcc:
+            recipients.bcc.length > 0 ? recipients.bcc.join(", ") : undefined,
+          thread_id: emailData.thread_id,
+        });
       }
     } catch (error) {
       console.error("Error sending email:", error);

@@ -1,8 +1,6 @@
-"""
-Analytics service for server-side PostHog event tracking.
-Provides type-safe event tracking with consistent naming conventions.
-"""
+"""Type-safe server-side PostHog event tracking with consistent naming conventions."""
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -45,9 +43,19 @@ class AnalyticsEvents(StrEnum):
     FEEDBACK_MESSAGE_SUBMITTED = "feedback:message_submitted"
     SESSION_ARTIFACT_PINNED = "session:artifact_pinned"
     PROFILE_UPDATED = "profile:updated"
+    # Activation checklist hidden by the user — carries how many steps were
+    # done at that moment, never which.
+    FIRST_STEPS_COLLAPSED = "first_steps:collapsed"
 
     # Lifecycle email
     NURTURE_EMAIL_SENT = "nurture:email_sent"
+
+    # Day-by-day activation sequence. The three together are the funnel: how
+    # many days went out, why the rest did not, and how often anyone answered.
+
+    # Settings. Which platform GAIA texts first — the names of the platforms
+    # and how many are ordered, never anything the user wrote.
+    SETTINGS_CHAT_CHANNEL_PRIORITY_UPDATED = "settings:chat_channel_priority_updated"
 
     # Payments (used by payment webhook processing)
     PAYMENT_SUCCEEDED = "payment:succeeded"
@@ -59,18 +67,18 @@ class AnalyticsEvents(StrEnum):
     SUBSCRIPTION_CANCELLED = "subscription:cancelled"
     SUBSCRIPTION_EXPIRED = "subscription:expired"
     RATE_LIMIT_HIT = "rate_limit_hit"
+    # A non-PRO caller was turned away from a paid-only surface with a 402.
+    # Carries which surface blocked them, never what they were trying to do.
+    PAYWALL_BLOCKED = "paywall:blocked"
 
     # Conversations
     CONVERSATION_CREATED = "chat:conversation_created"
     CONVERSATION_RENAMED = "chat:conversation_renamed"
     CONVERSATION_STARRED = "chat:conversation_starred"
     CONVERSATION_DELETED = "chat:conversation_deleted"
-    # Terminal turn event. Latency props (all ms, measured server-side):
-    # ttft_ms (first response text; absent when no text streamed), e2e_ack_ms
-    # (comms ack), e2e_full_ms (stream DONE after executor wait), delegated,
-    # queued. Executor-leg timings (queue_wait_ms, executor_ttft_ms,
-    # executor_active_ms) ride on agent:run_completed, and HIL waits on the
-    # wide event — not here.
+    # Terminal turn event. Server-side latency props: ttft_ms (first response text,
+    # absent when none streamed), e2e_ack_ms, e2e_full_ms, delegated, queued.
+    # Executor-leg timings ride on agent:run_completed, HIL waits on the wide event.
     CHAT_MESSAGE_COMPLETED = "chat:message_completed"
     CHAT_MESSAGE_CANCELLED = "chat:message_cancelled"
     CHAT_MESSAGE_PINNED = "chat:message_pinned"
@@ -172,7 +180,9 @@ class AnalyticsEvents(StrEnum):
     NOTIFICATION_UNSUBSCRIBED = "notification:unsubscribed"
 
     # Onboarding
-    ONBOARDING_STEP_COMPLETED = "onboarding:step_completed"
+    # Named for its "phase" payload — the web's own onboarding:step_completed
+    # carries step_number/step_name, a different shape unqueryable under one name.
+    ONBOARDING_PHASE_COMPLETED = "onboarding:phase_completed"
     ONBOARDING_COMPLETED = "onboarding:completed"
     ONBOARDING_INTEGRATIONS_SUBMITTED = "onboarding:integrations_submitted"
     ONBOARDING_RESET = "onboarding:reset"
@@ -293,13 +303,11 @@ def capture_event(
     properties: dict[str, Any] | None = None,
     dedupe_key: str | None = None,
 ) -> None:
-    """Capture an analytics event in PostHog, attributed to ``user_id``.
+    """Capture an analytics event in PostHog, attributed to user_id.
 
-    ``dedupe_key`` makes the capture idempotent: pass a value derived from the
-    thing that happened (a run id, a user plus a phase) and PostHog collapses
-    repeats of it into one event. Anything emitted from a retryable worker task
-    needs one — an ARQ retry re-runs the whole body, and without a key the
-    second pass simply counts the milestone twice.
+    dedupe_key makes it idempotent: derive it from what happened (a run id, a
+    user+phase) and PostHog collapses repeats. Required for anything emitted
+    from a retryable worker task, or an ARQ retry double-counts the milestone.
     """
     client = _get_posthog_client()
     if client is None:
@@ -342,15 +350,9 @@ def track_signup(
     signup_method: str = LOGIN_METHOD_WORKOS,
     properties: dict[str, Any] | None = None,
 ) -> None:
-    """
-    Track a user signup event.
+    """Track a user signup event.
 
-    Args:
-        user_id: User's unique identifier
-        email: User's email address
-        name: User's display name
-        signup_method: How the user signed up (workos, google, email)
-        properties: Additional properties
+    signup_method is one of "workos", "google", "email".
     """
     identify_user(
         user_id,
@@ -379,15 +381,9 @@ def track_login(
     login_method: str = LOGIN_METHOD_WORKOS,
     properties: dict[str, Any] | None = None,
 ) -> None:
-    """
-    Track a user login event.
+    """Track a user login event.
 
-    Args:
-        user_id: User's unique identifier
-        email: User's email address
-        name: User's display name
-        login_method: How the user logged in (workos, google, email)
-        properties: Additional properties
+    login_method is one of "workos", "google", "email".
     """
     identify_user(
         user_id,
@@ -427,40 +423,40 @@ def track_logout(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SubscriptionPlan:
+    """The priced plan a subscription event refers to.
+
+    Fields a given webhook doesn't carry stay None and are dropped from the event.
+    """
+
+    name: str | None = None
+    amount: float | None = None
+    currency: str | None = None
+
+
 def track_subscription_event(
     user_id: str,
     event_type: AnalyticsEvents,
     subscription_id: str | None = None,
-    plan_name: str | None = None,
-    amount: float | None = None,
-    currency: str | None = None,
+    plan: SubscriptionPlan | None = None,
     properties: dict[str, Any] | None = None,
 ) -> None:
-    """
-    Track subscription-related events.
-
-    Args:
-        user_id: User's unique identifier
-        event_type: Type of subscription event
-        subscription_id: Subscription identifier
-        plan_name: Name of the plan
-        amount: Subscription amount
-        currency: Currency code
-        properties: Additional properties
-    """
+    """Track subscription-related events."""
+    plan = plan or SubscriptionPlan()
     log.set(
         subscription={
             "user_id": user_id,
             "event_type": event_type,
-            "plan_name": plan_name,
+            "plan_name": plan.name,
             "subscription_id": subscription_id,
         }
     )
     event_properties = {
         "subscription_id": subscription_id,
-        "plan_name": plan_name,
-        "amount": amount,
-        "currency": currency,
+        "plan_name": plan.name,
+        "amount": plan.amount,
+        "currency": plan.currency,
         **(properties or {}),
     }
     # Remove None values
@@ -519,17 +515,7 @@ def track_payment_event(
     currency: str | None = None,
     properties: dict[str, Any] | None = None,
 ) -> None:
-    """
-    Track payment-related events.
-
-    Args:
-        user_id: User's unique identifier
-        event_type: Type of payment event
-        payment_id: Payment identifier
-        amount: Payment amount
-        currency: Currency code
-        properties: Additional properties
-    """
+    """Track payment-related events."""
     event_properties = {
         "payment_id": payment_id,
         "amount": amount,

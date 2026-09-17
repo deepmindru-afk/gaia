@@ -1,40 +1,16 @@
 #!/usr/bin/env python3
-"""
-Complete Payment setup script for GAIA.
-This script sets up subscription plans in the database using Dodo product IDs.
+"""Set up GAIA subscription plans in the database using Dodo product IDs.
 
-IMPORTANT: Run this script from the correct directory!
+Run from apps/api/: python scripts/payment_setup.py --monthly-product-id
+<id> --yearly-product-id <id> (also works via PYTHONPATH=/app, or
+python -m scripts.payment_setup). Pass --dry-run first to print the
+per-field diff without writing anything.
 
-1. If running locally:
-    cd /path/to/your/gaia/apps/api
-    python scripts/payment_setup.py --monthly-product-id <id> --yearly-product-id <id>
+docker exec skips the image entrypoint, so Infisical's machine-identity
+vars from Docker Swarm secrets are missing in an exec shell; export them
+from /run/secrets/gaia_infisical_* first, like docker-entrypoint.sh does.
 
-2. If running inside Docker container:
-    cd /app
-    python scripts/payment_setup.py --monthly-product-id <id> --yearly-product-id <id>
-
-3. Alternative Docker approach (set PYTHONPATH):
-    PYTHONPATH=/app python scripts/payment_setup.py --monthly-product-id <id> --yearly-product-id <id>
-
-4. Run as module (from app directory):
-    python -m scripts.payment_setup --monthly-product-id <id> --yearly-product-id <id>
-
-`docker exec` does not run the image entrypoint, so the Infisical machine-identity
-variables it exports from the Docker Swarm secrets are absent in an exec shell and
-settings import fails. Export them from /run/secrets/gaia_infisical_* first, the
-same way scripts/docker-entrypoint.sh does.
-
-Prerequisites:
-- DODO_PAYMENTS_API_KEY must be available in Infisical secrets or as an environment variable.
-  - The script will first attempt to fetch DODO_PAYMENTS_API_KEY from Infisical (if configured),
-     and fallback to the environment variable or settings if not found.
-- MongoDB connection string (MONGO_DB) must be configured
-- Have your Dodo product IDs ready from your Dodo Payments dashboard
-
-Usage:
-     python payment_setup.py --monthly-product-id <product_id> --yearly-product-id <product_id>
-
-Pass --dry-run first to print the per-field diff without writing anything.
+Needs DODO_PAYMENTS_API_KEY (Infisical or env var) and MONGO_DB configured.
 """
 
 import argparse
@@ -67,7 +43,6 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
 from app.config.settings import settings
 from app.constants.cache import PLANS_CACHE_KEYS
-from app.constants.memory import FREE_MEMORY_FACT_LIMIT
 from app.db.redis import redis_cache
 from app.models.payment_models import PlanDocument
 
@@ -79,45 +54,25 @@ Outcome = Literal["created", "updated", "unchanged"]
 
 
 def build_plan_catalogue(monthly_product_id: str, yearly_product_id: str) -> list[PlanDocument]:
-    """The subscription plans GAIA offers, as they should exist in the database."""
+    """Return the subscription plans GAIA offers, as they should exist in the database."""
     now = datetime.now(UTC)
-    # Ordered to line up row-for-row with the Free card's list below, so each
-    # upgrade sits on the same line as the limit it replaces.
+    # GAIA is paid-only: these read as what Pro includes, never as a step up
+    # from a free tier. Re-run this script after editing so the live rows match.
     pro_features = [
-        "Chat on iMessage",
-        "More powerful models",
-        "Much higher usage limits",
-        "Unlimited memories",
+        "Chat on iMessage, WhatsApp, Telegram, Slack and Discord",
+        "Inbox triage and drafted replies every morning",
+        "Meeting briefs and reminders from your calendar",
+        "Todos GAIA works on, not just tracks",
+        "Workflows that run without you",
+        "Remembers what you tell it, once",
         "Priority support",
-        "Long running tasks",
-        "Early access to new features",
     ]
 
     return [
         PlanDocument(
-            dodo_product_id="",  # Free plan doesn't need Dodo product ID
-            name="Free",
-            description="Start free. See what GAIA can do.",
-            amount=0,
-            currency="USD",
-            duration="monthly",
-            max_users=1,
-            features=[
-                "Chat on WhatsApp, Telegram, Discord & Slack",
-                "Standard models",
-                "Daily AI usage allowance",
-                f"{FREE_MEMORY_FACT_LIMIT} saved memories",
-                "Community support",
-                "All tools & 100s of integrations",
-            ],
-            is_active=True,
-            created_at=now,
-            updated_at=now,
-        ),
-        PlanDocument(
             dodo_product_id=monthly_product_id,
             name="Pro",
-            description="For serious users who want to save time.",
+            description="Everything GAIA does, in one plan.",
             amount=3000,  # $30.00 in cents
             currency="USD",
             duration="monthly",
@@ -130,7 +85,7 @@ def build_plan_catalogue(monthly_product_id: str, yearly_product_id: str) -> lis
         PlanDocument(
             dodo_product_id=yearly_product_id,
             name="Pro",
-            description="For serious users who want to save time.",
+            description="Everything GAIA does, in one plan.",
             amount=30000,  # $300.00 in cents (2 months free, ~16.7% discount)
             currency="USD",
             duration="yearly",
@@ -164,6 +119,29 @@ def build_plan_catalogue(monthly_product_id: str, yearly_product_id: str) -> lis
     ]
 
 
+async def deactivate_free_plan(
+    collection: AsyncIOMotorCollection[dict[str, Any]], dry_run: bool
+) -> bool:
+    """Mark a leftover Free plan row inactive rather than deleting it, keeping the historical record.
+
+    GAIA is paid-only and the catalogue no longer seeds a Free row.
+    Idempotent: a no-op once the row is already inactive or never seeded.
+    """
+    existing = await collection.find_one({"name": "Free", "is_active": True})
+    if existing is None:
+        return False
+
+    if dry_run:
+        print("   📝 Would mark existing Free plan inactive (paid-only cutover)")
+    else:
+        await collection.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"is_active": False, "updated_at": datetime.now(UTC)}},
+        )
+        print("   🚫 Marked existing Free plan inactive (paid-only cutover)")
+    return True
+
+
 async def cleanup_old_indexes(collection: AsyncIOMotorCollection[dict[str, Any]]) -> None:
     """Remove old payment gateway indexes that might conflict."""
     try:
@@ -184,7 +162,7 @@ async def cleanup_old_indexes(collection: AsyncIOMotorCollection[dict[str, Any]]
 
 
 def catalogue_fields(plan: PlanDocument) -> dict[str, Any]:
-    """The plan's content, without the id and the timestamps that always move."""
+    """Return the plan's content, without the id and the timestamps that always move."""
     return plan.model_dump(by_alias=True, exclude={"id"} | _TIMESTAMP_FIELDS)
 
 
@@ -235,7 +213,7 @@ async def reconcile_plan(
 
 
 def print_plan_details(plan: PlanDocument) -> None:
-    """The human-readable summary printed under each processed plan."""
+    """Print the human-readable summary under each processed plan."""
     print(f"   💰 Amount: ${plan.amount / 100:.2f} {plan.currency}")
     print(f"   📅 Duration: {plan.duration.capitalize()}")
     print(f"   👥 Max Users: {plan.max_users}")
@@ -245,7 +223,7 @@ def print_plan_details(plan: PlanDocument) -> None:
 
 
 def print_summary(outcomes: list[Outcome], dry_run: bool) -> None:
-    """Counts per outcome, worded for whichever mode the run was in."""
+    """Print counts per outcome, worded for whichever mode the run was in."""
     print("=" * 50)
     print("📈 Setup Summary:")
     print(f"   • {'Would create' if dry_run else 'Created'}: {outcomes.count('created')} plans")
@@ -313,6 +291,8 @@ async def setup_payment_plans(
             outcomes.append(await reconcile_plan(collection, plan, dry_run))
             print_plan_details(plan)
 
+        await deactivate_free_plan(collection, dry_run)
+
         # Before the report below, so a failure while reading it back can never
         # leave the API serving a cached catalogue the database has moved past.
         if not dry_run:
@@ -335,7 +315,7 @@ async def setup_payment_plans(
 
 
 async def main() -> None:
-    """Main entry point."""
+    """Run the payment setup script."""
     parser = argparse.ArgumentParser(description="Setup Payment plans for GAIA")
     parser.add_argument(
         "--monthly-product-id",

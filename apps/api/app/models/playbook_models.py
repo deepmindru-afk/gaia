@@ -46,10 +46,9 @@ from pydantic import (
 from app.db.repositories.base import MongoDocument
 from app.services.workflow.playbook.placeholders import PLACEHOLDER_TOKEN
 
-#: The key that marks an argument value as a slot a model fills at replay,
-#: rather than as data. A ``$`` prefix because no tool takes an argument or a
-#: JSON field by that name, so the marker cannot collide with real content.
-#: ``AskSlot`` below repeats the literal because a pydantic alias has to be one.
+#: The key marking an argument value as a replay-time slot, not data. A `$`
+#: prefix because no tool/JSON field is named that, so it can't collide.
+#: AskSlot below repeats the literal because a pydantic alias has to be one.
 ASK_KEY = "$ask"
 
 #: Cap on a single ``$ask`` slot's output. Generous enough for a briefing body,
@@ -57,10 +56,9 @@ ASK_KEY = "$ask"
 #: generation — the whole point of a playbook is a bounded token cost.
 DEFAULT_ASK_MAX_TOKENS = 1024
 
-#: Ceiling on how many times one ``for_each`` step may repeat. A replay's cost
-#: has to be knowable before it runs, and the fan-out is the only part of a
-#: playbook whose size the author cannot see when they write it: today's inbox
-#: had three mails that wanted a reply, tomorrow's has forty.
+#: Ceiling on how many times one for_each step may repeat: a replay's cost must
+#: be knowable before it runs, and fan-out is the one thing whose size the
+#: author cannot see up front (today's inbox: 3 mails; tomorrow's: 40).
 MAX_FOR_EACH_ITEMS = 25
 
 #: The key a ``for_each`` ask slot answers to, appended to the step's prefix.
@@ -108,11 +106,9 @@ class DeclineKind(str, Enum):
     NO_WORK_TODAY = "no_work_today"
 
 
-#: Kinds that describe a run which never reached the work. They must not count
-#: toward ``PLAYBOOK_DECLINE_LIMIT``: a workflow blocked on a disconnected
-#: integration fires twice a day and would exhaust its three chances in under
-#: two days, then be locked out of ever earning a playbook — including after the
-#: user connects the integration, because only a workflow edit resets the tally.
+#: Never counts toward PLAYBOOK_DECLINE_LIMIT: a workflow blocked on a
+#: disconnected integration fires twice a day and would exhaust 3 chances in
+#: under 2 days, staying locked out even after reconnecting (only an edit resets it).
 BLOCKED_DECLINE_KINDS = frozenset(
     {
         DeclineKind.BLOCKED_MISSING_INTEGRATION,
@@ -121,12 +117,9 @@ BLOCKED_DECLINE_KINDS = frozenset(
     }
 )
 
-#: A call that changes something, by its name: every tool in this codebase and
-#: every Composio action spells its verb first (``create_todo``,
-#: ``GMAIL_SEND_EMAIL``). A run that made one of these did the work, whatever it
-#: says about the day. A heuristic by name, not a catalogue: a doing-tool with
-#: a novel verb slips through, which is today's behaviour, and no listing tool
-#: (``list_``, ``get_``, ``fetch_``, ``search_``) can be mistaken for one.
+#: A call that changes something, by its name: tools and Composio actions spell
+#: their verb first (create_todo, GMAIL_SEND_EMAIL). A heuristic, not a
+#: catalogue — a novel-verb doing-tool slips through; list_/get_/fetch_/search_ never do.
 WORK_CALL_VERBS = frozenset(
     {
         "create",
@@ -157,10 +150,9 @@ def is_work_call(tool_name: str) -> bool:
     return any(part in WORK_CALL_VERBS for part in parts)
 
 
-#: Kinds that do not count toward the limit: the blocked ones, and a quiet day.
-#: A fan-out over an empty list makes no calls, and a playbook freezes calls
-#: that ran, so a workflow whose work is seasonal would spend its chances on
-#: the days nothing happened and be locked out on the day something did.
+#: Kinds that don't count toward the limit: the blocked ones, and a quiet day.
+#: A playbook only freezes calls that ran, so a seasonal workflow would
+#: otherwise spend its chances on empty days and lock out on a busy one.
 UNCOUNTED_DECLINE_KINDS = BLOCKED_DECLINE_KINDS | {DeclineKind.NO_WORK_TODAY}
 
 #: Blocked kinds that name integrations and can therefore pause the workflow.
@@ -328,10 +320,9 @@ class PlaybookAskAnswer(BaseModel):
 
     @model_validator(mode="after")
     def _exactly_one_kind(self) -> Self:
-        # ``items`` is judged by presence, not length: an empty list is the
-        # answer "nothing qualifies today", which a for_each slot must be able
-        # to receive. Seen on a scheduled fire: the model answered ``[]`` on a
-        # quiet day and the refusal turned a right body into a failed replay.
+        # `items` is judged by presence, not length — an empty list means "nothing
+        # qualifies today", which a for_each slot must accept. Seen live: a quiet-day
+        # `[]` answer was refused, turning a correct body into a failed replay.
         has_text, has_items = bool(self.text.strip()), self.items is not None
         if has_text == has_items:
             raise ValueError(
@@ -620,10 +611,9 @@ _ARGS_DESCRIPTION = (
 )
 
 
-#: Names a model reaches for when it means ``args``. Dropped as unknown keys,
-#: any of these would store a call with no arguments at all and pass it off as
-#: authored; refusing them by name is what keeps lenience from swallowing the
-#: one key a step cannot do without.
+#: Names a model reaches for when it means args. If dropped as unknown keys,
+#: the call would store with no arguments and pass as authored — refusing
+#: them by name keeps lenience from swallowing the one key a step needs.
 _ARGS_NEAR_MISSES = ("arguments", "input", "inputs", "params", "parameters", "kwargs")
 
 
@@ -710,11 +700,9 @@ class PlaybookHandoffStepInput(_CallInput):
     @model_validator(mode="before")
     @classmethod
     def _flat_or_refused(cls, data: object) -> object:
-        # Lenient about unknown keys, but not about these two: a child that
-        # carries its own ``steps`` or ``handoff`` is the author nesting a
-        # delegation a level deeper than a playbook goes, and dropping that
-        # silently would store a playbook that runs a fraction of what the
-        # author wrote and pass it off as the whole sequence.
+        # Lenient about unknown keys, but not these two: a child carrying its own
+        # steps/handoff nests delegation deeper than a playbook goes. Dropping it
+        # silently would store a playbook that runs only a fraction of what was written.
         if isinstance(data, Mapping):
             nested = sorted(key for key in ("steps", "handoff") if key in data)
             if nested:

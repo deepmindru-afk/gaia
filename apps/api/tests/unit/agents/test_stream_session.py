@@ -36,19 +36,12 @@ from app.agents.core.background.session import (
     signal_executor_done,
     teardown_session,
 )
+from app.models.user_models import AuthenticatedUser
 
 
 def _spawned(stream_id: str) -> bool:
     session = get_session(stream_id)
     return session is not None and session.executor_spawned
-
-
-@pytest.fixture(autouse=True)
-def _clean_registry():
-    """Sessions are module-global; isolate every test."""
-    sess._sessions.clear()
-    yield
-    sess._sessions.clear()
 
 
 class TestSessionRegistry:
@@ -102,11 +95,9 @@ class TestExecutorLifecycleFlags:
         assert _spawned("s1") is True
 
     def test_spawning_resets_the_first_frame_stamp(self) -> None:
-        # A redirect reuses the stream id for the new run, so the spawn must
-        # clear the previous incarnation's first-frame stamp — otherwise the
-        # new run inherits the cancelled run's TTFT start. Asserted by identity
-        # against None: a falsy placeholder (e.g. "") would satisfy a truthiness
-        # check yet still corrupt the measured interval.
+        # A redirect reuses the stream id, so the spawn must clear the previous
+        # incarnation's first-frame stamp or the new run inherits its TTFT start.
+        # Asserted against None by identity: a falsy placeholder would still corrupt it.
         session = create_session("s1", RunKind.QUEUED)
         session.executor_first_frame_perf = 123.5
         mark_executor_spawned("s1")
@@ -123,8 +114,7 @@ class TestExecutorLifecycleFlags:
 
 
 class TestQueuedWithoutRun:
-    """``queued_without_run`` is the "nothing happened yet" signal the turn's
-    final message is built from, so each of its three answers is load-bearing."""
+    """queued_without_run is the "nothing happened yet" signal the turn's final message is built from."""
 
     def test_a_stream_with_no_session_reports_nothing(self) -> None:
         # A stream nobody registered has no queued dispatch to report, and the
@@ -170,7 +160,7 @@ class TestOwnershipRule:
         run = ExecutorRun(
             stream_id="s1",
             conversation_id="conv-1",
-            user={"user_id": "u1"},
+            user=AuthenticatedUser(user_id="u1"),
             kind=kind,
             task_id="t1",
             user_message_id=None,
@@ -183,7 +173,7 @@ class TestOwnershipRule:
         run = ExecutorRun(
             stream_id="queued_looking_but_live",
             conversation_id="c",
-            user={},
+            user=AuthenticatedUser(user_id=""),
             kind=RunKind.LIVE,
             task_id=None,
             user_message_id=None,
@@ -208,7 +198,9 @@ class TestOwnershipRule:
                 user_message_id="m1",
             ),
         )
-        assert run.user == {"user_id": "u1", "email": "u1@x.com", "name": "Uno", "timezone": None}
+        assert run.user == AuthenticatedUser(
+            user_id="u1", email="u1@x.com", name="Uno", timezone=None
+        )
         assert run.workflow_id == "wf-9"
         assert run.workflow_title == "Daily digest"
         assert run.workflow_notify_on_completion is False
@@ -308,9 +300,7 @@ class TestToolOutputOwnership:
 
 @pytest.mark.regression
 class TestExecutorRunCarriesWorkflowExecution:
-    """The execution id lives only on the workflow task's wide event, never in
-    ``configurable``; the run built inside that boundary has to pick it up or
-    every executor call it makes is unattributable to the run in the ledger."""
+    """The execution id lives only on the workflow task's wide event, never in configurable."""
 
     async def test_from_configurable_reads_the_execution_id_off_the_boundary(self) -> None:
         from shared.py.wide_events import WorkflowContext, log, wide_task

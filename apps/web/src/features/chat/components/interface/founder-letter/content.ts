@@ -37,6 +37,9 @@ export const LETTER_DISMISSED_KEY = "gaia_founder_letter_dismissed";
 export const INK = "#000000";
 export const INK_SOFT = "#000000";
 
+/** Typography: the app's normal sans everywhere. */
+export const BODY_FONT = "var(--font-inter), Inter, sans-serif";
+
 /** The letter's body, one entry per paragraph. The offer paragraph is
  * rendered separately (it carries the inline code + copy button). */
 export const LETTER_PARAGRAPHS: readonly string[] = [

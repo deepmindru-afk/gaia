@@ -19,13 +19,14 @@ from app.models.support_models import (
     SupportRequestSubmissionResponse,
     SupportRequestType,
 )
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 
 SUPPORT_ENDPOINT = "app.api.v1.endpoints.support"
 
 
 class TestGetMySupportRequests:
-    """GET /api/v1/support/requests/my"""
+    """GET /api/v1/support/requests/my."""
 
     async def test_page_over_max_returns_422(self, client: AsyncClient) -> None:
         resp = await client.get(f"/api/v1/support/requests/my?page={MAX_PAGE_NUMBER + 1}")
@@ -87,6 +88,36 @@ class TestSubmitSupportRequest:
             },
         )
 
+    async def test_submit_passes_the_callers_identity_to_the_service(
+        self, client: AsyncClient
+    ) -> None:
+        result = SupportRequestSubmissionResponse(
+            success=True, message="Submitted", ticket_id="T-127"
+        )
+        with (
+            patch(
+                f"{SUPPORT_ENDPOINT}.create_support_request",
+                new_callable=AsyncMock,
+                return_value=result,
+            ) as create,
+            patch(f"{SUPPORT_ENDPOINT}.capture_context_event"),
+        ):
+            resp = await client.post(
+                "/api/v1/support/requests",
+                json={
+                    "type": "support",
+                    "title": "Need help",
+                    "description": "It broke completely",
+                },
+            )
+
+        assert resp.status_code == 200
+        kwargs = create.await_args.kwargs
+        assert kwargs["request_data"].title == "Need help"
+        assert kwargs["user_id"] == "507f1f77bcf86cd799439011"
+        assert kwargs["user_email"] == "test@example.com"
+        assert kwargs["user_name"] == "Test User"
+
     async def test_submit_with_attachments_captures_analytics(self, client: AsyncClient) -> None:
         result = SupportRequestSubmissionResponse(
             success=True, message="Submitted", ticket_id="T-124"
@@ -126,7 +157,7 @@ class TestSubmitSupportRequest:
         )
 
         assert resp.status_code == 400
-        assert resp.json()["detail"] == "Invalid request type. Must be one of: support, feature"
+        assert resp.json()["message"] == "Invalid request type. Must be one of: support, feature"
 
     async def test_submit_with_attachments_passes_exact_kwargs_to_service(
         self, client: AsyncClient
@@ -160,6 +191,8 @@ class TestSubmitSupportRequest:
         assert kwargs["request_data"].title == "New idea"
         assert kwargs["request_data"].description == "Add a thing"
         assert kwargs["user_id"] == "507f1f77bcf86cd799439011"
+        assert kwargs["user_email"] == "test@example.com"
+        assert kwargs["user_name"] == "Test User"
         assert isinstance(kwargs["attachments"], list) and len(kwargs["attachments"]) == 1
 
     async def test_submit_with_attachments_service_error_wraps_as_500_exact_detail(
@@ -180,11 +213,15 @@ class TestSubmitSupportRequest:
             )
 
         assert resp.status_code == 500
-        assert resp.json()["detail"] == "Failed to submit support request: cloudinary down"
+        assert resp.json()["message"] == "Failed to submit support request: cloudinary down"
 
     async def test_attachments_endpoint_requires_user_id_and_email(self, test_app: FastAPI) -> None:
         """Missing user_id OR email each yield 401 with the exact detail string."""
-        for current_user in ({}, {"user_id": "u1"}, {"email": "a@b.c"}):
+        for current_user in (
+            AuthenticatedUser(user_id=""),
+            AuthenticatedUser(user_id="u1"),
+            AuthenticatedUser(user_id="", email="a@b.c"),
+        ):
             original = test_app.dependency_overrides.get(get_current_user)
             test_app.dependency_overrides[get_current_user] = lambda cu=current_user: cu
             try:
@@ -203,7 +240,7 @@ class TestSubmitSupportRequest:
                     test_app.dependency_overrides[get_current_user] = original
 
             assert resp.status_code == 401
-            assert resp.json()["detail"] == "User authentication required"
+            assert resp.json()["message"] == "User authentication required"
 
 
 class TestSubmitSupportRequestLogPins:
@@ -238,7 +275,7 @@ class TestSubmitSupportRequestLogPins:
         app = FastAPI()
         app.include_router(router, prefix="/api/v1")
 
-        app.dependency_overrides[_get_current_user_dep] = lambda: {"user_id": "u1"}
+        app.dependency_overrides[_get_current_user_dep] = lambda: AuthenticatedUser(user_id="u1")
         try:
             with patch(f"{SUPPORT_ENDPOINT}.log"):
                 with TestClient(app, raise_server_exceptions=False) as c:

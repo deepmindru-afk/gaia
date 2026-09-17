@@ -165,7 +165,7 @@ export default function DemoCalendarView() {
                   return (
                     <div
                       key={event.id}
-                      className="absolute left-0.5 right-0.5 cursor-pointer overflow-hidden rounded-xl backdrop-blur-3xl transition-all hover:brightness-110"
+                      className="absolute left-0.5 right-0.5 cursor-pointer overflow-hidden rounded-xl backdrop-blur-3xl transition-[filter] hover:brightness-110"
                       style={{
                         top,
                         height: Math.max(height, 20),

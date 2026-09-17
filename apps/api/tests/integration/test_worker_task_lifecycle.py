@@ -42,7 +42,7 @@ _FREEZEGUN_IGNORE = ["transformers"]
 
 
 def freeze_time(*args, **kwargs):
-    """Wrapper that always passes ignore=['transformers']."""
+    """Pass ignore=['transformers'] on every call."""
     kwargs.setdefault("ignore", _FREEZEGUN_IGNORE)
     return _freeze_time(*args, **kwargs)
 
@@ -91,8 +91,7 @@ class TestReminderTaskExecution:
 
     @freeze_time("2026-04-01T12:00:00Z")
     async def test_cleanup_expired_reminders_deletes_old_completed(self):
-        """cleanup_expired_reminders delegates to the repository with a 30-day cutoff.
-        (The completed/cancelled status filter is the repository's contract.)"""
+        """cleanup_expired_reminders delegates to the repository with a 30-day cutoff."""
 
         with patch(
             "app.workers.tasks.reminder_tasks.reminder_repository.delete_finished_before",
@@ -213,7 +212,7 @@ class TestCleanupTaskSafety:
                 return_value=False,
             ),
             patch(
-                "app.workers.tasks.cleanup_tasks.enqueue_intelligence_job",
+                "app.workers.tasks.cleanup_tasks.enqueue_gmail_personalization",
                 new_callable=AsyncMock,
                 return_value="job-123",
             ) as mock_enqueue,
@@ -239,7 +238,7 @@ class TestCleanupTaskSafety:
             assert "No stuck users found" in result
 
     async def test_cleanup_handles_enqueue_failure_gracefully(self):
-        """If enqueue_intelligence_job returns None for a user, count it as an error."""
+        """If enqueue_gmail_personalization returns None for a user, count it as an error."""
 
         stuck_user = UserDocument(
             id=str(ObjectId()),
@@ -259,7 +258,7 @@ class TestCleanupTaskSafety:
                 return_value=False,
             ),
             patch(
-                "app.workers.tasks.cleanup_tasks.enqueue_intelligence_job",
+                "app.workers.tasks.cleanup_tasks.enqueue_gmail_personalization",
                 new_callable=AsyncMock,
                 return_value=None,  # None means enqueue failed
             ),
@@ -315,21 +314,10 @@ class TestTaskErrorHandling:
     async def test_onboarding_task_reports_service_error(self):
         """If the intelligence service raises, the task catches it and returns a failure message."""
 
-        with (
-            patch(
-                "app.services.onboarding.intelligence_service.process_onboarding_intelligence",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("LLM timeout"),
-            ),
-            patch(
-                "app.workers.tasks.onboarding_tasks.user_repository.get",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "app.workers.tasks.onboarding_tasks.user_repository.set_pipeline_completion",
-                new_callable=AsyncMock,
-            ),
+        with patch(
+            "app.services.onboarding.intelligence_service.process_onboarding_intelligence",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("LLM timeout"),
         ):
             result = await process_onboarding_intelligence_task(ARQ_CTX, FAKE_USER_ID)
 
@@ -346,6 +334,16 @@ class TestTaskErrorHandling:
 @pytest.mark.integration
 class TestWorkflowTaskExecution:
     """Verify workflow execution tracks success/failure and sends notifications."""
+
+    @pytest.fixture(autouse=True)
+    def _subscription_active_by_default(self):
+        """Default the owner to an active subscription so the paid-only gate stays out of the way of these execution-lifecycle tests."""
+        with patch(
+            "app.workers.tasks.workflow_tasks.is_paid",
+            new_callable=AsyncMock,
+            return_value=True,
+        ):
+            yield
 
     async def test_execute_workflow_not_found(self):
         """When workflow ID does not exist, return a not-found message."""
@@ -628,7 +626,7 @@ class TestOnboardingTask:
     """Verify onboarding task delegates correctly."""
 
     async def test_onboarding_intelligence_task_success(self):
-        """Successful run should call the intelligence service and return a message."""
+        """Successful run should call the Gmail personalization pipeline and return a message naming the user."""
 
         with patch(
             "app.services.onboarding.intelligence_service.process_onboarding_intelligence",
@@ -637,8 +635,7 @@ class TestOnboardingTask:
             result = await process_onboarding_intelligence_task(ARQ_CTX, FAKE_USER_ID)
 
             mock_service.assert_awaited_once_with(FAKE_USER_ID)
-            assert "onboarding intelligence completed" in result.lower()
-            assert FAKE_USER_ID in result
+            assert result == f"Gmail personalization completed for user {FAKE_USER_ID}"
 
 
 # ---------------------------------------------------------------------------

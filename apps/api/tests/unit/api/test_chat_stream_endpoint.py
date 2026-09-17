@@ -43,7 +43,11 @@ class TestSubscribeExecutorStreamReplay:
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": True}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": True,
+                    }
                 ),
             ),
             patch(
@@ -54,13 +58,9 @@ class TestSubscribeExecutorStreamReplay:
                 "app.api.v1.endpoints.chat.stream_manager.subscribe_stream",
                 new=_fake_subscribe,
             ),
-            # `_stream_from_redis` checks this singleton before it ever reaches
-            # the patched `subscribe_stream`, and nothing in a unit run owns its
-            # state — whether a previous test in the same xdist worker left the
-            # client connected decided whether this one replayed frames or
-            # emitted [STREAM_ERROR]. Pinning it makes the replay assertion
-            # depend on the replay logic and nothing else; the unavailable
-            # branch is covered separately below.
+            # _stream_from_redis checks this singleton before subscribe_stream;
+            # an xdist-shared client state could otherwise flip this test
+            # between replay and [STREAM_ERROR]. Pinning isolates the assertion.
             patch("app.api.v1.endpoints.chat.redis_cache.redis", new=MagicMock()),
         ):
             async with client.stream("GET", f"/api/v1/stream/{STREAM_ID}") as response:
@@ -71,14 +71,16 @@ class TestSubscribeExecutorStreamReplay:
         assert "[DONE]" in body
 
     async def test_no_redis_client_reports_a_stream_error(self, client) -> None:
-        """The branch the flake was silently taking. Without a Redis client there
-        is no event log to follow, and the client must be told so rather than
-        handed a bare [DONE] it would read as "the turn produced nothing"."""
+        """Without a Redis client there is no event log to follow, and the client must be told so rather than handed a bare [DONE]."""
         with (
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": True}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": True,
+                    }
                 ),
             ),
             patch(
@@ -95,9 +97,7 @@ class TestSubscribeExecutorStreamReplay:
 
     @pytest.mark.regression
     async def test_the_log_lookup_names_the_requested_stream(self, client) -> None:
-        """The expired-log check must ask about THIS stream. Asking about any
-        other id answers for the wrong stream, and a live log reads as expired —
-        exactly the bare-[DONE] regression above, back by another door."""
+        """The expired-log check must ask about this stream; asking about another id answers for the wrong stream and reads a live log as expired."""
         events_by_stream = {STREAM_ID: True}
 
         async def _has_events(stream_id: str) -> bool:
@@ -107,7 +107,11 @@ class TestSubscribeExecutorStreamReplay:
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": True}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": True,
+                    }
                 ),
             ),
             patch("app.api.v1.endpoints.chat.stream_manager.has_events", new=_has_events),
@@ -124,18 +128,18 @@ class TestSubscribeExecutorStreamReplay:
         assert body == "".join(FRAMES)
 
     async def test_completed_stream_with_expired_log_returns_done_only(self, client) -> None:
-        # subscribe_stream and the Redis singleton are pinned even though the
-        # short-circuit means neither should be reached. That is the point: if
-        # the guard ever stops short-circuiting, this test fails on the frames
-        # it did not expect, instead of idling on real keepalives until the
-        # runner kills it. A wrong branch must be a fast red, not a hang.
+        # Both are pinned even though the short-circuit means neither should
+        # be reached — if the guard stops short-circuiting, this fails fast
+        # on unexpected frames instead of hanging on real keepalives.
+        get_progress = AsyncMock(
+            return_value={
+                "user_id": "507f1f77bcf86cd799439011",
+                "conversation_id": "conv-1",
+                "is_complete": True,
+            }
+        )
         with (
-            patch(
-                "app.api.v1.endpoints.chat.stream_manager.get_progress",
-                new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": True}
-                ),
-            ),
+            patch("app.api.v1.endpoints.chat.stream_manager.get_progress", new=get_progress),
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.has_events",
                 new=AsyncMock(return_value=False),
@@ -151,19 +155,22 @@ class TestSubscribeExecutorStreamReplay:
                 body = "".join([chunk async for chunk in response.aiter_text()])
 
         assert body == "data: [DONE]\n\n"
+        get_progress.assert_awaited_once_with(STREAM_ID)
 
     @pytest.mark.parametrize("has_events", [True, False])
     async def test_a_live_stream_always_replays_whatever_the_log_says(
         self, client, has_events: bool
     ) -> None:
-        """The expired-log short-circuit is gated on completion first. A stream
-        still running has more frames coming by definition, so it must be
-        followed regardless of what the log lookup answers."""
+        """The expired-log short-circuit is gated on completion first; a still-running stream has more frames coming and must be followed regardless."""
         with (
             patch(
                 "app.api.v1.endpoints.chat.stream_manager.get_progress",
                 new=AsyncMock(
-                    return_value={"user_id": "507f1f77bcf86cd799439011", "is_complete": False}
+                    return_value={
+                        "user_id": "507f1f77bcf86cd799439011",
+                        "conversation_id": "conv-1",
+                        "is_complete": False,
+                    }
                 ),
             ),
             patch(
@@ -277,8 +284,7 @@ class TestSSEDeliveryLatency:
         assert elapsed == pytest.approx(0.5)
 
     async def test_cancelled_delivery_observes_disconnected_span(self) -> None:
-        """Cancellation mid-stream (server shutdown / client task cancel) is a
-        disconnect, not an error — it must not land in the error series."""
+        """Cancellation mid-stream is a disconnect, not an error, so it stays out of that series."""
         before = _delivery_count("disconnected")
         with (
             patch(

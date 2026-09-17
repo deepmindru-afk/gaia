@@ -9,7 +9,12 @@ import {
 } from "@icons";
 import type { RateLimitData } from "@shared/chat";
 import { formatFeatureName, formatPlanName } from "@shared/utils";
-import { usePricingModalStore } from "@/stores/pricingModalStore";
+
+// Fixture-only stub: the pre-refactor card read the (since removed)
+// pricingModalStore. The gallery keeps the old visual with a no-op.
+const usePricingModalStore = (
+  selector: (s: { openModal: () => void }) => () => void,
+): (() => void) => selector({ openModal: () => undefined });
 
 interface RateLimitCardProps {
   data: RateLimitData;

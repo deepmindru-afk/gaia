@@ -109,7 +109,7 @@ export function FeaturesGrid() {
           className="relative z-10"
         >
           <GetStartedButton
-            text="Get started free"
+            text="Get started"
             btnColor="#000000"
             className="text-base h-12 rounded-2xl"
           />

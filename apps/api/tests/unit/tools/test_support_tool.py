@@ -3,6 +3,8 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.models.user_models import UserDocument
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -35,7 +37,7 @@ class TestCreateSupportTicket:
         w = _writer()
         mock_gsw.return_value = w
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
@@ -64,7 +66,7 @@ class TestCreateSupportTicket:
     async def test_happy_path_feature(self, mock_user_svc: MagicMock, mock_gsw: MagicMock) -> None:
         mock_gsw.return_value = _writer()
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
@@ -82,14 +84,11 @@ class TestCreateSupportTicket:
     async def test_mixed_case_type_labels_correctly(
         self, mock_user_svc: MagicMock, mock_gsw: MagicMock
     ) -> None:
-        """Regression: the confirmation label must come from the normalized enum,
-        not the raw LLM-supplied string. 'Feature' streams a feature ticket but
-        used to be announced as a support ticket because the raw string never
-        equals SupportRequestType.FEATURE."""
+        """Regression: "Feature" used to be announced as a support ticket because the raw LLM string never equals SupportRequestType.FEATURE; the label must come from the normalized enum."""
         w = _writer()
         mock_gsw.return_value = w
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
@@ -116,6 +115,17 @@ class TestCreateSupportTicket:
         )
         assert "authentication required" in result.lower()
 
+    async def test_config_without_metadata_asks_for_authentication(self) -> None:
+        from app.agents.tools.support_tool import create_support_ticket
+
+        result = await create_support_ticket.coroutine(
+            config={},
+            ticket_type="support",
+            title="Test",
+            description="A test description for the ticket.",
+        )
+        assert result == "User authentication required to create support ticket."
+
     @patch(f"{MODULE}.user_service")
     async def test_user_not_found(self, mock_user_svc: MagicMock) -> None:
         mock_user_svc.get_user_by_id = AsyncMock(return_value=None)
@@ -132,7 +142,7 @@ class TestCreateSupportTicket:
 
     @patch(f"{MODULE}.user_service")
     async def test_user_no_email(self, mock_user_svc: MagicMock) -> None:
-        mock_user_svc.get_user_by_id = AsyncMock(return_value={"name": "Test User"})
+        mock_user_svc.get_user_by_id = AsyncMock(return_value=UserDocument(name="Test User"))
 
         from app.agents.tools.support_tool import create_support_ticket
 
@@ -150,7 +160,7 @@ class TestCreateSupportTicket:
         w = _writer()
         mock_gsw.return_value = w
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
@@ -186,7 +196,9 @@ class TestCreateSupportTicket:
     async def test_user_name_defaults(self, mock_user_svc: MagicMock, mock_gsw: MagicMock) -> None:
         w = _writer()
         mock_gsw.return_value = w
-        mock_user_svc.get_user_by_id = AsyncMock(return_value={"email": "test@example.com"})
+        mock_user_svc.get_user_by_id = AsyncMock(
+            return_value=UserDocument(email="test@example.com")
+        )
 
         from app.agents.tools.support_tool import create_support_ticket
 

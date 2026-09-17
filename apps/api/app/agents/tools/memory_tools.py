@@ -72,12 +72,9 @@ from shared.py.wide_events import MemoryContext, UserContext, log
 _ERR_NO_USER_ID = "Error: user_id not found in config"
 
 
-# ---------------------------------------------------------------------------
-# The ``memory_data`` payload vocabulary — the frontend contract described in
-# the module docstring, as a union discriminated on ``action``. Plain
-# TypedDicts: these are built here and handed straight to the stream writer,
-# so there is nothing to validate or coerce at runtime.
-# ---------------------------------------------------------------------------
+# The memory_data payload vocabulary from the module docstring, as a union
+# discriminated on action. Plain TypedDicts: built here and handed straight to
+# the stream writer, with nothing to validate or coerce at runtime.
 
 # A ``MemoryEntry``/``MemoryEpisodeEntry`` serialized with ``model_dump(mode="json")``
 # — an arbitrary JSON object by the time it reaches the payload.
@@ -443,11 +440,9 @@ async def update_memory(
     if not user_id:
         return _ERR_NO_USER_ID
 
-    # A bad id RAISES (MemoryNotFoundError) rather than returning an error
-    # string. The string version read back to the model as an ordinary result:
-    # it typo'd an id, got "Error: ... not found", and told the user the
-    # memory was fixed. A superseded id is not a failure — the engine resolves
-    # it to the live head of its chain.
+    # A bad id RAISES (MemoryNotFoundError) instead of returning an error string:
+    # the string version read back to the model as success on a typo'd id. A
+    # superseded id is not a failure — the engine resolves it to the live head.
     try:
         entry = await memory_engine.update_memory(user_id, memory_id, new_content)
     except Exception as e:

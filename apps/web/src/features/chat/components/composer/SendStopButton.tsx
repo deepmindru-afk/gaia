@@ -12,10 +12,9 @@ import {
 import { useStopStream } from "@/features/chat/hooks/useStopStream";
 import { cn } from "@/lib/utils";
 
-// One source of truth for the button's look: the HeroUI background (`color`) and
-// the icon color (icons inherit `currentColor`, transitioned) are decided
-// together so they can never drift apart. Stop wins; otherwise typed content
-// gets the primary fill, an empty composer the muted default.
+// One source of truth for the button's look: HeroUI background (`color`)
+// and icon color (`currentColor`) decided together so they can't drift.
+// Stop wins; otherwise typed content gets the primary fill, empty the muted default.
 function getButtonStyle(
   showStop: boolean,
   hasContent: boolean,

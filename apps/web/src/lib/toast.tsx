@@ -37,10 +37,9 @@ const DISMISS_LABEL = "Dismiss";
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-// Sileo's pill title uses white-space: nowrap with a JS-rendered SVG background —
-// title cannot wrap. For long messages with no description we promote to description
-// so the text wraps properly; sileo falls back to the state name as the pill label.
-// When a description is already provided, the title is truncated in the pill.
+// Sileo's pill title is white-space: nowrap over a JS-rendered SVG background, so it
+// cannot wrap. A long message with no description is promoted to description instead;
+// sileo then falls back to the state name as the pill label.
 const TITLE_MAX_CHARS = 50;
 
 type ToastState = "success" | "error" | "warning" | "info" | "loading";
@@ -59,10 +58,8 @@ const ACTION_COLOR: Record<
 };
 const BTN_BASE = "h-7 min-w-0 font-medium text-xs";
 
-// Control row rendered inside the toast description. Sileo's own `button` slot
-// only fits ONE button, so we render our own: the action is tinted with the
-// toast's state color and dismiss stays neutral. One button spans full width;
-// two sit side by side in a 2-column grid. `idRef` resolves the id at click time.
+// Sileo's own `button` slot only fits one button, so we render our own row here.
+// `idRef` resolves the toast id at click time, since sileo only returns it after creation.
 function ToastControls({
   idRef,
   action,
@@ -79,6 +76,7 @@ function ToastControls({
     <div className={twoUp ? "mt-2 grid grid-cols-2 gap-2" : "mt-2"}>
       {action ? (
         <Button
+          as="div"
           size="sm"
           variant="flat"
           fullWidth
@@ -92,6 +90,7 @@ function ToastControls({
       ) : null}
       {showDismiss ? (
         <Button
+          as="div"
           size="sm"
           variant="flat"
           fullWidth
@@ -110,10 +109,8 @@ function translate(message: string, opts?: ToastOptions): SileoOptions {
   const out: SileoOptions = {};
 
   if (message.length > TITLE_MAX_CHARS && opts?.description === undefined) {
-    // Long title, no description: move full message to description so it wraps.
-    // The collapsed pill would show only the state name, hiding the entire
-    // message — so this case opts back into auto-expansion (expansion is
-    // otherwise hover-only, see Toaster.tsx).
+    // Long title, no description: promote to description so it wraps, and opt into
+    // auto-expansion (otherwise hover-only, see Toaster.tsx) so the message isn't hidden.
     out.description = message;
     out.autopilot = true;
     // title intentionally omitted — sileo defaults to state name ("error", "success", etc.)
@@ -136,12 +133,8 @@ function translate(message: string, opts?: ToastOptions): SileoOptions {
 
 type SileoFn = (opts: SileoOptions) => string;
 
-// Wire up the toast's controls. We deliberately DON'T use sileo's native
-// `button` slot — it renders one full-width button. Instead we render our own
-// compact, auto-width control row in the description, which keeps buttons small
-// and lets an action and a dismiss sit side by side. The panel (and thus the
-// controls) shows on hover only (autopilot is disabled in Toaster.tsx).
-// Returns a binder called with sileo's returned id.
+// Renders our own control row instead of sileo's native `button` slot (one button only).
+// The row only shows on hover since autopilot is disabled in Toaster.tsx.
 function attachControls(
   out: SileoOptions,
   state: ToastState,

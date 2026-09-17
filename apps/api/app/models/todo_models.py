@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Annotated
 
@@ -8,6 +8,7 @@ from app.constants.general import MAX_PAGE_NUMBER
 from app.db.repositories.base import UserScopedDocument
 from app.models.trigger_subscription_models import TriggerSubscription
 from app.models.workflow_models import WorkflowWithIntegrations
+from app.schemas.common import ResponseModel
 
 
 class Priority(str, Enum):
@@ -17,8 +18,10 @@ class Priority(str, Enum):
     NONE = "none"  # no color
 
 
-class SubTask(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class SubTask(ResponseModel):
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_serialization_defaults_required=True
+    )
 
     id: str = Field(default="", description="Unique identifier for the subtask")
     title: str = Field(..., description="Title of the subtask")
@@ -107,7 +110,7 @@ class TodoUpdateRequest(BaseModel):
 
 
 # For responses with ID and user_id
-class TodoResponse(TodoBase):
+class TodoResponse(TodoBase, ResponseModel):
     """Complete todo response with all fields"""
 
     id: str = Field(..., description="Unique identifier")
@@ -201,7 +204,7 @@ class SubtaskUpdateRequest(BaseModel):
 
 
 # Pagination and stats
-class PaginationMeta(BaseModel):
+class PaginationMeta(ResponseModel):
     total: int = Field(..., description="Total number of items")
     page: int = Field(..., description="Current page (1-based)")
     per_page: int = Field(..., description="Items per page")
@@ -228,7 +231,7 @@ class TodoStats(BaseModel):
     labels: list[TodoLabelCount] | None = None
 
 
-class TodoListResponse(BaseModel):
+class TodoListResponse(ResponseModel):
     data: list[TodoResponse]
     meta: PaginationMeta
     stats: TodoStats | None = None
@@ -264,15 +267,10 @@ class TodoSearchParams(BaseModel):
     include_stats: bool = Field(default=False)
 
 
-class TodoListQuery(BaseModel):
-    """Flattened query params for ``GET /todos`` (bound via ``Depends()``).
+class TodoListParams(BaseModel):
+    """The query string of GET /todos, bound with Depends() so each field is its own param."""
 
-    Bound as a dependency, not ``Query()``: FastAPI does not flatten
-    query-models through ``include_router``, so a ``Query()``-bound model
-    422s every request expecting a JSON body. ``Depends()`` binds each
-    field as its own flattened query param (same wire as the individual
-    ``Query()`` params it replaces).
-    """
+    model_config = ConfigDict(frozen=True)
 
     q: str | None = Field(default=None, description="Search query")
     mode: SearchMode = Field(
@@ -292,6 +290,51 @@ class TodoListQuery(BaseModel):
     per_page: int = Field(default=50, ge=1, le=100)
     include_stats: bool = Field(default=False, description="Include statistics in response")
 
+    @property
+    def filters_applied(self) -> list[str]:
+        applied = (
+            ("query", bool(self.q)),
+            ("project", bool(self.project_id)),
+            ("completed", self.completed is not None),
+            ("priority", bool(self.priority)),
+            ("labels", bool(self.labels)),
+            ("due_today", self.due_today),
+            ("due_this_week", self.due_this_week),
+            ("date_range", bool(self.due_after or self.due_before)),
+        )
+        return [name for name, is_applied in applied if is_applied]
+
+    def to_search_params(self) -> TodoSearchParams:
+        """Build the service-level search with due_today and due_this_week resolved.
+
+        Those flags become a concrete due-date range that overrides due_after and due_before.
+        """
+        due_after, due_before = self.due_after, self.due_before
+        if self.due_today:
+            today = datetime.now(UTC).date()
+            due_after = datetime.combine(today, datetime.min.time()).replace(tzinfo=UTC)
+            due_before = datetime.combine(today, datetime.max.time()).replace(tzinfo=UTC)
+        elif self.due_this_week:
+            now = datetime.now(UTC)
+            due_after = now
+            due_before = now + timedelta(days=7)
+
+        return TodoSearchParams(
+            q=self.q,
+            mode=self.mode,
+            project_id=self.project_id,
+            completed=self.completed,
+            priority=self.priority,
+            has_due_date=self.has_due_date,
+            overdue=self.overdue,
+            due_date_start=due_after,
+            due_date_end=due_before,
+            labels=self.labels,
+            page=self.page,
+            per_page=self.per_page,
+            include_stats=self.include_stats,
+        )
+
 
 # Bulk operations
 class BulkOperationRequest(BaseModel):
@@ -308,7 +351,9 @@ class BulkMoveRequest(BulkOperationRequest):
 
 class BulkOperationResponse(BaseModel):
     success: list[str] = Field(default_factory=list)
-    failed: list[dict[str, object]] = Field(default_factory=list)
+    # Todo ids, like ``success`` — the bulk repository calls report a modified
+    # count, never a per-todo error, so there is nothing else to carry.
+    failed: list[str] = Field(default_factory=list)
     total: int
     message: str
 
@@ -349,12 +394,9 @@ class TodoWorkflowStatusResponse(BaseModel):
     workflow: WorkflowWithIntegrations | None = None
 
 
-# Repository layer — persisted documents, typed updates, and aggregation results.
-# ``TodoDocument`` is the full stored shape (a superset of ``TodoResponse``): it
-# also carries the tracked-todo fields (canvas/log content, scheduling, retry
-# state) that the executor and maintenance sweep read and write. Dormant legacy
-# fields (goal/offer experiments) are dropped on read via ``extra="ignore"`` and
-# preserved on write because updates are ``$set``-only.
+# TodoDocument (superset of TodoResponse) adds tracked-todo fields (canvas/log,
+# scheduling, retry) the executor reads/writes; dormant legacy fields drop on
+# read via extra="ignore" but persist on write, since updates are $set-only.
 
 
 class TodoDocument(UserScopedDocument):
@@ -449,7 +491,7 @@ class ProjectWithCount(ProjectDocument):
     todo_count: int = 0
 
 
-class TodoCounts(BaseModel):
+class TodoCounts(ResponseModel):
     """Dashboard/sidebar counts for a user's todos."""
 
     inbox: int = 0
