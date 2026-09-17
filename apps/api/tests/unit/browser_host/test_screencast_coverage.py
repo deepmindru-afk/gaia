@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import contextlib
 import json
 from typing import TYPE_CHECKING, Any
@@ -477,6 +478,22 @@ def test_event_sink_routes_navigation_to_the_nav_handler_and_ignores_other_metho
 
 
 @pytest.mark.unit
+async def test_event_sink_hands_a_paramless_event_an_empty_params_mapping() -> None:
+    """A CDP event can carry no params at all; a handler given None would raise instead."""
+    background: set[asyncio.Task[Any]] = set()
+    with patch.object(screencast, "_refresh_meta", new=AsyncMock()) as mock_refresh:
+        sink = _make_event_sink(
+            MagicMock(),
+            _make_nav_handler(MagicMock(), "target-1", _PageMeta(), background, "page-sess"),
+        )
+        sink({"method": "Page.frameNavigated", "sessionId": "page-sess"})
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    mock_refresh.assert_awaited_once()
+
+
+@pytest.mark.unit
 def test_event_sink_handles_every_frame_the_mux_routes_to_it() -> None:
     """The mux already withholds other pages, so a sink that re-filtered would drop its own frames."""
     on_frame = MagicMock()
@@ -930,6 +947,9 @@ async def test_pull_captures_on_the_page_session_with_the_screencast_encoding(
     await _tick_pull(mux, _PageMeta(), frames, stream, ticks=1)
 
     assert ("Page.captureScreenshot", {"format": "jpeg", "quality": 72}, "page-sess") in mux.calls
+    # The metadata the frame is sent with comes off the streamed target, not off
+    # whatever target the shared connection last touched.
+    assert ("Target.getTargetInfo", {"targetId": "target-1"}, None) in mux.calls
     frame = frames.get_nowait()
     assert (frame.data, frame.css_width, frame.css_height) == ("pulled", 1280, 800)
 
@@ -972,6 +992,13 @@ async def test_pull_rereads_the_favicon_only_when_the_url_changed(
     await _tick_pull(mux, meta, asyncio.Queue(maxsize=_FRAME_QUEUE_SIZE), _StreamState(), ticks=1)
 
     assert mux.methods.count("Runtime.evaluate") == 1
+    # The re-read must ride the page session this viewer attached: on the shared
+    # connection an unaddressed Runtime.evaluate is a different page's DOM.
+    assert (
+        "Runtime.evaluate",
+        {"expression": screencast._FAVICON_JS, "returnByValue": True},
+        "page-sess",
+    ) in mux.calls
     assert meta.favicon == "https://example.com/icon.png"
 
 
@@ -1009,3 +1036,92 @@ async def test_pull_logs_one_line_per_failure_streak_and_keeps_going(
         f"{LogTag.BROWSER} Could not pull a live-view frame",
         error_type="RuntimeError",
     )
+
+
+async def _pull_until(
+    mux: FakeMux,
+    stream: _StreamState,
+    frames: asyncio.Queue[_Frame],
+    ready: Callable[[], bool],
+) -> None:
+    """Run the pull, yielding to the loop until ready() (or the task dies), never on a clock."""
+    task = asyncio.ensure_future(
+        _pull_frames(mux, "page-sess", "target-1", _PageMeta(), frames, stream)
+    )
+    for _ in range(200):
+        if ready() or task.done():
+            break
+        await asyncio.sleep(0)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.unit
+async def test_pull_warns_again_once_a_screencast_frame_broke_the_failure_streak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one-line-per-streak counter belongs to the current run of failures, not the viewer."""
+    monkeypatch.setattr(screencast, "_PULL_INTERVAL_SECONDS", 0)
+    mux = make_mux()
+    stream = _StreamState()
+    attempts = 0
+
+    async def send(
+        method: str, params: dict[str, Any] | None = None, session_id: str | None = None
+    ) -> dict[str, Any]:
+        nonlocal attempts
+        if method == "Target.getTargetInfo":
+            attempts += 1
+            if attempts == 1:
+                # the engine screencasts one frame before the next pull tick
+                stream.delivered = True
+            raise RuntimeError("engine wedged")
+        return {}
+
+    monkeypatch.setattr(mux, "send_raw", send)
+
+    with patch.object(screencast.log, "warning") as mock_warning:
+        await _pull_until(
+            mux,
+            stream,
+            asyncio.Queue(maxsize=_FRAME_QUEUE_SIZE),
+            lambda: mock_warning.call_count == 2,
+        )
+
+    # Exactly two pulls were attempted: the first failed and spoke, the delivered
+    # frame skipped the next tick, and the pull after it failed and spoke again.
+    assert attempts == 2
+    assert mock_warning.call_count == 2
+
+
+@pytest.mark.unit
+async def test_pull_warns_again_once_a_successful_capture_broke_the_failure_streak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A capture that worked ends the streak, so the next failure is a new one worth a line."""
+    monkeypatch.setattr(screencast, "_PULL_INTERVAL_SECONDS", 0)
+    mux = make_mux({"Page.captureScreenshot": {"data": "pulled"}})
+    captures = 0
+    send_raw = mux.send_raw
+
+    async def send(
+        method: str, params: dict[str, Any] | None = None, session_id: str | None = None
+    ) -> dict[str, Any]:
+        nonlocal captures
+        result = await send_raw(method, params, session_id)
+        if method == "Page.captureScreenshot":
+            captures += 1
+            if captures != 2:  # only the middle capture comes back
+                raise RuntimeError("capture refused")
+        return result
+
+    monkeypatch.setattr(mux, "send_raw", send)
+    frames: asyncio.Queue[_Frame] = asyncio.Queue(maxsize=_FRAME_QUEUE_SIZE)
+
+    with patch.object(screencast.log, "warning") as mock_warning:
+        await _pull_until(mux, _StreamState(), frames, lambda: mock_warning.call_count == 2)
+
+    assert captures == 3
+    assert mock_warning.call_count == 2
+    assert frames.get_nowait().data == "pulled"

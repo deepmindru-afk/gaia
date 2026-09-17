@@ -10,6 +10,7 @@ exact class of bug this module exists to prevent.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -18,8 +19,12 @@ import pytest
 
 from app.browser_host import cdp_mux
 from app.browser_host.cdp_mux import CdpConnectionClosed, CdpMux
+from app.constants.log_tags import LogTag
 
 _URL = "ws://127.0.0.1:9222/devtools/browser/fake"
+# The one message every path that ends the connection reports, spelled out here
+# rather than imported, so a rename has to be a deliberate change to the contract.
+_CLOSED_MESSAGE = "browser session connection closed"
 
 
 class _FakeWebSocket:
@@ -28,12 +33,17 @@ class _FakeWebSocket:
     def __init__(self) -> None:
         self.sent: list[dict[str, Any]] = []
         self.closed = False
-        self._inbound: asyncio.Queue[str | None] = asyncio.Queue()
+        self._inbound: asyncio.Queue[str | BaseException | None] = asyncio.Queue()
         # Set each time the mux writes, so a test can await "the send landed"
         # without a sleep or a poll loop.
         self.wrote = asyncio.Event()
+        # Runs instead of a successful send, for the tests where the socket fails
+        # under the write the way a dying engine connection does.
+        self.send_hook: Callable[[str], Awaitable[None]] | None = None
 
     async def send(self, raw: str) -> None:
+        if self.send_hook is not None:
+            await self.send_hook(raw)
         self.sent.append(json.loads(raw))
         self.wrote.set()
 
@@ -50,6 +60,10 @@ class _FakeWebSocket:
         """Let the engine hang up: the async-for finishes and the loop exits normally."""
         self._inbound.put_nowait(None)
 
+    def fail(self, exc: BaseException) -> None:
+        """Let the socket itself fail: the async-for raises rather than finishing."""
+        self._inbound.put_nowait(exc)
+
     def __aiter__(self) -> _FakeWebSocket:
         return self
 
@@ -57,6 +71,8 @@ class _FakeWebSocket:
         raw = await self._inbound.get()
         if raw is None:
             raise StopAsyncIteration
+        if isinstance(raw, BaseException):
+            raise raw
         return raw
 
 
@@ -213,8 +229,11 @@ async def test_close_fails_a_pending_caller_instead_of_leaving_it_hanging() -> N
 
     await mux.close()
 
-    with pytest.raises(CdpConnectionClosed):
+    with pytest.raises(CdpConnectionClosed) as failure:
         await asyncio.wait_for(call, timeout=1.0)
+    # One message for every way a session's connection ends, so a caller can
+    # match on it rather than on three near-identical copies.
+    assert str(failure.value) == _CLOSED_MESSAGE
     assert mux.closed is True
     assert ws.closed is True
 
@@ -225,8 +244,9 @@ async def test_a_call_after_close_raises_rather_than_hanging() -> None:
     mux = await _started_mux(ws)
     await mux.close()
 
-    with pytest.raises(CdpConnectionClosed):
+    with pytest.raises(CdpConnectionClosed) as failure:
         await asyncio.wait_for(mux.send_raw("Target.getTargets"), timeout=1.0)
+    assert str(failure.value) == _CLOSED_MESSAGE
 
 
 @pytest.mark.unit
@@ -252,8 +272,9 @@ async def test_the_engine_hanging_up_fails_pending_callers_too() -> None:
 
     ws.end()  # the engine drops the socket; nobody called close()
 
-    with pytest.raises(CdpConnectionClosed):
+    with pytest.raises(CdpConnectionClosed) as failure:
         await asyncio.wait_for(call, timeout=1.0)
+    assert str(failure.value) == _CLOSED_MESSAGE
     await asyncio.wait_for(mux.wait_closed(), timeout=1.0)
 
 
@@ -415,3 +436,235 @@ async def test_a_forwarded_reply_goes_to_its_sender_even_when_another_sink_owns_
     assert agent == [{"id": 5, "sessionId": "page-1-session-1", "result": {}}]
     assert viewer == []
     await mux.close()
+
+
+@pytest.mark.unit
+async def test_closing_a_mux_that_never_opened_is_safe_and_still_marks_it_closed() -> None:
+    """create_context closes the mux it built when start() itself failed, so this path is real."""
+    mux = CdpMux(_URL)
+
+    await mux.close()
+
+    assert mux.closed is True
+    await asyncio.wait_for(mux.wait_closed(), timeout=1.0)
+    with pytest.raises(CdpConnectionClosed) as failure:
+        await asyncio.wait_for(mux.send_raw("Target.getTargets"), timeout=1.0)
+    assert str(failure.value) == _CLOSED_MESSAGE
+
+
+@pytest.mark.unit
+async def test_starting_an_already_open_connection_is_refused_without_dialing_again() -> None:
+    """A second dial would strand the first socket, and the refusal is not a closure."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    redial = AsyncMock(return_value=_FakeWebSocket())
+
+    with (
+        patch.object(cdp_mux.websockets, "connect", redial),
+        pytest.raises(RuntimeError) as failure,
+    ):
+        await mux.start()
+
+    # Not CdpConnectionClosed: a caller retries a closed connection and must not
+    # retry this, so the two failures may never collapse into one type.
+    assert type(failure.value) is RuntimeError
+    assert str(failure.value) == "browser session connection is already open"
+    redial.assert_not_awaited()
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_the_connection_is_dialed_with_no_frame_cap_and_no_pings() -> None:
+    """A screencast frame dwarfs the websockets default cap, and this engine answers no ping."""
+    ws = _FakeWebSocket()
+    mux = CdpMux(_URL)
+    connect = AsyncMock(return_value=ws)
+
+    with patch.object(cdp_mux.websockets, "connect", connect):
+        await mux.start()
+
+    assert connect.await_args is not None
+    assert connect.await_args.kwargs == {"max_size": None, "ping_interval": None}
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_outbound_ids_run_one_at_a_time_across_every_consumer() -> None:
+    """One allocator, one step: a gap or a repeat is how two consumers' replies cross."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    seen: list[dict[str, Any]] = []
+
+    await mux.forward({"id": 900, "method": "Page.enable"}, seen.append)
+    await mux.forward({"id": 901, "method": "Page.disable"}, seen.append)
+    call = asyncio.create_task(mux.send_raw("Target.getTargets"))
+    ws.wrote.clear()
+    control = await _next_write(ws)
+    await mux.forward({"id": 902, "method": "Page.reload"}, seen.append)
+
+    assert [frame["id"] for frame in ws.sent] == [1, 2, 3, 4]
+    ws.deliver({"id": control["id"], "result": {}})
+    assert await asyncio.wait_for(call, timeout=1.0) == {}
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_a_success_reply_carrying_no_result_is_an_empty_ack() -> None:
+    """Most CDP commands answer with no payload; that is an ack, not a malformed reply."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    call = asyncio.create_task(mux.send_raw("Page.enable"))
+    sent = await _next_write(ws)
+
+    ws.deliver({"id": sent["id"]})
+
+    assert await asyncio.wait_for(call, timeout=1.0) == {}
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_a_non_dict_result_fails_the_call_naming_the_method_and_the_payload() -> None:
+    """An empty result the caller misreads is worse than a failure that says what arrived."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    call = asyncio.create_task(mux.send_raw("Runtime.evaluate"))
+    sent = await _next_write(ws)
+
+    ws.deliver({"id": sent["id"], "result": "oops"})
+
+    with pytest.raises(RuntimeError) as failure:
+        await asyncio.wait_for(call, timeout=1.0)
+    assert str(failure.value) == "malformed CDP result for Runtime.evaluate: 'oops'"
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_a_failed_send_releases_its_id_so_a_late_reply_still_reaches_subscribers() -> None:
+    """The frame may already be on the wire when the send fails; its reply must not vanish."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    seen: list[dict[str, Any]] = []
+    mux.subscribe(seen.append)
+
+    async def _refuse(_raw: str) -> None:
+        raise ConnectionResetError("write failed")
+
+    ws.send_hook = _refuse
+    with pytest.raises(ConnectionResetError):
+        await mux.send_raw("Page.enable")
+    ws.send_hook = None
+    late = {"id": 1, "result": {"answered anyway": True}}
+    ws.deliver(late)
+    await asyncio.sleep(0)
+
+    assert seen == [late]
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_a_send_that_fails_as_the_engine_hangs_up_reports_the_write_failure() -> None:
+    """The close that lands mid-write empties the waiter table; the caller still learns why."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+
+    async def _die_mid_write(_raw: str) -> None:
+        ws.end()
+        await asyncio.wait_for(mux.wait_closed(), timeout=1.0)
+        raise ConnectionResetError("socket died mid-write")
+
+    ws.send_hook = _die_mid_write
+
+    with pytest.raises(ConnectionResetError) as failure:
+        await asyncio.wait_for(mux.send_raw("Page.enable"), timeout=1.0)
+    assert str(failure.value) == "socket died mid-write"
+    assert mux.closed is True
+
+
+@pytest.mark.unit
+async def test_a_reply_nobody_is_waiting_for_reaches_the_subscribers() -> None:
+    """A stale or unsolicited reply is an ordinary frame, not a reason to drop the loop."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    seen: list[dict[str, Any]] = []
+    mux.subscribe(seen.append)
+
+    orphan = {"id": 4242, "result": {"targetInfos": []}}
+    ws.deliver(orphan)
+    await asyncio.sleep(0)
+
+    assert seen == [orphan]
+    call = asyncio.create_task(mux.send_raw("Page.enable"))
+    sent = await _next_write(ws)
+    ws.deliver({"id": sent["id"], "result": {}})
+    assert await asyncio.wait_for(call, timeout=1.0) == {}
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_a_forwarded_frame_with_no_id_comes_back_without_one() -> None:
+    """A CDP event the client fired and forgot: answering it with our id would confuse its router."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    seen: list[dict[str, Any]] = []
+
+    await mux.forward({"method": "Page.enable"}, seen.append)
+    outbound = ws.sent[-1]
+    ws.deliver({"id": outbound["id"], "result": {"ok": True}})
+    await asyncio.sleep(0)
+
+    assert outbound["id"] == 1  # the mux still numbers it on the wire
+    assert seen == [{"result": {"ok": True}}]
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_an_unparsable_frame_is_logged_onto_the_wide_event() -> None:
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+
+    with patch.object(cdp_mux.log, "warning") as warning:
+        ws.deliver("{not json")
+        await asyncio.sleep(0)
+
+    warning.assert_called_once_with(
+        f"{LogTag.BROWSER} browser session dropped an unparsable CDP frame",
+        error_type="ValueError",
+    )
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_a_sink_that_raises_is_logged_with_the_exception_it_raised() -> None:
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+
+    def _explode(_frame: dict[str, Any]) -> None:
+        raise ValueError("bad sink")
+
+    mux.subscribe(_explode)
+
+    with patch.object(cdp_mux.log, "warning") as warning:
+        ws.deliver({"method": "Page.loadEventFired"})
+        await asyncio.sleep(0)
+
+    warning.assert_called_once_with(
+        f"{LogTag.BROWSER} browser session frame sink failed",
+        error_type="ValueError",
+    )
+    await mux.close()
+
+
+@pytest.mark.unit
+async def test_the_socket_failing_under_the_read_loop_fails_callers_with_that_error() -> None:
+    """The engine's own failure is what the caller needs to see, not a hang."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+    call = asyncio.create_task(mux.send_raw("Target.getTargets"))
+    await _next_write(ws)
+
+    ws.fail(ConnectionResetError("engine socket reset"))
+
+    with pytest.raises(ConnectionResetError) as failure:
+        await asyncio.wait_for(call, timeout=1.0)
+    assert str(failure.value) == "engine socket reset"
+    assert mux.closed is True

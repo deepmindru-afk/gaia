@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import copy
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -412,9 +413,24 @@ def test_filter_downstream_gettargets_targetinfos_not_list_returns_frame() -> No
 
 @pytest.mark.unit
 def test_filter_downstream_untracked_id_passes_through() -> None:
+    """Only a getTargets THIS proxy sent is trimmed; any other reply is passed on verbatim."""
     ids: set[int] = set()
-    frame = {"id": 99, "result": {"targetInfos": [{"targetId": "a", "browserContextId": "other"}]}}
-    assert _filter_downstream(frame, "ctx1", ids) == frame  # not tracked, so not filtered
+    frame = {
+        "id": 99,
+        "result": {
+            "targetInfos": [
+                {"targetId": "a", "browserContextId": "other"},
+                {"targetId": "b", "browserContextId": "ctx1"},
+            ]
+        },
+    }
+    untouched = copy.deepcopy(frame)
+
+    out = _filter_downstream(frame, "ctx1", ids)
+
+    # The frame is filtered in place, so the copy taken before the call is the
+    # only thing that can tell a pass-through from a trim.
+    assert out == untouched
 
 
 @pytest.mark.unit
@@ -855,3 +871,36 @@ async def test_run_cdp_proxy_records_navigation_and_page_metrics_for_this_sessio
     assert host.note_navigation_started.call_args_list == [call("sess-metrics")]
     assert host.note_page_created.call_args_list == [call("sess-metrics")]
     assert host.note_navigation_finished.call_args_list == [call("sess-metrics")]
+
+
+@pytest.mark.unit
+async def test_run_cdp_proxy_routes_a_forwarded_frames_reply_to_the_client_that_sent_it() -> None:
+    """Two clients share one engine connection, so a reply reaches its sender's socket alone."""
+    mux = FakeMux()
+    bystander_ws = MagicMock()
+    bystander_ws.send_text = AsyncMock()
+    bystander_ws.receive_text = _never_speaks
+    bystander = asyncio.create_task(
+        proxy_mod.run_cdp_proxy(
+            MagicMock(), make_session(mux=mux, session_id="sess-other"), bystander_ws
+        )
+    )
+    await asyncio.sleep(0)  # let the other proxy subscribe before ours forwards anything
+
+    def the_engine_answers() -> None:
+        # The sink the forward named is what decides whose client gets this reply.
+        mux.reply_sinks[-1]({"id": 77, "result": {"frameId": "f1"}})
+
+    client_ws = _client_ws(
+        json.dumps({"id": 77, "method": "Page.navigate", "params": {"url": "https://a.test"}}),
+        the_engine_answers,
+    )
+
+    await proxy_mod.run_cdp_proxy(
+        MagicMock(), make_session(mux=mux, session_id="sess-mine"), client_ws
+    )
+
+    assert _sent(client_ws) == [{"id": 77, "result": {"frameId": "f1"}}]
+    bystander_ws.send_text.assert_not_called()
+    mux.close_signal.set()
+    await asyncio.wait_for(bystander, timeout=1.0)

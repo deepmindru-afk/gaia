@@ -473,3 +473,29 @@ async def test_live_view_survives_a_failing_capture_and_logs_it(
     assert mux.methods.count("Page.captureScreenshot") > 1
     mock_warning.assert_called_once()
     assert mock_warning.call_args.kwargs["error_type"] == "RuntimeError"
+
+
+@pytest.mark.unit
+async def test_live_view_pull_addresses_the_attached_target_and_page_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pull rides the same shared connection: misaddressed, it captures another page."""
+    monkeypatch.setattr(screencast, "_PULL_INTERVAL_SECONDS", 0)
+    mux = make_mux({"Page.captureScreenshot": {"data": "pulled"}})
+
+    async def go_quiet() -> None:
+        for _ in range(8):
+            await asyncio.sleep(0)
+
+    await _run_to_client(mux, go_quiet)
+
+    captures = [
+        (params, sid) for method, params, sid in mux.calls if method == "Page.captureScreenshot"
+    ]
+    assert captures
+    assert all(sid == _PAGE_SESSION for _, sid in captures)
+
+    infos = [params for method, params, _ in mux.calls if method == "Target.getTargetInfo"]
+    # one from setup plus one per pull, every one naming the focused target
+    assert len(infos) > 1
+    assert all(params == {"targetId": "target-1"} for params in infos)

@@ -164,6 +164,26 @@ class TestSamplerFailureIsolation:
             browser={"pid": 777},
         )
 
+    def test_for_pid_samples_the_pid_it_was_given_and_names_it_when_that_fails(self) -> None:
+        """A sampler aimed at the wrong pid reports another process's numbers as this session's."""
+        root = MagicMock()
+        root.children.side_effect = psutil.AccessDenied(4321)
+
+        with patch.object(metrics_module.psutil, "Process", return_value=root) as process:
+            sampler = ProcessSampler.for_pid(4321)
+
+        assert sampler is not None
+        process.assert_called_once_with(4321)
+
+        with patch.object(metrics_module, "log") as mock_log:
+            assert sampler.sample() is None
+
+        mock_log.warning.assert_called_once_with(
+            f"{LogTag.BROWSER} browser host resource sample failed",
+            error_type="AccessDenied",
+            browser={"pid": 4321},
+        )
+
     async def test_a_failing_sampler_does_not_break_create_or_dispose(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

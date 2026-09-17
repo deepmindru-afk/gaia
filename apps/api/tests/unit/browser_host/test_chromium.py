@@ -211,6 +211,17 @@ async def test_healthz_probes_the_root_connection_not_any_session_connection() -
 
 
 @pytest.mark.unit
+async def test_create_context_on_a_host_that_never_started_says_so_and_frees_its_slot() -> None:
+    """The rollback must not close a connection that was never opened, or it buries the real error."""
+    host = ChromiumHost()  # no root websocket url: the engine was never launched
+
+    with pytest.raises(RuntimeError, match="browser host is not started"):
+        await host.create_context(None)
+
+    assert host._pending_slots == 0
+
+
+@pytest.mark.unit
 async def test_healthz_does_not_probe_a_dead_engine_even_with_a_connection_object() -> None:
     """A dead process cannot answer, so the probe is skipped rather than left to time out."""
     host = make_host()

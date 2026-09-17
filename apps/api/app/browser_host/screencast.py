@@ -158,7 +158,7 @@ def _make_event_sink(on_frame: _EventHandler, on_nav: _EventHandler) -> Callable
     }
 
     def sink(frame: CdpFrame) -> None:
-        handler = handlers.get(frame.get("method", ""))
+        handler = handlers.get(frame.get("method"))
         if handler is not None:
             handler(frame.get("params", {}))
 

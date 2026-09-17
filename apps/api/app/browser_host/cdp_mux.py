@@ -228,7 +228,8 @@ class CdpMux:
                 # Hand the reply back wearing the id its sender chose, so the
                 # client's own routing still recognises it.
                 if client_id is None:
-                    frame.pop("id", None)
+                    # isinstance(message_id, int) above proves the key is there.
+                    frame.pop("id")
                 else:
                     frame["id"] = client_id
                 self._deliver(reply_to, frame)
