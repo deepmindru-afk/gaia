@@ -139,6 +139,10 @@ branches[].pr   number, url, state ("OPEN" | "MERGED" | "QUEUED"); absent when n
 older than the parent's current tip. `needsRebase` is true when the current parent tip is no longer
 an ancestor of the branch.
 
+CI state is a different question, and `gh pr checks <n>` is the wrong tool for it on a stack: it
+aggregates superseded runs, so a layer reads red while its current head is green. Resolve the head
+sha and read that sha's runs — see `references/troubleshooting.md`.
+
 ## Exit codes
 
 | Code | Meaning | Recovery |
@@ -181,4 +185,6 @@ Open the reference whose trigger matches the task; no need to preload all three.
 - `references/commands.md` — read when a command fails unexpectedly or you need its preconditions,
   side effects, atomicity, or ordering guarantees.
 - `references/troubleshooting.md` — read on a rebase conflict, after a squash-merge, on local and
-  remote divergence, when restructuring a stack, or when driving stacks from another tool.
+  remote divergence, when restructuring a stack, when driving stacks from another tool, or when
+  reading CI across the stack — which layer is really red, why a layer got no runs at all, and
+  how to avoid re-running the whole stack for one fix.

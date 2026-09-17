@@ -10,6 +10,13 @@
 - [Driving stacks from another tool or worktree](#driving-stacks-from-another-tool-or-worktree)
 - [Stack file is locked (exit 8)](#stack-file-is-locked-exit-8)
 - [An interrupted modify session (exit 10)](#an-interrupted-modify-session-exit-10)
+- [Reading CI on a stacked PR](#reading-ci-on-a-stacked-pr)
+- [Cancelled is not failed](#cancelled-is-not-failed)
+- [A conflicting PR gets no runs at all](#a-conflicting-pr-gets-no-runs-at-all)
+- [Batch fixes; one push per round](#batch-fixes-one-push-per-round)
+- [Fix at the lowest layer that has the defect](#fix-at-the-lowest-layer-that-has-the-defect)
+- [Never truncate the conflict list](#never-truncate-the-conflict-list)
+- [Landing a new gate inside a stack](#landing-a-new-gate-inside-a-stack)
 
 ## Rebase conflicts (exit 3)
 
@@ -174,3 +181,84 @@ remote stack grouping and recreating it from local state. Without a TTY (`--auto
 non-interactive run) it skips that confirmation and overwrites the remote grouping. Get explicit
 operator approval for the remote grouping change before running `submit` with a pending modify
 state.
+
+## Reading CI on a stacked PR
+
+`gh pr checks <n>` aggregates **every** run for the branch, superseded ones included. On a stack you
+push each layer repeatedly, so it reports failures from heads that no longer exist and a PR reads red
+while its current head is green. Resolve the head sha and ask for that sha's runs instead:
+
+```bash
+sha=$(gh pr view <n> --json headRefOid --jq .headRefOid)
+gh api "repos/<owner>/<repo>/actions/runs?head_sha=$sha&per_page=30" \
+  --jq '.workflow_runs[] | "\(.name)=\(.status)/\(.conclusion)"' | sort -u
+```
+
+That is the only authoritative read. Do this for every layer before concluding anything about the
+stack's health — on a nine-PR stack the aggregated view produced hours of chasing failures that had
+already been superseded.
+
+## Cancelled is not failed
+
+A contended runner kills jobs at `timeout-minutes`, and GitHub reports that as `cancelled`, not
+`failure`. A superseded run reports the same thing. Neither is a code defect. Compare each job's span
+against the lane's cap before diagnosing anything:
+
+```bash
+gh api repos/<owner>/<repo>/actions/runs/<run>/jobs --paginate \
+  --jq '.jobs[] | select(.conclusion=="failure" or .conclusion=="cancelled")
+        | "\(.name): \(.conclusion) \(.started_at)->\(.completed_at)"'
+```
+
+A span that equals the cap is a clock problem: re-run it when the box is quiet
+(`gh run rerun <run> --failed` re-runs cancelled jobs too). A job that failed well inside the cap is
+real — diagnose that one. Re-running on a loaded box just reproduces the timeout and costs another
+full round.
+
+## A conflicting PR gets no runs at all
+
+When a PR's `mergeable` state is `CONFLICTING`, GitHub creates no `pull_request` runs — silently, with
+no queued entry and no error. If CI appears to have stopped for one layer, check this before anything
+else:
+
+```bash
+gh pr view <n> --json mergeable,mergeStateStatus
+```
+
+Re-merge the parent and resolve before pushing further. This is easy to miss mid-stack because the
+layers above and below keep running normally.
+
+## Batch fixes; one push per round
+
+Every push to a lower layer propagates into every layer above it, and each layer starts its own CI
+run. A nine-PR stack is roughly eighteen workflow runs per round, which on a self-hosted box can be
+hours. So do not push a fix the moment you find it: collect every red across the whole stack, fix each
+at its owning layer, then chain and push once from the bottom. Pushing mid-round also supersedes the
+runs already in flight, which throws away work that was about to go green.
+
+## Fix at the lowest layer that has the defect
+
+"Fix at the bottom" is wrong as a reflex. Fix at the lowest layer where the defect actually manifests.
+A gate that lands at layer 1 may only be violated by code introduced at layer 6 — fixing it at layer 1
+touches a branch that does not have the problem and forces every layer in between through another CI
+round for nothing.
+
+## Never truncate the conflict list
+
+`git diff --name-only --diff-filter=U` piped through `head`/`tail` silently hides conflicted files.
+Resolving the visible subset leaves conflict markers in the tree, and the next command fails somewhere
+unrelated — a syntax error in a file you never opened. Always read the list in full, and confirm it is
+empty before committing:
+
+```bash
+git diff --name-only --diff-filter=U            # read all of it
+grep -rl '^<<<<<<< ' -- . | head                # belt and braces
+```
+
+## Landing a new gate inside a stack
+
+A lint, contract or coverage gate added at a low layer is enforced on every layer above it, against
+code those layers already contain. Expect the top of the stack to surface real violations the bottom
+never had, and budget a fix round for them. That is the gate working, not a regression — but if you
+land the gate and the stack in the same push, you will discover the debt one layer at a time, each
+discovery costing a full CI round.
