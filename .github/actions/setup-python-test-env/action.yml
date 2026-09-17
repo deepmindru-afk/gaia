@@ -114,9 +114,16 @@ runs:
           MODEL_CACHE_DIR=/tmp/fastembed_cache
         fi
         mkdir -p "$MODEL_CACHE_DIR"
+        # USE_REAL_SERVICES only where services really run. It is what switches
+        # the root conftest's hermetic fences OFF, so exporting it on a lane
+        # started with services=false told the suite to reach Mongo and Redis
+        # that the lane never launched: a unit test on that path hung on the
+        # firewalled port until the 22-minute job cap killed the slice.
+        if [ "${{ inputs.services }}" = "true" ]; then
+          echo "USE_REAL_SERVICES=1" >> "$GITHUB_ENV"
+        fi
         {
           echo "ENV=test"
-          echo "USE_REAL_SERVICES=1"
           echo "MODEL_CACHE_DIR=$MODEL_CACHE_DIR"
           echo "MEMORY_MODEL_CACHE_DIR=$MODEL_CACHE_DIR"
           # Deliberately NOT setting PYTHONDONTWRITEBYTECODE: on the persistent
