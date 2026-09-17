@@ -4,12 +4,9 @@
 
 # GAIA
 
-**The open-source AI assistant that doesn't wait to be asked.**
+**The open-source AI assistant that does your busywork before you ask.**
 
 [![Documentation](https://img.shields.io/badge/Documentation-00bbff?style=flat&logo=gitbook&logoColor=white)](https://docs.heygaia.io) [![Discord](https://discord-live-members-count-badge.vercel.app/api/discord-members?guildId=585464664650022914&color=5c6af3&label=Discord)](https://discord.heygaia.io) [![WhatsApp](https://img.shields.io/badge/WhatsApp-25D366?logo=whatsapp&logoColor=fff&style=flat)](https://whatsapp.heygaia.io)
-
-<a href="https://heygaia.io"><img src="apps/web/public/images/readme/cta-try-gaia-free.png" alt="Try GAIA Free" height="48" /></a>
-<a href="https://docs.heygaia.io/self-hosting/overview"><img src="apps/web/public/images/readme/cta-self-host.png" alt="Self-host" height="48" /></a>
 
 </div>
 
@@ -18,6 +15,13 @@ GAIA is a personal AI assistant that can automate your whole day. Connect Gmail 
 You set none of that up. It's running the moment you connect.
 
 And when something needs you, it comes to you — on iMessage, WhatsApp, Telegram, Slack or Discord.
+
+<div align="center">
+
+<a href="https://heygaia.io"><img src="apps/web/public/images/readme/cta-try-gaia-free.png" alt="Try GAIA Free" height="48" /></a>
+<a href="https://docs.heygaia.io/self-hosting/overview"><img src="apps/web/public/images/readme/cta-self-host.png" alt="Self-host" height="48" /></a>
+
+</div>
 
 ## Why GAIA
 
