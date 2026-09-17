@@ -69,7 +69,7 @@ _VIEWER_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>GAIA \u2014 Live browser (__SESSION_ID__)</title>
+<title>GAIA Live browser (__SESSION_ID__)</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
