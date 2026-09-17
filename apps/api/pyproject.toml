@@ -367,9 +367,6 @@ ignore_imports = [
   "app.utils.composio_hooks.twitter_hooks -> langgraph",
   "app.utils.device_onboarding -> langgraph",
   "app.utils.device_onboarding -> app.models.agent_models",
-  # Deferred at function scope precisely to keep langchain off this path — the
-  # noqa on the import says so. grimp reads the AST and cannot see the deferral.
-  "app.utils.timezone -> app.models.agent_models",
   # Reaches a langchain-typed model directly; the stack is below that edge.
   "app.utils.workflow_utils -> app.models.agent_models",
   # Utils that call the LLM client / vision helpers / tool registry outright —
