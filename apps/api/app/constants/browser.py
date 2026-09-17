@@ -210,3 +210,47 @@ BROWSER_TAKEOVER_PREAMBLE = (
 # payloads stay small. 1280 is still comfortably desktop-layout territory.
 BROWSER_VIEWPORT_WIDTH = 1280
 BROWSER_VIEWPORT_HEIGHT = 800
+
+
+# ---------------------------------------------------------------------------
+# Jev decision policy (BROWSER_USE_JEV_ENABLED). The operation vocabulary is the
+# one browser-use/jev-ultrafast offers Jev — each maps onto one Browser-Use
+# action — plus the two human-takeover controls this codebase registers.
+# ---------------------------------------------------------------------------
+class JevOperation(StrEnum):
+    """One Jev choice per step; the element-bound ones also carry a target index."""
+
+    CLICK = "CLICK"
+    TYPE_TEXT = "TYPE_TEXT"
+    SELECT = "SELECT"
+    SCROLL_UP = "SCROLL_UP"
+    SCROLL_DOWN = "SCROLL_DOWN"
+    WAIT = "WAIT"
+    NAVIGATE = "NAVIGATE"
+    GO_BACK = "GO_BACK"
+    REQUEST_HUMAN = "REQUEST_HUMAN"
+    SOLVE_CAPTCHA = "SOLVE_CAPTCHA"
+    DONE = "DONE"
+    BLOCKED = "BLOCKED"
+
+
+# Operations that need an observed element; each gets its own speculative
+# target question in the same Jev request (see services/browser/jev/policy.py).
+JEV_TARGET_OPERATIONS = (JevOperation.CLICK, JevOperation.TYPE_TEXT, JevOperation.SELECT)
+
+# Gateway wire contract for the Vercel AI SDK's evaluation-model route — the
+# header values `@ai-sdk/gateway` sends, which the gateway rejects without.
+JEV_GATEWAY_PROTOCOL_VERSION = "0.0.1"
+JEV_GATEWAY_EVALUATION_SPEC_VERSION = "4"
+JEV_GATEWAY_TIMEOUT_SECONDS = 25.0
+JEV_GATEWAY_MAX_ATTEMPTS = 3
+
+# Observation budget: visible page text sent as Jev state, and how much of the
+# run's own action history rides along as context.
+JEV_PAGE_TEXT_MAX_CHARS = 6000
+JEV_ELEMENT_LABEL_MAX_CHARS = 120
+JEV_RECENT_ACTIONS = 10
+JEV_TEXT_HELPER_RECENT_ACTIONS = 6
+JEV_TEXT_VALUE_MAX_CHARS = 2000
+# Probability mass across a choice question must sum to ~1; the gateway rounds.
+JEV_PROBABILITY_SUM_TOLERANCE = 0.02

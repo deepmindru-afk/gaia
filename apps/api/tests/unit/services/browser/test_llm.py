@@ -37,6 +37,9 @@ def _custom_lane_off_by_default(monkeypatch):
     monkeypatch.setattr(
         "app.services.browser.llm.settings.BROWSER_USE_LLM_API_KEY", "explicit-test-key"
     )
+    # No gateway key → the chat model drives every step, whatever the dev .env
+    # says; the Jev lane has its own tests below.
+    monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_JEV_GATEWAY_API_KEY", None)
 
 
 pytestmark = pytest.mark.unit
@@ -533,3 +536,83 @@ class TestOpenRouterVisionIsAlwaysCatalogJudged:
 
         assert await resolve_use_vision() is False
         cat.accepts_images.assert_awaited_once_with("text-only-model")
+
+
+class TestJevLane:
+    """BROWSER_USE_JEV_ENABLED + a gateway key wraps the chat model in the Jev policy."""
+
+    def _jev(self, monkeypatch, *, enabled: bool, key: str | None) -> None:
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_JEV_ENABLED", enabled)
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_JEV_GATEWAY_API_KEY", key)
+        monkeypatch.setattr(
+            "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_GATEWAY_API_KEY", key
+        )
+
+    def test_enabled_with_a_key_returns_the_jev_model_over_the_chat_model(self, monkeypatch):
+        from app.services.browser.jev import JevChatModel
+        from app.services.browser.llm import build_browser_llm
+
+        _fake_browser_use_modules(monkeypatch)
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
+        self._jev(monkeypatch, enabled=True, key="vck_x")
+
+        result = build_browser_llm()
+
+        assert isinstance(result, JevChatModel)
+        assert result.text_model == "google-llm"
+
+    def test_enabled_without_a_key_falls_back_to_the_chat_model_and_says_so(self, monkeypatch):
+        from app.services.browser import llm as llm_mod
+        from app.services.browser.llm import build_browser_llm
+
+        _fake_browser_use_modules(monkeypatch)
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
+        self._jev(monkeypatch, enabled=True, key=None)
+        logger = MagicMock()
+        monkeypatch.setattr(llm_mod, "log", logger)
+
+        assert build_browser_llm() == "google-llm"
+        logger.warning.assert_called_once_with(
+            "[BROWSER] Jev enabled but not configured; chat model drives the browser",
+            error_type="BrowserUnavailableError",
+        )
+
+    def test_disabled_ignores_the_key(self, monkeypatch):
+        from app.services.browser.llm import build_browser_llm
+
+        _fake_browser_use_modules(monkeypatch)
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
+        self._jev(monkeypatch, enabled=False, key="vck_x")
+
+        assert build_browser_llm() == "google-llm"
+
+    def test_a_missing_chat_key_still_fails_loudly_under_jev(self, monkeypatch):
+        """The text helper is required: Jev alone cannot type."""
+        from app.services.browser.llm import build_browser_llm
+
+        _fake_browser_use_modules(monkeypatch)
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_API_KEY", None)
+        monkeypatch.setattr("app.services.browser.llm.settings.OPENROUTER_API_KEY", None)
+        self._jev(monkeypatch, enabled=True, key="vck_x")
+
+        with pytest.raises(BrowserUnavailableError):
+            build_browser_llm()
+
+    async def test_vision_is_off_while_jev_decides(self, monkeypatch):
+        from app.services.browser.llm import resolve_use_vision
+
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_VISION", True)
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
+        self._jev(monkeypatch, enabled=True, key="vck_x")
+
+        assert await resolve_use_vision() is False
+
+    async def test_vision_follows_the_chat_model_when_jev_is_unconfigured(self, monkeypatch):
+        from app.services.browser.llm import resolve_use_vision
+
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_VISION", True)
+        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
+        self._jev(monkeypatch, enabled=True, key=None)
+
+        assert await resolve_use_vision() is True

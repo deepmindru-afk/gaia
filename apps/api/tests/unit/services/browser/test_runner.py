@@ -1643,6 +1643,25 @@ async def test_run_hands_browser_use_exactly_the_expected_agent_keys(patch_brows
     assert set(FakeAgent.last_kwargs) == AGENT_KWARG_KEYS
 
 
+async def test_a_jev_model_is_bound_to_the_session_and_its_helper_extracts(patch_browser) -> None:
+    """Jev reads the observation off the session Browser-Use drives, gets the raw
+    task (not the takeover preamble), and its text helper is what Browser-Use
+    meters and extracts with."""
+    from app.services.browser.jev import JevChatModel
+
+    helper = object()
+    jev = MagicMock(spec=JevChatModel)
+    jev.text_model = helper
+    _, emit = _collector()
+
+    await _make_runner(emit=emit, overrides=_RunnerOverrides(llm=jev)).run("Book it")
+
+    jev.bind.assert_called_once_with(FakeAgent.last_kwargs["browser"], "Book it")
+    assert FakeAgent.last_kwargs["llm"] is jev
+    assert FakeAgent.last_kwargs["page_extraction_llm"] is helper
+    assert set(FakeAgent.last_kwargs) == AGENT_KWARG_KEYS | {"page_extraction_llm"}
+
+
 async def test_run_gives_the_agent_the_llm_it_was_constructed_with(patch_browser) -> None:
     sentinel = object()
     _, emit = _collector()

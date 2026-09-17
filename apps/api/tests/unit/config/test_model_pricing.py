@@ -20,6 +20,7 @@ from app.config.model_pricing import (
     calculate_token_cost,
     get_model_pricing,
 )
+from app.config.settings import settings
 from app.constants.llm import (
     AUX_MODEL_NAME,
     DEFAULT_MODEL_NAME,
@@ -45,7 +46,15 @@ def _fresh_wide_event() -> None:
 # belongs in MODEL_PRICING — the coverage test below is what turns a forgotten
 # rate into a red build instead of a prod log line.
 RUNTIME_MODEL_IDS = sorted(
-    {DEFAULT_MODEL_NAME, PAID_MODEL_NAME, AUX_MODEL_NAME, MEMORY_MODEL_NAME, VISION_MODEL_NAME}
+    {
+        DEFAULT_MODEL_NAME,
+        PAID_MODEL_NAME,
+        AUX_MODEL_NAME,
+        MEMORY_MODEL_NAME,
+        VISION_MODEL_NAME,
+        # The browser lane's decision model — metered from Browser-Use's history.
+        settings.BROWSER_USE_JEV_MODEL,
+    }
 )
 
 

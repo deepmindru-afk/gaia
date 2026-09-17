@@ -44,6 +44,7 @@ from app.schemas.browser import (
 )
 from app.services.browser.captions import caption_from_action_list
 from app.services.browser.exceptions import BrowserHandoffCancelled, BrowserUnavailableError
+from app.services.browser.jev import JevChatModel
 from app.services.browser.replay import create_replay_link
 from app.services.browser.screenshots import upload_step_screenshot
 from app.services.browser.session import BrowserHostSession
@@ -323,6 +324,14 @@ class BrowserTaskRunner:
                 handle_takeover=self._handle_takeover,
             ),
         }
+        if isinstance(self._llm, JevChatModel):
+            # Browser-Use hands its model rendered text; the Jev policy needs the
+            # structured observation behind it, so it reads the session directly.
+            # The raw task is its goal — the takeover preamble is chat-model prose.
+            # Its text helper is registered as the extraction model so Browser-Use
+            # meters that model's tokens under its own name (see _record_usage).
+            self._llm.bind(browser, task)
+            agent_kwargs["page_extraction_llm"] = self._llm.text_model
         self._agent = Agent(**agent_kwargs)
 
         try:

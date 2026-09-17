@@ -273,6 +273,23 @@ class CommonSettings(BaseAppSettings):
     # step, versus 1.8s at "low". Set this to have the lane's own model treated as
     # a reasoning model so the effort actually reaches the wire.
     BROWSER_USE_LLM_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] | None = None
+    # Jev "System One" decision policy (TypeSafe AI via Vercel AI Gateway).
+    # Feature flag: when on, the browser agent's per-step decision — which
+    # operation, on which observed element — is a single Jev evaluation over the
+    # page's indexed element table instead of a generative chat completion, the
+    # way browser-use/jev-ultrafast does it. The chat model configured above is
+    # kept as the text helper: it writes a field value only when Jev picks
+    # TYPE_TEXT (and a URL / takeover reason / final summary when those are
+    # picked). Screenshots are never sent to Jev, so vision is forced off.
+    # On by default; without a gateway key the lane falls back to the chat model
+    # (logged), so an unconfigured deployment keeps working.
+    BROWSER_USE_JEV_ENABLED: bool = True
+    # Vercel AI Gateway API key (a `vck_...` key; the gateway also reads it from
+    # AI_GATEWAY_API_KEY in its own SDK). Required for Jev to actually run.
+    BROWSER_USE_JEV_GATEWAY_API_KEY: str | None = None
+    BROWSER_USE_JEV_GATEWAY_BASE_URL: str = "https://ai-gateway.vercel.sh/v4/ai"
+    BROWSER_USE_JEV_MODEL: str = "typesafe-ai/jev"
+
     # Vision (screenshots to the model) is the biggest cost driver — keep it on
     # for reliability, but a deployment optimizing cost can disable it.
     BROWSER_USE_VISION: bool = True

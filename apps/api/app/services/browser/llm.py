@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any
 from app.agents.llm.model_catalog import get_openrouter_catalog
 from app.config.settings import settings
 from app.constants.llm import DEFAULT_MODEL_NAME
+from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserUnavailableError
+from app.services.browser.jev import build_jev_chat_model
+from shared.py.wide_events import log
 
 if TYPE_CHECKING:
     from browser_use.llm.base import BaseChatModel
@@ -68,12 +71,36 @@ def _resolve_browser_lane() -> tuple[str, str, str | None, str | None]:
 
 
 def build_browser_llm() -> BaseChatModel:
-    """Build the Browser-Use chat model for the configured provider.
+    """Build the model that drives the Browser-Use agent.
 
-    Raises :class:`BrowserUnavailableError` when the provider is unknown or its
-    API key is missing, so the tool reports a clean reason instead of the agent
-    failing deep inside a run.
+    With ``BROWSER_USE_JEV_ENABLED`` (the default) and a gateway key, step
+    decisions come from Jev and the configured chat model only writes text
+    (see ``services/browser/jev``). Without a gateway key the chat model drives
+    every step, so an unconfigured deployment keeps working — logged, not fatal.
+
+    Raises :class:`BrowserUnavailableError` when the chat provider is unknown or
+    its API key is missing, so the tool reports a clean reason instead of the
+    agent failing deep inside a run.
     """
+    chat_model = _build_chat_model()
+    if not settings.BROWSER_USE_JEV_ENABLED:
+        return chat_model
+    try:
+        return build_jev_chat_model(text_model=chat_model)
+    except BrowserUnavailableError as exc:
+        log.warning(
+            f"{LogTag.BROWSER} Jev enabled but not configured; chat model drives the browser",
+            error_type=type(exc).__name__,
+        )
+        return chat_model
+
+
+def jev_active() -> bool:
+    """Whether Jev, not the chat model, will make the step decisions."""
+    return bool(settings.BROWSER_USE_JEV_ENABLED and settings.BROWSER_USE_JEV_GATEWAY_API_KEY)
+
+
+def _build_chat_model() -> BaseChatModel:
     provider, model, api_key, override_base_url = _resolve_browser_lane()
     if not api_key:
         raise BrowserUnavailableError(
@@ -141,6 +168,10 @@ async def resolve_use_vision() -> bool:
     per-model within that provider.
     """
     if not settings.BROWSER_USE_VISION:
+        return False
+    # Jev consumes structured state, never screenshots; the text helper's calls
+    # carry no images either. Skip the vision message parts entirely.
+    if jev_active():
         return False
 
     # Same lane the agent will actually run on (inherits the custom endpoint when
