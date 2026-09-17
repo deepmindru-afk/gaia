@@ -8,7 +8,7 @@ import pytest
 
 from app.agents.llm.lane import AgentRole, ModelLane
 from app.agents.llm.ttft import LLMTtftCallback
-from app.agents.llm.types import LLMProviderName
+from app.constants.llm import LLMProviderName
 from app.constants.log_tags import LogTag
 from app.helpers.agent_helpers import (
     AgentIdentity,

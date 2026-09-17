@@ -16,13 +16,10 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from workos import AsyncWorkOSClient
 
-from app.api.v1.middleware import (
-    EntitlementMiddleware,
-    LoggingMiddleware,
-    PostHogRequestContextMiddleware,
-    ProfilingMiddleware,
-    WorkOSAuthMiddleware,
-)
+from app.api.v1.middleware.auth import PostHogRequestContextMiddleware, WorkOSAuthMiddleware
+from app.api.v1.middleware.entitlement import EntitlementMiddleware
+from app.api.v1.middleware.logging import LoggingMiddleware
+from app.api.v1.middleware.profiling import ProfilingMiddleware
 from app.api.v1.middleware.rate_limiter import RouterAwareSlowAPIMiddleware, limiter
 from app.api.v1.middleware.timeout import RequestTimeoutMiddleware
 from app.api.v1.middleware.unhandled_exception import UnhandledExceptionMiddleware

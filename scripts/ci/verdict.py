@@ -21,7 +21,7 @@ without anybody noticing.
 Subcommands:
     emit --lane L (--status S --summary "…" | --job-status <job.status>)
          [--finding f:l:msg [--detail-file p]]… [--advice "…"]…
-         [--out DIR] [--only-if-missing]
+         [--findings F] [--out DIR] [--only-if-missing]
         Write <out>/<lane>.json, annotate, summarise, and print the one-line
         human verdict. Always exits 0: it reports, it does not decide
         (`ci_verdict_die` in lib/log.sh is the dying call site). `--job-status`
@@ -49,10 +49,12 @@ Subcommands:
         Decide whether the base-revision run actually proved anything: every
         regression test must have FAILED — not passed, not skipped, and not
         merely errored.
-    collect --into <findings.jsonl>
+    collect --into <findings.jsonl> [--fallback <path>]
         Read mypy/tsc/ruff/biome/bandit output on stdin and append its
-        file:line findings to a JSONL that `step-outcomes` folds into the
-        lane's one verdict. Prints nothing — annotating here too would put
+        file:line findings to a JSONL that `emit` and `step-outcomes` fold
+        into the lane's one verdict. `--fallback` pins the whole output to one
+        path for a tool that names a package rather than a line (syncpack,
+        manypkg, nx). Prints nothing — annotating here too would put
         every finding on the page twice.
     step-outcomes --lane L [--findings F] [--out DIR] <name>=<outcome> [...]
         Fail a job when any of its `continue-on-error` steps did not pass,
@@ -293,6 +295,13 @@ def _verdict_parser(prog: str, *, default_lane: str) -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
+def read_findings(path: Path | None) -> list[Finding]:
+    """Read a `collect` JSONL, or nothing when the lane's tools wrote none."""
+    if path is None or not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
 class EmitUsageError(ValueError):
     """A malformed `--finding` / `--detail-file`, reported as usage, not a crash."""
 
@@ -375,6 +384,14 @@ def cmd_emit(args: list[str]) -> int:
         ),
     )
     parser.add_argument("--advice", action="append", default=[])
+    # The same JSONL `step-outcomes` reads. A lane with ONE tool has no step
+    # outcomes to fold, but its tool's findings are no less worth carrying —
+    # without this, adopting the contract meant losing the file:line.
+    parser.add_argument(
+        "--findings",
+        type=Path,
+        help="JSONL written by `verdict.py collect` — appended to any --finding given",
+    )
     # A lane that died at its cap wrote nothing; the trailing step that notices
     # must not overwrite a real verdict when the lane DID report.
     parser.add_argument("--only-if-missing", action="store_true")
@@ -402,7 +419,7 @@ def cmd_emit(args: list[str]) -> int:
         opts.lane,
         status,
         summary,
-        findings=findings,
+        findings=findings + read_findings(opts.findings),
         advice=opts.advice or derived_advice,
         out_dir=opts.out,
     )
@@ -1078,6 +1095,10 @@ def cmd_regression_proof_verdict(args: list[str]) -> int:
 # Turn mypy/tsc/ruff/biome/bandit output into findings for the lane's verdict.
 # ---------------------------------------------------------------------------
 
+# How much of a line-less tool's output the one fallback finding carries. The
+# tail, not the head: nx, syncpack and manypkg all put the verdict last.
+FALLBACK_DETAIL_LINES = 40
+
 ANNOTATION_PATTERNS = [
     # mypy: path:line: error: msg  or path:line:col: error
     re.compile(r"^(?P<file>[^:]+):(?P<line>\d+):(?:\d+:)?\s*(?:error|warning):"),
@@ -1099,10 +1120,19 @@ def cmd_collect(args: list[str]) -> int:
     """
     parser = argparse.ArgumentParser(prog="verdict.py collect")
     parser.add_argument("--into", type=Path, required=True)
+    parser.add_argument(
+        "--fallback",
+        help=(
+            "repo-relative path to pin the whole output to when NO line carried a "
+            "file:line. syncpack, manypkg and nx name a package, not a line — "
+            "without this their lanes adopt the contract and lose their reason."
+        ),
+    )
     opts = parser.parse_args(args)
 
+    text = sys.stdin.read()
     found: list[Finding] = []
-    for line in sys.stdin:
+    for line in text.splitlines():
         for pattern in ANNOTATION_PATTERNS:
             match = pattern.match(line.strip())
             if match:
@@ -1114,6 +1144,16 @@ def cmd_collect(args: list[str]) -> int:
                     }
                 )
                 break
+    if not found and opts.fallback and text.strip():
+        body = [stripped for raw in text.splitlines() if (stripped := raw.strip())]
+        found.append(
+            {
+                "file": opts.fallback,
+                "line": 1,
+                "message": body[0][:500],
+                "detail": "\n".join(body[-FALLBACK_DETAIL_LINES:]),
+            }
+        )
     opts.into.parent.mkdir(parents=True, exist_ok=True)
     with opts.into.open("a") as handle:
         handle.writelines(json.dumps(f) + "\n" for f in found)

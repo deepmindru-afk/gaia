@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.constants.db import SCHEMA_BOOTSTRAP_LOCK_ID
 from app.constants.log_tags import LogTag
 from app.db.postgresql import (
-    SCHEMA_BOOTSTRAP_LOCK_ID,
     Base,
     _adapt_url_for_asyncpg,
     _ensure_added_columns,

@@ -1,6 +1,50 @@
+from enum import StrEnum
 from typing import Any
 
-from app.agents.llm.types import DevModelOption, LLMProviderName
+from typing_extensions import TypedDict
+
+
+class LLMProviderName(StrEnum):
+    """Logical provider names, keying PROVIDER_MODELS and PROVIDER_PRIORITY.
+
+    Also the value of the provider configurable that picks a lane per request.
+    """
+
+    GEMINI = "gemini"
+    OPENROUTER = "openrouter"
+    CUSTOM = "custom"
+
+
+class LLMProviderKey(StrEnum):
+    """Lazy-loader registry keys.
+
+    Single source of truth for the @lazy_provider names and the lookup in
+    _get_available_providers.
+    """
+
+    GEMINI = "gemini_llm"
+    OPENROUTER = "openrouter_llm"
+    CUSTOM = "custom_llm"
+
+
+class DevModelOption(TypedDict):
+    """One entry of the DEV-ONLY model menu (``DEV_MODEL_OPTIONS`` below).
+
+    A TypedDict, not a model: it is a fixed in-process shape that is only ever
+    spread onto a LangGraph configurable, so it crosses no validation boundary.
+
+    ``model_kwargs`` and ``reasoning``'s effort payload stay ``dict[str, Any]``
+    because that is exactly how ``ChatOpenRouter`` declares the fields they are
+    bound to — free-form OpenRouter request params, not a shape we own.
+    """
+
+    #: Keyed the same as ``PROVIDER_MODELS``/``PROVIDER_PRIORITY`` — the enum is
+    #: what stops the menu naming a lane the client cannot resolve.
+    provider: LLMProviderName
+    model: str
+    model_kwargs: dict[str, Any] | None
+    reasoning: bool
+
 
 # LangChain's field-resolution keys, written at TWO definition sites (Gemini's
 # ConfigurableField and OpenRouter's) and produced at a third (ModelLane.binding_keys);

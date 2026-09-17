@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.models.chat_models import BOT_CONVERSATION_SOURCES, ConversationSource
+from app.constants.chat import BOT_CONVERSATION_SOURCES, ConversationSource
 
 # Dead-letter exchange every outbound work queue routes failed messages to.
 OUTBOUND_DLX = "outbound.dlx"

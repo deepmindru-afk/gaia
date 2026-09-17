@@ -60,7 +60,6 @@ from app.agents.llm.client import (
     register_llm_providers,
 )
 from app.agents.llm.exceptions import LLM_FALLBACK_EXCEPTIONS, LLMNotConfiguredError
-from app.agents.llm.types import LLMProviderName
 from app.constants.llm import (
     AUX_MODEL_NAME,
     DEFAULT_GEMINI_MODEL_NAME,
@@ -73,6 +72,7 @@ from app.constants.llm import (
     OPENROUTER_MAX_OUTPUT_TOKENS,
     PROVIDER_NAME_METADATA_KEY,
     UNKNOWN_MODEL_NAME,
+    LLMProviderName,
 )
 from app.core.lazy_loader import ProviderRegistry
 from app.services.llm_metering import LLMCallContext

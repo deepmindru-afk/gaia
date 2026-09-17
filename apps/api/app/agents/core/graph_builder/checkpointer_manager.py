@@ -22,8 +22,8 @@ from psycopg.rows import DictRow, TupleRow
 from psycopg_pool import AsyncConnectionPool
 
 from app.config.settings import settings
+from app.constants.db import LANGGRAPH_SETUP_LOCK_ID
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider, providers
-from app.db.postgresql import LANGGRAPH_SETUP_LOCK_ID
 
 
 class CheckpointerManager:
