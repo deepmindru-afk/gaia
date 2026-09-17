@@ -115,6 +115,28 @@ _cpu_slots_total() {
   printf '%s' "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
 }
 
+# How many host tokens ONE of `shards` concurrent consumers may take: the
+# full nproc-2 appetite divided by the concurrency, never below 1. Without the
+# division, N shards that each want nproc-2 (the mutation lane's default) want
+# N*(nproc-2) of a pool that holds nproc — they starve each other for
+# GAIA_CPU_SLOTS_TIMEOUT, fail open, and all run anyway, oversubscribing the
+# box by Nx (measured 2026-09-16: two mutation shards at nproc-2 each waited
+# 600s, ran fail-open, and their 28 workers on 16 threads pushed a mocked
+# baseline test past its 45s timeout and red'd the lane). Sized to nproc the
+# shards COEXIST: 2 shards x 7 = 14 <= 16, 4 x 3 = 12 <= 16, and a lone shard
+# keeps the full nproc-2.
+cpu_slots_share() {
+  local nproc="${1:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)}"
+  local shards="${2:-1}"
+  _cpu_slots_is_uint "$shards" || shards=1
+  [ "$shards" -lt 1 ] && shards=1
+  local budget
+  budget=$(( nproc > 3 ? nproc - 2 : 1 ))
+  budget=$(( budget / shards ))
+  [ "$budget" -lt 1 ] && budget=1
+  printf '%s' "$budget"
+}
+
 _cpu_slots_jitter() { awk -v r="$RANDOM" 'BEGIN { srand(r); printf "%.2f", 1 + rand()*2 }'; }
 
 # Chain onto any existing EXIT trap instead of clobbering it — cmd_shard and

@@ -13,7 +13,11 @@ Three subcommands:
       Read a coverage DB and emit the map.
 
   fetch
-      Download the newest map artifact for this slice into $MAP_DIR.
+      Download the newest AVAILABLE map artifact for this slice into $MAP_DIR:
+      the newest trusted master run is tried first, then each older one in
+      order until a map lands. One run whose artifact is missing (deleted,
+      expired, or a recording that did not upload) must not force the whole
+      slice.
 
   select
       Diff the PR against its merge-base and write
@@ -534,7 +538,7 @@ def cmd_select(args: argparse.Namespace) -> int:
 
 
 def cmd_fetch(args: argparse.Namespace) -> int:
-    """Download the newest map artifact for this slice into $MAP_DIR.
+    """Download the newest AVAILABLE map artifact for this slice into $MAP_DIR.
 
     Maps are uploaded as workflow artifacts by master / dispatch runs (main.yml
     "Upload test impact map"), not actions/cache: a pull_request run may only
@@ -542,6 +546,15 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     map recorded by a master run was invisible to the PR — measured: four maps
     in the cache, every lane "ran ALL". Artifacts are fetched by run, which any
     job with actions:read may do.
+
+    The trusted runs are tried newest-first and the search stops at the first
+    one whose artifact downloads — the listing's newest entry is not always the
+    newest run that HAS a map (observed: a stale API page resolving to a
+    3-week-old run whose map artifacts were gone turned every PR slice into a
+    full run). A run that is the newest overall but missing its map must not
+    waste the fetch; the next-newest is a perfectly good map (selection is by
+    file, so age within the listing matters only for files that did not exist
+    then — and every one of those shapes widens to ALL elsewhere).
 
     Every failure mode leaves no map, and `select` then runs the whole slice.
     """
@@ -561,16 +574,25 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     map_dir = Path(os.environ.get("MAP_DIR", DEFAULT_MAP_DIR))
     map_dir.mkdir(parents=True, exist_ok=True)
 
-    run = _newest_trusted_run(repo)
-    if run is None:
+    runs = _trusted_runs(repo)
+    if not runs:
         print(f"test impact ({slice_name}): no trusted master run with a map yet")
         return 0
-    run_id, created = run
-    return _download_map(repo, artifact, run_id, created, map_dir, slice_name)
+    for run_id, created in runs:
+        if _download_map(repo, artifact, run_id, map_dir):
+            print(f"test impact ({slice_name}): map from run {run_id} ({created})")
+            return 0
+    newest_run_id = runs[0][0]
+    print(
+        f"::warning::test impact ({slice_name}): no {artifact} in any of the "
+        f"{len(runs)} newest trusted master runs (newest {newest_run_id}); "
+        "running the whole slice"
+    )
+    return 0
 
 
-def _newest_trusted_run(repo: str) -> tuple[int, str] | None:
-    """The newest successful push-to-master run of main.yml, or None.
+def _trusted_runs(repo: str) -> list[tuple[int, str]]:
+    """Successful push-to-master runs of main.yml, newest first.
 
     Resolved by RUN, never by the artifact's ``head_branch`` string. A branch
     name is not provenance: a fork can open a PR from a branch it named
@@ -583,19 +605,22 @@ def _newest_trusted_run(repo: str) -> tuple[int, str] | None:
     So: ask the API for runs of main.yml that are ``event=push`` on ``master``
     and ``status=success``, and then re-check each candidate's own event and
     head repository, because query parameters are a filter, not a guarantee.
+    The whole filtered list is returned, not just the first entry: callers
+    walk it until one run's map artifact actually downloads.
     """
     listing = _gh_json(
         f"repos/{repo}/actions/workflows/main.yml/runs"
         "?branch=master&event=push&status=success&per_page=20"
     )
+    runs: list[tuple[int, str]] = []
     for run in (listing or {}).get("workflow_runs", []):
         if run.get("event") == "pull_request":
             continue
         head_repo = (run.get("head_repository") or {}).get("full_name")
         if head_repo != repo:
             continue
-        return int(run["id"]), str(run.get("created_at", ""))
-    return None
+        runs.append((int(run["id"]), str(run.get("created_at", ""))))
+    return runs
 
 
 def _gh_json(endpoint: str) -> dict[str, Any] | None:
@@ -612,8 +637,14 @@ def _gh_json(endpoint: str) -> dict[str, Any] | None:
 
 
 def _download_map(
-    repo: str, artifact: str, run_id: int, created: str, map_dir: Path, slice_name: str
-) -> int:
+    repo: str, artifact: str, run_id: int, map_dir: Path
+) -> bool:
+    """Try to land <artifact>.json from ``run_id`` into ``map_dir``.
+
+    Returns True when the artifact downloaded to a non-empty file. A missing
+    or empty artifact is NOT an error — the caller walks the next-newest
+    trusted run, and only if none lands does the slice fall back to ALL.
+    """
     proc = subprocess.run(
         [
             "gh",
@@ -633,14 +664,9 @@ def _download_map(
     )
     landed = map_dir / f"{artifact}.json"
     if proc.returncode == 0 and landed.is_file() and landed.stat().st_size > 0:
-        print(f"test impact ({slice_name}): map from run {run_id} ({created})")
-        return 0
+        return True
     landed.unlink(missing_ok=True)
-    print(
-        f"::warning::test impact ({slice_name}): could not download {artifact} "
-        f"from run {run_id}; running the whole slice"
-    )
-    return 0
+    return False
 
 
 # ── cli ──────────────────────────────────────────────────────────────────────

@@ -24,7 +24,8 @@
 #   matrix  none directly; delegates the diff to `changes.sh files py`.
 #   plan    GITHUB_OUTPUT (stdout-only when unset).
 #   shard   GROUP (required, compact JSON array of {module,testfiles,ranges});
-#           SHARD_LOG (shard.log), GITHUB_STEP_SUMMARY.
+#           SHARDS_TOTAL (how many shards the plan emitted, for the host-CPU
+#           share; defaults to 1), SHARD_LOG (shard.log), GITHUB_STEP_SUMMARY.
 #   module  MUTMUT_WORKDIR_BASE, MUTMUT_MAX_CHILDREN, MUTMUT_KEEP_WORKDIR.
 #   local   MUTATION_JOBS, MUTATION_CPU_BUDGET, MUTMUT_MAX_CHILDREN.
 set -euo pipefail
@@ -214,7 +215,15 @@ for entry in entries:
   # explicit override for the local runner.
   local NPROC BUDGET SLOTS
   NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
-  BUDGET="$(( NPROC > 3 ? NPROC - 2 : 1 ))"
+  # This shard's SHARE of the box, not the whole appetite: the lane fans out
+  # to SHARDS_TOTAL shards (the plan's count, passed through the workflow's
+  # matrix env), and each taking its full nproc-2 would want N*(nproc-2) of a
+  # pool that holds nproc — they starve each other for GAIA_CPU_SLOTS_TIMEOUT,
+  # fail open, and all run anyway, oversubscribing the box by Nx. Sizing for
+  # the concurrency makes the shards coexist: measured 2026-09-16, the pair at
+  # nproc-2 each waited 600s then ran fail-open and a mocked baseline test
+  # blew its 45s cap. cpu_slots_share leaves the lone-shard case unchanged.
+  BUDGET="$(cpu_slots_share "$NPROC" "${SHARDS_TOTAL:-1}")"
   export MUTMUT_MAX_CHILDREN="${MUTMUT_MAX_CHILDREN:-$BUDGET}"
   # Acquire tokens for the workers we will ACTUALLY spawn, not the default
   # budget: an explicit MUTMUT_MAX_CHILDREN override (e.g. a local runner) can

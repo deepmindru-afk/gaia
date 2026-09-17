@@ -271,7 +271,14 @@ jobs:
     needs: [select-runner, detect]
     if: needs.detect.outputs.has_python == 'true'
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
-    timeout-minutes: 22
+    # 45, not 22: this bounds a HUNG job, and a PR that touches a file no test
+    # in the slice covers (or that falls back when the impact map is missing)
+    # legitimately runs the slice's whole suite. A healthy full slice finishes
+    # in minutes (whole suite 183s at 16 workers), but on 2026-09-16 a loaded
+    # box (mutation shards starved then fail-open + both push workflows
+    # overlapping) crept past 22m without finishing; 45 bounds a hang while
+    # leaving a saturated fallback room to land.
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read # `test_impact.py fetch` reads the map artifact of a master run

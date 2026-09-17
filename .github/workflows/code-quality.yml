@@ -1221,6 +1221,11 @@ jobs:
         # inline ${{ }} in a run block is a shell-injection seam regardless.
         env:
           GROUP: ${{ matrix.group }}
+          # Whole-lane concurrency: the plan's count (<= max-parallel above),
+          # so each shard sizes its host-CPU appetite to its share of the box
+          # instead of all of them wanting nproc-2 at once (see
+          # lib/cpu-slots.sh cpu_slots_share).
+          SHARDS_TOTAL: ${{ needs.test-mutation-plan.outputs.count }}
         run: bash scripts/ci/mutation.sh shard
       - name: Upload shard log
         # Belt and braces for the diagnosis path: runs even when the step

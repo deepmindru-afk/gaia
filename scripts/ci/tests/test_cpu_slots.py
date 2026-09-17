@@ -63,6 +63,36 @@ def _live_sum(holders: Path) -> int:
     return total
 
 
+# ── worker-share arithmetic (pure, no lock, runs everywhere) ────────────────
+
+
+def test_share_gives_a_lone_shard_the_full_appetite() -> None:
+    # A single shard keeps nproc-2 (two cores left for the OS and docker) —
+    # the pre-concurrency behavior, unchanged.
+    r = _run("echo $(cpu_slots_share 16 1) $(cpu_slots_share 8 1)", {})
+    assert r.returncode == 0
+    assert r.stdout.split() == ["14", "6"]
+
+
+def test_share_divides_the_box_between_concurrent_shards() -> None:
+    # Two shards at nproc-2 each would want 28 of a 16-token pool: they starve
+    # each other for the timeout, fail open, and run anyway — the oversubscribed
+    # box that blew the mutation lane's baseline on 2026-09-16. The share keeps
+    # them civil: 2 x 7 = 14 <= 16, 4 x 3 = 12 <= 16.
+    r = _run("echo $(cpu_slots_share 16 2) $(cpu_slots_share 16 4)", {})
+    assert r.returncode == 0
+    assert r.stdout.split() == ["7", "3"]
+
+
+def test_share_never_drops_below_one_worker() -> None:
+    # A pathological concurrency (more shards than cores) must still leave each
+    # shard one worker, and a garbage SHARDS_TOTAL must not divide by zero or
+    # treat the pool as free.
+    r = _run("echo $(cpu_slots_share 4 8) $(cpu_slots_share 16 nope) $(cpu_slots_share 16 0)", {})
+    assert r.returncode == 0
+    assert r.stdout.split() == ["1", "14", "14"]
+
+
 # ── fail-open guards (no lock needed, run everywhere) ───────────────────────
 
 

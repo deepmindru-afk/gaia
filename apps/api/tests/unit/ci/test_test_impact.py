@@ -490,3 +490,81 @@ def test_fetch_script_disabled_downloads_nothing(tmp_path: Path) -> None:
     assert "disabled by TEST_IMPACT_ENABLED=0" in proc.stdout
     # GITHUB_REPOSITORY is unset: any attempt at `gh api` would have failed.
     assert not (tmp_path / ".test-impact-map").exists()
+
+
+def _fake_run(run_id: int, created: str) -> dict:
+    """One workflow_run-shaped dict for `_trusted_runs` to accept."""
+    return {
+        "id": run_id,
+        "created_at": created,
+        "event": "push",
+        "head_branch": "master",
+        "head_repository": {"full_name": "theexperiencecompany/gaia"},
+    }
+
+
+def test_fetch_walks_trusted_runs_until_a_map_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A run whose map artifact is missing must not fail the fetch.
+
+    The newest trusted master run is tried first; when its artifact does not
+    exist (deleted, expired, or a recording that never uploaded), the next
+    newest run's map is used instead of widening the slice to ALL. This is the
+    regression that made unit-b run everything on 2026-09-16: the API served a
+    3-week-old run as its newest entry and that run's maps were long gone.
+    """
+    newest, older = 33135783419, 35056052489
+    monkeypatch.setattr(
+        ti,
+        "_gh_json",
+        lambda _endpoint: {
+            "workflow_runs": [
+                _fake_run(newest, "2026-08-28T00:00:00Z"),
+                _fake_run(older, "2026-09-16T04:33:18Z"),
+            ]
+        },
+    )
+    tried: list[int] = []
+
+    def fake_download(_repo, _artifact, run_id, _map_dir) -> bool:
+        tried.append(run_id)
+        return run_id == older
+
+    monkeypatch.setattr(ti, "_download_map", fake_download)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "theexperiencecompany/gaia")
+    monkeypatch.setenv("MAP_DIR", str(tmp_path))
+
+    assert ti.main(["fetch", "--slice", "unit-b"]) == 0
+    assert tried == [newest, older]
+    assert f"map from run {older}" in capsys.readouterr().out
+
+
+def test_fetch_warns_only_when_every_trusted_run_lacks_a_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    newest, older = 33135783419, 35056052489
+    monkeypatch.setattr(
+        ti,
+        "_gh_json",
+        lambda _endpoint: {
+            "workflow_runs": [
+                _fake_run(newest, "2026-08-28T00:00:00Z"),
+                _fake_run(older, "2026-09-16T04:33:18Z"),
+            ]
+        },
+    )
+    monkeypatch.setattr(ti, "_download_map", lambda *_args: False)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "theexperiencecompany/gaia")
+    monkeypatch.setenv("MAP_DIR", str(tmp_path))
+
+    assert ti.main(["fetch", "--slice", "unit-a"]) == 0
+    out = capsys.readouterr().out
+    assert (
+        f"no test-impact-map-unit-a in any of the 2 newest trusted master runs (newest {newest})"
+        in out
+    )
+    assert "running the whole slice" in out
+    # The failed attempts must not leave a half-downloaded map behind: `select`
+    # keys off the file's presence and a stale/empty blob would be trusted.
+    assert not (tmp_path / "test-impact-map-unit-a.json").exists()
