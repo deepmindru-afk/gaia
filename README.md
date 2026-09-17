@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="apps/desktop/resources/icons/512x512.png" alt="GAIA" width="96" />
+<img src="apps/desktop/resources/icons/512x512.png" alt="GAIA" width="128" />
 
 # GAIA
 
