@@ -8,6 +8,9 @@ from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_config
 
+from app.constants.hil import HIL_RESUME_CONFIG_KEY
+from app.utils.timezone import AgentRunConfig
+
 #: One entry of an agent's middleware stack.
 #:
 #: ``AgentMiddleware``'s ``StateT`` is erased here because a stack is genuinely
@@ -209,7 +212,7 @@ def current_run_config() -> RunnableConfig:
         return RunnableConfig()
 
 
-def agent_configurable(config: RunnableConfig | None) -> AgentConfigurable:
+def agent_configurable(config: AgentRunConfig | None) -> AgentConfigurable:
     """The GAIA-owned keys of a run's ``configurable``, typed.
 
     The single way to READ a ``configurable``. Every consumer used to inline
@@ -294,3 +297,21 @@ class SilentRunResult:
     #: is the error itself, or why the wait for it gave up.
     executor_failed: bool = False
     executor_failure: str | None = None
+
+
+# What survives a queue hop / HIL resume. Every GAIA-owned configurable key is
+# safe to carry by construction, so AgentConfigurable IS the allowlist: the
+# hand-maintained list this replaces had fallen behind it and was dropping the
+# OpenRouter provider pin, plan_type, root_request_id, langfuse_trace_id and the
+# HIL intent judge's user_messages — a queued run was not a smaller run, it was a
+# different one. What must still be filtered is LangGraph's own runtime keys
+# (checkpoint_ns, checkpoint_id, __pregel_*, Runtime objects), which are exactly
+# the keys NOT declared on AgentConfigurable. Derived from the TypedDict at
+# import time, so it belongs beside it: app/constants/ is a leaf, and reaching
+# agent_models from there dragged langchain into every constants importer.
+CONFIGURABLE_OWNED_KEYS: frozenset[str] = frozenset(AgentConfigurable.__annotations__)
+
+# Owned keys that are nonetheless scoped to ONE dispatch and must not ride along
+# to the next: hil_resume_replay means "this exact call is a replay", so carrying
+# it would make a fresh run probe its subagent threads for interrupts it cannot have.
+CONFIGURABLE_RUN_SCOPED_KEYS: frozenset[str] = frozenset({HIL_RESUME_CONFIG_KEY})

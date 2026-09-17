@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from typing_extensions import TypedDict
 
 from app.constants.chat import MAX_MESSAGE_LENGTH
-from app.services.storage import SAFE_PATH_ID_PATTERN
+from app.constants.vfs import SAFE_PATH_ID_PATTERN
 
 SafePathId = Annotated[str, StringConstraints(pattern=SAFE_PATH_ID_PATTERN)]
 

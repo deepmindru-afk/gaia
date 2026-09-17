@@ -5,6 +5,7 @@ on actual behaviour. If a primitive were deleted, the matching test would fail.
 """
 
 from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -18,6 +19,7 @@ from app.utils.timezone import (
     ResolvedTimezone,
     Timezone,
     TimezoneSource,
+    _known_zone_names,
     format_local_time,
     home_timezone_from_config,
     is_valid_timezone,
@@ -201,6 +203,24 @@ class TestTryParseEdges:
     @pytest.mark.parametrize("bad", ["+24:00", "+23:60", "-24:00", "+00:60", "+99:99"])
     def test_out_of_range_offset_is_not_a_zone(self, bad: str) -> None:
         assert Timezone.try_parse(bad) is None
+
+    def test_a_name_too_long_for_the_tz_database_is_not_a_zone(self) -> None:
+        """ZoneInfo probes the filesystem, which refuses a 300-char name with OSError."""
+        assert Timezone.try_parse("A" * 300) is None
+
+    def test_the_known_zone_list_is_read_from_the_tz_database(self) -> None:
+        """The list is computed once; a cleared cache must rebuild it from the database."""
+        _known_zone_names.cache_clear()
+        assert "Europe/Berlin" in _known_zone_names()
+        assert _known_zone_names() is _known_zone_names()
+
+    def test_a_read_failure_on_a_real_zone_is_not_hidden_as_unknown(self) -> None:
+        """A broken tz database is an outage, not a user typing an unknown zone."""
+        with (
+            patch("app.utils.timezone.ZoneInfo", side_effect=OSError("tzdata unreadable")),
+            pytest.raises(OSError),
+        ):
+            Timezone.try_parse("Europe/Berlin")
 
     @pytest.mark.parametrize(
         ("raw", "expected"),

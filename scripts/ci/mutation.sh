@@ -41,6 +41,56 @@ source "$(dirname "$0")/lib/cpu-slots.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+_nproc() { nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2; }
+
+# How many mutant workers ONE mutmut run forks, and therefore exactly how many
+# host CPU tokens the shard that drives it takes.
+#
+# Half the threads (8 on the 16-thread box), not mutmut's own os.cpu_count()
+# default and not the old nproc-2. Measured 2026-09-17: at nproc-2 = 14 a shard
+# could not fit beside another one in the then 16-token pool, so the shards ran
+# strictly one at a time while 19 listeners waited on an otherwise idle box
+# (loadavg 7). The smaller shard is also what keeps a mutant honest under load:
+# when many un-gated jobs overlapped and the loadavg reached 75, mutants started
+# hitting the then 45 s per-test timeout and one module took 138 s where it
+# takes 29 s without the overload. Eight workers is the size that measured clean
+# — two concurrent shards (16 workers) held the loadavg at 5-10 with no
+# timeouts, while four (32 workers, the GAIA_CPU_TOKENS=32 stopgap) reached
+# loadavg 34 and still timed out (run #1202, shards 1/6 and 3/6). The pool
+# default in lib/cpu-slots.sh (nproc * 3 / 2) is what limits how many overlap.
+_mutant_workers() {
+  local threads
+  threads="$(_nproc)"
+  printf '%s' "$(( threads > 1 ? threads / 2 : 1 ))"
+}
+
+# Where the disposable copies of app/ + tests/ + scripts/ live.
+#
+# tmpfs when the machine offers one: a module's tree is ~43 MB over 2100 files
+# and mutmut writes a whole mutants/ tree beside it, so on a spinning-disk or
+# busy SSD those writes, not the mutation work, set the pace. Falls back to
+# apps/api on machines without tmpfs (macOS) or when it is nearly full, so a
+# constrained box degrades in speed rather than failing. The shard base and
+# every module workdir MUST resolve here identically — `cp -al` cannot link
+# across filesystems.
+_workdir_base() {
+  if [ -n "${MUTMUT_WORKDIR_BASE:-}" ]; then
+    printf '%s' "$MUTMUT_WORKDIR_BASE"
+    return
+  fi
+  if [ -d /dev/shm ] && [ -w /dev/shm ]; then
+    # Need room for the base copy plus every live mutants/ tree; 1 GiB is a
+    # comfortable ceiling now that the per-module copies are hardlinks.
+    local free_kb
+    free_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2{print $4}')"
+    if [ -n "${free_kb:-}" ] && [ "$free_kb" -gt 1048576 ]; then
+      printf '%s' /dev/shm
+      return
+    fi
+  fi
+  printf '%s' "$REPO_ROOT/apps/api"
+}
+
 # Emit the mutation-check matrix: every changed app module + its test file.
 #
 # Used by the test-mutation lane (code-quality.yml) to run mutation testing
@@ -169,7 +219,16 @@ cmd_shard() {
   # to iterate and the shard would exit 0 having mutated nothing — a false green,
   # which is the one outcome this gate must never produce.
   SHARD_TSV="$(mktemp)"
-  trap 'rm -f "$SHARD_TSV"' EXIT
+  SHARD_BASE=""
+  # Explicit ifs, not `&&`: an EXIT trap whose last command returns 1 clobbers
+  # the script's exit status, and this shard's status IS the gate's verdict.
+  _shard_cleanup() {
+    rm -f "$SHARD_TSV"
+    if [ -n "$SHARD_BASE" ]; then
+      rm -rf "$SHARD_BASE"
+    fi
+  }
+  trap _shard_cleanup EXIT
   if ! GROUP="$GROUP" python3 -c '
 import json
 import os
@@ -206,22 +265,41 @@ for entry in entries:
 
   # This shard's CPU appetite: mutmut forks one mutant worker per child, and its
   # own default is os.cpu_count() — 16 on the box, so four shards at max-parallel
-  # would spawn 64 workers on 16 threads. Bound each shard to nproc-2 (the same
-  # budget cmd_local uses; two cores left for the OS and docker) AND take that
-  # many host tokens for the run, so the mutation shards queue against the box's
-  # physical-core budget instead of thrashing it and the test-python/build lanes.
-  # Fail-open and a no-op off the self-hosted box; MUTMUT_MAX_CHILDREN honours an
-  # explicit override for the local runner.
-  local NPROC BUDGET SLOTS
-  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
-  BUDGET="$(( NPROC > 3 ? NPROC - 2 : 1 ))"
-  export MUTMUT_MAX_CHILDREN="${MUTMUT_MAX_CHILDREN:-$BUDGET}"
-  # Acquire tokens for the workers we will ACTUALLY spawn, not the default
-  # budget: an explicit MUTMUT_MAX_CHILDREN override (e.g. a local runner) can
-  # exceed BUDGET, and taking only BUDGET tokens would let the shard run more
-  # workers than it holds slots for, weakening the host cap.
-  SLOTS="$MUTMUT_MAX_CHILDREN"; [ "$SLOTS" -ge "$BUDGET" ] || SLOTS="$BUDGET"
+  # would spawn 64 workers on 16 threads. Bound each shard to _mutant_workers
+  # (nproc/2) AND take EXACTLY that many host tokens, so the shard's weight in
+  # the governor is the number of workers it really runs — no more (which used
+  # to make two shards mutually exclusive) and no less (which would let it
+  # outrun the tokens it holds). An explicit MUTMUT_MAX_CHILDREN is honoured as
+  # given, in both places: it is a smaller appetite as often as a larger one, and
+  # rounding it back up to a fixed budget is what made a deliberately small local
+  # override still hold 14 tokens.
+  export MUTMUT_MAX_CHILDREN="${MUTMUT_MAX_CHILDREN:-$(_mutant_workers)}"
+  local SLOTS="$MUTMUT_MAX_CHILDREN"
+  # Printed, not implied: how heavy a shard decided to be is otherwise invisible
+  # from the lane's output, and "the shards ran one at a time" took a week to
+  # notice for exactly that reason.
+  echo "mutation shard: $MUTMUT_MAX_CHILDREN mutant worker(s), $SLOTS host CPU token(s)"
   cpu_slots_acquire "$SLOTS"
+
+  # ONE real copy of app/ + tests/ + scripts/ for the whole shard; each module
+  # below gets a `cp -al` hardlink copy of it. A 40-module shard used to copy
+  # those 43 MB / 2100 files 40 times over (and mutmut copied them a second time
+  # into mutants/, which mutmut_hardlink_copy now links as well).
+  # Named .mutation-* so apps/api/.gitignore covers a SIGKILLed run's leftovers.
+  SHARD_BASE="$(_workdir_base)/.mutation-base-$$"
+  rm -rf "$SHARD_BASE"
+  mkdir -p "$SHARD_BASE"
+  if ( cd "$REPO_ROOT/apps/api" &&
+       cp -r app tests scripts "$SHARD_BASE/" &&
+       cp -f pyproject.toml pytest.ini "$SHARD_BASE/" ); then
+    export MUTMUT_SHARD_BASE="$SHARD_BASE"
+  else
+    # Not fatal: cmd_module copies for itself when it is handed no base. Loud,
+    # because the shard then pays the old per-module copy and nothing else says so.
+    echo "::warning::mutation shard could not stage its base copy in $SHARD_BASE — each module will copy for itself"
+    rm -rf "$SHARD_BASE"
+    SHARD_BASE=""
+  fi
 
   rc=0
   failed_modules=()
@@ -358,7 +436,7 @@ print(
   # of magnitude and thrash — split one budget between them instead. Two cores
   # are left for the OS and docker. Most runs touch one or two modules, so the
   # weighting favours mutmut's children over module fan-out.
-  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+  NPROC="$(_nproc)"
   BUDGET="${MUTATION_CPU_BUDGET:-$(( NPROC > 3 ? NPROC - 2 : 1 ))}"
   JOBS="${MUTATION_JOBS:-$MODULE_COUNT}"
   [ "$JOBS" -gt 4 ] && JOBS=4
@@ -507,38 +585,17 @@ EOF
     exit 1
   fi
 
+  # The same worker budget a shard would hand down, so `mutation.sh module` run
+  # by hand does not silently fall back to mutmut's own os.cpu_count() default
+  # (16 on the box) and swamp whatever else is on the machine.
+  export MUTMUT_MAX_CHILDREN="${MUTMUT_MAX_CHILDREN:-$(_mutant_workers)}"
+
   # Per-invocation workdir: parallel-safe isolation for the config swap, the
   # mutants/ dir, and the pytest run. Absolute path: the trap runs after
   # `cd "$WORKDIR"`, so a relative path would delete the wrong directory.
   #
-  # Placed on tmpfs when the machine offers one. Each invocation copies ~65 MB
-  # of app + tests + scripts and then has mutmut write a whole mutants/ tree
-  # beside it; with several modules in flight those writes, not the mutation
-  # work, set the pace. /dev/shm keeps all of it in RAM. Falls back to the
-  # working directory on machines without tmpfs (macOS) or when it is nearly
-  # full, so a constrained box degrades in speed rather than failing.
-  #
-  # Real copies, not hardlinks (`cp -al`): the changed-line scoping below
-  # rewrites $MODULE in place, and a hardlink shares its inode with the file in
-  # the developer's checkout — the pragma stamping would edit the real source.
-  # Not symlinks either: a symlinked workdir/app resolves to the SAME inode as
-  # apps/api/app — if both ever land on sys.path, CPython raises "cannot load
-  # module more than once per process" when the same file is imported under two
-  # paths (observed in CI for app.db.chroma).
-  WORKDIR_BASE="${MUTMUT_WORKDIR_BASE:-}"
-  if [ -z "$WORKDIR_BASE" ]; then
-    WORKDIR_BASE="$(pwd)"
-    if [ -d /dev/shm ] && [ -w /dev/shm ]; then
-      # Need room for the copy plus mutmut's mutants/ tree; 1 GiB is a
-      # comfortable ceiling for a single module.
-      SHM_FREE_KB="$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2{print $4}')"
-      if [ -n "${SHM_FREE_KB:-}" ] && [ "$SHM_FREE_KB" -gt 1048576 ]; then
-        WORKDIR_BASE=/dev/shm
-      fi
-    fi
-  fi
   # Named .mutation-$$ so apps/api/.gitignore covers a SIGKILLed run's leftovers.
-  WORKDIR="$WORKDIR_BASE/.mutation-$$"
+  WORKDIR="$(_workdir_base)/.mutation-$$"
 
   # Phase tracking.
   #
@@ -576,15 +633,38 @@ EOF
   # is what .mutation-*/ in apps/api/.gitignore covers.)
   trap 'exit 143' TERM INT
   _phase "copy workdir"
-  mkdir -p "$WORKDIR"
-  cp -r app "$WORKDIR/app"
-  cp -r tests "$WORKDIR/tests"
-  cp -r scripts "$WORKDIR/scripts"
-  cp -f pyproject.toml "$WORKDIR/pyproject.toml"
-  # pytest.ini carries asyncio_mode=auto. Under apps/api the workdir found it by
-  # walking up; under /dev/shm there is nothing above, and without it every
-  # async test fails with "async def functions are not natively supported".
-  cp -f pytest.ini "$WORKDIR/pytest.ini"
+  # A shard stages ONE real copy and every module hardlinks it (`cp -al`), which
+  # costs directories and inodes instead of 43 MB per module. Run standalone
+  # there is no base, and the real copy happens here as it always did.
+  #
+  # Never symlinks: a symlinked workdir/app resolves to the SAME inode as
+  # apps/api/app — if both ever land on sys.path, CPython raises "cannot load
+  # module more than once per process" when the same file is imported under two
+  # paths (observed in CI for app.db.chroma).
+  if [ -n "${MUTMUT_SHARD_BASE:-}" ] && [ -d "${MUTMUT_SHARD_BASE:-}" ] &&
+     mkdir -p "$WORKDIR" && cp -al "$MUTMUT_SHARD_BASE/." "$WORKDIR/" 2> /dev/null; then
+    # The two files this run WRITES must not be shared with the shard's base:
+    # pyproject.toml is rewritten just below with this module's [tool.mutmut],
+    # and the module under test is the mutation target. Writing through a
+    # hardlink would hand every other module in the shard this module's config
+    # and a mutated source file. rm-then-cp, not `cp --remove-destination`
+    # (GNU-only) and not plain `cp -f` (which writes straight through the link).
+    for private in pyproject.toml "$MODULE"; do
+      rm -f "$WORKDIR/$private"
+      cp "$private" "$WORKDIR/$private"
+    done
+  else
+    rm -rf "$WORKDIR"
+    mkdir -p "$WORKDIR"
+    cp -r app "$WORKDIR/app"
+    cp -r tests "$WORKDIR/tests"
+    cp -r scripts "$WORKDIR/scripts"
+    cp -f pyproject.toml "$WORKDIR/pyproject.toml"
+    # pytest.ini carries asyncio_mode=auto. Under apps/api the workdir found it
+    # by walking up; under /dev/shm there is nothing above, and without it every
+    # async test fails with "async def functions are not natively supported".
+    cp -f pytest.ini "$WORKDIR/pytest.ini"
+  fi
   cd "$WORKDIR"
 
   # mutmut 3.x scopes mutation and test selection only via config — point both
@@ -596,11 +676,33 @@ EOF
   # weakness (measured: app/agents/tools/core/retrieval.py reached 186 of 348
   # mutants in CI with 33 timeouts, and completes in 76s with zero on a
   # developer machine). The whole hermetic suite runs in under 300s with xdist,
-  # so a single test in a per-mutant selection needs seconds; 45 leaves ~45x
-  # headroom while capping a hang at a fifteenth of what it used to cost.
+  # so a single test in a per-mutant selection needs seconds.
   # A mutant that times out proves nothing either way and is already excluded
   # from the verdict — this only stops it consuming the module's budget too.
-  MUTANT_TEST_TIMEOUT=45
+  #
+  # 120 and timeout_func_only, not a bare 45. Both come from the same finding:
+  # every abort the lane produced was ONE 45 s pytest-timeout inside the STATS
+  # run of a module whose mapped test files are large endpoint/worker suites
+  # (payment_models.py: "1 failed, 131 passed in 64s"; timezone.py: "1 failed,
+  # 407 passed in 83s"), on a box at load 14 and 54% CPU — not an overloaded one.
+  # A stats-run failure makes mutmut abort with "no state produced", so the whole
+  # module errored with no survivors and the shard was re-run until the box was
+  # quiet. Two distinct forms, and each needs its own half of the fix:
+  #
+  #   ERROR tests/unit/api/test_payments_endpoint.py::TestGetPlans::test_get_plans_returns_200 - Failed: Timeout
+  #     an ERROR, so the cap fired during fixture SETUP — the client fixture
+  #     builds the whole app, 30-40 s when several cold sessions start together.
+  #     timeout_func_only stops charging setup to the test's own budget.
+  #   FAILED ...::test_chat_stream_captures_message_submitted
+  #     a call-phase timeout on a test that waits on streams and retries. Those
+  #     are seconds idle and tens of seconds under real parallelism, so the cap
+  #     itself has to be bigger than a number sized on an idle box.
+  #
+  # Nothing is unguarded by this: a genuinely hung mutant still hits mutmut's own
+  # per-mutant RLIMIT, and the module-level 12-minute cap below is what actually
+  # bounds the lane. A mutant that times out proves nothing either way and is
+  # already excluded from the verdict.
+  MUTANT_TEST_TIMEOUT=120
   python3 - "$MODULE" "$MUTANT_TEST_TIMEOUT" "${TESTFILES[@]}" << 'EOF'
 import json
 import pathlib
@@ -630,8 +732,13 @@ replacement = (
     f'do_not_mutate_patterns = ["# pragma: no mutate"]\n'
     f'debug = true\n'
     f'pytest_add_cli_args_test_selection = [{selection}]\n'
-    f'pytest_add_cli_args = ["-p", "no:xdist", "-o", '
-    f'\'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers --timeout={mutant_test_timeout}\']\n'
+    # The -o addopts REPLACES apps/api/pytest.ini's, so the plugin fence it
+    # carries has to be repeated here or every stats/mutant pytest session pays
+    # opik's ~4s import again. Keep the two lists in step. timeout_func_only is
+    # ini-only in pytest-timeout, so it needs its own -o rather than a place
+    # inside addopts.
+    f'pytest_add_cli_args = ["-p", "no:xdist", "-o", "timeout_func_only=true", "-o", '
+    f'\'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers -p no:opik -p no:langsmith_plugin -p no:schemathesis --timeout={mutant_test_timeout}\']\n'
 )
 text = re.sub(r"(?ms)^\[tool\.mutmut\].*?(?=^\[|\Z)", replacement, text)
 path.write_text(text)
@@ -658,7 +765,9 @@ EOF
   # macOS, and the process-group kill takes mutmut's mutant children with it.
   # The decorated-function patch (mutmut_decorated_patch.py) is imported
   # first so endpoints and other decorated functions become mutation targets,
-  # and mutmut_diff_scope.py scopes generation to the PR's changed lines.
+  # mutmut_diff_scope.py scopes generation to the PR's changed lines, and
+  # mutmut_hardlink_copy.py links the also_copy tree into mutants/ rather than
+  # duplicating the workdir a second time.
   MUTMUT_PATCH_DIR="$REPO_ROOT/scripts/test"
   # Absolute: the run cd's into $WORKDIR, so a relative path resolves nowhere.
   CLASSIFIER="$REPO_ROOT/scripts/test/mutation_classify.py"
@@ -689,6 +798,7 @@ run_args = ['run'] + (['--max-children', max_children] if max_children else [])
 child_code = (
     'import mutmut_decorated_patch; '
     'import mutmut_diff_scope; '
+    'import mutmut_hardlink_copy; '
     'import sys as _sys; '
     f'_sys.argv += {run_args!r}; '
     'from mutmut.__main__ import cli; cli()'
@@ -755,7 +865,7 @@ sys.exit(proc.returncode)
     # with a reason. Fails there too -> a real breakage, fail loudly.
     if grep -q "Failed to run clean test" "$WORKDIR/mutmut.log"; then
       if "$VENV_PY" -m pytest -q "${TESTFILES[@]}" -p no:randomly -p no:random-order \
-          -o 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers --timeout=300' \
+          -o 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers -p no:opik -p no:langsmith_plugin -p no:schemathesis --timeout=300' \
           > "$WORKDIR/plain-check.log" 2>&1; then
         echo "SKIP: $MODULE — the tests pass in the plain copy but fail under"
         echo "      mutmut's single-process phase transitions. Module-level state"
@@ -778,7 +888,7 @@ sys.exit(proc.returncode)
     if grep -q "BadTestExecutionCommandsException" "$WORKDIR/mutmut.log"; then
       if [ -d "$WORKDIR/mutants" ] && (cd "$WORKDIR/mutants" && "$VENV_PY" -m pytest -q "${TESTFILES[@]}" \
           --rootdir=. -p no:randomly -p no:random-order -p no:xdist \
-          -o 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers --timeout=300' \
+          -o 'addopts=-m "not composio and not model_onboarding and not schemathesis" --strict-markers -p no:opik -p no:langsmith_plugin -p no:schemathesis --timeout=300' \
           > "$WORKDIR/mutants-tree-check.log" 2>&1); then
         echo "SKIP: $MODULE — the same pytest run passes on mutmut's instrumented tree"
         echo "      out of process, but fails inside mutmut's in-process stats tracer"

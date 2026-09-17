@@ -255,7 +255,7 @@
     "test:schemathesis": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "uv run --group backend --group dev pytest tests/integration/real/test_schemathesis.py -v --tb=short -m schemathesis --override-ini=addopts=--strict-markers --timeout=600",
+        "command": "uv run --group backend --group dev pytest tests/integration/real/test_schemathesis.py -v --tb=short -m schemathesis -p schemathesis --override-ini=addopts=--strict-markers --timeout=600",
         "cwd": "{projectRoot}"
       },
       "cache": false

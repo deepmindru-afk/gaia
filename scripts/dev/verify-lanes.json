@@ -115,6 +115,14 @@
       "command": "python3 tools/lints/run.py apps/api/app"
     },
     {
+      "name": "lint-imports",
+      "scope": "^apps/api/(app/.*\\.py|pyproject\\.toml)$",
+      "heavy": false,
+      "timeout_s": 300,
+      "require_cmd": ["uvx"],
+      "command": "cd apps/api && uvx --no-build --from import-linter==2.6 lint-imports --no-cache"
+    },
+    {
       "name": "plr-complexity",
       "scope": "\\.py$|^tools/lints/(check_plr_complexity\\.py|plr_complexity_baseline\\.txt)",
       "heavy": false,

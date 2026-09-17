@@ -14,6 +14,7 @@ from fastapi import (
 )
 
 from app.api.v1.dependencies.oauth_dependencies import get_current_user, get_user_id
+from app.constants.vfs import SAFE_PATH_ID_PATTERN
 from app.db.repositories.conversations import conversation_repository
 from app.decorators import tiered_rate_limit
 from app.models.files_models import FileDocument
@@ -22,7 +23,6 @@ from app.models.user_models import AuthenticatedUser
 from app.schemas.file import FileDeletedResponse, UpdateFileRequest
 from app.services.analytics_service import AnalyticsEvents, capture_context_event
 from app.services.files import FileService
-from app.services.storage import SAFE_PATH_ID_PATTERN
 from shared.py.wide_events import log
 
 router = APIRouter()

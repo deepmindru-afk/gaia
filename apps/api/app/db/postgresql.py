@@ -15,6 +15,7 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.schema import DDL
 
 from app.config.settings import settings
+from app.constants.db import SCHEMA_BOOTSTRAP_LOCK_ID
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider, providers
 from shared.py.wide_events import log
@@ -171,6 +172,9 @@ async def init_postgresql_engine() -> AsyncEngine:
     )
 
     async with engine.begin() as conn:
+        await conn.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": SCHEMA_BOOTSTRAP_LOCK_ID}
+        )
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_added_columns)
         await conn.run_sync(_ensure_timestamptz_columns)
