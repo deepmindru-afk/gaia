@@ -411,6 +411,58 @@ class TestRedisCacheSet:
 # ---------------------------------------------------------------------------
 
 
+class TestRedisCacheGetAndDelete:
+    """RedisCache.get_and_delete — one GETDEL, so a one-time credential is read exactly once."""
+
+    async def test_returns_the_deserialized_value_and_removes_the_key(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.getdel = AsyncMock(
+            return_value='{"name": "Jane", "email": "j@t.io", "age": 25}'
+        )
+
+        result = await cache.get_and_delete("token:1", model=SampleUser)
+
+        cache.redis.getdel.assert_awaited_once_with("token:1")
+        assert isinstance(result, SampleUser)
+        assert result.name == "Jane"
+
+    async def test_none_when_the_key_is_absent_or_empty(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.getdel = AsyncMock(return_value=None)
+        assert await cache.get_and_delete("gone") is None
+        cache.redis.getdel = AsyncMock(return_value="")
+        assert await cache.get_and_delete("blank") is None
+
+    async def test_warns_and_returns_none_when_redis_is_not_initialized(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = None
+
+        with patch("app.db.redis.log") as mock_log:
+            assert await cache.get_and_delete("k") is None
+
+        mock_log.warning.assert_called_once_with(
+            "[STORAGE] Redis is not initialized. Skipping get_and_delete."
+        )
+
+    async def test_logs_the_failed_op_and_returns_none_on_exception(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.getdel = AsyncMock(side_effect=ConnectionError("boom"))
+
+        with patch("app.db.redis.log") as mock_log:
+            assert await cache.get_and_delete("k") is None
+
+        mock_log.error.assert_called_once_with(
+            "redis_op_failed",
+            op="get_and_delete",
+            key="k",
+            error_type="ConnectionError",
+            error="boom",
+        )
+
+
 class TestRedisCacheSetIfAbsent:
     """RedisCache.set_if_absent — the one first-writer-wins primitive."""
 
@@ -425,6 +477,18 @@ class TestRedisCacheSetIfAbsent:
             "handoff:1:settled", '"cancelled"', ex=900, nx=True
         )
 
+    async def test_serializes_the_value_against_the_model(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.set = AsyncMock(return_value=True)
+        user = SampleUser(name="Jane", email="j@t.io", age=25)
+
+        with patch("app.db.redis.serialize_any", return_value='{"n": 1}') as serialize:
+            await cache.set_if_absent("u", user, ttl=5, model=SampleUser)
+
+        serialize.assert_called_once_with(user, SampleUser)
+        assert cache.redis.set.call_args.args[1] == '{"n": 1}'
+
     async def test_reports_false_when_the_key_already_existed(self) -> None:
         cache = RedisCache.__new__(RedisCache)
         cache.redis = AsyncMock()
@@ -432,14 +496,33 @@ class TestRedisCacheSetIfAbsent:
 
         assert await cache.set_if_absent("k", "v", ttl=10) is False
 
-    async def test_reports_false_when_redis_is_down_or_the_write_fails(self) -> None:
+    async def test_warns_and_reports_false_when_redis_is_not_initialized(self) -> None:
         cache = RedisCache.__new__(RedisCache)
         cache.redis = None
-        assert await cache.set_if_absent("k", "v", ttl=10) is False
 
+        with patch("app.db.redis.log") as mock_log:
+            assert await cache.set_if_absent("k", "v", ttl=10) is False
+
+        mock_log.warning.assert_called_once_with(
+            "[STORAGE] Redis is not initialized. Skipping set_if_absent."
+        )
+
+    async def test_logs_the_failed_op_and_reports_false_on_exception(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
         cache.redis = AsyncMock()
         cache.redis.set = AsyncMock(side_effect=ConnectionError("boom"))
-        assert await cache.set_if_absent("k", "v", ttl=10) is False
+
+        with patch("app.db.redis.log") as mock_log:
+            assert await cache.set_if_absent("k", "v", ttl=10) is False
+
+        mock_log.error.assert_called_once_with(
+            "redis_op_failed",
+            op="set_if_absent",
+            key="k",
+            ttl=10,
+            error_type="ConnectionError",
+            error="boom",
+        )
 
 
 class TestRedisCacheTtlSeconds:
@@ -453,6 +536,12 @@ class TestRedisCacheTtlSeconds:
         assert await cache.ttl_seconds("k") == 42
         cache.redis.ttl.assert_awaited_once_with("k")
 
+    async def test_zero_is_a_real_remaining_life(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
+        cache.redis = AsyncMock()
+        cache.redis.ttl = AsyncMock(return_value=0)
+        assert await cache.ttl_seconds("k") == 0
+
     async def test_absent_and_persistent_keys_have_no_ttl(self) -> None:
         cache = RedisCache.__new__(RedisCache)
         cache.redis = AsyncMock()
@@ -461,14 +550,32 @@ class TestRedisCacheTtlSeconds:
         cache.redis.ttl = AsyncMock(return_value=-1)
         assert await cache.ttl_seconds("forever") is None
 
-    async def test_none_when_redis_is_down_or_the_read_fails(self) -> None:
+    async def test_warns_and_returns_none_when_redis_is_not_initialized(self) -> None:
         cache = RedisCache.__new__(RedisCache)
         cache.redis = None
-        assert await cache.ttl_seconds("k") is None
 
+        with patch("app.db.redis.log") as mock_log:
+            assert await cache.ttl_seconds("k") is None
+
+        mock_log.warning.assert_called_once_with(
+            "[STORAGE] Redis is not initialized. Skipping ttl operation."
+        )
+
+    async def test_logs_the_failed_op_and_returns_none_on_exception(self) -> None:
+        cache = RedisCache.__new__(RedisCache)
         cache.redis = AsyncMock()
         cache.redis.ttl = AsyncMock(side_effect=ConnectionError("boom"))
-        assert await cache.ttl_seconds("k") is None
+
+        with patch("app.db.redis.log") as mock_log:
+            assert await cache.ttl_seconds("k") is None
+
+        mock_log.error.assert_called_once_with(
+            "redis_op_failed",
+            op="ttl",
+            key="k",
+            error_type="ConnectionError",
+            error="boom",
+        )
 
 
 class TestRedisCacheDelete:
@@ -651,6 +758,14 @@ class TestGetAndDeleteCache:
 # ---------------------------------------------------------------------------
 # delete_cache_by_pattern
 # ---------------------------------------------------------------------------
+
+
+class TestGetAndDeleteCacheDelegates:
+    async def test_module_helper_forwards_key_and_model_to_the_cache(self) -> None:
+        with patch.object(redis_cache, "get_and_delete", new_callable=AsyncMock) as method:
+            method.return_value = "value"
+            assert await get_and_delete_cache("k", SampleUser) == "value"
+        method.assert_awaited_once_with("k", SampleUser)
 
 
 class TestDeleteCacheByPattern:

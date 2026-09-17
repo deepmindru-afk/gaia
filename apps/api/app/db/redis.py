@@ -336,7 +336,7 @@ class RedisCache:
             return None
 
     async def set_if_absent(
-        self, key: str, value: object, ttl: int = 3600, model: type[Any] | None = None
+        self, key: str, value: object, *, ttl: int, model: type[Any] | None = None
     ) -> bool:
         """SET NX with a TTL: True when this call created the key, False when it already existed.
 

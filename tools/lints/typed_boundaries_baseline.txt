@@ -148,7 +148,7 @@ apps/api/app/db/mongodb/indexes.py	TB001	deferred-until=2026-10-15; #876 touches
 apps/api/app/db/mongodb/indexes.py	TB002	deferred-until=2026-10-15; #876 touches this file only to add the browser_profiles/browser_tasks index builders; the grandfathered boundary predates it and typing it is its own change (decided 2026-09-17)
 apps/api/app/db/mongodb/mongodb.py	TB001
 apps/api/app/db/postgresql.py	TB001
-apps/api/app/db/redis.py	TB001
+apps/api/app/db/redis.py	TB001	deferred-until=2026-10-15; #876 adds get_and_delete/set_if_absent/ttl_seconds beside the module's measured Any overloads (narrowing them costs 31 mypy errors per its own note); that narrowing is its own change (decided 2026-09-17)
 apps/api/app/db/repositories/conversations.py	TB002
 apps/api/app/db/repositories/usage_daily.py	TB002
 apps/api/app/db/repositories/users.py	TB002
