@@ -12,8 +12,6 @@ import pytest
 
 from app.browser_host import screencast
 from app.browser_host.screencast import (
-    _DEFAULT_MAX_HEIGHT,
-    _DEFAULT_MAX_WIDTH,
     _FRAME_QUEUE_SIZE,
     _apply_input,
     _Frame,
@@ -29,6 +27,7 @@ from app.browser_host.screencast import (
     _start_screencast,
     _StreamState,
 )
+from app.constants.browser import BROWSER_VIEWPORT_HEIGHT, BROWSER_VIEWPORT_WIDTH
 from app.constants.log_tags import LogTag
 from tests.unit.browser_host.conftest import FakeMux, make_session
 from tests.unit.browser_host.test_screencast import make_mux
@@ -338,7 +337,7 @@ async def test_apply_input_resize_defaults_when_missing() -> None:
         with pytest.raises(asyncio.CancelledError):
             await _apply_input(host, session, fake_cdp, client_ws, "page-sess")
         mock_screencast.assert_awaited_once_with(
-            fake_cdp, "page-sess", _DEFAULT_MAX_WIDTH, _DEFAULT_MAX_HEIGHT
+            fake_cdp, "page-sess", BROWSER_VIEWPORT_WIDTH, BROWSER_VIEWPORT_HEIGHT
         )
 
 
@@ -613,7 +612,9 @@ async def test_run_live_view_builds_handlers_with_expected_args() -> None:
     # freeze on whatever the first page declared.
     assert nav_args[4] == "page-sess"
 
-    mock_start.assert_awaited_once_with(mux, "page-sess", _DEFAULT_MAX_WIDTH, _DEFAULT_MAX_HEIGHT)
+    mock_start.assert_awaited_once_with(
+        mux, "page-sess", BROWSER_VIEWPORT_WIDTH, BROWSER_VIEWPORT_HEIGHT
+    )
 
 
 @pytest.mark.unit

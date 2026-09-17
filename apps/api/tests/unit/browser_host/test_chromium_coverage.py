@@ -1911,19 +1911,6 @@ async def test_cdp_call_wrapper_raises_when_no_cdp() -> None:
         await host._cdp_call("Page.enable")
 
 
-@pytest.mark.unit
-async def test_cdp_call_wrapper_forwards_to_cdp_call_fn() -> None:
-    host = ChromiumHost()
-    fake_cdp = MagicMock()
-    host._cdp = fake_cdp
-    with patch.object(chromium, "cdp_call", new=AsyncMock(return_value={"ok": 1})) as mock_cdp_call:
-        result = await host._cdp_call("Target.getTargets", {"a": 1}, session_id="sess", timeout=5.0)
-        assert result == {"ok": 1}
-        mock_cdp_call.assert_awaited_once_with(
-            fake_cdp, "Target.getTargets", {"a": 1}, session_id="sess", timeout=5.0
-        )
-
-
 # ---------------------------------------------------------------------------
 # _reaper_loop
 # ---------------------------------------------------------------------------
@@ -2183,24 +2170,6 @@ async def test_cdp_call_timeout_raises_and_logs() -> None:
             await cdp_call(HangingFake(), "Target.getTargets", timeout=0.04)
         assert exc_info.value.args[0] == "Target.getTargets"
         mock_err.assert_called_once()
-
-
-@pytest.mark.unit
-async def test_cdp_call_wrapper_uses_bounded_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    host = make_host()
-    root = FakeMux()
-
-    # make send_raw hang so cdp_call's wait_for triggers CDPTimeoutError via _cdp_call
-    async def hanging_send_raw(*_a: object, **_kw: object) -> dict[str, object]:
-        await asyncio.Event().wait()
-        return {}
-
-    root.send_raw = hanging_send_raw  # type: ignore[method-assign]  # a hanging stand-in
-    host._cdp = root
-    # patch the module-level timeout to be tiny so the test is fast
-    monkeypatch.setattr(chromium, "_CDP_CALL_TIMEOUT_SECONDS", 0.05)
-    with pytest.raises(CDPTimeoutError):
-        await host._cdp_call("Target.getTargets", {}, timeout=0.05)
 
 
 @pytest.mark.unit

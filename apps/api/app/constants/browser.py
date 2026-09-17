@@ -155,6 +155,10 @@ BROWSER_IMPORT_TOKEN_ENTROPY_BYTES = 32
 BROWSER_PROFILE_TTL_DAYS = 90
 BROWSER_PROFILE_TTL_SECONDS = BROWSER_PROFILE_TTL_DAYS * 24 * 3600
 
+# Prefixes the summary of a run that died on an unexpected error. The runner writes
+# it; bot delivery strips it back off to show the user the reason alone.
+BROWSER_TASK_FAILED_PREFIX = "Browser task failed: "
+
 # Chat acks when a handoff is resolved by a natural-language reply.
 BROWSER_HANDOFF_ACK_CONTINUE = "Got it, continuing the browser task."
 BROWSER_HANDOFF_ACK_CANCEL = "Okay, I've stopped the browser task."
@@ -198,8 +202,8 @@ BROWSER_TAKEOVER_PREAMBLE = (
     "mis-selects."
 )
 
-# Desktop viewport (the ~800x600 CDP default collapses sites to mobile layout). Width MUST
-# match the 1280px screencast cap in screencast.py: wider only buys a downscaled stream, a
-# takeover coordinate mismatch and bigger vision payloads; 1280 is still desktop layout.
+# Desktop viewport (the ~800x600 CDP default collapses sites to mobile layout). The live
+# view caps its stream at this same size (screencast.py imports it): wider only buys a
+# downscaled stream, a takeover coordinate mismatch and bigger vision payloads.
 BROWSER_VIEWPORT_WIDTH = 1280
 BROWSER_VIEWPORT_HEIGHT = 800

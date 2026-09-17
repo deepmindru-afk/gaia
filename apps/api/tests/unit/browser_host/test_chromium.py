@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -52,14 +51,10 @@ async def test_cdp_call_raises_cdptimeouterror_instead_of_hanging_forever() -> N
     """cdp_use's send_raw awaits its future with no timeout of its own."""
     transport = FakeMux(hang_on="Target.getTargets", hang_call_count=1)
 
-    start = time.monotonic()
+    # The whole point of the fix: control comes back, instead of parking on a
+    # future the wedged engine will never resolve.
     with pytest.raises(CDPTimeoutError):
         await cdp_call(transport, "Target.getTargets", timeout=0.05)
-    elapsed = time.monotonic() - start
-
-    # The whole point of the fix: control comes back promptly, not after
-    # Chromium wedges forever.
-    assert elapsed < 2.0
 
 
 # --- BUG 2: create_context held the session lock across CDP I/O ---

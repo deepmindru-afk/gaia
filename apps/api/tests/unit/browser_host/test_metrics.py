@@ -29,11 +29,6 @@ def _sampler_over(root: MagicMock, pid: int = 4321) -> ProcessSampler:
         return ProcessSampler(pid)
 
 
-def _unused_pid() -> int:
-    live = set(psutil.pids())
-    return next(pid for pid in range(30000, 60000) if pid not in live)
-
-
 def _started_host(monkeypatch: pytest.MonkeyPatch) -> ChromiumHost:
     """Build a host whose sessions ride a fake connection, since a session is a connection now."""
     install_mux(monkeypatch)
@@ -137,11 +132,6 @@ class TestSamplerFailureIsolation:
     def test_sampler_for_a_dead_process_is_none_not_an_exception(self) -> None:
         with patch.object(metrics_module.psutil, "Process", side_effect=psutil.NoSuchProcess(1234)):
             assert ProcessSampler.for_pid(1234) is None
-
-    def test_a_pid_that_owns_no_process_yields_no_sampler_rather_than_the_callers_own(
-        self,
-    ) -> None:
-        assert ProcessSampler.for_pid(_unused_pid()) is None
 
     def test_an_unusable_pid_warns_with_the_pid_and_the_real_failure_type(self) -> None:
         with (

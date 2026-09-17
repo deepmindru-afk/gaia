@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.constants.browser import (
     BROWSER_TAKEOVER_PREAMBLE,
+    BROWSER_TASK_FAILED_PREFIX,
     BROWSER_VIEWPORT_HEIGHT,
     BROWSER_VIEWPORT_WIDTH,
     MAX_HANDOFFS_PER_TASK,
@@ -373,7 +374,7 @@ class BrowserTaskRunner:
             return await self._finish(
                 BrowserSessionStatus.FAILED,
                 False,
-                f"Browser task failed: {exc}",
+                f"{BROWSER_TASK_FAILED_PREFIX}{exc}",
             )
 
         if self._stopped:

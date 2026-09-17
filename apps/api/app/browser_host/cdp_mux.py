@@ -15,7 +15,7 @@ every other frame reaches every sink that claimed nothing.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import json
 from typing import Any, Protocol
 
@@ -31,7 +31,23 @@ _FIRST_MESSAGE_ID = 1
 CdpFrame = dict[str, Any]
 FrameSink = Callable[[CdpFrame], None]
 # A sink plus the CDP session id it claims, or None when it takes the open stream.
-_Subscription = tuple[FrameSink, str | None]
+Subscription = tuple[FrameSink, str | None]
+
+
+def sinks_for(subscriptions: Sequence[Subscription], frame: CdpFrame) -> list[FrameSink]:
+    """Return the sinks a frame belongs to: its session's owner alone, else the open stream.
+
+    The one statement of the routing rule, so a test double cannot hold a second,
+    drifting copy of it. The result is a snapshot, so a sink may unsubscribe as
+    it is called.
+    """
+    session_id = frame.get("sessionId")
+    claimed = session_id is not None and any(owned == session_id for _, owned in subscriptions)
+    return [
+        sink
+        for sink, owned in subscriptions
+        if (owned == session_id if owned is not None else not claimed)
+    ]
 
 
 class CdpTransport(Protocol):
@@ -61,7 +77,7 @@ class CdpMux:
         self._pending: dict[int, asyncio.Future[CdpFrame]] = {}
         # our id -> the client's own id, for frames forwarded verbatim.
         self._forwarded: dict[int, int | None] = {}
-        self._sinks: list[_Subscription] = []
+        self._sinks: list[Subscription] = []
         self._closed = asyncio.Event()
 
     async def start(self) -> None:
@@ -83,7 +99,8 @@ class CdpMux:
 
     @property
     def closed(self) -> bool:
-        return self._ws is None
+        """Whether the connection has ended — whether we closed it or the engine hung up."""
+        return self._closed.is_set()
 
     async def wait_closed(self) -> None:
         """Block until the connection ends, so a consumer can tear itself down with it.
@@ -101,7 +118,7 @@ class CdpMux:
         the agent's client, which would otherwise be handed a stream of
         screenshots and load events it never asked for.
         """
-        entry: _Subscription = (sink, owns_session)
+        entry: Subscription = (sink, owns_session)
         self._sinks.append(entry)
 
         def _remove() -> None:
@@ -160,7 +177,9 @@ class CdpMux:
 
     async def _write(self, message: CdpFrame) -> None:
         ws = self._ws
-        if ws is None:
+        # The socket outlives an engine-side hang-up (close() still has to release
+        # it), so the end of the read loop — not a None ws — is what says it is over.
+        if ws is None or self._closed.is_set():
             raise CdpConnectionClosed("browser session connection closed")
         await ws.send(json.dumps(message))
 
@@ -205,12 +224,7 @@ class CdpMux:
         self._fan_out(frame)
 
     def _fan_out(self, frame: CdpFrame) -> None:
-        session_id = frame.get("sessionId")
-        claimed = session_id is not None and any(owned == session_id for _, owned in self._sinks)
-        for sink, owned in list(self._sinks):
-            wanted = owned == session_id if owned is not None else not claimed
-            if not wanted:
-                continue
+        for sink in sinks_for(self._sinks, frame):
             try:
                 sink(frame)
             except Exception as exc:

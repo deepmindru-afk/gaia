@@ -371,3 +371,19 @@ async def test_a_session_returns_to_the_open_stream_once_its_owner_unsubscribes(
 
     assert agent == [claimed]
     await mux.close()
+
+
+@pytest.mark.unit
+async def test_the_engine_hanging_up_marks_the_mux_closed_and_fails_later_calls() -> None:
+    """Teardown reads closed to decide whether to talk to the engine, so it must not lie."""
+    ws = _FakeWebSocket()
+    mux = await _started_mux(ws)
+
+    ws.end()  # the engine drops the socket; nobody called close()
+    await asyncio.wait_for(mux.wait_closed(), timeout=1.0)
+
+    assert mux.closed is True
+    with pytest.raises(CdpConnectionClosed):
+        await asyncio.wait_for(mux.send_raw("Target.getTargets"), timeout=1.0)
+    with pytest.raises(CdpConnectionClosed):
+        await asyncio.wait_for(mux.forward({"id": 1, "method": "Page.enable"}), timeout=1.0)

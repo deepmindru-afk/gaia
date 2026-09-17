@@ -9,6 +9,7 @@ message instead of a pasted link.
 
 from app.constants.browser import (
     BROWSER_CREDENTIALS_SAVED_NOTE,
+    BROWSER_TASK_FAILED_PREFIX,
     HandoffStatus,
     SensitiveCategory,
 )
@@ -30,7 +31,6 @@ _CAPTION_MAX_CHARS = 90
 # The runner's failure summary is written for logs, not chat — clip it so a raw
 # error dump never floods the conversation.
 _FAILURE_REASON_MAX_CHARS = 160
-_FAILURE_SUMMARY_PREFIX = "Browser task failed: "
 
 
 class BotProgressDelivery:
@@ -122,8 +122,8 @@ class BotProgressDelivery:
 
 
 def _failure_reason(summary: str) -> str:
-    """Turn a runner failure summary into a short, user-safe reason, or "" if none."""
-    reason = " ".join(summary.removeprefix(_FAILURE_SUMMARY_PREFIX).split())
+    """Collapse a runner failure summary to one clipped line, or "" when it carried none."""
+    reason = " ".join(summary.removeprefix(BROWSER_TASK_FAILED_PREFIX).split())
     if len(reason) > _FAILURE_REASON_MAX_CHARS:
         reason = reason[: _FAILURE_REASON_MAX_CHARS - 1].rstrip() + "…"
     return reason

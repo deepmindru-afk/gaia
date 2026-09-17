@@ -60,8 +60,8 @@ _HEADLESS_SHELL_BINARIES = ("headless_shell", "chrome-headless-shell", "headless
 # Poll budget for Chromium to publish its DevTools endpoint after launch.
 _CDP_READY_TIMEOUT_SECONDS = 30.0
 _CDP_READY_POLL_SECONDS = 0.2
-# Every root-CDP round-trip is bounded: cdp_use.CDPClient.send_raw awaits its
-# response future with no timeout, so a wedged renderer would otherwise freeze the
+# Every CDP round-trip is bounded: neither CdpMux nor cdp_use.CDPClient puts a
+# timeout on the response future, so a wedged renderer would otherwise freeze the
 # session lock and the reaper while the process stays alive and looks healthy.
 _CDP_CALL_TIMEOUT_SECONDS = 20.0
 # The health probe backs a container healthcheck, so it must give up well inside
@@ -103,7 +103,7 @@ class SessionNotFoundError(KeyError):
 
 
 class CDPTimeoutError(RuntimeError):
-    """Raised when a root-CDP call outruns its budget — Chromium is wedged, not busy."""
+    """Raised when a CDP call outruns its budget — Chromium is wedged, not busy."""
 
 
 async def cdp_call(
@@ -271,7 +271,7 @@ class ChromiumHost:
 
     @property
     def root_ws_url(self) -> str:
-        """Chromium's root CDP websocket URL (what the proxy/screencast dial)."""
+        """The engine's root CDP websocket URL, which every session dials once for its own mux."""
         if self._root_ws_url is None:
             raise RuntimeError("browser host is not started")
         return self._root_ws_url

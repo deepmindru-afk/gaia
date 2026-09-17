@@ -58,25 +58,15 @@ _CDP_REFUSED_CODE = -32000
 # and a dropped reply or event desynchronises the client's protocol state forever.
 _DOWNSTREAM_QUEUE_UNBOUNDED = 0
 
-# Downloads are denied per context at creation (chromium.py), and browser-use's
-# DownloadsWatchdog sends Browser.setDownloadBehavior allow on every run, which
-# would undo it. Refused outright; browser-use's call site swallows the failure.
-_REFUSED_METHODS = frozenset(
-    {
-        "Browser.setDownloadBehavior",
-        "Page.setDownloadBehavior",
-        # The host owns the context lifecycle (capacity/reaper/recovery accounting).
-        # A client minting contexts would grow memory un-capped and un-reaped; one
-        # disposing them could kill a sibling session's isolation.
-        "Target.createBrowserContext",
-        "Target.disposeBrowserContext",
-    }
-)
-
-# Refusal messages, keyed by method.
+# Every method this proxy refuses, keyed to the reason the client is told: one
+# table, so a method can never be refused without one. Downloads are denied per
+# context at creation (chromium.py) and browser-use's DownloadsWatchdog would undo it.
 _REFUSAL_REASONS: dict[str, str] = {
     "Browser.setDownloadBehavior": "downloads are denied for this session",
     "Page.setDownloadBehavior": "downloads are denied for this session",
+    # The host owns the context lifecycle (capacity/reaper/recovery accounting).
+    # A client minting contexts would grow memory un-capped and un-reaped; one
+    # disposing them could kill a sibling session's isolation.
     "Target.createBrowserContext": "the host owns context lifecycle (one context per session)",
     "Target.disposeBrowserContext": "the host owns context lifecycle (one context per session)",
 }
@@ -111,7 +101,7 @@ def _refused_navigation_url(message: dict[str, Any]) -> str | None:
 def _refusal_reason(message: dict[str, Any]) -> str | None:
     """Why this client command must not reach Chromium, or None to forward it."""
     method = message.get("method")
-    if method in _REFUSED_METHODS:
+    if isinstance(method, str) and method in _REFUSAL_REASONS:
         return f"{method} refused: {_REFUSAL_REASONS[method]}"
     url = _refused_navigation_url(message)
     if url is not None:

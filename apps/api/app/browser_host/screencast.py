@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from app.browser_host.cdp_mux import CdpFrame, CdpMux
 from app.browser_host.chromium import cdp_call
 from app.browser_host.pumps import pump_until_first_close
+from app.constants.browser import BROWSER_VIEWPORT_HEIGHT, BROWSER_VIEWPORT_WIDTH
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
 
@@ -38,11 +39,6 @@ if TYPE_CHECKING:
 # which is what makes the stream lag. ``_SCREENCAST_QUALITY`` applies only to "jpeg".
 _SCREENCAST_FORMAT = "jpeg"
 _SCREENCAST_QUALITY = 72
-# The stream cap equals the agent viewport (constants/browser.py): frames are 1:1
-# with the page, so takeover input maps exactly. A repainting page emits 70+ fps;
-# 1280-wide q72 frames (~7 KB, ~0.5 MB/s) stay smooth. Frames carry the page CSS size.
-_DEFAULT_MAX_WIDTH = 1280
-_DEFAULT_MAX_HEIGHT = 800
 # Bounded so a slow viewer applies backpressure by dropping stale frames, not by
 # stalling Chromium (we ack every frame regardless).
 _FRAME_QUEUE_SIZE = 2
@@ -132,7 +128,9 @@ async def run_live_view(host: ChromiumHost, session: HostSession, client_ws: Web
             owns_session=page_session,
         )
 
-        await _start_screencast(mux, page_session, _DEFAULT_MAX_WIDTH, _DEFAULT_MAX_HEIGHT)
+        # Capped at the agent viewport, so frames are 1:1 with the page and takeover
+        # input maps exactly; 1280-wide q72 frames (~7 KB, ~0.5 MB/s) stay smooth.
+        await _start_screencast(mux, page_session, BROWSER_VIEWPORT_WIDTH, BROWSER_VIEWPORT_HEIGHT)
 
         await pump_until_first_close(
             _send_frames(client_ws, frames, meta),
@@ -398,8 +396,8 @@ async def _apply_input(
             await _start_screencast(
                 mux,
                 page_session,
-                int(message.get("width", _DEFAULT_MAX_WIDTH)),
-                int(message.get("height", _DEFAULT_MAX_HEIGHT)),
+                int(message.get("width", BROWSER_VIEWPORT_WIDTH)),
+                int(message.get("height", BROWSER_VIEWPORT_HEIGHT)),
             )
 
 

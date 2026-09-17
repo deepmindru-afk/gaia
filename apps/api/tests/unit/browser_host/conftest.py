@@ -8,7 +8,8 @@ chromium.memory_usage_mb themselves to simulate pressure.
 
 FakeMux stands in for a session's one engine connection. make_host deliberately
 leaves the host's root CDP client unset, so any session work that regressed to
-the shared client fails loudly instead of silently crossing connections.
+the shared client fails loudly instead of silently crossing connections. The
+live view's paced capture is parked by default so it cannot tick mid-test.
 """
 
 from __future__ import annotations
@@ -20,18 +21,27 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.browser_host import chromium, proxy
-from app.browser_host.cdp_mux import CdpMux
+from app.browser_host import chromium, proxy, screencast
+from app.browser_host.cdp_mux import CdpMux, sinks_for
 from app.browser_host.chromium import ChromiumHost, HostSession
 from app.config.settings import settings
 
 FAKE_ROOT_WS_URL = "ws://127.0.0.1:9222/devtools/browser/fake"
+# Longer than any test runs: the live view's paced capture must only fire for the
+# tests that drive it, never as a real 0.5s tick landing mid-assertion.
+_NEVER_SECONDS = 3600.0
 
 
 @pytest.fixture(autouse=True)
 def _no_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the proxy's DNS-resolving guard so no unit test touches real DNS."""
     monkeypatch.setattr(proxy, "assert_public_http_url", AsyncMock())
+
+
+@pytest.fixture(autouse=True)
+def _park_the_live_view_pull(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hold the screencast fallback capture still; the pull tests set their own interval."""
+    monkeypatch.setattr(screencast, "_PULL_INTERVAL_SECONDS", _NEVER_SECONDS)
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +56,8 @@ class FakeMux:
     Records every (method, params, session_id) it is asked to send and every
     frame forwarded verbatim, answers from a per-method map (or a per-method
     queue when the answer must vary call to call), tracks start/close so a
-    leaked connection is visible, and pushes frames at subscribers via emit.
+    leaked connection is visible, and pushes frames at subscribers via emit,
+    which routes them through the mux's own sinks_for so the two cannot drift.
     """
 
     # Sensible per-method answers; anything unlisted replies with an empty object,
@@ -120,19 +131,17 @@ class FakeMux:
         self.sinks.append(entry)
 
         def _remove() -> None:
-            self.sinks.remove(entry)
+            if entry in self.sinks:  # the real remover tolerates a second call
+                self.sinks.remove(entry)
             self.unsubscribed.append(sink)
 
         return _remove
 
     def emit(self, *frames: dict[str, Any]) -> None:
-        """Push frames at the subscribers entitled to them, the way the real read loop routes."""
+        """Push frames at the subscribers entitled to them, routed by the real rule."""
         for frame in frames:
-            session_id = frame.get("sessionId")
-            claimed = session_id is not None and any(owned == session_id for _, owned in self.sinks)
-            for sink, owned in list(self.sinks):
-                if (owned == session_id) if owned is not None else not claimed:
-                    sink(frame)
+            for sink in sinks_for(self.sinks, frame):
+                sink(frame)
 
     async def send_raw(
         self, method: str, params: dict[str, Any] | None = None, session_id: str | None = None

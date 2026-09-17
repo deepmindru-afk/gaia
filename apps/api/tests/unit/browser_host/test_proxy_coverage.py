@@ -610,17 +610,15 @@ async def test_run_cdp_proxy_never_sees_a_frame_another_subscriber_claimed() -> 
 
 
 @pytest.mark.unit
-async def test_run_cdp_proxy_opens_no_websocket_of_its_own() -> None:
-    """One engine connection per session: the proxy uses session.mux and dials nothing."""
+async def test_run_cdp_proxy_sends_the_clients_frame_on_the_sessions_own_connection() -> None:
+    """One engine connection per session: the proxy rides session.mux and dials nothing."""
     mux = FakeMux()
     client_ws = _client_ws(json.dumps({"id": 1, "method": "Page.enable", "params": {}}))
 
-    with patch("websockets.connect") as connect:
-        await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
+    await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
 
-    connect.assert_not_called()
-    assert not hasattr(proxy_mod, "websockets")
-    assert len(mux.forwarded) == 1
+    assert mux.forwarded == [{"id": 1, "method": "Page.enable", "params": {}}]
+    assert mux.started == 0  # the host opened it; the proxy borrows it
 
 
 @pytest.mark.unit
