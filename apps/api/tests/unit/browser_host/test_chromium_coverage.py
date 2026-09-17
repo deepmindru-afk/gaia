@@ -1631,7 +1631,9 @@ async def test_read_devtools_port_empty_file_polls(
     port_file = tmp_path / "DevToolsActivePort"
     port_file.write_text("")  # empty initially
     monkeypatch.setattr(chromium, "_CDP_READY_POLL_SECONDS", 0.02)
-    monkeypatch.setattr(chromium, "_CDP_READY_TIMEOUT_SECONDS", 0.5)
+    # Generous, because the read returns the moment the file fills: a tight budget
+    # only buys a flake on a loaded box, never a faster test.
+    monkeypatch.setattr(chromium, "_CDP_READY_TIMEOUT_SECONDS", 10.0)
 
     async def delayed_write():
         await asyncio.sleep(0.06)
@@ -1709,7 +1711,7 @@ async def test_read_devtools_port_non_digit_then_digit(
     port_file = tmp_path / "DevToolsActivePort"
     port_file.write_text("not-a-port\n")
     monkeypatch.setattr(chromium, "_CDP_READY_POLL_SECONDS", 0.02)
-    monkeypatch.setattr(chromium, "_CDP_READY_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(chromium, "_CDP_READY_TIMEOUT_SECONDS", 10.0)
 
     async def fix_file():
         await asyncio.sleep(0.06)
