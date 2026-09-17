@@ -152,7 +152,6 @@ export default function MainLayout({ children }: { children: ReactNode }) {
             </SidebarLayout>
 
             <SidebarInset className="flex h-screen min-w-0 w-auto flex-col bg-primary-bg">
-              <StatusBanner />
               {/* Tapping anywhere outside the mobile sidebar dismisses it via
                   the Sheet's own modal overlay (see ui/sidebar), so the shell
                   needs no click handler of its own here. */}
