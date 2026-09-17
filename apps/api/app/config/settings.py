@@ -277,6 +277,9 @@ class CommonSettings(BaseAppSettings):
     BROWSER_HOST_IDLE_TTL_SECONDS: int = 300
     # Run Chromium headed (under Xvfb) instead of --headless=new, for anti-bot.
     BROWSER_HOST_HEADED: bool = False
+    # Dev only: let the agent's browser reach loopback/private/link-local hosts.
+    # Off, the CDP proxy refuses them and Obscura gets no private-network access.
+    BROWSER_HOST_ALLOW_PRIVATE_NETWORK: bool = False
     # Override the Chromium binary; when unset the host resolves Playwright's bundled one.
     BROWSER_HOST_CHROMIUM_PATH: str | None = None
     # Per-renderer V8 heap ceiling. One runaway page must not be able to eat the

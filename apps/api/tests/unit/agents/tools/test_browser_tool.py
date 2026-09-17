@@ -11,6 +11,7 @@ import pytest
 
 from app.agents.tools import browser_tool as tool_mod
 from app.agents.tools.browser_tool import browser_task
+from app.config.settings import settings
 from app.constants.browser import (
     BROWSER_TASK_EVENT,
     BrowserSessionStatus,
@@ -528,6 +529,37 @@ async def test_start_url_is_appended_to_the_task_and_opened(
     )
     assert h.run_task == "book a table\n\nStart at: https://resy.com"
     assert h.session_kwargs == {"user_id": "u1", "start_url": "https://resy.com"}
+
+
+async def test_a_private_start_url_is_refused_before_a_session_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A literal loopback/metadata start URL never reaches the host; the model is told why."""
+    h = _install(monkeypatch)
+
+    out = await browser_task.ainvoke(
+        {"task": "read the metadata", "start_url": "http://169.254.169.254/latest/meta-data"},
+        config=UI_CONFIG,
+    )
+
+    assert out == (
+        "I can't open http://169.254.169.254/latest/meta-data: refusing to connect to "
+        "non-public address 169.254.169.254. Only public http(s) sites are reachable."
+    )
+    assert h.session_kwargs == {}  # no session was ever requested
+
+
+async def test_the_private_network_switch_lets_a_local_start_url_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = _install(monkeypatch)
+    monkeypatch.setattr(settings, "BROWSER_HOST_ALLOW_PRIVATE_NETWORK", True)
+
+    await browser_task.ainvoke(
+        {"task": "check the dev site", "start_url": "http://127.0.0.1:3000"}, config=UI_CONFIG
+    )
+
+    assert h.session_kwargs == {"user_id": "u1", "start_url": "http://127.0.0.1:3000"}
 
 
 async def test_blank_start_url_is_not_appended(monkeypatch: pytest.MonkeyPatch) -> None:

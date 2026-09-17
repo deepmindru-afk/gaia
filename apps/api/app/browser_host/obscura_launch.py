@@ -22,7 +22,7 @@ _CDP_READY_POLL_SECONDS = 0.2
 
 
 def obscura_serve_argv(port: int) -> list[str]:
-    """Build the obscura serve argv for port, stealthed and private-network-permitted.
+    """Build the obscura serve argv for port, stealthed; private-network access only when configured.
 
     Raises when OBSCURA_BIN is unset — fail loud, never silently fall back to
     another engine.
@@ -30,14 +30,10 @@ def obscura_serve_argv(port: int) -> list[str]:
     obscura_bin = settings.OBSCURA_BIN
     if not obscura_bin:
         raise RuntimeError("Obscura requires OBSCURA_BIN to be set")
-    return [
-        obscura_bin,
-        "serve",
-        "--port",
-        str(port),
-        "--stealth",
-        "--allow-private-network",
-    ]
+    argv = [obscura_bin, "serve", "--port", str(port), "--stealth"]
+    if settings.BROWSER_HOST_ALLOW_PRIVATE_NETWORK:
+        argv.append("--allow-private-network")
+    return argv
 
 
 class _DevToolsVersion(BaseModel):

@@ -11,10 +11,19 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
-from app.browser_host.proxy import _is_load_event, _refusal_reason, _refused_navigation_url
+from app.browser_host import proxy
+from app.browser_host.proxy import (
+    _is_load_event,
+    _navigation_url,
+    _refusal_reason,
+    _refused_navigation_url,
+    _refused_private_target,
+)
+from app.config.settings import settings
 
 
 @pytest.mark.unit
@@ -99,3 +108,84 @@ def test_context_lifecycle_is_refused() -> None:
 def test_load_event_detection(frame: str, expected: bool) -> None:
     """Navigation timing closes on the load event — and only on the real one."""
     assert _is_load_event(frame) is expected
+
+
+# ---------------------------------------------------------------------------
+# _refused_private_target — the SSRF guard on explicit navigations
+# ---------------------------------------------------------------------------
+
+
+async def test_a_target_resolving_to_a_private_address_is_refused(monkeypatch) -> None:
+    guard = AsyncMock(
+        side_effect=ValueError("refusing to connect to non-public address 169.254.169.254")
+    )
+    monkeypatch.setattr(proxy, "assert_public_http_url", guard)
+
+    reason = await _refused_private_target(
+        {"id": 3, "method": "Page.navigate", "params": {"url": "http://metadata.internal/latest"}}
+    )
+
+    assert reason == (
+        "navigation to http://metadata.internal/latest refused: "
+        "refusing to connect to non-public address 169.254.169.254"
+    )
+    guard.assert_awaited_once_with("http://metadata.internal/latest")
+
+
+async def test_a_public_target_is_forwarded(monkeypatch) -> None:
+    guard = AsyncMock()
+    monkeypatch.setattr(proxy, "assert_public_http_url", guard)
+
+    assert (
+        await _refused_private_target(
+            {"id": 3, "method": "Target.createTarget", "params": {"url": "https://example.com"}}
+        )
+        is None
+    )
+    guard.assert_awaited_once_with("https://example.com")
+
+
+async def test_non_navigations_relative_urls_and_foreign_schemes_skip_the_resolver(
+    monkeypatch,
+) -> None:
+    guard = AsyncMock()
+    monkeypatch.setattr(proxy, "assert_public_http_url", guard)
+
+    for message in (
+        {"id": 1, "method": "Page.enable", "params": {}},
+        {"id": 2, "method": "Page.navigate", "params": {"url": "/relative/path"}},
+        {"id": 3, "method": "Page.navigate", "params": {"url": "file:///etc/passwd"}},
+        {"id": 4, "method": "Page.navigate", "params": {"url": "about:blank"}},
+    ):
+        assert await _refused_private_target(message) is None
+    guard.assert_not_awaited()
+
+
+async def test_the_private_network_switch_disables_the_guard(monkeypatch) -> None:
+    guard = AsyncMock(side_effect=ValueError("non-public"))
+    monkeypatch.setattr(proxy, "assert_public_http_url", guard)
+    monkeypatch.setattr(settings, "BROWSER_HOST_ALLOW_PRIVATE_NETWORK", True)
+
+    message = {"id": 3, "method": "Page.navigate", "params": {"url": "http://10.0.0.5/admin"}}
+    assert await _refused_private_target(message) is None
+    guard.assert_not_awaited()
+
+
+def test_navigation_url_is_the_target_or_none_for_blank_missing_or_non_string() -> None:
+    assert _navigation_url({"method": "Page.navigate", "params": {"url": "https://a.test"}}) == (
+        "https://a.test"
+    )
+    assert _navigation_url({"method": "Page.navigate", "params": {"url": ""}}) is None
+    assert _navigation_url({"method": "Page.navigate", "params": {"url": "about:blank"}}) is None
+    assert _navigation_url({"method": "Page.navigate", "params": {"url": 123}}) is None
+    assert _navigation_url({"method": "Page.navigate", "params": {}}) is None
+    assert _navigation_url({"method": "Page.enable", "params": {"url": "https://a.test"}}) is None
+
+
+def test_refusal_reason_names_the_foreign_scheme_navigation_it_refuses() -> None:
+    assert (
+        _refusal_reason(
+            {"id": 1, "method": "Page.navigate", "params": {"url": "file:///etc/passwd"}}
+        )
+        == "navigation to file:///etc/passwd refused: only http and https are allowed"
+    )

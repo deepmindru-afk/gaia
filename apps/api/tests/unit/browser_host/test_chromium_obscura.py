@@ -14,15 +14,28 @@ import pytest
 
 from app.browser_host import chromium
 from app.browser_host.chromium import ChromiumHost
+from app.browser_host.obscura_launch import obscura_serve_argv
 from app.config.settings import settings
 from app.constants.browser import BrowserEngine
+
+
+@pytest.mark.unit
+def test_private_network_access_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flag that lets Obscura reach loopback/private hosts follows the one switch."""
+    monkeypatch.setattr(settings, "OBSCURA_BIN", "/opt/obscura/obscura")
+
+    monkeypatch.setattr(settings, "BROWSER_HOST_ALLOW_PRIVATE_NETWORK", False)
+    assert "--allow-private-network" not in obscura_serve_argv(9931)
+
+    monkeypatch.setattr(settings, "BROWSER_HOST_ALLOW_PRIVATE_NETWORK", True)
+    assert obscura_serve_argv(9931)[-1] == "--allow-private-network"
 
 
 @pytest.mark.unit
 async def test_launch_obscura_builds_the_serve_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """engine=obscura spawns <bin> serve --port <port> --stealth --allow-private-network."""
+    """engine=obscura spawns <bin> serve --port <port> --stealth, with no private-network access."""
     monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
     monkeypatch.setattr(settings, "OBSCURA_BIN", "/opt/obscura/obscura")
     monkeypatch.setattr(settings, "OBSCURA_PORT", 9931)
@@ -47,7 +60,6 @@ async def test_launch_obscura_builds_the_serve_command(
         "--port",
         "9931",
         "--stealth",
-        "--allow-private-network",
     ]
     assert spawn.call_args.kwargs == {
         "stdout": subprocess.DEVNULL,

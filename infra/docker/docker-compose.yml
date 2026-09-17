@@ -750,11 +750,19 @@ services:
   # SECURITY. The agent renders attacker-influenced pages, so this container is
   # treated as hostile and kept off the data plane: it joins ONLY gaia_browser_net,
   # never gaia_network, so mongo/redis/postgres do not resolve here at all.
-  # Downloads are denied per browser context and navigation is allowlisted to
-  # http(s) in the CDP proxy (see app/browser_host/).
+  # Downloads are denied per browser context; the CDP proxy allowlists
+  # navigation to http(s) and resolves every explicit navigation target,
+  # refusing loopback, private, link-local (169.254.169.254) and other
+  # non-public addresses (see app/browser_host/proxy.py); Obscura runs without
+  # private-network access unless BROWSER_HOST_ALLOW_PRIVATE_NETWORK is set.
+  # Without that flag Obscura's own SSRF gate (obscura-net validate_url plus its
+  # DNS resolver guard, re-checked on every redirect hop and mirrored into JS
+  # fetch/iframe loads) also refuses private targets the proxy never sees:
+  # in-page redirects, subresources and scripts.
   # STILL A DEPLOY REQUIREMENT in production: an egress firewall blocking the
-  # cloud-metadata address 169.254.169.254 (and IMDSv6 fd00:ec2::254). Network
-  # isolation stops container-DNS SSRF; only a firewall stops a raw-IP literal.
+  # cloud-metadata address 169.254.169.254 (and IMDSv6 fd00:ec2::254) — the
+  # only layer that holds for the chromium fallback engine, and the backstop
+  # if either in-process gate is ever switched off.
   # ---------------------------------------------------------------------------
   browser-host:
     container_name: browser-host

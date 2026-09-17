@@ -702,8 +702,8 @@ class ChromiumHost:
         """Obscura's argv. It is a CDP *server* — serve, not a chrome debug flag.
 
         It publishes its DevTools endpoint at /json/version on the port we
-        name (never ephemeral, so we can poll for it), stealthed, and permitted
-        to reach the private network the host allowlist otherwise fronts.
+        name (never ephemeral, so we can poll for it), stealthed, and kept off
+        the private network unless BROWSER_HOST_ALLOW_PRIVATE_NETWORK says otherwise.
         """
         return obscura_serve_argv(settings.OBSCURA_PORT)
 

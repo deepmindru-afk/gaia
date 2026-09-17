@@ -72,6 +72,7 @@ from app.utils.agent_utils import (
     format_subagent_start_event,
 )
 from app.utils.background_tasks import spawn_background_task
+from app.utils.url_safety import assert_safe_url_shape
 from shared.py.wide_events import log
 
 # Screenshots stream into the chat live, so the reply must never narrate them.
@@ -449,6 +450,11 @@ async def browser_task(
 
     if not settings.BROWSER_USE_ENABLED:
         return "Browser automation is currently disabled."
+    if start_url and not settings.BROWSER_HOST_ALLOW_PRIVATE_NETWORK:
+        try:
+            assert_safe_url_shape(start_url)
+        except ValueError as exc:
+            return f"I can't open {start_url}: {exc}. Only public http(s) sites are reachable."
 
     writer = get_stream_writer()
     thread_mirror = _BrowserThreadMirror(writer)

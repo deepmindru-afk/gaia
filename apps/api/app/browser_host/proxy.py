@@ -24,7 +24,9 @@ from urllib.parse import urlsplit
 import websockets
 
 from app.browser_host.pumps import pump_until_first_close
+from app.config.settings import settings
 from app.constants.log_tags import LogTag
+from app.utils.url_safety import assert_public_http_url
 from shared.py.wide_events import log
 
 if TYPE_CHECKING:
@@ -78,8 +80,8 @@ _REFUSAL_REASONS: dict[str, str] = {
 }
 
 
-def _refused_navigation_url(message: dict[str, Any]) -> str | None:
-    """Return the URL to refuse when this command navigates outside http(s), else None."""
+def _navigation_url(message: dict[str, Any]) -> str | None:
+    """Return the URL a navigation command opens, or None when it is not one or opens nothing."""
     if message.get("method") not in _NAVIGATION_METHODS:
         return None
     params = message.get("params")
@@ -87,6 +89,14 @@ def _refused_navigation_url(message: dict[str, Any]) -> str | None:
         return None
     url = params.get("url")
     if not isinstance(url, str) or not url or url == _BLANK_URL:
+        return None
+    return url
+
+
+def _refused_navigation_url(message: dict[str, Any]) -> str | None:
+    """Return the URL to refuse when this command navigates outside http(s), else None."""
+    url = _navigation_url(message)
+    if url is None:
         return None
     scheme = urlsplit(url).scheme.lower()
     # An empty scheme is a relative/implicit URL, which Chromium resolves against
@@ -104,6 +114,26 @@ def _refusal_reason(message: dict[str, Any]) -> str | None:
     url = _refused_navigation_url(message)
     if url is not None:
         return f"navigation to {url} refused: only http and https are allowed"
+    return None
+
+
+async def _refused_private_target(message: dict[str, Any]) -> str | None:
+    """Why this navigation must not reach Chromium: its host resolves to a non-public address.
+
+    Resolved right before the command is forwarded, so DNS rebinding cannot slip
+    an address past an earlier check. The first line of SSRF defence for a
+    model- or user-supplied URL; the deployment egress firewall stays the second,
+    because in-page redirects and subresources never pass through this proxy.
+    """
+    if settings.BROWSER_HOST_ALLOW_PRIVATE_NETWORK:
+        return None
+    url = _navigation_url(message)
+    if url is None or urlsplit(url).scheme.lower() not in _ALLOWED_NAVIGATION_SCHEMES:
+        return None  # relative URLs stay on the current document; foreign schemes are refused above
+    try:
+        await assert_public_http_url(url)
+    except ValueError as exc:
+        return f"navigation to {url} refused: {exc}"
     return None
 
 
@@ -186,7 +216,7 @@ async def run_cdp_proxy(host: ChromiumHost, session: HostSession, client_ws: Web
                 raw = await client_ws.receive_text()
                 host.touch(session.session_id)
                 message = json.loads(raw)
-                reason = _refusal_reason(message)
+                reason = _refusal_reason(message) or await _refused_private_target(message)
                 if reason is not None:
                     log.warning(
                         f"{LogTag.BROWSER} browser cdp command refused",

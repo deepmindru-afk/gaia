@@ -9,10 +9,18 @@ chromium.memory_usage_mb themselves to simulate pressure.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
-from app.browser_host import chromium
+from app.browser_host import chromium, proxy
 from app.config.settings import settings
+
+
+@pytest.fixture(autouse=True)
+def _no_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the proxy's DNS-resolving guard so no unit test touches real DNS."""
+    monkeypatch.setattr(proxy, "assert_public_http_url", AsyncMock())
 
 
 @pytest.fixture(autouse=True)
