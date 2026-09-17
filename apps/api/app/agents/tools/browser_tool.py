@@ -78,13 +78,12 @@ from shared.py.wide_events import log
 # Screenshots stream into the chat live, so the reply must never narrate them.
 _NO_META = (
     "The step-by-step screenshots were already shown to the user in this chat, so do "
-    "NOT mention screenshots, tools, steps, or 'browser vision' — speak only to the outcome."
+    "NOT mention screenshots, tools, steps, or 'browser vision'. Speak only to the outcome."
 )
 
 
 def _agent_result_message(result: BrowserResultSnapshot) -> str:
-    """Outcome-specific guidance for the assistant's reply — so it confirms a real
-    result, owns a stop, or reports a failure, but never claims success it didn't get."""
+    """Tell the assistant how to reply: confirm a real result, own a stop, or report a failure."""
     summary = result.summary.strip()
     if result.status == BrowserSessionStatus.COMPLETED and result.success:
         return (
@@ -93,7 +92,7 @@ def _agent_result_message(result: BrowserResultSnapshot) -> str:
         )
     if result.status == BrowserSessionStatus.CANCELLED:
         return (
-            "BROWSER TASK STOPPED BY THE USER before it finished — it did NOT complete, so "
+            "BROWSER TASK STOPPED BY THE USER before it finished. It did NOT complete, so "
             "there is no result and you must not claim one.\n\n"
             f"Briefly acknowledge you've stopped and ask if they'd like you to try again or "
             f"do something else. {_NO_META}"

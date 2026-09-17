@@ -209,7 +209,7 @@ def _collector():
 # completed takeover. Asserted verbatim so a reworded prompt has to be deliberate.
 TAKEOVER_VERIFY_TAIL = (
     "Do NOT assume the page is in the state you expect. Look at the "
-    "CURRENT page now and VERIFY before doing anything else — e.g. a solved CAPTCHA "
+    "CURRENT page now and VERIFY before doing anything else. A solved CAPTCHA "
     "shows a green checkmark and no 'please verify that you are not a robot' error "
     "remains; a login lands on the signed-in page. If the step is NOT actually "
     "complete, call the takeover / solve_captcha_with_help action again instead of "

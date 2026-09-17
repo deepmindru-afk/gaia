@@ -192,7 +192,7 @@ async def test_bot_delivery_outage_does_not_abort_run(
 # on purpose: these strings are the tool's whole user-visible contract.
 NO_META = (
     "The step-by-step screenshots were already shown to the user in this chat, so do "
-    "NOT mention screenshots, tools, steps, or 'browser vision' — speak only to the outcome."
+    "NOT mention screenshots, tools, steps, or 'browser vision'. Speak only to the outcome."
 )
 
 
@@ -212,7 +212,7 @@ def _failed_message(summary: str) -> str:
 
 
 CANCELLED_MESSAGE = (
-    "BROWSER TASK STOPPED BY THE USER before it finished — it did NOT complete, so "
+    "BROWSER TASK STOPPED BY THE USER before it finished. It did NOT complete, so "
     "there is no result and you must not claim one.\n\n"
     "Briefly acknowledge you've stopped and ask if they'd like you to try again or "
     f"do something else. {NO_META}"
