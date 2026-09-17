@@ -24,6 +24,14 @@ class TestExtractReasoningDelta:
         )
         assert extract_reasoning_delta(chunk) == "we"
 
+    def test_a_reasoning_key_on_a_non_reasoning_block_is_not_thinking(self) -> None:
+        from langchain_core.messages import AIMessageChunk
+
+        from app.agents.llm.reasoning import extract_reasoning_delta
+
+        chunk = AIMessageChunk(content=[{"type": "text", "text": "answer", "reasoning": "stray"}])
+        assert extract_reasoning_delta(chunk) == ""
+
     def test_deepseek_style_reasoning_content_is_extracted(self) -> None:
         """DeepSeek-style providers put thinking in additional_kwargs — LangChain."""
         from langchain_core.messages import AIMessageChunk

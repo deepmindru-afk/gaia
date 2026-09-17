@@ -154,8 +154,9 @@ def test_verify_rejects_non_string_session_id():
         _SECRET,
         algorithm=JWT_ALGORITHM,
     )
-    with pytest.raises(JWTError, match="Takeover token missing session_id, subject, or expiry"):
+    with pytest.raises(JWTError) as exc:
         tt.verify_takeover_token(forged)
+    assert str(exc.value) == "Takeover token missing session_id, subject, or expiry"
 
 
 def test_verify_rejects_missing_user_id():
@@ -202,8 +203,9 @@ def test_verify_rejects_missing_exp():
         _SECRET,
         algorithm=JWT_ALGORITHM,
     )
-    with pytest.raises(JWTError, match="Takeover token missing session_id, subject, or expiry"):
+    with pytest.raises(JWTError) as exc:
         tt.verify_takeover_token(forged)
+    assert str(exc.value) == "Takeover token missing session_id, subject, or expiry"
 
 
 def test_verify_wraps_jose_rejection_of_non_numeric_exp():

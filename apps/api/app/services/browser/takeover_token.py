@@ -48,6 +48,9 @@ def create_takeover_token(session_id: str, user_id: str) -> str:
     return token
 
 
+_MISSING_CLAIMS_MESSAGE = "Takeover token missing session_id, subject, or expiry"
+
+
 class _TakeoverPayload(BaseModel):
     """The decoded token as jose hands it back, before the claims are checked."""
 
@@ -79,11 +82,11 @@ def verify_takeover_token(token: str) -> TakeoverTokenClaims:
     try:
         claims = _TakeoverPayload.model_validate(payload)
     except ValidationError as exc:
-        raise JWTError("Takeover token missing session_id, subject, or expiry") from exc
+        raise JWTError(_MISSING_CLAIMS_MESSAGE) from exc
     if claims.role != _TAKEOVER_ROLE:
         raise JWTError("Invalid token role")
     if claims.session_id is None or claims.sub is None or claims.exp is None:
-        raise JWTError("Takeover token missing session_id, subject, or expiry")
+        raise JWTError(_MISSING_CLAIMS_MESSAGE)
 
     return {"session_id": claims.session_id, "user_id": claims.sub, "exp": claims.exp}
 
