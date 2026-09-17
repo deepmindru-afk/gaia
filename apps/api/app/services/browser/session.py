@@ -140,7 +140,7 @@ async def auto_resolve_handoff_on_navigation(
                 handoff_id,
                 HandoffDecision.CONTINUE,
                 user_id,
-                "Signed in, resuming automatically.",
+                "Looks like you're done here, resuming.",
             )
             return
 
