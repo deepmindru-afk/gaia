@@ -40,13 +40,14 @@ import {
   type PlatformName,
   type RichMessage,
   type RichMessageTarget,
+  redeemLinkCode,
   renderForPlatform,
   richMessageToMarkdown,
   type SentMessage,
   STREAMING_DEFAULTS,
   sanitizeErrorForLog,
   withWideEvent,
-} from "@gaia/shared";
+} from "@gaia/shared/bots";
 import type { Message } from "@grammyjs/types";
 import { Bot, type Context, GrammyError, InputFile } from "grammy";
 
@@ -113,14 +114,11 @@ export interface TelegramMedia {
 }
 
 /**
- * Maps a grammY {@link Message} onto a {@link TelegramMedia} descriptor, or
- * null when the message carries no media we recognise. Exported as a pure
- * function so the mapping is unit-testable without a live grammY context.
- *
- * Photos arrive as an ascending-size array, so the last entry is the highest
- * resolution. Voice notes (push-to-talk) are flagged separately from audio
- * files. Videos, video notes, animations (GIFs) and stickers map to the
- * unsupported kinds the shared pipeline rejects without a download.
+ * Map a grammY {@link Message} onto a {@link TelegramMedia} descriptor, or null
+ * when no recognised media is present. Exported pure for unit-testing without a
+ * live grammY context. Photos arrive ascending-size (last = highest resolution);
+ * voice notes are flagged separately from audio; video/video-notes/animations/
+ * stickers map to kinds the shared pipeline rejects without downloading.
  */
 export function extractTelegramMedia(msg: Message): TelegramMedia | null {
   if (msg.photo && msg.photo.length > 0) {
@@ -205,10 +203,9 @@ export class TelegramAdapter extends BaseBotAdapter {
     this.token = token;
 
     this.bot = new Bot(this.token);
-    // grammY's terminal error handler: anything a middleware throws and nobody
-    // caught ends here. It is a unit of work like any other — the update that
-    // blew up, who sent it, and why — so it gets its own canonical event
-    // instead of a lone error line with no trace_id.
+    // grammY's terminal error handler: anything an uncaught middleware throws ends
+    // here. Treated as its own unit of work so it gets a canonical event (update,
+    // sender, cause) instead of a lone error line with no trace_id.
     this.bot.catch((err) =>
       withWideEvent(
         "bot_runtime_error",
@@ -241,13 +238,25 @@ export class TelegramAdapter extends BaseBotAdapter {
    * and dispatches all others through the unified command system.
    */
   protected async registerCommands(commands: BotCommand[]): Promise<void> {
-    // /start → help command
+    // /start with a deep-link payload is the one-tap linking handoff; bare
+    // /start stays the help command.
     this.bot.command("start", async (ctx) => {
       const userId = ctx.from?.id.toString();
       if (!userId) return;
 
       const target = this.createCtxTarget(ctx, userId);
-      await this.dispatchCommand("help", target);
+      const code = (ctx.match || "").trim();
+      if (!code) {
+        await this.dispatchCommand("help", target);
+        return;
+      }
+
+      // The redeem delivers GAIA's whole first contact itself: nothing to run
+      // afterwards, and a failure has already told the user why.
+      await redeemLinkCode(this.gaia, this.platform, userId, code, target, {
+        username: ctx.from?.username,
+        displayName: ctx.from?.first_name,
+      });
     });
 
     for (const cmd of commands) {
@@ -443,9 +452,11 @@ export class TelegramAdapter extends BaseBotAdapter {
   protected async deliverOutbound(
     destinationId: string,
     text: string,
+    _isChannel: boolean,
   ): Promise<void> {
-    // grammY accepts a string chat_id; passing the id through avoids the NaN
-    // that Number() would produce for any non-numeric destination.
+    // grammY accepts a string chat_id, avoiding the NaN Number() would produce for
+    // a non-numeric destination. A Telegram chat_id is polymorphic — group/supergroup
+    // ids already route correctly, so _isChannel needs no branch here.
     await this.sendHtml(
       (t, opts) => this.bot.api.sendMessage(destinationId, t, opts),
       text,
@@ -483,17 +494,11 @@ export class TelegramAdapter extends BaseBotAdapter {
   }
 
   /**
-   * Edits a message as Telegram HTML. A "message is not modified" error (thrown
-   * when the new text equals the current text) is ignored; any other failure
-   * retries as stripped plain text. Centralises the fallback every Telegram
-   * edit path needs.
-   *
-   * A failure of that retry is reported via `onError` **and rethrown**. It used
-   * to be swallowed, which made a rejected edit — an expired message, or text
-   * the API refused — look like a successful delivery to the caller: the stream
-   * logged `chat_stream_completed` while the user was still looking at stale
-   * text. Callers that can recover (the shared streamer resends as a new
-   * message) need the throw to know they must.
+   * Edit a message as Telegram HTML, recovering from the one resend-fixable failure.
+   * "message is not modified" is a no-op success; an HTML parse rejection retries as
+   * stripped plain text (same gate as `sendHtml`); anything else is reported via
+   * `onError` and rethrown — retrying on a 429/dead connection just burns another
+   * call, and swallowing used to log stream success while the user saw stale text.
    */
   private async editHtml(
     edit: (text: string, opts?: { parse_mode: "HTML" }) => Promise<unknown>,
@@ -506,6 +511,13 @@ export class TelegramAdapter extends BaseBotAdapter {
       if (e instanceof Error && e.message.includes("message is not modified")) {
         return;
       }
+      if (!isTelegramHtmlParseError(e)) {
+        onError(e);
+        throw e;
+      }
+      this.adapterLogger.warn("telegram_html_parse_fallback", {
+        reason: e instanceof Error ? e.message : String(e),
+      });
       try {
         await edit(htmlToPlainText(html));
       } catch (err) {
@@ -570,6 +582,7 @@ export class TelegramAdapter extends BaseBotAdapter {
           platform: "telegram",
           platformUserId: userId,
           channelId: chatId.toString(),
+          isDm: ctx.chat?.type === "private",
           ...(attachments.length > 0
             ? {
                 fileIds: attachments.map((a) => a.fileId),
@@ -877,6 +890,7 @@ export class TelegramAdapter extends BaseBotAdapter {
       platform: "telegram",
       userId,
       channelId: chatId?.toString(),
+      isDm: !isGroup,
       profile,
 
       send: async (text: string): Promise<SentMessage> => {

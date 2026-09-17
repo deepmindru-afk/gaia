@@ -2,15 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import RightSidebarPanel from "@/components/layout/sidebar/RightSidebarPanel";
 import { TodoSidebar } from "@/components/layout/sidebar/right-variants/TodoSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { todoApi } from "@/features/todo/api/todoApi";
 import TodoList from "@/features/todo/components/TodoList";
 import { useTodoData } from "@/features/todo/hooks/useTodoData";
 import { useUrlTodoSelection } from "@/features/todo/hooks/useUrlTodoSelection";
-import { useRightSidebar } from "@/stores/rightSidebarStore";
 import { useTodoStore } from "@/stores/todoStore";
-import type { Todo, TodoFilters, TodoUpdate } from "@/types/features/todoTypes";
+import type {
+  Project,
+  Todo,
+  TodoFilters,
+  TodoUpdate,
+} from "@/types/features/todoTypes";
 
 function TodoItemSkeleton() {
   return (
@@ -75,6 +80,60 @@ interface TodoListPageProps {
   filterTodos?: (todos: Todo[]) => Todo[];
 }
 
+/**
+ * Renders the currently selected todo into the right sidebar. Mounted below the
+ * loading early-return so its sidebar element is never built for skeleton-only
+ * renders. Mounting the panel opens the sidebar; unmounting closes it.
+ */
+function SelectedTodoSidebarPanel({
+  selectedTodoId,
+  todos,
+  fetchedTodo,
+  notFoundId,
+  projects,
+  onUpdate,
+  onDelete,
+  clearSelection,
+}: Readonly<{
+  selectedTodoId: string | null;
+  todos: Todo[];
+  fetchedTodo: Todo | null;
+  notFoundId: string | null;
+  projects: Project[];
+  onUpdate: (todoId: string, updates: TodoUpdate) => Promise<void>;
+  onDelete: (todoId: string) => Promise<void>;
+  clearSelection: () => void;
+}>) {
+  // Find the selected task: prefer the loaded list, fall back to the item
+  // fetched by id for deep links that point outside the current view.
+  const selectedTodo = useMemo(() => {
+    if (!selectedTodoId) return null;
+    const inList = todos.find((t) => t.id === selectedTodoId);
+    if (inList) return inList;
+    return fetchedTodo?.id === selectedTodoId ? fetchedTodo : null;
+  }, [selectedTodoId, todos, fetchedTodo]);
+
+  // Confirmed missing (deleted/stale, fetch returned 404) - clear selection.
+  // While a deep-linked task is still being fetched we leave the selection
+  // intact so the sidebar opens once it resolves.
+  useEffect(() => {
+    if (selectedTodoId && notFoundId === selectedTodoId) clearSelection();
+  }, [selectedTodoId, notFoundId, clearSelection]);
+
+  if (!selectedTodo) return null;
+
+  return (
+    <RightSidebarPanel mode="sheet" onClose={clearSelection}>
+      <TodoSidebar
+        todo={selectedTodo}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
+        projects={projects}
+      />
+    </RightSidebarPanel>
+  );
+}
+
 export default function TodoListPage({
   filters,
   filterTodos,
@@ -82,17 +141,11 @@ export default function TodoListPage({
   const { selectedTodoId, selectTodo, clearSelection } = useUrlTodoSelection();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Deep-link fallback: a task opened via ?todoId= may not be in the loaded
-  // (filtered/paginated) list — e.g. a dormant task linked from a notification.
-  // In that case we fetch it by id so the sidebar still opens. `notFoundId`
-  // records an id confirmed missing (404) so we clear instead of refetching.
+  // Deep-link fallback: a task opened via ?todoId= may be missing from the
+  // loaded (filtered/paginated) list, so fetch it by id to still open the
+  // sidebar; `notFoundId` records a confirmed-404 id so we clear instead of refetching.
   const [fetchedTodo, setFetchedTodo] = useState<Todo | null>(null);
   const [notFoundId, setNotFoundId] = useState<string | null>(null);
-
-  // Get right sidebar actions - these are stable from Zustand
-  const setRightSidebarContent = useRightSidebar((state) => state.setContent);
-  const openWithContent = useRightSidebar((state) => state.openWithContent);
-  const closeRightSidebar = useRightSidebar((state) => state.close);
 
   // Individual selectors to avoid re-renders from unrelated store changes
   const storeTodos = useTodoStore((state) => state.todos);
@@ -116,17 +169,17 @@ export default function TodoListPage({
   }, [storeTodos, dataTodos, filterTodos]);
 
   // Merge projects similarly
-  const projects = useMemo(() => {
-    return storeProjects.length > 0 ? storeProjects : dataProjects;
-  }, [storeProjects, dataProjects]);
+  const projects = storeProjects.length > 0 ? storeProjects : dataProjects;
 
   // Use refs to store latest callback versions to avoid stale closures
   const updateTodoRef = useRef(updateTodo);
   const deleteTodoRef = useRef(deleteTodo);
   const clearSelectionRef = useRef(clearSelection);
-  updateTodoRef.current = updateTodo;
-  deleteTodoRef.current = deleteTodo;
-  clearSelectionRef.current = clearSelection;
+  useEffect(() => {
+    updateTodoRef.current = updateTodo;
+    deleteTodoRef.current = deleteTodo;
+    clearSelectionRef.current = clearSelection;
+  });
 
   // Stable callbacks that don't change reference
   const handleTodoUpdate = useCallback(
@@ -140,20 +193,17 @@ export default function TodoListPage({
     [],
   );
 
-  const handleTodoDelete = useCallback(
-    async (todoId: string) => {
-      try {
-        await deleteTodoRef.current(todoId);
-      } catch (error) {
-        console.error("Failed to delete todo:", error);
-      }
-      // Always close sidebar after deletion — effects alone miss the case
-      // where the deleted todo was the last one in the current filtered view
-      clearSelectionRef.current();
-      closeRightSidebar();
-    },
-    [closeRightSidebar],
-  );
+  const handleTodoDelete = useCallback(async (todoId: string) => {
+    try {
+      await deleteTodoRef.current(todoId);
+    } catch (error) {
+      console.error("Failed to delete todo:", error);
+    }
+    // Always close sidebar after deletion — clearing the selection unmounts
+    // the panel, which misses nothing when the deleted todo was the last one
+    // in the current filtered view.
+    clearSelectionRef.current();
+  }, []);
 
   // Stable click handler
   const handleTodoClick = useCallback(
@@ -166,15 +216,6 @@ export default function TodoListPage({
   const handlePrefetchWorkflow = useCallback((todoId: string) => {
     useTodoStore.getState().prefetchWorkflowStatus(todoId);
   }, []);
-
-  // Find the selected task: prefer the loaded list, fall back to the item
-  // fetched by id for deep links that point outside the current view.
-  const selectedTodo = useMemo(() => {
-    if (!selectedTodoId) return null;
-    const inList = todos.find((t) => t.id === selectedTodoId);
-    if (inList) return inList;
-    return fetchedTodo?.id === selectedTodoId ? fetchedTodo : null;
-  }, [selectedTodoId, todos, fetchedTodo]);
 
   // Fetch a deep-linked task by id when it isn't in the loaded list.
   useEffect(() => {
@@ -197,65 +238,6 @@ export default function TodoListPage({
     };
   }, [selectedTodoId, todos, fetchedTodo, notFoundId]);
 
-  // Memoize sidebar content so setRightSidebarContent only gets a new element
-  // when the selected todo or its data actually changes — not on every store update.
-  const sidebarContent = useMemo(() => {
-    if (!selectedTodo) return null;
-    return (
-      <TodoSidebar
-        todo={selectedTodo}
-        onUpdate={handleTodoUpdate}
-        onDelete={handleTodoDelete}
-        projects={projects}
-      />
-    );
-  }, [selectedTodo, handleTodoUpdate, handleTodoDelete, projects]);
-
-  // Effect: Sync selected todo with right sidebar
-  useEffect(() => {
-    if (sidebarContent && selectedTodo) {
-      openWithContent(sidebarContent, "sheet");
-    } else if (selectedTodoId && notFoundId === selectedTodoId) {
-      // Confirmed missing (deleted/stale, fetch returned 404) - clear selection.
-      // While a deep-linked task is still being fetched we leave the selection
-      // intact so the sidebar opens once it resolves.
-      clearSelection();
-      closeRightSidebar();
-    } else if (!selectedTodoId) {
-      // No selection - ensure sidebar is closed
-      setRightSidebarContent(null);
-      closeRightSidebar();
-    }
-  }, [
-    sidebarContent,
-    selectedTodo,
-    selectedTodoId,
-    notFoundId,
-    todos.length,
-    setRightSidebarContent,
-    openWithContent,
-    closeRightSidebar,
-    clearSelection,
-  ]);
-
-  // Effect: Handle sidebar close from external trigger (e.g., X button)
-  useEffect(() => {
-    const unsubscribe = useRightSidebar.subscribe((state, prevState) => {
-      if (prevState.isOpen && !state.isOpen && selectedTodoId) {
-        clearSelection();
-      }
-    });
-
-    return unsubscribe;
-  }, [selectedTodoId, clearSelection]);
-
-  // Effect: Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      closeRightSidebar();
-    };
-  }, [closeRightSidebar]);
-
   // Show skeleton on initial load only — subsequent filter changes keep stale todos visible
   if (initialLoading) {
     return (
@@ -269,6 +251,16 @@ export default function TodoListPage({
 
   return (
     <div className="flex h-full w-full flex-col">
+      <SelectedTodoSidebarPanel
+        selectedTodoId={selectedTodoId}
+        todos={todos}
+        fetchedTodo={fetchedTodo}
+        notFoundId={notFoundId}
+        projects={projects}
+        onUpdate={handleTodoUpdate}
+        onDelete={handleTodoDelete}
+        clearSelection={clearSelection}
+      />
       <div
         ref={scrollContainerRef}
         className="w-full flex-1 overflow-y-auto px-4"

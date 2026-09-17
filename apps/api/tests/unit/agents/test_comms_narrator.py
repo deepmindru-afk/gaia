@@ -10,11 +10,12 @@ to the comms checkpoint.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.core.background.comms_narrator import (
     narrate_executor_result,
     record_executor_cancellation,
+    record_platform_delivery,
 )
 from app.agents.core.graph_manager import GraphUnavailableError
 from app.agents.llm.lane import AgentRole
@@ -24,10 +25,13 @@ from app.agents.prompts.comms_prompts import (
 )
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.general import NEW_MESSAGE_BREAKER
+from app.constants.log_tags import LogTag
+from app.models.user_models import AuthenticatedUser, OnboardingSubdocument
+from tests.helpers import captured_wide_event
 
 MODULE = "app.agents.core.background.comms_narrator"
 
-USER: dict = {"user_id": "user-1", "email": "u@gaia.local"}
+USER = AuthenticatedUser(user_id="user-1", email="u@gaia.local")
 CONVERSATION_ID = "conv-1"
 RESULT_TEXT = f"Downloaded the report.{NEW_MESSAGE_BREAKER}It has 3 pages."
 CARD_NOTE = wrap_agent_payload(AgentTag.RETURNED_TO_FRONTEND, "a card is on screen")
@@ -67,21 +71,21 @@ class TestNarrateExecutorResult:
         assert config["configurable"]["conversation_id"] == CONVERSATION_ID
 
     async def test_the_users_onboarding_data_reaches_build_agent_config(self) -> None:
-        """``build_agent_config`` runs for real here (unmocked) — proves the
-        (preferences, writing_style) pair extracted from ``user["onboarding"]``
-        actually lands on the configurable this narration run carries, not just
-        that the extraction call doesn't crash."""
-        user_with_onboarding = {
-            **USER,
-            "onboarding": {
-                "preferences": {"profession": "engineer"},
-                "writing_style": {"summary": "terse"},
-            },
-        }
+        """The (preferences, writing_style) pair from user.onboarding must reach the configurable, unmocked."""
+        user_with_onboarding = USER.model_copy(
+            update={
+                "onboarding": OnboardingSubdocument.model_validate(
+                    {
+                        "preferences": {"profession": "engineer"},
+                        "writing_style": {"summary": "terse"},
+                    }
+                )
+            }
+        )
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -96,7 +100,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result("boom", "error", CONVERSATION_ID, USER)
@@ -110,7 +114,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -130,7 +134,7 @@ class TestNarrateExecutorResult:
         with (
             _patch_graph(_fake_comms_graph()),
             patch(
-                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", {}))
+                f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("revoiced", []))
             ) as silent,
         ):
             await narrate_executor_result(
@@ -147,8 +151,7 @@ class TestNarrateExecutorResult:
         )
 
     async def test_parroted_internal_tags_are_stripped(self) -> None:
-        """A weak model that echoes the whole framed block back keeps its words
-        and loses the plumbing — both the open and the close tag."""
+        """A parroting model keeps the words but strips both the open and close tag."""
         parroted = wrap_agent_payload(AgentTag.EXECUTOR_RESULT, "done")
         with (
             _patch_graph(_fake_comms_graph()),
@@ -188,10 +191,7 @@ class TestRecordExecutorCancellation:
         assert call.kwargs["as_node"] == "tools"
         messages = call.args[1]["messages"]
         assert len(messages) == 1
-        # The whole record, not a fragment of it: this text is the only thing
-        # that stops comms claiming a cancelled task finished, so every clause
-        # of the denial is load-bearing and a test that matched one phrase let
-        # the rest of the sentence be rewritten unnoticed.
+        # Full text, not a fragment: every clause is load-bearing.
         assert messages[0].content == wrap_agent_payload(
             AgentTag.EXECUTOR_CANCELLED,
             "The background task task-42 ('send the email') was cancelled by the user "
@@ -214,6 +214,50 @@ class TestRecordExecutorCancellation:
             await record_executor_cancellation(CONVERSATION_ID, "task-42", "send the email")
 
 
+class TestRecordPlatformDelivery:
+    async def test_delivered_message_is_appended_to_the_checkpoint(self) -> None:
+        graph = _fake_comms_graph()
+        get_graph = AsyncMock(return_value=graph)
+        with patch(f"{MODULE}.GraphManager.get_graph", get_graph):
+            await record_platform_delivery(CONVERSATION_ID, "Report is ready. It has 3 pages.")
+
+        # The comms graph specifically — a wrong graph writes into a thread
+        # whose next turn would read a message it never sent.
+        get_graph.assert_awaited_once_with("comms_agent")
+        graph.aupdate_state.assert_awaited_once()
+        call = graph.aupdate_state.await_args
+        assert call.args[0] == {"configurable": {"thread_id": CONVERSATION_ID}}
+        # as_node="tools": as "agent" makes aupdate_state evaluate should_continue,
+        # which needs a store it cannot inject, so the write raises and is lost.
+        assert call.kwargs["as_node"] == "tools"
+        messages = call.args[1]["messages"]
+        assert len(messages) == 1
+        assert isinstance(messages[0], AIMessage)
+        assert messages[0].content == "Report is ready. It has 3 pages."
+
+    async def test_blank_text_is_a_no_op(self) -> None:
+        graph = _fake_comms_graph()
+        with _patch_graph(graph):
+            await record_platform_delivery(CONVERSATION_ID, "   ")
+
+        graph.aupdate_state.assert_not_called()
+
+    async def test_failure_to_record_is_swallowed_and_reported_on_the_wide_event(self) -> None:
+        """A checkpoint failure must not break the caller, but log.error must land in the wide event's errors[]."""
+        graph = _fake_comms_graph()
+        graph.aupdate_state = AsyncMock(side_effect=RuntimeError("checkpoint down"))
+        with _patch_graph(graph):
+            async with captured_wide_event() as event:
+                await record_platform_delivery(CONVERSATION_ID, "hello")
+
+        (error,) = [e for e in event["errors"] if "platform delivery" in e["msg"]]
+        assert error["msg"] == (
+            f"{LogTag.AGENT} Failed to record platform delivery in conversation thread"
+        )
+        assert error["conversation_id"] == CONVERSATION_ID
+        assert error["error"] == "checkpoint down"
+
+
 class TestNarrationResolvesItsOwnCommsLane:
     """Background narration is a top-level run with no parent to inherit from.
 
@@ -228,7 +272,7 @@ class TestNarrationResolvesItsOwnCommsLane:
         with (
             _patch_graph(graph),
             patch(f"{MODULE}.build_agent_config", built),
-            patch(f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("narrated", {}))),
+            patch(f"{MODULE}.execute_graph_silent", AsyncMock(return_value=("narrated", []))),
         ):
             await narrate_executor_result(
                 result_text=RESULT_TEXT,
@@ -238,9 +282,9 @@ class TestNarrationResolvesItsOwnCommsLane:
             )
 
         kwargs = built.await_args.kwargs
-        assert kwargs["role"] is AgentRole.COMMS
-        assert kwargs["agent_name"] == "comms_agent"
-        assert kwargs["conversation_id"] == CONVERSATION_ID
-        # No base_configurable: inheriting one would carry a stale lane from
-        # whatever run happened to be in flight.
-        assert "base_configurable" not in kwargs
+        assert kwargs["lane"].role is AgentRole.COMMS
+        assert kwargs["identity"].agent_name == "comms_agent"
+        assert kwargs["identity"].conversation_id == CONVERSATION_ID
+        # No thread group at all, so no base_configurable: inheriting one would
+        # carry a stale lane from whatever run happened to be in flight.
+        assert "thread" not in kwargs

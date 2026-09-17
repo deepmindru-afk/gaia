@@ -12,6 +12,7 @@ import type {
 import { getToolCategoryIcon } from "@/features/chat/utils/toolIcons";
 import { useIntegrationLookup } from "@/features/integrations/hooks/useIntegrationLookup";
 import { StepRow, SubagentRow } from "./SubagentRow";
+import { deriveTimelineItemKeys } from "./TextBubble/useSubagentSynthesis";
 
 /**
  * Unified timeline item — either a regular tool call or a subagent invocation.
@@ -43,6 +44,60 @@ interface UnifiedToolThreadProps {
 }
 
 const SHOW_ICONS = 10;
+
+// ── Stacked category icons ──────────────────────────────────────────────────
+
+// Rendered as a child after UnifiedToolThread's early return, so renders that
+// bail out never build this subtree.
+function StackedIcons({
+  icons,
+}: {
+  icons: { category: string; iconUrl?: string }[];
+}) {
+  const display = icons.slice(0, SHOW_ICONS);
+  if (display.length === 0) return null;
+
+  return (
+    <div className="flex min-h-8 items-center -space-x-2">
+      {display.map((d, i) => {
+        const icon = getToolCategoryIcon(
+          d.category,
+          { width: 21, height: 21 },
+          d.iconUrl,
+        ) || (
+          <div className="p-1 bg-zinc-800 rounded-lg text-zinc-400 backdrop-blur">
+            <ToolsIcon width={21} height={21} />
+          </div>
+        );
+        let rotate = "0deg";
+        if (display.length > 1) {
+          rotate = i % 2 === 0 ? "8deg" : "-8deg";
+        }
+        return (
+          <div
+            key={d.category}
+            className="relative flex min-w-8 items-center justify-center"
+            style={{
+              rotate,
+              zIndex: i,
+            }}
+          >
+            {icon}
+          </div>
+        );
+      })}
+      {icons.length > SHOW_ICONS && (
+        <div className="z-0 flex size-7 min-h-7 min-w-7 items-center justify-center rounded-lg bg-zinc-700/60 text-xs text-foreground-500 font-normal">
+          +{icons.length - SHOW_ICONS}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Root timeline items get one stable React key each, derived from
+// stream-stable structure (tool_call_id/subagent_id/anchored slot, never
+// payload) — a growing reasoning delta keeps its key instead of remounting and snapping `expanded` shut.
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -96,10 +151,11 @@ export default function UnifiedToolThread({
     return count;
   }, [timeline]);
 
-  // Stacked icons — deduplicated by category across all items
-  const stackedIcons = useMemo(() => {
+  // Stacked icons — deduplicated by category across all items. Data only; the
+  // JSX subtree lives in <StackedIcons>, rendered after the early return.
+  const uniqueIcons = useMemo(() => {
     const seenCategories = new Set<string>();
-    const uniqueIcons: { category: string; iconUrl?: string }[] = [];
+    const icons: { category: string; iconUrl?: string }[] = [];
 
     for (const item of timeline) {
       // Thinking steps have no tool icon — keep them out of the stacked icons.
@@ -110,7 +166,7 @@ export default function UnifiedToolThread({
           : item.data.tool_category || "subagent";
       if (seenCategories.has(cat)) continue;
       seenCategories.add(cat);
-      uniqueIcons.push({
+      icons.push({
         category: cat,
         iconUrl:
           item.kind === "tool"
@@ -119,46 +175,13 @@ export default function UnifiedToolThread({
       });
     }
 
-    const display = uniqueIcons.slice(0, SHOW_ICONS);
-    if (display.length === 0) return null;
-
-    return (
-      <div className="flex min-h-8 items-center -space-x-2">
-        {display.map((d, i) => {
-          const icon = getToolCategoryIcon(
-            d.category,
-            { width: 21, height: 21 },
-            d.iconUrl,
-          ) || (
-            <div className="p-1 bg-zinc-800 rounded-lg text-zinc-400 backdrop-blur">
-              <ToolsIcon width={21} height={21} />
-            </div>
-          );
-          let rotate = "0deg";
-          if (display.length > 1) {
-            rotate = i % 2 === 0 ? "8deg" : "-8deg";
-          }
-          return (
-            <div
-              key={d.category}
-              className="relative flex min-w-8 items-center justify-center"
-              style={{
-                rotate,
-                zIndex: i,
-              }}
-            >
-              {icon}
-            </div>
-          );
-        })}
-        {uniqueIcons.length > SHOW_ICONS && (
-          <div className="z-0 flex size-7 min-h-7 min-w-7 items-center justify-center rounded-lg bg-zinc-700/60 text-xs text-foreground-500 font-normal">
-            +{uniqueIcons.length - SHOW_ICONS}
-          </div>
-        )}
-      </div>
-    );
+    return icons;
   }, [timeline, getIconUrl]);
+
+  // One stable React key per timeline item — derived from stream-stable
+  // structure (tool_call_id/subagent_id/anchored slot), never payload, so a
+  // growing reasoning delta keeps its row's identity and `expanded` state.
+  const itemKeys = deriveTimelineItemKeys(timeline);
 
   if (timeline.length === 0) return null;
 
@@ -181,7 +204,7 @@ export default function UnifiedToolThread({
           key="tools"
           title={
             <div className="flex items-center hover:text-white text-zinc-500">
-              {totalToolCount > 1 && stackedIcons}
+              {totalToolCount > 1 && <StackedIcons icons={uniqueIcons} />}
               <span
                 className={`text-xs font-medium transition-colors duration-200 ${totalToolCount > 1 ? "ml-2" : ""}`}
               >
@@ -203,7 +226,7 @@ export default function UnifiedToolThread({
               if (item.kind === "tool") {
                 return (
                   <StepRow
-                    key={`tc-${item.data.tool_call_id || idx}`}
+                    key={itemKeys[idx]}
                     call={item.data}
                     isLast={isLast}
                     getIconUrl={getIconUrl}
@@ -216,7 +239,7 @@ export default function UnifiedToolThread({
 
               return (
                 <SubagentRow
-                  key={`sa-${item.data.subagent_id}`}
+                  key={itemKeys[idx]}
                   group={item.data}
                   isLast={isLast}
                   isStreaming={isStreaming}

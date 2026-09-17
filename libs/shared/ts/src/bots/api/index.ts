@@ -13,11 +13,17 @@ import type {
   BotWorkflowExecutionResponse,
   BotWorkflowListResponse,
   ChatRequest,
+  RedeemedLinkCode,
   SettingsResponse,
 } from "../types";
-import { getHttpStatus } from "../utils/logger";
+import { getErrorReason, getHttpStatus } from "../utils/logger";
 import { wideLog } from "../utils/wide-events";
-import { type ApprovalUpdateHandler, streamChat } from "./chat-stream";
+import {
+  type ApprovalUpdateHandler,
+  type MessageBoundaryHandler,
+  type NoticeHandler,
+  streamChat,
+} from "./chat-stream";
 import {
   downloadArtifactRequest,
   transcribeAudioRequest,
@@ -26,11 +32,18 @@ import {
 
 export class GaiaApiError extends Error {
   status?: number;
+  /** The API's error body — a status says what failed, not why. */
+  reason: Record<string, unknown>;
 
-  constructor(message: string, status?: number) {
+  constructor(
+    message: string,
+    status?: number,
+    reason: Record<string, unknown> = {},
+  ) {
     super(message);
     this.name = "GaiaApiError";
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -124,7 +137,11 @@ export class GaiaClient {
       if (error instanceof GaiaApiError) throw error;
       const message = error instanceof Error ? error.message : "Unknown error";
       const status = getHttpStatus(error);
-      throw new GaiaApiError(`API error: ${status || message}`, status);
+      throw new GaiaApiError(
+        `API error: ${status || message}`,
+        status,
+        getErrorReason(error),
+      );
     }
   }
 
@@ -145,7 +162,11 @@ export class GaiaClient {
 
       if (error instanceof GaiaApiError) throw error;
       const message = error instanceof Error ? error.message : "Unknown error";
-      throw new GaiaApiError(`API error: ${status || message}`, status);
+      throw new GaiaApiError(
+        `API error: ${status || message}`,
+        status,
+        getErrorReason(error),
+      );
     }
   }
 
@@ -168,6 +189,8 @@ export class GaiaClient {
     onDone: (fullText: string, conversationId: string) => void | Promise<void>,
     onError: (error: Error) => void | Promise<void>,
     onApprovalUpdate?: ApprovalUpdateHandler,
+    onMessageBoundary?: MessageBoundaryHandler,
+    onNotice?: NoticeHandler,
   ): Promise<string> {
     return streamChat(
       {
@@ -182,6 +205,8 @@ export class GaiaClient {
       onError,
       "/api/v1/bot/chat-stream",
       onApprovalUpdate,
+      onMessageBoundary,
+      onNotice,
     );
   }
 
@@ -479,6 +504,7 @@ export class GaiaClient {
     platform: string,
     platformUserId: string,
     channelId?: string,
+    isDm?: boolean,
   ): Promise<void> {
     return this.request(async () => {
       await this.client.post(
@@ -487,6 +513,7 @@ export class GaiaClient {
           platform,
           platform_user_id: platformUserId,
           channel_id: channelId ?? null,
+          is_dm: isDm ?? false,
         },
         {
           headers: {
@@ -604,6 +631,50 @@ export class GaiaClient {
       return {
         token: data.token,
         authUrl: data.auth_url,
+      };
+    });
+  }
+
+  /**
+   * Redeems a one-tap link code the web minted during onboarding — the reverse of
+   * {@link createLinkToken}: the code, not this request, decides which GAIA user gets linked.
+   * The API delivers GAIA's first contact itself on the outbound queue once linked, so this
+   * only returns whether the link succeeded.
+   *
+   * @throws {@link GaiaApiError} status 400 (expired/used), 409 (handle linked elsewhere), 429 (needs paid plan).
+   */
+  async redeemLinkCode(
+    platform: string,
+    platformUserId: string,
+    code: string,
+    profile?: { username?: string; displayName?: string },
+    firstMessage?: string,
+  ): Promise<RedeemedLinkCode> {
+    return this.request(async () => {
+      const { data } = await this.client.post(
+        "/api/v1/bot/redeem-link-code",
+        {
+          platform,
+          platform_user_id: platformUserId,
+          code,
+          ...(profile?.username && { username: profile.username }),
+          ...(profile?.displayName && { display_name: profile.displayName }),
+          // Absent, not empty: an empty string is "they sent only the code",
+          // and a blank turn in the thread is worse than no turn.
+          ...(firstMessage && { first_message: firstMessage }),
+        },
+        {
+          headers: {
+            "X-Bot-API-Key": this.apiKey,
+            "X-Bot-Platform": platform,
+            "X-Bot-Platform-User-Id": platformUserId,
+          },
+        },
+      );
+      return {
+        linked: data.linked,
+        delivered: data.delivered,
+        firstContact: data.first_contact,
       };
     });
   }

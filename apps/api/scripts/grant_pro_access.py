@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# mypy: ignore-errors
+# mypy: ignore-errors -- admin one-off script; typing not maintained here
 """
 Grant or revoke Pro access for a user in the local dev MongoDB.
 
@@ -96,7 +96,7 @@ async def grant_pro(email: str) -> None:
                 {
                     "$set": {
                         "status": "active",
-                        "next_billing_date": now + timedelta(days=365),
+                        "next_billing_date": (now + timedelta(days=365)).isoformat(),
                         "updated_at": now,
                     }
                 },
@@ -116,8 +116,8 @@ async def grant_pro(email: str) -> None:
                     "payment_frequency_interval": "month",
                     "subscription_period_count": 1,
                     "subscription_period_interval": "month",
-                    "next_billing_date": now + timedelta(days=365),
-                    "previous_billing_date": now,
+                    "next_billing_date": (now + timedelta(days=365)).isoformat(),
+                    "previous_billing_date": now.isoformat(),
                     "created_at": now,
                     "updated_at": now,
                     "metadata": {"dev": True, "granted_by": "grant_pro_access.py"},

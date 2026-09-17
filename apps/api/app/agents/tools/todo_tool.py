@@ -122,13 +122,9 @@ class TodosSummary(TypedDict):
     by_project: dict[str, _ProjectCounts]
 
 
-# ---------------------------------------------------------------------------
-# Tool return shapes. Plain TypedDicts, not models: the value goes straight to
-# LangChain, which stringifies it into the ToolMessage the LLM reads — so the
-# runtime object must stay the exact dict it is today. ``count`` is
-# ``NotRequired`` because the error paths deliberately return only the payload
-# key plus ``error``.
-# ---------------------------------------------------------------------------
+# Tool return shapes are plain TypedDicts, not models: LangChain stringifies
+# the value into the ToolMessage the LLM reads. ``count`` is ``NotRequired``
+# because error paths return only the payload key plus ``error``.
 
 
 class TodoResult(TypedDict):
@@ -207,7 +203,7 @@ async def create_todo(
     due_date_timezone: Annotated[
         str | None, "Timezone for the due date (e.g., 'America/New_York')"
     ] = None,
-    priority: Annotated[str | None, "Priority level: high, medium, low, or none"] = None,
+    priority: Annotated[Priority | None, "Priority level"] = None,
     project_id: Annotated[str | None, "Project ID to assign the todo to"] = None,
 ) -> TodoResult:
     try:
@@ -218,8 +214,7 @@ async def create_todo(
         if not user_id:
             return {"error": "User authentication required", "todo": None}
 
-        # Convert priority string to enum if provided
-        priority_enum = Priority(priority) if priority else Priority.NONE
+        priority_enum = priority or Priority.NONE
 
         todo_data = TodoModel(
             title=title,
@@ -269,7 +264,7 @@ async def list_todos(
     config: RunnableConfig,
     project_id: Annotated[str | None, "Filter by specific project ID"] = None,
     completed: Annotated[bool | None, "Filter by completion status"] = None,
-    priority: Annotated[str | None, "Filter by priority: high, medium, low, or none"] = None,
+    priority: Annotated[Priority | None, "Filter by priority"] = None,
     has_due_date: Annotated[bool | None, "Filter todos with/without due dates"] = None,
     overdue: Annotated[bool | None, "Filter overdue uncompleted todos"] = None,
     skip: Annotated[int, "Number of records to skip for pagination"] = 0,
@@ -286,13 +281,11 @@ async def list_todos(
         # Ensure limit is reasonable
         limit = min(limit, 100)
 
-        priority_value = Priority(priority) if priority else None
-
         results = await get_all_todos_service(
             user_id,
             project_id=project_id,
             completed=completed,
-            priority=priority_value,
+            priority=priority,
             has_due_date=has_due_date,
             overdue=overdue,
             skip=skip,
@@ -335,7 +328,7 @@ async def update_todo(
     labels: Annotated[list[str] | None, "New list of labels"] = None,
     due_date: Annotated[datetime | None, "New due date"] = None,
     due_date_timezone: Annotated[str | None, "New timezone for due date"] = None,
-    priority: Annotated[str | None, "New priority: high, medium, low, or none"] = None,
+    priority: Annotated[Priority | None, "New priority"] = None,
     project_id: Annotated[str | None, "Move to different project"] = None,
     completed: Annotated[bool | None, "Mark as complete/incomplete"] = None,
 ) -> TodoResult:
@@ -354,7 +347,7 @@ async def update_todo(
             labels=labels,
             due_date=due_date,
             due_date_timezone=due_date_timezone,
-            priority=Priority(priority) if priority is not None else None,
+            priority=priority,
             project_id=project_id,
             completed=completed,
         )
@@ -479,7 +472,7 @@ async def semantic_search_todos(
     limit: Annotated[int, "Maximum number of results to return"] = 20,
     project_id: Annotated[str | None, "Filter by specific project ID"] = None,
     completed: Annotated[bool | None, "Filter by completion status"] = None,
-    priority: Annotated[str | None, "Filter by priority: high, medium, low, or none"] = None,
+    priority: Annotated[Priority | None, "Filter by priority"] = None,
 ) -> SemanticSearchResult:
     try:
         log.set(tool={"name": "semantic_search_todos", "action": "search"})
@@ -498,7 +491,7 @@ async def semantic_search_todos(
             limit=limit,
             project_id=project_id,
             completed=completed,
-            priority=Priority(priority) if priority else None,
+            priority=priority,
         )
 
         todos_data = [todo.model_dump(mode="json") for todo in results]
@@ -580,8 +573,9 @@ async def get_today_todos(config: RunnableConfig) -> TodoListResult:
         if not user_id:
             return {"error": "User authentication required", "todos": []}
 
-        today_start = datetime.combine(datetime.today(), time.min)
-        today_end = datetime.combine(datetime.today(), time.max)
+        now = datetime.now(UTC)
+        today_start = datetime.combine(now, time.min)
+        today_end = datetime.combine(now, time.max)
 
         results = await get_todos_by_date_range(user_id, today_start, today_end)
         todos_data = [todo.model_dump(mode="json") for todo in results]
@@ -1064,13 +1058,10 @@ async def add_subtask(
         if not user_id:
             return {"error": "User authentication required", "todo": None}
 
-        # Get the todo first
         todo = await get_todo_service(todo_id, user_id)
 
-        # Create new subtask
         new_subtask = SubTask(id=str(uuid.uuid4()), title=title, completed=False)
 
-        # Update todo with new subtask
         update_data = TodoUpdateRequest(subtasks=todo.subtasks + [new_subtask])
 
         result = await update_todo_service(todo_id, update_data, user_id)
@@ -1239,12 +1230,11 @@ async def get_todos_summary(config: RunnableConfig) -> TodosSummaryResult:
         if not user_id:
             return {"error": "User authentication required", "summary": None}
 
-        # --- Helper functions ---
         def get_date_ranges() -> tuple[datetime, datetime, datetime, datetime, datetime]:
             """Calculate all needed date ranges."""
             now = datetime.now(UTC)
-            today_start = datetime.combine(datetime.today(), time.min)
-            today_end = datetime.combine(datetime.today(), time.max)
+            today_start = datetime.combine(now, time.min)
+            today_end = datetime.combine(now, time.max)
             week_end = now + timedelta(days=7)
             yesterday = now - timedelta(days=1)
             return now, today_start, today_end, week_end, yesterday
@@ -1311,7 +1301,6 @@ async def get_todos_summary(config: RunnableConfig) -> TodosSummaryResult:
                 "has_more": len(todos) > limit,
             }
 
-        # --- Parallel data fetching ---
         now, today_start, today_end, week_end, yesterday = get_date_ranges()
 
         today_todos, upcoming_todos, all_todos, all_projects = await asyncio.gather(
@@ -1321,14 +1310,12 @@ async def get_todos_summary(config: RunnableConfig) -> TodosSummaryResult:
             get_all_projects_service(user_id),
         )
 
-        # --- Process data ---
         overdue, high_priority, recently_completed, next_deadline = filter_todos(
             all_todos, now, yesterday
         )
         stats = calculate_stats(all_todos, recently_completed, overdue)
         project_breakdown = build_project_breakdown(all_todos, all_projects)
 
-        # --- Build summary ---
         summary: TodosSummary = {
             "today": serialize_todos(today_todos),
             "overdue": serialize_todos(overdue),

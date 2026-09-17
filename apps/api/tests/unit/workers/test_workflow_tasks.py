@@ -1,22 +1,40 @@
 """Unit tests for workflow_tasks ARQ worker."""
 
+from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock, call, patch
+from uuid import UUID, uuid4
 
 from bson import ObjectId
 import pytest
 
 from app.api.v1.middleware.tiered_rate_limiter import RateLimitExceededException
+from app.constants.log_tags import LogTag
 from app.constants.notifications import CHANNEL_TYPE_INAPP
-from app.models.notification.notification_models import ActionType, NotificationSourceEnum
+from app.models.agent_models import SilentRunResult
+from app.models.notification.notification_models import (
+    ActionType,
+    NotificationSourceEnum,
+)
+from app.models.user_models import AuthenticatedUser, UserDocument
+from app.models.workflow_execution_models import RecordedCall
+from app.models.workflow_models import TriggerType, WorkflowStep
 from app.services.analytics_service import AnalyticsEvents
+from app.services.workflow.conversation_service import build_selected_workflow_data
+from app.services.workflow.execution_service import (
+    WorkflowExecutorFailed,
+    WorkflowFireQueued,
+    WorkflowRunFailed,
+)
 from app.services.workflow.notifications import (
     send_workflow_completion_notification,
     send_workflow_failure_notification,
 )
 from app.utils.errors import AppError
 from app.workers.tasks.workflow_tasks import (
+    AGENT_RUN_SUMMARY,
+    _record_execution_failure,
     execute_workflow_as_chat,
     execute_workflow_by_id,
     generate_workflow_steps,
@@ -25,21 +43,28 @@ from app.workers.tasks.workflow_tasks import (
 )
 
 
+def _user_context(**fields: object) -> Callable[[str], AuthenticatedUser]:
+    """Stub load_user_context to answer for whichever user id it is asked for."""
+    return lambda user_id: AuthenticatedUser(user_id=user_id, **fields)
+
+
 @pytest.fixture(autouse=True)
 def _no_real_analytics():
-    """Keep every test hermetic: WORKFLOW_CREATED events are asserted through
-    this mock and never reach a real PostHog client."""
+    """Keep every test hermetic.
+
+    WORKFLOW_CREATED events are asserted through this mock and never reach a real PostHog client.
+    """
     with patch("app.workers.tasks.workflow_tasks.capture_event") as mock_capture:
         yield mock_capture
 
 
 @pytest.fixture(autouse=True)
 def _onboarded_user():
-    """Default every test's user to a finished-onboarding one, so the
-    system-initiated-run gate stays out of the way. The gate's own tests
-    (test_workflow_tasks_onboarding_gate.py) override this."""
-    user = MagicMock()
-    user.onboarding = {"completed": True}
+    """Default every test's user to a finished-onboarding one.
+
+    Keeps the system-initiated-run gate out of the way; test_workflow_tasks_onboarding_gate.py overrides this.
+    """
+    user = UserDocument.model_validate({"onboarding": {"completed": True}})
     with patch(
         "app.workers.tasks.workflow_tasks.user_repository.get",
         AsyncMock(return_value=user),
@@ -61,9 +86,7 @@ def _make_workflow(
     wf.title = title
     wf.description = "A test workflow"
     wf.prompt = "Run the standup"
-    wf.steps = steps or [
-        MagicMock(id="s1", title="Step 1", description="Do it", category="general")
-    ]
+    wf.steps = steps or [WorkflowStep(id="s1", title="Step 1", description="Do it")]
     wf.is_todo_workflow = is_todo_workflow
     wf.source_todo_id = source_todo_id
     wf.model_dump = MagicMock(return_value={"id": wf.id, "title": wf.title})
@@ -74,7 +97,7 @@ def _patch_scheduler(workflow=None):
     """Stand in for the process-wide workflow_scheduler singleton.
 
     Returns the mock plus its unstarted patcher, so callers can enter it in a
-    `with (...):` block alongside their other patches.
+    with (...): block alongside their other patches.
     """
     scheduler = AsyncMock()
     scheduler.get_task = AsyncMock(return_value=workflow)
@@ -89,8 +112,8 @@ def _no_analytics():
     """Neutralize the analytics capture on workflow-conversation creation.
 
     The generation task creates the workflow's conversation via
-    ``create_system_conversation``, which captures ``CONVERSATION_CREATED``
-    through ``capture_event`` — the PostHog provider is not registered in this
+    create_system_conversation, which captures CONVERSATION_CREATED
+    through capture_event — the PostHog provider is not registered in this
     test module's import chain, so the call must be mocked.
     """
     with patch("app.services.conversation_service.capture_event"):
@@ -145,7 +168,7 @@ class TestExecuteWorkflowById:
         mock_create_exec = AsyncMock(return_value=mock_execution)
         mock_complete_exec = AsyncMock()
         mock_increment = AsyncMock()
-        mock_execute_chat = AsyncMock(return_value="conv_123")
+        mock_execute_chat = AsyncMock(return_value=("conv_123", []))
 
         with (
             p_scheduler,
@@ -189,7 +212,7 @@ class TestExecuteWorkflowById:
             p_scheduler,
             patch(
                 "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
-                AsyncMock(return_value="conv_123"),
+                AsyncMock(return_value=("conv_123", [])),
             ),
             patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
             patch(
@@ -262,7 +285,7 @@ class TestExecuteWorkflowById:
             p_scheduler,
             patch(
                 "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
-                AsyncMock(return_value="conv_123"),
+                AsyncMock(return_value=("conv_123", [])),
             ),
             patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
             patch(
@@ -316,6 +339,89 @@ class TestExecuteWorkflowById:
 
         mock_scheduler.close.assert_not_awaited()
 
+    async def test_success_path_threads_the_exact_arguments_through(self, ctx):
+        """A dropped, renamed, or None'd value here lands on the wrong conversation, row, or occurrence."""
+        workflow = _make_workflow()
+        execution_id = str(uuid4())
+        mock_execution = MagicMock()
+        mock_execution.execution_id = execution_id
+        context = {"trigger_type": "manual"}
+
+        scheduler, p_scheduler = _patch_scheduler(workflow)
+        rearm = AsyncMock()
+        execute_chat = AsyncMock(return_value=("conv_123", []))
+        complete_exec = AsyncMock()
+
+        with (
+            p_scheduler,
+            patch(
+                "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
+                execute_chat,
+            ),
+            patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
+            patch(
+                "app.workers.tasks.workflow_tasks.create_execution",
+                AsyncMock(return_value=mock_execution),
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.complete_execution",
+                complete_exec,
+            ),
+            patch("app.workers.tasks.workflow_tasks._rearm_quietly", rearm),
+        ):
+            mock_wf_svc.increment_execution_count = AsyncMock()
+            result = await execute_workflow_by_id(ctx, workflow.id, context=context)
+
+        assert "executed successfully" in result
+        execute_chat.assert_awaited_once_with(
+            workflow, AuthenticatedUser(user_id=workflow.user_id), context
+        )
+        complete_exec.assert_awaited_once_with(
+            execution_id=execution_id,
+            status="success",
+            summary=AGENT_RUN_SUMMARY,
+            conversation_id="conv_123",
+            trace=[],
+        )
+        rearm.assert_awaited_once_with(scheduler, workflow, "manual", workflow.id)
+
+    async def test_failure_path_records_and_rearms_with_the_exact_arguments(self, ctx):
+        """A None'd id on the failure path strands an open execution record or kills the recurrence."""
+        workflow = _make_workflow()
+        execution_id = str(uuid4())
+        mock_execution = MagicMock()
+        mock_execution.execution_id = execution_id
+        context = {"trigger_type": "manual"}
+        error = ValueError("boom")
+
+        scheduler, p_scheduler = _patch_scheduler(workflow)
+        rearm = AsyncMock()
+        record_failure = AsyncMock()
+
+        with (
+            p_scheduler,
+            patch(
+                "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
+                AsyncMock(side_effect=error),
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.create_execution",
+                AsyncMock(return_value=mock_execution),
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks._record_execution_failure",
+                record_failure,
+            ),
+            patch("app.workers.tasks.workflow_tasks._rearm_quietly", rearm),
+        ):
+            result = await execute_workflow_by_id(ctx, workflow.id, context=context)
+
+        assert "Error executing workflow" in result
+        record_failure.assert_awaited_once_with(
+            error, workflow, workflow.id, execution_id, record=None
+        )
+        rearm.assert_awaited_once_with(scheduler, workflow, "manual", workflow.id)
+
     async def test_scheduled_execution_captures_workflow_executed(self, ctx, _no_real_analytics):
         workflow = _make_workflow()
         mock_execution = MagicMock()
@@ -327,7 +433,7 @@ class TestExecuteWorkflowById:
             p_scheduler,
             patch(
                 "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
-                AsyncMock(return_value="conv_123"),
+                AsyncMock(return_value=("conv_123", [])),
             ),
             patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
             patch(
@@ -364,7 +470,7 @@ class TestExecuteWorkflowById:
             p_scheduler,
             patch(
                 "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
-                AsyncMock(return_value="conv_123"),
+                AsyncMock(return_value=("conv_123", [])),
             ),
             patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
             patch(
@@ -402,7 +508,7 @@ class TestExecuteWorkflowById:
             p_scheduler,
             patch(
                 "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
-                AsyncMock(return_value="conv_123"),
+                AsyncMock(return_value=("conv_123", [])),
             ),
             patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
             patch(
@@ -418,7 +524,10 @@ class TestExecuteWorkflowById:
             result = await execute_workflow_by_id(
                 ctx,
                 workflow.id,
-                context={"trigger_type": "schedule", "trigger_data": {"message_id": "m1"}},
+                context={
+                    "trigger_type": "schedule",
+                    "trigger_data": {"message_id": "m1"},
+                },
             )
 
         assert "executed successfully" in result
@@ -443,7 +552,7 @@ class TestExecuteWorkflowById:
             p_scheduler,
             patch(
                 "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
-                AsyncMock(return_value="conv_123"),
+                AsyncMock(return_value=("conv_123", [])),
             ),
             patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
             patch(
@@ -592,7 +701,7 @@ class TestProcessWorkflowGenerationTask:
         assert payload["todo_id"] == todo_id
 
     async def test_empty_description_uses_no_details_section(self, ctx):
-        """When description is empty the prompt template omits the details section."""
+        """Omit the description argument so the function's default is under test, not an explicit empty string."""
         # Must be a valid 24-char hex ObjectId string because production code
         # calls ObjectId(todo_id) before the mocked update_one is invoked.
         todo_id = "507f1f77bcf86cd799439013"
@@ -622,12 +731,10 @@ class TestProcessWorkflowGenerationTask:
             mock_ws.broadcast_to_user = AsyncMock()
             mock_ws_mgr.return_value = mock_ws
 
-            await process_workflow_generation_task(
-                ctx, todo_id, user_id, "Buy groceries", description=""
-            )
+            await process_workflow_generation_task(ctx, todo_id, user_id, "Buy groceries")
 
         assert len(captured_requests) == 1
-        # The **Details:** section should be absent when description is empty
+        # The **Details:** section should be absent when the (default) description is empty
         assert "**Details:**" not in captured_requests[0].prompt
 
 
@@ -780,10 +887,19 @@ class TestExecuteWorkflowAsChat:
     exercised here; we test the function body directly.
 
     I/O boundaries mocked:
-      - get_user_by_id
+      - load_user_context
       - get_or_create_workflow_conversation
       - call_agent_silent  (the core agent invocation)
+      - reset_workflow_threads  (Postgres; proven in test_thread_reset.py)
     """
+
+    @pytest.fixture(autouse=True)
+    def reset_threads(self):
+        with patch(
+            "app.workers.tasks.workflow_tasks.reset_workflow_threads",
+            new_callable=AsyncMock,
+        ) as reset:
+            yield reset
 
     def _make_workflow(self, workflow_id: str | None = None, user_id: str = "user_abc"):
         wf = MagicMock()
@@ -793,8 +909,8 @@ class TestExecuteWorkflowAsChat:
         wf.description = "Daily morning workflow"
         wf.prompt = "Run the morning briefing"
         wf.steps = [
-            MagicMock(id="s1", title="Step 1", description="Check mail", category="comms"),
-            MagicMock(id="s2", title="Step 2", description="Weather", category="info"),
+            WorkflowStep(id="s1", title="Step 1", description="Check mail", category="comms"),
+            WorkflowStep(id="s2", title="Step 2", description="Weather", category="info"),
         ]
         return wf
 
@@ -805,9 +921,9 @@ class TestExecuteWorkflowAsChat:
 
         with (
             patch(
-                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                "app.workers.tasks.workflow_tasks.load_user_context",
                 new_callable=AsyncMock,
-                return_value={"user_id": workflow.user_id, "timezone": "UTC"},
+                side_effect=_user_context(timezone="UTC"),
             ),
             patch(
                 "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
@@ -821,11 +937,11 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=("Result text", {}),
+                return_value=SilentRunResult(message="Result text", tool_data=[]),
             ) as mock_call_agent,
         ):
-            conversation_id = await execute_workflow_as_chat(
-                workflow, {"user_id": workflow.user_id}, {}
+            conversation_id, _trace = await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
             )
 
         # Conversation was fetched for this workflow and user
@@ -848,9 +964,9 @@ class TestExecuteWorkflowAsChat:
 
         with (
             patch(
-                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                "app.workers.tasks.workflow_tasks.load_user_context",
                 new_callable=AsyncMock,
-                return_value={"user_id": workflow.user_id, "timezone": "UTC"},
+                side_effect=_user_context(timezone="UTC"),
             ),
             patch(
                 "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
@@ -864,11 +980,11 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=("Step 1 done. Step 2 done.", {}),
+                return_value=SilentRunResult(message="Step 1 done. Step 2 done.", tool_data=[]),
             ) as mock_call_agent,
         ):
-            conversation_id = await execute_workflow_as_chat(
-                workflow, {"user_id": workflow.user_id}, {}
+            conversation_id, _trace = await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
             )
 
         assert conversation_id == "conv_123"
@@ -880,9 +996,9 @@ class TestExecuteWorkflowAsChat:
 
         with (
             patch(
-                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                "app.workers.tasks.workflow_tasks.load_user_context",
                 new_callable=AsyncMock,
-                return_value={"user_id": workflow.user_id, "timezone": "UTC"},
+                side_effect=_user_context(timezone="UTC"),
             ),
             patch(
                 "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
@@ -896,25 +1012,25 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=("Done", {}),
+                return_value=SilentRunResult(message="Done", tool_data=[]),
             ) as mock_call_agent,
         ):
-            await execute_workflow_as_chat(workflow, {"user_id": workflow.user_id}, {})
+            await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
+            )
 
-        trigger_context = mock_call_agent.call_args.kwargs["trigger_context"]
+        trigger_context = mock_call_agent.call_args.kwargs["options"].trigger_context
         assert trigger_context["workflow_id"] == workflow.id
 
     async def test_exception_in_agent_returns_error_message_not_reraise(self):
-        """When call_agent_silent raises, the function re-raises so the caller
-        marks the execution as failed.
-        """
+        """call_agent_silent raising causes the function to re-raise so the caller marks the execution failed."""
         workflow = self._make_workflow()
 
         with (
             patch(
-                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                "app.workers.tasks.workflow_tasks.load_user_context",
                 new_callable=AsyncMock,
-                return_value={"user_id": workflow.user_id, "timezone": "UTC"},
+                side_effect=_user_context(timezone="UTC"),
             ),
             patch(
                 "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
@@ -930,19 +1046,25 @@ class TestExecuteWorkflowAsChat:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("Agent crashed"),
             ),
+            patch("app.workers.tasks.workflow_tasks.log") as log,
         ):
             with pytest.raises(RuntimeError, match="Agent crashed"):
-                await execute_workflow_as_chat(workflow, {"user_id": workflow.user_id}, {})
+                await execute_workflow_as_chat(
+                    workflow, AuthenticatedUser(user_id=workflow.user_id), {}
+                )
 
-    async def test_get_user_by_id_failure_falls_back_to_utc(self):
-        """When get_user_by_id raises, the function falls back gracefully and still
-        calls the agent with a minimal user_data dict.
-        """
+        # The wide event names the error itself, not just its type: this line
+        # is what a reader of a failed fire searches for.
+        assert log.error.call_args.kwargs["error"] == "Agent crashed"
+        assert log.error.call_args.kwargs["error_type"] == "RuntimeError"
+
+    async def test_user_context_failure_falls_back_to_utc(self):
+        """Falls back to a minimal user_data dict and still calls the agent when load_user_context raises."""
         workflow = self._make_workflow()
 
         with (
             patch(
-                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                "app.workers.tasks.workflow_tasks.load_user_context",
                 new_callable=AsyncMock,
                 side_effect=ConnectionError("DB unreachable"),
             ),
@@ -958,11 +1080,11 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=("Fallback result", {}),
+                return_value=SilentRunResult(message="Fallback result", tool_data=[]),
             ) as mock_call_agent,
         ):
-            conversation_id = await execute_workflow_as_chat(
-                workflow, {"user_id": workflow.user_id}, {}
+            conversation_id, _trace = await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
             )
 
         # Execution completes successfully despite user fetch failing
@@ -970,19 +1092,17 @@ class TestExecuteWorkflowAsChat:
 
         # Agent was called with a minimal user dict that still includes user_id
         call_user = mock_call_agent.call_args.kwargs["user"]
-        assert call_user["user_id"] == workflow.user_id
+        assert call_user.user_id == workflow.user_id
 
     async def test_workflow_steps_passed_to_agent_as_selected_workflow(self):
-        """All workflow steps are serialised and forwarded inside the request's
-        selectedWorkflow field so the agent knows what to execute.
-        """
+        """All workflow steps are serialised into the request's selectedWorkflow field."""
         workflow = self._make_workflow()
 
         with (
             patch(
-                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                "app.workers.tasks.workflow_tasks.load_user_context",
                 new_callable=AsyncMock,
-                return_value={"user_id": workflow.user_id, "timezone": "UTC"},
+                side_effect=_user_context(timezone="UTC"),
             ),
             patch(
                 "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
@@ -996,28 +1116,29 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=("Done", {}),
+                return_value=SilentRunResult(message="Done", tool_data=[]),
             ) as mock_call_agent,
         ):
-            await execute_workflow_as_chat(workflow, {"user_id": workflow.user_id}, {})
+            await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
+            )
 
         request_arg = mock_call_agent.call_args.kwargs["request"]
         assert request_arg.selectedWorkflow is not None
         assert request_arg.selectedWorkflow.id == workflow.id
         assert request_arg.message == f"Execute workflow: {workflow.title}"
         # Both steps must be present
-        step_ids = [s["id"] for s in request_arg.selectedWorkflow.steps]
+        step_ids = [s.id for s in request_arg.selectedWorkflow.steps]
         assert "s1" in step_ids
         assert "s2" in step_ids
 
     async def test_user_data_none_falls_back_to_utc(self):
-        """When get_user_by_id returns None, the function uses a minimal
-        user_data dict and UTC timezone."""
+        """When load_user_context returns None, the function uses a minimal user_data dict and UTC timezone."""
         workflow = self._make_workflow()
 
         with (
             patch(
-                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                "app.workers.tasks.workflow_tasks.load_user_context",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -1033,16 +1154,16 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=("None user result", {}),
+                return_value=SilentRunResult(message="None user result", tool_data=[]),
             ) as mock_call_agent,
         ):
-            conversation_id = await execute_workflow_as_chat(
-                workflow, {"user_id": workflow.user_id}, {}
+            conversation_id, _trace = await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
             )
 
         assert conversation_id == "conv_none"
         call_user = mock_call_agent.call_args.kwargs["user"]
-        assert call_user["user_id"] == workflow.user_id
+        assert call_user.user_id == workflow.user_id
 
     async def test_user_message_has_selected_workflow(self):
         """The persisted trigger user message carries the selectedWorkflow data."""
@@ -1050,9 +1171,9 @@ class TestExecuteWorkflowAsChat:
 
         with (
             patch(
-                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                "app.workers.tasks.workflow_tasks.load_user_context",
                 new_callable=AsyncMock,
-                return_value={"user_id": workflow.user_id, "timezone": "UTC"},
+                side_effect=_user_context(timezone="UTC"),
             ),
             patch(
                 "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
@@ -1066,16 +1187,94 @@ class TestExecuteWorkflowAsChat:
             patch(
                 "app.agents.core.agent.call_agent_silent",
                 new_callable=AsyncMock,
-                return_value=("OK", {}),
+                return_value=SilentRunResult(message="OK", tool_data=[]),
             ),
         ):
-            await execute_workflow_as_chat(workflow, {"user_id": workflow.user_id}, {})
+            await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
+            )
 
         stored_messages = mock_store.call_args.kwargs["workflow_execution_messages"]
         user_msg = stored_messages[0]
         assert user_msg.type == "user"
         assert user_msg.selectedWorkflow is not None
         assert user_msg.selectedWorkflow.id == workflow.id
+
+    async def test_it_resets_the_conversations_checkpoint_threads_before_running(
+        self, reset_threads
+    ):
+        """Without this the run replays every previous run out of Postgres."""
+        workflow = self._make_workflow()
+
+        with (
+            patch(
+                "app.workers.tasks.workflow_tasks.load_user_context",
+                new_callable=AsyncMock,
+                side_effect=_user_context(timezone="UTC"),
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
+                new_callable=AsyncMock,
+                return_value="conv_reset",
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.add_workflow_execution_messages",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.agents.core.agent.call_agent_silent",
+                new_callable=AsyncMock,
+                return_value=SilentRunResult(message="Done", tool_data=[]),
+            ),
+        ):
+            await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
+            )
+
+        reset_threads.assert_awaited_once_with("conv_reset")
+
+    async def test_it_returns_the_runs_tool_calls_as_the_trace(self):
+        """The trace is what the next run reads instead of the checkpoints."""
+        workflow = self._make_workflow()
+        tool_data = [
+            {
+                "tool_name": "tool_calls_data",
+                "data": {
+                    "tool_name": "GMAIL_FETCH",
+                    "inputs": {"query": "is:unread"},
+                    "output": "12 messages",
+                },
+            }
+        ]
+
+        with (
+            patch(
+                "app.workers.tasks.workflow_tasks.load_user_context",
+                new_callable=AsyncMock,
+                side_effect=_user_context(timezone="UTC"),
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
+                new_callable=AsyncMock,
+                return_value="conv_trace",
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.add_workflow_execution_messages",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.agents.core.agent.call_agent_silent",
+                new_callable=AsyncMock,
+                return_value=SilentRunResult(message="Done", tool_data=tool_data),
+            ),
+        ):
+            _conversation_id, trace = await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
+            )
+
+        assert [c.tool_name for c in trace] == ["GMAIL_FETCH"]
+        assert trace[0].args == {"query": "is:unread"}
+        assert trace[0].result_digest == "12 messages"
 
 
 # ---------------------------------------------------------------------------
@@ -1086,13 +1285,10 @@ class TestExecuteWorkflowAsChat:
 class TestWorkflowNotificationSenders:
     """Tests for the workflow completion/failure notification senders."""
 
-    async def test_completion_notification_is_inapp_with_view_results_link(self) -> None:
-        """send_workflow_completion_notification fires a human, in-app-only badge.
-
-        The result itself is delivered to the user's chat as real messages, so the
-        notification carries no result payload and no external push — just a single
-        "View Results" link so a web user reaches the run's conversation in one tap.
-        """
+    async def test_completion_notification_is_inapp_with_view_results_link(
+        self,
+    ) -> None:
+        """The completion badge carries no result payload — only a View Results link; results ride the chat."""
         with patch(
             "app.services.workflow.notifications.notification_service",
         ) as mock_notif:
@@ -1118,7 +1314,10 @@ class TestWorkflowNotificationSenders:
         assert len(actions) == 1
         assert actions[0].type == ActionType.REDIRECT
         assert actions[0].config.redirect.url == "/c/conv_xyz"
-        assert notif_req.metadata == {"workflow_id": "wf_1", "conversation_id": "conv_xyz"}
+        assert notif_req.metadata == {
+            "workflow_id": "wf_1",
+            "conversation_id": "conv_xyz",
+        }
 
     async def test_failure_notification_sent_with_workflow_failed_source(self):
         """send_workflow_failure_notification sends a WORKFLOW_FAILED notification."""
@@ -1152,7 +1351,7 @@ class TestExecuteWorkflowByIdNotifications:
     def _make_error_patches(self, workflow, error):
         """Build the common with-block patches for an error scenario.
 
-        Returns individual patch objects so they can be used in a `with (...):`
+        Returns individual patch objects so they can be used in a with (...):
         block without needing iterable unpacking.
         """
         _, p_scheduler = _patch_scheduler(workflow)
@@ -1175,8 +1374,7 @@ class TestExecuteWorkflowByIdNotifications:
         return p_scheduler, p_chat, p_create, p_complete
 
     async def test_rate_limit_with_reset_time_sends_upgrade_notification(self, ctx):
-        """RateLimitExceededException with reset_time sends a notification
-        mentioning when the limit resets and prompting upgrade."""
+        """RateLimitExceededException with reset_time mentions when the limit resets and prompts upgrade."""
         workflow = _make_workflow()
         reset_time = datetime(2026, 3, 21, 12, 0, 0, tzinfo=UTC)
         error = RateLimitExceededException(
@@ -1211,6 +1409,52 @@ class TestExecuteWorkflowByIdNotifications:
         assert len(notif_req.content.actions) == 1
         assert "Upgrade" in notif_req.content.actions[0].label
 
+    async def _quota_notification(self, ctx, error, reset_user):
+        workflow = _make_workflow()
+        p_sched, p_chat, p_create, p_complete = self._make_error_patches(workflow, error)
+        with (
+            p_sched,
+            p_chat,
+            p_create,
+            p_complete,
+            patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
+            patch("app.workers.tasks.workflow_tasks.notification_service") as mock_notif,
+            patch(
+                "app.workers.tasks.workflow_tasks.get_user_by_id",
+                AsyncMock(return_value=reset_user),
+            ),
+        ):
+            mock_wf_svc.increment_execution_count = AsyncMock()
+            mock_notif.create_notification = AsyncMock()
+            await execute_workflow_by_id(ctx, workflow.id)
+        return mock_notif.create_notification.call_args[0][0]
+
+    async def test_a_pro_user_at_the_quota_wall_gets_no_upgrade_pitch(self, ctx):
+        error = RateLimitExceededException(
+            feature="trigger_workflow_executions",
+            plan_required="pro",
+            reset_time=datetime(2026, 3, 21, 12, 0, 0, tzinfo=UTC),
+            current_plan="pro",
+        )
+
+        notif_req = await self._quota_notification(ctx, error, reset_user=None)
+
+        assert "Upgrade" not in notif_req.content.body
+        assert not notif_req.content.actions
+
+    async def test_the_reset_time_is_shown_in_the_users_home_timezone(self, ctx):
+        error = RateLimitExceededException(
+            feature="trigger_workflow_executions",
+            plan_required="pro",
+            reset_time=datetime(2026, 3, 21, 12, 0, 0, tzinfo=UTC),
+        )
+
+        notif_req = await self._quota_notification(
+            ctx, error, reset_user=MagicMock(timezone="Asia/Kolkata")
+        )
+
+        assert "Resets Mar 21 at 05:30 PM" in notif_req.content.body
+
     async def test_rate_limit_without_reset_time_sends_plan_gated_notification(self, ctx):
         """RateLimitExceededException without reset_time sends a plan-gated message."""
         workflow = _make_workflow()
@@ -1241,8 +1485,7 @@ class TestExecuteWorkflowByIdNotifications:
         assert "Upgrade to Pro" in notif_req.content.body
 
     async def test_rate_limit_with_invalid_reset_time_format_falls_back(self, ctx):
-        """When reset_time string in the detail dict is unparseable,
-        the fallback body is used (no Resets line)."""
+        """An unparseable reset_time string in the detail dict falls back to the body with no Resets line."""
         workflow = _make_workflow()
         # Create a RateLimitExceededException and manually set an invalid reset_time
         error = RateLimitExceededException(
@@ -1301,8 +1544,7 @@ class TestExecuteWorkflowByIdNotifications:
         assert notif_req.content.actions is None
 
     async def test_notification_failure_during_error_is_swallowed(self, ctx):
-        """If notification_service.create_notification fails during error handling,
-        the exception is swallowed and the error result is still returned."""
+        """A failing notification_service.create_notification is swallowed; the error result is still returned."""
         workflow = _make_workflow()
         error = ValueError("Original error")
 
@@ -1393,8 +1635,7 @@ class TestExecuteWorkflowByIdNotifications:
         assert "Error executing workflow" in result
 
     async def test_no_execution_id_skips_complete_execution_on_error(self, ctx):
-        """When create_execution itself fails, execution_id is None
-        and complete_execution is not called."""
+        """When create_execution itself fails, execution_id is None and complete_execution is not called."""
         workflow = _make_workflow()
 
         _, p_scheduler = _patch_scheduler(workflow)
@@ -1422,15 +1663,15 @@ class TestExecuteWorkflowByIdNotifications:
         # complete_execution should NOT have been called since execution_id is None
         mock_complete_exec.assert_not_awaited()
 
-    async def test_conversation_id_passed_to_complete_execution(self, ctx):
-        """The conversation id returned by execute_workflow_as_chat is forwarded
-        to complete_execution."""
+    async def test_conversation_id_and_trace_passed_to_complete_execution(self, ctx):
+        """The trace from execute_workflow_as_chat is forwarded to complete_execution — it's what the next run reads."""
         workflow = _make_workflow()
 
         _, p_scheduler = _patch_scheduler(workflow)
 
         mock_execution = MagicMock()
         mock_execution.execution_id = str(uuid4())
+        recorded_call = RecordedCall(tool_name="GMAIL_FETCH", args={"query": "is:unread"})
 
         mock_complete_exec = AsyncMock()
 
@@ -1438,7 +1679,7 @@ class TestExecuteWorkflowByIdNotifications:
             p_scheduler,
             patch(
                 "app.workers.tasks.workflow_tasks.execute_workflow_as_chat",
-                AsyncMock(return_value="conv_123"),
+                AsyncMock(return_value=("conv_123", [recorded_call])),
             ),
             patch("app.workers.tasks.workflow_tasks.WorkflowService") as mock_wf_svc,
             patch(
@@ -1457,6 +1698,7 @@ class TestExecuteWorkflowByIdNotifications:
         mock_complete_exec.assert_awaited_once()
         call_kwargs = mock_complete_exec.call_args.kwargs
         assert call_kwargs["conversation_id"] == "conv_123"
+        assert call_kwargs["trace"] == [recorded_call]
 
 
 # ---------------------------------------------------------------------------
@@ -1522,8 +1764,7 @@ class TestProcessWorkflowGenerationTaskAdditional:
                 await process_workflow_generation_task(ctx, todo_id, user_id, "No Steps")
 
     async def test_websocket_broadcast_failure_on_success_does_not_raise(self, ctx):
-        """When the websocket broadcast fails during the success path,
-        the function still returns success."""
+        """When the websocket broadcast fails during the success path, the function still returns success."""
         todo_id = "507f1f77bcf86cd799439014"
         user_id = "user_abc"
         workflow = _make_workflow(user_id=user_id)
@@ -1554,8 +1795,7 @@ class TestProcessWorkflowGenerationTaskAdditional:
         assert "Successfully generated" in result
 
     async def test_clear_flag_failure_on_exception_does_not_mask_error(self, ctx):
-        """When clear_workflow_generating_flag fails during exception handling,
-        the original exception is still raised."""
+        """A failing clear_workflow_generating_flag during exception handling still raises the original."""
         todo_id = str(ObjectId())
         user_id = "user_abc"
 
@@ -1576,8 +1816,7 @@ class TestProcessWorkflowGenerationTaskAdditional:
                 await process_workflow_generation_task(ctx, todo_id, user_id, "Failing Todo")
 
     async def test_websocket_failure_event_broadcast_fails_gracefully(self, ctx):
-        """When the failure websocket broadcast itself fails, the original
-        exception is still raised."""
+        """When the failure websocket broadcast itself fails, the original exception is still raised."""
         todo_id = str(ObjectId())
         user_id = "user_abc"
 
@@ -1725,8 +1964,7 @@ class TestGenerateWorkflowStepsAdditional:
         mock_ws.broadcast_to_user.assert_not_awaited()
 
     async def test_websocket_failure_on_todo_workflow_does_not_raise(self, ctx):
-        """When the WebSocket broadcast fails for a todo workflow,
-        the function still returns success."""
+        """When the WebSocket broadcast fails for a todo workflow, the function still returns success."""
         workflow_id = str(uuid4())
         user_id = "user_abc"
         todo_id = str(uuid4())
@@ -1780,3 +2018,682 @@ class TestRegenerateWorkflowStepsAdditional:
         mock_wf_svc.regenerate_workflow_steps.assert_awaited_once_with(
             workflow_id, user_id, "reason", False
         )
+
+
+MODULE = "app.workers.tasks.workflow_tasks"
+
+
+class _FirePatches:
+    """Every I/O edge one execute_workflow_by_id fire touches, mocked.
+
+    The by-id task is the only place several ids are threaded together (the
+    batch key, the claim, the cost wall, the counters), so these tests assert
+    the exact arguments each edge received rather than that it was called.
+    """
+
+    def __init__(self, workflow) -> None:
+        self.workflow = workflow
+        self.scheduler = AsyncMock()
+        self.scheduler.get_task = AsyncMock(return_value=workflow)
+        self.execution = MagicMock()
+        self.execution.execution_id = "exec_1"
+        self.complete_execution = AsyncMock()
+        self.increment = AsyncMock()
+        self.chat = AsyncMock(return_value=("conv_1", []))
+        self.cost_budget = AsyncMock()
+        self.drain = AsyncMock(return_value=[{"event": "one"}])
+        self.reschedule = AsyncMock()
+        self.coalesce = MagicMock(return_value=30)
+        self.distrust = AsyncMock()
+        self.log = MagicMock()
+
+    def enter(self, stack) -> None:
+        for patcher in (
+            patch(f"{MODULE}.workflow_scheduler", self.scheduler),
+            patch(f"{MODULE}.create_execution", AsyncMock(return_value=self.execution)),
+            patch(f"{MODULE}.complete_execution", self.complete_execution),
+            patch(
+                f"{MODULE}.WorkflowService",
+                MagicMock(increment_execution_count=self.increment),
+            ),
+            patch(f"{MODULE}.execute_workflow_as_chat", self.chat),
+            patch(f"{MODULE}.enforce_daily_cost_budget", self.cost_budget),
+            patch(f"{MODULE}.drain_trigger_batch", self.drain),
+            patch(f"{MODULE}.reschedule_if_refilled", self.reschedule),
+            patch(f"{MODULE}.coalesce_window_seconds", self.coalesce),
+            patch(f"{MODULE}.distrust_fresh_playbook", self.distrust),
+            patch(f"{MODULE}.log", self.log),
+        ):
+            stack.enter_context(patcher)
+
+
+class TestTheByIdTaskThreadsItsIdsThrough:
+    """One fire touches five collaborators, each keyed on an id it was handed.
+
+    A blanked or swapped id books this run against the wrong thing, which is worse than not
+    booking it: nothing goes looking for wrong data.
+    """
+
+    async def test_the_workflow_is_fetched_by_the_id_the_task_was_given(self):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            result = await execute_workflow_by_id({}, workflow.id)
+
+        seams.scheduler.get_task.assert_awaited_once_with(workflow.id)
+        seams.log.info.assert_any_call(
+            "[WORKER] Processing workflow execution", workflow_id=workflow.id
+        )
+        assert "executed successfully" in result
+
+    async def test_a_workflow_that_is_gone_stops_the_fire_before_any_work(self):
+        seams = _FirePatches(None)
+        missing_id = str(uuid4())
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            result = await execute_workflow_by_id({}, missing_id)
+
+        assert result == f"Workflow {missing_id} not found"
+        seams.complete_execution.assert_not_awaited()
+        seams.chat.assert_not_awaited()
+
+    async def test_the_daily_cost_wall_is_checked_for_this_user_and_feature(self):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            await execute_workflow_by_id({}, workflow.id)
+
+        assert seams.cost_budget.await_args_list == [
+            call(workflow.user_id, feature_key="trigger_workflow_executions")
+        ]
+
+    async def test_the_success_is_counted_against_this_workflow_for_this_user(self):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            await execute_workflow_by_id({}, workflow.id)
+
+        assert seams.increment.await_args_list == [
+            call(workflow.id, workflow.user_id, is_successful=True)
+        ]
+
+    async def test_the_fresh_playbook_is_distrust_checked_under_this_workflow_and_user(self):
+        """A distrust check keyed on the wrong id would never mark this run's bad playbook body, replaying it forever."""
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+        trace = [RecordedCall(tool_name="GMAIL_FETCH", args={"query": "is:unread"})]
+        seams.chat = AsyncMock(return_value=("conv_1", trace))
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            await execute_workflow_by_id({}, workflow.id)
+
+        assert seams.distrust.await_args_list == [
+            call(workflow.id, workflow.user_id, trace, healing=False)
+        ]
+
+    async def test_an_unstamped_context_reads_as_a_manual_fire_and_is_not_captured(
+        self, _no_real_analytics
+    ):
+        """A manual fire is captured by the run-now endpoint already; recapturing here would double-count it."""
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            await execute_workflow_by_id({}, workflow.id)
+
+        captured = [
+            entry.args[1] for entry in _no_real_analytics.call_args_list if len(entry.args) > 1
+        ]
+        assert AnalyticsEvents.WORKFLOW_EXECUTED not in captured
+
+    async def test_a_webhook_payload_without_a_stamp_reads_as_an_integration_fire(
+        self, _no_real_analytics
+    ):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            await execute_workflow_by_id({}, workflow.id, {"trigger_data": {"events": []}})
+
+        _no_real_analytics.assert_any_call(
+            workflow.user_id,
+            AnalyticsEvents.WORKFLOW_EXECUTED,
+            {"workflow_id": workflow.id, "trigger_type": TriggerType.INTEGRATION.value},
+        )
+
+
+class TestTheCoalescedBatchIsTakenUnderItsOwnKey:
+    """Trigger events live in Redis under trigger_batch_key, not in the job payload.
+
+    Reading the wrong key drains nothing and the events are stranded until something else fires
+    the workflow.
+    """
+
+    async def test_the_batch_is_drained_and_refill_checked_under_the_context_key(self):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+        context = {
+            "trigger_batch_key": "batch_77",
+            "trigger_type": TriggerType.INTEGRATION.value,
+        }
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            await execute_workflow_by_id({}, workflow.id, context)
+
+        seams.drain.assert_awaited_once_with("batch_77")
+        seams.reschedule.assert_awaited_once()
+        assert seams.reschedule.await_args.args[1] == "batch_77"
+
+    async def test_a_fire_with_no_batch_key_drains_nothing(self):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            await execute_workflow_by_id({}, workflow.id, {"trigger_type": "manual"})
+
+        seams.drain.assert_not_awaited()
+        seams.reschedule.assert_not_awaited()
+
+    async def test_the_drained_events_reach_the_run_as_its_trigger_data(self):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+        seams.drain = AsyncMock(return_value=[{"event": "a"}, {"event": "b"}])
+        context = {
+            "trigger_batch_key": "batch_77",
+            "trigger_type": TriggerType.INTEGRATION.value,
+        }
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            await execute_workflow_by_id({}, workflow.id, context)
+
+        ran_with = seams.chat.await_args.args[2]
+        assert ran_with["trigger_data"] == {
+            "events": [{"event": "a"}, {"event": "b"}],
+            "count": 2,
+        }
+
+
+class TestTheByIdExceptPathsNameTheirCause:
+    """The except blocks are where a fire explains itself.
+
+    A blanked message or a dropped id there is a silent fire nobody can find in the logs.
+    """
+
+    async def test_a_queued_fire_is_logged_and_booked_with_its_own_signal(self):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+        queued = WorkflowFireQueued(
+            task_id=workflow.id, user_id=workflow.user_id, conversation_id="conv_q", trace=[]
+        )
+        seams.chat.side_effect = queued
+        never_ran = AsyncMock(return_value="queued instead")
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            stack.enter_context(patch(f"{MODULE}._record_fire_that_never_ran", never_ran))
+            result = await execute_workflow_by_id({}, workflow.id)
+
+        assert result == "queued instead"
+        seams.log.warning.assert_any_call(
+            "[WORKER] Workflow fire did not run",
+            workflow_id=workflow.id,
+            reason=str(queued),
+            error_type="WorkflowFireQueued",
+        )
+        assert never_ran.await_args.args == (
+            queued,
+            workflow,
+            workflow.id,
+            seams.execution.execution_id,
+            None,
+        )
+
+    async def test_a_crashed_fire_is_logged_with_its_unwrapped_cause(self):
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+        seams.chat.side_effect = RuntimeError("gmail exploded")
+        failure = AsyncMock(return_value="failed")
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            stack.enter_context(patch(f"{MODULE}._record_run_failure", failure))
+            result = await execute_workflow_by_id({}, workflow.id)
+
+        assert result == "failed"
+        seams.log.exception.assert_called_once_with(
+            "[WORKER] Error executing workflow",
+            workflow_id=workflow.id,
+            error="gmail exploded",
+            error_type="RuntimeError",
+        )
+
+    async def test_a_quota_capped_fire_is_warned_with_the_quota_it_hit(self):
+        """A quota refusal logs as WARNING, not exception — the only record distinguishing it from a crash."""
+        workflow = _make_workflow()
+        seams = _FirePatches(workflow)
+        capped = RateLimitExceededException(
+            feature="trigger_workflow_executions", plan_required="pro"
+        )
+        seams.chat.side_effect = capped
+        failure = AsyncMock(return_value="skipped")
+
+        with ExitStack() as stack:
+            seams.enter(stack)
+            stack.enter_context(patch(f"{MODULE}._record_run_failure", failure))
+            result = await execute_workflow_by_id({}, workflow.id)
+
+        assert result == "skipped"
+        seams.log.exception.assert_not_called()
+        seams.log.warning.assert_called_once_with(
+            "[WORKER] Workflow skipped — rate limit exceeded",
+            workflow_id=workflow.id,
+            error=str(capped),
+            error_type="RateLimitExceededException",
+        )
+
+
+class TestTheWorkflowCardBothRunPathsAttach:
+    """build_selected_workflow_data is the one builder behind the agent turn and the playbook replay.
+
+    The card is read by the UI by key, so the whole payload is pinned: a renamed step key renders
+    an empty row, and a dropped prompt loses what the run was asked to do.
+    """
+
+    def _workflow(self):
+        wf = MagicMock()
+        wf.id = "wf_card_1"
+        wf.title = "Morning Briefing"
+        wf.description = "Daily morning workflow"
+        wf.prompt = "Run the morning briefing"
+        wf.steps = [
+            WorkflowStep(id="s1", title="Step 1", description="Check mail", category="comms"),
+            WorkflowStep(
+                id="s2", title="Step 2", description="Draft the digest", category="general"
+            ),
+        ]
+        return wf
+
+    def test_the_card_carries_the_prompt_and_every_step_key_verbatim(self) -> None:
+        card = build_selected_workflow_data(self._workflow())
+
+        assert card.model_dump() == {
+            "id": "wf_card_1",
+            "title": "Morning Briefing",
+            "description": "Daily morning workflow",
+            "prompt": "Run the morning briefing",
+            "steps": [
+                {
+                    "id": "s1",
+                    "title": "Step 1",
+                    "description": "Check mail",
+                    "category": "comms",
+                },
+                {
+                    "id": "s2",
+                    "title": "Step 2",
+                    "description": "Draft the digest",
+                    "category": "general",
+                },
+            ],
+        }
+
+    def test_a_workflow_with_no_prompt_still_builds_a_card(self) -> None:
+        workflow = self._workflow()
+        workflow.prompt = None
+        workflow.steps = []
+
+        assert build_selected_workflow_data(workflow).model_dump() == {
+            "id": "wf_card_1",
+            "title": "Morning Briefing",
+            "description": "Daily morning workflow",
+            "prompt": None,
+            "steps": [],
+        }
+
+
+class TestTheChatRunsTriggerTurnIsBuiltExactly:
+    """The trigger turn is the only thing this function persists; the result is saved by the delivery path.
+
+    Its shape is what the UI renders as the workflow card, so every field is asserted rather than
+    its presence.
+    """
+
+    def _workflow(self):
+        wf = MagicMock()
+        wf.id = str(ObjectId())
+        wf.user_id = "user_abc"
+        wf.title = "Morning Briefing"
+        wf.description = "Daily morning workflow"
+        wf.prompt = "Run the morning briefing"
+        wf.notify_on_completion = True
+        wf.steps = [
+            WorkflowStep(id="s1", title="Step 1", description="Check mail", category="comms")
+        ]
+        return wf
+
+    async def _run(self, workflow, add_messages, reset_threads, log_seam):
+        with (
+            patch(
+                f"{MODULE}.load_user_context",
+                AsyncMock(side_effect=_user_context(timezone="UTC")),
+            ),
+            patch(
+                f"{MODULE}.get_or_create_workflow_conversation",
+                AsyncMock(return_value="conv_expected_123"),
+            ) as conversation,
+            patch(f"{MODULE}.add_workflow_execution_messages", add_messages),
+            patch(f"{MODULE}.reset_workflow_threads", reset_threads),
+            patch(f"{MODULE}.log", log_seam),
+            patch(
+                "app.agents.core.agent.call_agent_silent",
+                AsyncMock(return_value=SilentRunResult(message="Result text", tool_data=[])),
+            ) as agent,
+        ):
+            await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {}
+            )
+        return conversation, agent
+
+    async def test_the_conversation_is_opened_for_this_workflow_user_and_title(self):
+        workflow = self._workflow()
+        log_seam = MagicMock()
+
+        conversation, _ = await self._run(workflow, AsyncMock(), AsyncMock(), log_seam)
+
+        conversation.assert_awaited_once_with(
+            workflow_id=workflow.id,
+            user_id=workflow.user_id,
+            workflow_title=workflow.title,
+        )
+        log_seam.info.assert_any_call(
+            "[WORKER] Executing workflow as chat session",
+            workflow_id=workflow.id,
+            user_id=workflow.user_id,
+        )
+        log_seam.set.assert_any_call(conversation_context_found=True)
+
+    async def test_the_conversations_checkpoint_threads_are_reset_by_id(self):
+        """Without the reset the run replays every previous run instead of this fire's recorded trace."""
+        workflow = self._workflow()
+        reset_threads = AsyncMock()
+
+        await self._run(workflow, AsyncMock(), reset_threads, MagicMock())
+
+        reset_threads.assert_awaited_once_with("conv_expected_123")
+
+    async def test_the_turn_is_an_empty_user_message_carrying_the_workflow_card(self):
+        workflow = self._workflow()
+        add_messages = AsyncMock()
+
+        _, agent = await self._run(workflow, add_messages, AsyncMock(), MagicMock())
+
+        assert add_messages.await_args.kwargs["conversation_id"] == "conv_expected_123"
+        assert add_messages.await_args.kwargs["user_id"] == workflow.user_id
+        (message,) = add_messages.await_args.kwargs["workflow_execution_messages"]
+        assert message.type == "user"
+        # Empty on purpose: the UI renders the card, not a "Run workflow: ..." bubble.
+        assert message.response == ""
+        assert message.selectedWorkflow == build_selected_workflow_data(workflow)
+        assert UUID(message.message_id).version == 4
+        # The same card goes to the agent, so both surfaces render one workflow.
+        assert agent.await_args.kwargs["request"].selectedWorkflow == message.selectedWorkflow
+
+    async def test_the_trigger_context_carries_the_fires_context_and_mode(self):
+        """The splatted fire context and the execution_mode key both route the silent run's result delivery."""
+        workflow = self._workflow()
+        with (
+            patch(
+                f"{MODULE}.load_user_context",
+                AsyncMock(side_effect=_user_context(timezone="UTC")),
+            ),
+            patch(
+                f"{MODULE}.get_or_create_workflow_conversation",
+                AsyncMock(return_value="conv_expected_123"),
+            ),
+            patch(f"{MODULE}.add_workflow_execution_messages", AsyncMock()),
+            patch(f"{MODULE}.reset_workflow_threads", AsyncMock()),
+            patch(
+                "app.agents.core.agent.call_agent_silent",
+                AsyncMock(return_value=SilentRunResult(message="Result text", tool_data=[])),
+            ) as agent,
+        ):
+            await execute_workflow_as_chat(
+                workflow, AuthenticatedUser(user_id=workflow.user_id), {"trigger_batch": "b1"}
+            )
+
+        options = agent.await_args.kwargs["options"]
+        assert options.trigger_context == {
+            "trigger_batch": "b1",
+            "workflow_id": workflow.id,
+            "workflow_title": workflow.title,
+            "workflow_notify_on_completion": True,
+            "execution_mode": "background",
+        }
+
+
+@pytest.mark.unit
+class TestAnExecutorThatDiedIsNotASuccessfulRun:
+    """Seen live: the executor's model call failed but the execution record showed success.
+
+    Comms apologised and the apology became the "success" result, while delivery had already sent
+    the user a failure notification. The executor's outcome rides the session, not the prose.
+    """
+
+    async def test_an_executor_failure_raises_so_the_record_is_marked_failed(self) -> None:
+        workflow = MagicMock(
+            id="wf_1",
+            user_id="u_1",
+            title="Digest",
+            description="Daily digest",
+            prompt="Summarise my day",
+            notify_on_completion=True,
+        )
+        workflow.steps = []
+
+        with (
+            patch(
+                "app.workers.tasks.workflow_tasks.load_user_context",
+                new_callable=AsyncMock,
+                side_effect=_user_context(timezone="UTC"),
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
+                new_callable=AsyncMock,
+                return_value="conv_1",
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.add_workflow_execution_messages",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.agents.core.agent.call_agent_silent",
+                new_callable=AsyncMock,
+                return_value=SilentRunResult(
+                    message="Sorry, something went wrong.",
+                    tool_data=_FETCH_TOOL_DATA,
+                    executor_failed=True,
+                ),
+            ),
+            pytest.raises(WorkflowExecutorFailed) as raised,
+        ):
+            await execute_workflow_as_chat(workflow, AuthenticatedUser(user_id="u_1"), {})
+
+        assert raised.value.conversation_id == "conv_1"
+        assert "Sorry, something went wrong." in str(raised.value)
+        assert [c.tool_name for c in raised.value.trace] == ["GMAIL_FETCH"]
+
+    async def test_a_fire_queued_behind_the_previous_one_raises_with_its_trace(self) -> None:
+        """Comms' acknowledgement of queued work is not a result; the raise carries what did run."""
+        workflow = MagicMock(
+            id="wf_1",
+            user_id="u_1",
+            title="Digest",
+            description="Daily digest",
+            prompt="Summarise my day",
+            notify_on_completion=True,
+        )
+        workflow.steps = []
+
+        with (
+            patch(
+                "app.workers.tasks.workflow_tasks.load_user_context",
+                new_callable=AsyncMock,
+                side_effect=_user_context(timezone="UTC"),
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.get_or_create_workflow_conversation",
+                new_callable=AsyncMock,
+                return_value="conv_1",
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.add_workflow_execution_messages",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.agents.core.agent.call_agent_silent",
+                new_callable=AsyncMock,
+                return_value=SilentRunResult(
+                    message="On it.", tool_data=_FETCH_TOOL_DATA, queued_task_id="job_9"
+                ),
+            ),
+            pytest.raises(WorkflowFireQueued) as queued,
+        ):
+            await execute_workflow_as_chat(workflow, AuthenticatedUser(user_id="u_1"), {})
+
+        assert queued.value.task_id == "job_9"
+        assert queued.value.conversation_id == "conv_1"
+        assert [c.tool_name for c in queued.value.trace] == ["GMAIL_FETCH"]
+
+
+#: One recorded executor call, in the shape the silent run hands back.
+_FETCH_TOOL_DATA = [
+    {
+        "tool_name": "tool_calls_data",
+        "data": {
+            "tool_name": "GMAIL_FETCH",
+            "inputs": {"query": "is:unread"},
+            "output": "12 messages",
+        },
+    }
+]
+
+
+@pytest.mark.unit
+class TestRecordExecutionFailure:
+    """Bookkeeping for a failed fire: each step is best-effort, and each is asserted exactly.
+
+    The record closes with what the fire had done, a failing close-out is a warning with the
+    error, the count is bumped except on a budget wall, and an executor's own failure is not
+    announced twice.
+    """
+
+    def _workflow(self) -> MagicMock:
+        return MagicMock(id="wf_1", user_id="u_1", title="Digest")
+
+    async def test_the_record_closes_with_the_runs_own_trace_and_conversation(self) -> None:
+        record = WorkflowRunFailed(
+            "boom", conversation_id="conv_9", trace=[RecordedCall(tool_name="t")]
+        )
+        with (
+            patch(
+                "app.workers.tasks.workflow_tasks.complete_execution", new_callable=AsyncMock
+            ) as close,
+            patch(
+                "app.workers.tasks.workflow_tasks.WorkflowService.increment_execution_count",
+                new_callable=AsyncMock,
+            ) as count,
+            patch(
+                "app.workers.tasks.workflow_tasks._notify_workflow_failed", new_callable=AsyncMock
+            ) as notify,
+        ):
+            await _record_execution_failure(
+                ValueError("boom"), self._workflow(), "wf_1", "exec_1", record=record
+            )
+
+        close.assert_awaited_once_with(
+            execution_id="exec_1",
+            status="failed",
+            error_message="boom",
+            conversation_id="conv_9",
+            trace=record.trace,
+        )
+        count.assert_awaited_once_with("wf_1", "u_1", is_successful=False)
+        notify.assert_awaited_once()
+
+    async def test_a_close_out_that_fails_is_a_warning_naming_the_record_and_the_error(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "app.workers.tasks.workflow_tasks.complete_execution",
+                AsyncMock(side_effect=ConnectionError("mongo away")),
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks.WorkflowService.increment_execution_count",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.workers.tasks.workflow_tasks._notify_workflow_failed", new_callable=AsyncMock
+            ),
+            patch("app.workers.tasks.workflow_tasks.log") as log,
+        ):
+            await _record_execution_failure(ValueError("boom"), self._workflow(), "wf_1", "exec_1")
+
+        log.warning.assert_any_call(
+            f"{LogTag.WORKER} Failed to complete execution record; it stays 'running'",
+            workflow_id="wf_1",
+            execution_id="exec_1",
+            error="mongo away",
+            error_type="ConnectionError",
+        )
+
+    async def test_without_an_execution_id_nothing_is_closed_and_no_workflow_means_no_more(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "app.workers.tasks.workflow_tasks.complete_execution", new_callable=AsyncMock
+            ) as close,
+            patch(
+                "app.workers.tasks.workflow_tasks.WorkflowService.increment_execution_count",
+                new_callable=AsyncMock,
+            ) as count,
+            patch(
+                "app.workers.tasks.workflow_tasks._notify_workflow_failed", new_callable=AsyncMock
+            ) as notify,
+        ):
+            await _record_execution_failure(ValueError("boom"), None, "wf_1", None)
+
+        close.assert_not_awaited()
+        count.assert_not_awaited()
+        notify.assert_not_awaited()
+
+    async def test_an_executors_own_failure_is_not_announced_a_second_time(self) -> None:
+        died = WorkflowExecutorFailed("the executor did not finish", conversation_id="c", trace=[])
+        with (
+            patch("app.workers.tasks.workflow_tasks.complete_execution", new_callable=AsyncMock),
+            patch(
+                "app.workers.tasks.workflow_tasks.WorkflowService.increment_execution_count",
+                new_callable=AsyncMock,
+            ) as count,
+            patch(
+                "app.workers.tasks.workflow_tasks._notify_workflow_failed", new_callable=AsyncMock
+            ) as notify,
+        ):
+            await _record_execution_failure(died, self._workflow(), "wf_1", "exec_1", record=died)
+
+        count.assert_awaited_once()
+        notify.assert_not_awaited()

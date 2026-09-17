@@ -12,27 +12,41 @@ from collections.abc import Callable
 from typing import Union, cast
 
 from composio.types import Tool, ToolExecuteParams, ToolExecutionResponse
+from pydantic import ValidationError
 
 from app.constants.log_tags import LogTag
+from app.models.integrations.composio_hooks import ComposioToolCall, RunnableConfigTransport
 from shared.py.wide_events import log
 
-# After-hooks trim/reshape the raw Composio envelope before it reaches the LLM. Most
-# return a narrower dict built from the envelope's `data` field, but at least one hook
-# (gmail_attachment_after_hook) legitimately passes through a non-dict `data` value
-# unprocessed, so the honest type here is "whatever the tool's response payload is."
+# Most after-hooks return a narrower dict built from the envelope's data field,
+# but gmail_attachment_after_hook legitimately passes through a non-dict data
+# value unprocessed — so the honest type here is "whatever the payload is."
 AfterHookResponse = object
 BeforeHookFn = Callable[[str, str, ToolExecuteParams], ToolExecuteParams]
 AfterHookFn = Callable[[str, str, ToolExecutionResponse], AfterHookResponse]
 SchemaModifierFn = Callable[[str, str, Tool], Tool]
 
 
-class ComposioHookRegistry:
-    """
-    Enhanced registry for managing before_execute, after_execute hooks,
-    and schema modifiers.
+class HookAbortError(Exception):
+    """A before-hook signal that the tool call MUST NOT proceed.
 
-    Supports conditional execution based on tool name/toolkit with a single
-    master hook system that handles ALL tools.
+    Ordinary before-hook exceptions are swallowed (a hook is enrichment: a bug in
+    one must not fail the tool). This one is different — it means the hook found a
+    condition that makes executing the tool wrong (e.g. a requested attachment
+    could not be resolved), so letting the call run would produce a silently
+    incorrect result. execute_before_hooks re-raises it so it propagates
+    through Composio's executor and fails the tool loudly.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class ComposioHookRegistry:
+    """Registry for before_execute, after_execute, and schema-modifier hooks.
+
+    A single master hook system supports conditional execution by tool/toolkit.
     """
 
     def __init__(self) -> None:
@@ -68,6 +82,11 @@ class ComposioHookRegistry:
         for hook_func in self._before_hooks:
             try:
                 modified_params = hook_func(tool, toolkit, modified_params)
+            except HookAbortError:
+                # An explicit "do not run this tool" signal — propagate so the
+                # executor fails the call instead of running it with a wrong /
+                # missing argument (see HookAbortError).
+                raise
             except Exception as e:
                 log.error(
                     f"{LogTag.COMPOSIO} Error executing before_execute hook for",
@@ -86,10 +105,9 @@ class ComposioHookRegistry:
         modified_response: AfterHookResponse = response
         for hook_func in self._after_hooks:
             try:
-                # Registrations are tool/toolkit-scoped and mutually exclusive, so at most
-                # one hook in the chain ever narrows the envelope — every other hook either
-                # doesn't match (passthrough) or hasn't run yet, meaning `modified_response`
-                # is still the pristine `ToolExecutionResponse` by the time a match fires.
+                # Registrations are mutually exclusive, so at most one hook in the
+                # chain ever narrows the envelope; modified_response stays the
+                # pristine ToolExecutionResponse until a match fires.
                 modified_response = hook_func(
                     tool, toolkit, cast(ToolExecutionResponse, modified_response)
                 )
@@ -134,6 +152,41 @@ class ComposioHookRegistry:
 hook_registry = ComposioHookRegistry()
 
 
+def _resolve_call_identity(tool: str, toolkit: str, params: ToolExecuteParams) -> None:
+    """Establish the calling user from RunnableConfig metadata, ahead of every hook.
+
+    The agent flow binds its tools once with user_id="" and names the real user per
+    invocation through runnable metadata, so identity becomes known here. Hooks must never see
+    a stale or model-supplied user_id: our injected id wins on conflict (logged), trigger flows
+    (no metadata) keep the SDK's bound id, and __runnable_config__ is popped as transport.
+    """
+    # Real params arrive as plain dicts that may omit keys or carry non-dict
+    # values; a call that does not parse simply carries no identity to resolve.
+    try:
+        call = ComposioToolCall.model_validate(params)
+    except ValidationError:
+        return
+    config = call.arguments.pop("__runnable_config__", None)
+    params["arguments"] = call.arguments
+    if not isinstance(config, dict):
+        return
+    try:
+        transport = RunnableConfigTransport.model_validate(config)
+    except ValidationError:
+        return
+    user_id = transport.metadata.user_id if transport.metadata else None
+    if not user_id:
+        return
+    if call.user_id and call.user_id != user_id:
+        log.warning(
+            f"{LogTag.COMPOSIO} Hook user_id overwritten from RunnableConfig",
+            tool=tool,
+            toolkit=toolkit,
+        )
+    params["user_id"] = user_id
+    params["entity_id"] = user_id
+
+
 def master_before_execute_hook(
     tool: str, toolkit: str, params: ToolExecuteParams
 ) -> ToolExecuteParams:
@@ -145,41 +198,27 @@ def master_before_execute_hook(
     2. Frontend streaming setup
     3. All registered tool-specific hooks
     """
+    log.set(composio_tool=tool, composio_toolkit=toolkit)
+    _resolve_call_identity(tool, toolkit, params)
     return hook_registry.execute_before_hooks(tool, toolkit, params)
 
 
 def master_after_execute_hook(
     tool: str, toolkit: str, response: ToolExecutionResponse
 ) -> ToolExecutionResponse:
-    """
-    Master after_execute hook that handles ALL tools.
+    """Run every registered tool-specific after_execute hook plus global transforms.
 
-    This includes:
-    1. All registered tool-specific output processing hooks
-    2. Any global response transformations
-
-    Composio's own `AfterExecute` protocol declares this call signature as
-    returning `ToolExecutionResponse`, but registered hooks legitimately return a
-    trimmed dict subset for the LLM (see `AfterHookResponse`) rather than the full
-    envelope. Composio's own SDK doesn't enforce the shape at runtime either — it
-    casts the modifier chain's result straight to `Dict` before using it — so this
-    cast matches the SDK's actual behavior at the boundary it declared, not just
-    its type hint.
+    Composio's AfterExecute protocol declares this returns ToolExecutionResponse, but hooks
+    legitimately return a trimmed dict subset for the LLM (AfterHookResponse). The cast
+    matches the SDK's own runtime behavior, which casts the modifier chain's result straight
+    to Dict without enforcing the shape either.
     """
     result = hook_registry.execute_after_hooks(tool, toolkit, response)
     return cast(ToolExecutionResponse, result)
 
 
 def master_schema_modifier(tool: str, toolkit: str, schema: Tool) -> Tool:
-    """
-    Master schema modifier that handles ALL tools.
-
-    This modifies tool schemas before they are presented to agents.
-    Useful for:
-    - Adding/modifying tool descriptions
-    - Setting default values for arguments
-    - Adding custom guidance to tool usage
-    """
+    """Master schema modifier that runs all registered schema modifiers before a tool schema reaches an agent."""
     return hook_registry.execute_schema_modifiers(tool, toolkit, schema)
 
 
@@ -187,31 +226,7 @@ def register_before_hook(
     tools: Union[str, list[str]] | None = None,
     toolkits: Union[str, list[str]] | None = None,
 ) -> Callable[[BeforeHookFn], BeforeHookFn]:
-    """
-    Enhanced decorator for registering before_execute hooks.
-
-    Args:
-        tools: Single tool name or list of tool names to target
-        toolkits: Single toolkit name or list of toolkit names to target
-
-    Usage:
-        @register_before_hook(tools=["GMAIL_FETCH_EMAILS", "GMAIL_SEND_EMAIL"])
-        def gmail_param_modifier(tool, toolkit, params):
-            if tool == "GMAIL_FETCH_EMAILS":
-                # Handle fetch emails params
-                pass
-            elif tool == "GMAIL_SEND_EMAIL":
-                # Handle send email params
-                pass
-            return params
-
-        @register_before_hook(toolkits="GMAIL")
-        def gmail_toolkit_modifier(tool, toolkit, params):
-            if toolkit == "GMAIL":
-                # Handle all Gmail tools
-                pass
-            return params
-    """
+    """Register a decorator that scopes a before_execute hook to specific tools or toolkits (all if omitted)."""
 
     def decorator(func: BeforeHookFn) -> BeforeHookFn:
         # Normalize tools and toolkits to lists
@@ -254,28 +269,7 @@ def register_after_hook(
     tools: Union[str, list[str]] | None = None,
     toolkits: Union[str, list[str]] | None = None,
 ) -> Callable[[AfterHookFn], AfterHookFn]:
-    """
-    Enhanced decorator for registering after_execute hooks.
-
-    Args:
-        tools: Single tool name or list of tool names to target
-        toolkits: Single toolkit name or list of toolkit names to target
-
-    Usage:
-        @register_after_hook(tools=["GMAIL_FETCH_EMAILS"])
-        def gmail_output_processor(tool, toolkit, response):
-            if tool == "GMAIL_FETCH_EMAILS":
-                # Process Gmail fetch response
-                pass
-            return response
-
-        @register_after_hook(toolkits="GMAIL")
-        def gmail_toolkit_processor(tool, toolkit, response):
-            if toolkit == "GMAIL":
-                # Process all Gmail tool responses
-                pass
-            return response
-    """
+    """Register a decorator that scopes an after_execute hook to specific tools or toolkits (all if omitted)."""
 
     def decorator(func: AfterHookFn) -> AfterHookFn:
         # Normalize tools and toolkits to lists
@@ -318,30 +312,7 @@ def register_schema_modifier(
     tools: Union[str, list[str]] | None = None,
     toolkits: Union[str, list[str]] | None = None,
 ) -> Callable[[SchemaModifierFn], SchemaModifierFn]:
-    """
-    Decorator for registering schema modifiers.
-
-    Schema modifiers transform a tool's schema before the tool is seen by an agent.
-    Useful for modifying descriptions, setting defaults, or adding custom guidance.
-
-    Args:
-        tools: Single tool name or list of tool names to target
-        toolkits: Single toolkit name or list of toolkit names to target
-
-    Usage:
-        @register_schema_modifier(tools=["GMAIL_SEND_EMAIL"])
-        def add_draft_guidance(tool, toolkit, schema):
-            schema.description += "\\n\\nPrefer creating drafts first."
-            return schema
-
-        @register_schema_modifier(tools=["GMAIL_FETCH_EMAILS"])
-        def set_fetch_defaults(tool, toolkit, schema):
-            # Set default values for parameters
-            props = schema.input_parameters.get("properties", {})
-            if "max_results" in props:
-                props["max_results"]["default"] = 10
-            return schema
-    """
+    """Register a decorator that scopes a schema modifier to specific tools or toolkits (all if omitted)."""
 
     def decorator(func: SchemaModifierFn) -> SchemaModifierFn:
         # Normalize tools and toolkits to lists

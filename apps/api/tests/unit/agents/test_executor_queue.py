@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.agents.core.background import executor_queue as eq, session as sess
+from app.agents.core.background import executor_queue as eq
 from app.agents.core.background.executor_queue import (
     LockState,
     build_lock_value,
@@ -25,16 +25,10 @@ from app.agents.core.background.executor_queue import (
     release_lock_if_owned,
     safe_configurable,
 )
-from app.agents.core.background.session import RunKind, get_session
+from app.agents.core.background.session import RunIdentity, RunKind, get_session
 from app.constants.cache import EXECUTOR_BUSY_TTL, EXECUTOR_QUEUE_TTL
 from app.models.agent_models import AgentConfigurable
-
-
-@pytest.fixture(autouse=True)
-def _clean_registry():
-    sess._sessions.clear()
-    yield
-    sess._sessions.clear()
+from app.models.user_models import AuthenticatedUser
 
 
 def _queue_item(**overrides) -> str:
@@ -103,7 +97,9 @@ class TestPopNextQueuedRun:
         assert run.task_id == "task-7"
         assert run.user_message_id == "msg-1"
         assert run.conversation_id == "conv-1"
-        assert run.user == {"user_id": "u1", "email": "u1@x.com", "name": "Uno", "timezone": None}
+        assert run.user == AuthenticatedUser(
+            user_id="u1", email="u1@x.com", name="Uno", timezone=None
+        )
 
         # The popped item's stale stream_id is replaced by the fresh queued one.
         assert prepared.configurable["stream_id"] == run.stream_id
@@ -179,6 +175,17 @@ class TestLockOwnership:
             redis.client.get = AsyncMock(return_value=build_lock_value("other", "t9"))
             assert await get_lock_state("conv-1", "s1", "t1") is LockState.FOREIGN
 
+    async def test_a_run_without_a_task_id_still_owns_its_own_lock(self) -> None:
+        """A chat run carries no task_id, so its lock value is stream: with the task half EMPTY."""
+        with patch.object(eq, "redis_cache") as redis:
+            redis.client.get = AsyncMock(return_value="s1:")
+            assert await get_lock_state("conv-1", "s1", None) is LockState.OURS
+
+    async def test_a_missing_task_id_does_not_match_a_lock_that_names_one(self) -> None:
+        with patch.object(eq, "redis_cache") as redis:
+            redis.client.get = AsyncMock(return_value="s1:t1")
+            assert await get_lock_state("conv-1", "s1", None) is LockState.FOREIGN
+
     async def test_release_deletes_only_when_owned(self) -> None:
         with patch.object(eq, "redis_cache") as redis:
             redis.client.get = AsyncMock(return_value=build_lock_value("s1", "t1"))
@@ -205,8 +212,7 @@ class TestReclaimStrandedTask:
             redis.client.set.assert_not_awaited()  # never touches the lock
 
     async def test_lost_nx_claim_backs_off(self) -> None:
-        """A concurrent call_executor acquired the lock first — its finalize
-        will drain the queue, so reclaim must yield rather than trample."""
+        """A concurrent call_executor's finalize will drain the queue, so reclaim must yield rather than trample."""
         with patch.object(eq, "redis_cache") as redis:
             redis.client.llen = AsyncMock(return_value=1)
             redis.client.set = AsyncMock(return_value=None)  # NX lost
@@ -244,20 +250,26 @@ class TestEnqueueTask:
             redis.client.expire = AsyncMock()
 
             await enqueue_task(
-                queue_key="executor:queue:conv-1",
-                task="do it",
-                task_id="task-1",
-                configurable={
-                    "user_id": "u1",
-                    "workflow_id": "wf-1",
-                    # Not declared on AgentConfigurable — LangGraph's own runtime
-                    # keys look like this and must never reach the queue item.
-                    "not_owned": "dropped",
-                    # Declared, but holding something JSON cannot carry.
-                    "model_kwargs": {"provider": object()},
-                },
-                conversation_id="conv-1",
-                user_message_id="msg-1",
+                "executor:queue:conv-1",
+                build_run_item(
+                    task="do it",
+                    configurable={
+                        "user_id": "u1",
+                        "workflow_id": "wf-1",
+                        # Not declared on AgentConfigurable — LangGraph's own runtime
+                        # keys look like this and must never reach the queue item.
+                        "not_owned": "dropped",
+                        # Declared, but holding something JSON cannot carry.
+                        "model_kwargs": {"provider": object()},
+                    },
+                    identity=RunIdentity(
+                        stream_id="",
+                        conversation_id="conv-1",
+                        kind=RunKind.QUEUED,
+                        task_id="task-1",
+                        user_message_id="msg-1",
+                    ),
+                ),
             )
 
             payload = json.loads(redis.client.rpush.await_args.args[1])
@@ -270,45 +282,61 @@ class TestEnqueueTask:
 
 
 class TestBuildRunItem:
-    """``build_run_item`` is the single serialized shape written by both the
-    plain queue enqueue and the HIL pause store — fields must default so a
-    plain queue item never accidentally carries resume-only identity."""
+    """build_run_item is the single serialized shape written by both the plain queue enqueue and the HIL pause store.
+
+    Fields must default so a plain queue item never accidentally carries
+    resume-only identity.
+    """
 
     def test_omits_bot_message_id_by_default(self) -> None:
         item = build_run_item(
             task="do it",
-            task_id="task-1",
             configurable={"user_id": "u1"},
-            conversation_id="conv-1",
-            user_message_id="msg-1",
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id="msg-1",
+            ),
         )
         assert item["bot_message_id"] is None
 
     def test_carries_bot_message_id_when_a_pause_supplies_it(self) -> None:
         item = build_run_item(
             task="do it",
-            task_id="task-1",
             configurable={"user_id": "u1"},
-            conversation_id="conv-1",
-            user_message_id="msg-1",
-            bot_message_id="orig-msg-1",
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id="msg-1",
+                bot_message_id="orig-msg-1",
+            ),
         )
         assert item["bot_message_id"] == "orig-msg-1"
 
 
 class TestPrepareRunFromItemResumeIdentity:
-    """A HIL resume re-dispatches through the same ``prepare_run_from_item``
-    the queue pop uses — the resumed run must inherit the original bot
-    message id from the stored item so its result can reconcile onto it."""
+    """A HIL resume re-dispatches through the same prepare_run_from_item the queue pop uses.
+
+    The resumed run must inherit the original bot message id from the stored
+    item so its result can reconcile onto it.
+    """
 
     async def test_bot_message_id_threads_into_the_resumed_run(self) -> None:
         item = build_run_item(
             task="continue the task",
-            task_id="task-1",
             configurable={"user_id": "u1"},
-            conversation_id="conv-1",
-            user_message_id="msg-1",
-            bot_message_id="orig-msg-1",
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id="msg-1",
+                bot_message_id="orig-msg-1",
+            ),
         )
         with (
             patch.object(eq, "redis_cache") as redis,
@@ -334,10 +362,14 @@ class TestPrepareRunFromItemResumeIdentity:
     async def test_plain_queued_item_has_no_bot_message_id(self) -> None:
         item = build_run_item(
             task="do it",
-            task_id="task-1",
             configurable={"user_id": "u1"},
-            conversation_id="conv-1",
-            user_message_id="msg-1",
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id="msg-1",
+            ),
         )
         with (
             patch.object(eq, "redis_cache") as redis,
@@ -423,3 +455,118 @@ class TestSafeConfigurable:
         assert kept == {"thread_id": "t"}
         assert warn.call_count == 1
         assert warn.call_args.kwargs["configurable_key"] == "model_kwargs"
+
+
+@pytest.mark.regression
+class TestRunItemCarriesWorkflowExecution:
+    """The execution id exists only on the workflow task's wide event.
+
+    A HIL resume and a queue pop both rebuild the run in some OTHER context
+    (the approval request, the previous run's finalize), so the stored item
+    has to carry it or the resumed run's calls are unattributable.
+    """
+
+    async def test_the_item_records_the_execution_in_flight(self) -> None:
+        from shared.py.wide_events import WorkflowContext, log, wide_task
+
+        async with wide_task("workflow_execution"):
+            log.set(workflow=WorkflowContext(id="wf-9", execution_id="exec-42"))
+            item = build_run_item(
+                task="do it",
+                configurable={"user_id": "u1", "workflow_id": "wf-9"},
+                identity=RunIdentity(
+                    stream_id="",
+                    conversation_id="conv-1",
+                    kind=RunKind.QUEUED,
+                    task_id="task-1",
+                    user_message_id=None,
+                ),
+            )
+
+        assert item["workflow_execution_id"] == "exec-42"
+
+    def test_a_run_supplies_its_own_execution_id_when_pausing(self) -> None:
+        item = build_run_item(
+            task="do it",
+            configurable={"user_id": "u1", "workflow_id": "wf-9"},
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id=None,
+            ),
+            workflow_execution_id="exec-42",
+        )
+
+        assert item["workflow_execution_id"] == "exec-42"
+
+    async def test_a_resume_outside_any_boundary_still_knows_its_execution(self) -> None:
+        item = build_run_item(
+            task="continue the task",
+            configurable={"user_id": "u1", "workflow_id": "wf-9"},
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id=None,
+            ),
+            workflow_execution_id="exec-42",
+        )
+        with (
+            patch.object(eq, "redis_cache") as redis,
+            patch.object(eq, "StreamManager") as sm,
+            patch.object(eq, "websocket_manager") as ws,
+        ):
+            redis.client.set = AsyncMock()
+            sm.start_stream = AsyncMock()
+            ws.broadcast_to_user = AsyncMock()
+
+            # No wide-event boundary here on purpose: this is the approval
+            # request's context, where the workflow task's stamp never existed.
+            prepared = await prepare_run_from_item("conv-1", item)
+
+        assert prepared is not None
+        assert prepared.run.workflow_id == "wf-9"
+        assert prepared.run.workflow_execution_id == "exec-42"
+
+
+class TestRunItemDiscriminatorRoundTrip:
+    """t_dispatch_perf and queued survive build_run_item to prepare_run_from_item.
+
+    They are the executor metrics' discriminators: lose them and a dequeued run
+    is measured as a HIL resume, or the reverse.
+    """
+
+    async def test_dispatch_stamp_and_queue_origin_round_trip(self) -> None:
+        item = build_run_item(
+            task="do it",
+            configurable={"user_id": "u1"},
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id="msg-1",
+                t_dispatch_perf=1234.5,
+                queued=True,
+            ),
+        )
+        # Exact keys: a renamed key drops the value silently on the read side.
+        assert item["t_dispatch_perf"] == 1234.5
+        assert item["queued"] is True
+
+        with (
+            patch.object(eq, "redis_cache") as redis,
+            patch.object(eq, "StreamManager") as sm,
+            patch.object(eq, "websocket_manager") as ws,
+        ):
+            redis.client.set = AsyncMock()
+            sm.start_stream = AsyncMock()
+            ws.broadcast_to_user = AsyncMock()
+            prepared = await prepare_run_from_item("conv-1", item)
+
+        assert prepared is not None
+        assert prepared.run.t_dispatch_perf == 1234.5
+        assert prepared.run.queued is True

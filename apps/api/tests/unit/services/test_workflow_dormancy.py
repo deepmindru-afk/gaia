@@ -128,16 +128,10 @@ class TestSweepDormantWorkflows:
         assert result.workflows_paused == 1
         assert result.candidates[0].last_active_at is None
 
-    # Deliberately carries no regression marker. That marker means "this bug
-    # existed on the base revision", and the regression-proof lane re-runs marked
-    # tests against base to prove they go red there. This whole module is new, so
-    # on base the file cannot even be collected — an error, which the lane rightly
-    # refuses to accept as proof. Both tests below are still mutation-checked on
-    # this branch (drop the `_is_really_dormant` call and they go red).
+    # No regression marker: this module is new, so on base the file fails collection (an error,
+    # not a red test), which the regression lane rejects as proof. Both tests are still mutation-checked here.
     async def test_recent_chat_keeps_a_user_out_of_the_cohort(self):
-        """`last_active_at` is bumped only by a WorkOS web login, so a user who
-        lives in a bot looks dormant on it while using GAIA daily. On production
-        that was 210 users owning 1,965 activated workflows at a 30-day cutoff."""
+        """last_active_at only tracks WorkOS web logins; on production this covered 210 bot-only users owning 1,965 workflows."""
         deactivate = AsyncMock()
         p = _patches(
             users=[_user("bot_user"), _user("really_gone")],
@@ -170,9 +164,34 @@ class TestSweepDormantWorkflows:
         assert result.candidates == []
         deactivate.assert_not_awaited()
 
+    async def test_automation_only_usage_rows_do_not_mask_dormancy(self):
+        """A pure-automation usage_daily row has cost but count 0, which truthiness alone misreads as "active"."""
+        deactivate = AsyncMock()
+        p = _patches(
+            users=[_user("wf_only")],
+            workflows_by_user={"wf_only": [_workflow("wf_a")]},
+            deactivate=deactivate,
+        )
+        with (
+            p[0],
+            p[1],
+            patch(
+                f"{_MOD}.usage_daily_repository.counts_since",
+                new_callable=AsyncMock,
+                return_value={"2026-08-01": 0, "2026-08-02": 0},
+            ),
+            p[3],
+            p[4],
+        ):
+            result = await sweep_dormant_workflows()
+
+        assert result.workflows_paused == 1
+        deactivate.assert_awaited_once_with(
+            "wf_a", "wf_only", reason=DeactivationReason.USER_DORMANT
+        )
+
     async def test_max_users_bounds_one_run(self):
-        """Pausing unregisters Composio triggers per workflow, so an unbounded
-        first run over a long backlog is a burst of third-party calls."""
+        """Pausing unregisters Composio triggers per workflow, so an unbounded first run bursts third-party calls."""
         deactivate = AsyncMock()
         p = _patches(
             users=[_user("u1"), _user("u2"), _user("u3")],
@@ -191,10 +210,7 @@ class TestSweepDormantWorkflows:
 
     @pytest.mark.parametrize("bad", [timedelta(0), timedelta(days=-1)])
     async def test_a_non_positive_threshold_is_refused(self, bad: timedelta):
-        """A zero threshold puts the cutoff at this instant, so EVERY prior
-        activity timestamp falls before it and every user reads as dormant —
-        `--days 0` would pause the whole product. A negative one is worse: the
-        cutoff moves into the future."""
+        """A zero threshold puts the cutoff now, reading every user as dormant; a negative one moves it into the future."""
         find_dormant = AsyncMock(return_value=[])
         with (
             patch(f"{_MOD}.user_repository.find_dormant_since", find_dormant),
@@ -206,11 +222,7 @@ class TestSweepDormantWorkflows:
         find_dormant.assert_not_awaited()
 
     async def test_both_activity_signals_are_asked_about_the_same_cutoff(self):
-        """The cutoff must reach BOTH repositories, and reach usage_daily in the
-        `YYYY-MM-DD` shape its `date` field is stored as. Nothing else pins this:
-        the doubles elsewhere discard the argument, so a wrong (or wrongly
-        formatted) cutoff would still report the user dormant — the direction
-        that pauses a live user's workflows."""
+        """The cutoff must reach both repositories, usage_daily in its stored YYYY-MM-DD shape — nothing else pins this."""
         chat = AsyncMock(return_value=False)
         metered = AsyncMock(return_value={})
         with (
@@ -233,10 +245,9 @@ class TestSweepDormantWorkflows:
         assert chat.await_args.args == ("u1", result.cutoff)
         assert metered.await_args.args == ("u1", result.cutoff.strftime("%Y-%m-%d"))
 
-    async def test_the_threshold_defaults_to_ninety_days(self):
-        """30 days is where the signal choice still moves the answer by ~2,000
-        workflows; 90 is where it stops mattering. See DORMANCY_THRESHOLD."""
-        assert timedelta(days=90) == DORMANCY_THRESHOLD
+    async def test_the_threshold_defaults_to_thirty_days(self):
+        """A month of silence on every human signal is dormancy; the old 90 covered for automation-pollutable signals."""
+        assert timedelta(days=30) == DORMANCY_THRESHOLD
 
     async def test_the_cutoff_honours_the_threshold(self):
         find_dormant = AsyncMock(return_value=[])

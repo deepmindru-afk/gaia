@@ -9,7 +9,7 @@
  * against.
  */
 
-import type { PlatformName } from "@gaia/shared";
+import type { PlatformName } from "@gaia/shared/bots";
 import { HarnessAdapter } from "./adapter";
 import { isEmulatablePlatform, resolveEmulation } from "./emulation";
 import type { Scenario, ScenarioAssertion } from "./scenario.types";
@@ -100,6 +100,17 @@ export async function linkDevUser(
   };
 }
 
+/**
+ * Keeps the adapter (and its outbound RabbitMQ consumer) alive `settleMs` after a
+ * turn's stream closes, so deliveries published afterward land in that turn's
+ * events. A handoff turn closes SSE on the preamble while the real answer
+ * publishes later; shutting down early strands it in the queue instead of losing it.
+ */
+function settle(settleMs: number): Promise<void> {
+  if (settleMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, settleMs));
+}
+
 /** Boots a HarnessAdapter emulating `platform`, targeting `apiUrl`. */
 async function bootAdapter(
   platform: PlatformName,
@@ -132,13 +143,16 @@ export async function sendOneShot(params: {
   email: string;
   message: string;
   channelId?: string;
+  /** See {@link settle} — 0 (the default) shuts down as soon as the stream ends. */
+  settleMs?: number;
 }): Promise<SendResult> {
-  const { apiUrl, emulate, email, message, channelId } = params;
+  const { apiUrl, emulate, email, message, channelId, settleMs = 0 } = params;
   const user = await linkDevUser(apiUrl, email, emulate);
   const transcript = new TranscriptRecorder(emulate);
   const adapter = await bootAdapter(emulate, apiUrl, transcript);
   try {
     await adapter.simulateMessage(user.platformUserId, message, { channelId });
+    await settle(settleMs);
   } finally {
     await adapter.shutdown("harness").catch(() => undefined);
   }
@@ -161,6 +175,7 @@ export interface ScenarioResult {
 export async function runScenario(
   scenario: Scenario,
   apiUrl: string,
+  settleMsOverride?: number,
 ): Promise<ScenarioResult> {
   if (!isEmulatablePlatform(scenario.emulate)) {
     throw new Error(
@@ -179,6 +194,9 @@ export async function runScenario(
       await adapter.simulateMessage(user.platformUserId, turn.send, {
         channelId: turn.channelId,
       });
+      // Settle BEFORE slicing: a late outbound delivery belongs to the turn
+      // that caused it, and its assertions must be able to see it.
+      await settle(turn.settleMs ?? settleMsOverride ?? scenario.settleMs ?? 0);
       const turnEvents = transcript.getEvents().slice(before);
       for (const assertion of turn.expect ?? []) {
         for (const failure of evaluateAssertion(turnEvents, assertion)) {

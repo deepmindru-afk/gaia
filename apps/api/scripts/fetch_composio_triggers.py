@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fetch Available Composio Triggers Script
+Fetch Available Composio Triggers Script.
 
 Independent script to fetch all available Composio triggers for GAIA's integrations.
 Outputs trigger information including slug, name, description, and config schema.
@@ -31,7 +31,7 @@ if not os.getenv("ENV"):
 
 
 def load_integrations() -> list[dict[str, Any]]:
-    """Load integrations from oauth_config.py"""
+    """Load integrations from oauth_config.py."""
     from app.config.oauth_config import OAUTH_INTEGRATIONS
 
     integrations = []
@@ -134,7 +134,7 @@ def format_config_schema(config: object) -> str:
 
 
 def main():
-    """Main function to fetch and display triggers."""
+    """Fetch and display triggers."""
     print("=" * 80)
     print("COMPOSIO TRIGGERS FETCH SCRIPT")
     print("=" * 80)
@@ -212,7 +212,7 @@ def main():
 
     # Save to JSON file
     output_file = Path(__file__).parent / "composio_triggers_output.json"
-    with open(output_file, "w") as f:
+    with output_file.open("w") as f:
         json.dump(all_triggers, f, indent=2, default=str)
 
     print(f"✓ Full output saved to: {output_file}")

@@ -3,10 +3,10 @@
 Runs the executor agent or any single subagent directly, skipping the comms
 front door, so tests and coding agents can exercise one layer in isolation
 instead of always driving the full comms → executor → handoff chain. Reuses
-the exact production preparation paths (``prepare_executor_execution``,
-``prepare_subagent_execution``) so a direct run can never drift from what the
+the exact production preparation paths (prepare_executor_execution,
+prepare_subagent_execution) so a direct run can never drift from what the
 real hand-off does. Mounted only in development behind the auth bypass — see
-``create_app``. Under ``GAIA_SIM_MODE`` the graphs already resolve to the
+create_app. Under GAIA_SIM_MODE the graphs already resolve to the
 scripted LLM stub, so directive-bearing tasks run deterministically.
 """
 
@@ -22,7 +22,7 @@ from app.agents.core.subagents.subagent_runner import (
 )
 from app.agents.llm.lane import AgentRole
 from app.constants.log_tags import LogTag
-from app.helpers.agent_helpers import build_agent_config
+from app.helpers.agent_helpers import AgentIdentity, AgentLane, AgentTurn, build_agent_config
 from app.models.agent_models import AgentConfigurable, AgentUserContext
 from app.schemas.dev_schemas import DevAgentRunResponse, DevSubagentInfo
 from app.services.dev_service import require_dev_user
@@ -63,15 +63,19 @@ async def _dev_base_configurable(
     }
     user_preferences, writing_style = onboarding_preferences(user_doc.onboarding)
     config = await build_agent_config(
-        conversation_id=cid,
-        user=user,
-        agent_name=agent_name,
+        identity=AgentIdentity(
+            conversation_id=cid,
+            user=user,
+            agent_name=agent_name,
+        ),
         # A direct dev run is top-level, so it resolves its own lane. Before
         # this it resolved none at all, which is why the dev harness quietly
         # ran a different model than real chat.
-        role=AgentRole.EXECUTOR,
-        user_preferences=user_preferences,
-        writing_style=writing_style,
+        lane=AgentLane(role=AgentRole.EXECUTOR),
+        turn=AgentTurn(
+            user_preferences=user_preferences,
+            writing_style=writing_style,
+        ),
     )
     return cast(AgentConfigurable, config["configurable"]), user_id, cid
 
@@ -80,7 +84,7 @@ def _reject_pause(outcome: SubagentOutcome, agent_name: str) -> None:
     """Fail loud when a direct run parks on a HIL approval.
 
     A direct run has no stream and therefore no approval channel to answer the
-    interrupt on, so ``outcome.text`` is meaningless — returning it would hand
+    interrupt on, so outcome.text is meaningless — returning it would hand
     back an empty message as if it were the agent's answer.
     """
     if outcome.paused:

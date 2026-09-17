@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
@@ -21,6 +21,8 @@ export interface UseIntegrationsReturn {
   // Data
   integrations: Integration[];
   isLoading: boolean;
+  /** No catalogue yet (first paint, or the fetch has not started): show placeholders. */
+  isPending: boolean;
   error: Error | null;
 
   // Helpers
@@ -31,6 +33,7 @@ export interface UseIntegrationsReturn {
   // Actions
   connectIntegration: (
     integrationId: string,
+    bearerToken?: string,
   ) => Promise<{ status: string; toolsCount?: number }>;
   disconnectIntegration: (integrationId: string) => Promise<void>;
   createCustomIntegration: (
@@ -59,6 +62,7 @@ export const useIntegrations = (): UseIntegrationsReturn => {
   const {
     data: myIntegrationsData,
     isLoading,
+    isPending,
     error,
   } = useQuery({
     queryKey: integrationKeys.me,
@@ -78,7 +82,9 @@ export const useIntegrations = (): UseIntegrationsReturn => {
   // depend on the array — otherwise every refetch changes their identity and
   // churns consumers (e.g. the sidebar content rebuilt on every poll tick).
   const integrationsRef = useRef(integrations);
-  integrationsRef.current = integrations;
+  useEffect(() => {
+    integrationsRef.current = integrations;
+  });
 
   // Get status for a specific integration, derived from the /me catalog.
   const getIntegrationStatus = useCallback(
@@ -94,6 +100,7 @@ export const useIntegrations = (): UseIntegrationsReturn => {
   const connectIntegration = useCallback(
     async (
       integrationId: string,
+      bearerToken?: string,
     ): Promise<{ status: string; name?: string; toolsCount?: number }> => {
       const integration = integrationsRef.current.find(
         (i) => i.id.toLowerCase() === integrationId.toLowerCase(),
@@ -103,7 +110,10 @@ export const useIntegrations = (): UseIntegrationsReturn => {
       const toastId = toast.loading(`Connecting to ${integrationName}...`);
 
       try {
-        const result = await integrationsApi.connectIntegration(integrationId);
+        const result = await integrationsApi.connectIntegration(
+          integrationId,
+          bearerToken,
+        );
 
         if (result.status === "connected") {
           toast.success(`Connected to ${result.name}`, { id: toastId });
@@ -259,6 +269,7 @@ export const useIntegrations = (): UseIntegrationsReturn => {
   return {
     integrations,
     isLoading,
+    isPending,
     error: error as Error | null,
     getIntegrationStatus,
     connectIntegration,

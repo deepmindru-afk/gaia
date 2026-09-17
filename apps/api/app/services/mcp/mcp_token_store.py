@@ -5,12 +5,14 @@ Stores MCP credentials encrypted in PostgreSQL instead of filesystem.
 Follows same patterns as Composio for parity.
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 import json
 import secrets
-from typing import Any, cast
+from typing import cast
 
 from cryptography.fernet import Fernet
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 
 from app.config.settings import settings
@@ -25,9 +27,11 @@ from app.constants.log_tags import LogTag
 from app.db.postgresql import get_db_session
 from app.db.redis import get_and_delete_cache, get_cache, set_cache
 from app.models.db_oauth import MCPAuthType, MCPCredential, MCPCredentialStatus
-from app.models.mcp_config import DCRClientRegistration, OAuthDiscovery
-from app.utils.mcp_oauth_utils import introspect_token as do_introspect
+from app.models.mcp_config import DCRClientRegistration, OAuthDiscovery, OAuthPendingState
+from app.utils.mcp_oauth_utils import TokenIntrospectionResponse, introspect_token as do_introspect
 from shared.py.wide_events import log
+
+_DCR_CLIENT_REGISTRATION: TypeAdapter[DCRClientRegistration] = TypeAdapter(DCRClientRegistration)
 
 
 class MCPTokenStore:
@@ -49,7 +53,7 @@ class MCPTokenStore:
             except Exception as e:
                 raise ValueError(
                     f"MCP_ENCRYPTION_KEY is not a valid Fernet key (must be 32 url-safe base64-encoded bytes): {e}"
-                )
+                ) from e
         return self._cipher
 
     def _encrypt(self, data: str) -> str:
@@ -128,7 +132,7 @@ class MCPTokenStore:
         """Check if token expires within threshold (default 5 minutes).
 
         Also returns True when token_expires_at is not set but the token
-        was issued more than ``max_age_seconds`` ago — servers can revoke
+        was issued more than max_age_seconds ago — servers can revoke
         tokens at any time, so proactively refreshing stale tokens avoids
         connection failures from expired-but-unknown-expiry tokens.
         """
@@ -137,7 +141,8 @@ class MCPTokenStore:
             return False
 
         if cred.token_expires_at:
-            from datetime import timedelta
+            # Deferred import: stdlib import kept local to this expiry branch
+            from datetime import timedelta  # noqa: PLC0415 -- stdlib import kept local
 
             return cred.token_expires_at < datetime.now(UTC) + timedelta(seconds=threshold_seconds)
 
@@ -146,7 +151,7 @@ class MCPTokenStore:
         # expired only when mcp-use fails to connect.
         max_age_seconds = 3600
         if cred.connected_at:
-            from datetime import timedelta
+            from datetime import timedelta  # noqa: PLC0415 -- stdlib import kept local
 
             return cred.connected_at < datetime.now(UTC) - timedelta(seconds=max_age_seconds)
 
@@ -263,14 +268,10 @@ class MCPTokenStore:
                 )
 
     async def create_oauth_state(self, integration_id: str, code_verifier: str) -> str:
-        """
-        Create OAuth state for CSRF protection.
+        """Create OAuth state and PKCE code_verifier for CSRF protection, stored in Redis with TTL.
 
-        Stores state and PKCE code_verifier in Redis with TTL.
-        Returns the state token to include in OAuth URL.
-
-        Note: Connection status is managed in MongoDB user_integrations.
-        PostgreSQL only stores the PKCE state for the OAuth flow.
+        PostgreSQL only stores the PKCE state for the flow; connection status
+        lives in MongoDB user_integrations.
         """
         state = secrets.token_urlsafe(32)
 
@@ -298,23 +299,20 @@ class MCPTokenStore:
         if not stored_data:
             return False, None
 
-        stored_state: str | None
-        code_verifier: str | None
         try:
             # Written by create_oauth_state as {"state": ..., "code_verifier": ...};
             # set_cache may hand it back already deserialized or still as JSON text.
-            data: dict[str, str] = (
-                stored_data if isinstance(stored_data, dict) else json.loads(stored_data)
+            pending = (
+                OAuthPendingState.model_validate(stored_data)
+                if isinstance(stored_data, dict)
+                else OAuthPendingState.model_validate_json(stored_data)
             )
-            stored_state = data.get("state")
-            code_verifier = data.get("code_verifier")
-        except (json.JSONDecodeError, TypeError):
+        except ValidationError:
             # Legacy format - just state string (backwards compat)
-            stored_state = stored_data
-            code_verifier = None
+            pending = OAuthPendingState(state=str(stored_data))
 
-        if stored_state and stored_state == state:
-            return True, code_verifier
+        if pending.state and pending.state == state:
+            return True, pending.code_verifier
         return False, None
 
     async def delete_credentials(self, integration_id: str) -> None:
@@ -347,8 +345,8 @@ class MCPTokenStore:
             try:
                 # Written by store_dcr_client from an RFC 7591 registration
                 # response; only the credential fields are ever read back.
-                return cast(DCRClientRegistration, json.loads(cred.client_registration))
-            except json.JSONDecodeError:
+                return _DCR_CLIENT_REGISTRATION.validate_json(cred.client_registration)
+            except ValidationError:
                 return None
         return None
 
@@ -373,12 +371,12 @@ class MCPTokenStore:
                 await session.commit()
                 log.info(f"{LogTag.MCP} Deleted DCR client for", integration_id=integration_id)
 
-    async def store_dcr_client(self, integration_id: str, dcr_data: dict[str, Any]) -> None:
+    async def store_dcr_client(self, integration_id: str, dcr_data: Mapping[str, object]) -> None:
         """Store DCR client registration from dynamic registration.
 
         The whole RFC 7591 response is persisted verbatim — servers return
         arbitrary extra metadata alongside the credentials — so the write side
-        stays a raw mapping. Reads go through :class:`DCRClientRegistration`.
+        stays an open JSON object. Reads go through DCRClientRegistration.
         """
         async with get_db_session() as session:
             result = await session.execute(
@@ -390,7 +388,7 @@ class MCPTokenStore:
             cred = result.scalar_one_or_none()
 
             if cred:
-                cred.client_registration = json.dumps(dcr_data)
+                cred.client_registration = json.dumps(dict(dcr_data))
                 session.add(cred)
             else:
                 cred = MCPCredential(
@@ -398,25 +396,18 @@ class MCPTokenStore:
                     integration_id=integration_id,
                     auth_type=MCPAuthType.OAUTH,
                     status=MCPCredentialStatus.PENDING,
-                    client_registration=json.dumps(dcr_data),
+                    client_registration=json.dumps(dict(dcr_data)),
                 )
                 session.add(cred)
             await session.commit()
             log.info(f"{LogTag.MCP} Stored DCR client for", integration_id=integration_id)
 
     async def store_oauth_discovery(self, integration_id: str, discovery: OAuthDiscovery) -> None:
-        """
-        Cache OAuth discovery data in Redis.
+        """Cache OAuth discovery data in Redis for 24 hours.
 
-        NOTE: This cache is GLOBAL per integration, not per-user. The key is:
-        `mcp_oauth_discovery:{integration_id}` (no user_id component).
-
-        This is intentional because OAuth discovery data (authorization_endpoint,
-        token_endpoint, registration_endpoint, etc.) is the same for all users
-        connecting to the same MCP server. User-specific data like DCR client_id
-        is stored separately in PostgreSQL per user.
-
-        TTL: 24 hours (OAuth metadata changes infrequently)
+        Global per integration (key: mcp_oauth_discovery:{integration_id}, no
+        user_id) since discovery data is the same for all users; per-user DCR
+        client_id is stored separately in PostgreSQL.
         """
         cache_key = f"{OAUTH_DISCOVERY_PREFIX}:{integration_id}"
         await set_cache(cache_key, discovery.model_dump(mode="json"), ttl=OAUTH_DISCOVERY_TTL)
@@ -454,7 +445,7 @@ class MCPTokenStore:
 
     async def get_excluded_scopes(self, integration_id: str) -> set[str]:
         """
-        Get scopes the auth server rejected with `invalid_scope`.
+        Get scopes the auth server rejected with invalid_scope.
 
         Accumulated within a single OAuth flow (TTL-bounded) so each
         re-authorization retry drops the offending scope(s) and converges.
@@ -480,13 +471,11 @@ class MCPTokenStore:
         integration_id: str,
         client_id: str | None = None,
         client_secret: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> TokenIntrospectionResponse | None:
         """
         Introspect token at authorization server per RFC 7662.
 
         Returns introspection response with 'active' field, or None if failed.
-        The body stays a raw mapping: past ``active``, RFC 7662 lets the
-        authorization server return any claims it likes.
         """
         discovery = await self.get_oauth_discovery(integration_id)
         if not discovery:

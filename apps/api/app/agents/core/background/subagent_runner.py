@@ -10,6 +10,7 @@ subagents complete or park, collect their results, and — when any parked on a
 HIL approval — pause the executor once for the whole batch.
 """
 
+from dataclasses import dataclass
 import time
 
 from app.agents.core.background.bg_results import append_bg_subagent_result
@@ -19,6 +20,7 @@ from app.agents.core.background.session import (
     decrement_pending_subagents,
     release_bg_integration,
 )
+from app.agents.core.subagents.call_record import append_call_record
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
     execute_subagent_stream,
@@ -28,44 +30,59 @@ from app.models.agent_models import AgentConfigurable
 from app.services.hil.approvals_store import stamp_subagent_resume
 from app.utils.agent_utils import (
     IntegrationMetadata,
+    SubagentStartDetails,
     format_subagent_end_event,
     format_subagent_start_event,
 )
 from shared.py.wide_events import get_trace_id, log, wide_task
 
 
+@dataclass(frozen=True)
+class BackgroundHandoff:
+    """How a background subagent run presents itself and what it releases on exit.
+
+    Icon/name metadata for tool events, the subagent and integration ids, the
+    display triple for start/end cards, and whether successful calls are
+    recorded (workflow runs only).
+    """
+
+    integration_metadata: IntegrationMetadata | None = None
+    subagent_id: str | None = None
+    display_name: str | None = None
+    tool_category: str | None = None
+    icon_url: str | None = None
+    integration_id: str | None = None
+    record_calls: bool = False
+
+
 async def run_subagent_background(
     ctx: SubagentExecutionContext,
     stream_id: str,
-    integration_metadata: IntegrationMetadata | None = None,
-    subagent_id: str | None = None,
-    display_name: str | None = None,
-    tool_category: str | None = None,
-    icon_url: str | None = None,
-    integration_id: str | None = None,
+    handoff: BackgroundHandoff | None = None,
 ) -> None:
     """Run a provider subagent in the background and store its result.
 
-    Designed for asyncio.create_task(). Never raises — all exceptions
-    caught and stored as the subagent's result text.
-
-    A HIL pause is not an error: the subagent's graph is checkpointed, so this
-    stamps the approval record with the thread id and exits. The
-    wait_for_subagents join rediscovers it durably, pauses the executor for the
-    user's decision, and resumes the subagent when it lands.
-
-    Args:
-        ctx: Fully prepared SubagentExecutionContext.
-        stream_id: Active SSE stream ID for tool event publishing.
-        integration_metadata: Optional icon/name metadata for tool events.
-        integration_id: Releases this integration's background slot on exit.
+    Designed for asyncio.create_task(). Never raises — exceptions are caught
+    and stored as the result text. A HIL pause stamps the approval record and
+    exits; wait_for_subagents rediscovers it durably and resumes on decision.
     """
+    handoff = handoff or BackgroundHandoff()
+    integration_metadata, subagent_id, integration_id = (
+        handoff.integration_metadata,
+        handoff.subagent_id,
+        handoff.integration_id,
+    )
+    display_name, tool_category, icon_url = (
+        handoff.display_name,
+        handoff.tool_category,
+        handoff.icon_url,
+    )
+    record_calls = handoff.record_calls
+
     conversation_id = str(ctx.configurable.get("conversation_id", ""))
     # This task outlives the spawning executor turn, so it needs its own
-    # wide-event boundary or every log.set() in the run (LLM accounting
-    # included) is silently discarded. get_trace_id() reads the spawner's
-    # trace_id from the task's copied context, correlating this event with
-    # the run that dispatched it.
+    # wide-event boundary or every log.set() is silently discarded.
+    # get_trace_id() correlates this event with the run that dispatched it.
     async with wide_task(
         "subagent_run",
         trace_id=get_trace_id() or None,
@@ -85,8 +102,9 @@ async def run_subagent_background(
                             subagent_name=display_name or ctx.agent_name,
                             agent_type="handoff",
                             subagent_id=subagent_id,
-                            icon_url=icon_url,
-                            tool_category=tool_category,
+                            details=SubagentStartDetails(
+                                icon_url=icon_url, tool_category=tool_category
+                            ),
                         )
                     }
                 )
@@ -101,7 +119,11 @@ async def run_subagent_background(
             if outcome.paused:
                 await _park(ctx, outcome.interrupt or {}, stream_id)
                 return
-            result = outcome.text
+            result = (
+                append_call_record(outcome.text, outcome.run_messages)
+                if record_calls
+                else outcome.text
+            )
             duration_ms = int((time.monotonic() - start_time) * 1000)
 
             if subagent_id:
@@ -140,13 +162,9 @@ async def run_subagent_background(
 async def _wake_if_executor_rested(conversation_id: str, configurable: AgentConfigurable) -> None:
     """Queue a collection turn when this landing has no live executor to collect it.
 
-    The executor may legitimately end its turn while background subagents run
-    ("dispatched — I'll report when it's done"). This is the notification that
-    makes that safe: the queued turn joins, gathers results, and pauses for any
-    approvals. Busy executor → it will collect itself; headless run → nothing to
-    wake (the gate denied any destructive work, results have no live audience).
-    Best-effort: a wake failure must not crash the task — the marker TTL and the
-    next landing retry it.
+    Busy executor -> it will collect itself; headless run -> nothing to wake
+    (results have no live audience). Best-effort: a wake failure must not
+    crash the task — the marker TTL and the next landing retry it.
     """
     if not conversation_id or str(configurable.get("execution_mode") or "") == "background":
         return

@@ -30,12 +30,13 @@ class OutboundMessageEnvelope(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     platform: str = Field(min_length=1)
     destination_id: str = Field(min_length=1)
-    # A message carries a single ``text`` body, an ordered ``text_parts`` group,
-    # an attachment, or a combination. ``text_parts`` is how a multi-bubble
-    # notification (e.g. a workflow completion: header, result messages, footer)
-    # is delivered as ONE queue unit so the consumer sends its bubbles in order —
-    # publishing them as separate envelopes would let a concurrent consumer
-    # reorder them.
+    # False (default): destination_id is the user's DM target. True: it is a
+    # channel/group id and the bot must send to the channel — some platforms
+    # (Discord, Slack) address a channel differently from a user DM.
+    is_channel: bool = False
+    # A message carries text, an ordered text_parts group, an attachment, or a
+    # combination. text_parts keeps a multi-bubble notification as ONE queue
+    # unit so a concurrent consumer can't reorder the bubbles.
     text: str | None = Field(default=None, min_length=1)
     text_parts: list[str] | None = None
     attachment: OutboundAttachment | None = None

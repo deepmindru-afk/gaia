@@ -1,5 +1,5 @@
 """
-OAuth Integration Configuration
+OAuth Integration Configuration.
 
 Single source of truth for all OAuth integration configurations in GAIA.
 Defines integrations, scopes, display properties, and subagent configurations.
@@ -19,6 +19,7 @@ from app.agents.prompts.memory_prompts import (
     GITHUB_MEMORY_PROMPT,
     GMAIL_MEMORY_PROMPT,
     GOOGLE_DOCS_MEMORY_PROMPT,
+    GOOGLE_DRIVE_MEMORY_PROMPT,
     GOOGLE_MAPS_MEMORY_PROMPT,
     GOOGLE_MEET_MEMORY_PROMPT,
     GOOGLE_SHEETS_MEMORY_PROMPT,
@@ -34,7 +35,6 @@ from app.agents.prompts.memory_prompts import (
     PERPLEXITY_MEMORY_PROMPT,
     POSTHOG_MEMORY_PROMPT,
     REDDIT_MEMORY_PROMPT,
-    REMINDER_MEMORY_PROMPT,
     SKILLS_MEMORY_PROMPT,
     SLACK_MEMORY_PROMPT,
     TODO_MEMORY_PROMPT,
@@ -56,6 +56,7 @@ from app.agents.prompts.subagent_prompts import (
     GITHUB_AGENT_SYSTEM_PROMPT,
     GMAIL_AGENT_SYSTEM_PROMPT,
     GOOGLE_DOCS_AGENT_SYSTEM_PROMPT,
+    GOOGLE_DRIVE_AGENT_SYSTEM_PROMPT,
     GOOGLE_MAPS_AGENT_SYSTEM_PROMPT,
     GOOGLE_MEET_AGENT_SYSTEM_PROMPT,
     GOOGLE_SHEETS_AGENT_SYSTEM_PROMPT,
@@ -71,7 +72,6 @@ from app.agents.prompts.subagent_prompts import (
     PERPLEXITY_AGENT_SYSTEM_PROMPT,
     POSTHOG_AGENT_SYSTEM_PROMPT,
     REDDIT_AGENT_SYSTEM_PROMPT,
-    REMINDER_AGENT_SYSTEM_PROMPT,
     SKILLS_AGENT_SYSTEM_PROMPT,
     SLACK_AGENT_SYSTEM_PROMPT,
     TODO_AGENT_SYSTEM_PROMPT,
@@ -94,6 +94,7 @@ from app.config.oauth_content import (
     GOOGLE_MAPS_CONTENT,
     GOOGLECALENDAR_CONTENT,
     GOOGLEDOCS_CONTENT,
+    GOOGLEDRIVE_CONTENT,
     GOOGLEMEET_CONTENT,
     GOOGLESHEETS_CONTENT,
     GOOGLETASKS_CONTENT,
@@ -124,6 +125,7 @@ from app.constants.hil_destructive_tools import (
     GOOGLE_MAPS_DESTRUCTIVE_TOOLS,
     GOOGLECALENDAR_DESTRUCTIVE_TOOLS,
     GOOGLEDOCS_DESTRUCTIVE_TOOLS,
+    GOOGLEDRIVE_DESTRUCTIVE_TOOLS,
     GOOGLEMEET_DESTRUCTIVE_TOOLS,
     GOOGLESHEETS_DESTRUCTIVE_TOOLS,
     GOOGLETASKS_DESTRUCTIVE_TOOLS,
@@ -345,6 +347,49 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
         content=GOOGLEDOCS_CONTENT,
     ),
     OAuthIntegration(
+        id="googledrive",
+        name="Google Drive",
+        description="Search, organize, share, and retrieve your files in Google Drive",
+        category="productivity",
+        provider="googledrive",
+        scopes=[],
+        is_featured=True,
+        short_name="drive",
+        managed_by="composio",
+        composio_config=ComposioConfig(
+            auth_config_id="ac_BIDZlYnyVjzm",
+            toolkit="GOOGLEDRIVE",
+            toolkit_version="20260826_00",
+        ),
+        destructive_tools=GOOGLEDRIVE_DESTRUCTIVE_TOOLS,
+        subagent_config=SubAgentConfig(
+            has_subagent=True,
+            agent_name="googledrive_agent",
+            tool_space="googledrive",
+            handoff_tool_name="call_googledrive_agent",
+            domain="file storage, organization, search, sharing, and retrieval",
+            capabilities="searching files and folders, creating folders, uploading and downloading files, moving and copying files, sharing with collaborators, exporting Google Workspace documents, and pulling files into other tasks such as email attachments",
+            use_cases="finding a file, organizing folders, sharing a file or folder, downloading or exporting a file, attaching a Drive file to an email, or any Google Drive operation",
+            system_prompt=GOOGLE_DRIVE_AGENT_SYSTEM_PROMPT,
+            auto_bind_tools=[
+                "GOOGLEDRIVE_FIND_FILE",
+                "GOOGLEDRIVE_FIND_FOLDER",
+                "GOOGLEDRIVE_GET_FILE_METADATA",
+                "GOOGLEDRIVE_CREATE_FOLDER",
+                "GOOGLEDRIVE_CREATE_FILE_FROM_TEXT",
+                "GOOGLEDRIVE_UPLOAD_FILE",
+                "GOOGLEDRIVE_DOWNLOAD_FILE",
+                "GOOGLEDRIVE_EXPORT_GOOGLE_WORKSPACE_FILE",
+                "GOOGLEDRIVE_MOVE_FILE",
+                "GOOGLEDRIVE_COPY_FILE_ADVANCED",
+                "GOOGLEDRIVE_CREATE_PERMISSION",
+                "GOOGLEDRIVE_TRASH_FILE",
+            ],
+            memory_prompt=GOOGLE_DRIVE_MEMORY_PROMPT,
+        ),
+        content=GOOGLEDRIVE_CONTENT,
+    ),
+    OAuthIntegration(
         id="todos",
         name="Todos",
         description="Manage tasks, projects, and personal productivity with AI assistance",
@@ -388,19 +433,6 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
         is_featured=False,
         short_name="reminders",
         managed_by="internal",
-        subagent_config=SubAgentConfig(
-            has_subagent=True,
-            agent_name="reminder_agent",
-            tool_space="reminders",
-            handoff_tool_name="call_reminder_agent",
-            domain="scheduling and time-based notifications",
-            capabilities="creating reminders and timed pings ('remind me to ...', 'ping me', 'alert me at ...', 'notify me in N minutes', 'set a timer'), scheduling one-off and recurring notifications that fire at a set time, managing reminder statuses, searching reminders",
-            use_cases="any 'remind me' / 'ping me' / 'alert me' / 'notify me at' / 'set a timer' request — a time-based notification that fires at a scheduled time (NOT a todo list item)",
-            system_prompt=REMINDER_AGENT_SYSTEM_PROMPT,
-            use_direct_tools=True,
-            disable_retrieve_tools=True,
-            memory_prompt=REMINDER_MEMORY_PROMPT,
-        ),
     ),
     # Internal Skills System (no OAuth required)
     OAuthIntegration(
@@ -444,7 +476,7 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
         short_name="gmail",
         managed_by="composio",
         composio_config=ComposioConfig(
-            auth_config_id="ac_zLZJrT48iedR",
+            auth_config_id="ac_svLPDmjcTVMX",
             toolkit="GMAIL",
             toolkit_version="20260107_00",
         ),
@@ -508,14 +540,9 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
             # miners into the agent AND its spawned chunk-readers so triage mines
             # the offload with query_json/grep instead of read-whole-file + bash.
             extra_initial_tools=["query_json", "grep"],
-            # Custom read tools supersede the stock ones and are the agent's
-            # single canonical path: GMAIL_FETCH_MESSAGES (paginating, renders
-            # the card) replaces GMAIL_FETCH_EMAILS, whose fixed page size
-            # silently capped inbox reads; GMAIL_FETCH_THREAD (normalized,
-            # offloading) replaces GMAIL_FETCH_MESSAGE_BY_THREAD_ID's raw,
-            # unshaped thread view. Exclude the stock tools so they are neither
-            # bound nor retrievable by the agent. (The REST mail layer still
-            # invokes them by name — exclude_tools gates agent retrieval only.)
+            # GMAIL_FETCH_MESSAGES (paginated) replaces GMAIL_FETCH_EMAILS's capped
+            # page size; GMAIL_FETCH_THREAD (normalized) replaces the raw thread view.
+            # Excluded here so the agent can't retrieve them; REST mail still calls them by name.
             exclude_tools=["GMAIL_FETCH_EMAILS", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"],
             memory_prompt=GMAIL_MEMORY_PROMPT,
         ),
@@ -550,13 +577,13 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
         destructive_tools=NOTION_DESTRUCTIVE_TOOLS,
         associated_triggers=[
             TriggerConfig(
-                slug="NOTION_PAGE_ADDED_TO_DATABASE",
+                slug="NOTION_PAGE_CREATED",
                 name="New Page in Database",
-                description="Triggers when a new page is added to a Notion database.",
+                description="Triggers when a new page is created in a Notion data source or under a parent page.",
                 auto_activate=False,
                 workflow_trigger_schema=WorkflowTriggerSchema(
                     slug="notion_new_page_in_db",
-                    composio_slug="NOTION_PAGE_ADDED_TO_DATABASE",
+                    composio_slug="NOTION_PAGE_CREATED",
                     name="New Page in Database",
                     description="Trigger when a page is added to a specific database",
                     config_schema={
@@ -569,13 +596,13 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
                 ),
             ),
             TriggerConfig(
-                slug="NOTION_PAGE_UPDATED_TRIGGER",
+                slug="NOTION_PAGE_PROPERTIES_UPDATED",
                 name="Page Updated",
-                description="Triggers when any block within a specified Notion page is updated.",
+                description="Triggers when the properties of a specified Notion page are updated.",
                 auto_activate=False,
                 workflow_trigger_schema=WorkflowTriggerSchema(
                     slug="notion_page_updated",
-                    composio_slug="NOTION_PAGE_UPDATED_TRIGGER",
+                    composio_slug="NOTION_PAGE_PROPERTIES_UPDATED",
                     name="Page Updated",
                     description="Trigger when a specific page is updated",
                     config_schema={
@@ -588,16 +615,22 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
                 ),
             ),
             TriggerConfig(
-                slug="NOTION_ALL_PAGE_EVENTS_TRIGGER",
-                name="All Page Events",
-                description="Triggers when any Notion page is created or updated across the workspace.",
+                slug="NOTION_PAGE_CONTENT_UPDATED",
+                name="Page Content Updated",
+                description="Triggers when the body content of a specified Notion page is updated.",
                 auto_activate=False,
                 workflow_trigger_schema=WorkflowTriggerSchema(
-                    slug="notion_all_page_events",
-                    composio_slug="NOTION_ALL_PAGE_EVENTS_TRIGGER",
-                    name="Any Page Event",
-                    description="Trigger on any page creation or update",
-                    config_schema={},
+                    slug="notion_page_content_updated",
+                    composio_slug="NOTION_PAGE_CONTENT_UPDATED",
+                    name="Page Content Updated",
+                    description="Trigger when a page's content is updated",
+                    config_schema={
+                        "page_id": TriggerConfigFieldSchema(
+                            type="string",
+                            default="",
+                            description="The ID of the Notion page to monitor (empty for all pages)",
+                        ),
+                    },
                 ),
             ),
         ],
@@ -1550,24 +1583,19 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
         destructive_tools=ASANA_DESTRUCTIVE_TOOLS,
         associated_triggers=[
             TriggerConfig(
-                slug="ASANA_TASK_TRIGGER",
+                slug="ASANA_TASK_CREATED",
                 name="Task Trigger",
-                description="Triggered when a task involves the user.",
+                description="Triggered when a new task is created in a monitored project.",
                 auto_activate=False,
                 workflow_trigger_schema=WorkflowTriggerSchema(
                     slug="asana_task_trigger",
-                    composio_slug="ASANA_TASK_TRIGGER",
+                    composio_slug="ASANA_TASK_CREATED",
                     name="Task Trigger",
-                    description="Triggered when a task involves the user.",
+                    description="Triggered when a new task is created in a monitored project.",
                     config_schema={
-                        "project_id": TriggerConfigFieldSchema(
+                        "project_gid": TriggerConfigFieldSchema(
                             type="string",
-                            description="ID of the project to trigger on.",
-                            default="",
-                        ),
-                        "workspace_id": TriggerConfigFieldSchema(
-                            type="string",
-                            description="ID of the workspace to trigger on.",
+                            description="Asana GID of the project to monitor (required).",
                             default="",
                         ),
                     },
@@ -1936,10 +1964,8 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
         short_name="browserbase",
         managed_by="mcp",
         mcp_config=MCPConfig(
-            # Browserbase has no OAuth (no PRM/AS-metadata/DCR — /register 404s).
-            # It authenticates with the user's API key, so the frontend prompts
-            # for it via the bearer-token modal (auth_type="bearer") instead of
-            # attempting an OAuth flow.
+            # No OAuth (no PRM/AS-metadata/DCR — /register 404s); auth_type="bearer"
+            # prompts for the user's API key via the bearer-token modal instead.
             server_url="https://mcp.browserbase.com/mcp",
             requires_auth=True,
             auth_type="bearer",
@@ -1997,7 +2023,6 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
 
 @cache
 def get_integration_by_id(integration_id: str) -> OAuthIntegration | None:
-    """Get an integration by its ID."""
     return next((i for i in OAUTH_INTEGRATIONS if i.id == integration_id), None)
 
 

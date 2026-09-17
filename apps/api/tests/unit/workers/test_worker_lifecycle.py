@@ -1,6 +1,9 @@
 """Unit tests for ARQ worker lifecycle (startup, shutdown) and config."""
 
 import asyncio
+import importlib.util
+from pathlib import Path
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,10 +11,8 @@ import pytest
 from app.workers.config.worker_settings import WorkerSettings
 from app.workers.lifecycle.shutdown import shutdown
 
-# ---------------------------------------------------------------------------
-# startup — imported lazily because the module has side-effects at import time
-# (calls configure_file_logging and setup_warnings)
-# ---------------------------------------------------------------------------
+# startup is imported lazily: the module has side effects at import time
+# (configure_file_logging, setup_warnings).
 
 
 class TestWorkerStartup:
@@ -75,6 +76,21 @@ class TestWorkerStartup:
         after = loop.time()
         assert before <= ctx["startup_time"] <= after
 
+    async def test_startup_starts_the_device_up_listener(self, ctx):
+        """Without this listener, every device warm-connect times out waiting for mcp.opened."""
+        with (
+            patch(
+                "app.workers.lifecycle.startup.unified_startup",
+                new_callable=AsyncMock,
+            ),
+            patch("app.workers.lifecycle.startup.start_up_listener") as mock_start,
+        ):
+            from app.workers.lifecycle.startup import startup
+
+            await startup(ctx)
+
+        mock_start.assert_called_once_with()
+
 
 # ---------------------------------------------------------------------------
 # shutdown
@@ -94,6 +110,23 @@ class TestWorkerShutdown:
             await shutdown(ctx)
 
         mock_unified.assert_awaited_once_with("arq_worker")
+
+    async def test_shutdown_stops_the_device_up_listener(self):
+        """Symmetric with startup: the up-listener must be stopped on shutdown."""
+        ctx: dict = {"startup_time": 100.0}
+        with (
+            patch(
+                "app.workers.lifecycle.shutdown.unified_shutdown",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.workers.lifecycle.shutdown.stop_up_listener",
+                new_callable=AsyncMock,
+            ) as mock_stop,
+        ):
+            await shutdown(ctx)
+
+        mock_stop.assert_awaited_once_with()
 
     async def test_shutdown_logs_runtime_when_startup_time_present(self):
         """When ctx has startup_time, shutdown computes and logs the runtime."""
@@ -161,8 +194,8 @@ class TestWorkerShutdown:
 class TestWorkerSettings:
     """Tests for WorkerSettings configuration class.
 
-    The class doubles as the ARQ wiring registry: ``app/worker.py`` assigns
-    ``functions`` / ``cron_jobs`` / ``on_startup`` / ``on_shutdown`` at
+    The class doubles as the ARQ wiring registry: app/worker.py assigns
+    functions / cron_jobs / on_startup / on_shutdown at
     import, and any test file importing it pollutes the class for the whole
     xdist worker. These tests pin the DECLARED defaults, so reset them in
     setup instead of depending on import order (pytest-randomly).
@@ -179,7 +212,7 @@ class TestWorkerSettings:
         assert WorkerSettings.redis_settings is not None
 
     def test_functions_default_empty_list(self):
-        """functions starts as an empty list (populated by the worker module)."""
+        """Functions starts as an empty list (populated by the worker module)."""
         assert isinstance(WorkerSettings.functions, list)
 
     def test_cron_jobs_default_empty_list(self):
@@ -191,7 +224,6 @@ class TestWorkerSettings:
         assert WorkerSettings.on_startup is None
 
     def test_on_shutdown_default_none(self):
-        """on_shutdown is None by default."""
         assert WorkerSettings.on_shutdown is None
 
     def test_max_jobs_is_positive_integer(self):
@@ -225,7 +257,24 @@ class TestWorkerSettings:
         """health_check_key must be a non-empty string."""
         assert isinstance(WorkerSettings.health_check_key, str)
         assert len(WorkerSettings.health_check_key) > 0
-        assert WorkerSettings.health_check_key == "arq:health"
+
+    def test_health_check_key_is_per_worker(self):
+        """A shared health key lets one worker's dead probe read HEALTHY via a sibling still refreshing it."""
+        assert WorkerSettings.health_check_key != "arq:health", (
+            "a fleet-wide health key makes the probe report 'is ANY worker alive'"
+        )
+        assert socket.gethostname() in WorkerSettings.health_check_key
+
+    def test_healthcheck_probe_reads_the_key_this_worker_writes(self):
+        """arq_healthcheck.py can't import app, so the key format is duplicated; drift fails every worker."""
+        spec = importlib.util.spec_from_file_location(
+            "arq_healthcheck", Path(__file__).resolve().parents[3] / "scripts/arq_healthcheck.py"
+        )
+        assert spec and spec.loader
+        probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(probe)
+
+        assert WorkerSettings.health_check_key == probe.ARQ_HEALTH_KEY
 
     def test_allow_abort_jobs_enabled(self):
         """allow_abort_jobs should be True."""

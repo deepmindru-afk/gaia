@@ -5,8 +5,11 @@ for. Plain-Python AST checkers, stdlib only, one file per rule plus a shared
 runner. They run in the `static-python` CI job and the api pre-commit config.
 
 ```bash
-# Run against the API app tree (exits non-zero on any violation):
-python3 tools/lints/run.py apps/api/app
+# Run against the API app tree (exits non-zero on any violation or crashed rule).
+# Needs Python 3.12+ (the version CI runs) and refuses to start on anything
+# older — the rules parse app sources with the running interpreter's `ast`, so
+# an older python crashes rules on syntax it cannot parse:
+uv run --project apps/api python tools/lints/run.py apps/api/app apps/api/tests
 
 # Unit tests:
 uv run --project apps/api pytest tools/lints/test_lints.py -q
@@ -161,95 +164,235 @@ has no allowlist (the layer is new — it starts clean).
 
 ---
 
-## ignore-ratchet
+## ignore-whys
 
-Not an AST rule — a config ratchet, so it runs as its own script/hook rather than
-through `run.py`:
+Not an AST rule — a config check on the root ``pyproject.toml``:
 
 ```bash
-python3 tools/lints/check_ignore_ratchet.py           # check
-python3 tools/lints/check_ignore_ratchet.py --update  # record a deliberate change
+python3 tools/lints/check_ignore_whys.py
 ```
 
-**Rule:** the escape hatches in the root `pyproject.toml` may only ever *shrink*.
-Three kinds are tracked:
+**Rule:** every escape hatch in the root config must carry a why-comment —
+trailing on the entry's line, or in a comment block directly above it:
 
 | source | an escape hatch is |
 | --- | --- |
-| `[tool.ruff.lint] ignore` | a rule switched off everywhere |
-| `[tool.ruff.lint.per-file-ignores]` | a rule switched off for a path glob |
-| `[[tool.mypy.overrides]]` | a per-module setting that *weakens* checking |
+| ``[tool.ruff.lint] ignore`` | a rule switched off everywhere |
+| ``[tool.ruff.lint.per-file-ignores]`` | a rule switched off for a path glob |
+| ``[[tool.mypy.overrides]]`` | a per-module setting that *weakens* checking (rationale goes above the block header) |
 
-The check fails if a rule is added to either ruff list, a new file entry appears,
-or a mypy override starts weakening a check for a module it did not before.
+Adjacency is strict: a distant group comment does not cover a newly appended
+entry. One rationale may still document a short run of siblings by sitting
+directly above the first — but each entry must be able to point at its why.
 
-Only mypy *loosenings* count. The strict-island block that sets the same keys to
-`true` is a tightening and is deliberately untracked — this guards holes, not
-strictness. The edit it is really there to catch is widening an existing block's
-`module` list: dropping `"app.services.*"` in beside `"tests.*"` turns off type
-checking for every service and reads as a one-word diff.
-
-**Why:** both lists are the residue of a cleanup campaign. They are the only two
-places a ruff rule can be switched off wholesale, and editing them is invisible
-in review in a way a failing check is not — a single line quietly re-opens
-exactly the hole the campaign closed. Comparing against the checked-in baseline
-turns "loosen the linter" from an unnoticed config edit into a conscious,
-reviewable decision.
-
-**Baseline:** `tools/lints/ignore_ratchet_baseline.txt`, one line per escape
-hatch, sorted, checked in. Compared as a **set**, not a count — a count check
-passes when someone removes one entry and adds another. Line shapes:
-
-```
-ignore<TAB><rule>
-per-file-ignores<TAB><glob><TAB><rule>
-mypy-override<TAB><module><TAB><setting>
-```
-
-**Fix:** delete the offending rule from the list and fix the code it silences.
-If the exemption is genuinely warranted (a framework contract, a generated file),
-justify it in review and run `--update`; the baseline diff then shows the new
-escape hatch on its own line for a reviewer to accept or reject.
-
-**Removals always pass** — that is the ratchet turning. The check prints what was
-removed and suggests `--update` to lock the win in; until someone does, the
-baseline stays at the old high-water mark, so a removed entry can be re-added
-without failing. Running `--update` as part of the cleanup closes that window.
+**Why this replaced the old set-ratchet:** a baseline that blocks additions
+cannot tell a load-bearing exemption from stale debt, and the stock never gets
+re-litigated. An escape hatch WITH a stated why is a decision; one WITHOUT is a
+hole. If you cannot state the reason in one sentence, fix the code instead of
+exempting it.
 
 ---
 
-## suppression-baseline
+## suppression-hygiene
 
-Not an AST rule — a checked-in baseline, so it runs as its own script/hook rather
-than through `run.py`:
+Not an AST rule — a stateless scan of every source file:
 
 ```bash
-python3 tools/lints/check_suppressions.py           # check
-python3 tools/lints/check_suppressions.py --update  # regenerate the baseline
+python3 tools/lints/check_suppressions.py            # whole tree
+python3 tools/lints/check_suppressions.py app/foo.py # scoped
 ```
 
-**Rule:** inline lint-suppression comments (`# noqa`, `# type: ignore` in `*.py`;
-`// biome-ignore` in ts/tsx/js/jsx/mjs/cjs) may not grow beyond what
-`config/suppressions-baseline.json` records, per `(file, kind)`. The baseline is
-line-number-free (reordering lines within a file is always free) and tracks a
-content hash per file so a pure rename — byte-identical content moved to a new
-path — is free too, without ever consulting git history.
+**Rule:** an inline suppression may only exist at the offending line, WITH a
+written reason on that same line:
 
-**Why:** replaces a git-archaeology ratchet (`scripts/ci/check-suppression-ratchet.sh`,
-deleted) that diffed merge-base vs HEAD and had four verified bugs: pure renames
-false-failed, a force-push crashed it (`github.event.before` unfetched on that
-event), a same-file swap between suppression kinds netted to zero and stayed
-invisible, and failures printed counts instead of exact lines. This scans the
-current working tree instead — no fetch-depth, no base ref, no merge-base — so
-it is reproducible with the exact command CI runs, locally, every time.
+```python
+builder = create_agent(**kwargs)  # type: ignore[arg-type]  # langgraph ships no stubs
+result = run(cmd)  # noqa: S603 -- operator-supplied command is the feature
+```
 
-**Fix:** delete the suppression, or add it to the baseline in the same PR with
-`--update` — the baseline diff is the review surface, so justify it there. A
-baseline entry whose count exceeds the tree's is stale and must be shrunk the
-same way; the baseline may only ever match or shrink.
+```ts
+const x: any = load(); // biome-ignore lint/suspicious/noExplicitAny: gallery-only demo
+```
 
-**Not the same as `ignore-ratchet` below** — this guards inline comments in
-source files; `ignore-ratchet` guards the escape-hatch *lists* in `pyproject.toml`.
+The reason states the ROOT CAUSE (upstream typing gap, framework contract,
+deliberate choice). Another tool directive (``NOSONAR …``) is not a reason.
+The bar is presence; review judges quality.
+
+**There is no baseline and no memory.** Two stateless properties hold the line:
+
+1. HERE — a suppression without a why fails at its exact line.
+2. The compilers hunt staleness: mypy's ``warn_unused_ignores`` flags dead
+   ``# type: ignore``, ruff's RUF100 flags dead ``# noqa``, and biome emits
+   ``suppressions/unused`` for dead ``// biome-ignore`` (gated in CI). A
+   suppression that no longer masks anything breaks the build on its own —
+   strictly stronger than any growth ratchet, because nothing can rot silently.
+
+This replaces the old count-baseline (``config/suppressions-baseline.json``,
+deleted): counting suppressions was always a proxy for "every suppression is
+justified" — now the real invariant is enforced directly.
+
+### Staleness watchdog (per-file entries)
+
+Inline noqas clean themselves up via RUF100; config exemptions cannot. The
+suppression-hygiene lane therefore also runs:
+
+```bash
+python3 tools/lints/check_ignore_staleness.py
+```
+
+which re-runs every concrete `per-file-ignores` entry's rule against its file
+with only that entry stripped from a temp copy of the config — every other
+setting stays exactly as configured — and fails when an entry masks nothing
+anymore: delete it. Pattern globs are skipped: they are category policy, not
+per-file debt.
+
+---
+
+## plr-complexity-ratchet
+
+Not an AST rule — runs its own `ruff` invocation, so it's a standalone
+script/hook rather than something through `run.py`:
+
+```bash
+python3 tools/lints/check_plr_complexity.py           # check
+python3 tools/lints/check_plr_complexity.py --update  # record the current baseline
+```
+
+**Rule:** ruff's `PLR0911`/`PLR0912`/`PLR0913`/`PLR0915` (too many returns /
+branches / arguments / statements) are enforced everywhere, but the debt that
+existed when they were switched on is grandfathered per file in
+`tools/lints/plr_complexity_baseline.txt` — **until a PR touches that file**.
+A genuinely new violation (a new file, or a rule an existing file didn't
+already have) is never grandfathered, touched or not.
+
+This is deliberately *not* a plain `[tool.ruff.lint.per-file-ignores]` entry:
+that silences a rule for the whole file forever, with no way to notice a PR
+making an already-flagged function worse. `PLR0911/0912/0913/0915` sit in
+`[tool.ruff.lint] ignore` only so the main ruff lane doesn't double-report a
+debt this script already owns — they are not actually off.
+
+**Why:** the debt was too large (240 violations across 180 files) to fix in
+one pass, but a static exemption never shrinks on its own. Tying the
+exemption to "has this PR touched the file" turns each PR that happens to
+edit a grandfathered file into the moment its debt gets paid down, without
+blocking unrelated work everywhere else.
+
+**Fix:** if the violation is new, simplify the function (or, if it's a
+genuine one-off, justify it in review and add it to the baseline with
+`--update`). If it's grandfathered but your PR touches that file, fix the
+violation now and delete its line from the baseline.
+
+**Scope:** on a PR, "touched" is the same `scripts/ci/changes.sh files py`
+diff every other lane uses. On a push/full scan (no PR base ref), there is no
+notion of "touched" — grandfathered violations stay quiet, same as before.
+
+**Deferral:** a baseline line may carry a third tab-separated field,
+`deferred-until=YYYY-MM-DD; <reason>`. While the date is in the future a
+touched file's known violation emits a `::warning` annotation naming the
+deferral instead of failing; once the date has passed it fails with
+"deferral expired — fix or renew with a reason". The reason is reviewed like
+any other diff, and `--update` preserves the field.
+
+---
+
+## typed-boundaries
+
+A touch-to-fix ratchet like `plr-complexity-ratchet`, sharing its mechanics
+(`_ratchet.py`) and its baseline format:
+
+```bash
+python3 tools/lints/check_typed_boundaries.py           # check
+python3 tools/lints/check_typed_boundaries.py --update  # record the current baseline
+python3 tools/lints/check_typed_boundaries.py --count   # the debt, per rule and directory
+```
+
+**Rule:** under `apps/api/app/`, (TB001) no parameter or return annotated
+`Any`, `dict`, or `dict[str, Any]` — anything whose keys a reader must guess —
+and (TB002) no `value.get("key")` / `value["key"]` read. Reads on a map keyed
+by a *protocol* rather than a shape (`os.environ`, `request.headers`,
+`query_params`, `path_params`, `cookies`) are fine; `Literal["…"]` is a type,
+not a read; a `.get(...)` call used as a decorator (`@router.get("/path")`) is
+a registration, not a read. A read on a name annotated with a TypedDict
+(a parameter or annotated assignment in the same function or module) is a
+declared shape that mypy key-checks — Type Safety item 6 — so it is exempt too:
+TypedDicts are discovered from `class X(TypedDict)` across the scan, and the
+library ones (`ToolCall`, `RunnableConfig`) are named in `EXTERNAL_TYPEDDICTS`.
+The check is syntactic: a TypedDict reached through an attribute chain or an
+unannotated loop variable is still flagged — bind it to an annotated local.
+
+**Why:** a string key is a guess about a shape that nothing checks: a typo
+compiles, a renamed field compiles, a key the producer never sets compiles and
+surfaces as a `None` three layers away. Every one of the contract bugs this
+rule postdates — `improvedPrompt` vs `improved_prompt`, `total_count` never
+sent, a `status` no endpoint emitted, `error_code` vs `code` — was a string
+key nobody could type-check. The shape belongs in a model at the boundary
+(repository, provider client, request body), read once by string there and by
+attribute everywhere else; mypy then owns every read.
+
+**Fix:** declare the shape — a Pydantic model for anything that crosses a
+validation boundary (a document, a provider payload, a request) or a
+`TypedDict`/dataclass for an in-process record — and read its attribute. The
+`BOUNDARY_MODULES` map in the script names the few files that *are* the
+boundary (the Mongo base repository, the vendored library patches); string
+keys are the point there and nowhere else. A new entry there needs a reason
+and a review, not a convenience.
+
+**Baseline** `tools/lints/typed_boundaries_baseline.txt`, one line per
+(file, rule): a listed file only stays quiet while untouched; the PR that
+touches it fixes its violations and deletes the line. Deferrals work as for the
+PLR ratchet.
+## import-cost
+
+Not an AST rule — it imports the real modules in fresh subprocesses under
+`python -X importtime`, so it is a standalone script/hook rather than
+something through `run.py`:
+
+```bash
+python3 tools/lints/check_import_cost.py            # check (exits 1 over budget)
+python3 tools/lints/check_import_cost.py --report   # every module's cost, gates nothing
+```
+
+**Rule:** every git-tracked module under `apps/api/app/{constants,config,utils,models}`
+must import, ON ITS OWN, inside `MODULE_BUDGET_MS`; the three entry points
+(`tests.conftest`, `app.main`, `app.worker`) have their own budgets in
+`ENTRY_BUDGET_MS`. "On its own" is literal: each module is imported alone in
+a fresh subprocess, so its cost is its own body plus everything it is the
+first to import — which is what `-X importtime` reports as the cumulative
+column for the root of a lone import.
+
+**Why:** a base-layer module is imported by everything above it, so its cost
+is paid by every test session, every worker boot and every CLI start.
+`import app.constants.llm` measured 1.6 s and pulled transformers,
+langchain_core and langsmith; a constants module must be a leaf. Plugin
+autoload and this import graph together were 3.2 s and 2.8 s of a 7.4 s
+pytest run that executed 0.24 s of test.
+
+**No list, no baseline.** Nothing here names a package. Which modules are
+measured is discovered from `git ls-files`, so a new file is covered the
+moment it is committed; how expensive a package is, is measured rather than
+asserted. Where a heavy package may be imported FROM is a separate question
+and belongs in `[tool.importlinter]`'s layers contract, not in a list here.
+
+**Fix:** the failure prints the most expensive path out of the module —
+`app.utils.chat_utils -> app.agents.llm.chatbot (6487 ms) -> ...`. Cut the
+first edge. A base-layer module must not reach up into a layer above it, and
+a type-only import is still a runtime import in this repo (no
+`TYPE_CHECKING`), so move the shared type down rather than importing the
+heavy module to name it.
+
+**Noise:** the box runs the test and mutation lanes on the same cores, so a
+single slow read is a coin flip. One sweep decides the common case; only a
+module that blew its budget is re-measured (`CONFIRM_RUNS`), and the cheapest
+reading wins. Re-running the whole sweep three times costs six minutes to
+change no answer.
+
+**Status (2026-09-17):** the CI step runs with `--report` and gates nothing.
+Measured on the home box, every module under `app/utils` and `app/models`
+costs 6-15 s alone, because those layers import upward
+(`app.utils.chat_utils` -> `app.agents.llm.chatbot`). Gating today would red
+~200 modules on a PR that caused none of them. Drop `--report` from the step
+in `code-quality.yml` and from `scripts/dev/verify-lanes.json` once the
+layering is fixed — that is the whole change.
 
 ---
 
@@ -280,3 +423,153 @@ is a blanket.
 handler does not shift it and fire a false alarm. It grandfathers ten probe/parse
 sites that predate the rule. Like the `no-service-classes` allowlist it is a
 ratchet — remove an entry when the site is fixed, never add one.
+
+---
+
+## tool-dump-boundary
+
+**Rule:** every `model_dump()` call under `app/agents/tools/` must pass
+`mode="json"` literally. A bare call (or any other mode, or `**kwargs`) is
+reported.
+
+**Why:** Pydantic's two dump modes have opposite contracts — python mode keeps
+native `datetime` objects, JSON mode produces ISO strings — and they differ by
+three invisible characters at the call site. Inside the tools tree every dump
+crosses into model/SSE text, where python-mode output either crashes stdlib
+`json.dumps` (`TypeError: Object of type datetime is not JSON serializable`) or
+silently degrades to Python reprs. Issue #917 shipped exactly this:
+`search_reminders_tool` returned its serialization error on every call for
+months because one tool used a bare dump while the rest of the tree used
+`mode="json"`; the unit tests mocked `model_dump()` with plain strings and never
+saw it.
+
+**Scope** is deliberately the tools tree only. Service- and repository-layer
+dumps legitimately stay in python mode: those dicts persist to MongoDB as BSON
+dates, which the scheduler's `$lte` recovery scans match on — converting them to
+ISO strings would break scheduling silently.
+
+**Fix:** pass `mode="json"`. If a dump under `tools/` genuinely feeds a
+Mongo write rather than the model/stream boundary, that logic belongs in the
+service/repository layer anyway (see `repository-boundaries`).
+
+**Allowlist:** keyed `<path>::<enclosing function>` with an **audited call
+count**, grandfathering thirteen sites whose models the #917 audit verified are
+string-only (`ImageData`, `SearchResultItem`/`WebSearchResult`, the calendar
+wire models, `TodoLabelCount`) — both dump modes produce identical output
+there. The count is the ratchet, not just the entry: a *new* bare dump added to
+an allowlisted function pushes its count past the audited number and is
+reported, so a historical exemption can never absorb new code. An entry comes
+out when its model gains a datetime field and the calls take `mode="json"`;
+never raise a count.
+
+---
+
+## docstring-content
+
+**Rule:** a docstring states the contract. Ruff's `D`/`DOC` rules (in
+`pyproject.toml`) check its shape; this rule checks what is inside:
+
+| Code | Reported when |
+| --- | --- |
+| DS1 | longer than 6 lines (function), 12 (class), 15 (module) |
+| DS2 | any backtick |
+| DS3 | RST/Sphinx markup — ` ``x`` `, `:param`, `:returns:`, `:raises:`, `.. note::`, `>>>` |
+| DS4 | a `test_*` function/method docstring longer than one line |
+| DS5 | a summary that only restates the function name |
+| DS6 | an `Args:` entry that only restates the argument name |
+| DS7 | a type written inside an `Args:` entry |
+| DS8 | an `Examples:` section |
+
+**Why:** a docstring is read by every caller, so every line of narrative in it
+is paid for many times over. The patterns above are what 900+ docstrings in
+`app/` had accumulated: pasted PR descriptions, RST markup nothing renders,
+`user_id: The user ID.`, and example blocks that rot the moment a signature
+changes. The *why* of a change belongs in its PR; the code is the example.
+
+**Scope:** `app/` and `tests/` (this rule opts into the test tree via
+`INCLUDES_TESTS`). DS4 applies to `test_*` functions/methods only — a test
+module or test class docstring is graded by the ordinary DS1 caps (15/12)
+instead, since the test *name* is what DS4's "the name is the doc" reasoning
+is about; a module has no name to carry that.
+
+Docstrings that are runtime data are never checked, from two sources that
+never drift against each other:
+
+- **The ONE source of truth for "this whole file is runtime data"** is root
+  `pyproject.toml`'s own `[tool.ruff.lint.per-file-ignores]` — any glob whose
+  ignore list already contains `"D"` (route handlers feeding OpenAPI,
+  `@tool` bodies, pydantic models/schemas, argparse `--help` scripts, …)
+  exempts the whole file here too, parsed straight from that table rather
+  than a second hardcoded path list. The repo root is auto-detected by
+  walking up from the scanned files to the nearest `pyproject.toml` that
+  actually configures ruff (skipping one like `apps/api/pyproject.toml`
+  that exists only for `uv`/mypy/coverage); `run.py --repo-root PATH`
+  overrides that for the rare case a scan targets a tree where
+  auto-detection can't find it.
+- **What ruff's per-file config cannot see**, because it is not file-shaped:
+  `@tool` / `@custom_tool` / `@with_doc`-decorated functions, `@router.*`
+  handlers, `BaseModel` / `BaseSettings` / `BaseTool` subclasses anywhere,
+  and a `BaseModel` / `TypedDict` referenced by name as an argument to
+  `with_structured_output` / `bind_tools` anywhere in the tree — only a
+  literal class name written at the call site is caught, not one threaded
+  through a variable or a wrapper function.
+
+**Fix:** shorten. Keep the summary line and the one constraint the name does
+not carry; delete the rest. A test's name is its doc — one line at most, and
+only when it says something the name cannot (a regression reference).
+
+**No allowlist.** The cleanup that introduced this rule brought both trees to
+zero, and there is no `noqa` — a finding is fixed by editing the docstring.
+
+---
+
+## comment-content
+
+**Rule:** a comment is one line of *why* at the point of surprise.
+
+| Code | Reported when |
+| --- | --- |
+| CM1 | more than 3 consecutive own-line comment lines |
+| CM2 | a banner (`# ----`, `# ====`) or `# Step N` inside a function body |
+| CM3 | a comment whose only content is the statement directly below it |
+
+Pragmas (`noqa`, `type:`, `pragma`, `fmt`, `nosec`, `NOSONAR`, …) and trailing
+comments never count.
+
+**Why:** a four-line paragraph above `= 40` hides the one fact that mattered
+(`40 is too tight; truncates real work`); the benchmark story behind it belongs
+in the PR. A numbered `# Step 1` narration inside a function is a function that
+wants splitting. `# sort by date` above `rows.sort(key=by_date)` is noise that
+teaches readers to skip comments — which is how the load-bearing one gets
+skipped too.
+
+**Scope:** `app/` and `tests/`. Module- and class-level banners are allowed on
+purpose: a constants file or a 300-field `Settings` class is supposed to be
+sectioned, and the banner *is* the section.
+
+**Fix:** keep the numbers, limits and constraints; delete the sentences around
+them. If a block genuinely cannot fit in three lines of facts, the surprise is
+big enough to be a named helper or a paragraph in the PR — not a comment.
+
+**No allowlist**, no `noqa`.
+
+---
+
+## tool-pins
+
+**Rule:** every surface that runs a linter runs the version in the `EXPECTED`
+table of `check_tool_pins.py` — ruff, mypy, bandit, pip-audit, interrogate,
+xenon, biome. Surfaces: both pre-commit configs, `code-quality.yml`,
+`scripts/dev/verify-lanes.json`, the root `package.json` quality scripts,
+`apps/api/mise.toml`, the ignore-staleness guard's own ruff call, `uv.lock`,
+and for biome every `package.json` that declares it (exact, caret-free) plus
+every `biome.json` `$schema` URL.
+
+**Why:** "passed locally" must mean "passes CI". A ruff release promotes rules
+(0.16.0 shipped ISC004/RUF036), a biome release changes formatting — an
+unpinned surface goes red or green on its own schedule, with no commit to blame.
+
+**Fix:** bump `EXPECTED` and every invocation in the same commit. `uv run
+<tool>` surfaces are pinned through `uv.lock`; `uvx` surfaces name the version
+(`tool@x.y.z` / `tool==x.y.z`); package.json declares the exact version and
+`pnpm-lock.yaml` follows.

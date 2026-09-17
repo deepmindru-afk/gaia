@@ -8,6 +8,7 @@ run_executor_background.
 
 import asyncio
 import json
+import time
 from typing import Annotated
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from langchain_core.tools import tool
 
 from app.agents.core.background.executor_queue import (
     build_lock_value,
+    build_run_item,
     decode_raw_item,
     enqueue_task,
     parse_lock_value,
@@ -25,7 +27,9 @@ from app.agents.core.background.executor_queue import (
 from app.agents.core.background.executor_runner import run_executor_background
 from app.agents.core.background.session import (
     ExecutorRun,
+    RunIdentity,
     RunKind,
+    mark_executor_queued,
     mark_executor_spawned,
 )
 from app.agents.core.subagents.subagent_runner import compose_executor_brief
@@ -42,18 +46,14 @@ from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
 from app.models.agent_models import AgentConfigurable, agent_configurable
 from app.services.hil.resolution import cancel_conversation_approvals
+from app.services.workflow.execution_service import get_last_run_brief
+from app.services.workflow.playbook.check import playbook_check_brief
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log
 
-# A "stop X, do Y" redirect makes the comms model emit cancel_executor and
-# call_executor in ONE turn. The tool node runs both concurrently, so
-# call_executor can reach the busy lock before cancel_executor releases it and
-# would wrongly queue Y behind the task being killed — which renders Y as a
-# separate queued tool card instead of streaming live into the same turn. These
-# bound a short wait for the in-flight cancel to free the lock so Y runs live.
-# DETECT is how long we look for evidence a cancel is happening (if none, the
-# holder is a genuinely busy different turn and we queue immediately); WAIT caps
-# the total wait once a cancel is seen.
+# A same-turn "stop X, do Y" redirect races call_executor against
+# cancel_executor for the busy lock; these bound the wait for the cancel to free
+# it so Y runs live. DETECT: max wait for evidence of a cancel; WAIT: total cap.
 REDIRECT_CANCEL_DETECT_S = 0.4
 REDIRECT_CANCEL_WAIT_S = 1.5
 REDIRECT_CANCEL_POLL_S = 0.05
@@ -80,11 +80,9 @@ async def _acquire_lock_through_redirect(
     while waited < REDIRECT_CANCEL_WAIT_S:  # NOSONAR python:S7484
         if not saw_cancel:
             saw_cancel = await StreamManager.is_cancelled(held_stream_id)
-        # Try the lock on every poll, not only after a cancel is observed:
-        # cancel_executor deletes the busy key WITHOUT calling cancel_stream for
-        # empty/"1" stream ids, so is_cancelled() may never flip even though the
-        # holder is gone. Gating acquisition on saw_cancel would then queue behind
-        # a lock that is already free. saw_cancel only governs the extended wait.
+        # Try the lock on every poll: cancel_executor deletes the busy key
+        # without calling cancel_stream for empty/"1" stream ids, so
+        # is_cancelled() may never flip though the holder is gone.
         if await try_acquire_lock(lock_key, lock_value):
             return True
         if not saw_cancel and waited >= REDIRECT_CANCEL_DETECT_S:
@@ -106,14 +104,8 @@ async def call_executor(
         "What must be TRUE for this task to count as done, as a checklist (e.g. "
         "['the 3 promo emails archived', 'the offer letter flagged']). Give the "
         "executor a concrete target so it doesn't stop after one step. NEVER "
-        "omit — even a single-step ask needs a concrete done state.",
+        "omit: even a single-step ask needs a concrete done state.",
     ],
-    verbatim_request: Annotated[
-        str | None,
-        "The user's exact original request, word for word, as they typed it "
-        "(not your rewritten task). Pass it through so the executor sees the "
-        "verbatim ask alongside your composed task.",
-    ] = None,
     active_todo_id: Annotated[
         str | None,
         "Optional tracked-todo ID to BIND this executor run to. When set, "
@@ -147,10 +139,34 @@ async def call_executor(
         return "Internal error: conversation context unavailable. Please try again."
 
     task_id = str(uuid4())
+    # Read off the configurable, never a tool argument: asking the comms model to
+    # re-transcribe the request corrupted 3 of 4 recipient addresses on a pasted
+    # billing table and dropped the verbatim copy entirely.
+
+    # A workflow run's threads are reset before it starts, so its previous run
+    # reaches the executor here — as one recorded trace instead of the whole
+    # replayed transcript. Empty for interactive chat and for a first run.
+    workflow_id = base_configurable.get("workflow_id")
+    user_id = base_configurable.get("user_id")
+    is_workflow_run = bool(workflow_id and user_id)
+    last_run = await get_last_run_brief(workflow_id, user_id) if is_workflow_run else ""
+    # Asked here, not at narration time: write_playbook is an executor tool that
+    # comms (which narrates the result) cannot reach. The stopped-replay record
+    # rides along verbatim for the same reason as the request: comms paraphrases.
+    playbook_check = (
+        await playbook_check_brief(
+            workflow_id, user_id, fallback_note=base_configurable.get("playbook_fallback")
+        )
+        if is_workflow_run
+        else ""
+    )
+
     composed_task = compose_executor_brief(
         task,
         acceptance_criteria,
-        verbatim_request=verbatim_request,
+        verbatim_request=base_configurable.get("user_request"),
+        last_run=last_run,
+        playbook_check=playbook_check,
     )
 
     try:
@@ -162,10 +178,9 @@ async def call_executor(
         )
     except Exception as e:
         log.error(f"{LogTag.TOOL} Error dispatching executor", error=str(e))
-        # Release only if THIS dispatch's acquire is what holds the lock. An
-        # unconditional delete here freed a FOREIGN lock when the failure
-        # happened in the queue branch (lock held by a live run), allowing a
-        # second concurrent executor in the same conversation.
+        # Release only if this dispatch's acquire holds the lock: an unconditional
+        # delete here freed a FOREIGN lock when failure hit the queue branch,
+        # letting a second concurrent executor start in the same conversation.
         await release_lock_if_owned(conversation_id, configurable.get("stream_id"), task_id)
         return f"Error starting task: {e!s}"
 
@@ -188,18 +203,15 @@ async def _dispatch_executor(
     stream_id = configurable.get("stream_id")
     user_message_id = configurable.get("user_message_id")
     bot_message_id = configurable.get("bot_message_id")
+    # Dispatch stamp every later latency derives from; monotonic, never logged.
+    t_dispatch = time.perf_counter()
 
     lock_key = f"{EXECUTOR_BUSY_PREFIX}{conversation_id}"
     lock_value = build_lock_value(stream_id, task_id)
 
     if not await try_acquire_lock(lock_key, lock_value):
-        # The lock is held. Distinguish two cases by the holder's stream_id:
-        #   - SAME stream_id → the comms model called call_executor twice within
-        #     ONE turn. Queuing it would run the whole task a SECOND time
-        #     (observed: deep research executed twice for a single user message).
-        #     Reject it — the first dispatch already covers this turn.
-        #   - DIFFERENT stream_id → a genuinely new request arrived while the
-        #     executor is busy; queue it to run next.
+        # SAME stream_id means call_executor was called twice in one turn
+        # (queuing would rerun the task) so reject; DIFFERENT means queue it.
         held_value = await redis_cache.client.get(lock_key)
         held_stream_id = parse_lock_value(decode_raw_item(held_value))[0] if held_value else ""
         if stream_id and held_stream_id == stream_id:
@@ -210,16 +222,26 @@ async def _dispatch_executor(
                 conversation_id=conversation_id,
             )
             return (
-                "That task is already running from this same message — not "
+                "That task is already running from this same message, not "
                 "starting it again. The results are on the way."
             )
 
-        # A same-turn redirect (cancel_executor + call_executor together) races
-        # the cancel: the holder is being killed THIS turn, so wait for that
-        # cancel to free the lock and run live instead of queuing behind it — the
-        # redirect then streams into the same turn's card, not a separate queued
-        # one. Only waits when a cancel is actually in flight (see helper).
-        if await _acquire_lock_through_redirect(lock_key, lock_value, held_stream_id):
+        # A same-turn redirect (cancel + call_executor together) races the
+        # cancel: wait for it to free the lock and run live in the same turn's
+        # card instead of queuing. Only waits when a cancel is in flight.
+        redirect_start = time.perf_counter()
+        redirect_acquired = await _acquire_lock_through_redirect(
+            lock_key, lock_value, held_stream_id
+        )
+        if redirect_acquired:
+            log.set(
+                tool={
+                    "name": CALL_EXECUTOR_NAME,
+                    "action": "dispatch",
+                    "task_id": task_id,
+                    "redirect_wait_ms": round((time.perf_counter() - redirect_start) * 1000.0, 2),
+                },
+            )
             log.info(
                 f"{LogTag.TOOL} Acquired executor lock after redirect cancel — running live",
                 task_id=task_id,
@@ -229,13 +251,25 @@ async def _dispatch_executor(
             # Executor is busy with a different turn — queue for later execution
             queue_key = f"{EXECUTOR_QUEUE_PREFIX}{conversation_id}"
             await enqueue_task(
-                queue_key=queue_key,
-                task=task,
-                task_id=task_id,
-                configurable=configurable,
-                conversation_id=conversation_id,
-                user_message_id=user_message_id,
+                queue_key,
+                build_run_item(
+                    task=task,
+                    configurable=configurable,
+                    identity=RunIdentity(
+                        conversation_id=conversation_id,
+                        task_id=task_id,
+                        user_message_id=user_message_id,
+                        t_dispatch_perf=t_dispatch,
+                        # A busy-lock dequeue, not a HIL resume: label it queued.
+                        queued=True,
+                    ),
+                ),
             )
+            # The only record that this dispatch deferred rather than ran; the
+            # returned prose is for the comms model, so a caller needing to know
+            # start status reads this instead (see queued_without_run).
+            if stream_id:
+                mark_executor_queued(stream_id, task_id)
             log.info(
                 f"{LogTag.TOOL} Executor busy — task queued",
                 task_id=task_id,
@@ -256,12 +290,15 @@ async def _dispatch_executor(
 
     run = ExecutorRun.from_configurable(
         configurable,
-        stream_id=stream_id or "",
-        conversation_id=conversation_id,
-        kind=RunKind.LIVE,
-        task_id=task_id,
-        user_message_id=user_message_id,
-        bot_message_id=bot_message_id,
+        identity=RunIdentity(
+            stream_id=stream_id or "",
+            conversation_id=conversation_id,
+            kind=RunKind.LIVE,
+            task_id=task_id,
+            user_message_id=user_message_id,
+            bot_message_id=bot_message_id,
+            t_dispatch_perf=t_dispatch,
+        ),
     )
     spawn_background_task(
         run_executor_background(
@@ -280,7 +317,7 @@ async def _dispatch_executor(
     # has run a single tool — so it must not read as completion, and it has to
     # name the approval gate the user may be about to see.
     return (
-        f"Task accepted (task_id: {task_id}). Nothing has run yet — this only means the "
+        f"Task accepted (task_id: {task_id}). Nothing has run yet: this only means the "
         "work has STARTED. Do not tell the user anything was sent, created, deleted, or "
         "finished. Risky actions pause for the user's approval first and they see an "
         "approval card; if that happens the work waits on them, not on you. Acknowledge "
@@ -298,7 +335,7 @@ async def cancel_executor(
     task_ids: Annotated[
         list[str],
         "List of task_ids to cancel. Empty list = cancel ALL (running + queued).",
-    ] = [],  # noqa: B006
+    ] = [],  # noqa: B006 -- empty default is the cancel-all sentinel; list is never mutated
 ) -> str:
     """Cancel background executor tasks by their task_ids.
 
@@ -373,15 +410,12 @@ async def cancel_executor(
 
         result = f"Cancelled: {', '.join(cancelled)}."
         if skipped_running:
-            result += " Currently running task was not in the cancel list — still running."
+            result += " Currently running task was not in the cancel list, still running."
         return result
 
     except Exception as e:
-        # Deliberately no lock cleanup here: this handler used to delete the busy
-        # key unconditionally, which freed the lock of a run it had NOT managed to
-        # cancel (no cancel_stream reached it), so the old executor kept going
-        # while a new call_executor could acquire the lock — two concurrent
-        # executors on one conversation. The lock's TTL is the safe recovery.
+        # Deliberately no lock cleanup here: unconditional deletion previously
+        # let two executors run concurrently on one conversation. TTL recovers it.
         log.error(f"{LogTag.TOOL} cancel_executor failed", error=str(e))
         return f"Cancellation attempted but hit an error: {e}"
 

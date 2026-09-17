@@ -1,10 +1,10 @@
 """Request/response bridge between agent tools and the desktop app.
 
-A tool running mid-graph publishes a ``desktop_tool_request`` frame onto the
+A tool running mid-graph publishes a desktop_tool_request frame onto the
 conversation's SSE stream. The Electron renderer that owns that stream executes
-the action via IPC and POSTs the result to ``/desktop/tool-result``, which
+the action via IPC and POSTs the result to /desktop/tool-result, which
 relays it over a per-request Redis channel back to the awaiting tool. Redis
-pub/sub crosses uvicorn workers the same way ``stream:channel:`` does, so the
+pub/sub crosses uvicorn workers the same way stream:channel: does, so the
 awaiting tool and the HTTP process receiving the result never need to share a
 process.
 """
@@ -40,7 +40,7 @@ ERROR_TIMEOUT = (
 ERROR_REDIS_UNAVAILABLE = "Desktop bridge unavailable (no Redis connection)."
 
 
-class DesktopRequestNotFound(AppError):
+class DesktopRequestNotFoundError(AppError):
     """The pending request key is gone — expired or already resolved."""
 
     def __init__(self) -> None:
@@ -50,7 +50,7 @@ class DesktopRequestNotFound(AppError):
         )
 
 
-class DesktopRequestForbidden(AppError):
+class DesktopRequestForbiddenError(AppError):
     """A result was POSTed by a user who does not own the pending request."""
 
     def __init__(self) -> None:
@@ -79,7 +79,7 @@ async def request_desktop_action(
     """Execute one action on the user's desktop and await its result.
 
     Publishes the request onto the chat SSE stream and blocks (up to
-    ``DESKTOP_TOOL_TIMEOUT_SECONDS``) on the per-request Redis result channel.
+    DESKTOP_TOOL_TIMEOUT_SECONDS) on the per-request Redis result channel.
     """
     if not redis_cache.redis:
         log.error(f"{LogTag.DESKTOP} Desktop bridge: Redis unavailable")
@@ -135,10 +135,9 @@ async def request_desktop_action(
 
         return outcome
     finally:
-        # Best-effort cleanup in independent guards: a failure here must never
-        # mask the real outcome, and a failed key-delete must not skip the
-        # pubsub teardown (the request key also carries a TTL, so it expires
-        # regardless).
+        # Best-effort, independent guards: a failure here must never mask the
+        # real outcome, and a failed key-delete must not skip pubsub teardown
+        # (the request key also carries a TTL, so it expires regardless).
         with contextlib.suppress(Exception):
             await redis_cache.delete(request_key)
         with contextlib.suppress(Exception):
@@ -200,16 +199,16 @@ async def relay_desktop_result(
     """Validate ownership of a pending desktop request and relay its result.
 
     Deletes the request key (so late/duplicate deliveries cannot double-resolve)
-    before publishing. Raises :class:`DesktopRequestNotFound` if the request
-    expired or was already resolved, or :class:`DesktopRequestForbidden` if the
+    before publishing. Raises :class:DesktopRequestNotFoundError if the request
+    expired or was already resolved, or :class:DesktopRequestForbiddenError if the
     POSTing user does not own it.
     """
     request_key = f"{DESKTOP_REQUEST_PREFIX}{request_id}"
     pending = await redis_cache.get(request_key)
     if not pending:
-        raise DesktopRequestNotFound()
+        raise DesktopRequestNotFoundError()
     if pending.get("user_id") != user_id:
-        raise DesktopRequestForbidden()
+        raise DesktopRequestForbiddenError()
 
     await redis_cache.delete(request_key)
     await publish_desktop_result(request_id, ok=ok, data=data, error=error)

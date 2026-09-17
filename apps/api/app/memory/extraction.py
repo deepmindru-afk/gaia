@@ -24,7 +24,9 @@ from app.constants.memory import (
 )
 from app.memory.prompts import (
     CATEGORIZE_SYSTEM_PROMPT,
+    DOCUMENT_VERIFICATION_PROMPT,
     EPISODE_SUMMARY_SYSTEM_PROMPT,
+    EXTRACTION_FOLDER_TREE_BLOCK,
     EXTRACTION_SYSTEM_PROMPT,
     RECONCILE_SYSTEM_PROMPT,
 )
@@ -36,6 +38,7 @@ from app.memory.schemas import (
     FactCategorization,
     ReconcileBatchResult,
     ReconcileDecision,
+    VerifiedDocument,
 )
 from shared.py.wide_events import log
 
@@ -44,25 +47,26 @@ _StructuredT = TypeVar("_StructuredT", bound=BaseModel)
 _TRANSCRIPT_TRUNCATION_MARKER = "\n[... transcript truncated ...]\n"
 
 
-# These LLM calls run inside the LangGraph run that spawned them (the
-# add_memory tool, or a background ingestion task that inherited the graph's
-# callback context). Without this marker their structured-output tokens are
-# captured by the chat token stream and rendered as assistant text. ``silent``
-# is the same flag the chat stream consumers use to drop internal-LLM chunks.
-# ``configurable.user_id`` is who this background spend is metered against —
-# see ``ainvoke_structured``; without it the pipeline's real COGS would land in
-# nobody's budget.
+# Without ``silent`` these tokens get captured by the chat token stream and
+# rendered as assistant text. ``configurable.user_id`` meters this background
+# spend against the right budget.
 def _silent_config(user_id: str) -> RunnableConfig:
-    return {
+    config: RunnableConfig = {
         **silent_metered_config(user_id),
         "tags": ["memory_internal"],
     }
+    # Sticky-routing chain per user (not per conversation), so extractions
+    # keep landing on the upstream holding this user's transcript prefixes.
+    # Indexing, not .get: a missing configurable should fail loud.
+    config["configurable"] = {
+        **config["configurable"],
+        "session_id": f"memory-{user_id}",
+    }
+    return config
 
 
-# Provider failures and malformed structured output both degrade to None so the
-# memory helper never breaks the chat that spawned it. ``OutputParserException``
-# is what the structured-output parser raises on malformed/truncated model
-# output (it wraps the underlying ``ValidationError``/JSON error).
+# Provider failures and malformed structured output both degrade to None so
+# the memory helper never breaks the chat that spawned it.
 _STRUCTURED_FAILURE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     *LLM_FALLBACK_EXCEPTIONS,
     ValidationError,
@@ -81,7 +85,7 @@ class SimilarMemory(BaseModel):
 def format_transcript(messages: list[dict[str, str]]) -> str:
     """Render conversation messages as a plain-text transcript for the LLM.
 
-    Capped at ``EXTRACTION_TRANSCRIPT_MAX_CHARS`` using a head+tail strategy:
+    Capped at EXTRACTION_TRANSCRIPT_MAX_CHARS using a head+tail strategy:
     the opening context and the most recent exchanges matter most, the middle
     is dropped.
     """
@@ -105,19 +109,13 @@ async def _invoke_structured(
     operation: str,
     user_id: str,
 ) -> _StructuredT | None:
-    """Structured-output call on the memory lane via the canonical
-    ``ainvoke_structured_gemini`` (which owns provider selection, retry +
-    validation, and meters the spend against ``user_id``). Returns None only
-    when NO provider is configured or every one of them failed, so extraction
-    degrades gracefully and never breaks the chat that spawned it. The silent
-    config keeps the structured-output tokens out of the chat stream.
+    """Structured-output call on the memory lane via ainvoke_structured_gemini.
 
-    Prefers direct Gemini on purpose (see ``ainvoke_structured_gemini``): the
-    extraction is a background task that overlaps the graph's next-turn
-    requests, and concurrent requests on the same provider's cache store wipe
-    each other's cached chains mid-read (measured). When Google is not
-    configured, or Gemini is down, the call runs on the aux lane instead —
-    losing the cache isolation, not the memory."""
+    Prefers direct Gemini (see that function) since concurrent requests on
+    the same provider's cache store wipe each other's cached chains mid-read
+    (measured); falls back to the aux lane, losing cache isolation, not the
+    memory. Returns None only when every provider failed.
+    """
     try:
         return await ainvoke_structured_gemini(
             output_model, messages, label=f"memory:{operation}", config=_silent_config(user_id)
@@ -160,23 +158,22 @@ async def extract_memories(
     journal_section = (
         "\n".join(f"- {line}" for line in journaled_today) if journaled_today else "(empty)"
     )
-    system_prompt = EXTRACTION_SYSTEM_PROMPT.format(
-        user_name=user_name,
-        folder_tree=folder_tree or "(no folders yet)",
-    )
-    # The volatile context (today's date, recently stored facts, today's
-    # journal) rides in a TRAILING message, NOT inside the system prompt.
-    # The memory lane's cache is a byte-prefix cache: with the facts/journal
-    # churning inside the system prompt the prefix broke there and the whole
-    # (append-only) transcript re-sent uncached every turn — measured ~41%
-    # hit on the lane. With them moved to the tail, the cached prefix extends
-    # through the stable template + the transcript and only this small tail
-    # re-sends uncached.
+    # The system prompt is deliberately user-agnostic (formatting the name in
+    # meant no user's traffic could warm another's: measured 87% zero cache
+    # hits). The name rides the volatile tail instead.
+    system_prompt = EXTRACTION_SYSTEM_PROMPT
+    # Volatile context rides in a TRAILING message so the byte-prefix cache
+    # doesn't break; within it, order is by churn rate slowest-first, so one
+    # new fact doesn't re-send the whole journal on every extraction.
     volatile_context = (
+        f"The user in this transcript (`user:`) is {user_name}. "
+        "Write every fact using this real name.\n"
         f"Today is {current_date:%A, %d %B %Y}.\n"
-        f"## Recently stored facts (do NOT re-extract these)\n{recent_facts_section}\n"
         "## Today's journal so far (do NOT repeat these events, even reworded)\n"
-        f"{journal_section}{hints_section}"
+        f"{journal_section}\n"
+        + EXTRACTION_FOLDER_TREE_BLOCK.format(folder_tree=folder_tree or "(no folders yet)")
+        + f"\n## Recently stored facts (do NOT re-extract these)\n{recent_facts_section}"
+        + hints_section
     )
 
     result = await _invoke_structured(
@@ -255,6 +252,26 @@ async def rewrite_core_document(system_prompt: str, inputs: str, *, user_id: str
         user_id=user_id,
     )
     return result.content if result else None
+
+
+async def verify_core_document(
+    content: str, facts: list[str], *, user_id: str
+) -> VerifiedDocument | None:
+    """Strike document lines the source facts do not support (consolidation pass).
+
+    Returns None on total LLM failure — the caller keeps the unverified
+    document rather than losing the rewrite.
+    """
+    fact_lines = "\n".join(f"- {fact}" for fact in facts)
+    return await _invoke_structured(
+        VerifiedDocument,
+        [
+            SystemMessage(content=DOCUMENT_VERIFICATION_PROMPT),
+            HumanMessage(content=f"## Document\n{content}\n\n## Source facts\n{fact_lines}"),
+        ],
+        operation="verify_document",
+        user_id=user_id,
+    )
 
 
 def _format_reconcile_input(pairs: list[tuple[ExtractedFact, list[SimilarMemory]]]) -> str:

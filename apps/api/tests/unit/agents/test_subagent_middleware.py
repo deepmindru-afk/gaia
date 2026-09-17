@@ -17,7 +17,7 @@ MODULE = "app.agents.middleware.subagent"
 
 def _make_middleware(**kwargs):
     """Create SubagentMiddleware with default test wiring."""
-    from app.agents.middleware.subagent import SubagentMiddleware
+    from app.agents.middleware.subagent import SubagentMiddleware, SubagentMiddlewareConfig
 
     defaults = {
         "llm": None,
@@ -26,7 +26,7 @@ def _make_middleware(**kwargs):
         "max_turns": 5,
     }
     defaults.update(kwargs)
-    return SubagentMiddleware(**defaults)
+    return SubagentMiddleware(SubagentMiddlewareConfig(**defaults))
 
 
 def _ready_middleware(**kwargs):
@@ -74,11 +74,7 @@ def _done(text: str):
 
 @contextmanager
 def _spawn_harness(outcomes, decisions=("approved",), recovered=None):
-    """Patch only the edges of a spawn: the LangGraph stream context, memory
-    retrieval, the graph runner, and the HIL interrupt. Everything the
-    middleware itself does (context building, the drive loop, event emission,
-    exception routing) stays real.
-    """
+    """Patch only the edges of a spawn (stream context, memory retrieval, graph runner, HIL interrupt); rest stays real."""
     writer = MagicMock()
     execute = AsyncMock(side_effect=outcomes)
     resume = MagicMock(side_effect=decisions)
@@ -91,6 +87,38 @@ def _spawn_harness(outcomes, decisions=("approved",), recovered=None):
         patch(f"{MODULE}.recover_from_checkpoint", new=recover),
     ):
         yield SimpleNamespace(writer=writer, execute=execute, resume=resume, recover=recover)
+
+
+@contextmanager
+def _context_harness(spawn_configurable=None):
+    """Capture what _build_context hands the two config builders, using real keyword-only signatures, not AsyncMock."""
+    captured = SimpleNamespace()
+    captured.spawn_config = {"configurable": dict(spawn_configurable or {"user_id": "spawned-u1"})}
+
+    async def build_agent_config(*, identity, lane=None, thread=None, turn=None, tracing=None):
+        captured.identity = identity
+        captured.lane = lane
+        captured.thread = thread
+        return captured.spawn_config
+
+    async def build_initial_messages(*, system_message, agent_name, task, seed):
+        captured.system_message = system_message
+        captured.agent_name = agent_name
+        captured.task = task
+        captured.seed = seed
+        return ["seeded"]
+
+    with (
+        patch(f"{MODULE}.build_agent_config", new=build_agent_config),
+        patch(f"{MODULE}.build_initial_messages", new=build_initial_messages),
+    ):
+        yield captured
+
+
+def _start_event(writer: MagicMock) -> dict:
+    return next(
+        c.args[0]["subagent_start"] for c in writer.call_args_list if "subagent_start" in c.args[0]
+    )
 
 
 def _event_names(writer: MagicMock) -> list[str]:
@@ -122,9 +150,7 @@ class TestSubagentMiddlewareInit:
         assert "spawn_subagent" in mw._excluded_tools
 
     async def test_default_available_tools_yield_an_empty_spawn_registry(self):
-        """``available_tools or []`` — dropping the fallback survives construction
-        and only explodes mid-spawn, inside ``_build_context``'s comprehension.
-        """
+        """Dropping the available_tools-or-[] fallback survives construction and only explodes mid-spawn."""
         mw = _ready_middleware(available_tools=None)
 
         with _spawn_harness(outcomes=[_done("ok")]):
@@ -153,6 +179,12 @@ class TestSubagentMiddlewareInit:
         mw = _make_middleware(tool_runtime_config=config)
         assert mw._tool_runtime_config.initial_tool_names == ["my_tool"]
         assert mw._tool_runtime_config.enable_retrieve_tools is False
+
+    def test_the_configured_store_is_kept(self):
+        """set_store is the usual path; a caller that passes a store directly must not be silently dropped."""
+        store = MagicMock()
+
+        assert _make_middleware(store=store)._store is store
 
     def test_default_tool_runtime_config(self):
         mw = _make_middleware()
@@ -243,9 +275,7 @@ class TestSpawnSubagentTool:
         provider.assert_not_awaited()
 
     async def test_hil_pause_propagates_out_of_the_tool(self):
-        """A GraphBubbleUp is the user's approval request in flight. Swallowing it
-        into a tool error would drop the approval and silently finish the turn.
-        """
+        """A GraphBubbleUp is the approval request in flight; swallowing it into a tool error would drop it."""
         mw = _ready_middleware()
         with _spawn_harness(
             outcomes=[_paused("approval-1")],
@@ -281,9 +311,7 @@ class TestSpawnSubagentTool:
         assert _event_names(h.writer) == ["subagent_start", "subagent_end"]
 
     async def test_drive_resumes_every_gate_before_returning(self):
-        """Two gated calls in one task pause twice; each resume carries its own
-        gate's decision and only the final, unpaused outcome is the tool result.
-        """
+        """Two gated calls in one task pause twice; only the final, unpaused outcome is the tool result."""
         mw = _ready_middleware()
         with _spawn_harness(
             outcomes=[_paused("approval-1"), _paused("approval-2"), _done("deleted 2 files")],
@@ -321,9 +349,7 @@ class TestSpawnSubagentTool:
         assert h.execute.await_count == 1
 
     async def test_replay_returns_the_checkpointed_result_without_rerunning(self):
-        """A sibling's pause replays this tool node. Re-running the spawn would
-        repeat every action it already took.
-        """
+        """A sibling's pause replays this tool node; re-running the spawn would repeat every action already taken."""
         from app.constants.hil import HIL_RESUME_CONFIG_KEY
 
         mw = _ready_middleware()
@@ -362,19 +388,12 @@ class TestSpawnSubagentTool:
 class TestSpawnNesting:
     """A spawn inherits its parent's row id so the UI can nest it.
 
-    ``subagent_start`` carries ``parent_subagent_id``, read straight off the
+    subagent_start carries parent_subagent_id, read straight off the
     running config. The client builds its subagent tree from that field alone
-    (``stream_utils.reconstruct_subagent_groups``), so a spawn that loses it does
+    (stream_utils.reconstruct_subagent_groups), so a spawn that loses it does
     not render in the wrong place — it renders at the top level, as a sibling of
     the very subagent that started it.
     """
-
-    def _start_event(self, writer: MagicMock) -> dict:
-        return next(
-            c.args[0]["subagent_start"]
-            for c in writer.call_args_list
-            if "subagent_start" in c.args[0]
-        )
 
     async def test_a_spawn_inside_a_subagent_is_nested_under_it(self):
         mw = _ready_middleware()
@@ -386,12 +405,10 @@ class TestSpawnNesting:
                 config=_make_spawn_config(subagent_id="parent-row-1"),
             )
 
-        assert self._start_event(h.writer)["parent_subagent_id"] == "parent-row-1"
+        assert _start_event(h.writer)["parent_subagent_id"] == "parent-row-1"
 
     async def test_a_spawn_from_the_executor_has_no_parent(self):
-        """The executor is not a subagent and owns no row, so its spawns belong
-        at the top level. A fabricated parent id would target a group that does
-        not exist and the row would be dropped."""
+        """The executor is not a subagent and owns no row, so its spawns belong at the top level."""
         mw = _ready_middleware()
         with _spawn_harness(outcomes=[_done("done")]) as h:
             await mw.tools[0].coroutine(
@@ -401,7 +418,7 @@ class TestSpawnNesting:
                 config=_make_spawn_config(),
             )
 
-        assert "parent_subagent_id" not in self._start_event(h.writer)
+        assert "parent_subagent_id" not in _start_event(h.writer)
 
     async def test_a_spawn_gets_its_own_row_distinct_from_its_parent(self):
         mw = _ready_middleware()
@@ -413,13 +430,12 @@ class TestSpawnNesting:
                 config=_make_spawn_config(subagent_id="parent-row-1"),
             )
 
-        event = self._start_event(h.writer)
+        event = _start_event(h.writer)
         assert event["subagent_id"] != event["parent_subagent_id"]
         assert event["agent_type"] == "spawned"
 
     async def test_the_row_id_is_stable_across_replays_of_one_call(self):
-        """An approval pause replays the spawn. A fresh row id each time would
-        orphan the paused row and open a duplicate on resume."""
+        """An approval pause replays the spawn; a fresh row id each time would orphan the paused row."""
         mw = _ready_middleware()
         ids = []
         for _ in range(2):
@@ -430,6 +446,101 @@ class TestSpawnNesting:
                     selected_tool_ids=[],
                     config=_make_spawn_config(subagent_id="parent-row-1"),
                 )
-            ids.append(self._start_event(h.writer)["subagent_id"])
+            ids.append(_start_event(h.writer)["subagent_id"])
 
         assert ids[0] == ids[1]
+
+
+# ---------------------------------------------------------------------------
+# _build_context: what the spawn's own run config is built from
+# ---------------------------------------------------------------------------
+
+
+class TestBuildContextWiring:
+    """The single seam where the parent run crosses into the spawn.
+
+    Identity, thread and retrieval inputs are all passed by keyword into frozen
+    dataclasses whose every field has a default, so a dropped or nulled one
+    builds a perfectly valid object: the spawn just runs as nobody, on the
+    parent's own thread, or with the comms turn limit instead of its own. The
+    three objects are therefore pinned whole rather than field by field.
+    """
+
+    TASK = "summarise the attachment"
+
+    async def _build(self, mw):
+        return await mw._build_context(
+            self.TASK, "", _make_spawn_config(conversation_id="conv-9"), "call_abc", []
+        )
+
+    async def test_the_spawn_runs_as_the_parents_user_in_the_parents_conversation(self):
+        from app.constants.general import SPAWN_AGENT_NAME
+        from app.helpers.agent_helpers import AgentIdentity
+
+        mw = _ready_middleware()
+        with _context_harness() as h:
+            await self._build(mw)
+
+        assert h.identity == AgentIdentity(
+            conversation_id="conv-9",
+            user={"user_id": "u1", "email": "u1@example.com", "name": "Ada"},
+            agent_name=SPAWN_AGENT_NAME,
+        )
+
+    async def test_the_spawn_gets_its_own_thread_and_its_own_turn_limit(self):
+        """max_turns and thread id both silently fall back to a working default when dropped."""
+        from app.constants.general import SPAWN_AGENT_NAME
+        from app.helpers.agent_helpers import AgentThread
+
+        mw = _ready_middleware(max_turns=7)
+        config = _make_spawn_config(conversation_id="conv-9")
+        with _context_harness() as h:
+            await mw._build_context(self.TASK, "", config, "call_abc", [])
+
+        assert h.thread == AgentThread(
+            thread_id="spawn_conv-9_call_abc",
+            base_configurable=config["configurable"],
+            subagent_id=SPAWN_AGENT_NAME,
+            recursion_limit=7,
+        )
+
+    async def test_the_thread_seed_retrieves_against_the_spawns_own_run(self):
+        """The seed must read the SPAWN's own configurable, not the parent's, and retrieve against the task."""
+        from app.agents.context.tiers import AgentTier
+        from app.agents.core.subagents.subagent_runner import ThreadSeed
+
+        mw = _ready_middleware()
+        with _context_harness() as h:
+            await self._build(mw)
+
+        assert h.seed == ThreadSeed(
+            tier=AgentTier.SPAWN,
+            configurable=h.spawn_config["configurable"],
+            user_id="u1",
+            retrieval_query=self.TASK,
+        )
+
+
+class TestSpawnStartEvent:
+    async def test_the_start_event_is_pinned_whole(self):
+        """tool_category marks it a spawn and drops out entirely when nulled (exclude_none), so pin the payload whole."""
+        from app.agents.core.subagents.subagent_runner import subagent_row_id
+
+        mw = _ready_middleware()
+        with _spawn_harness(outcomes=[_done("ok")]) as h:
+            await mw._run_spawn(
+                task="summarise the attachment",
+                context="",
+                config=_make_spawn_config(subagent_id="parent-row-1"),
+                tool_call_id="call_abc",
+                inherited_tool_names=[],
+            )
+
+        event = _start_event(h.writer)
+        assert {k: v for k, v in event.items() if k != "started_at"} == {
+            "subagent_id": subagent_row_id("call_abc"),
+            "subagent_name": "summarise the attachment",
+            "agent_type": "spawned",
+            "tool_category": "spawn_subagent",
+            "parent_subagent_id": "parent-row-1",
+        }

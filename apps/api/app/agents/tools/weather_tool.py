@@ -5,6 +5,7 @@ from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
 
 from app.decorators import with_doc, with_rate_limiting
+from app.models.integrations.weather import WeatherReport
 from app.templates.docstrings.weather_tool_docs import GET_WEATHER
 from app.utils.weather_utils import user_weather
 
@@ -13,14 +14,22 @@ from app.utils.weather_utils import user_weather
 @with_rate_limiting("weather_checks")
 @with_doc(GET_WEATHER)
 async def get_weather(
-    config: RunnableConfig,
+    config: RunnableConfig,  # noqa: ARG001 -- framework contract
     location: Annotated[str, "Name of the location (e.g. Mumbai,IN)"],
 ) -> str:
     writer = get_stream_writer()
     writer({"progress": f"Fetching weather information for {location}..."})
 
     # Get the raw weather data
-    weather_data = await user_weather(location)
+    weather = await user_weather(location)
+    weather_data = (
+        weather.model_dump(  # pragma: no mutate -- dropping mode= is unobservable here and banned by tool-dump-boundary
+            mode="json",  # pragma: no mutate -- a WeatherReport holds only JSON-native values, so json and python dumps match
+            exclude_unset=True,
+        )
+        if isinstance(weather, WeatherReport)
+        else weather
+    )
 
     # Send weather data to frontend via writer
     writer({"weather_data": weather_data, "location": location})

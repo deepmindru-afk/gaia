@@ -7,10 +7,10 @@ by any later tool call or UI action. Three buckets qualify:
   3. Financial actions (pay / purchase / checkout).
 Reversible actions — trash/archive, create/update/edit, follow/like/star/react,
 labels, internal comments, reads — are NOT listed. Each integration references its
-constant via ``destructive_tools=`` in ``app/config/oauth_config.py``; the registry
-stamps ``Tool.destructive`` from it. A present (possibly empty) list = reviewed:
+constant via destructive_tools= in app/config/oauth_config.py; the registry
+stamps Tool.destructive from it. A present (possibly empty) list = reviewed:
 exactly those gate, every other tool in the toolkit is safe. These are the DEFAULT
-gated set; users override per tool via HIL ``tool_overrides``.
+gated set; users override per tool via HIL tool_overrides.
 """
 
 GOOGLECALENDAR_DESTRUCTIVE_TOOLS: list[str] = [
@@ -24,10 +24,21 @@ GOOGLEDOCS_DESTRUCTIVE_TOOLS: list[str] = [
     "GOOGLEDOCS_DELETE_TAB",
 ]
 
-# GMAIL_DELETE_DRAFT is intentionally NOT gated: a draft is an unsent, agent-managed
-# artifact, and revising a draft means deleting the old one and creating a new one
-# (Gmail has no in-place edit). Gating it would prompt on every draft edit — routine
-# cleanup, not irreversible loss of real mail. Real message deletes below stay gated.
+# Permanent, trash-bypassing deletes gate. CREATE_PERMISSION gates too: sharing
+# exposes the file's contents the instant it's granted, and revoking later
+# can't undo what was already read (CWE-200). TRASH_FILE stays ungated (recoverable).
+GOOGLEDRIVE_DESTRUCTIVE_TOOLS: list[str] = [
+    "GOOGLEDRIVE_CREATE_PERMISSION",
+    "GOOGLEDRIVE_DELETE_DRIVE",
+    "GOOGLEDRIVE_DELETE_FILE",
+    "GOOGLEDRIVE_DELETE_REVISION",
+    "GOOGLEDRIVE_DELETE_TEAM_DRIVE",
+    "GOOGLEDRIVE_EMPTY_TRASH",
+    "GOOGLEDRIVE_GOOGLE_DRIVE_DELETE_FOLDER_OR_FILE_ACTION",
+]
+
+# GMAIL_DELETE_DRAFT is intentionally NOT gated: revising a draft deletes the
+# old one and creates a new one, so gating it would prompt on routine cleanup.
 GMAIL_DESTRUCTIVE_TOOLS: list[str] = [
     "GMAIL_BATCH_DELETE_MESSAGES",
     "GMAIL_DELETE_FILTER",

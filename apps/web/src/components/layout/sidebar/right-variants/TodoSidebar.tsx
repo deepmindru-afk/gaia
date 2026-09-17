@@ -8,7 +8,7 @@ import { formatDistanceToNow } from "date-fns";
 import type React from "react";
 import { useState } from "react";
 import { SidebarContent, SidebarFooter } from "@/components/ui/sidebar";
-import { useUser } from "@/features/auth/hooks/useUser";
+import { useCurrentUser } from "@/features/auth/hooks/useCurrentUser";
 import CanvasViewer from "@/features/todo/components/CanvasViewer";
 import SubtaskManager from "@/features/todo/components/shared/SubtaskManager";
 import TodoFieldsRow from "@/features/todo/components/shared/TodoFieldsRow";
@@ -34,7 +34,7 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
   onDelete,
   projects,
 }) => {
-  const user = useUser();
+  const user = useCurrentUser();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
 
@@ -110,6 +110,9 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
                 <Input
                   defaultValue={todo.title}
                   onKeyDown={(e) => {
+                    // Don't commit while an IME composition is active (CJK
+                    // users press Enter to confirm candidates).
+                    if (e.nativeEvent.isComposing) return;
                     if (e.key === "Enter") {
                       handleTitleSave(e.currentTarget.value);
                     }
@@ -129,11 +132,16 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
                 />
               ) : (
                 <h1
-                  onClick={() => setIsEditingTitle(true)}
                   style={{ wordBreak: "break-all" }}
-                  className={`cursor-pointer text-2xl leading-tight font-medium transition-colors hover:text-zinc-200 ${todo.completed ? "text-zinc-500 line-through" : "text-zinc-100"}`}
+                  className={`text-2xl leading-tight font-medium ${todo.completed ? "text-zinc-500 line-through" : "text-zinc-100"}`}
                 >
-                  {todo.title}
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingTitle(true)}
+                    className="w-full cursor-pointer text-left transition-colors hover:text-zinc-200"
+                  >
+                    {todo.title}
+                  </button>
                 </h1>
               )}
             </div>
@@ -161,10 +169,15 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
             />
           ) : (
             <p
-              onClick={() => setIsEditingDescription(true)}
-              className={`cursor-pointer text-sm leading-relaxed transition-colors hover:text-zinc-300 ${todo.completed ? "text-zinc-600" : "text-zinc-400"}`}
+              className={`text-sm leading-relaxed ${todo.completed ? "text-zinc-600" : "text-zinc-400"}`}
             >
-              {todo.description || "Add a description..."}
+              <button
+                type="button"
+                onClick={() => setIsEditingDescription(true)}
+                className="w-full cursor-pointer text-left transition-colors hover:text-zinc-300"
+              >
+                {todo.description || "Add a description..."}
+              </button>
             </p>
           )}
 
@@ -177,10 +190,10 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
           <div className="py-2">
             <TodoFieldsRow
               priority={todo.priority}
-              projectId={todo.project_id}
+              projectId={todo.project_id ?? undefined}
               projects={projects}
-              dueDate={todo.due_date}
-              dueDateTimezone={todo.due_date_timezone}
+              dueDate={todo.due_date ?? undefined}
+              dueDateTimezone={todo.due_date_timezone ?? undefined}
               labels={todo.labels}
               onPriorityChange={(priority: Priority) =>
                 handleFieldChange("priority", priority)

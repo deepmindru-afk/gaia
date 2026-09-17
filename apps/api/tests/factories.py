@@ -1,7 +1,28 @@
 """Test data factories for GAIA API tests."""
 
 from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import MagicMock
 from uuid import uuid4
+
+from app.models.user_models import AuthenticatedUser
+
+
+def make_authenticated_user(**overrides: Any) -> AuthenticatedUser:
+    """Build the request.state.user a signed-in test caller carries.
+
+    Built as a WorkOS session; overrides are AuthenticatedUser fields.
+    """
+    defaults: dict[str, Any] = {
+        "user_id": str(uuid4()),
+        "auth_provider": "workos",
+        "email": "test@example.com",
+        "name": "Test User",
+        "created_at": datetime.now(UTC),
+        "is_active": True,
+    }
+    defaults.update(overrides)
+    return AuthenticatedUser(**defaults)
 
 
 def make_user(**overrides) -> dict:
@@ -51,11 +72,11 @@ def make_state(**overrides) -> dict:
     return defaults
 
 
-def make_tool_call(name: str, args: dict | None = None, id: str | None = None) -> dict:
+def make_tool_call(name: str, args: dict | None = None, call_id: str | None = None) -> dict:
     return {
         "name": name,
         "args": args or {},
-        "id": id or f"call_{uuid4().hex[:24]}",
+        "id": call_id or f"call_{uuid4().hex[:24]}",
         "type": "tool_call",
     }
 
@@ -103,3 +124,20 @@ def make_integration(provider: str, **overrides) -> dict:
     }
     defaults.update(overrides)
     return defaults
+
+
+def make_integration_config(
+    integration_id: str = "gmail",
+    name: str = "Gmail",
+    managed_by: str = "composio",
+    associated_triggers: list | None = None,
+    metadata_config: object | None = None,
+):
+    """Build a lightweight mock integration config object."""
+    config = MagicMock()
+    config.id = integration_id
+    config.name = name
+    config.managed_by = managed_by
+    config.associated_triggers = associated_triggers or []
+    config.metadata_config = metadata_config
+    return config

@@ -1,6 +1,4 @@
-"""
-Device Token Service for Push Notifications
-"""
+"""Device Token Service for Push Notifications."""
 
 from datetime import UTC, datetime
 
@@ -12,7 +10,7 @@ from shared.py.wide_events import log
 
 
 class DeviceTokenService:
-    """Service for managing device push notification tokens"""
+    """Service for managing device push notification tokens."""
 
     def __init__(self, mongodb: MongoDB):
         self.collection: AsyncIOMotorCollection = mongodb.database.get_collection("device_tokens")
@@ -96,7 +94,7 @@ class DeviceTokenService:
         return [doc["token"] async for doc in cursor if doc.get("token")]
 
     async def deactivate_tokens(self, tokens: list[str]) -> None:
-        """Mark dead tokens inactive so ``get_active_tokens`` stops returning them."""
+        """Mark dead tokens inactive so get_active_tokens stops returning them."""
         if not tokens:
             return
         await self.collection.update_many(
@@ -145,11 +143,12 @@ device_token_service: DeviceTokenService | None = None
 
 
 def get_device_token_service() -> DeviceTokenService:
-    """Get the global device token service instance"""
+    """Get the global device token service instance."""
     global device_token_service
 
     if device_token_service is None:
-        from app.db.mongodb.mongodb import init_mongodb
+        # Deferred import: kept inside the lazy singleton so MongoDB connects on first service access
+        from app.db.mongodb.mongodb import init_mongodb  # noqa: PLC0415 -- lazy init
 
         mongodb = init_mongodb()
         device_token_service = DeviceTokenService(mongodb)

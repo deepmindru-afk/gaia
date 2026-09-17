@@ -9,6 +9,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from langgraph.store.base import PutOp
 import pytest
 
+from app.constants.chroma import (
+    TOOLS_INDEX_CACHE_TTL_SECONDS,
+    TOOLS_SEED_LOCK_ACQUIRE_TIMEOUT_SECONDS,
+    TOOLS_SEED_LOCK_KEY_PREFIX,
+    TOOLS_SEED_LOCK_LEASE_SECONDS,
+    TOOLS_SEED_LOCK_MAX_HOLD_SECONDS,
+    TOOLS_SEED_LOCK_RENEW_SECONDS,
+)
+from app.constants.log_tags import LogTag
+from app.db.chroma import chroma_tools_store
 from app.db.chroma.chroma_tools_store import (
     _build_put_operations,
     _compute_tool_diff,
@@ -17,12 +27,34 @@ from app.db.chroma.chroma_tools_store import (
     _get_current_tools_with_hashes,
     _get_existing_tools_from_chroma,
     _get_subagent_tools,
+    _tools_seed_lock,
     delete_tools_by_namespace,
     index_tools_to_store,
+    initialize_chroma_tools_store,
 )
 from app.models.mcp_config import SubAgentConfig
 from app.models.subagent_models import Subagent
+from app.utils.redis_lock import DistributedLock
 from shared.py.wide_events import log
+from tests.helpers import captured_wide_event
+
+
+@pytest.fixture(autouse=True)
+def seed_lock_keys():
+    """Run the seed lock's guarded work directly, so these tests stay hermetic.
+
+    Yields the list of lock keys the seeding ran under, so a test can prove
+    the work was serialized under the right namespace key.
+    """
+    seen: list[str] = []
+
+    async def _run(self, work):
+        seen.append(self._key)
+        await work()
+
+    with patch.object(DistributedLock, "run_idempotent", _run):
+        yield seen
+
 
 # ---------------------------------------------------------------------------
 # _compute_tool_hash
@@ -260,6 +292,85 @@ class TestComputeToolDiff:
         assert len(delete) == 1
         assert delete[0] == ("ns::gone", "ns")
 
+    @pytest.mark.regression
+    def test_custom_mcp_subagent_is_never_deleted_on_reseed(self):
+        """Regression: seed deleted device MCP subagents, wiping the executor's handoff target on restart."""
+        current: dict[str, dict] = {
+            "subagents::subagent:todos": {"hash": "h"},  # a builtin the seed manages
+        }
+        existing = {
+            "subagents::subagent:todos": {"hash": "h", "namespace": "subagents"},
+            # a device MCP subagent keyed by integration_id (UUID), not "subagent:"
+            "subagents::9531fa23-5120-458c-9d7c-8af9127be70e": {
+                "hash": "hx",
+                "namespace": "subagents",
+            },
+        }
+        _upsert, delete = _compute_tool_diff(current, existing)
+        deleted_keys = {key for key, _ns in delete}
+        assert "subagents::9531fa23-5120-458c-9d7c-8af9127be70e" not in deleted_keys
+
+    def test_builtin_subagent_absent_from_current_is_still_deleted(self):
+        current: dict[str, dict] = {}
+        existing = {
+            "subagents::subagent:retired": {"hash": "h", "namespace": "subagents"},
+        }
+        _upsert, delete = _compute_tool_diff(current, existing)
+        assert ("subagents::subagent:retired", "subagents") in delete
+
+    def test_reseed_prunes_stale_builtin_while_keeping_the_device_subagent(self):
+        # The device subagent is FIRST and the stale builtin SECOND on purpose:
+        # skipping the device one must `continue` (keep scanning), not `break`
+        # (which would leave the later stale builtin un-pruned).
+        current: dict[str, dict] = {}
+        existing = {
+            "subagents::aedc0ba0-b3b6-4783-8035-d25e94c291db": {
+                "hash": "hx",
+                "namespace": "subagents",
+            },
+            "subagents::subagent:retired": {"hash": "h", "namespace": "subagents"},
+        }
+        _upsert, delete = _compute_tool_diff(current, existing)
+        deleted_keys = {key for key, _ns in delete}
+        assert deleted_keys == {"subagents::subagent:retired"}
+
+
+class TestIsDynamicSubagent:
+    """A dynamic MCP subagent lives in the subagents namespace keyed by integration_id, not subagent:<id>."""
+
+    def test_device_subagent_keyed_by_integration_id_is_dynamic(self):
+        assert (
+            chroma_tools_store._is_dynamic_subagent(
+                "subagents::aedc0ba0-b3b6-4783-8035-d25e94c291db", "subagents"
+            )
+            is True
+        )
+
+    def test_builtin_subagent_is_not_dynamic(self):
+        assert (
+            chroma_tools_store._is_dynamic_subagent("subagents::subagent:todos", "subagents")
+            is False
+        )
+
+    def test_only_the_key_after_the_first_separator_is_examined(self):
+        # split(maxsplit=1): a "subagent:" builtin whose own id contains "::" is
+        # still a builtin. A higher maxsplit would look at the tail ("tail") and
+        # wrongly call it dynamic.
+        assert (
+            chroma_tools_store._is_dynamic_subagent("subagents::subagent:weird::tail", "subagents")
+            is False
+        )
+
+    def test_non_subagents_namespace_is_never_dynamic(self):
+        assert chroma_tools_store._is_dynamic_subagent("gmail::search_threads", "gmail") is False
+
+    def test_builtin_prefix_must_match_from_the_start(self):
+        # A key that merely contains "subagent:" later is still dynamic.
+        assert (
+            chroma_tools_store._is_dynamic_subagent("subagents::mcp-subagent:foo", "subagents")
+            is True
+        )
+
 
 # ---------------------------------------------------------------------------
 # _build_put_operations
@@ -334,11 +445,7 @@ class TestIndexToolsToStore:
         await index_tools_to_store([(tool, "bad::ns")])
 
     async def test_cache_hit_with_an_empty_store_reindexes_anyway(self):
-        """The bug this guard exists for: Redis says indexed, Chroma holds none.
-
-        Trusting the hash alone left the namespace empty forever and tool
-        discovery silently returned nothing.
-        """
+        """Redis says indexed, Chroma holds none; trusting the hash alone left the namespace empty and discovery silently returned nothing."""
         tool = SimpleNamespace(name="t", description="d")
         tools_signature = "t:d"
         expected_hash = hashlib.sha256(tools_signature.encode()).hexdigest()[:16]
@@ -404,17 +511,22 @@ class TestIndexToolsToStore:
             ),
         ):
             mock_providers.aget = AsyncMock(return_value=mock_store)
-            # existing is empty, current has one tool with hash "samehash"
-            # but existing also empty means diff will show upsert needed
-            # Let's make existing match current
+            # Existing store already holds the exact current tool (same composite
+            # key AND hash), so the diff is empty — no write, but the marker is
+            # stamped with the tools signature + TTL.
             mock_collection.get.return_value = {
                 "ids": ["ns::t"],
                 "metadatas": [{"tool_hash": "samehash", "namespace": "ns"}],
             }
-            await index_tools_to_store([(tool, "ns")])
-            mock_set_cache.assert_awaited_once()
+            async with captured_wide_event() as event:
+                await index_tools_to_store([(tool, "ns")])
+            assert event["vector"]["embedded_count"] == 0
+            expected_hash = hashlib.sha256(b"t:d").hexdigest()[:16]
+            mock_set_cache.assert_awaited_once_with(
+                "chroma:indexed:ns", expected_hash, ttl=TOOLS_INDEX_CACHE_TTL_SECONDS
+            )
 
-    async def test_diff_executes_operations(self):
+    async def test_diff_executes_operations(self, seed_lock_keys):
         tool = SimpleNamespace(name="t", description="d")
         mock_store = AsyncMock()
         mock_collection = AsyncMock()
@@ -438,22 +550,20 @@ class TestIndexToolsToStore:
             ),
         ):
             mock_providers.aget = AsyncMock(return_value=mock_store)
-            await index_tools_to_store([(tool, "ns")])
+            async with captured_wide_event() as event:
+                await index_tools_to_store([(tool, "ns")])
             mock_store.abatch.assert_awaited()
-            mock_set_cache.assert_awaited()
+            assert event["vector"]["embedded_count"] == 1
+            assert seed_lock_keys == ["lock:chroma:tools-seed:ns"]
+            expected_hash = hashlib.sha256(b"t:d").hexdigest()[:16]
+            mock_set_cache.assert_awaited_once_with(
+                "chroma:indexed:ns", expected_hash, ttl=TOOLS_INDEX_CACHE_TTL_SECONDS
+            )
 
 
-# ---------------------------------------------------------------------------
-# index_tools_to_store — the verified cache guard
-#
-# The Redis hash only proves that SOME PAST PROCESS believed it indexed this
-# namespace. Trusting it alone made a wiped or recreated ChromaDB permanent:
-# the guard hit forever, the namespace was never re-indexed, and tool discovery
-# silently returned nothing — no error, no retry, no signal. The whole failure
-# mode is invisible, so the warning that announces it is behaviour, and these
-# assert on it via the wide event's structured `warnings[]` rather than on the
-# prose (the same seam tests/unit/middleware/test_accounting.py asserts on).
-# ---------------------------------------------------------------------------
+# index_tools_to_store — the verified cache guard. The Redis hash only proves
+# a past process believed it indexed this namespace; trusting it alone made a
+# wiped ChromaDB permanent, so these assert on the wide event's `warnings[]`.
 
 _NAMESPACE = "gmail"
 _TOOL = SimpleNamespace(name="t", description="d")
@@ -461,7 +571,7 @@ _TOOLS_HASH = hashlib.sha256(b"t:d").hexdigest()[:16]
 
 
 def _store_holding(*doc_hashes: str) -> AsyncMock:
-    """A Chroma store whose namespace holds one indexed doc per given tool hash."""
+    """Return a Chroma store whose namespace holds one indexed doc per given tool hash."""
     collection = AsyncMock()
     collection.get.return_value = {
         "ids": [f"{_NAMESPACE}::t{i}" for i in range(len(doc_hashes))],
@@ -474,7 +584,7 @@ def _store_holding(*doc_hashes: str) -> AsyncMock:
 
 @contextmanager
 def _indexing(store: AsyncMock, cached_hash: str | None) -> Iterator[SimpleNamespace]:
-    """Run index_tools_to_store against ``store`` with Redis reporting ``cached_hash``."""
+    """Run index_tools_to_store against store with Redis reporting cached_hash."""
     with (
         patch(
             "app.db.chroma.chroma_tools_store.get_cache",
@@ -530,18 +640,68 @@ class TestVerifiedCacheGuard:
 
         assert len(_wiped_store_warnings()) == 1
         warning = _wiped_store_warnings()[0]
+        assert warning["msg"] == (
+            f"{LogTag.CHROMA} index_tools_to_store: Redis says namespace is indexed "
+            "but ChromaDB holds 0 docs — store was wiped behind the cache; reindexing"
+        )
         assert warning["namespace"] == _NAMESPACE
         assert warning["input_count"] == 1
 
-    async def test_a_first_time_index_is_not_mistaken_for_a_wipe(self):
-        # Cache miss + empty store is simply a namespace nobody has indexed yet.
-        # Crying wipe here would train operators to ignore the one alarm that
-        # means a real one.
+    async def test_a_first_time_index_seeds_then_writes_the_namespace_marker(self):
+        # Cache miss + empty store is simply a namespace nobody has indexed yet:
+        # embed the one tool and stamp the marker so the next run can short-circuit.
+        # Crying wipe here would train operators to ignore the one real alarm.
         with _indexing(_store_holding(), None) as mocks:
             await index_tools_to_store([(_TOOL, _NAMESPACE)])
 
         mocks.execute.assert_awaited_once()
         assert _wiped_store_warnings() == []
+        assert log.get()["vector"]["embedded_count"] == 1
+        mocks.set_cache.assert_awaited_once_with(
+            f"chroma:indexed:{_NAMESPACE}", _TOOLS_HASH, ttl=TOOLS_INDEX_CACHE_TTL_SECONDS
+        )
+
+    async def test_existing_docs_are_read_scoped_to_the_namespace(self):
+        # Both the fast-path read and the in-lease re-read must filter to this
+        # namespace — reading all namespaces would diff against other providers'
+        # tools and delete them.
+        collection = AsyncMock()
+        store = AsyncMock()
+        store._get_collection = AsyncMock(return_value=collection)
+        with (
+            _indexing(store, None),
+            patch(
+                "app.db.chroma.chroma_tools_store._get_existing_tools_from_chroma",
+                new=AsyncMock(return_value={}),
+            ) as get_existing,
+        ):
+            await index_tools_to_store([(_TOOL, _NAMESPACE)])
+
+        assert get_existing.await_count >= 2
+        for call in get_existing.await_args_list:
+            assert call.args == (collection, {_NAMESPACE})
+
+    async def test_a_delete_only_diff_still_writes(self):
+        # The current tool matches an existing doc (no upsert), but a stale doc
+        # must be deleted: the "no changes" short-circuit must not swallow a
+        # delete-only diff.
+        collection = AsyncMock()
+        store = AsyncMock()
+        store._get_collection = AsyncMock(return_value=collection)
+        existing = {
+            f"{_NAMESPACE}::t": {"hash": _compute_tool_hash(_TOOL), "namespace": _NAMESPACE},
+            f"{_NAMESPACE}::stale": {"hash": "gone", "namespace": _NAMESPACE},
+        }
+        with (
+            _indexing(store, None) as mocks,
+            patch(
+                "app.db.chroma.chroma_tools_store._get_existing_tools_from_chroma",
+                new=AsyncMock(return_value=existing),
+            ),
+        ):
+            await index_tools_to_store([(_TOOL, _NAMESPACE)])
+
+        mocks.execute.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -592,3 +752,126 @@ class TestDeleteToolsByNamespace:
 
         assert count == 0
         mock_collection.delete.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _tools_seed_lock
+# ---------------------------------------------------------------------------
+
+
+class TestToolsSeedLock:
+    def test_builds_the_lock_with_the_namespace_key_and_tuned_timing(self):
+        lock = _tools_seed_lock("myns")
+        assert lock._key == f"{TOOLS_SEED_LOCK_KEY_PREFIX}myns"
+        assert lock._lease_seconds == TOOLS_SEED_LOCK_LEASE_SECONDS
+        assert lock._acquire_timeout_seconds == TOOLS_SEED_LOCK_ACQUIRE_TIMEOUT_SECONDS
+        assert lock._renew_seconds == TOOLS_SEED_LOCK_RENEW_SECONDS
+        assert lock._max_hold_seconds == TOOLS_SEED_LOCK_MAX_HOLD_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# initialize_chroma_tools_store
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestInitializeChromaToolsStore:
+    @staticmethod
+    @contextmanager
+    def _patched(*, embeddings, current, existing):
+        collection = AsyncMock()
+        mock_store = AsyncMock()
+        mock_store._get_collection = AsyncMock(return_value=collection)
+        registry = MagicMock()
+        with (
+            patch(
+                "app.db.chroma.chroma_tools_store.get_tool_registry",
+                new=AsyncMock(return_value=registry),
+            ),
+            patch("app.db.chroma.chroma_tools_store.ChromaClient.get_client", new=AsyncMock()),
+            patch(
+                "app.db.chroma.chroma_tools_store.providers.aget",
+                new=AsyncMock(return_value=embeddings),
+            ),
+            patch("app.db.chroma.chroma_tools_store.ChromaStore", return_value=mock_store),
+            patch(
+                "app.db.chroma.chroma_tools_store._get_current_tools_with_hashes",
+                return_value=current,
+            ) as current_mock,
+            patch(
+                "app.db.chroma.chroma_tools_store._get_existing_tools_from_chroma",
+                new=AsyncMock(return_value=existing),
+            ) as existing_mock,
+            patch(
+                "app.db.chroma.chroma_tools_store._execute_batch_operations", new=AsyncMock()
+            ) as execute,
+        ):
+            yield SimpleNamespace(
+                store=mock_store,
+                collection=collection,
+                registry=registry,
+                current_mock=current_mock,
+                existing_mock=existing_mock,
+                execute=execute,
+            )
+
+    @staticmethod
+    async def _run():
+        # The factory is @lazy_provider-wrapped; loader_func is the real body.
+        loader = initialize_chroma_tools_store()
+        return await loader.loader_func()
+
+    @staticmethod
+    def _current(hash_: str) -> dict:
+        return {
+            "general::t": {
+                "hash": hash_,
+                "namespace": "general",
+                "tool": SimpleNamespace(name="t", description="d"),
+            }
+        }
+
+    async def test_raises_when_embeddings_unavailable(self):
+        with (
+            patch("app.db.chroma.chroma_tools_store.get_tool_registry", new=AsyncMock()),
+            patch("app.db.chroma.chroma_tools_store.ChromaClient.get_client", new=AsyncMock()),
+            patch(
+                "app.db.chroma.chroma_tools_store.providers.aget",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            with pytest.raises(RuntimeError) as exc:
+                await self._run()
+        assert str(exc.value) == "Embeddings not available"
+
+    async def test_seeds_and_returns_store_when_diff_exists(self, seed_lock_keys):
+        with self._patched(embeddings=object(), current=self._current("h1"), existing={}) as p:
+            async with captured_wide_event() as event:
+                result = await self._run()
+        assert result is p.store
+        # Diffs the current tools (from the registry) against what the managed
+        # namespaces already hold in the real collection, then upserts into the store.
+        p.current_mock.assert_called_once_with(p.registry)
+        p.existing_mock.assert_awaited_once_with(p.collection, {"general"})
+        p.execute.assert_awaited_once()
+        # Executed against the real store with the built put-ops (one upsert).
+        store_arg, put_ops = p.execute.await_args.args
+        assert store_arg is p.store
+        assert len(put_ops) == 1
+        assert seed_lock_keys == ["lock:chroma:tools-seed:builtin"]
+        assert event["vector"] == {
+            "operation": "upsert",
+            "collection": "langgraph_tools_store",
+            "embedded_count": 1,
+        }
+
+    async def test_no_diff_does_not_touch_the_store(self):
+        existing = {"general::t": {"hash": "h1", "namespace": "general"}}
+        with self._patched(
+            embeddings=object(), current=self._current("h1"), existing=existing
+        ) as p:
+            async with captured_wide_event() as event:
+                result = await self._run()
+        assert result is p.store
+        p.execute.assert_not_awaited()
+        assert event["vector"]["embedded_count"] == 0

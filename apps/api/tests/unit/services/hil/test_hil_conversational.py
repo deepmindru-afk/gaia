@@ -10,8 +10,8 @@ ambiguous or broken reply into an action:
   for the buttons or the timeout sweep, it does not ride along on someone else's "yes";
 * an index the model invents must not resolve whatever happens to sit at that position.
 
-The LLM is mocked at ``ainvoke_structured`` (the real boundary); everything between the
-verdict and ``resolve_approval`` is the production code under test.
+The LLM is mocked at ainvoke_structured (the real boundary); everything between the
+verdict and resolve_approval is the production code under test.
 """
 
 from typing import Any
@@ -19,14 +19,18 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.agents.llm.client import StructuredCallOptions
+from app.constants.hil import HIL_LLM_TIMEOUT_SECONDS
 from app.services.hil.conversational import (
     UNRELATED_FEEDBACK,
     BatchDecisionResult,
     BatchItemDecision,
     DecisionResult,
+    interpret_batch_decision_message,
+    interpret_decision_message,
     resolve_pending_from_message,
 )
-from app.services.hil.resolution import ApprovalRequestNotFound
+from app.services.hil.resolution import ApprovalRequestNotFoundError
 
 from .conftest import CONVERSATION_ID, USER_ID, make_record
 
@@ -41,7 +45,7 @@ def _quiet_log():
 
 @pytest.fixture
 def resolver():
-    """The two sinks a decision can reach, plus the LLM boundary in front of them."""
+    """Patch the two sinks a decision can reach, plus the LLM boundary in front of them."""
     with (
         patch(f"{MODULE}.resolve_approval", new=AsyncMock()) as resolve,
         patch(f"{MODULE}.abandon_conversation_approvals", new=AsyncMock()) as abandon,
@@ -195,8 +199,10 @@ class TestAnApprovalCannotCarryAnEdit:
 
 
 class TestBatch:
-    """Several approvals pending at once — the concurrent-subagent burst. A blanket answer
-    applies to all of them; a selective one must apply to nothing it did not name."""
+    """Approvals arrive in a concurrent-subagent burst.
+
+    A blanket answer resolves all of them; a selective one resolves only what it names.
+    """
 
     async def test_a_blanket_yes_approves_every_pending_action(self, resolver: dict) -> None:
         resolver["llm"].return_value = BatchDecisionResult(
@@ -232,10 +238,9 @@ class TestBatch:
     async def test_a_selective_answer_leaves_everything_it_did_not_name_pending(
         self, resolver: dict
     ) -> None:
-        # A non-exclusive partial answer ("approve the email one") resolves only what it
-        # names; an unmentioned action stays pending for the buttons or the sweep. (An
-        # EXCLUSIVE answer like "just the email" instead denies the rest — that is the
-        # classifier's job, mocked here; this pins the code path for a 'leave' verdict.)
+        # A non-exclusive answer resolves only what it names; unmentioned actions stay pending.
+        # An EXCLUSIVE answer ("just the email") instead denies the rest — that's the
+        # classifier's job (mocked here); this pins the code path for a 'leave' verdict.
         resolver["llm"].return_value = BatchDecisionResult(
             unrelated=False,
             decisions=[
@@ -318,8 +323,10 @@ class TestBatch:
 
 
 class TestInventedIndexes:
-    """The index comes from an LLM, so it is untrusted input. An out-of-range value must
-    be dropped, never wrapped, clamped, or used to index from the end of the list."""
+    """The index comes from an LLM, so it is untrusted input.
+
+    An out-of-range value must be dropped, never wrapped, clamped, or used to index from the end.
+    """
 
     @pytest.mark.parametrize("index", [0, -1, -2, 3, 99])
     async def test_an_out_of_range_index_resolves_nothing(self, resolver: dict, index: int) -> None:
@@ -348,10 +355,12 @@ class TestInventedIndexes:
 
 
 class TestClassifierFailure:
-    """A broken LLM must never resolve as approve — and never as a genuine ``unrelated``
-    either. Single and batch both fail toward leaving everything pending: an error is not
-    the same signal as the user moving on, so a transient hiccup must not abandon a
-    legitimate pending action. The buttons or the timeout sweep still resolve it."""
+    """A broken LLM must never resolve as approve, and never as a genuine unrelated either.
+
+    Single and batch both fail toward leaving everything pending, since a transient hiccup
+    is not the same signal as the user moving on. The buttons or the timeout sweep still
+    resolve it.
+    """
 
     async def test_a_single_pending_approval_is_left_pending_rather_than_abandoned(
         self, resolver: dict
@@ -381,8 +390,10 @@ class TestClassifierFailure:
 
 
 class TestRacingDecisions:
-    """The user can click a button and type "yes" at the same time, and the sweep can fire
-    mid-classification. A decision that lost the race must not break the others."""
+    """A button click, a typed "yes", and the timeout sweep can all fire at once.
+
+    A decision that lost the race must not break the others.
+    """
 
     async def test_an_already_resolved_item_does_not_block_the_rest_of_the_batch(
         self, resolver: dict
@@ -394,7 +405,7 @@ class TestRacingDecisions:
                 BatchItemDecision(index=2, action="approve"),
             ],
         )
-        resolver["resolve"].side_effect = [ApprovalRequestNotFound(), None]
+        resolver["resolve"].side_effect = [ApprovalRequestNotFoundError(), None]
         with pending("Send email", "Post to Slack"):
             action = await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes")
 
@@ -403,6 +414,71 @@ class TestRacingDecisions:
 
     async def test_an_already_resolved_single_approval_does_not_raise(self, resolver: dict) -> None:
         resolver["llm"].return_value = DecisionResult(action="approve")
-        resolver["resolve"].side_effect = ApprovalRequestNotFound()
+        resolver["resolve"].side_effect = ApprovalRequestNotFoundError()
         with pending("Send email"):
             assert await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes") == "approve"
+
+    async def test_a_forbidden_approval_is_swallowed_the_same_way(self, resolver: dict) -> None:
+        """A forbidden decision (wrong owner) is swallowed like an already-resolved one."""
+        from app.services.hil.resolution import ApprovalRequestForbiddenError
+
+        resolver["llm"].return_value = DecisionResult(action="approve")
+        resolver["resolve"].side_effect = ApprovalRequestForbiddenError()
+        with pending("Send email"):
+            assert await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes") == "approve"
+
+
+class TestTheClassifierCall:
+    """What the two interpreters hand the LLM boundary.
+
+    The label is what the call is metered and traced under, so batch and single stay
+    separate lanes; the timeout stops a hung provider from holding a chat turn open.
+    """
+
+    async def test_the_single_approval_call_is_labelled_and_bounded(self) -> None:
+        captured: dict[str, Any] = {}
+
+        async def fake_ainvoke_structured(
+            schema: type[DecisionResult],
+            prompt: Any,
+            *,
+            label: str,
+            config: Any = None,
+            options: StructuredCallOptions | None = None,
+        ) -> DecisionResult:
+            captured.update(schema=schema, label=label, options=options)
+            return DecisionResult(action="approve")
+
+        with patch(f"{MODULE}.ainvoke_structured", fake_ainvoke_structured):
+            result = await interpret_decision_message(
+                "yes", ["Send email — to: bob@example.com"], user_id=USER_ID
+            )
+
+        assert result == DecisionResult(action="approve")
+        assert captured["schema"] is DecisionResult
+        assert captured["label"] == "hil_conversational_resolve"
+        assert captured["options"] == StructuredCallOptions(timeout=HIL_LLM_TIMEOUT_SECONDS)
+
+    async def test_the_batch_call_is_labelled_and_bounded(self) -> None:
+        captured: dict[str, Any] = {}
+
+        async def fake_ainvoke_structured(
+            schema: type[BatchDecisionResult],
+            prompt: Any,
+            *,
+            label: str,
+            config: Any = None,
+            options: StructuredCallOptions | None = None,
+        ) -> BatchDecisionResult:
+            captured.update(schema=schema, label=label, options=options)
+            return BatchDecisionResult(unrelated=False)
+
+        with patch(f"{MODULE}.ainvoke_structured", fake_ainvoke_structured):
+            result = await interpret_batch_decision_message(
+                "yes", ["Send email", "Post to Slack"], user_id=USER_ID
+            )
+
+        assert result == BatchDecisionResult(unrelated=False)
+        assert captured["schema"] is BatchDecisionResult
+        assert captured["label"] == "hil_conversational_resolve_batch"
+        assert captured["options"] == StructuredCallOptions(timeout=HIL_LLM_TIMEOUT_SECONDS)

@@ -3,6 +3,8 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.models.user_models import UserDocument
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -35,18 +37,18 @@ class TestCreateSupportTicket:
         w = _writer()
         mock_gsw.return_value = w
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
 
         result = await create_support_ticket.coroutine(
             config=_cfg(),
-            type="support",
+            ticket_type="support",
             title="App crashes on login",
             description="When I try to log in with Google, the app crashes immediately.",
         )
-        assert "support ticket" in result
+        assert result.startswith("I've prepared a support ticket draft for you to review."), result
         assert "review" in result.lower()
         # Verify writer was called with progress and data
         assert w.call_count == 2
@@ -64,29 +66,65 @@ class TestCreateSupportTicket:
     async def test_happy_path_feature(self, mock_user_svc: MagicMock, mock_gsw: MagicMock) -> None:
         mock_gsw.return_value = _writer()
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
 
         result = await create_support_ticket.coroutine(
             config=_cfg(),
-            type="feature",
+            ticket_type="feature",
             title="Add dark mode",
             description="I would love to have a dark mode option in the settings.",
         )
-        assert "feature request" in result
+        assert result.startswith("I've prepared a feature request draft for you to review."), result
+
+    @patch(f"{MODULE}.get_stream_writer")
+    @patch(f"{MODULE}.user_service")
+    async def test_mixed_case_type_labels_correctly(
+        self, mock_user_svc: MagicMock, mock_gsw: MagicMock
+    ) -> None:
+        """Regression: "Feature" used to be announced as a support ticket because the raw LLM string never equals SupportRequestType.FEATURE; the label must come from the normalized enum."""
+        w = _writer()
+        mock_gsw.return_value = w
+        mock_user_svc.get_user_by_id = AsyncMock(
+            return_value=UserDocument(email="test@example.com", name="Test User")
+        )
+
+        from app.agents.tools.support_tool import create_support_ticket
+
+        result = await create_support_ticket.coroutine(
+            config=_cfg(),
+            ticket_type="Feature",
+            title="Add dark mode",
+            description="I would love to have a dark mode option in the settings.",
+        )
+        data_call = w.call_args_list[1][0][0]
+        ticket = data_call["support_ticket_data"][0]
+        assert ticket["type"] == "feature"
+        assert result.startswith("I've prepared a feature request draft for you to review."), result
 
     async def test_no_user_id(self) -> None:
         from app.agents.tools.support_tool import create_support_ticket
 
         result = await create_support_ticket.coroutine(
             config=_cfg_no_user(),
-            type="support",
+            ticket_type="support",
             title="Test",
             description="A test description for the ticket.",
         )
         assert "authentication required" in result.lower()
+
+    async def test_config_without_metadata_asks_for_authentication(self) -> None:
+        from app.agents.tools.support_tool import create_support_ticket
+
+        result = await create_support_ticket.coroutine(
+            config={},
+            ticket_type="support",
+            title="Test",
+            description="A test description for the ticket.",
+        )
+        assert result == "User authentication required to create support ticket."
 
     @patch(f"{MODULE}.user_service")
     async def test_user_not_found(self, mock_user_svc: MagicMock) -> None:
@@ -96,7 +134,7 @@ class TestCreateSupportTicket:
 
         result = await create_support_ticket.coroutine(
             config=_cfg(),
-            type="support",
+            ticket_type="support",
             title="Test",
             description="A test description for the ticket.",
         )
@@ -104,13 +142,13 @@ class TestCreateSupportTicket:
 
     @patch(f"{MODULE}.user_service")
     async def test_user_no_email(self, mock_user_svc: MagicMock) -> None:
-        mock_user_svc.get_user_by_id = AsyncMock(return_value={"name": "Test User"})
+        mock_user_svc.get_user_by_id = AsyncMock(return_value=UserDocument(name="Test User"))
 
         from app.agents.tools.support_tool import create_support_ticket
 
         result = await create_support_ticket.coroutine(
             config=_cfg(),
-            type="support",
+            ticket_type="support",
             title="Test",
             description="A test description for the ticket.",
         )
@@ -122,14 +160,14 @@ class TestCreateSupportTicket:
         w = _writer()
         mock_gsw.return_value = w
         mock_user_svc.get_user_by_id = AsyncMock(
-            return_value={"email": "test@example.com", "name": "Test User"}
+            return_value=UserDocument(email="test@example.com", name="Test User")
         )
 
         from app.agents.tools.support_tool import create_support_ticket
 
         await create_support_ticket.coroutine(
             config=_cfg(),
-            type="support",
+            ticket_type="support",
             title="  Padded title  ",
             description="  Padded description  ",
         )
@@ -146,7 +184,7 @@ class TestCreateSupportTicket:
 
         result = await create_support_ticket.coroutine(
             config=_cfg(),
-            type="support",
+            ticket_type="support",
             title="Test",
             description="A test description for the ticket.",
         )
@@ -158,13 +196,15 @@ class TestCreateSupportTicket:
     async def test_user_name_defaults(self, mock_user_svc: MagicMock, mock_gsw: MagicMock) -> None:
         w = _writer()
         mock_gsw.return_value = w
-        mock_user_svc.get_user_by_id = AsyncMock(return_value={"email": "test@example.com"})
+        mock_user_svc.get_user_by_id = AsyncMock(
+            return_value=UserDocument(email="test@example.com")
+        )
 
         from app.agents.tools.support_tool import create_support_ticket
 
         await create_support_ticket.coroutine(
             config=_cfg(),
-            type="support",
+            ticket_type="support",
             title="Test",
             description="A test description for the ticket.",
         )

@@ -60,12 +60,9 @@ export const chatKeys = {
 async function fetchMessagesFromApi(
   conversationId: string,
 ): Promise<Message[]> {
-  // Always hit the API — instant render is handled by the React Query cache
-  // (pre-warmed from AsyncStorage in ChatProvider). This call is the
-  // background-revalidation half of stale-while-revalidate: cached messages
-  // stay on screen while we fetch, and React Query swaps them in seamlessly
-  // once fresh data lands. The new messages are persisted so the next launch
-  // hydrates from the latest snapshot.
+  // Always hit the API: cached messages (pre-warmed from AsyncStorage) stay on
+  // screen while this background-revalidation fetch runs, and React Query swaps
+  // in fresh data seamlessly; the new messages persist for the next launch.
   const messages = await chatApi.fetchMessages(conversationId);
   if (messages.length > 0) {
     chatDb.saveMessages(conversationId, messages).catch((err) => {
@@ -83,7 +80,10 @@ export function useConversationQuery(conversationId: string | null) {
     queryKey: chatKeys.messages(conversationId!),
     queryFn: () => fetchMessagesFromApi(conversationId!),
     enabled: !!conversationId && !conversationId.startsWith("temp-"),
-    staleTime: 5 * 60 * 1000,
+    // Short staleness window: the cache-first seed still renders instantly,
+    // but revisiting a conversation revalidates against the API quickly
+    // enough that messages sent from other devices actually appear.
+    staleTime: 15_000,
   });
 }
 
@@ -91,7 +91,7 @@ export function useConversationsQuery() {
   return useQuery({
     queryKey: chatKeys.conversations(),
     queryFn: fetchConversationsList,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 15_000,
   });
 }
 
@@ -128,9 +128,30 @@ export function useChatQueryClient() {
       chatKeys.conversations(),
       (prev) => {
         if (!prev) return prev;
-        return prev.map((c) =>
+        const next = prev.map((c) =>
           c.id === conversationId ? { ...c, ...updates } : c,
         );
+        // Keep the AsyncStorage seed in sync so the next launch matches.
+        chatDb.saveConversations(next).catch((err) => {
+          console.warn("[queries] Failed to persist conversations:", err);
+        });
+        return next;
+      },
+    );
+  };
+
+  /** Optimistically drop a conversation from the list (and local seed). */
+  const removeConversationFromCache = (conversationId: string) => {
+    queryClient.setQueryData<Conversation[]>(
+      chatKeys.conversations(),
+      (prev) => {
+        if (!prev) return prev;
+        const next = prev.filter((c) => c.id !== conversationId);
+        chatDb.saveConversations(next).catch((err) => {
+          console.warn("[queries] Failed to persist conversations:", err);
+        });
+        chatDb.deleteConversation(conversationId).catch(() => undefined);
+        return next;
       },
     );
   };
@@ -141,5 +162,6 @@ export function useChatQueryClient() {
     invalidateMessages,
     prefetchMessages,
     updateConversationInCache,
+    removeConversationFromCache,
   };
 }

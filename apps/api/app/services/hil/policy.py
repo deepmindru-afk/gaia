@@ -2,52 +2,112 @@
 
 This module answers two questions and nothing else, so the gate can stay about acting:
 
-1. **Is this tool gated?** ``is_gated`` — the user's per-tool override, else the
+1. **Is this tool gated?** is_gated — the user's per-tool override, else the
    destructive classification. This set is identical in both gating modes.
-2. **What happens to the gated set?** ``resolve_policy`` — ``ask`` (confirm with the
-   user) or ``auto`` (let the intent judge decide). ``always_allow`` gates nothing.
+2. **What happens to the gated set?** resolve_policy — ask (confirm with the
+   user) or auto (let the intent judge decide). always_allow gates nothing.
 
 Plus one guard that belongs with the policy because it *suppresses* auto-approval:
-``has_pausing_sibling`` — see its docstring for the double-execution it prevents.
+has_pausing_sibling — see its docstring for the double-execution it prevents.
 """
 
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
 
 from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.tools import BaseTool
 
-from app.agents.tools.core.registry import get_tool_registry
+from app.agents.tools.core.registry import ToolRegistry, get_tool_registry
 from app.constants.hil import HIL_EXEMPT_TOOLS, HIL_PAUSING_TOOLS
 from app.constants.log_tags import LogTag
 from app.models.hil_models import HIL_DEFAULT_MODE, HILPreferences
 from app.services.hil.classification import is_tool_destructive, mcp_destructive_hint
 from app.services.hil.preferences import get_hil_preferences
-from app.services.hil.utils import current_tool_calls, tool_of
+from app.services.hil.utils import current_tool_calls, tool_of, unpack_tool_call
 from shared.py.wide_events import log
 
-# What the gate does with one call:
-#   allow — run it without asking
-#   ask   — pause and put it to the user
-#   auto  — let the intent judge choose between the two
+# What the gate does with one call: allow it, ask (pause for the user), or auto
+# (let the intent judge choose between the two).
 GatingPolicy = Literal["allow", "ask", "auto"]
+
+# Tools whose gate depends on an argument value, not just the name: a hit on
+# every listed (arg → value) pair forces the ask. ``manage_linked_account``
+# mints link URLs freely but disconnecting an account always confirms.
+ARGUMENT_GATED_TOOLS: dict[str, dict[str, object]] = {
+    "manage_linked_account": {"action": "disconnect"},
+}
+
+
+async def _stamp_registry() -> ToolRegistry | None:
+    """Return the registry the forced-ask stamp is read from, or None when unreachable.
+
+    The stamp only escalates, never clears, so an unreachable registry just means
+    "no stamp read" — the rest of the policy still decides. Raising instead took
+    the whole gate down: decide_tool_call fails closed on ANY exception, so an
+    unregistered provider silently refused every gated tool instead of asking.
+    """
+    try:
+        return await get_tool_registry()
+    except Exception as e:
+        log.warning(
+            f"{LogTag.HIL} tool registry unavailable; reading no forced-ask stamp",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return None
+
+
+async def _is_always_gated(tool_name: str) -> bool:
+    """Read the registry's forced-ask stamp, checked before any preference lookup."""
+    registry = await _stamp_registry()
+    if registry is None:
+        return False
+    meta = registry.get_tool_meta(tool_name)
+    return meta is not None and meta.always_gate
+
+
+def _argument_gate_hit(tool_name: str, args: Mapping[str, Any] | None) -> bool:
+    required = ARGUMENT_GATED_TOOLS.get(tool_name)
+    if not required or not args:
+        return False
+    return all(args.get(key) == value for key, value in required.items())
 
 
 async def resolve_policy(request: ToolCallRequest, user_id: str, tool_name: str) -> GatingPolicy:
-    """The user's mode plus the gated set, resolved into one decision."""
+    """Resolve the user's mode plus the gated set into one decision.
+
+    Forced-ask tools short-circuit BEFORE the preferences read, so they pause
+    even when the preference store itself is unreachable (fail closed for the
+    calls that must never slip through).
+    """
+    call = unpack_tool_call(request)
+    if await _is_always_gated(tool_name) or _argument_gate_hit(tool_name, call.args):
+        return "ask"
     prefs = await _preferences(user_id)
     if prefs.mode == "always_allow":
         return "allow"
-    if not await is_gated(prefs, tool_name, tool_of(request)):
+    if not await is_gated(prefs, tool_name, tool_of(request)):  # args resolved above
         return "allow"
     return "auto" if prefs.mode == "auto" else "ask"
 
 
-async def is_gated(prefs: HILPreferences, tool_name: str, tool: BaseTool | None) -> bool:
+async def is_gated(
+    prefs: HILPreferences,
+    tool_name: str,
+    tool: BaseTool | None,
+    args: Mapping[str, Any] | None = None,
+) -> bool:
     """Whether this tool needs approval — the set both gating modes act on.
 
-    A user's explicit per-tool choice wins over the classifier in both directions — even
-    over an MCP destructiveHint — since it is a deliberate setting on their own account.
+    The forced-ask stamp and argument gate outrank everything, including a user's
+    per-tool override, since they mark product invariants, not classifier opinions.
+    Otherwise the user's per-tool choice wins in both directions — even over an
+    MCP destructiveHint — since it is a deliberate setting on their own account.
     """
+    if await _is_always_gated(tool_name):
+        return True
+    if _argument_gate_hit(tool_name, args):
+        return True
     override = prefs.tool_overrides.get(tool_name)
     if override is not None:
         return override
@@ -59,33 +119,12 @@ async def is_gated(prefs: HILPreferences, tool_name: str, tool: BaseTool | None)
 
 
 async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_id: str) -> bool:
-    """Whether another call in this same AI message can pause the run.
+    """Return whether another call in this AI message can pause the run.
 
-    If one can, this call cannot simply run and be done with it. The sibling will
-    ``interrupt()``, and LangGraph discards the writes of every task in that step and
-    replays them on resume — so a handler that ran before the pause runs a second time
-    (verified: one send became two). Two callers act on that:
-
-    * **auto mode** does not auto-approve, because a call it approved would run before
-      the pause and then again on the replay. Auto-approval therefore applies only when
-      a call is the turn's only pausing action; several destructive actions in one turn
-      are confirmed together, which is the behaviour worth having anyway.
-    * **an ungated call** remembers its result under its tool_call_id, so the replay
-      reuses it rather than repeating the work (``gate._run_once_across_replays``).
-
-    A sibling pauses in one of two ways. It is **gated**, and pauses at its own gate:
-    siblings arrive as bare tool-call dicts, so each one's tool object is resolved from
-    the registry, because classifying it must use the same description and MCP
-    ``destructiveHint`` its own gate will use. Classifying without them (a bare name, an
-    empty description) both under-detects the sibling — defeating the double-run guard
-    this exists for — and poisons the registry's name-keyed ``destructive`` flag, since an
-    unclassified tool's verdict is written back there for every later gate check to read.
-
-    Or it is **exempt but pausing** (``HIL_PAUSING_TOOLS``) — ``handoff`` bubbles up its
-    subagent's gate interrupt, ``wait_for_subagents`` interrupts for the parked-approval
-    batch. Neither is ever gated, so skipping them as exempt would leave exactly the
-    double-run this guard exists to prevent. Checked first, and by name alone, so the
-    common case costs no preference or registry lookup.
+    A pause replays the step, so a call that already ran runs twice (one send became two):
+    auto mode withholds auto-approval, and ungated calls reuse gate._run_once_across_replays.
+    HIL_PAUSING_TOOLS pause by name (checked first); gated siblings are classified with their
+    registry tool — a bare name under-detects and poisons the name-keyed destructive flag.
     """
     siblings = [
         call
@@ -97,25 +136,34 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
     if any(call["name"] in HIL_PAUSING_TOOLS for call in siblings):
         return True
 
+    # Forced-ask siblings pause even when HIL is off, since the stamp isn't
+    # preference-driven — checked before the always_allow fast path below.
+    registry = await _stamp_registry()
+    for call in siblings:
+        name = str(call["name"])
+        meta = registry.get_tool_meta(name) if registry else None
+        if (meta is not None and meta.always_gate) or _argument_gate_hit(
+            name, call.get("args") or None
+        ):
+            return True
+
     prefs = await get_hil_preferences(user_id)
     if prefs.mode == "always_allow":
-        # HIL is off for this user, so no sibling gate can pause. Answered before the
-        # per-sibling classification below because every ungated call now asks this
-        # (see gate._run_once_across_replays) and that is ~100% of traffic.
+        # HIL is off, so no preference-driven gate can pause; account mutations
+        # already asked in the forced-gate scan above regardless of this mode.
         return False
-    registry = await get_tool_registry()
     for call in siblings:
         name = str(call["name"])
         if name in HIL_EXEMPT_TOOLS:
             continue
-        meta = registry.get_tool_meta(name)
-        if await is_gated(prefs, name, meta.tool if meta else None):
+        meta = registry.get_tool_meta(name) if registry else None
+        if await is_gated(prefs, name, meta.tool if meta else None, args=call.get("args") or None):
             return True
     return False
 
 
 async def _preferences(user_id: str) -> HILPreferences:
-    """The user's HIL preferences, or the default when the store is unreachable.
+    """Return the user's HIL preferences, or the default when the store is unreachable.
 
     Failing open here is safe only because HIL is opt-in and unlaunched: a Redis/Mongo
     blip must not gate every tool call for the overwhelmingly common HIL-off user. The

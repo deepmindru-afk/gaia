@@ -8,18 +8,23 @@ An approval decision moves money, sends mail, deletes things. The attacks:
 """
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
+from prometheus_client import REGISTRY
 import pytest
 
 from app.schemas.hil_schemas import BatchDecisionOutcome
 from app.services.hil.resolution import (
     CANCELLED_FEEDBACK,
-    ApprovalNotResumable,
-    ApprovalRequestForbidden,
-    ApprovalRequestNotFound,
+    ApprovalNotResumableError,
+    ApprovalRequestForbiddenError,
+    ApprovalRequestNotFoundError,
+    _observe_hil_dispatch_lag,
+    _observe_hil_user_wait,
+    _resolve_or_close,
     abandon_conversation_approvals,
     cancel_conversation_approvals,
     resolve_approval,
@@ -41,7 +46,7 @@ def _quiet_log():
 
 @pytest.fixture
 def resume() -> Any:
-    """Mocks the run-dispatch boundary; the resolution logic itself runs for real."""
+    """Mock the run-dispatch boundary; the resolution logic itself runs for real."""
     prepared = MagicMock(run=MagicMock(), task=MagicMock(), configurable={})
     with (
         patch(f"{MODULE}.prepare_run_from_item", new=AsyncMock(return_value=prepared)) as prepare,
@@ -61,7 +66,7 @@ class TestAuthorization:
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
             patch(f"{MODULE}.mark_decided", new=AsyncMock()) as decided,
-            pytest.raises(ApprovalRequestForbidden),
+            pytest.raises(ApprovalRequestForbiddenError),
         ):
             await resolve_approval(approval_id="appr-1", user_id="attacker-id", kind="approve")
 
@@ -74,7 +79,7 @@ class TestAuthorization:
     ) -> None:
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=None)),
-            pytest.raises(ApprovalRequestNotFound),
+            pytest.raises(ApprovalRequestNotFoundError),
         ):
             await resolve_approval(approval_id="nope", user_id=USER_ID, kind="approve")
         assert resume.prepare.await_count == 0
@@ -91,7 +96,7 @@ class TestExactlyOnce:
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
             patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=False)),
-            pytest.raises(ApprovalRequestNotFound),
+            pytest.raises(ApprovalRequestNotFoundError),
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
@@ -114,12 +119,9 @@ class TestExactlyOnce:
     async def test_the_resume_names_the_approval_that_was_actually_decided(
         self, resume: Any
     ) -> None:
-        # The status alone is not enough. A synchronous spawn that gated several calls
-        # replays its resume list positionally, so the driver matches on approval_id to
-        # hand each gate its OWN decision (subagent_runner.resume_for_gate). Send the
-        # wrong id and a correct matcher discards a real decision: the gate never sees an
-        # answer and an APPROVED action silently never runs. Deciding the second of two
-        # catches both a hardcoded id and "always the first record".
+        # The driver matches on approval_id (subagent_runner.resume_for_gate) since a
+        # synchronous spawn replays its resume list positionally; the wrong id discards a
+        # decision silently. Deciding the second of two catches "always the first record" too.
         second = make_record(approval_id="appr-2", tool_call_id="call-2")
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=second)),
@@ -131,15 +133,13 @@ class TestExactlyOnce:
 
 
 class TestTheResumeSlotIsExclusive:
-    """A batch pause puts several approvals on ONE executor thread. Two decisions landing
-    together must not start two concurrent LangGraph runs on it — that corrupts the
-    checkpoint and can double-execute whatever the run was mid-way through.
+    """A batch pause puts several approvals on ONE executor thread.
 
-    The whole guarantee is one Redis ``SETNX``. Every other test in this file mocks
-    ``claim_resume_dispatch`` to a constant, so the exclusivity itself was never executed;
-    a plain ``SET`` would hand the slot to every caller with the suite still green. These
-    run the real function against a real (in-memory) Redis, so the claim has to actually
-    be atomic.
+    Two decisions landing together must not start two concurrent LangGraph runs on it —
+    that corrupts the checkpoint and can double-execute whatever the run was mid-way
+    through. The whole guarantee is one Redis SETNX; every other test here mocks
+    claim_resume_dispatch to a constant, so these run the real function against a real
+    (in-memory) Redis to prove the claim is actually atomic.
     """
 
     @pytest.fixture
@@ -181,7 +181,7 @@ class TestUnresumableRecords:
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
             patch(f"{MODULE}.mark_decided", new=AsyncMock()) as decided,
-            pytest.raises(ApprovalNotResumable),
+            pytest.raises(ApprovalNotResumableError),
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
@@ -191,10 +191,9 @@ class TestUnresumableRecords:
     async def test_an_early_decision_on_a_parked_subagent_decides_without_dispatch(
         self, resume: Any
     ) -> None:
-        # The user answers a parked subagent's card BEFORE the executor reaches its
-        # join (so no resume_item exists yet). With a live executor (busy lock held)
-        # the decision must land — the running executor collects it durably — and
-        # must NOT dispatch or stamp a resume.
+        # The user answers before the executor reaches its join (no resume_item yet).
+        # With a live executor (busy lock held), the decision must land durably but
+        # must NOT dispatch or stamp a resume — the running executor collects it.
         record = make_record(resume_item=None, subagent_thread_id="gmail_executor_conv-1")
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
@@ -208,16 +207,15 @@ class TestUnresumableRecords:
         assert resume.mark_resumed.await_count == 0  # no dispatch happened, none stamped
 
     async def test_an_early_decision_with_no_live_executor_fails_loudly(self, resume: Any) -> None:
-        # Fire-and-forget: the executor finished without ever joining, so nobody
-        # will collect this decision. Accepting it would tell the user "going
-        # ahead" for an action that never runs — refuse instead; the sweep
-        # expires the record as a visible timeout.
+        # Fire-and-forget: the executor finished without joining, so nobody will collect
+        # this decision. Accepting it would tell the user "going ahead" for an action that
+        # never runs — refuse instead; the sweep expires the record as a visible timeout.
         record = make_record(resume_item=None, subagent_thread_id="gmail_executor_conv-1")
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
             patch(f"{MODULE}.is_executor_busy", new=AsyncMock(return_value=False)),
             patch(f"{MODULE}.mark_decided", new=AsyncMock()) as decided,
-            pytest.raises(ApprovalNotResumable),
+            pytest.raises(ApprovalNotResumableError),
         ):
             await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
 
@@ -245,10 +243,9 @@ class TestUnresumableRecords:
     async def test_a_lost_resume_slot_skips_dispatch_but_keeps_the_decision(
         self, resume: Any
     ) -> None:
-        # Two decisions on one batch land near-simultaneously. The loser must NOT
-        # start a second LangGraph run on the same executor thread (checkpoint
-        # corruption) — and must NOT stamp resumed_at, so the sweep can dispatch
-        # the decision later if the in-flight round misses it.
+        # Two decisions on one batch land near-simultaneously. The loser must NOT start a
+        # second LangGraph run on the same thread (checkpoint corruption), and must NOT
+        # stamp resumed_at, so the sweep can dispatch the decision if this round misses it.
         resume.claim.return_value = False
         record = make_record()
         with (
@@ -303,6 +300,36 @@ class TestDecisionSemantics:
 
         assert decided.await_args.args[1] == "abandoned"
         assert resume.runner.call_args.kwargs["resume"].resume["status"] == "denied"
+
+    async def test_the_returned_record_carries_the_full_decision_forward(self, resume: Any) -> None:
+        # The loaded record predates the transition; the caller and the resume dispatch
+        # must see the decided image, not the pending snapshot. Every copied field is
+        # load-bearing — a renamed key silently drops it back to the pending value.
+        record = make_record()
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+        ):
+            decided = await resolve_approval(
+                approval_id="appr-1",
+                user_id=USER_ID,
+                kind="approve",
+                feedback="looks good",
+                scope="always",
+            )
+
+        assert decided is not record
+        assert decided.status == "approved"
+        assert decided.feedback == "looks good"
+        assert decided.scope == "always"
+        assert decided.decided_by == USER_ID
+        assert decided.decided_at is not None
+        # The pending snapshot the caller loaded is not mutated in place.
+        assert record.status == "pending"
+        assert record.feedback is None
+        assert record.scope == "once"
+        assert record.decided_by is None
+        assert record.decided_at is None
 
 
 class TestBatchDecisions:
@@ -585,3 +612,104 @@ class TestCancelledRunApprovals:
         ):
             assert await cancel_conversation_approvals(CONVERSATION_ID, USER_ID) == []
         assert decided.await_count == 0
+
+
+class TestHILWaitBenchmarks:
+    """Dispatch measures what the user waited and what the system added."""
+
+    async def test_dispatch_measures_user_wait_and_dispatch_lag(self, resume: Any) -> None:
+        """decided_at is stamped by the transition, so this starts from a PENDING record."""
+        record = make_record(created_at=datetime.now(UTC) - timedelta(seconds=30))
+        assert record.decided_at is None
+        wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        wait_sum_before = REGISTRY.get_sample_value("hil_user_wait_seconds_sum", {}) or 0.0
+        lag_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) or 0.0
+        lag_sum_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_sum", {}) or 0.0
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+        assert resume.runner.call_count == 1
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
+        user_wait = REGISTRY.get_sample_value("hil_user_wait_seconds_sum", {}) - wait_sum_before
+        assert 25.0 <= user_wait <= 35.0
+        assert REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) == lag_before + 1
+        dispatch_lag = (
+            REGISTRY.get_sample_value("hil_dispatch_lag_seconds_sum", {}) - lag_sum_before
+        )
+        assert 0.0 <= dispatch_lag <= 10.0
+
+    async def test_skipped_dispatch_still_measures_the_user_wait(self, resume: Any) -> None:
+        """Losing the resume claim leaves only the dispatch lag unmeasured, not the user wait."""
+        resume.claim.return_value = False
+        record = make_record()
+        wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        lag_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) or 0.0
+        with (
+            patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+        ):
+            await resolve_approval(approval_id="appr-1", user_id=USER_ID, kind="approve")
+
+        assert resume.runner.call_count == 0
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
+        assert REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) == lag_before
+
+    async def test_a_closed_record_without_resume_context_still_measures_the_user_wait(
+        self,
+    ) -> None:
+        """A record closed in place, with no run to resume, still reaches the wait histogram."""
+        record = make_record(resume_item=None)
+        wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        with (
+            patch(f"{MODULE}.mark_decided", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.log") as log_mock,
+        ):
+            await _resolve_or_close(record, user_id=USER_ID, kind="deny", feedback="no")
+
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
+        assert "user_wait_s" in log_mock.set.call_args.kwargs["hil"]
+
+    def test_the_user_wait_is_logged_with_two_decimal_precision(self) -> None:
+        created = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        record = make_record(created_at=created, decided_at=created + timedelta(seconds=12.3456))
+        with patch(f"{MODULE}.log") as log_mock:
+            _observe_hil_user_wait(record)
+
+        assert log_mock.set.call_args.kwargs == {"hil": {"user_wait_s": 12.35}}
+
+    def test_a_zero_second_user_wait_is_still_measured(self) -> None:
+        # The guard is "never negative", not "never zero": a user who answers the instant
+        # the card is created served no wait, but it is still a real observation.
+        fixed = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        record = make_record(created_at=fixed, decided_at=fixed)
+        wait_before = REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) or 0.0
+        _observe_hil_user_wait(record)
+
+        assert REGISTRY.get_sample_value("hil_user_wait_seconds_count", {}) == wait_before + 1
+
+    def test_the_dispatch_lag_is_logged_with_two_decimal_precision(self) -> None:
+        decided = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        record = make_record(decided_at=decided)
+        with (
+            patch(f"{MODULE}.datetime") as clock,
+            patch(f"{MODULE}.log") as log_mock,
+        ):
+            clock.now.return_value = decided + timedelta(seconds=7.891)
+            _observe_hil_dispatch_lag(record)
+
+        assert log_mock.set.call_args.kwargs == {"hil": {"dispatch_lag_s": 7.89}}
+
+    def test_a_zero_second_dispatch_lag_is_still_measured(self) -> None:
+        # Clock skew is a negative delta; a resume that starts at the instant of the
+        # decision is zero lag, not a reason to drop the measurement.
+        decided = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        record = make_record(decided_at=decided)
+        lag_before = REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) or 0.0
+        with patch(f"{MODULE}.datetime") as clock:
+            clock.now.return_value = decided
+            _observe_hil_dispatch_lag(record)
+
+        assert REGISTRY.get_sample_value("hil_dispatch_lag_seconds_count", {}) == lag_before + 1

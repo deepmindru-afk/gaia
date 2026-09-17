@@ -1,14 +1,4 @@
-"""End-to-end webhook delivery pipeline: signed HTTP delivery → endpoint →
-trigger registry → handler → workflow queueing / expiry transition.
-
-The unit tests for this endpoint mock the signature check, the registry and the
-handler, so the chain a real Composio delivery travels is never exercised in one
-piece. These tests keep every link real — HMAC verification over the actual
-request bytes, raw-body routing, model validation, the global trigger registry,
-the Gmail handler's matching strategies, and spawn_logged_task's background
-execution — and mock only the infra seams (Redis dedupe, workflow repository,
-ARQ queueing, the terminal expiry services).
-"""
+"""End-to-end webhook delivery pipeline: signed HTTP delivery to workflow queueing / expiry."""
 
 import asyncio
 import base64
@@ -23,6 +13,8 @@ import pytest
 
 from app.config.settings import settings
 from app.models.workflow_models import TriggerConfig, TriggerType, Workflow, WorkflowStep
+from app.services.integrations.integration_expiry import ExpiryOptions
+from app.services.triggers.batching import PER_EMAIL_FALLBACK_WINDOW_SECONDS
 from app.services.workflow.queue_service import WorkflowQueueService
 from shared.py.wide_events import spawn_logged_task
 
@@ -40,7 +32,7 @@ CALENDAR_AUTH_CONFIG_ID = "ac_exqcpnLvCzGJ"
 
 
 def _sign(body: bytes, webhook_id: str, timestamp: str, secret: str) -> str:
-    """The exact scheme app/utils/webhook_utils.py verifies."""
+    """Sign a body using the exact scheme app/utils/webhook_utils.py verifies."""
     signed = webhook_id.encode() + b"." + timestamp.encode() + b"." + body
     digest = hmac_mod.new(secret.encode(), signed, hashlib.sha256).digest()
     return f"v1,{base64.b64encode(digest).decode()}"
@@ -118,7 +110,7 @@ def _workflow() -> Workflow:
 
 @pytest.fixture
 def _webhook_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The hermetic fence blanks the real secret; sign against a known one."""
+    """Blank the real secret set by the hermetic fence and sign against a known one."""
     monkeypatch.setattr(settings, "COMPOSIO_WEBHOOK_SECRET", TEST_SECRET)
 
 
@@ -133,8 +125,7 @@ def _redis():
 
 @pytest.fixture
 def _spawned():
-    """Keep spawn_logged_task REAL but hand back its tasks, so each test can
-    await the fire-and-forget work deterministically instead of sleeping."""
+    """Keep spawn_logged_task REAL but hand back its tasks so each test can await them."""
     spawned: list[asyncio.Task] = []
 
     def _recording_spawn(operation: str, coro: Any, **ctx: Any) -> asyncio.Task:
@@ -152,17 +143,18 @@ async def _drain(spawned: list[asyncio.Task]) -> None:
 
 
 class TestTriggerDeliveryToQueuedExecution:
-    """A signed GMAIL_NEW_GMAIL_MESSAGE delivery must come out the other end as
-    a queued workflow execution carrying the payload and the integration stamp."""
+    """A signed GMAIL_NEW_GMAIL_MESSAGE delivery must become a queued workflow execution."""
 
-    async def test_a_signed_delivery_queues_the_matched_workflow(
+    async def test_a_signed_delivery_buffers_the_matched_workflow_for_a_batched_run(
         self,
         unauthenticated_client: AsyncClient,
         _webhook_secret: None,
         _redis: MagicMock,
         _spawned: list,
     ) -> None:
+        """A delivery joins the daily batch; the per-event queue path once burned a day's budget in 3 min."""
         queue = AsyncMock()
+        buffer = AsyncMock(return_value=True)
         body = _gmail_delivery()
         with (
             patch(
@@ -176,9 +168,10 @@ class TestTriggerDeliveryToQueuedExecution:
                 AsyncMock(return_value=[]),
             ),
             patch(
-                "app.services.tracked_todo_service.tracked_todo_service.get_signal_matching_context",
+                "app.services.triggers.base.get_signal_matching_context",
                 AsyncMock(return_value="todo context"),
             ),
+            patch("app.services.triggers.base.buffer_trigger_event", buffer),
             patch.object(WorkflowQueueService, "queue_workflow_execution", queue),
         ):
             response = await unauthenticated_client.post(
@@ -191,16 +184,61 @@ class TestTriggerDeliveryToQueuedExecution:
         assert response.status_code == 200
         assert response.json()["message"] == "Webhook accepted"
 
-        queue.assert_awaited_once()
-        workflow_id, user_id = queue.await_args.args
-        context = queue.await_args.kwargs["context"]
+        buffer.assert_awaited_once()
+        workflow_id, user_id, data, window_seconds, context = buffer.await_args.args
         assert workflow_id == WORKFLOW_ID
         assert user_id == USER_ID
+        assert data["payload"]["message_id"] == "msg-1"
+        assert window_seconds == PER_EMAIL_FALLBACK_WINDOW_SECONDS
         # The stamp that tells the worker this run came from an integration
         # trigger, not a manual "run now".
         assert context["trigger_type"] == TriggerType.INTEGRATION.value
-        assert context["trigger_data"]["payload"]["message_id"] == "msg-1"
         assert context["tracked_todos_context"] == "todo context"
+        queue.assert_not_awaited()
+
+    async def test_a_signed_delivery_also_hands_the_event_to_subscribed_todos(
+        self,
+        unauthenticated_client: AsyncClient,
+        _webhook_secret: None,
+        _redis: MagicMock,
+        _spawned: list,
+    ) -> None:
+        """A tracked todo waiting on the same event must not be dropped by the no-match return."""
+        enqueue = AsyncMock()
+        body = _gmail_delivery()
+        with (
+            patch(
+                f"{GMAIL_HANDLER_MODULE}.workflow_repository.find_active_integration_workflows",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                f"{GMAIL_HANDLER_MODULE}.workflow_repository.find_active_by_composio_trigger",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "app.services.triggers.base.get_signal_matching_context",
+                AsyncMock(return_value=""),
+            ),
+            patch("app.services.triggers.base.RedisPoolManager.get_pool", AsyncMock()),
+            patch("app.services.triggers.base.enqueue_worker_job", enqueue),
+        ):
+            response = await unauthenticated_client.post(
+                ENDPOINT,
+                content=json.dumps(body).encode(),
+                headers=_signed_headers(body, "wh-e2e-todo-1"),
+            )
+            await _drain(_spawned)
+
+        assert response.status_code == 200
+
+        # No workflow matched, and the event still reached the todo side.
+        enqueue.assert_awaited_once()
+        _pool, task_name, trigger_names, trigger_id, user_id, payload = enqueue.await_args.args
+        assert task_name == "dispatch_todo_subscriptions"
+        assert "gmail_new_message" in trigger_names
+        assert user_id == USER_ID
+        assert payload["payload"]["message_id"] == "msg-1"
+        assert trigger_id is not None
 
     async def test_a_bad_signature_is_refused_and_never_reaches_the_handler(
         self,
@@ -240,6 +278,7 @@ class TestTriggerDeliveryToQueuedExecution:
         # First delivery claims the key; Composio's retry finds it taken.
         _redis.client.set = AsyncMock(side_effect=[True, None])
         queue = AsyncMock()
+        buffer = AsyncMock(return_value=True)
         body = _gmail_delivery()
         headers = _signed_headers(body, "wh-e2e-dupe")
         with (
@@ -254,9 +293,10 @@ class TestTriggerDeliveryToQueuedExecution:
                 AsyncMock(return_value=[]),
             ),
             patch(
-                "app.services.tracked_todo_service.tracked_todo_service.get_signal_matching_context",
+                "app.services.triggers.base.get_signal_matching_context",
                 AsyncMock(return_value=""),
             ),
+            patch("app.services.triggers.base.buffer_trigger_event", buffer),
             patch.object(WorkflowQueueService, "queue_workflow_execution", queue),
         ):
             first = await unauthenticated_client.post(
@@ -269,12 +309,12 @@ class TestTriggerDeliveryToQueuedExecution:
 
         assert first.json()["message"] == "Webhook accepted"
         assert second.json()["message"] == "Duplicate webhook ignored"
-        queue.assert_awaited_once()
+        buffer.assert_awaited_once()
+        queue.assert_not_awaited()
 
 
 class TestConnectionExpiryDelivery:
-    """A signed connected_account.expired delivery must resolve the integration
-    through the real oauth_config and run the shared expiry transition."""
+    """A signed connected_account.expired delivery must resolve via real oauth_config and expire."""
 
     async def test_an_expired_calendar_account_runs_the_expiry_transition(
         self,
@@ -304,11 +344,13 @@ class TestConnectionExpiryDelivery:
         expire.assert_awaited_once_with(
             USER_ID,
             "googlecalendar",
-            reason="refresh_token_revoked",
-            trigger="webhook",
-            notify=True,
-            connected_account_id="ca_xxxxxxxxxxxx",
-            paused_workflows=3,
+            ExpiryOptions(
+                reason="refresh_token_revoked",
+                trigger="webhook",
+                notify=True,
+                connected_account_id="ca_xxxxxxxxxxxx",
+                paused_workflows=3,
+            ),
         )
 
     async def test_an_unrecognised_toolkit_is_acked_without_touching_any_user(

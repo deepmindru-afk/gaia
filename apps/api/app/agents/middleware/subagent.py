@@ -1,13 +1,14 @@
 """SubagentMiddleware - Provides spawn_subagent tool for lightweight parallel task execution.
 
 A spawned subagent is a real compiled graph (see
-``app/agents/core/subagents/spawn_agent.py``), run imperatively on a disposable
+app/agents/core/subagents/spawn_agent.py), run imperatively on a disposable
 thread of its own. That is what gives it the full middleware stack — including
 the HIL gate, so a gated tool inside a spawn pauses for the user's approval and
-bubbles that pause up to the parent, exactly as ``handoff`` does.
+bubbles that pause up to the parent, exactly as handoff does.
 """
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 import time
 from typing import Annotated, Any, Protocol
 
@@ -32,6 +33,7 @@ from app.agents.context.tiers import AgentTier
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
     SubagentOutcome,
+    ThreadSeed,
     build_initial_messages,
     execute_subagent_stream,
     recover_from_checkpoint,
@@ -47,10 +49,11 @@ from app.constants.general import SPAWN_AGENT_NAME, SPAWN_THREAD_PREFIX
 from app.constants.hil import HIL_RESUME_CONFIG_KEY
 from app.constants.llm import SUBAGENT_RECURSION_LIMIT
 from app.constants.log_tags import LogTag
-from app.helpers.agent_helpers import build_agent_config
+from app.helpers.agent_helpers import AgentIdentity, AgentThread, build_agent_config
 from app.models.agent_models import AnyAgentMiddleware, agent_configurable
 from app.utils.agent_utils import (
     StreamWriterCallable,
+    SubagentStartDetails,
     format_subagent_end_event,
     format_subagent_start_event,
 )
@@ -60,11 +63,11 @@ from shared.py.wide_events import log
 class SpawnGraphProvider(Protocol):
     """Compiles the graph a spawn runs on.
 
-    A Protocol rather than ``Callable[..., ...]`` because this is an injection
+    A Protocol rather than Callable[..., ...] because this is an injection
     seam: every call site passes these six by keyword, and an erased signature
-    turns a renamed or dropped argument into a runtime ``TypeError`` instead of a
-    type error. Satisfied by ``core.subagents.spawn_agent.get_spawn_graph``,
-    which is injected rather than imported (see :meth:`set_spawn_graph_provider`).
+    turns a renamed or dropped argument into a runtime TypeError instead of a
+    type error. Satisfied by core.subagents.spawn_agent.get_spawn_graph,
+    which is injected rather than imported (see :meth:set_spawn_graph_provider).
     """
 
     async def __call__(
@@ -78,6 +81,27 @@ class SpawnGraphProvider(Protocol):
     ) -> CompiledStateGraph: ...
 
 
+@dataclass(frozen=True)
+class SubagentMiddlewareConfig:
+    """Construction settings for :class:SubagentMiddleware.
+
+    One object rather than ten constructor arguments: these are all build-time
+    wiring for the same middleware, and every field keeps the default the
+    constructor used to carry.
+    """
+
+    llm: LanguageModelLike | None = None
+    available_tools: list[BaseTool] | None = None
+    tool_registry: Mapping[str, BaseTool] | None = None
+    max_turns: int = SUBAGENT_RECURSION_LIMIT
+    system_prompt: str = SPAWN_SUBAGENT_SYSTEM_PROMPT
+    excluded_tool_names: set[str] | None = None
+    tool_space: str = "general"
+    store: BaseStore | None = None
+    tool_runtime_config: ToolRuntimeConfig | None = None
+    spawn_middleware_factory: Callable[[str], Sequence[AnyAgentMiddleware]] | None = None
+
+
 class SubagentState(AgentState[Any]):
     """State schema for subagent middleware."""
 
@@ -89,35 +113,24 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
 
     state_schema = SubagentState
 
-    def __init__(
-        self,
-        llm: LanguageModelLike | None = None,
-        available_tools: list[BaseTool] | None = None,
-        tool_registry: Mapping[str, BaseTool] | None = None,
-        max_turns: int = SUBAGENT_RECURSION_LIMIT,
-        system_prompt: str = SPAWN_SUBAGENT_SYSTEM_PROMPT,
-        excluded_tool_names: set[str] | None = None,
-        tool_space: str = "general",
-        store: BaseStore | None = None,
-        tool_runtime_config: ToolRuntimeConfig | None = None,
-        spawn_middleware_factory: Callable[[str], Sequence[AnyAgentMiddleware]] | None = None,
-    ) -> None:
+    def __init__(self, config: SubagentMiddlewareConfig | None = None) -> None:
         super().__init__()
-        self._llm = llm
-        self._spawn_middleware_factory = spawn_middleware_factory
+        settings = config or SubagentMiddlewareConfig()
+        self._llm = settings.llm
+        self._spawn_middleware_factory = settings.spawn_middleware_factory
         # Injected by whoever builds the parent graph (see set_spawn_graph_provider):
         # the builder imports create_agent, which imports this package, so this
         # module cannot reach the graph builder itself.
         self._spawn_graph_provider: SpawnGraphProvider | None = None
-        self._available_tools = available_tools or []
-        self._tool_registry = tool_registry
-        self._max_turns = max_turns
-        self._system_prompt = system_prompt
-        self._excluded_tools = excluded_tool_names or set()
+        self._available_tools = settings.available_tools or []
+        self._tool_registry = settings.tool_registry
+        self._max_turns = settings.max_turns
+        self._system_prompt = settings.system_prompt
+        self._excluded_tools = settings.excluded_tool_names or set()
         self._excluded_tools.add("spawn_subagent")
-        self._tool_space = tool_space
-        self._store: BaseStore | None = store
-        self._tool_runtime_config = tool_runtime_config or ToolRuntimeConfig(
+        self._tool_space = settings.tool_space
+        self._store: BaseStore | None = settings.store
+        self._tool_runtime_config = settings.tool_runtime_config or ToolRuntimeConfig(
             initial_tool_names=["read", "bash"],
             enable_retrieve_tools=True,
             include_subagents_in_retrieve=False,
@@ -219,8 +232,10 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
                     subagent_name=spawn_name,
                     agent_type="spawned",
                     subagent_id=sa_id,
-                    tool_category="spawn_subagent",
-                    parent_subagent_id=configurable.get("subagent_id"),
+                    details=SubagentStartDetails(
+                        tool_category="spawn_subagent",
+                        parent_subagent_id=configurable.get("subagent_id"),
+                    ),
                 )
             }
         )
@@ -246,10 +261,9 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
                     }
                 )
 
-        # The thread deliberately outlives the run: a later sibling in this same AI
-        # message can still pause, which replays the tool node from the top, and the
-        # checkpoint is what tells the replay this spawn already finished instead of
-        # redoing its whole task. The nightly sweep reclaims it once it is stale.
+        # The thread deliberately outlives the run: a later sibling in this
+        # same AI message can still pause and replay the tool node from the
+        # top, and the checkpoint tells the replay this spawn already finished.
         return outcome.text
 
     async def _drive(
@@ -261,12 +275,10 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
     ) -> SubagentOutcome:
         """Run the graph, bubbling every HIL pause up to the parent.
 
-        The spawn is invoked imperatively, so its GraphInterrupt never reaches the
-        parent's runtime — each pause is re-raised here with ``interrupt()``. A LOOP,
-        not an if: one task can gate several destructive calls in sequence, and each
-        must suspend the parent again. ``resume_for_gate`` raises on the first pass and
-        returns that gate's own decision on the replay (matching the recovered park, not
-        an earlier gate's already-applied decision).
+        The spawn is invoked imperatively, so its GraphInterrupt never reaches
+        the parent's runtime — each pause is re-raised here with interrupt().
+        A LOOP, not an if: one task can gate several destructive calls in
+        sequence, each suspending the parent again.
         """
         recovered = await recover_from_checkpoint(ctx) if probe_parked else None
         outcome = recovered or await execute_subagent_stream(
@@ -310,38 +322,41 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
             middleware_factory=lambda: middleware_factory(tool_space),
         )
 
-        # One thread per spawn call, never reused. ``tool_call_id`` is unique per call
-        # AND stable across node replays (it lives in the checkpointed AI message),
-        # which is what lets a resumed spawn find its own run — parked or finished —
-        # instead of starting a second one. The ``spawn_`` prefix is what
-        # workers/tasks/checkpoint_retention_tasks.py selects on to reclaim these once
-        # stale; the conversation uuid keeps them collectable with the conversation.
+        # One thread per spawn call, never reused: ``tool_call_id`` is unique
+        # and stable across replays. ``spawn_`` prefix lets
+        # checkpoint_retention_tasks.py reclaim these once stale.
         thread_id = f"{SPAWN_THREAD_PREFIX}{conversation_id}_{tool_call_id}"
 
         spawn_config = await build_agent_config(
-            conversation_id=conversation_id,
-            user={
-                "user_id": user_id,
-                "email": configurable.get("email"),
-                "name": configurable.get("user_name"),
-            },
-            agent_name=SPAWN_AGENT_NAME,
-            thread_id=thread_id,
-            base_configurable=configurable,
-            subagent_id=SPAWN_AGENT_NAME,
-            recursion_limit=self._max_turns,
+            identity=AgentIdentity(
+                conversation_id=conversation_id,
+                user={
+                    "user_id": user_id,
+                    "email": configurable.get("email"),
+                    "name": configurable.get("user_name"),
+                },
+                agent_name=SPAWN_AGENT_NAME,
+            ),
+            thread=AgentThread(
+                thread_id=thread_id,
+                base_configurable=configurable,
+                subagent_id=SPAWN_AGENT_NAME,
+                recursion_limit=self._max_turns,
+            ),
         )
         new_configurable = agent_configurable(spawn_config)
 
         user_content = f"Context:\n{context}\n\nTask:\n{task}" if context else f"Task:\n{task}"
         messages = await build_initial_messages(
             system_message=SystemMessage(content=self._system_prompt),
-            tier=AgentTier.SPAWN,
             agent_name=SPAWN_AGENT_NAME,
-            configurable=new_configurable,
             task=user_content,
-            user_id=user_id,
-            retrieval_query=task,
+            seed=ThreadSeed(
+                tier=AgentTier.SPAWN,
+                configurable=new_configurable,
+                user_id=user_id,
+                retrieval_query=task,
+            ),
         )
 
         return SubagentExecutionContext(
@@ -369,7 +384,7 @@ class SubagentMiddleware(AgentMiddleware[SubagentState, Any]):
     def set_spawn_graph_provider(self, provider: SpawnGraphProvider) -> None:
         """Wire the builder that compiles the graph a spawn runs on.
 
-        Injected rather than imported: the graph builder pulls in ``create_agent``,
+        Injected rather than imported: the graph builder pulls in create_agent,
         which imports this package, so importing it from here would close a cycle.
         """
         self._spawn_graph_provider = provider

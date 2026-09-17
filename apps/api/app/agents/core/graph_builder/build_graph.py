@@ -30,12 +30,19 @@ from app.agents.tools.core.store import get_tools_store
 from app.agents.tools.core.tool_runtime_config import (
     build_executor_child_tool_runtime_config,
 )
+from app.agents.tools.discovery_tools import find_integration, search_public_workflows
 from app.agents.tools.executor_tool import call_executor, cancel_executor
 from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_tools
 from app.agents.tools.wait_for_subagents_tool import wait_for_subagents as wait_for_subagents_tool
+from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 from app.constants.general import WAIT_FOR_SUBAGENTS_NAME
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
+from app.override.langgraph_bigtool.agent_config import (
+    AgentConfig,
+    HookConfig,
+    ToolRetrievalConfig,
+)
 from app.override.langgraph_bigtool.create_agent import create_agent
 from shared.py.wide_events import log
 
@@ -67,6 +74,7 @@ async def build_executor_graph(
     excluded_subagent_tools = {"handoff", WAIT_FOR_SUBAGENTS_NAME}
 
     middleware = create_executor_middleware(
+        chat_llm=chat_llm,
         subagent_excluded_tools=excluded_subagent_tools,
         subagent_tool_runtime_config=build_executor_child_tool_runtime_config(),
     )
@@ -89,30 +97,51 @@ async def build_executor_graph(
     pre_model_hooks = worker_pre_model_hooks(todo_hook)
 
     builder = create_agent(
-        llm=chat_llm,
-        agent_name="executor_agent",
-        tool_registry=tool_dict,
-        retrieve_tools_coroutine=get_retrieve_tools_function(),
-        initial_tool_ids=[
-            "handoff",
-            "plan_tasks",
-            "update_tasks",
-            "read",
-            "bash",
-            "deep_research",
-            "wait_for_subagents",
-            "read_manual",
-            "create_tracked_todo",
-            "update_tracked_todo",
-            "update_tracked_todo_canvas",
-            "complete_tracked_todo",
-            "search_todo_context",
-            "list_tracked_todos",
-            "save_learned_skill",
-        ],
-        middleware=middleware,
-        pre_model_hooks=pre_model_hooks,
-        require_finish_to_end=True,
+        chat_llm,
+        tool_dict,
+        tools_config=ToolRetrievalConfig(
+            retrieve_tools_coroutine=get_retrieve_tools_function(),
+            initial_tool_ids=[
+                "handoff",
+                "plan_tasks",
+                "update_tasks",
+                "read",
+                "write",
+                "edit",
+                "bash",
+                "deep_research",
+                "wait_for_subagents",
+                "read_manual",
+                "create_tracked_todo",
+                "update_tracked_todo",
+                "complete_tracked_todo",
+                "search_todo_context",
+                "list_tracked_todos",
+                "list_trigger_fields",
+                "subscribe_todo_to_trigger",
+                "unsubscribe_todo_from_trigger",
+                "save_learned_skill",
+                # Bound statically, not left to retrieve_tools: the <playbook_check>
+                # and heal briefs name these directly, so semantic retrieval
+                # missing them would leave the instruction unactionable.
+                "write_playbook",
+                "decline_playbook",
+                "read_playbook",
+                "disable_playbook",
+                # Same rule as playbook tools: not in the retrieval index, so
+                # retrieve_tools once improvised a nonexistent `gaia bridge approve`.
+                # approve_device_pairing stays gated regardless of binding.
+                "add_device",
+                "approve_device_pairing",
+                "list_devices",
+                "run_on_device",
+            ],
+        ),
+        hooks_config=HookConfig(
+            pre_model_hooks=pre_model_hooks,
+            require_finish_to_end=True,
+        ),
+        agent_config=AgentConfig(agent_name="executor_agent", middleware=middleware),
     )
 
     checkpointer_manager = await get_checkpointer_manager()
@@ -167,36 +196,50 @@ async def build_comms_graph(
     if chat_llm is None:
         chat_llm = init_llm()
 
+    # The discovery pair are read-only catalogue lookups, so they do not breach
+    # "delegate every real ask". Connecting an integration is a real ask and
+    # goes to the executor.
     tool_registry = {
         "call_executor": call_executor,
         "cancel_executor": cancel_executor,
+        "find_integration": find_integration,
+        "search_public_workflows": search_public_workflows,
+        web_search_tool.name: web_search_tool,
+        fetch_webpages.name: fetch_webpages,
         **{memory_tool.name: memory_tool for memory_tool in memory_tools.tools},
     }
     store = await get_tools_store()
 
-    middleware = create_comms_middleware()
+    middleware = create_comms_middleware(chat_llm=chat_llm)
 
     pre_model_hooks = comms_pre_model_hooks()
 
     builder = create_agent(
-        llm=chat_llm,
-        agent_name="comms_agent",
-        tool_registry=tool_registry,
-        disable_retrieve_tools=True,
-        initial_tool_ids=[
-            "call_executor",
-            "cancel_executor",
-            *[memory_tool.name for memory_tool in memory_tools.tools],
-        ],
-        middleware=middleware,
-        pre_model_hooks=pre_model_hooks,
-        end_graph_hooks=[
-            follow_up_actions_node,
-            # Learn durable user memories from every comms turn (passive
-            # ingestion). Without this, only facts the agent explicitly saves
-            # via add_memory persist — conversational disclosures are lost.
-            memory_node,
-        ],
+        chat_llm,
+        tool_registry,
+        tools_config=ToolRetrievalConfig(
+            disable_retrieve_tools=True,
+            initial_tool_ids=[
+                "call_executor",
+                "cancel_executor",
+                "find_integration",
+                "search_public_workflows",
+                web_search_tool.name,
+                fetch_webpages.name,
+                *[memory_tool.name for memory_tool in memory_tools.tools],
+            ],
+        ),
+        hooks_config=HookConfig(
+            pre_model_hooks=pre_model_hooks,
+            end_graph_hooks=[
+                follow_up_actions_node,
+                # Learn durable user memories from every comms turn (passive
+                # ingestion). Without this, only facts the agent explicitly saves
+                # via add_memory persist — conversational disclosures are lost.
+                memory_node,
+            ],
+        ),
+        agent_config=AgentConfig(agent_name="comms_agent", middleware=middleware),
     )
 
     checkpointer_manager = await get_checkpointer_manager()

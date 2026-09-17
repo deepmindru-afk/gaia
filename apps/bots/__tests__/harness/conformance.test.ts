@@ -21,7 +21,7 @@ import {
   buildPlanRequiredMessage,
   type PlatformName,
   renderForPlatform,
-} from "@gaia/shared";
+} from "@gaia/shared/bots";
 import { describe, expect, it, vi } from "vitest";
 import { HarnessAdapter } from "../../harness/src/adapter";
 import { resolveEmulation } from "../../harness/src/emulation";
@@ -118,10 +118,8 @@ function makeGaia(script: StreamScript) {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Canonical reduction: a keyed set of bubbles (create then update in place),
 // plus every text delivered by any channel (bubbles + ephemerals + DMs).
-// ---------------------------------------------------------------------------
 
 type Op =
   | { op: "create"; id: string; text: string }

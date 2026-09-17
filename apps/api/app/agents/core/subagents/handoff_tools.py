@@ -1,5 +1,5 @@
 """
-Subagent Tools - Consolidated Delegation Pattern
+Subagent Tools - Consolidated Delegation Pattern.
 
 This module provides two tools for subagent delegation:
 1. search_subagents - Semantic search for available subagents
@@ -10,17 +10,20 @@ Subagent identity/metadata comes from agents/core/subagents/registry.py
 (unified view of OAuth-derived + builtin subagents).
 """
 
+from dataclasses import dataclass
 import re
 import time
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import uuid4
 
+from langchain_core.messages import AnyMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from langgraph.config import get_stream_writer
 from langgraph.errors import GraphBubbleUp
 from langgraph.store.base import BaseStore, PutOp
 from langgraph.types import Command
+from pydantic import BaseModel, ConfigDict
 
 from app.agents.context.tiers import AgentTier
 from app.agents.core.background.bg_results import try_claim_bg_dispatch
@@ -30,19 +33,24 @@ from app.agents.core.background.session import (
     increment_pending_subagents,
     release_bg_integration,
 )
-from app.agents.core.background.subagent_runner import run_subagent_background
+from app.agents.core.background.subagent_runner import BackgroundHandoff, run_subagent_background
 from app.agents.core.graph_manager import CompiledAgentGraph
+from app.agents.core.subagents.call_record import append_call_record
 from app.agents.core.subagents.provider_subagents import (
     SubagentUnavailableError,
     create_subagent_for_user,
 )
-from app.agents.core.subagents.registry import all_subagents, get_subagent_by_id
+from app.agents.core.subagents.registry import (
+    all_subagents,
+    get_subagent_by_id,
+)
 from app.agents.core.subagents.subagent_helpers import (
     create_subagent_system_message,
 )
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
     SubagentOutcome,
+    ThreadSeed,
     build_initial_messages,
     execute_subagent_stream,
     recover_from_checkpoint,
@@ -55,7 +63,7 @@ from app.constants.log_tags import LogTag
 from app.core.lazy_loader import providers
 from app.db.redis import get_cache, set_cache
 from app.db.repositories.integrations import integration_repository
-from app.helpers.agent_helpers import build_agent_config
+from app.helpers.agent_helpers import AgentIdentity, AgentThread, build_agent_config
 from app.helpers.namespace_utils import derive_integration_namespace
 from app.models.agent_models import AgentConfigurable, AgentUserContext, agent_configurable
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
@@ -70,6 +78,7 @@ from app.services.provider_metadata_service import get_provider_metadata
 from app.utils.agent_utils import (
     IntegrationMetadata,
     StreamWriterCallable,
+    SubagentStartDetails,
     format_subagent_end_event,
     format_subagent_start_event,
     parse_subagent_id,
@@ -81,7 +90,80 @@ from shared.py.wide_events import log
 SUBAGENTS_NAMESPACE = ("subagents",)
 
 
-def _extract_service_username(metadata: dict[str, Any] | None) -> str | None:
+@dataclass(frozen=True)
+class CustomMcpIndexRequest:
+    """The custom-MCP identity/description cluster indexed for handoff discovery.
+
+    Args:
+        integration_id: Unique ID of the custom integration (12-char hex)
+        name: Display name of the integration
+        description: Description of what the integration does
+        server_url: MCP server URL for namespace derivation
+        tools: The MCP's tools — their names/summaries are embedded so the
+            subagent ranks for what it can actually do (e.g. a "get_meetings"
+            tool surfaces on a "meetings" query) instead of generic boilerplate.
+    """
+
+    integration_id: str
+    name: str
+    description: str
+    server_url: str | None = None
+    tools: list[BaseTool] | None = None
+
+
+@dataclass(frozen=True)
+class _HandoffDispatch:
+    """Everything besides the execution context that one handoff dispatch needs."""
+
+    metadata: IntegrationMetadata | None
+    agent_name: str
+    integration_id: str
+    tool_call_id: str
+    probe_parked: bool = False
+    record_calls: bool = False
+
+
+class CustomMcpSubagent(BaseModel):
+    """A custom MCP resolved as a handoff target, as cached under ``SUBAGENT_CACHE_PREFIX``.
+
+    Fields default because the cache holds whatever an earlier resolution wrote;
+    ``_resolve_custom_mcp_subagent`` refuses one with no ``id``.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = ""
+    name: str | None = None
+    source: str | None = None
+    managed_by: str | None = None
+    mcp_config: dict[str, object] | None = None
+    icon_url: str | None = None
+    subagent_config: None = None
+
+
+class _CustomIntegrationDoc(BaseModel):
+    """The ``IntegrationResolver.custom_doc`` keys a custom-MCP handoff target copies.
+
+    ``mcp_config`` stays the stored mapping: it is cached verbatim, never read here.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    integration_id: str = ""
+    name: str | None = None
+    mcp_config: dict[str, object] | None = None
+    icon_url: str | None = None
+
+
+class _RunMetadata(BaseModel):
+    """The ``metadata`` key of a ``RunnableConfig`` the handoff falls back on."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    user_id: str | None = None
+
+
+def _extract_service_username(metadata: dict[str, str] | None) -> str | None:
     if not metadata:
         return None
     for key in ("username", "login", "handle"):
@@ -132,17 +214,11 @@ async def check_integration_connection(
     return await request_integration_connection(subagent.id, subagent.name, user_id)
 
 
-async def _get_subagent_by_id(subagent_id: str) -> Subagent | dict[str, Any] | None:
-    """
-    Get subagent by ID or short_name.
+async def _get_subagent_by_id(subagent_id: str) -> Subagent | CustomMcpSubagent | None:
+    """Get subagent by ID or short_name.
 
     Checks both platform/builtin subagents (via registry) and custom MCPs
-    from MongoDB. Uses Redis caching to avoid repeated DB queries for
-    custom MCPs.
-
-    Returns:
-        Subagent (platform/builtin) or dict (custom MCP info), or None if
-        not found
+    from MongoDB, with Redis caching for the latter.
     """
     search_id = subagent_id.lower().strip()
 
@@ -153,25 +229,24 @@ async def _get_subagent_by_id(subagent_id: str) -> Subagent | dict[str, Any] | N
 
     # Check Redis cache for custom integrations
     cache_key = f"{SUBAGENT_CACHE_PREFIX}:{search_id}"
-    cached: dict[str, Any] | None = await get_cache(cache_key)
+    cached = await get_cache(cache_key)
     if cached is not None:
         # Return cached result (could be empty dict for negative cache)
-        return cached or None
+        return CustomMcpSubagent.model_validate(cached) if cached else None
 
     # Search by integration_id (case-insensitive) or exact name
     custom = await integration_repository.find_by_id_prefix_or_name(search_id)
 
     if custom:
-        result = {
-            "id": custom.integration_id,
-            "name": custom.name,
-            "source": custom.source,
-            "managed_by": custom.managed_by,
-            "mcp_config": custom.mcp_config.model_dump() if custom.mcp_config else None,
-            "icon_url": custom.icon_url,
-            "subagent_config": None,
-        }
-        await set_cache(cache_key, result, ttl=SUBAGENT_CACHE_TTL)
+        result = CustomMcpSubagent(
+            id=custom.integration_id,
+            name=custom.name,
+            source=custom.source,
+            managed_by=custom.managed_by,
+            mcp_config=custom.mcp_config.model_dump() if custom.mcp_config else None,
+            icon_url=custom.icon_url,
+        )
+        await set_cache(cache_key, result.model_dump(), ttl=SUBAGENT_CACHE_TTL)
         return result
 
     # Fallback: Try IntegrationResolver which checks multiple sources
@@ -179,17 +254,16 @@ async def _get_subagent_by_id(subagent_id: str) -> Subagent | dict[str, Any] | N
 
     resolved = await IntegrationResolver.resolve(search_id)
     if resolved and resolved.custom_doc:
-        doc = resolved.custom_doc
-        result = {
-            "id": doc.get("integration_id"),
-            "name": doc.get("name"),
-            "source": resolved.source,
-            "managed_by": "mcp",
-            "mcp_config": doc.get("mcp_config"),
-            "icon_url": doc.get("icon_url"),
-            "subagent_config": None,
-        }
-        await set_cache(cache_key, result, ttl=SUBAGENT_CACHE_TTL)
+        doc = _CustomIntegrationDoc.model_validate(resolved.custom_doc)
+        result = CustomMcpSubagent(
+            id=doc.integration_id,
+            name=doc.name,
+            source=resolved.source,
+            managed_by="mcp",
+            mcp_config=doc.mcp_config,
+            icon_url=doc.icon_url,
+        )
+        await set_cache(cache_key, result.model_dump(), ttl=SUBAGENT_CACHE_TTL)
         return result
 
     # Cache negative result to avoid repeated DB queries
@@ -199,28 +273,19 @@ async def _get_subagent_by_id(subagent_id: str) -> Subagent | dict[str, Any] | N
 
 async def index_custom_mcp_as_subagent(
     store: BaseStore,
-    integration_id: str,
-    name: str,
-    description: str,
-    server_url: str | None = None,
-    tools: list[BaseTool] | None = None,
+    request: CustomMcpIndexRequest,
 ) -> None:
-    """
-    Index a custom MCP as a subagent for handoff discovery.
+    """Index a custom MCP as a subagent for handoff discovery.
 
-    Called when user connects a custom MCP to make it immediately
-    available for semantic search and handoff.
-
-    Args:
-        store: The ChromaStore instance
-        integration_id: Unique ID of the custom integration (12-char hex)
-        name: Display name of the integration
-        description: Description of what the integration does
-        server_url: MCP server URL for namespace derivation
-        tools: The MCP's tools — their names/summaries are embedded so the
-            subagent ranks for what it can actually do (e.g. a "get_meetings"
-            tool surfaces on a "meetings" query) instead of generic boilerplate.
+    Called when user connects a custom MCP to make it immediately available
+    for semantic search and handoff.
     """
+    integration_id = request.integration_id
+    name = request.name
+    description = request.description
+    server_url = request.server_url
+    tools = request.tools
+
     parts = [f"{name}."]
     if description:
         parts.append(f"{description}.")
@@ -257,21 +322,93 @@ async def index_custom_mcp_as_subagent(
     )
 
 
+async def _resolve_custom_mcp_subagent(
+    resolved: CustomMcpSubagent,
+    user_id: str | None,
+) -> tuple[CompiledAgentGraph | None, str | None, str | None, bool]:
+    """Resolve a custom MCP into the _resolve_subagent tuple."""
+    integration_id = resolved.id
+    integration_name = resolved.name if resolved.name is not None else integration_id
+
+    if not integration_id:
+        return None, None, "Error: Custom integration has no ID", False
+
+    if not user_id:
+        return (
+            None,
+            None,
+            f"Error: {integration_name} requires authentication. Please sign in first.",
+            False,
+        )
+
+    # Create subagent for custom MCP
+    try:
+        subagent_graph = await create_subagent_for_user(integration_id, user_id)
+    except SubagentUnavailableError as e:
+        return (
+            None,
+            None,
+            f"Error: {integration_name} is unavailable: {e.reason}",
+            False,
+        )
+
+    agent_name = f"custom_mcp_{integration_id}"
+    return subagent_graph, agent_name, integration_id, True
+
+
+async def _resolve_auth_mcp_graph(
+    subagent: Subagent,
+    agent_name: str,
+    integration_id: str,
+    user_id: str | None,
+) -> tuple[CompiledAgentGraph | None, str | None]:
+    """Graph for an auth-required MCP integration, or (None, error_message)."""
+    if not user_id:
+        return None, f"Error: {agent_name} requires authentication. Please sign in first."
+
+    # Check if user has connected this MCP integration
+    token_store = MCPTokenStore(user_id=user_id)
+    is_connected = await token_store.is_connected(integration_id)
+    if not is_connected:
+        return None, await request_integration_connection(integration_id, subagent.name, user_id)
+
+    # Create subagent on-the-fly with user's tokens
+    try:
+        return await create_subagent_for_user(integration_id, user_id), None
+    except SubagentUnavailableError as e:
+        return None, f"Error: {agent_name} is unavailable: {e.reason}"
+
+
+async def _resolve_plain_subagent_graph(
+    subagent: Subagent,
+    agent_name: str,
+    integration_id: str,
+    user_id: str | None,
+) -> tuple[CompiledAgentGraph | None, str | None]:
+    """Graph for a non-MCP / non-auth-required integration, or (None, error_message)."""
+    # Skip connection check for internal integrations (always available)
+    if subagent.managed_by not in ("mcp", "internal") and user_id:
+        error_message = await check_integration_connection(integration_id, user_id)
+        if error_message:
+            return None, error_message
+
+    try:
+        subagent_graph = await providers.aget(agent_name)
+    except KeyError:
+        return None, f"Error: {agent_name} not available"
+    if not subagent_graph:
+        return None, f"Error: {agent_name} not available"
+    return subagent_graph, None
+
+
 async def _resolve_subagent(
     subagent_id: str,
     user_id: str | None,
 ) -> tuple[CompiledAgentGraph | None, str | None, str | None, bool]:
-    """
-    Resolve subagent from ID and get the graph.
+    """Resolve subagent from ID and get the graph.
 
-    Accepts formats:
-        - 'subagent:gmail'
-        - 'subagent:fb9dfd7e05f8 (Semantic Scholar)'
-        - 'gmail' (bare ID)
-
-    Returns:
-        Tuple of (subagent_graph, agent_name, integration_id, is_custom)
-        or (None, None, error_message, False) on failure
+    Accepts 'subagent:gmail', 'subagent:fb9dfd7e05f8 (Semantic Scholar)', or
+    a bare id. Returns (None, None, error_message, False) on failure.
     """
     clean_id, _ = parse_subagent_id(subagent_id)
 
@@ -286,36 +423,9 @@ async def _resolve_subagent(
         )
         return None, None, error, False
 
-    # Handle custom MCPs (returned as dict from MongoDB)
-    if isinstance(resolved, dict):
-        # Custom MCP - resolved is a dict
-        integration_id = str(resolved.get("id", ""))
-        integration_name = str(resolved.get("name", integration_id))
-
-        if not integration_id:
-            return None, None, "Error: Custom integration has no ID", False
-
-        if not user_id:
-            return (
-                None,
-                None,
-                f"Error: {integration_name} requires authentication. Please sign in first.",
-                False,
-            )
-
-        # Create subagent for custom MCP
-        try:
-            subagent_graph = await create_subagent_for_user(integration_id, user_id)
-        except SubagentUnavailableError as e:
-            return (
-                None,
-                None,
-                f"Error: {integration_name} is unavailable — {e.reason}",
-                False,
-            )
-
-        agent_name = f"custom_mcp_{integration_id}"
-        return subagent_graph, agent_name, integration_id, True
+    # Handle custom MCPs (resolved from MongoDB)
+    if isinstance(resolved, CustomMcpSubagent):
+        return await _resolve_custom_mcp_subagent(resolved, user_id)
 
     # Platform/builtin subagent (Subagent object)
     subagent = resolved
@@ -324,49 +434,16 @@ async def _resolve_subagent(
 
     # Handle auth-required MCP integrations specially
     if subagent.managed_by == "mcp" and subagent.mcp_config and subagent.mcp_config.requires_auth:
-        if not user_id:
-            return (
-                None,
-                None,
-                f"Error: {agent_name} requires authentication. Please sign in first.",
-                False,
-            )
-
-        # Check if user has connected this MCP integration
-        token_store = MCPTokenStore(user_id=user_id)
-        is_connected = await token_store.is_connected(integration_id)
-        if not is_connected:
-            return (
-                None,
-                None,
-                await request_integration_connection(integration_id, subagent.name, user_id),
-                False,
-            )
-
-        # Create subagent on-the-fly with user's tokens
-        try:
-            subagent_graph = await create_subagent_for_user(integration_id, user_id)
-        except SubagentUnavailableError as e:
-            return (
-                None,
-                None,
-                f"Error: {agent_name} is unavailable — {e.reason}",
-                False,
-            )
+        subagent_graph, graph_error = await _resolve_auth_mcp_graph(
+            subagent, agent_name, integration_id, user_id
+        )
     else:
         # Non-MCP or non-auth-required MCP integrations
-        # Skip connection check for internal integrations (always available)
-        if subagent.managed_by not in ("mcp", "internal") and user_id:
-            error_message = await check_integration_connection(integration_id, user_id)
-            if error_message:
-                return None, None, error_message, False
-
-        try:
-            subagent_graph = await providers.aget(agent_name)
-        except KeyError:
-            return None, None, f"Error: {agent_name} not available", False
-        if not subagent_graph:
-            return None, None, f"Error: {agent_name} not available", False
+        subagent_graph, graph_error = await _resolve_plain_subagent_graph(
+            subagent, agent_name, integration_id, user_id
+        )
+    if graph_error is not None:
+        return None, None, graph_error, False
 
     return subagent_graph, agent_name, integration_id, False
 
@@ -377,11 +454,11 @@ async def _build_integration_metadata(
     """Build display metadata for a resolved subagent integration."""
     if is_custom:
         integration = await _get_subagent_by_id(integration_id)
-        if isinstance(integration, dict):
+        if isinstance(integration, CustomMcpSubagent):
             return IntegrationMetadata(
-                icon_url=integration.get("icon_url"),
+                icon_url=integration.icon_url,
                 integration_id=integration_id,
-                name=str(integration.get("name") or integration_id),
+                name=integration.name or integration_id,
             )
         return None
     platform_integ = get_subagent_by_id(integration_id)
@@ -403,9 +480,9 @@ def _resolve_display_metadata(
     if not metadata:
         return fallback_name, None, fallback_category
     return (
-        str(metadata.get("name") or fallback_name),
-        metadata.get("icon_url"),
-        str(metadata.get("integration_id") or fallback_category),
+        str(metadata.name or fallback_name),
+        metadata.icon_url,
+        str(metadata.integration_id or fallback_category),
     )
 
 
@@ -418,7 +495,7 @@ async def prepare_subagent_execution(
     """Resolve a subagent and build everything needed to execute it.
 
     The single preparation path for running one subagent — used by the
-    executor's `handoff` tool and the dev direct-invocation endpoint.
+    executor's handoff tool and the dev direct-invocation endpoint.
     Returns (ctx, integration_metadata, None) on success or
     (None, None, error_message) when the subagent can't be resolved.
     """
@@ -455,12 +532,16 @@ async def prepare_subagent_execution(
     }
 
     subagent_config = await build_agent_config(
-        conversation_id=thread_id,
-        user=user,
-        thread_id=subagent_thread_id,
-        base_configurable=configurable,
-        agent_name=agent_name,
-        subagent_id=agent_name,
+        identity=AgentIdentity(
+            conversation_id=thread_id,
+            user=user,
+            agent_name=agent_name,
+        ),
+        thread=AgentThread(
+            thread_id=subagent_thread_id,
+            base_configurable=configurable,
+            subagent_id=agent_name,
+        ),
     )
     new_configurable = agent_configurable(subagent_config)
 
@@ -486,16 +567,18 @@ async def prepare_subagent_execution(
 
     messages = await build_initial_messages(
         system_message=system_message,
-        tier=AgentTier.PROVIDER_SUBAGENT,
         agent_name=agent_name,
-        configurable=new_configurable,
         task=sanitized_task,
-        user_id=user_id,
-        subagent_id=agent_name,
-        # Without this the custom-instructions/provider-metadata lookup falls
-        # back to agent_name ("gmail_agent"), which never matches the stored
-        # integration id ("gmail"), so the user's instructions are dropped.
-        integration_id=integration_id,
+        seed=ThreadSeed(
+            tier=AgentTier.PROVIDER_SUBAGENT,
+            configurable=new_configurable,
+            user_id=user_id,
+            subagent_id=agent_name,
+            # Without this the custom-instructions/provider-metadata lookup falls
+            # back to agent_name ("gmail_agent"), which never matches the stored
+            # integration id ("gmail"), so the user's instructions are dropped.
+            integration_id=integration_id,
+        ),
     )
 
     ctx = SubagentExecutionContext(
@@ -520,17 +603,23 @@ async def prepare_subagent_execution(
 
 async def _run_blocking_handoff(
     ctx: SubagentExecutionContext,
-    metadata: IntegrationMetadata | None,
-    agent_name: str,
-    integration_id: str,
-    tool_call_id: str,
-    probe_parked: bool = False,
+    dispatch: _HandoffDispatch,
 ) -> str:
-    """Run a handoff subagent synchronously, emitting lifecycle SSE events."""
+    """Run a handoff subagent synchronously, emitting lifecycle SSE events.
+
+    dispatch.record_calls (workflow runs only) appends the subagent's successful
+    tool calls to the result so the executor can transcribe them into a playbook.
+    """
+    metadata = dispatch.metadata
+    agent_name = dispatch.agent_name
+    integration_id = dispatch.integration_id
+    probe_parked = dispatch.probe_parked
+    record_calls = dispatch.record_calls
+
     writer = get_stream_writer()
     # Stable across replays so an approval pause reuses the same UI row instead of
     # orphaning the paused one and opening a duplicate on resume.
-    sa_id = subagent_row_id(tool_call_id)
+    sa_id = subagent_row_id(dispatch.tool_call_id)
     display, icon_url, tool_category = _resolve_display_metadata(
         metadata, agent_name, integration_id
     )
@@ -546,19 +635,16 @@ async def _run_blocking_handoff(
                 subagent_name=display,
                 agent_type="handoff",
                 subagent_id=sa_id,
-                icon_url=icon_url,
-                tool_category=tool_category,
+                subagent=integration_id,
+                details=SubagentStartDetails(icon_url=icon_url, tool_category=tool_category),
             )
         }
     )
     start_time = time.monotonic()
 
-    # When the executor resumes, THIS node re-runs from the top over a subagent thread
-    # that already holds work — parked on its interrupt, or finished before a LATER
-    # sibling in the same node paused. Either way, re-invoking it fresh would redo
-    # everything it already did, so an existing checkpoint means "recover, don't rerun".
-    # A recoverable checkpoint can only exist on a resume replay, so fresh runs skip the
-    # probe (a per-handoff Postgres read) entirely.
+    # On resume, this node re-runs over a subagent thread that already holds
+    # work, so an existing checkpoint means "recover, don't rerun". Fresh
+    # runs skip the probe (a per-handoff Postgres read) entirely.
     recovered = await recover_from_checkpoint(ctx) if probe_parked else None
     if recovered is not None:
         outcome = recovered
@@ -570,13 +656,10 @@ async def _run_blocking_handoff(
             subagent_id=sa_id,
         )
 
-    # The subagent was invoked imperatively, so its GraphInterrupt never reaches
-    # the executor's runtime — bubble each pause up explicitly. A LOOP, not an if:
-    # one task can gate several destructive calls in sequence ("send both emails"),
-    # and each pause must suspend the executor again. resume_for_gate() raises on the
-    # first pass (pausing the executor) and returns THIS gate's own decision on the
-    # replay — recovery fast-forwards to the latest park, so an earlier gate's already
-    # -applied decision must not be replayed onto it (matched out by approval_id).
+    # The subagent was invoked imperatively, so its GraphInterrupt never
+    # reaches the executor's runtime — bubble each pause up explicitly. A
+    # LOOP, not an if: one task can gate several destructive calls in sequence.
+    run_messages: list[AnyMessage] = list(outcome.run_messages)
     while outcome.paused:
         decision = resume_for_gate(outcome.interrupt)
         outcome = await execute_subagent_stream(
@@ -586,6 +669,7 @@ async def _run_blocking_handoff(
             subagent_id=sa_id,
             resume=Command(resume=decision),
         )
+        run_messages.extend(outcome.run_messages)
 
     writer(
         {
@@ -595,6 +679,8 @@ async def _run_blocking_handoff(
             )
         }
     )
+    if record_calls:
+        return append_call_record(outcome.text, run_messages)
     return outcome.text
 
 
@@ -604,8 +690,9 @@ async def _has_parked_subagent(ctx: SubagentExecutionContext) -> bool:
     Durable check (Mongo), so it holds across executor pause/resume and process
     restarts — the session slot only tracks live tasks in this invocation.
     """
-    conversation_id = str(ctx.configurable.get("conversation_id") or "")
-    thread_id = str(ctx.configurable.get("thread_id") or "")
+    configurable: AgentConfigurable = ctx.configurable
+    conversation_id = str(configurable.get("conversation_id") or "")
+    thread_id = str(configurable.get("thread_id") or "")
     if not conversation_id or not thread_id:
         return False
     records = await list_parked_subagents_for_conversation(conversation_id)
@@ -619,12 +706,9 @@ async def resume_parked_subagent(
 ) -> SubagentOutcome:
     """Resume a HIL-parked background subagent with its decided approval.
 
-    Everything is reconstructed from durable state — the approval record plus the
-    current executor configurable — because the run that parked it (its session,
-    stream and asyncio task) is gone. Crash-safe: a thread that already completed
-    (a prior collect crashed between resume and stamp) yields its checkpointed
-    final answer instead of being driven again, so the underlying action can
-    never re-execute.
+    Everything is reconstructed from durable state, since the run that
+    parked it is gone. Crash-safe: a thread that already completed yields
+    its checkpointed final answer instead of being driven again.
     """
     agent_ref = record.subagent_agent_name or ""
     graph, agent_name, int_id_or_error, _ = await _resolve_subagent(agent_ref, record.user_id)
@@ -639,12 +723,16 @@ async def resume_parked_subagent(
         "name": configurable.get("user_name"),
     }
     subagent_config = await build_agent_config(
-        conversation_id=record.conversation_id,
-        user=user,
-        thread_id=record.subagent_thread_id,
-        base_configurable=configurable,
-        agent_name=agent_name,
-        subagent_id=agent_name,
+        identity=AgentIdentity(
+            conversation_id=record.conversation_id,
+            user=user,
+            agent_name=agent_name,
+        ),
+        thread=AgentThread(
+            thread_id=record.subagent_thread_id,
+            base_configurable=configurable,
+            subagent_id=agent_name,
+        ),
     )
     ctx = SubagentExecutionContext(
         subagent_graph=graph,
@@ -679,12 +767,103 @@ async def resume_parked_subagent(
 def _subagent_resume_status(status: HILApprovalStatus) -> HILApprovalStatus:
     """Map a record's terminal status onto the gate's resumable statuses.
 
-    ``abandoned`` resumes as a denial — the gate accepts only
+    abandoned resumes as a denial — the gate accepts only
     approved/denied/timeout, and abandonment means "do not act."
     """
     if status in (HILApprovalStatus.APPROVED, HILApprovalStatus.TIMEOUT):
         return status
     return HILApprovalStatus.DENIED
+
+
+async def _handoff_rejection(
+    ctx: SubagentExecutionContext,
+    background: bool,
+    stream_id: str | None,
+) -> str | None:
+    """Return the pre-dispatch refusal for one handoff, or None when it may run."""
+    agent_name: str = ctx.agent_name
+    integration_id: str = ctx.integration_id
+
+    # An uncollected parked subagent owns this integration's checkpoint
+    # thread; a new handoff would orphan the user's approval card.
+    if await _has_parked_subagent(ctx):
+        return (
+            f"The {agent_name} subagent is paused waiting for the user's approval. "
+            "Call wait_for_subagents() to collect its outcome before sending it "
+            "new tasks."
+        )
+
+    # Same collision for a BLOCKING handoff while a background task holds
+    # this thread (the background branch guards via the session slot claim).
+    if not background and has_bg_integration(str(stream_id or ""), integration_id):
+        return (
+            f"A background {agent_name} subagent is already running on this "
+            "integration. Call wait_for_subagents() to collect it first."
+        )
+
+    return None
+
+
+async def _dispatch_background_handoff(
+    ctx: SubagentExecutionContext,
+    dispatch: _HandoffDispatch,
+    sid: str,
+) -> str:
+    """Spawn the subagent as a detached task, returning the collect-later notice."""
+    agent_name = dispatch.agent_name
+    integration_id = dispatch.integration_id
+
+    # execution_mode is inherited, NOT forced to "background", so the gate
+    # still fails closed on a headless run. One detached subagent per
+    # integration at a time: a duplicate would corrupt the shared thread id.
+    if not claim_bg_integration(sid, integration_id):
+        return (
+            f"A background {agent_name} subagent is already running. Call "
+            "wait_for_subagents() to collect it before sending it new tasks."
+        )
+    # Idempotent across node replays: tool_call_id is stable (lives in the
+    # checkpointed AI message); the claim is durable in Redis.
+    configurable: AgentConfigurable = ctx.configurable
+    conversation_id = str(configurable.get("conversation_id") or "")
+    if (
+        dispatch.tool_call_id
+        and conversation_id
+        and not await try_claim_bg_dispatch(conversation_id, dispatch.tool_call_id)
+    ):
+        release_bg_integration(sid, integration_id)
+        return (
+            f"Subagent {agent_name} started in background. "
+            "Call wait_for_subagents() when ready to collect results."
+        )
+    bg_sa_id = str(uuid4())
+    bg_display, bg_icon, bg_cat = _resolve_display_metadata(
+        dispatch.metadata, agent_name, integration_id
+    )
+    increment_pending_subagents(sid)
+    spawn_background_task(
+        run_subagent_background(
+            ctx=ctx,
+            stream_id=sid,
+            handoff=BackgroundHandoff(
+                integration_metadata=dispatch.metadata,
+                subagent_id=bg_sa_id,
+                display_name=bg_display,
+                tool_category=bg_cat,
+                icon_url=bg_icon,
+                integration_id=integration_id,
+                record_calls=dispatch.record_calls,
+            ),
+        )
+    )
+    log.info(
+        f"{LogTag.AGENT} Subagent dispatched to background",
+        agent_name=agent_name,
+        stream_id=sid,
+    )
+    return (
+        f"Subagent {agent_name} started in background. "
+        "Call wait_for_subagents() when ready to collect results."
+    )
 
 
 @tool
@@ -702,7 +881,7 @@ async def handoff(
     background: Annotated[
         bool,
         "If True, run the subagent in the background and return immediately. "
-        "Use for parallel subagent dispatch — call wait_for_subagents() after "
+        "Use for parallel subagent dispatch: call wait_for_subagents() after "
         "all background handoffs to collect results. Default False (blocking).",
     ] = False,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
@@ -725,12 +904,12 @@ async def handoff(
         background: If True, run non-blocking and return immediately
     """
     try:
-        configurable = agent_configurable(config)
+        configurable: AgentConfigurable = agent_configurable(config)
         user_id = configurable.get("user_id")
 
         # Fallback: try to get user_id from metadata if not in configurable
         if not user_id:
-            user_id = config.get("metadata", {}).get("user_id")
+            user_id = _RunMetadata.model_validate(config.get("metadata") or {}).user_id
             if user_id:
                 configurable["user_id"] = user_id
 
@@ -739,6 +918,11 @@ async def handoff(
         # Only a resume replay can have left a parked subagent behind, so the
         # per-handoff checkpoint probe in _run_blocking_handoff is gated on this.
         probe_parked = bool(configurable.get(HIL_RESUME_CONFIG_KEY))
+
+        # Workflow runs get the subagent's actual calls appended to the result
+        # so write_playbook transcribes real tool names/args instead of guessing
+        # them. Chat runs are untouched — no extra text, no extra tokens.
+        record_calls = bool(configurable.get("workflow_id"))
 
         ctx, integration_metadata, error = await prepare_subagent_execution(
             subagent_id=subagent_id,
@@ -752,112 +936,38 @@ async def handoff(
         agent_name: str = ctx.agent_name
         integration_id: str = ctx.integration_id
 
-        # An uncollected parked subagent owns this integration's checkpoint thread.
-        # Running ANY new handoff on it (blocking or background) would feed fresh
-        # input to an interrupted thread — LangGraph discards the pending interrupt,
-        # orphaning the user's approval card. Refuse until the join collects it.
-        if await _has_parked_subagent(ctx):
-            return (
-                f"The {agent_name} subagent is paused waiting for the user's approval. "
-                "Call wait_for_subagents() to collect its outcome before sending it "
-                "new tasks."
-            )
+        rejection = await _handoff_rejection(ctx, background, stream_id)
+        if rejection is not None:
+            return rejection
 
-        # Same collision for a BLOCKING handoff while a live background task holds
-        # this integration's thread (the background branch guards itself via the
-        # session slot claim).
-        if not background and has_bg_integration(str(stream_id or ""), integration_id):
-            return (
-                f"A background {agent_name} subagent is already running on this "
-                "integration. Call wait_for_subagents() to collect it first."
-            )
+        dispatch = _HandoffDispatch(
+            metadata=integration_metadata,
+            agent_name=agent_name,
+            integration_id=integration_id,
+            tool_call_id=tool_call_id,
+            probe_parked=probe_parked,
+            record_calls=record_calls,
+        )
 
-        # Background mode: spawn subagent as asyncio task and return immediately.
-        # Caller must use wait_for_subagents() to collect results.
-        #
-        # Requires stream_id to be propagated into the executor configurable so
-        # the result can be routed back to this conversation's results bucket.
+        # Background mode: spawn subagent as asyncio task and return
+        # immediately; caller uses wait_for_subagents() to collect results.
         if background:
             if not stream_id:
                 log.warning(
                     f"{LogTag.AGENT} handoff background=True but stream_id is missing — "
                     "falling back to blocking execution"
                 )
-                blocking_result = await _run_blocking_handoff(
-                    ctx,
-                    integration_metadata,
-                    agent_name,
-                    integration_id,
-                    tool_call_id,
-                    probe_parked,
-                )
+                blocking_result = await _run_blocking_handoff(ctx, dispatch)
                 return (
-                    "[WARNING: background handoff fell back to blocking — "
+                    "[WARNING: background handoff fell back to blocking: "
                     "stream_id not propagated into executor configurable] "
                     f"{blocking_result}"
                 )
             sid: str = str(stream_id)
-            # execution_mode is inherited, NOT forced to "background": a detached
-            # subagent in a live conversation now has a pause path — its gate parks the
-            # subagent's own checkpointed thread and wait_for_subagents collects the
-            # approval into one executor pause. A genuinely headless run (workflow/cron)
-            # is already "background" in the parent configurable, so its subagents
-            # inherit that and the gate still fails closed (no live user to ask).
-            #
-            # One detached subagent per integration at a time: a concurrent duplicate
-            # would share the deterministic checkpoint thread id and corrupt it. A
-            # blocking run would collide identically, so refuse rather than fall back.
-            if not claim_bg_integration(sid, integration_id):
-                return (
-                    f"A background {agent_name} subagent is already running. Call "
-                    "wait_for_subagents() to collect it before sending it new tasks."
-                )
-            # Idempotent across node replays: when this handoff shares its node run
-            # with the wait_for_subagents interrupt, the node re-runs on resume and
-            # must not spawn the subagent a second time. tool_call_id is stable (it
-            # lives in the checkpointed AI message); the claim is durable in Redis.
-            conversation_id = str(ctx.configurable.get("conversation_id") or "")
-            if (
-                tool_call_id
-                and conversation_id
-                and not await try_claim_bg_dispatch(conversation_id, tool_call_id)
-            ):
-                release_bg_integration(sid, integration_id)
-                return (
-                    f"Subagent {agent_name} started in background. "
-                    "Call wait_for_subagents() when ready to collect results."
-                )
-            bg_sa_id = str(uuid4())
-            bg_display, bg_icon, bg_cat = _resolve_display_metadata(
-                integration_metadata, agent_name, integration_id
-            )
-            increment_pending_subagents(sid)
-            spawn_background_task(
-                run_subagent_background(
-                    ctx=ctx,
-                    stream_id=sid,
-                    integration_metadata=integration_metadata,
-                    subagent_id=bg_sa_id,
-                    display_name=bg_display,
-                    tool_category=bg_cat,
-                    icon_url=bg_icon,
-                    integration_id=integration_id,
-                )
-            )
-            log.info(
-                f"{LogTag.AGENT} Subagent dispatched to background",
-                agent_name=agent_name,
-                stream_id=sid,
-            )
-            return (
-                f"Subagent {agent_name} started in background. "
-                "Call wait_for_subagents() when ready to collect results."
-            )
+            return await _dispatch_background_handoff(ctx, dispatch, sid)
 
         # Blocking (default): execute synchronously and return result.
-        return await _run_blocking_handoff(
-            ctx, integration_metadata, agent_name, integration_id, tool_call_id, probe_parked
-        )
+        return await _run_blocking_handoff(ctx, dispatch)
 
     except GraphBubbleUp:
         # The HIL gate's interrupt bubbling up from _run_blocking_handoff. Control

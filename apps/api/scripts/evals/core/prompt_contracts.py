@@ -1,30 +1,17 @@
 """Eval contracts anchored to the prompt text GAIA actually ships.
 
-The problem this exists to kill: every judge rubric in this harness used to be
-hand-written YAML prose. A rubric like "the reply mirrors the user's tone" is a
-*paraphrase* of `COMMS_AGENT_PROMPT`, frozen at the moment someone typed it. Edit
-the prompt — soften the rule, rename the section, delete it outright — and not a
-single eval notices. The suite keeps grading a spec the product stopped shipping,
-and reports green while the thing it claims to measure has moved.
+Every judge rubric here used to be hand-written prose that paraphrased a
+prompt at the moment someone typed it; editing the prompt left the eval
+grading a spec the product no longer ships, silently green. A clause is a
+named, verbatim span of a live prompt constant, quoted instead of restated,
+so an edit changes what the evals grade with no YAML to update.
 
-A **clause** is a named, verbatim span of a live prompt constant. Rubrics quote
-the clause instead of restating it, so a prompt edit changes what the evals grade
-with no YAML to update. `suites/quality.py::openui_policy_criteria` proved the
-shape on the OpenUI surface policy; this module is that idea generalised, and it
-is where the OpenUI extraction converges once the harness freeze lifts.
+Resolution fails loud: a missing anchor raises ClauseResolutionError, with no
+cached copy, no default, and no "best effort" match. contract_failures turns
+that into a CI gate (tests/unit/evals/test_prompt_contracts.py).
 
-**Resolution fails loud, always.** A clause whose anchor no longer appears —
-section renamed, rule deleted, prompt restructured — raises
-:class:`ClauseResolutionError`. There is no cached copy, no default, no empty
-string, and no "best effort" match. A silent fallback would recreate precisely
-the bug this module exists to fix: an eval that keeps passing because it quietly
-stopped reading the prompt. :func:`contract_failures` turns that property into a
-CI gate (`tests/unit/evals/test_prompt_contracts.py`).
-
-Anchors are matched as **exact substrings, and must occur exactly once**.
-Ambiguity is treated as a failure rather than resolved by "first match": once an
-anchor matches two places, it no longer identifies the rule, and the extract
-would drift the next time either copy is edited.
+Anchors are exact substrings that must occur exactly once; a match in two
+places is a failure, not resolved by "first match".
 """
 
 from __future__ import annotations
@@ -34,20 +21,15 @@ from functools import cache
 import importlib
 import textwrap
 
-#: Prompt constants a clause may be anchored in, as ``(module, attribute)``.
-#:
-#: Loaded lazily by :func:`prompt_text` rather than at module import: importing
-#: ``openui_prompts`` pulls in app settings (Infisical, validators), and
-#: ``__main__`` imports every suite module eagerly, so an import-time failure
-#: here would take down every suite's run rather than just the cases that
-#: actually depend on a prompt.
+#: Prompt constants a clause may be anchored in, as (module, attribute).
+#: Loaded lazily by prompt_text, not at import time, since __main__ imports
+#: every suite eagerly and an early failure would take down every suite's run.
 PROMPT_SOURCES: dict[str, tuple[str, str]] = {
     "comms": ("app.agents.prompts.comms_prompts", "COMMS_AGENT_PROMPT"),
     "executor": ("app.agents.prompts.comms_prompts", "EXECUTOR_AGENT_PROMPT"),
     "openui": ("app.agents.prompts.openui_prompts", "OPENUI_SURFACE_POLICY"),
     "subagent_base": ("app.agents.prompts.subagent_prompts", "BASE_SUBAGENT_PROMPT"),
     "subagent_gmail": ("app.agents.prompts.subagent_prompts", "GMAIL_AGENT_SYSTEM_PROMPT"),
-    "subagent_reminders": ("app.agents.prompts.subagent_prompts", "REMINDER_AGENT_SYSTEM_PROMPT"),
     "memory_extraction": ("app.agents.prompts.memory_prompts", "BASE_MEMORY_EXTRACTION_PROMPT"),
 }
 
@@ -66,17 +48,14 @@ class ClauseResolutionError(Exception):
 class Clause:
     """One named span of a live prompt.
 
-    ``starts_at`` and ``ends_before`` are verbatim substrings of the shipped
-    prompt. The span runs from the start of ``starts_at``'s line to the start of
-    ``ends_before``'s line; with no ``ends_before`` the clause is ``starts_at``'s
-    own line, which is the right extent for a single-line absolute.
+    starts_at and ends_before are verbatim substrings of the shipped prompt;
+    the span runs from starts_at's line to ends_before's line, or to the end
+    of starts_at's own line when ends_before is None.
 
-    Requiring an explicit end anchor (rather than inferring one from a header
-    regex) is deliberate. Header shapes differ per prompt file — ``—SECTION—``,
-    ``— SECTION``, ``## SECTION``, numbered rules — so one inferred rule would
-    silently mis-slice four of them, and a *changed* header shape would silently
-    change what the rubric quotes. An explicit end anchor cannot fail quietly:
-    the extent is contract-checked at both ends.
+    An explicit end anchor is required rather than inferred from a header
+    regex: header shapes differ per prompt file (—SECTION—, ## SECTION,
+    numbered rules), so one inferred rule would silently mis-slice some of
+    them, and a changed header shape would silently change what is quoted.
     """
 
     name: str
@@ -100,7 +79,7 @@ CLAUSES: tuple[Clause, ...] = (
     Clause(
         name="delegate_every_real_ask",
         source="comms",
-        starts_at="1. DELEGATE EVERY REAL ASK:",
+        starts_at="1. DELEGATE EVERY REAL ASK (except open-web lookups and catalogue reads):",
         ends_before="2. YOU ARE THE USER'S ONLY WINDOW:",
         governs="when a turn must go through call_executor instead of being answered directly",
         depends_on=(
@@ -169,7 +148,7 @@ CLAUSES: tuple[Clause, ...] = (
         name="no_invented_capabilities",
         source="comms",
         starts_at="11. NO INVENTED CAPABILITIES:",
-        ends_before="—Voice (Human WhatsApp Mode)—",
+        ends_before="12. CONNECT MEANS A LINK:",
         governs="how a request outside GAIA's real abilities is declined",
         depends_on=("data/quality/refusals.yaml", "data/comms/honesty.yaml"),
     ),
@@ -200,7 +179,7 @@ CLAUSES: tuple[Clause, ...] = (
     Clause(
         name="no_dashes",
         source="comms",
-        starts_at="- NEVER use em dashes",
+        starts_at="- Banned literals (dashes): NEVER use em dashes",
         ends_before="Never sound like a bot:",
         governs="em dashes and en dashes are banned from every output",
         depends_on=("gate:dash_discipline",),
@@ -208,7 +187,7 @@ CLAUSES: tuple[Clause, ...] = (
     Clause(
         name="banned_bot_phrases",
         source="comms",
-        starts_at="- Banned phrases (they scream chatbot):",
+        starts_at="- Banned literals (phrases that scream chatbot):",
         ends_before="- When the user is just chatting,",
         governs="the literal chatbot phrases that must never be said",
         depends_on=("gate:banned_bot_phrases", "data/quality/voice.yaml"),
@@ -216,8 +195,8 @@ CLAUSES: tuple[Clause, ...] = (
     Clause(
         name="content_vs_conversation_length",
         source="comms",
-        starts_at="—Length Modes (CRITICAL: two different modes, never confuse them)—",
-        ends_before="—Chat Bubbles—",
+        starts_at="## Length Modes (CRITICAL: two different modes, never confuse them)",
+        ends_before="## Chat Bubbles",
         governs="chat replies stay short; requested deliverables are written in full",
         depends_on=("data/quality/hard.yaml", "data/quality/everyday.yaml"),
     ),
@@ -225,15 +204,15 @@ CLAUSES: tuple[Clause, ...] = (
         name="write_like_a_human",
         source="comms",
         starts_at="WRITE LIKE A HUMAN (all content you produce):",
-        ends_before="—Chat Bubbles—",
+        ends_before="## Chat Bubbles",
         governs="the AI-tell patterns banned from produced content (LLM vocabulary, scaffolding)",
         depends_on=("data/quality/hard.yaml",),
     ),
     Clause(
         name="bubble_splitting",
         source="comms",
-        starts_at="—Chat Bubbles—",
-        ends_before="—Rich UI Components (OpenUI) — CRITICAL—",
+        starts_at="## Chat Bubbles",
+        ends_before="## Rich UI Components (OpenUI), CRITICAL",
         governs="conversational messages split into bubbles; structured data stays in one",
         depends_on=("gate:bubble_boundary", "data/quality/bubbles.yaml"),
     ),
@@ -279,16 +258,17 @@ CLAUSES: tuple[Clause, ...] = (
     Clause(
         name="executor_ground_truth_contract",
         source="comms",
-        starts_at="—Delivering Results (<executor_result> / <executor_error>)—",
-        ends_before="—Rate Limits & Subscription—",
+        starts_at="## Delivering Results (<executor_result> / <executor_error>)",
+        ends_before="## Rate Limits & Subscription",
         governs="how executor output is re-voiced: relay everything, change only tone",
         depends_on=("gate:communicate", "data/quality/hard.yaml"),
     ),
     Clause(
         name="upgrade_link",
         source="comms",
-        starts_at="[Upgrade to GAIA Pro](https://heygaia.io/pricing)",
-        governs="the exact markdown link offered when usage limits are hit",
+        starts_at="Plan, billing, payment and upgrade questions are executor work:",
+        governs="billing and upgrade asks delegate to the executor's real tools; "
+        "comms never pastes a static pricing link itself",
         depends_on=("data/quality/domains.yaml",),
     ),
     Clause(
@@ -303,7 +283,7 @@ CLAUSES: tuple[Clause, ...] = (
         name="preference_is_not_a_task",
         source="comms",
         starts_at="- A PREFERENCE IS NOT A TASK:",
-        ends_before="—Active Todo Binding—",
+        ends_before="## Active Todo Binding",
         governs="a standing preference is remembered, never turned into a destructive action",
         depends_on=("gate:no_forbidden_tools", "data/quality/hard.yaml"),
     ),
@@ -311,7 +291,7 @@ CLAUSES: tuple[Clause, ...] = (
     Clause(
         name="risky_writes_draft_first",
         source="executor",
-        starts_at="RISKY WRITES — DRAFT AND CONFIRM FIRST",
+        starts_at="RISKY WRITES: DRAFT AND CONFIRM FIRST",
         ends_before="TWO TASK SYSTEMS (do not confuse)",
         governs="emails always go through the draft flow; nothing auto-sends or auto-deletes",
         depends_on=("data/capability/gmail.yaml", "suites/hil.py"),
@@ -383,7 +363,7 @@ CLAUSES: tuple[Clause, ...] = (
     Clause(
         name="how_to_emit",
         source="openui",
-        starts_at="How to emit openui — fence the openui-lang code",
+        starts_at="How to emit openui: fence the openui-lang code",
         governs="a component is openui-lang inside a :::openui fence, mixed with ordinary prose",
         depends_on=("openui_policy:required", "data/quality/openui.yaml"),
     ),
@@ -398,17 +378,10 @@ CLAUSES: tuple[Clause, ...] = (
     Clause(
         name="draft_first_workflow",
         source="subagent_gmail",
-        starts_at="— DRAFT-FIRST WORKFLOW (NON-NEGOTIABLE)",
-        ends_before="— WHAT MAKES A GOOD EMAIL",
+        starts_at="## DRAFT-FIRST WORKFLOW (NON-NEGOTIABLE)",
+        ends_before="## WHAT MAKES A GOOD EMAIL",
         governs="every email goes through the real compose card, never plain text or OpenUI",
         depends_on=("data/capability/gmail.yaml", "suites/hil.py"),
-    ),
-    Clause(
-        name="delete_requires_consent",
-        source="subagent_reminders",
-        starts_at="- NEVER use delete_reminder_tool without explicit user consent",
-        governs="destructive reminder tools need explicit consent",
-        depends_on=("gate:no_forbidden_tools", "data/capability/reminders.yaml"),
     ),
     # -- memory extraction --------------------------------------------------
     Clause(
@@ -443,10 +416,10 @@ if len(_BY_REF) != len(CLAUSES):
 
 @cache
 def prompt_text(source: str) -> str:
-    """The live text of a registered prompt constant.
+    """Return the live text of a registered prompt constant.
 
     Cached because a run resolves dozens of clauses against the same handful of
-    prompts, and importing ``openui_prompts`` costs an app-settings boot.
+    prompts, and importing openui_prompts costs an app-settings boot.
     """
     entry = PROMPT_SOURCES.get(source)
     if entry is None:
@@ -475,7 +448,7 @@ def _line_start(text: str, index: int) -> int:
 
 
 def _locate(clause_obj: Clause, text: str, anchor: str, role: str) -> int:
-    """Index of ``anchor`` in ``text``, or a loud failure.
+    """Index of anchor in text, or a loud failure.
 
     Zero matches means the prompt no longer says this. Two or more means the
     anchor stopped identifying one rule, so the extracted span is arbitrary —
@@ -499,10 +472,10 @@ def _locate(clause_obj: Clause, text: str, anchor: str, role: str) -> int:
 
 
 def resolve(ref: str) -> str:
-    """The live prompt text of one clause, dedented and stripped.
+    """Return the live prompt text of one clause, dedented and stripped.
 
-    ``ref`` is ``"<source>.<name>"``. Raises :class:`ClauseResolutionError` if
-    the clause is unregistered or its anchors no longer resolve.
+    ref is "<source>.<name>"; raises ClauseResolutionError if the clause is
+    unregistered or its anchors no longer resolve.
     """
     clause_obj = _BY_REF.get(ref)
     if clause_obj is None:
@@ -527,7 +500,7 @@ def resolve(ref: str) -> str:
 
 
 def clause(source: str, name: str) -> str:
-    """The live prompt text of one clause, by source and name."""
+    """Return the live prompt text of one clause, by source and name."""
     return resolve(f"{source}.{name}")
 
 
@@ -571,7 +544,7 @@ def contract_failures() -> list[str]:
     """Every clause that no longer resolves, as ready-to-read failure messages.
 
     Collects instead of raising on the first break so one prompt edit surfaces
-    all of its damage in a single CI run. :func:`resolve` is still the loud path
+    all of its damage in a single CI run. :func:resolve is still the loud path
     for anything that runs during an eval.
     """
     failures: list[str] = []

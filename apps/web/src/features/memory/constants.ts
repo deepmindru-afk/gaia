@@ -1,5 +1,5 @@
+import type { MemoryDocType } from "@shared/api/generated";
 import type { GraphThemeColors } from "@supermemory/memory-graph";
-import type { MemoryDocType } from "@/features/memory/api/types";
 
 export const MEMORY_PAGE_SIZE = 20;
 
@@ -31,11 +31,6 @@ export const CORE_DOCUMENTS: {
     docType: "people_md",
     fileName: "people.md",
     description: "People in your life — names, roles, and key dates",
-  },
-  {
-    docType: "insights_md",
-    fileName: "insights.md",
-    description: "Patterns GAIA has noticed about your habits",
   },
 ];
 

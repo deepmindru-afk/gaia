@@ -1,10 +1,10 @@
 """Benchmark runner: retain turns then probe, one fresh user_id per scenario.
 
 Temporal injection:
-  ``ingestion.retain`` captures ``datetime.now(UTC)`` at the top of the
-  function — there is no ``occurred_at`` parameter.  We monkeypatch
-  ``app.memory.ingestion.datetime`` so that each turn is stamped at
-  ``base_date + timedelta(days=day_offset)``.  The patch is applied
+  ingestion.retain captures datetime.now(UTC) at the top of the
+  function — there is no occurred_at parameter.  We monkeypatch
+  app.memory.ingestion.datetime so that each turn is stamped at
+  base_date + timedelta(days=day_offset).  The patch is applied
   per-turn and restored immediately after, keeping the surrounding async
   machinery unaffected.
 """
@@ -32,16 +32,16 @@ MAX_SCENARIOS = 40
 
 
 def _make_fake_datetime(target: datetime) -> type:
-    """Return a drop-in replacement for the ``datetime`` class used in ingestion.py.
+    """Return a drop-in replacement for the datetime class used in ingestion.py.
 
-    ``datetime.now(UTC)`` must return ``target`` while everything else
-    (``datetime.fromisoformat``, ``datetime.utcnow``, etc.) delegates to the
+    datetime.now(UTC) must return target while everything else
+    (datetime.fromisoformat, datetime.utcnow, etc.) delegates to the
     real class.
     """
 
     class _FakeDatetime(datetime):
         @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:  # type: ignore[override]
+        def now(cls, tz: tzinfo | None = None) -> datetime:  # type: ignore[override]  # fake-clock subclass intentionally widens now() to the base class
             return target.replace(tzinfo=tz) if tz is not None else target
 
     return _FakeDatetime

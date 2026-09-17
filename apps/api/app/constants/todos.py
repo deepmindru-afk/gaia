@@ -23,3 +23,19 @@ FAILED_LABEL: Final[str] = "failed"
 # Label added by the maintenance sweep to an overdue todo with no scheduled
 # follow-up, so the UI can surface it for attention.
 NEEDS_FOLLOW_UP_LABEL: Final[str] = "needs-follow-up"
+
+# Labels meaning "this todo is waiting on something outside GAIA". The sweep
+# reads them to judge whether an overdue todo is genuinely stuck, and
+# trigger-subscription paths set/clear them, so they live here, not a consumer.
+WAITING_FOR_REPLY_LABEL: Final[str] = "waiting-for-reply"
+WAITING_FOR_APPROVAL_LABEL: Final[str] = "waiting-for-approval"
+BLOCKING_LABEL: Final[str] = "blocked"
+
+BLOCKING_LABELS: Final[frozenset[str]] = frozenset(
+    {WAITING_FOR_REPLY_LABEL, WAITING_FOR_APPROVAL_LABEL, BLOCKING_LABEL}
+)
+
+# How much of activity.md (from the end) a scheduled run sees in its prompt:
+# enough for the recent trail, bounded so a long-lived recurring todo does not
+# grow the prompt without limit. Older entries stay readable via the file.
+ACTIVITY_PROMPT_TAIL_CHARS: Final[int] = 4_000

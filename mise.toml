@@ -150,8 +150,6 @@ depends = ["setup:env", "setup:deps", "setup:voice-agent"]
 run = '''
 echo "Starting Docker services..."
 nx run docker:docker:up
-echo "Seeding AI models..."
-(cd apps/api && uv run --group backend python scripts/seed_models.py --force)
 echo ""
 echo "Setup complete! Run 'mise dev' to start development servers."
 '''
@@ -379,6 +377,10 @@ run = "nx affected -t test --parallel=3"
 description = "Run all Python tests with real services via Dagger"
 run = "dagger call -s test-python"
 
+[tasks."api:types"]
+description = "Export apps/api/openapi.json and regenerate the TypeScript API types in libs/shared/ts/src/api/generated (CI fails when either drifts)"
+run = "node scripts/ci/checks.mjs api-schema --write"
+
 [tasks."test:python:hermetic"]
 description = "Run the hermetic API suite (no Docker, no network) — must finish within the fast-suite budget"
 run = "cd apps/api && uv run --group backend --group dev pytest -q --tb=short"
@@ -386,6 +388,10 @@ run = "cd apps/api && uv run --group backend --group dev pytest -q --tb=short"
 [tasks."test:python:real"]
 description = "Run the real-infra tier (Postgres/Redis/Mongo/Chroma via docker compose) — opt-in"
 run = "cd apps/api && USE_REAL_SERVICES=1 uv run --group backend --group dev pytest tests/integration/real tests/contracts tests/e2e/test_hil_barrier_e2e.py tests/e2e/test_hil_spawn_e2e.py --tb=short -q"
+
+[tasks."test:one"]
+description = "Run one or more API test files exactly as CI does, minus xdist: `mise test:one tests/unit/x.py [more...]` (keeps --strict-markers and the -m filter; `-o addopts=\"\"` silently drops both)"
+run = "cd apps/api && uv run pytest -p no:xdist -q {{arg(name=\"paths\", var=true)}}"
 
 [tasks."test:python:unit"]
 description = "Run Python unit tests only (no services, fast)"
@@ -442,6 +448,18 @@ run = "nx run-many -t type-check --parallel=3"
 [tasks."type-check:affected"]
 description = "Type-check only affected projects (parallel with caching)"
 run = "nx affected -t type-check --parallel=3"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPENDENCY SECURITY
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tasks."audit:deps"]
+description = "pnpm audit (prod, >=high) with expiring allowlist in config/pnpm-audit-allowlist.json"
+run = "bash scripts/ci/audit.sh pnpm"
+
+[tasks."audit:deps:test"]
+description = "Unit tests for the CI shell gates (runner.sh, audit.sh, ...)"
+run = "uv run --no-project --with pytest pytest scripts/ci -q"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-COMMIT HOOKS
@@ -648,3 +666,17 @@ run = "python3 tools/evlog_map"
 [tasks."observability:map:all"]
 description = "Observability score with the per-entry check matrix"
 run = "python3 tools/evlog_map --all"
+
+# ── Agent-legible gates ──────────────────────────────────────────────────────
+[tasks."ci:local"]
+description = "Run CI quality gates locally (same lanes/versions as GitHub Actions); --list shows all lanes"
+run = "uv run python scripts/dev/gaia_verify.py"
+
+
+[tasks."pr:comments"]
+description = "Fetch PR review threads read-only: resolution state, IDs for resolve/reply, next-step syntax"
+run = "uv run python scripts/dev/pr_comments.py"
+
+[tasks."ci:remote"]
+description = "Why a PR is red: each failing lane's verdict artifact or error-anchored job log, plus conflicts, reviews, threads and the gh stack (--verbose/--json/--watch)"
+run = "uv run python scripts/dev/ci_remote.py"

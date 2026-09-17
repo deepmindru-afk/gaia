@@ -1,15 +1,15 @@
 """The observability envelope every ARQ task runs behind.
 
-``arq_task`` is applied once per task in ``app.worker`` at registration time, so
-a task cannot reach ``WorkerSettings`` without it. It owns the two things every
+arq_task is applied once per task in app.worker at registration time, so
+a task cannot reach WorkerSettings without it. It owns the two things every
 task needs and no task body should have to remember:
 
-* the ``worker_task`` wide-event boundary, carrying the trace id propagated by
-  ``app.workers.queue.enqueue_worker_job`` plus ARQ's ``job_id`` / ``job_try`` — the
+* the worker_task wide-event boundary, carrying the trace id propagated by
+  app.workers.queue.enqueue_worker_job plus ARQ's job_id / job_try — the
   latter two are what make a retry chain queryable.
-* the Prometheus duration/outcome metrics behind the ``arq-worker`` dashboard.
+* the Prometheus duration/outcome metrics behind the arq-worker dashboard.
 
-Task bodies therefore call ``log.set(...)`` directly: the boundary is already
+Task bodies therefore call log.set(...) directly: the boundary is already
 open by the time they run.
 """
 
@@ -35,7 +35,7 @@ def arq_task(
     task_name = func.__name__
 
     @functools.wraps(func)
-    async def wrapper(ctx: dict[str, Any], *args: Any, **kwargs: Any) -> T:
+    async def wrapper(ctx: dict[str, Any], *args: Any, **kwargs: Any) -> T:  # noqa: ANN401 -- ARQ's job API is dynamically typed upstream
         # Absent only when a caller (a test) invokes the task with a bare ctx;
         # omitting the keys beats emitting nulls the dashboards would have to skip.
         job_context = {key: ctx[key] for key in ("job_id", "job_try") if key in ctx}

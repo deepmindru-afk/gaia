@@ -1,3 +1,4 @@
+import type { ToolDataEntry } from "../api/generated";
 import {
   DESKTOP_TOOL_DEFAULT_TIMEOUT_MS,
   type DesktopToolRequest,
@@ -7,13 +8,7 @@ import type { TodoProgressSnapshot } from "./types";
 
 export type { TodoProgressSnapshot };
 
-export interface StreamToolDataEntry {
-  tool_name: string;
-  data: unknown;
-  timestamp?: string | null;
-  tool_category?: string;
-  subagent_id?: string;
-}
+export type StreamToolDataEntry = ToolDataEntry;
 
 /**
  * tool_name marking a streamed tool-call-progress entry. These render via the
@@ -52,6 +47,10 @@ export type ChatStreamEvent =
   | { type: "error"; error: string }
   | { type: "model_fallback"; model?: string }
   | { type: "response"; chunk: string }
+  // End of one assistant message. `discarded` means it turned out to carry tool calls, so the
+  // streamed text was a handoff preamble and the real reply is the NEXT message — the wire sends
+  // text before the tool call, so the client has already rendered it and must take it back.
+  | { type: "message_boundary"; messageId: string; discarded: boolean }
   | {
       type: "conversation_initialized";
       conversation_id?: string;
@@ -98,7 +97,8 @@ const toToolDataEntry = (value: unknown): StreamToolDataEntry | null => {
 
   return {
     tool_name: value.tool_name,
-    data: value.data,
+    // The frame is JSON; every tool owns the shape of its own `data`.
+    data: value.data as StreamToolDataEntry["data"],
     timestamp:
       typeof value.timestamp === "string" || value.timestamp === null
         ? value.timestamp
@@ -158,6 +158,19 @@ const extractResponse = (payload: JsonObject): ChatStreamEvent[] => {
     events.push({ type: "response", chunk: payload.response });
   }
   return events;
+};
+
+const extractMessageBoundary = (payload: JsonObject): ChatStreamEvent[] => {
+  const boundary = payload.message_boundary;
+  if (!isObject(boundary) || typeof boundary.discarded !== "boolean") return [];
+  return [
+    {
+      type: "message_boundary",
+      messageId:
+        typeof boundary.message_id === "string" ? boundary.message_id : "",
+      discarded: boundary.discarded,
+    },
+  ];
 };
 
 const extractFollowUpActions = (payload: JsonObject): ChatStreamEvent[] =>
@@ -405,6 +418,7 @@ export function parseChatStreamEvent(data: string): ChatStreamEvent[] {
     ...extractError(payload),
     ...extractModelFallback(payload),
     ...extractResponse(payload),
+    ...extractMessageBoundary(payload),
     ...extractFollowUpActions(payload),
     ...extractProgress(payload),
     ...extractToolData(payload),
@@ -468,10 +482,16 @@ export function upsertTodoProgressToolData<T extends StreamToolDataEntry>(
     [source]: snapshot,
   };
 
+  // Preserve the FIRST tick's timestamp on replacement: the entry identity
+  // (and any key anchored to its creation time) must stay stable while the
+  // snapshot content updates, or the card remounts every streamed frame.
   const nextEntry = {
     tool_name: "todo_progress",
     data: nextData,
-    timestamp: new Date().toISOString(),
+    timestamp:
+      existingIndex >= 0
+        ? (entries[existingIndex].timestamp ?? new Date().toISOString())
+        : new Date().toISOString(),
   } as T;
 
   if (existingIndex >= 0) {

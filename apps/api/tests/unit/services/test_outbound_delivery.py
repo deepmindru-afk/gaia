@@ -1,23 +1,33 @@
-"""Unit tests for publish_outbound_message — the outbound RabbitMQ publisher
-that replaces direct platform HTTP sends."""
+"""Unit tests for publish_outbound_message — the outbound RabbitMQ publisher that replaces direct platform HTTP sends."""
 
 import json
 from unittest.mock import AsyncMock, patch
 
+from app.constants.outbound import (
+    OUTBOUND_TTL_SECONDS_DEFAULT,
+    OUTBOUND_TTL_SECONDS_GREETING,
+)
 from app.models.chat_models import ConversationSource
 from app.services import outbound_delivery as od
 
 
 class TestPublishOutboundMessage:
     async def test_unlinked_account_is_skipped(self) -> None:
-        with patch.object(
-            od.PlatformLinkService,
-            "get_linked_platforms",
-            new_callable=AsyncMock,
-            return_value={},
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={},
+            ) as linked,
+            patch.object(od, "log") as mock_log,
         ):
             ok = await od.publish_outbound_message(ConversationSource.WHATSAPP, "user-1", ["hi"])
         assert ok is od.OutboundResult.SKIPPED
+        # The DM destination is resolved for the real user, not a dropped id.
+        linked.assert_awaited_once_with("user-1")
+        # The skip is attributed to the operation that hit it.
+        assert mock_log.warning.call_args.kwargs["log_label"] == "publish_outbound_message"
 
     async def test_no_non_blank_parts_is_skipped(self) -> None:
         with patch.object(
@@ -75,6 +85,47 @@ class TestPublishOutboundMessage:
         assert envelope["text_parts"] == ["hi", "there"]
         assert envelope.get("text") is None
 
+    async def test_the_message_carries_a_broker_ttl(self) -> None:
+        """Without the broker TTL, a bot down for a day floods the user with a day of stale replies on return."""
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"whatsapp": {"platformUserId": "15551234567"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            await od.publish_outbound_message(ConversationSource.WHATSAPP, "user-1", ["hi"])
+
+        assert (
+            publisher.publish_outbound.await_args.kwargs["expiration"]
+            == OUTBOUND_TTL_SECONDS_DEFAULT
+        )
+
+    async def test_a_callers_ttl_is_the_one_that_reaches_the_broker(self) -> None:
+        """ttl_seconds lets a caller mark a message as noise past its moment; ignored, it gets the day-long default."""
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"whatsapp": {"platformUserId": "15551234567"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            await od.publish_outbound_message(
+                ConversationSource.WHATSAPP, "user-1", ["hi"], ttl_seconds=42
+            )
+
+        assert publisher.publish_outbound.await_args.kwargs["expiration"] == 42
+
     async def test_single_part_uses_plain_text_envelope(self) -> None:
         publisher = AsyncMock()
         with (
@@ -98,6 +149,32 @@ class TestPublishOutboundMessage:
         # A lone part stays in ``text`` (the common executor-reply shape).
         assert envelope["text"] == "just one"
         assert envelope.get("text_parts") is None
+        # Default (no override): a DM target, not a channel send.
+        assert envelope["is_channel"] is False
+
+    async def test_destination_override_sends_to_the_channel_without_dm_lookup(self) -> None:
+        """A channel override addresses the group directly — the envelope carries the override id, and the DM link is skipped."""
+        publisher = AsyncMock()
+        resolve = AsyncMock()
+        with (
+            patch.object(od.PlatformLinkService, "get_linked_platforms", resolve),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            ok = await od.publish_outbound_message(
+                ConversationSource.TELEGRAM,
+                "user-1",
+                ["ping"],
+                destination_override="-100999",
+                is_channel=True,
+            )
+        assert ok is od.OutboundResult.PUBLISHED
+        resolve.assert_not_awaited()  # the DM link is bypassed entirely
+        _queue, body = publisher.publish_outbound.await_args.args
+        envelope = json.loads(body)
+        assert envelope["destination_id"] == "-100999"
+        assert envelope["is_channel"] is True
 
 
 def _linked(platform: str, platform_user_id: object) -> dict[str, dict[str, object]]:
@@ -170,8 +247,7 @@ class TestPublishOutboundMessageBrutalEdges:
 
 
 class TestPublishOutboundFile:
-    """publish_outbound_file enqueues an *attachment* envelope (not text) and is
-    best-effort: every can't-deliver path returns False without raising."""
+    """publish_outbound_file enqueues an attachment envelope and is best-effort — every can't-deliver path returns False, never raises."""
 
     async def test_unsupported_platform_returns_false(self) -> None:
         # WEB has no outbound queue — the link lookup must not even be reached.
@@ -271,3 +347,152 @@ class TestPublishOutboundFile:
             "content_type": "application/pdf",
             "caption": "here you go",
         }
+        # A queued file expires like a queued message: the artifact it points at
+        # is cleaned up, so a late delivery hands the bot a dead reference.
+        assert (
+            publisher.publish_outbound.await_args.kwargs["expiration"]
+            == OUTBOUND_TTL_SECONDS_DEFAULT
+        )
+
+
+class TestNotifyAccountLinked:
+    async def test_a_linked_bot_platform_gets_the_confirmation_with_its_display_name(self) -> None:
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"telegram": {"platformUserId": "tg-123"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            result = await od.notify_account_linked("telegram", "user-1")
+
+        assert result is od.OutboundResult.PUBLISHED
+        envelope = json.loads(publisher.publish_outbound.await_args.args[1])
+        assert envelope["destination_id"] == "tg-123"
+        # The friendly display name, not the raw enum value.
+        assert "Your Telegram account is now linked to GAIA." in envelope["text"]
+
+    async def test_the_confirmation_goes_to_the_user_who_linked_on_the_greeting_ttl(
+        self,
+    ) -> None:
+        """Pins two things: the destination is the user who just linked, and the confirmation expires on the short greeting TTL."""
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"telegram": {"platformUserId": "tg-123"}},
+            ) as linked,
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            await od.notify_account_linked("telegram", "user-1")
+
+        linked.assert_awaited_once_with("user-1")
+        assert (
+            publisher.publish_outbound.await_args.kwargs["expiration"]
+            == OUTBOUND_TTL_SECONDS_GREETING
+        )
+        assert OUTBOUND_TTL_SECONDS_GREETING < OUTBOUND_TTL_SECONDS_DEFAULT
+
+    async def test_whatsapp_uses_cased_display_name(self) -> None:
+        """WhatsApp's display name is WhatsApp, not Whatsapp — a .capitalize() fallback would be observable."""
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"whatsapp": {"platformUserId": "wa-123"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            result = await od.notify_account_linked("whatsapp", "user-1")
+
+        assert result is od.OutboundResult.PUBLISHED
+        envelope = json.loads(publisher.publish_outbound.await_args.args[1])
+        assert "Your WhatsApp account is now linked to GAIA." in envelope["text"]
+        assert "Your Whatsapp account" not in envelope["text"]
+
+    async def test_imessage_is_spelled_the_way_apple_spells_it(self) -> None:
+        """IMessage is the one platform whose display name is not a plain capitalization, so the map must carry it."""
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"imessage": {"platformUserId": "im-123"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            result = await od.notify_account_linked("imessage", "user-1")
+
+        assert result is od.OutboundResult.PUBLISHED
+        envelope = json.loads(publisher.publish_outbound.await_args.args[1])
+        assert "Your iMessage account is now linked to GAIA." in envelope["text"]
+        assert "Your Imessage account" not in envelope["text"]
+
+    async def test_a_non_bot_platform_is_skipped(self) -> None:
+        with patch.object(
+            od.PlatformLinkService, "get_linked_platforms", new_callable=AsyncMock
+        ) as linked:
+            result = await od.notify_account_linked("web", "user-1")
+        assert result is od.OutboundResult.SKIPPED
+        linked.assert_not_awaited()
+
+
+class TestOutboundBubbleSplitting:
+    """Raw agent text carries bubble-break sentinels; outbound publish is the last place that can turn them into real bubbles."""
+
+    async def test_sentinels_inside_one_part_become_ordered_bubbles(self) -> None:
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"whatsapp": {"platformUserId": "15551234567"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            ok = await od.publish_outbound_message(
+                ConversationSource.WHATSAPP,
+                "user-1",
+                ["all set.<NEW_MESSAGE_BREAK>8 tasks created[NEW_LINE_BREAK]2 nudges"],
+            )
+        assert ok is od.OutboundResult.PUBLISHED
+        envelope = json.loads(publisher.publish_outbound.await_args.args[1])
+        assert envelope["text_parts"] == ["all set.", "8 tasks created", "2 nudges"]
+
+    async def test_a_trailing_partial_sentinel_never_ships(self) -> None:
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"whatsapp": {"platformUserId": "15551234567"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            await od.publish_outbound_message(
+                ConversationSource.WHATSAPP, "user-1", ["here are your numbers<NEW_MESSAGE_B"]
+            )
+        envelope = json.loads(publisher.publish_outbound.await_args.args[1])
+        assert envelope["text"] == "here are your numbers"

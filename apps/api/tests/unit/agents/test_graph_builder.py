@@ -9,9 +9,11 @@ Covers:
 """
 
 from contextlib import ExitStack
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+
+from app.constants.db import LANGGRAPH_SETUP_LOCK_ID
 
 _MOD = "app.agents.core.graph_builder.build_graph"
 _CM_MOD = "app.agents.core.graph_builder.checkpointer_manager"
@@ -80,6 +82,15 @@ def _apply_patches(stack: ExitStack, overrides: dict | None = None):
 _TEST_DB_URL = "postgresql://localhost/test"
 
 
+def _mock_pool() -> AsyncMock:
+    """Build an AsyncConnectionPool mock whose connection() is the context manager setup() borrows."""
+    pool = AsyncMock()
+    pool.connection = MagicMock()
+    pool.connection.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
+    pool.connection.return_value.__aexit__ = AsyncMock(return_value=False)
+    return pool
+
+
 class TestCheckpointerManager:
     """Tests for CheckpointerManager lifecycle."""
 
@@ -122,7 +133,7 @@ class TestCheckpointerManager:
     async def test_setup_creates_pool_and_checkpointer(
         self, mock_pool_cls, mock_saver_cls, mock_store_cls
     ):
-        mock_pool = AsyncMock()
+        mock_pool = _mock_pool()
         mock_pool_cls.return_value = mock_pool
 
         mock_saver = AsyncMock()
@@ -149,7 +160,7 @@ class TestCheckpointerManager:
     @patch(f"{_CM_MOD}.AsyncPostgresSaver")
     @patch(f"{_CM_MOD}.AsyncConnectionPool")
     async def test_setup_returns_self(self, mock_pool_cls, mock_saver_cls, mock_store_cls):
-        mock_pool_cls.return_value = AsyncMock()
+        mock_pool_cls.return_value = _mock_pool()
         mock_saver_cls.return_value = AsyncMock()
         mock_store_ctx = AsyncMock()
         mock_store_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
@@ -166,7 +177,7 @@ class TestCheckpointerManager:
     async def test_setup_pool_connection_kwargs(
         self, mock_pool_cls, mock_saver_cls, mock_store_cls
     ):
-        mock_pool_cls.return_value = AsyncMock()
+        mock_pool_cls.return_value = _mock_pool()
         mock_saver_cls.return_value = AsyncMock()
         mock_store_ctx = AsyncMock()
         mock_store_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
@@ -196,6 +207,65 @@ class TestCheckpointerManager:
         mgr = self._make_manager()
         # Should not raise
         await mgr.close()
+
+    @staticmethod
+    def _record_setup_order(
+        mock_pool_cls, mock_saver_cls, mock_store_cls, *, store_error: Exception | None = None
+    ) -> MagicMock:
+        order = MagicMock()
+        pool = _mock_pool()
+        conn = pool.connection.return_value.__aenter__.return_value
+        conn.execute.side_effect = lambda sql, params: order.execute(sql, params)
+        mock_pool_cls.return_value = pool
+
+        saver = AsyncMock()
+        saver.setup.side_effect = lambda: order.saver_setup()
+        mock_saver_cls.return_value = saver
+
+        store = AsyncMock()
+        store.setup.side_effect = store_error or (lambda: order.store_setup())
+        store_ctx = AsyncMock()
+        store_ctx.__aenter__ = AsyncMock(return_value=store)
+        store_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_store_cls.from_conn_string.return_value = store_ctx
+        return order
+
+    @patch(f"{_CM_MOD}.AsyncPostgresStore")
+    @patch(f"{_CM_MOD}.AsyncPostgresSaver")
+    @patch(f"{_CM_MOD}.AsyncConnectionPool")
+    async def test_migrations_run_under_the_advisory_lock(
+        self, mock_pool_cls, mock_saver_cls, mock_store_cls
+    ):
+        """Concurrent starters must not race langgraph's CREATE TYPE checkpoint_migrations."""
+        order = self._record_setup_order(mock_pool_cls, mock_saver_cls, mock_store_cls)
+
+        await self._make_manager().setup()
+
+        mock_store_cls.from_conn_string.assert_called_once_with(_TEST_DB_URL)
+        lock = (LANGGRAPH_SETUP_LOCK_ID,)
+        assert order.mock_calls == [
+            call.execute("SELECT pg_advisory_lock(%s)", lock),
+            call.saver_setup(),
+            call.store_setup(),
+            call.execute("SELECT pg_advisory_unlock(%s)", lock),
+        ]
+
+    @patch(f"{_CM_MOD}.AsyncPostgresStore")
+    @patch(f"{_CM_MOD}.AsyncPostgresSaver")
+    @patch(f"{_CM_MOD}.AsyncConnectionPool")
+    async def test_a_failed_migration_still_releases_the_lock(
+        self, mock_pool_cls, mock_saver_cls, mock_store_cls
+    ):
+        order = self._record_setup_order(
+            mock_pool_cls, mock_saver_cls, mock_store_cls, store_error=RuntimeError("store DDL")
+        )
+
+        with pytest.raises(RuntimeError, match="store DDL"):
+            await self._make_manager().setup()
+
+        assert order.mock_calls[-1] == call.execute(
+            "SELECT pg_advisory_unlock(%s)", (LANGGRAPH_SETUP_LOCK_ID,)
+        )
 
 
 class TestGetCheckpointerManager:
@@ -290,6 +360,19 @@ class TestBuildCommsGraph:
 
             deps["mocks"][f"{_MOD}.init_llm"].assert_called_once()
 
+    async def test_comms_middleware_receives_the_chat_llm(self):
+        """build_comms_graph must forward chat_llm into the middleware stack, so the summarizer rides the conversation's model."""
+        with ExitStack() as stack:
+            deps = _apply_patches(stack)
+            from app.agents.core.graph_builder.build_graph import build_comms_graph
+
+            async with build_comms_graph(chat_llm=deps["llm"], in_memory_checkpointer=True) as _:
+                pass
+
+            mock_cm = deps["mocks"][f"{_MOD}.create_comms_middleware"]
+            mock_cm.assert_called_once()
+            assert mock_cm.call_args.kwargs["chat_llm"] is deps["llm"]
+
     async def test_create_agent_called_with_comms_params(self):
         with ExitStack() as stack:
             deps = _apply_patches(stack)
@@ -301,11 +384,22 @@ class TestBuildCommsGraph:
             mock_ca = deps["mocks"][f"{_MOD}.create_agent"]
             mock_ca.assert_called_once()
             kwargs = mock_ca.call_args.kwargs
-            assert kwargs["agent_name"] == "comms_agent"
-            assert kwargs["disable_retrieve_tools"] is True
-            assert "call_executor" in kwargs["initial_tool_ids"]
-            assert "add_memory" in kwargs["initial_tool_ids"]
-            assert "search_memory" in kwargs["initial_tool_ids"]
+            assert kwargs["agent_config"].agent_name == "comms_agent"
+            assert kwargs["tools_config"].disable_retrieve_tools is True
+            from app.agents.tools import memory_tools
+            from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
+
+            # Comms binds these statically: retrieval is off, so a tool absent
+            # from initial_tool_ids is unreachable no matter what it's registered as.
+            assert kwargs["tools_config"].initial_tool_ids == [
+                "call_executor",
+                "cancel_executor",
+                "find_integration",
+                "search_public_workflows",
+                web_search_tool.name,
+                fetch_webpages.name,
+                *[memory_tool.name for memory_tool in memory_tools.tools],
+            ]
 
     async def test_comms_graph_has_end_graph_hooks(self):
         with ExitStack() as stack:
@@ -316,9 +410,8 @@ class TestBuildCommsGraph:
                 pass
 
             kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
-            assert "end_graph_hooks" in kwargs
             # comms runs follow-up-action suggestion + passive memory ingestion.
-            hook_names = {hook.__name__ for hook in kwargs["end_graph_hooks"]}
+            hook_names = {hook.__name__ for hook in kwargs["hooks_config"].end_graph_hooks}
             assert hook_names == {"follow_up_actions_node", "memory_node"}
 
     async def test_comms_tool_registry_contains_expected_tools(self):
@@ -329,11 +422,14 @@ class TestBuildCommsGraph:
             async with build_comms_graph(chat_llm=deps["llm"], in_memory_checkpointer=True) as _:
                 pass
 
-            kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
-            tool_registry = kwargs["tool_registry"]
+            call = deps["mocks"][f"{_MOD}.create_agent"].call_args
+            tool_registry = call.args[1]
             assert "call_executor" in tool_registry
             assert "add_memory" in tool_registry
             assert "search_memory" in tool_registry
+            # Comms runs open-web lookups itself instead of delegating to the executor.
+            assert "web_search_tool" in tool_registry
+            assert "fetch_webpages" in tool_registry
 
     async def test_comms_pre_model_hooks_structure(self):
         with ExitStack() as stack:
@@ -344,7 +440,7 @@ class TestBuildCommsGraph:
                 pass
 
             kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
-            pre_model_hooks = kwargs["pre_model_hooks"]
+            pre_model_hooks = kwargs["hooks_config"].pre_model_hooks
             # comms agent: filter_messages_node, executor_status_hook,
             # manage_system_prompts_node
             assert len(pre_model_hooks) == 3
@@ -362,7 +458,7 @@ class TestBuildCommsGraph:
                 pass
 
             kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
-            assert kwargs["middleware"] is mock_mw
+            assert kwargs["agent_config"].middleware is mock_mw
 
 
 # ===================================================================
@@ -384,11 +480,7 @@ class TestBuildExecutorGraph:
                 assert graph is deps["compiled"]
 
     async def test_executor_is_built_with_the_completion_guard_and_skill_tool(self):
-        """Two things the executor cannot lose. ``require_finish_to_end`` is what
-        opts it into the harness-owned completion check — without it a plain-text
-        stop is taken at face value and the guard is inert. ``save_learned_skill``
-        is bound up front rather than retrieved, so a renamed id silently drops the
-        tool from the executor's initial set."""
+        """require_finish_to_end opts the executor into the completion check; save_learned_skill is bound up front, not retrieved."""
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -398,8 +490,8 @@ class TestBuildExecutorGraph:
 
             kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
 
-        assert kwargs["require_finish_to_end"] is True
-        assert "save_learned_skill" in kwargs["initial_tool_ids"]
+        assert kwargs["hooks_config"].require_finish_to_end is True
+        assert "save_learned_skill" in kwargs["tools_config"].initial_tool_ids
 
     async def test_yields_compiled_graph_postgres(self):
         fake_cp = MagicMock(name="postgres_checkpointer")
@@ -452,9 +544,39 @@ class TestBuildExecutorGraph:
             mock_ca = deps["mocks"][f"{_MOD}.create_agent"]
             mock_ca.assert_called_once()
             kwargs = mock_ca.call_args.kwargs
-            assert kwargs["agent_name"] == "executor_agent"
-            assert "handoff" in kwargs["initial_tool_ids"]
-            assert "plan_tasks" in kwargs["initial_tool_ids"]
+            assert kwargs["agent_config"].agent_name == "executor_agent"
+            # Exact equality, not membership: a renamed id silently drops that
+            # tool from the executor's initial bind set, and membership lets the
+            # typo through as long as one asserted name survives.
+            assert kwargs["tools_config"].initial_tool_ids == [
+                "handoff",
+                "plan_tasks",
+                "update_tasks",
+                "read",
+                "write",
+                "edit",
+                "bash",
+                "deep_research",
+                "wait_for_subagents",
+                "read_manual",
+                "create_tracked_todo",
+                "update_tracked_todo",
+                "complete_tracked_todo",
+                "search_todo_context",
+                "list_tracked_todos",
+                "list_trigger_fields",
+                "subscribe_todo_to_trigger",
+                "unsubscribe_todo_from_trigger",
+                "save_learned_skill",
+                "write_playbook",
+                "decline_playbook",
+                "read_playbook",
+                "disable_playbook",
+                "add_device",
+                "approve_device_pairing",
+                "list_devices",
+                "run_on_device",
+            ]
 
     async def test_executor_tool_registry_includes_handoff(self):
         with ExitStack() as stack:
@@ -464,8 +586,8 @@ class TestBuildExecutorGraph:
             async with build_executor_graph(chat_llm=deps["llm"], in_memory_checkpointer=True) as _:
                 pass
 
-            kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
-            assert "handoff" in kwargs["tool_registry"]
+            call = deps["mocks"][f"{_MOD}.create_agent"].call_args
+            assert "handoff" in call.args[1]
 
     async def test_executor_pre_model_hooks_includes_todo_hook(self):
         with ExitStack() as stack:
@@ -476,10 +598,44 @@ class TestBuildExecutorGraph:
                 pass
 
             kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
-            pre_model_hooks = kwargs["pre_model_hooks"]
+            pre_model_hooks = kwargs["hooks_config"].pre_model_hooks
             # executor: filter_messages_node, adapt_media_node,
             # manage_system_prompts_node, todo_hook
             assert len(pre_model_hooks) == 4
+
+    async def test_a_supplied_model_is_the_one_the_graph_is_built_with(self):
+        """A caller that hands in a model gets that model, not a freshly built one — rebuilding could pick a provider with no key."""
+        with ExitStack() as stack:
+            deps = _apply_patches(stack)
+            from app.agents.core.graph_builder.build_graph import build_executor_graph
+
+            async with build_executor_graph(chat_llm=deps["llm"], in_memory_checkpointer=True):
+                pass
+
+            call = deps["mocks"][f"{_MOD}.create_agent"].call_args
+            deps["mocks"][f"{_MOD}.init_llm"].assert_not_called()
+
+        assert call.args[0] is deps["llm"]
+
+    async def test_it_checkpoints_to_postgres_unless_asked_not_to(self):
+        """In-memory checkpointing is opt-in; the default must stay durable, or a worker restart loses every conversation."""
+        fake_checkpointer = MagicMock(name="postgres_checkpointer")
+        fake_manager = MagicMock()
+        fake_manager.get_checkpointer.return_value = fake_checkpointer
+
+        with ExitStack() as stack:
+            deps = _apply_patches(
+                stack,
+                {f"{_MOD}.get_checkpointer_manager": AsyncMock(return_value=fake_manager)},
+            )
+            from app.agents.core.graph_builder.build_graph import build_executor_graph
+
+            async with build_executor_graph(chat_llm=deps["llm"]):
+                pass
+
+            compile_kwargs = deps["builder"].compile.call_args.kwargs
+
+        assert compile_kwargs["checkpointer"] is fake_checkpointer
 
     async def test_subagent_middleware_wired_when_present(self):
         """When SubagentMiddleware is in the middleware stack, set_llm/set_tools/set_store are called."""
@@ -562,7 +718,7 @@ class TestBuildExecutorGraph:
                 pass
 
             kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
-            assert kwargs["middleware"] is mock_mw
+            assert kwargs["agent_config"].middleware is mock_mw
 
     async def test_executor_retrieve_tools_function_set(self):
         mock_retrieve = AsyncMock()
@@ -577,7 +733,7 @@ class TestBuildExecutorGraph:
                 pass
 
             kwargs = deps["mocks"][f"{_MOD}.create_agent"].call_args.kwargs
-            assert kwargs["retrieve_tools_coroutine"] is mock_retrieve
+            assert kwargs["tools_config"].retrieve_tools_coroutine is mock_retrieve
 
 
 # ===================================================================
@@ -764,3 +920,21 @@ class TestCompileKwargs:
 
             call_kwargs = deps["builder"].compile.call_args.kwargs
             assert isinstance(call_kwargs["checkpointer"], InMemorySaver)
+
+
+class TestCommsToolRegistry:
+    async def test_the_discovery_tools_are_registered_under_their_own_names(self):
+        with ExitStack() as stack:
+            deps = _apply_patches(stack)
+            from app.agents.core.graph_builder.build_graph import build_comms_graph
+            from app.agents.tools.discovery_tools import (
+                find_integration,
+                search_public_workflows,
+            )
+
+            async with build_comms_graph(chat_llm=deps["llm"], in_memory_checkpointer=True) as _:
+                pass
+
+            registry = deps["mocks"][f"{_MOD}.create_agent"].call_args.args[1]
+            assert registry["find_integration"] is find_integration
+            assert registry["search_public_workflows"] is search_public_workflows

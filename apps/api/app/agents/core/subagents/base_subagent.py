@@ -1,12 +1,15 @@
 """Factory for provider-specific sub-agents.
 
 Subagents are standalone graphs with their own checkpointers, invoked via the
-tool-calling pattern like executor_agent. Each runs memory_node as an
-end_graph_hook to learn user memories (IDs, preferences, contacts) per user.
+tool-calling pattern like executor_agent. Passive memory learning is NOT wired
+here — it runs once per comms turn, over the conversation the user actually
+had (see app/agents/core/nodes/memory_node.py).
 """
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.language_models import LanguageModelLike
 from langchain_core.tools import BaseTool
@@ -15,10 +18,13 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agents.core.graph_builder.checkpointer_manager import get_checkpointer_manager
-from app.agents.core.nodes import memory_node
 from app.agents.core.nodes.pre_model_hooks import worker_pre_model_hooks
 from app.agents.core.subagents.spawn_agent import get_spawn_graph
-from app.agents.middleware import SubagentMiddleware, create_subagent_middleware
+from app.agents.middleware import (
+    SubagentMiddleware,
+    SubagentStackOptions,
+    create_subagent_middleware,
+)
 from app.agents.tools.coding import bash, grep, query_json, read
 from app.agents.tools.core.registry import ToolRegistry, get_tool_registry
 from app.agents.tools.core.store import get_tools_store
@@ -35,6 +41,7 @@ from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_
 from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 from app.constants.general import FINISH_TASK_NAME
 from app.constants.log_tags import LogTag
+from app.override.langgraph_bigtool.agent_config import AgentConfig, HookConfig
 from app.override.langgraph_bigtool.create_agent import create_agent
 from shared.py.wide_events import log
 
@@ -46,17 +53,11 @@ def resolve_declared_tools(
     provider: str,
     kind: str,
 ) -> list[str]:
-    """The declared tools that actually resolved, warning about any that did not.
+    """Return the declared tools that actually resolved, warning about any that did not.
 
-    A subagent's ``auto_bind_tools`` / ``extra_initial_tools`` are a promise that
-    those tools are bound before its first model call. Filtering out names the
-    registry never produced is correct — binding a non-existent tool would fail
-    the build — but a name that goes missing is always an upstream fault (a
-    provider category that never registered, a renamed slug), never a normal
-    outcome. Left silent, a Gmail subagent builds with none of its Gmail tools,
-    reports healthy, and can do nothing.
-
-    Declaring nothing is normal and says nothing.
+    A missing name is always an upstream fault (an unregistered provider
+    category, a renamed slug), never normal — left silent, a Gmail subagent
+    builds with none of its Gmail tools, reports healthy, and can do nothing.
     """
     if not declared:
         return []
@@ -74,7 +75,7 @@ def resolve_declared_tools(
     return resolved
 
 
-def _build_scoped_tool_dict(
+def build_scoped_tool_dict(
     tool_registry: ToolRegistry,
     tool_space: str,
     mcp_tools: list[BaseTool] | None,
@@ -83,13 +84,10 @@ def _build_scoped_tool_dict(
 ) -> tuple[dict[str, BaseTool], list[str]]:
     """Assemble the scoped tool dict + initial tool IDs for a subagent.
 
-    Split out of `create_provider_subagent` to keep that function's cognitive
-    complexity below SonarQube's threshold.
-
-    ``authoring_only`` builds a pure draft-authoring agent (e.g. the workflow
-    assistant): only its tool_space tools, none of the always-available
-    execution tools (coding/FS, web, research, memory), so it cannot try to
-    *do* the work instead of describe it.
+    Split out of create_provider_subagent to keep its cognitive complexity
+    below SonarQube's threshold. authoring_only builds a pure draft-authoring
+    agent (e.g. the workflow assistant): only its tool_space tools, none of
+    the always-available execution tools.
     """
     scoped_tool_dict: dict[str, BaseTool] = {}
     initial_tool_ids: list[str] = []
@@ -136,6 +134,21 @@ def _build_scoped_tool_dict(
     return scoped_tool_dict, initial_tool_ids
 
 
+@dataclass
+class SubAgentToolConfig:
+    """Tool-retrieval and behavior knobs for a spawned provider subagent."""
+
+    tool_space: str = "general"
+    use_direct_tools: bool = False
+    disable_retrieve_tools: bool = False
+    auto_bind_tools: list[str] | None = None
+    extra_initial_tools: list[str] | None = None
+    include_finish_task: bool = True
+    mcp_tools: list[BaseTool] | None = None
+    source_label: str | None = None
+    authoring_only: bool = False
+
+
 class SubAgentFactory:
     """Factory for creating provider-specific sub-agents with specialized tool registries."""
 
@@ -144,42 +157,18 @@ class SubAgentFactory:
         provider: str,
         name: str,
         llm: LanguageModelLike,
-        tool_space: str = "general",
-        use_direct_tools: bool = False,
-        disable_retrieve_tools: bool = False,
-        auto_bind_tools: list[str] | None = None,
-        extra_initial_tools: list[str] | None = None,
-        include_finish_task: bool = True,
-        mcp_tools: list[BaseTool] | None = None,
-        source_label: str | None = None,
-        authoring_only: bool = False,
+        config: SubAgentToolConfig | None = None,
     ) -> CompiledStateGraph:
-        """
-        Creates a specialized sub-agent graph for a specific provider with tool registry.
+        """Create a specialized sub-agent graph for a specific provider with tool registry.
 
-        Args:
-            provider: Provider name (gmail, notion, twitter, linkedin, calendar)
-            llm: Language model to use
-            tool_space: Tool space to use for retrieval (e.g., "gmail_delegated", "general")
-            use_direct_tools: If True, bind all tools directly without retrieve_tools
-            disable_retrieve_tools: If True, disable retrieve_tools mechanism entirely
-            auto_bind_tools: Tools to auto-bind at startup. Always included
-                in `initial` regardless of `use_direct_tools` or
-                `disable_retrieve_tools`. Reduces latency for
-                frequently-used tools.
-            include_finish_task: When True (default), the subagent gets the
-                `finish_task` tool to signal completion. When False, it
-                terminates with a normal AIMessage that the streaming layer
-                captures as the final answer. Use False for answer-only
-                subagents (e.g. documentation fetchers) where finish_task adds
-                latency without value.
-            source_label: Human-readable name for the provider, streamed with
-                todo_progress events so the frontend shows the integration's
-                name instead of its raw id (provider).
-
-        Returns:
-            Compiled LangGraph agent with tool registry, retrieval, and checkpointer
+        auto_bind_tools is always included in initial, regardless of use_direct_tools or
+        disable_retrieve_tools. include_finish_task=False terminates with a normal AIMessage
+        instead of the finish_task tool — for answer-only subagents (e.g. doc fetchers)
+        where finish_task adds latency without value.
         """
+        cfg = config or SubAgentToolConfig()
+        tool_space = cfg.tool_space
+        use_direct_tools = cfg.use_direct_tools
         log.set(subagent={"name": name, "provider": provider})
         log.info(
             f"{LogTag.AGENT} Creating sub-agent graph",
@@ -190,30 +179,28 @@ class SubAgentFactory:
 
         store, tool_registry = await asyncio.gather(get_tools_store(), get_tool_registry())
 
-        scoped_tool_dict, initial_tool_ids = _build_scoped_tool_dict(
+        scoped_tool_dict, initial_tool_ids = build_scoped_tool_dict(
             tool_registry=tool_registry,
             tool_space=tool_space,
-            mcp_tools=mcp_tools,
-            include_finish_task=include_finish_task,
-            authoring_only=authoring_only,
+            mcp_tools=cfg.mcp_tools,
+            include_finish_task=cfg.include_finish_task,
+            authoring_only=cfg.authoring_only,
         )
 
-        # Get full tool dict so spawned sub-subagents (via spawn_subagent) inherit
-        # all parent tools, not just the provider's scoped tools.
-        # The provider agent itself uses scoped_tool_dict for its own tool access,
-        # but its SubagentMiddleware needs the full registry so that any child
-        # subagent it spawns can access tools like read, bash, web_search, etc.
+        # Full tool dict so sub-subagents spawned via spawn_subagent inherit
+        # all parent tools, not just the provider's scoped_tool_dict.
         full_tool_dict = tool_registry.get_tool_dict()
 
-        # An authoring-only subagent (the workflow assistant) just emits a draft;
-        # it must not spawn sub-subagents or plan/run tasks. Strip the spawn
-        # middleware and the todo (plan_tasks/update_tasks) tools + hook so it
-        # cannot drift into executing the workflow it is supposed to describe.
+        # An authoring-only subagent just emits a draft: strip spawn
+        # middleware and todo tools/hook so it can't drift into execution.
         middleware = create_subagent_middleware(
-            subagent_llm=llm,
-            subagent_registry=full_tool_dict,
-            subagent_tool_space=tool_space,
-            enable_subagent=not authoring_only,
+            agent_name=name,
+            subagent=SubagentStackOptions(
+                enabled=not cfg.authoring_only,
+                llm=llm,
+                registry=full_tool_dict,
+                tool_space=tool_space,
+            ),
         )
 
         subagent_mw = next(
@@ -223,9 +210,11 @@ class SubAgentFactory:
 
         # Create todo tools and register them in the scoped tool registry
         todo_tools: list[BaseTool] = (
-            [] if authoring_only else create_todo_tools(source=provider, source_label=source_label)
+            []
+            if cfg.authoring_only
+            else create_todo_tools(source=provider, source_label=cfg.source_label)
         )
-        todo_hook = None if authoring_only else create_todo_pre_model_hook(source=provider)
+        todo_hook = None if cfg.authoring_only else create_todo_pre_model_hook(source=provider)
         todo_tool_names: list[str] = []
         for todo_tool in todo_tools:
             scoped_tool_dict[todo_tool.name] = todo_tool
@@ -235,30 +224,30 @@ class SubAgentFactory:
             subagent_mw.set_store(store)
             subagent_mw.set_spawn_graph_provider(get_spawn_graph)
 
-        common_kwargs = {
+        common_kwargs: dict[str, Any] = {
             "llm": llm,
             "tool_registry": scoped_tool_dict,  # Use scoped dict instead of global
-            "agent_name": name,
-            "middleware": middleware,
-            "pre_model_hooks": worker_pre_model_hooks(todo_hook),
-            "end_graph_hooks": [memory_node],
+            "agent_config": AgentConfig(agent_name=name, middleware=middleware),
+            # No memory hook: extraction runs once per comms turn, and a
+            # subagent sees the same thread comms already ingested.
+            "hooks_config": HookConfig(
+                pre_model_hooks=worker_pre_model_hooks(todo_hook),
+                end_graph_hooks=[],
+            ),
         }
 
         valid_auto_bind: list[str] | None = (
             resolve_declared_tools(
-                auto_bind_tools, scoped_tool_dict, provider=provider, kind="auto_bind"
+                cfg.auto_bind_tools, scoped_tool_dict, provider=provider, kind="auto_bind"
             )
             or None
         )
 
-        # Config-declared extra initial tools (SubAgentConfig.extra_initial_tools):
-        # local/general tools this subagent always needs bound up front — for the
-        # agent AND the chunk-reader children it spawns. E.g. gmail declares
-        # query_json/grep so triage mines an offloaded inbox directly instead of
-        # falling back to read-whole-file + bash. Kept per-integration in config
-        # (not branched on provider) so it scales to any subagent that offloads.
+        # Config-declared extra tools always bound up front, e.g. gmail
+        # declares query_json/grep so triage mines an offloaded inbox
+        # directly instead of read-whole-file + bash.
         extra_initial = resolve_declared_tools(
-            extra_initial_tools, scoped_tool_dict, provider=provider, kind="extra_initial"
+            cfg.extra_initial_tools, scoped_tool_dict, provider=provider, kind="extra_initial"
         )
         if extra_initial:
             valid_auto_bind = [*(valid_auto_bind or []), *extra_initial]
@@ -276,8 +265,8 @@ class SubAgentFactory:
             todo_tool_names=todo_tool_names,
             auto_bind_tool_names=valid_auto_bind,
             use_direct_tools=use_direct_tools,
-            disable_retrieve_tools=disable_retrieve_tools,
-            include_finish_task=include_finish_task,
+            disable_retrieve_tools=cfg.disable_retrieve_tools,
+            include_finish_task=cfg.include_finish_task,
         )
         common_kwargs.update(
             build_create_agent_tool_kwargs(
@@ -291,7 +280,7 @@ class SubAgentFactory:
         child_tool_runtime = build_child_tool_runtime_config(
             parent_tool_runtime,
             use_direct_tools=use_direct_tools,
-            disable_retrieve_tools=disable_retrieve_tools,
+            disable_retrieve_tools=cfg.disable_retrieve_tools,
             extra_initial_tool_names=extra_initial,
         )
         spawn_seed_tools = [
@@ -307,7 +296,7 @@ class SubAgentFactory:
                 tool_runtime_config=child_tool_runtime,
             )
 
-        builder = create_agent(**common_kwargs)  # type: ignore[arg-type]
+        builder = create_agent(**common_kwargs)
 
         try:
             checkpointer_manager = await get_checkpointer_manager()

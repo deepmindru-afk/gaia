@@ -12,13 +12,19 @@ Covers:
 """
 
 import asyncio
-from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, NonCallableMagicMock, patch
 
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.runnables import RunnableConfig, RunnableLambda
+from langchain_core.outputs import ChatGeneration, Generation, LLMResult
+from langchain_core.runnables import (
+    Runnable,
+    RunnableBinding,
+    RunnableConfig,
+    RunnableLambda,
+)
 from langchain_openrouter import ChatOpenRouter
 from pydantic import BaseModel, SecretStr
 import pytest
@@ -30,38 +36,61 @@ from app.agents.llm.client import (
     LLM_RETRYABLE_EXCEPTIONS,
     PROVIDER_MODELS,
     PROVIDER_PRIORITY,
+    LLMInvokeOptions,
+    ResponseFacts,
+    StructuredCallOptions,
     _build_default_llm,
     _create_configurable_llm,
+    _GenerationIdCallback,
     _get_available_providers,
     _get_ordered_providers,
-    _meter_discarded_replay,
     _openrouter_wire_configurables,
     _record_auxiliary_usage,
-    _silenced,
+    _reported_cost,
+    _requested_model,
     _stamp_fallback,
+    _with_usage_handler,
     ainvoke_llm,
     ainvoke_structured,
     ainvoke_structured_gemini,
+    background_structured_runnable,
     get_default_llm,
     init_llm,
+    invoke_llm,
     register_llm_providers,
 )
 from app.agents.llm.exceptions import LLM_FALLBACK_EXCEPTIONS, LLMNotConfiguredError
-from app.agents.llm.types import LLMProviderName
 from app.constants.llm import (
     AUX_MODEL_NAME,
     DEFAULT_GEMINI_MODEL_NAME,
     DEFAULT_MODEL_NAME,
+    HELPER_MAX_OUTPUT_TOKENS,
+    OPENROUTER_APP_CATEGORIES,
+    OPENROUTER_APP_TITLE,
+    OPENROUTER_DEV_APP_TITLE,
+    OPENROUTER_DEV_APP_URL,
     OPENROUTER_MAX_OUTPUT_TOKENS,
-    STICKY_FLIP_RETRY_MIN_INPUT,
+    PROVIDER_NAME_METADATA_KEY,
+    UNKNOWN_MODEL_NAME,
+    LLMProviderName,
 )
-from app.constants.log_tags import LogTag
 from app.core.lazy_loader import ProviderRegistry
+from app.services.llm_metering import LLMCallContext
 from shared.py.wide_events import log
+from tests.helpers import create_fake_llm
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# The identity every auxiliary one-shot now states about itself. These tests are
+# about what gets BOOKED, not about the ledger row, so they share one minimal
+# context; the row it produces is covered in test_llm_metering_ledger.py.
+_CLIENT = "app.agents.llm.client"
+
+_AUX_CONTEXT = LLMCallContext(
+    agent_name="memory_extraction", background=True, charge_to_budget=False
+)
 
 
 def _make_fake_provider(name: str = "fake") -> MagicMock:
@@ -125,11 +154,7 @@ class TestGetAvailableProviders:
         assert list(result.keys()) == ["gemini"]
 
     def test_unregistered_provider_is_skipped_not_fatal(self) -> None:
-        """custom_llm is registered only when ENV=development, so in production
-        the registry has no such key. Against the REAL registry (which raises
-        KeyError on an unregistered name, unlike the mock the sibling tests use)
-        that killed init_llm, and with it every agent graph.
-        """
+        """Runs against the real registry, which raises KeyError on an unregistered name and once killed init_llm."""
         registry = ProviderRegistry()
         gemini_inst = _make_fake_provider("gemini")
         openrouter_inst = _make_fake_provider("openrouter")
@@ -148,9 +173,7 @@ class TestGetAvailableProviders:
 
 
 class TestNextFallbackProvider:
-    """What a caller that caught a provider failure retries onto. The graph
-    selects its lane by ``configurable["provider"]`` and never fails over itself,
-    so a wrong answer here is a turn that dies on the provider that just 402'd."""
+    """What a caller retries onto after a provider failure; the graph selects its lane via configurable["provider"] and never fails over itself."""
 
     def _available(self, *names: LLMProviderName) -> Any:
         return patch(
@@ -186,9 +209,7 @@ class TestNextFallbackProvider:
             assert client_module.next_fallback_provider(LLMProviderName.OPENROUTER) is None
 
     def test_an_unconfigured_provider_is_skipped_not_returned_modelless(self) -> None:
-        """The custom dev endpoint's PROVIDER_MODELS entry is ``DEV_LLM_MODEL or
-        ""``; pinning ``""`` trades one dead provider for a guaranteed bad
-        request."""
+        """The custom endpoint's PROVIDER_MODELS entry is DEV_LLM_MODEL or ""; pinning "" trades a dead provider for a guaranteed bad request."""
         with (
             self._available(LLMProviderName.OPENROUTER, LLMProviderName.CUSTOM),
             patch.dict(PROVIDER_MODELS, {LLMProviderName.CUSTOM: ""}),
@@ -315,7 +336,7 @@ class TestGetOrderedProviders:
 class TestCreateConfigurableLlm:
     def test_no_alternatives_returns_primary_instance(self) -> None:
         primary = _make_llm_provider("gemini")
-        result = _create_configurable_llm(primary, [])  # type: ignore[arg-type]
+        result = _create_configurable_llm(primary, [])  # type: ignore[arg-type]  # stub provider dict stands in for an LLMProvider
 
         assert result is primary["instance"]
 
@@ -324,7 +345,7 @@ class TestCreateConfigurableLlm:
         alt1 = _make_llm_provider("openai")
         alt2 = _make_llm_provider("openrouter")
 
-        _create_configurable_llm(primary, [alt1, alt2])  # type: ignore[arg-type, list-item]
+        _create_configurable_llm(primary, [alt1, alt2])  # type: ignore[arg-type, list-item]  # stub provider dicts stand in for LLMProvider entries
 
         primary["instance"].configurable_alternatives.assert_called_once()
         call_args = primary["instance"].configurable_alternatives.call_args
@@ -463,6 +484,90 @@ class TestInitLlm:
 # ---------------------------------------------------------------------------
 
 
+class TestOpenRouterAppAttribution:
+    """Every real OpenRouter client must attribute itself, on both lanes.
+
+    The aux lane (_build_default_llm — memory extraction, follow-ups,
+    onboarding) shipped with no attribution at all, so its production traffic
+    reported as "unknown app" on the OpenRouter dashboard, indistinguishable
+    from a leaked key. And development used to send the localhost FRONTEND_URL,
+    which OpenRouter cannot attribute — same bucket.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh_cache(self):
+        _build_default_llm.cache_clear()
+        yield
+        _build_default_llm.cache_clear()
+
+    @staticmethod
+    def _attribution_of(mock_chat_openrouter: MagicMock) -> dict[str, object]:
+        kwargs = mock_chat_openrouter.call_args.kwargs
+        return {k: kwargs.get(k) for k in ("app_url", "app_title", "app_categories")}
+
+    @patch("app.agents.llm.client.without_sdk_retry", new=lambda llm: llm)
+    @patch("app.agents.llm.client.ChatOpenRouter")
+    @patch("app.agents.llm.client.settings")
+    def test_the_aux_lane_attributes_itself(
+        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
+    ) -> None:
+        mock_settings.ENV = "production"
+        mock_settings.FRONTEND_URL = "https://heygaia.io"
+        mock_settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
+        mock_settings.OPENROUTER_PROVIDER_ORDER = ""
+
+        _build_default_llm(0.7)
+
+        assert self._attribution_of(mock_chat_openrouter) == {
+            "app_url": "https://heygaia.io",
+            "app_title": OPENROUTER_APP_TITLE,
+            "app_categories": OPENROUTER_APP_CATEGORIES,
+        }
+
+    @patch("app.agents.llm.client.without_sdk_retry", new=lambda llm: llm)
+    @patch("app.agents.llm.client.ChatOpenRouter")
+    @patch("app.agents.llm.client.settings")
+    def test_development_reports_as_its_own_app_not_unknown(
+        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
+    ) -> None:
+        """A localhost referer is unattributable; dev must send the fixed dev identity so its spend is legible on the dashboard."""
+        mock_settings.ENV = "development"
+        mock_settings.FRONTEND_URL = "http://localhost:3000"
+        mock_settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
+        mock_settings.OPENROUTER_PROVIDER_ORDER = ""
+
+        _build_default_llm(0.7)
+
+        assert self._attribution_of(mock_chat_openrouter) == {
+            "app_url": OPENROUTER_DEV_APP_URL,
+            "app_title": OPENROUTER_DEV_APP_TITLE,
+            "app_categories": OPENROUTER_APP_CATEGORIES,
+        }
+
+    @patch("app.agents.llm.client._openrouter_wire_configurables", new=lambda llm: llm)
+    @patch("app.agents.llm.client.without_sdk_retry", new=lambda llm: llm)
+    @patch("app.agents.llm.client.ChatOpenRouter")
+    @patch("app.agents.llm.client.settings")
+    def test_the_graph_lane_attributes_itself(
+        self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
+    ) -> None:
+        mock_settings.GAIA_SIM_MODE = False
+        mock_settings.ENV = "production"
+        mock_settings.FRONTEND_URL = "https://heygaia.io"
+        mock_settings.OPENROUTER_API_KEY = "or-key"  # pragma: allowlist secret
+
+        # lazy_provider swaps the imported symbol for a registration hook; the
+        # real factory lives on the LazyLoader it returns. Running it is the
+        # only way to prove the GRAPH lane passes attribution through.
+        client_module.init_openrouter_llm().loader_func()
+
+        assert self._attribution_of(mock_chat_openrouter) == {
+            "app_url": "https://heygaia.io",
+            "app_title": OPENROUTER_APP_TITLE,
+            "app_categories": OPENROUTER_APP_CATEGORIES,
+        }
+
+
 class TestGetDefaultLlm:
     @pytest.fixture(autouse=True)
     def _fresh_cache(self):
@@ -525,6 +630,93 @@ class TestGetDefaultLlm:
         assert get_default_llm() is mock_sim_llm.return_value
 
 
+class TestBackgroundStructuredRunnable:
+    class _Shape(BaseModel):
+        text: str
+
+    @patch("app.agents.llm.client._build_custom_llm")
+    @patch("app.agents.llm.client._sim_llm")
+    @patch("app.agents.llm.client.settings")
+    def test_sim_mode_wins_over_the_custom_endpoint(
+        self, mock_settings: MagicMock, mock_sim_llm: MagicMock, mock_build_custom: MagicMock
+    ) -> None:
+        """A sim run with DEV_LLM_* set must land on the scripted stub, like every other factory, not the real custom endpoint."""
+        mock_settings.GAIA_SIM_MODE = True
+        mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.CUSTOM
+        mock_settings.DEV_LLM_BASE_URL = "https://custom.example/v1"
+
+        runnable = background_structured_runnable(self._Shape, temperature=0.3)
+
+        mock_build_custom.assert_not_called()
+        mock_sim_llm.assert_called_once_with(0.3)
+        mock_sim_llm.return_value.with_structured_output.assert_called_once_with(self._Shape)
+        assert runnable is mock_sim_llm.return_value.with_structured_output.return_value
+
+    @patch("app.agents.llm.client._aux_structured_runnable")
+    @patch("app.agents.llm.client._build_custom_llm")
+    @patch("app.agents.llm.client.settings")
+    def test_outside_sim_mode_the_custom_endpoint_is_used_when_configured(
+        self, mock_settings: MagicMock, mock_build_custom: MagicMock, mock_aux: MagicMock
+    ) -> None:
+        mock_settings.GAIA_SIM_MODE = False
+        mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.CUSTOM
+        mock_settings.DEV_LLM_BASE_URL = "https://custom.example/v1"
+
+        runnable = background_structured_runnable(self._Shape, temperature=0.3)
+
+        mock_aux.assert_not_called()
+        mock_build_custom.assert_called_once_with(0.3)
+        # Bounded like the helper lane. Seen live: a replay's narration on the
+        # custom endpoint ran to the endpoint's 64k output cap, took 257 seconds,
+        # and delivered a result cut mid-sentence.
+        bounded = mock_build_custom.return_value.model_copy
+        bounded.assert_called_once_with(update={"max_tokens": HELPER_MAX_OUTPUT_TOKENS})
+        # The caller's schema is what the endpoint is asked to fill; a runnable
+        # bound to anything else parses the one model call of the whole replay.
+        bounded.return_value.with_structured_output.assert_called_once_with(self._Shape)
+        assert runnable is bounded.return_value.with_structured_output.return_value
+
+    @patch("app.agents.llm.client._aux_structured_runnable")
+    @patch("app.agents.llm.client._build_custom_llm")
+    @patch("app.agents.llm.client.settings")
+    def test_a_base_url_alone_does_not_make_this_a_custom_deployment(
+        self, mock_settings: MagicMock, mock_build_custom: MagicMock, mock_aux: MagicMock
+    ) -> None:
+        """Both halves must hold: a DEV base URL alone still runs on OpenRouter, so its one-shot must not hit the custom endpoint."""
+
+        def _aux(schema: Any, temperature: float, config: RunnableConfig | None) -> str:
+            return "aux-runnable"
+
+        mock_aux.side_effect = _aux
+        mock_settings.GAIA_SIM_MODE = False
+        mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.OPENROUTER
+        mock_settings.DEV_LLM_BASE_URL = "https://custom.example/v1"
+        run_config: RunnableConfig = {"configurable": {"session_id": "sess-1"}}
+
+        runnable = background_structured_runnable(self._Shape, temperature=0.3, config=run_config)
+
+        mock_build_custom.assert_not_called()
+        mock_aux.assert_called_once_with(self._Shape, 0.3, run_config)
+        assert runnable == "aux-runnable"
+
+    @patch("app.agents.llm.client._aux_structured_runnable")
+    @patch("app.agents.llm.client._build_custom_llm")
+    @patch("app.agents.llm.client.settings")
+    def test_a_custom_model_with_no_base_url_falls_back_to_the_aux_lane(
+        self, mock_settings: MagicMock, mock_build_custom: MagicMock, mock_aux: MagicMock
+    ) -> None:
+        """The other half: naming the custom provider without an endpoint leaves nowhere to build the client from."""
+        mock_settings.GAIA_SIM_MODE = False
+        mock_settings.DEV_DEFAULT_MODEL = LLMProviderName.CUSTOM
+        mock_settings.DEV_LLM_BASE_URL = None
+
+        runnable = background_structured_runnable(self._Shape, temperature=0.3)
+
+        mock_build_custom.assert_not_called()
+        mock_aux.assert_called_once_with(self._Shape, 0.3, None)
+        assert runnable is mock_aux.return_value
+
+
 # ---------------------------------------------------------------------------
 # ainvoke_llm — the single LLM invocation primitive (retry + fallback)
 # ---------------------------------------------------------------------------
@@ -533,10 +725,9 @@ class TestGetDefaultLlm:
 class TestAinvokeLlm:
     @staticmethod
     def _runnable(side_effect: Any = None, result: Any = None) -> NonCallableMagicMock:
-        # with_llm_retry calls runnable.with_retry(...) -> return self so the mock
-        # .ainvoke is what actually runs (the real retry is LangChain's concern).
-        # NonCallable because real Runnables aren't callable — ainvoke_llm treats
-        # a callable fallback as a lazy factory.
+        # with_llm_retry calls runnable.with_retry(...) -> return self, so the mock
+        # .ainvoke is what actually runs. NonCallable because real Runnables aren't
+        # callable — ainvoke_llm treats a callable fallback as a lazy factory.
         runnable = NonCallableMagicMock()
         runnable.with_retry = MagicMock(return_value=runnable)
         runnable.ainvoke = AsyncMock(side_effect=side_effect, return_value=result)
@@ -584,6 +775,24 @@ class TestAinvokeLlm:
         with pytest.raises(ConnectionError):
             await ainvoke_llm(primary, [HumanMessage(content="hi")])
 
+    async def test_max_attempts_bounds_the_primary_retry(self) -> None:
+        """max_attempts must reach the primary's retry wrapper, or a caller asking for one attempt silently gets the default three with backoff."""
+        attempts = 0
+
+        def _always_fails(_: Any) -> AIMessage:
+            nonlocal attempts
+            attempts += 1
+            raise ConnectionError("provider down")
+
+        with pytest.raises(ConnectionError):
+            await ainvoke_llm(
+                RunnableLambda(_always_fails),
+                [HumanMessage(content="hi")],
+                options=LLMInvokeOptions(max_attempts=1),
+            )
+
+        assert attempts == 1
+
     async def test_programming_error_propagates_not_downgraded(self) -> None:
         primary = self._runnable(side_effect=ValueError("a real bug"))
         fallback = self._runnable(result=AIMessage(content="must-not-be-used"))
@@ -605,19 +814,130 @@ class TestAinvokeLlm:
             primary,
             [HumanMessage(content="hi")],
             config=RunnableConfig(),
-            meter_auxiliary=False,
+            options=LLMInvokeOptions(meter_auxiliary=False),
         )
         assert "callbacks" not in primary.ainvoke.call_args.kwargs["config"]
 
+    async def test_an_auxiliary_call_is_metered_with_the_runs_own_context(self) -> None:
+        """The ledger row for a one-shot helper must name the conversation it ran for, not just a label with no link back to the turn."""
+        primary = self._runnable(result=AIMessage(content="ok"))
+        config = RunnableConfig(
+            configurable={
+                "user_id": "u1",
+                "conversation_id": "conv-1",
+                "thread_id": "executor_conv-1",
+                "workflow_id": "wf-1",
+            }
+        )
+
+        with patch(f"{_CLIENT}._record_auxiliary_usage", new_callable=AsyncMock) as record:
+            await ainvoke_llm(
+                primary, [HumanMessage(content="hi")], config=config, label="memory_extraction"
+            )
+
+        context = record.await_args.kwargs["context"]
+        assert context.agent_name == "memory_extraction"
+        # Never the user's allowance: a memory save is work GAIA chose to do.
+        assert context.background is True
+        assert context.charge_to_budget is False
+        assert context.conversation_id == "conv-1"
+        assert context.thread_id == "executor_conv-1"
+        assert context.workflow_id == "wf-1"
+
+    async def test_an_auxiliary_calls_wall_time_is_reported_in_milliseconds(self) -> None:
+        """Measured around the whole retry/fallback chain with a pinned clock: 50.1234 ms survives rounding to 2dp, exposing a scale or precision bug."""
+        primary = self._runnable(result=AIMessage(content="ok"))
+        clock = iter([100.0])
+
+        def _monotonic() -> float:
+            # First read is the start; every later read is the finish, so an
+            # extra clock read inside the retry wrapper cannot shift the result.
+            return next(clock, 100.0501234)
+
+        with (
+            patch(f"{_CLIENT}._record_auxiliary_usage", new_callable=AsyncMock) as record,
+            patch.object(client_module.time, "monotonic", _monotonic),
+        ):
+            await ainvoke_llm(primary, [HumanMessage(content="hi")], config=RunnableConfig())
+
+        assert record.await_args.kwargs["context"].duration_ms == 50.12
+
+    async def test_an_auxiliary_call_with_a_bare_config_attributes_nothing_it_lacks(self) -> None:
+        """Most one-shots run outside any conversation; their ledger rows say so rather than inheriting whichever ids happened to be around."""
+        primary = self._runnable(result=AIMessage(content="ok"))
+
+        with patch(f"{_CLIENT}._record_auxiliary_usage", new_callable=AsyncMock) as record:
+            await ainvoke_llm(primary, [HumanMessage(content="hi")], config=RunnableConfig())
+
+        context = record.await_args.kwargs["context"]
+        assert context.conversation_id is None
+        assert context.thread_id is None
+        assert context.workflow_id is None
+        # Background work nobody typed a message for: "system", per the rule.
+        # It used to come out null, which is neither answer the rule promises.
+        assert context.channel == "system"
+
+
+class TestOneInvocationPerCall:
+    """ainvoke_llm sends a graph call to the provider EXACTLY once, regardless of cache temperature.
+
+    A cold read used to trigger a second, byte-identical invocation whose answer
+    was thrown away — a cache-warming re-send. Measured over 2026-08-16..29 it
+    cost 3,614 extra calls and $34.55, ~20% of all LLM spend, to warm a chain
+    the router then scattered off anyway (49 of 114 threads were served by more
+    than one provider). Pinning the provider is what keeps the chain warm now,
+    so the re-send is pure waste and the number of invocations is the contract.
+    """
+
+    @staticmethod
+    def _cold_primary() -> NonCallableMagicMock:
+        runnable = NonCallableMagicMock()
+        runnable.with_retry = MagicMock(return_value=runnable)
+        runnable.ainvoke = AsyncMock(
+            return_value=AIMessage(
+                content="cold",
+                response_metadata={"model_name": "served/model"},
+                usage_metadata={
+                    "input_tokens": 10_000,
+                    "output_tokens": 5,
+                    "total_tokens": 10_005,
+                    "input_token_details": {"cache_read": 0},
+                },
+            )
+        )
+        return runnable
+
+    @pytest.mark.regression
+    async def test_a_cold_graph_call_is_sent_once(self) -> None:
+        primary = self._cold_primary()
+
+        result = await ainvoke_llm(
+            primary,
+            [HumanMessage(content="hi")],
+            config=RunnableConfig(
+                configurable={"user_id": "u1", "provider": "openrouter", "root_request_id": "r1"}
+            ),
+            label="comms_agent",
+            options=LLMInvokeOptions(meter_auxiliary=False),
+        )
+
+        assert primary.ainvoke.await_count == 1
+        assert result.content == "cold"
+
 
 class TestFallbackHandover:
-    """What the fallback is handed when the primary fails: the conversation's
-    sticky session, the caller's messages, a metered config — and a run stamped
-    so the rest of the run skips the broken primary."""
+    """What the fallback is handed when the primary fails: sticky session, messages, metered config, and a stamp marking it fell back."""
 
     @staticmethod
     def _bindable_runnable(result: Any) -> NonCallableMagicMock:
-        runnable = NonCallableMagicMock()
+        """Build a fallback double that reports as OpenRouter-wire.
+
+        spec makes it a RunnableBinding wrapping a real ChatOpenRouter, so the
+        walk that binds session_id sees the same branch production does — a
+        bare mock has no wrapper chain to walk.
+        """
+        runnable = NonCallableMagicMock(spec=RunnableBinding)
+        runnable.bound = ChatOpenRouter(model="m", api_key="k")
         runnable.with_retry = MagicMock(return_value=runnable)
         runnable.bind = MagicMock(return_value=runnable)
         runnable.ainvoke = AsyncMock(return_value=result)
@@ -627,18 +947,13 @@ class TestFallbackHandover:
     async def test_the_fallback_inherits_the_conversation_sticky_session(
         self, mock_log: MagicMock
     ) -> None:
-        """The key is BOUND on the runnable, not left in config.
-
-        A config-carried session_id is dropped before the wire, so a fallback
-        that only inherited the config would land on a provider with no warm
-        cache for this conversation.
-        """
+        """The sticky key must be bound on the runnable, not left in config — a config-carried session_id is dropped before the wire."""
         primary = TestAinvokeLlm._runnable(side_effect=ConnectionError("provider down"))
         fallback = self._bindable_runnable(AIMessage(content="fallback-ok"))
         config = RunnableConfig(configurable={"user_id": "u1", "session_id": "conv-1"})
         messages = [HumanMessage(content="hi")]
 
-        result = await ainvoke_llm(primary, messages, fallback=fallback, config=config)
+        result = await ainvoke_llm(primary, messages, config=config, fallback=fallback)
 
         assert result.content == "fallback-ok"
         # Suffixed: this call is auxiliary (meter_auxiliary defaults True), and an
@@ -658,13 +973,15 @@ class TestFallbackHandover:
     async def test_the_downgrade_warning_names_the_call_that_fell_back(
         self, mock_log: MagicMock
     ) -> None:
-        """The warning is the only record of a downgrade; unlabelled it cannot
-        be attributed to a caller."""
+        """The warning is the only record of a downgrade; unlabelled it cannot be attributed to a caller."""
         primary = TestAinvokeLlm._runnable(side_effect=ConnectionError("provider down"))
         fallback = self._bindable_runnable(AIMessage(content="fallback-ok"))
 
         await ainvoke_llm(
-            primary, [HumanMessage(content="hi")], fallback=fallback, label="the_judge"
+            primary,
+            [HumanMessage(content="hi")],
+            label="the_judge",
+            fallback=fallback,
         )
 
         assert mock_log.warning.call_args.kwargs["llm"] == {
@@ -674,432 +991,218 @@ class TestFallbackHandover:
         }
 
 
-def _replay_result(content: str, *, prompt: int, cached: int) -> AIMessage:
-    """A provider answer carrying the usage the sticky-flip gate reads."""
-    return AIMessage(
-        content=content,
-        usage_metadata={
-            "input_tokens": prompt,
-            "output_tokens": 5,
-            "total_tokens": prompt + 5,
-            "input_token_details": {"cache_read": cached},
-        },
-    )
-
-
-def _replaying_primary(first: Any, second: Any) -> NonCallableMagicMock:
-    """A primary that answers ``first``, then ``second`` on the replay."""
-    runnable = NonCallableMagicMock()
-    runnable.with_retry = MagicMock(return_value=runnable)
-    runnable.ainvoke = AsyncMock(side_effect=[first, second])
-    return runnable
-
-
-# Only the graph lane of a sticky-routing provider replays at all, so the
-# thresholds and the replay's own wiring are unreachable without one.
-_STICKY_LANE = RunnableConfig(configurable={"provider": "openrouter"})
-
-
-@pytest.fixture
-def booked_replay() -> Iterator[AsyncMock]:
-    """The metering seam a fired replay reaches, stubbed.
-
-    A replay meters its discarded first answer through ``record_llm_call``,
-    which prices the model and writes the spend — real I/O the unit tier must
-    not do, and the seam these tests read to see what was booked.
-    """
-    with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.25)) as rec:
-        yield rec
-
-
-class TestStickyFlipReplayThresholds:
-    """The cold-cache replay fires on a big prompt whose cache came back cold,
-    and on nothing else: a re-send costs a whole extra request."""
-
-    async def test_a_prompt_exactly_at_the_input_floor_is_replayed(
-        self, booked_replay: AsyncMock
-    ) -> None:
-        """The floor is inclusive — a prompt that just reaches it still counts."""
-        primary = _replaying_primary(
-            _replay_result("cold", prompt=STICKY_FLIP_RETRY_MIN_INPUT, cached=0),
-            _replay_result("warm", prompt=STICKY_FLIP_RETRY_MIN_INPUT, cached=7_900),
-        )
-
-        result = await ainvoke_llm(
-            primary,
-            [HumanMessage(content="hi")],
-            config=_STICKY_LANE,
-            meter_auxiliary=False,
-        )
-
-        # "cold" — the answer the user already watched stream. The replay is a
-        # cache-warming write, so its answer is discarded rather than returned;
-        # returning it would persist text that differs from what was on screen.
-        assert result.content == "cold"
-        assert primary.ainvoke.await_count == 2
-
-    async def test_a_prompt_just_under_the_input_floor_is_not_replayed(self) -> None:
-        """Under the floor the prompt is too small for a re-send to pay off."""
-        prompt = STICKY_FLIP_RETRY_MIN_INPUT - 1
-        primary = _replaying_primary(
-            _replay_result("cold", prompt=prompt, cached=0),
-            _replay_result("unused", prompt=prompt, cached=prompt),
-        )
-
-        result = await ainvoke_llm(
-            primary,
-            [HumanMessage(content="hi")],
-            config=_STICKY_LANE,
-            meter_auxiliary=False,
-        )
-
-        assert result.content == "cold"
-        assert primary.ainvoke.await_count == 1
-
-    async def test_a_hit_rate_exactly_at_the_floor_is_not_replayed(self) -> None:
-        """At the floor the cache is warm enough; re-sending would just pay twice."""
-        prompt = 10_000
-        primary = _replaying_primary(
-            _replay_result("warm", prompt=prompt, cached=int(prompt * 0.92)),
-            _replay_result("unused", prompt=prompt, cached=prompt),
-        )
-
-        result = await ainvoke_llm(
-            primary,
-            [HumanMessage(content="hi")],
-            config=_STICKY_LANE,
-            meter_auxiliary=False,
-        )
-
-        assert result.content == "warm"
-        assert primary.ainvoke.await_count == 1
-
-    async def test_auxiliary_metering_is_on_unless_a_caller_opts_out(self) -> None:
-        """The default is what one-shot callers get without thinking about it.
-
-        Auxiliary calls (vision, summaries, memory extraction) have no graph
-        middleware charging them, so this handler IS their accounting — if it
-        silently defaults off, their tokens are spent and never booked, and
-        nothing anywhere fails.
-        """
-        primary = NonCallableMagicMock()
-        primary.with_retry = MagicMock(return_value=primary)
-        primary.ainvoke = AsyncMock(return_value=AIMessage(content="hi"))
-
-        await ainvoke_llm(primary, [HumanMessage(content="hi")])
-
-        callbacks = primary.ainvoke.await_args.kwargs["config"]["callbacks"]
-        assert any(isinstance(handler, UsageMetadataCallbackHandler) for handler in callbacks)
-
-    async def test_opting_out_of_auxiliary_metering_attaches_no_handler(self) -> None:
-        # The graph lane passes meter_auxiliary=False because
-        # LLMAccountingMiddleware already charges the call; attaching here too
-        # would book it twice.
-        primary = NonCallableMagicMock()
-        primary.with_retry = MagicMock(return_value=primary)
-        primary.ainvoke = AsyncMock(return_value=AIMessage(content="hi"))
-
-        await ainvoke_llm(primary, [HumanMessage(content="hi")], meter_auxiliary=False)
-
-        callbacks = primary.ainvoke.await_args.kwargs["config"].get("callbacks") or []
-        assert not any(isinstance(handler, UsageMetadataCallbackHandler) for handler in callbacks)
-
-    async def test_a_result_that_carries_no_usage_at_all_is_returned_as_is(self) -> None:
-        """Structured runnables return a plain schema instance — no usage
-        attribute to read, and nothing to decide a replay on."""
-        parsed = _Extracted(fact="remembered")
-        primary = NonCallableMagicMock()
-        primary.with_retry = MagicMock(return_value=primary)
-        primary.ainvoke = AsyncMock(return_value=parsed)
-
-        result = await ainvoke_llm(primary, [HumanMessage(content="hi")], meter_auxiliary=False)
-
-        assert result is parsed
-        assert primary.ainvoke.await_count == 1
-
-
-class TestStickyFlipReplayIsSentLikeTheFirstCall:
-    """What the re-send itself carries. The replay's answer is the one the user
-    gets and the one graph state meters, so anything the first call had and it
-    lacks is silently dropped from the turn."""
-
-    _FIRST = _replay_result("cold", prompt=10_000, cached=0)
-    _SECOND = _replay_result("warm", prompt=10_000, cached=9_900)
-
-    async def test_the_replay_re_sends_the_same_prompt(self, booked_replay: AsyncMock) -> None:
-        """Re-sending anything else answers a different question — and the
-        answer to THAT is what the user would receive."""
-        primary = _replaying_primary(self._FIRST, self._SECOND)
-        messages = [HumanMessage(content="hi")]
-
-        await ainvoke_llm(primary, messages, config=_STICKY_LANE, meter_auxiliary=False)
-
-        assert [call.args[0] for call in primary.ainvoke.await_args_list] == [messages, messages]
-
-    async def test_the_replay_inherits_the_caller_lane_and_is_silenced(
-        self, booked_replay: AsyncMock
-    ) -> None:
-        """The re-send must land on the same provider (that is the whole point
-        of re-sending) but must not stream: both answers share one SSE stream,
-        so an unsilenced replay appends a second answer to the first."""
-        primary = _replaying_primary(self._FIRST, self._SECOND)
-
-        await ainvoke_llm(
-            primary, [HumanMessage(content="hi")], config=_STICKY_LANE, meter_auxiliary=False
-        )
-
-        first, replay = (call.kwargs["config"] for call in primary.ainvoke.await_args_list)
-        assert replay["configurable"] == _STICKY_LANE["configurable"]
-        assert replay["metadata"]["silent"] is True
-        assert "silent" not in (first.get("metadata") or {})
-
-    async def test_the_replay_gets_one_attempt_while_the_first_call_keeps_its_budget(
-        self, booked_replay: AsyncMock
-    ) -> None:
-        """The replay is an optimisation on a latency budget — retrying it pays
-        for a third request to save a cache miss. The first call is the one the
-        turn depends on and keeps the caller's retry budget."""
-        primary = _replaying_primary(self._FIRST, self._SECOND)
-
-        await ainvoke_llm(
-            primary,
-            [HumanMessage(content="hi")],
-            config=_STICKY_LANE,
-            meter_auxiliary=False,
-            max_attempts=2,
-        )
-
-        assert [
-            call.kwargs["stop_after_attempt"] for call in primary.with_retry.call_args_list
-        ] == [2, 1]
-
-    @patch("app.agents.llm.client.log")
-    async def test_a_failed_replay_is_warned_about_by_name(
-        self, mock_log: MagicMock, booked_replay: AsyncMock
-    ) -> None:
-        """The first answer is already in hand, so the caller sees nothing — this
-        warning is the only trace that the re-send cost a request and failed."""
-        primary = _replaying_primary(self._FIRST, ConnectionError("provider down"))
-
-        result = await ainvoke_llm(
-            primary,
-            [HumanMessage(content="hi")],
-            config=_STICKY_LANE,
-            label="the_judge",
-            meter_auxiliary=False,
-        )
-
-        assert result is self._FIRST
-        mock_log.warning.assert_called_once_with(
-            f"{LogTag.AGENT} sticky-flip replay failed; keeping the first response",
-            agent_name="the_judge",
-            error="provider down",
-        )
-        booked_replay.assert_not_awaited()
-
-    @patch("app.agents.llm.client.log")
-    async def test_the_discarded_answer_is_booked_against_the_calling_agent(
-        self, mock_log: MagicMock, booked_replay: AsyncMock
-    ) -> None:
-        """``label`` is how the discarded spend is attributed; unlabelled it
-        cannot be traced back to the caller that paid for it."""
-        primary = _replaying_primary(self._FIRST, self._SECOND)
-
-        await ainvoke_llm(
-            primary,
-            [HumanMessage(content="hi")],
-            config=_STICKY_LANE,
-            label="the_judge",
-            meter_auxiliary=False,
-        )
-
-        booked_replay.assert_awaited_once()
-        assert mock_log.info.call_args.kwargs["agent_name"] == "the_judge"
-
-
-class TestSilenced:
-    """``_silenced`` stamps the flag the SSE consumer skips message chunks on."""
-
-    def test_the_flag_is_added_without_dropping_the_metadata_already_there(self) -> None:
-        """The rest of the metadata is what the run is traced and attributed by;
-        replacing the dict instead of merging into it loses all of it."""
-        config = RunnableConfig(metadata={"langfuse_session_id": "s-1"}, tags=["graph"])
-
-        silenced = _silenced(config)
-
-        assert silenced["metadata"] == {"langfuse_session_id": "s-1", "silent": True}
-        assert silenced["tags"] == ["graph"]
-
-    def test_the_caller_config_is_left_alone(self) -> None:
-        """Callers pass shared module-level configs and live graph configs — a
-        stamp written in place silences every later call that reuses one."""
-        config = RunnableConfig(metadata={"langfuse_session_id": "s-1"})
-
-        _silenced(config)
-
-        assert config["metadata"] == {"langfuse_session_id": "s-1"}
-
-    def test_a_config_with_no_metadata_yet_gets_only_the_flag(self) -> None:
-        assert _silenced(RunnableConfig())["metadata"] == {"silent": True}
-
-
-class TestMeterDiscardedReplay:
-    """Who pays for the answer the replay threw away.
-
-    The discarded first invocation never lands in graph state, so
-    ``LLMAccountingMiddleware`` cannot see it — this seam is its only accounting.
-    """
-
-    _DISCARDED = AIMessage(
-        content="cold",
-        response_metadata={"model_name": "served/model"},
-        usage_metadata={
-            "input_tokens": 10_000,
-            "output_tokens": 40,
-            "total_tokens": 10_040,
-            "input_token_details": {"cache_read": 100},
-            "output_token_details": {"reasoning": 7},
-        },
-    )
-
-    async def test_the_whole_token_breakdown_is_booked_to_the_budget(
-        self, booked_replay: AsyncMock
-    ) -> None:
-        """The user asked for this turn, so unlike auxiliary COGS the discarded
-        request counts against their allowance — and every token class is priced
-        separately, so a dropped field under-reports the spend."""
-        config = RunnableConfig(configurable={"user_id": "u-1", "root_request_id": "r-1"})
-
-        await _meter_discarded_replay(self._DISCARDED, config, "the_judge")
-
-        assert booked_replay.await_args.kwargs == {
-            "user_id": "u-1",
-            "model_name": "served/model",
-            "input_tokens": 10_000,
-            "output_tokens": 40,
-            "cached_tokens": 100,
-            "reasoning_tokens": 7,
-            "root_request_id": "r-1",
-            "charge_to_budget": True,
-        }
-
-    async def test_a_discarded_non_message_is_not_booked(self, booked_replay: AsyncMock) -> None:
-        """Structured runnables return a schema instance, which carries no usage
-        to price at all."""
-        await _meter_discarded_replay(_Extracted(fact="remembered"), None, "the_judge")
-
-        booked_replay.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# ainvoke_structured_gemini — memory-lane provider selection
-# ---------------------------------------------------------------------------
-
-
 class _Extracted(BaseModel):
     fact: str
 
 
 class TestMemoryLaneProviderSelection:
-    """The direct-Gemini memory lane is a cache-isolation optimisation, not a
-    requirement. A deployment with only OPENROUTER_API_KEY — the documented
-    self-host path — must still extract memories, and a Gemini outage must not
-    silently drop every extraction for its duration."""
+    """The memory pipeline prefers the aux (OpenRouter) lane and keeps direct Gemini as the fallback.
 
-    @patch("app.agents.llm.client.ainvoke_structured", new_callable=AsyncMock)
-    @patch("app.agents.llm.client.get_memory_llm")
-    @patch("app.agents.llm.client.memory_lane_available", return_value=False)
-    async def test_falls_back_to_the_aux_lane_when_google_is_unconfigured(
-        self, mock_available: MagicMock, mock_memory_llm: MagicMock, mock_aux: AsyncMock
+    Measured: Gemini's implicit cache never extends past tools+system into the
+    contents (identical 4.6k prompts read exactly 3,064 cached), while the aux
+    lane reads 98.1%% cached on the same shape and keeps extending as the
+    transcript appends. The per-agent sticky session key now gives Gemini's old
+    cache-isolation reason to the aux lane too, so the working-cache lane wins.
+    """
+
+    @patch("app.agents.llm.client.settings")
+    def test_provider_order_setting_becomes_the_routing_preference(
+        self, mock_settings: MagicMock
     ) -> None:
-        mock_aux.return_value = _Extracted(fact="from-aux")
-        config = RunnableConfig(configurable={"user_id": "u1"})
+        """Must translate to slugs in order with allow_fallbacks: False (an unlisted upstream must never take the turn), and no-op when unset."""
+        from app.agents.llm.client import _provider_order_kwargs
 
-        result = await ainvoke_structured_gemini(
-            _Extracted,
-            "transcript",
-            label="memory:extract",
-            temperature=0.4,
-            config=config,
-            timeout=9.0,
-        )
-
-        assert result.fact == "from-aux"
-        mock_memory_llm.assert_not_called()
-        # The handover is the whole call, not just the schema: a dropped
-        # argument here silently re-defaults it on the lane that actually runs.
-        assert mock_aux.await_args.args[0] is _Extracted
-        assert mock_aux.await_args.args[1] == "transcript"
-        assert mock_aux.await_args.kwargs == {
-            "label": "memory:extract",
-            "temperature": 0.4,
-            "config": config,
-            "timeout": 9.0,
+        mock_settings.OPENROUTER_PROVIDER_ORDER = "coreweave/fp8, deepseek"
+        assert _provider_order_kwargs() == {
+            "model_kwargs": {
+                "provider": {
+                    "order": ["coreweave/fp8", "deepseek"],
+                    "allow_fallbacks": False,
+                }
+            }
         }
+
+        mock_settings.OPENROUTER_PROVIDER_ORDER = None
+        assert _provider_order_kwargs() == {}
+
+        # Whitespace-only must not send an empty order list to the provider.
+        mock_settings.OPENROUTER_PROVIDER_ORDER = " , "
+        assert _provider_order_kwargs() == {}
+
+    @patch("app.agents.llm.client.settings")
+    def test_the_aux_lane_predicate_reads_the_openrouter_key(
+        self, mock_settings: MagicMock
+    ) -> None:
+        """The real predicate body, not a patch of it — the lane choice hangs off this one boolean, so its truth table is contract."""
+        from app.agents.llm.client import aux_lane_available
+
+        mock_settings.GAIA_SIM_MODE = False
+        mock_settings.OPENROUTER_API_KEY = "or-key"
+        assert aux_lane_available() is True
+
+        mock_settings.OPENROUTER_API_KEY = None
+        assert aux_lane_available() is False
+
+        mock_settings.GAIA_SIM_MODE = True
+        assert aux_lane_available() is True
 
     @patch("app.agents.llm.client._aux_structured_runnable")
     @patch("app.agents.llm.client.ainvoke_llm", new_callable=AsyncMock)
     @patch("app.agents.llm.client.get_memory_llm")
     @patch("app.agents.llm.client.memory_lane_available", return_value=True)
-    async def test_gemini_is_preferred_and_carries_an_aux_fallback(
+    @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=True)
+    async def test_the_aux_lane_is_preferred_and_carries_a_gemini_fallback(
         self,
+        mock_aux_available: MagicMock,
         mock_available: MagicMock,
         mock_memory_llm: MagicMock,
         mock_ainvoke: AsyncMock,
         mock_aux_runnable: MagicMock,
     ) -> None:
-        mock_ainvoke.return_value = _Extracted(fact="from-gemini")
+        mock_ainvoke.return_value = _Extracted(fact="from-aux")
         config = RunnableConfig(configurable={"user_id": "u1"})
-        structured = mock_memory_llm.return_value.with_structured_output.return_value
 
         result = await ainvoke_structured_gemini(
             _Extracted,
             "transcript",
             label="memory:extract",
-            temperature=0.4,
             config=config,
-            timeout=9.0,
+            options=StructuredCallOptions(temperature=0.4, timeout=9.0),
         )
 
-        assert result.fact == "from-gemini"
-        mock_memory_llm.assert_called_once()
-        assert mock_memory_llm.call_args.kwargs["temperature"] == 0.4
-        assert mock_memory_llm.return_value.with_structured_output.call_args.args[0] is _Extracted
+        assert result.fact == "from-aux"
         # The handover is the whole call, not just the runnable: a dropped
         # argument here silently re-defaults it on the lane that actually runs.
-        assert mock_ainvoke.await_args.args == (structured, "transcript")
+        assert mock_ainvoke.await_args.args == (mock_aux_runnable.return_value, "transcript")
+        assert mock_aux_runnable.call_args.args == (_Extracted, 0.4, config)
         kwargs = dict(mock_ainvoke.await_args.kwargs)
         fallback = kwargs.pop("fallback")
-        assert kwargs == {"config": config, "label": "memory:extract", "timeout": 9.0}
-        # A Gemini outage has somewhere to go: ainvoke_llm gets a real fallback
-        # factory instead of the None that dropped every extraction — and the
-        # aux runnable it builds carries this call's schema, temperature and
-        # config rather than a defaulted set.
-        assert fallback() is mock_aux_runnable.return_value
-        assert mock_aux_runnable.call_args.args == (_Extracted, 0.4, config)
+        assert kwargs == {
+            "config": config,
+            "label": "memory:extract",
+            "options": LLMInvokeOptions(timeout=9.0),
+        }
+        # An aux outage has somewhere to go: the fallback factory builds the
+        # Gemini structured runnable with this call's schema and temperature.
+        mock_memory_llm.assert_not_called()
+        assert fallback() is mock_memory_llm.return_value.with_structured_output.return_value
+        assert mock_memory_llm.call_args.kwargs["temperature"] == 0.4
+        assert mock_memory_llm.return_value.with_structured_output.call_args.args[0] is _Extracted
 
-    @patch("app.agents.llm.client.get_helper_llm")
-    @patch("app.agents.llm.client.get_memory_llm")
-    @patch("app.agents.llm.client.memory_lane_available", return_value=True)
-    async def test_gemini_outage_is_served_by_the_aux_lane(
+    @patch("app.agents.llm.client._aux_structured_runnable")
+    @patch("app.agents.llm.client.ainvoke_llm", new_callable=AsyncMock)
+    @patch("app.agents.llm.client.memory_lane_available", return_value=False)
+    @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=True)
+    async def test_no_gemini_at_all_means_aux_with_no_fallback(
         self,
+        mock_aux_available: MagicMock,
         mock_available: MagicMock,
-        mock_memory_llm: MagicMock,
-        mock_helper: MagicMock,
+        mock_ainvoke: AsyncMock,
+        mock_aux_runnable: MagicMock,
     ) -> None:
-        failing = NonCallableMagicMock()
-        failing.with_retry = MagicMock(return_value=failing)
-        failing.ainvoke = AsyncMock(side_effect=ConnectionError("gemini down"))
-        mock_memory_llm.return_value.with_structured_output.return_value = failing
-
-        aux = NonCallableMagicMock()
-        aux.with_retry = MagicMock(return_value=aux)
-        aux.ainvoke = AsyncMock(return_value=_Extracted(fact="from-aux"))
-        mock_helper.return_value.model_copy.return_value.with_structured_output.return_value = aux
+        mock_ainvoke.return_value = _Extracted(fact="from-aux")
 
         result = await ainvoke_structured_gemini(_Extracted, "transcript", label="memory:extract")
 
         assert result.fact == "from-aux"
+        assert mock_ainvoke.await_args.kwargs["fallback"] is None
+
+    @patch("app.agents.llm.client.ainvoke_llm", new_callable=AsyncMock)
+    @patch("app.agents.llm.client.get_memory_llm")
+    @patch("app.agents.llm.client.memory_lane_available", return_value=True)
+    @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=False)
+    async def test_without_the_aux_lane_gemini_still_serves_alone(
+        self,
+        mock_aux_available: MagicMock,
+        mock_available: MagicMock,
+        mock_memory_llm: MagicMock,
+        mock_ainvoke: AsyncMock,
+    ) -> None:
+        mock_ainvoke.return_value = _Extracted(fact="from-gemini")
+        structured = mock_memory_llm.return_value.with_structured_output.return_value
+        config = RunnableConfig(configurable={"user_id": "u1"})
+
+        result = await ainvoke_structured_gemini(
+            _Extracted,
+            "transcript",
+            label="memory:extract",
+            config=config,
+            options=StructuredCallOptions(temperature=0.4, timeout=9.0),
+        )
+
+        assert result.fact == "from-gemini"
+        # The handover is the whole call: a dropped argument silently
+        # re-defaults it on the lane that actually runs.
+        assert mock_memory_llm.call_args.kwargs["temperature"] == 0.4
+        assert mock_memory_llm.return_value.with_structured_output.call_args.args[0] is _Extracted
+        assert mock_ainvoke.await_args.args == (structured, "transcript")
+        assert mock_ainvoke.await_args.kwargs == {
+            "config": config,
+            "label": "memory:extract",
+            "options": LLMInvokeOptions(timeout=9.0),
+        }
+
+    @patch("app.agents.llm.client.ainvoke_structured", new_callable=AsyncMock)
+    @patch("app.agents.llm.client.get_memory_llm")
+    @patch("app.agents.llm.client.memory_lane_available", return_value=False)
+    @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=False)
+    async def test_neither_lane_configured_surfaces_the_canonical_not_configured(
+        self,
+        mock_aux_available: MagicMock,
+        mock_available: MagicMock,
+        mock_memory_llm: MagicMock,
+        mock_structured: AsyncMock,
+    ) -> None:
+        """Delegates to ainvoke_structured, whose LLMNotConfiguredError names the fix; extraction's callers catch exactly that type."""
+        mock_structured.return_value = _Extracted(fact="delegated")
+        config = RunnableConfig(configurable={"user_id": "u1"})
+
+        result = await ainvoke_structured_gemini(
+            _Extracted,
+            "transcript",
+            label="memory:extract",
+            config=config,
+            options=StructuredCallOptions(temperature=0.4, timeout=9.0),
+        )
+
+        assert result.fact == "delegated"
+        mock_memory_llm.assert_not_called()
+        # The handover is the whole call: a dropped argument silently
+        # re-defaults it on the lane that actually runs.
+        assert mock_structured.await_args.args == (_Extracted, "transcript")
+        assert mock_structured.await_args.kwargs == {
+            "label": "memory:extract",
+            "config": config,
+            "options": StructuredCallOptions(temperature=0.4, timeout=9.0),
+        }
+
+    @patch("app.agents.llm.client.get_memory_llm")
+    @patch("app.agents.llm.client.get_helper_llm")
+    @patch("app.agents.llm.client.memory_lane_available", return_value=True)
+    @patch("app.agents.llm.client.aux_lane_available", create=True, return_value=True)
+    async def test_an_aux_outage_is_served_by_gemini(
+        self,
+        mock_aux_available: MagicMock,
+        mock_available: MagicMock,
+        mock_helper: MagicMock,
+        mock_memory_llm: MagicMock,
+    ) -> None:
+        failing = NonCallableMagicMock()
+        failing.with_retry = MagicMock(return_value=failing)
+        failing.bind = MagicMock(return_value=failing)
+        failing.ainvoke = AsyncMock(side_effect=ConnectionError("aux down"))
+        mock_helper.return_value.model_copy.return_value.with_structured_output.return_value = (
+            failing
+        )
+
+        gemini = NonCallableMagicMock()
+        gemini.with_retry = MagicMock(return_value=gemini)
+        gemini.ainvoke = AsyncMock(return_value=_Extracted(fact="from-gemini"))
+        mock_memory_llm.return_value.with_structured_output.return_value = gemini
+
+        result = await ainvoke_structured_gemini(_Extracted, "transcript", label="memory:extract")
+
+        assert result.fact == "from-gemini"
 
 
 # ---------------------------------------------------------------------------
@@ -1176,9 +1279,8 @@ class TestConstants:
 
     def test_gemini_runtime_errors_covered_by_fallback_set(self) -> None:
         # Regression guard: langchain-google-genai wraps 4xx into
-        # ChatGoogleGenerativeAIError and lets google-genai ServerError (5xx)
-        # propagate raw — the sets must be built from THOSE classes, not the
-        # legacy google-api-core hierarchy the SDK no longer raises.
+        # ChatGoogleGenerativeAIError and lets ServerError (5xx) propagate raw —
+        # build the sets from THOSE classes, not the legacy google-api-core ones.
         from google.genai.errors import APIError, ClientError, ServerError
         from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 
@@ -1217,8 +1319,7 @@ class TestChatbot:
     async def test_no_provider_is_raised_not_degraded(
         self, mock_get_helper: MagicMock, mock_log: MagicMock
     ) -> None:
-        """Callers own how they degrade — chatbot never invents a friendly
-        placeholder answer, because a swallowed failure reads as a real reply."""
+        """Callers own how they degrade; chatbot never invents a friendly placeholder answer, because a swallowed failure reads as a real reply."""
         mock_get_helper.side_effect = LLMNotConfiguredError("no providers")
 
         with pytest.raises(LLMNotConfiguredError):
@@ -1262,10 +1363,10 @@ class TestChatbot:
 class TestRecordAuxiliaryUsage:
     """What one-shot helper spend gets booked as.
 
-    ``ainvoke_structured`` runs outside the agent graph, so
-    ``LLMAccountingMiddleware`` never sees it — this is the only place auxiliary
-    COGS is recorded. ``record_llm_call`` is the persistence seam and is the only
-    thing mocked; the real ``UsageMetadataCallbackHandler`` carries the usage.
+    ainvoke_structured runs outside the agent graph, so
+    LLMAccountingMiddleware never sees it — this is the only place auxiliary
+    COGS is recorded. record_llm_call is the persistence seam and is the only
+    thing mocked; the real UsageMetadataCallbackHandler carries the usage.
     """
 
     @staticmethod
@@ -1274,9 +1375,94 @@ class TestRecordAuxiliaryUsage:
         handler.usage_metadata = dict(usage_by_model)
         return handler
 
+    async def test_the_llm_call_event_carries_the_generation_id(self) -> None:
+        """Structured calls used to lose the generation id (every follow-up/memory event read MISSING); the aux metering path must put it on the wide event."""
+        handler = self._handler(m={"input_tokens": 10, "output_tokens": 2})
+
+        with (
+            patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.0)),
+            patch("app.agents.llm.client.log") as mock_log,
+        ):
+            await _record_auxiliary_usage(
+                handler,
+                "follow_up_actions",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(generation_id="gen-abc123"),
+            )
+
+        assert mock_log.info.call_args.kwargs["generation_id"] == "gen-abc123"
+
+    def test_the_generation_id_callback_reads_llm_output_then_generation_info(self) -> None:
+        """ChatOpenRouter puts the id in llm_output non-streaming and generation_info when streaming; the callback must read both, else None."""
+        from langchain_core.outputs import ChatGeneration, LLMResult
+
+        from app.agents.llm.client import _GenerationIdCallback
+
+        cb = _GenerationIdCallback()
+        cb.on_llm_end(LLMResult(generations=[[]], llm_output={"id": "gen-nonstream"}))
+        assert cb.generation_id == "gen-nonstream"
+
+        cb = _GenerationIdCallback()
+        cb.on_llm_end(
+            LLMResult(
+                generations=[
+                    [
+                        ChatGeneration(
+                            message=AIMessage(content="x"),
+                            generation_info={"id": "gen-streamed"},
+                        )
+                    ]
+                ],
+                llm_output=None,
+            )
+        )
+        assert cb.generation_id == "gen-streamed"
+
+        cb = _GenerationIdCallback()
+        cb.on_llm_end(LLMResult(generations=[[]], llm_output={}))
+        assert cb.generation_id is None
+
+    async def test_ainvoke_llm_threads_the_generation_id_to_the_metering(self) -> None:
+        """ainvoke_llm must attach the callback and forward its captured value to metering — a hardcoded None would pass unnoticed."""
+
+        with (
+            patch("app.agents.llm.client._GenerationIdCallback") as cb_cls,
+            patch("app.agents.llm.client._record_auxiliary_usage", new=AsyncMock()) as rec,
+        ):
+            cb_cls.return_value.facts = ResponseFacts(generation_id="gen-wired")
+            await ainvoke_llm(create_fake_llm(["ok"]), "hi", label="follow_up_actions")
+
+        assert rec.await_args.kwargs["facts"].generation_id == "gen-wired"
+
+    async def test_the_fallback_call_carries_the_generation_handler_too(self) -> None:
+        """A fallback that drops the handler makes exactly the calls that changed provider unattributable; both invoke sites must attach it."""
+
+        failing = NonCallableMagicMock()
+        failing.with_retry = MagicMock(return_value=failing)
+        failing.ainvoke = AsyncMock(side_effect=ConnectionError("primary down"))
+
+        with (
+            patch("app.agents.llm.client._GenerationIdCallback") as cb_cls,
+            patch("app.agents.llm.client._record_auxiliary_usage", new=AsyncMock()),
+            patch(
+                "app.agents.llm.client._with_usage_handler",
+                side_effect=lambda config, handler: dict(config or {}),
+            ) as attach,
+        ):
+            await ainvoke_llm(
+                failing,
+                "hi",
+                label="follow_up_actions",
+                fallback=create_fake_llm(["ok"]),
+            )
+
+        attached = [call.args[1] for call in attach.call_args_list]
+        # primary: usage + generation handler; fallback: usage + generation handler
+        assert attached.count(cb_cls.return_value) == 2
+
     async def test_books_reasoning_tokens_from_the_output_details(self) -> None:
-        """Reasoning tokens are billed and priced separately, so losing them
-        under-reports the cost of every reasoning-model helper call."""
+        """Reasoning tokens are billed and priced separately; losing them under-reports the cost of every reasoning-model helper call."""
         handler = self._handler(
             gemini={
                 "input_tokens": 100,
@@ -1286,37 +1472,59 @@ class TestRecordAuxiliaryUsage:
         )
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.5)) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", "user-1")
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
 
-        assert rec.call_args.kwargs["reasoning_tokens"] == 77
+        assert rec.call_args.kwargs["usage"]["reasoning_tokens"] == 77
 
     async def test_a_missing_count_books_zero_beside_a_present_one(self) -> None:
-        """One absent token key must book 0, not a placeholder — a stand-in
-        charges tokens that never existed on every such call."""
+        """One absent token key must book 0, not a placeholder — a stand-in charges tokens that never existed."""
         handler = self._handler(gemini={"output_tokens": 20})
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.0)) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", "user-1")
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
 
-        assert rec.call_args.kwargs["input_tokens"] == 0
-        assert rec.call_args.kwargs["output_tokens"] == 20
+        assert rec.call_args.kwargs["usage"]["input_tokens"] == 0
+        assert rec.call_args.kwargs["usage"]["output_tokens"] == 20
 
         handler = self._handler(gemini={"input_tokens": 100})
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.0)) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", "user-1")
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
 
-        assert rec.call_args.kwargs["input_tokens"] == 100
-        assert rec.call_args.kwargs["output_tokens"] == 0
+        assert rec.call_args.kwargs["usage"]["input_tokens"] == 100
+        assert rec.call_args.kwargs["usage"]["output_tokens"] == 0
 
     async def test_reasoning_defaults_to_zero_without_output_details(self) -> None:
-        """A non-reasoning model sends no ``output_token_details`` at all; that
-        must book zero rather than a placeholder."""
+        """A non-reasoning model sends no output_token_details at all; that must book zero rather than a placeholder."""
         handler = self._handler(gemini={"input_tokens": 100, "output_tokens": 20})
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.5)) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", "user-1")
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
 
-        assert rec.call_args.kwargs["reasoning_tokens"] == 0
+        assert rec.call_args.kwargs["usage"]["reasoning_tokens"] == 0
 
     async def test_an_explicit_zero_reasoning_count_stays_zero(self) -> None:
         handler = self._handler(
@@ -1328,13 +1536,18 @@ class TestRecordAuxiliaryUsage:
         )
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.5)) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", "user-1")
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
 
-        assert rec.call_args.kwargs["reasoning_tokens"] == 0
+        assert rec.call_args.kwargs["usage"]["reasoning_tokens"] == 0
 
     async def test_books_the_whole_token_breakdown_and_never_the_budget(self) -> None:
-        """``charge_to_budget=False`` is the load-bearing part: background work
-        GAIA does on the user's behalf must not eat their chat allowance."""
+        """charge_to_budget=False is load-bearing: background work GAIA does on the user's behalf must not eat their chat allowance."""
         handler = self._handler(
             gemini={
                 "input_tokens": 100,
@@ -1345,29 +1558,47 @@ class TestRecordAuxiliaryUsage:
         )
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.5)) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", "user-1")
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
 
         assert rec.call_args.kwargs == {
             "user_id": "user-1",
             "model_name": "gemini",
-            "input_tokens": 100,
-            "output_tokens": 20,
-            "cached_tokens": 40,
-            "reasoning_tokens": 7,
-            "charge_to_budget": False,
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cached_tokens": 40,
+                "reasoning_tokens": 7,
+            },
+            # This lane reported no price, so metering falls back to the table.
+            "provider_cost": None,
+            # The model the handler keyed its usage by is what answered, so the
+            # ledger records it as served; the upstream stays unknown here (the
+            # raw response never reaches this seam) and is never guessed.
+            "context": replace(_AUX_CONTEXT, model_served="gemini"),
         }
 
     async def test_a_call_that_burned_no_tokens_is_not_booked(self) -> None:
         handler = self._handler(gemini={"input_tokens": 0, "output_tokens": 0})
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock()) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", "user-1")
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
 
         rec.assert_not_called()
 
     async def test_every_model_in_one_run_is_booked(self) -> None:
-        """A retry that fell back to another provider leaves two models on the
-        handler; booking only the first under-reports the run."""
+        """A retry that fell back to another provider leaves two models on the handler; booking only the first under-reports the run."""
         handler = self._handler(
             gemini={"input_tokens": 10, "output_tokens": 1},
             openrouter={
@@ -1378,30 +1609,38 @@ class TestRecordAuxiliaryUsage:
         )
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.1)) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", "user-1")
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "user-1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(),
+            )
 
-        booked = {c.kwargs["model_name"]: c.kwargs["reasoning_tokens"] for c in rec.call_args_list}
+        booked = {
+            c.kwargs["model_name"]: c.kwargs["usage"]["reasoning_tokens"]
+            for c in rec.call_args_list
+        }
         assert booked == {"gemini": 0, "openrouter": 5}
 
     async def test_spend_without_a_user_id_is_still_booked(self) -> None:
-        """A threading gap must not silently drop the COGS — it is warned about
-        and recorded against no user, never skipped."""
+        """A threading gap must not silently drop the COGS — it is warned about and recorded against no user, never skipped."""
         handler = self._handler(gemini={"input_tokens": 100, "output_tokens": 20})
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.5)) as rec:
-            await _record_auxiliary_usage(handler, "memory_extraction", None)
+            await _record_auxiliary_usage(
+                handler, "memory_extraction", None, context=_AUX_CONTEXT, facts=ResponseFacts()
+            )
 
         assert rec.call_args.kwargs["user_id"] is None
 
 
 class TestAuxiliaryMeteringWiring:
-    """The plumbing between ``ainvoke_llm`` and the metering call: which config
-    the provider is handed, and what reaches ``_record_auxiliary_usage``."""
+    """The plumbing between ainvoke_llm and the metering call: which config the provider is handed, and what reaches _record_auxiliary_usage."""
 
     @staticmethod
     def _reporting_runnable(usage: dict[str, Any]) -> NonCallableMagicMock:
-        """A runnable that reports token usage the way a real provider does —
-        through the ``UsageMetadataCallbackHandler`` attached to its config."""
+        """Build a runnable that reports token usage via the UsageMetadataCallbackHandler attached to its config, like a real provider."""
 
         async def _ainvoke(_messages: Any, config: RunnableConfig | None = None) -> AIMessage:
             for handler in (config or {}).get("callbacks") or []:
@@ -1415,8 +1654,7 @@ class TestAuxiliaryMeteringWiring:
         return runnable
 
     async def test_the_config_user_id_is_who_the_spend_is_booked_against(self) -> None:
-        """``configurable.user_id`` is the only thread between the caller and the
-        COGS row; dropping it books every helper call against nobody."""
+        """configurable.user_id is the only thread to the COGS row; dropping it books every helper call against nobody."""
         primary = self._reporting_runnable({"input_tokens": 10, "output_tokens": 2})
 
         with patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.1)) as rec:
@@ -1430,8 +1668,7 @@ class TestAuxiliaryMeteringWiring:
         assert rec.call_args.kwargs["user_id"] == "user-9"
 
     async def test_unattributed_spend_is_warned_about_with_its_label(self) -> None:
-        """The warning is the only trail back to which helper leaked its user_id,
-        so the label has to be on the recorded event, not just in the message."""
+        """The warning is the only trail to which helper leaked its user_id, so the label must be on the recorded event, not just the message."""
         log.reset()
         primary = self._reporting_runnable({"input_tokens": 10, "output_tokens": 2})
 
@@ -1447,16 +1684,14 @@ class TestAuxiliaryMeteringWiring:
         assert [w["llm"]["label"] for w in warned] == ["memory_extraction"]
 
     async def test_skipping_metering_still_forwards_the_caller_config(self) -> None:
-        """``meter_auxiliary=False`` only means "attach no handler". Replacing the
-        caller's config with a fresh one strips ``configurable`` — the graph's
-        thread id, user id and run metadata all travel in there."""
+        """meter_auxiliary=False means "attach no handler" only; replacing the config with a fresh one would strip the thread id, user id and run metadata."""
         primary = self._reporting_runnable({"input_tokens": 10, "output_tokens": 2})
 
         await ainvoke_llm(
             primary,
             [HumanMessage(content="hi")],
             config=RunnableConfig(configurable={"user_id": "user-9"}),
-            meter_auxiliary=False,
+            options=LLMInvokeOptions(meter_auxiliary=False),
         )
 
         forwarded = primary.ainvoke.call_args.kwargs["config"]
@@ -1466,7 +1701,7 @@ class TestAuxiliaryMeteringWiring:
 class TestAinvokeStructured:
     """The one canonical one-shot structured call.
 
-    It runs on ``get_helper_llm``, not ``get_default_llm``: structured output is
+    It runs on get_helper_llm, not get_default_llm: structured output is
     always a small JSON blob, so reserving the full output budget for it wastes
     the reservation on every helper call in the app.
     """
@@ -1475,11 +1710,7 @@ class TestAinvokeStructured:
         answer: str
 
     async def test_runs_on_the_capped_helper_re_pointed_at_the_aux_model(self) -> None:
-        """Both halves of this lane at once: the runnable is built FROM
-        ``get_helper_llm`` (so the 8k output cap still applies) and then
-        re-pointed at ``AUX_MODEL_NAME`` (so the call lands in its own cache
-        namespace). Losing the first re-reserves 64k per helper call; losing
-        the second puts aux blocks back in the conversation's namespace."""
+        """Built from get_helper_llm (8k output cap) then re-pointed at AUX_MODEL_NAME (its own cache namespace) — losing either wastes 64k or misplaces the cache."""
         structured = MagicMock(name="structured_runnable")
         aux = MagicMock(name="aux_model")
         aux.with_structured_output = MagicMock(return_value=structured)
@@ -1494,7 +1725,10 @@ class TestAinvokeStructured:
             ) as mock_invoke,
         ):
             result = await ainvoke_structured(
-                self._Schema, "what is the answer?", label="the_judge", temperature=0.3
+                self._Schema,
+                "what is the answer?",
+                label="the_judge",
+                options=StructuredCallOptions(temperature=0.3),
             )
 
         assert mock_helper.call_args.kwargs["temperature"] == 0.3
@@ -1504,8 +1738,7 @@ class TestAinvokeStructured:
         assert result.answer == "42"
 
     async def test_the_label_and_config_reach_the_invoke(self) -> None:
-        """``label`` names the call in the COGS event and ``config`` carries the
-        user the spend is attributed to; losing either drops the attribution."""
+        """Label names the call in the COGS event and config carries the user attribution; losing either drops it."""
         helper = MagicMock()
         helper.model_copy = MagicMock(return_value=MagicMock())
         config = RunnableConfig(configurable={"user_id": "user-3"})
@@ -1525,11 +1758,7 @@ class TestAinvokeStructured:
         assert mock_invoke.call_args.kwargs["config"] is config
 
     async def test_the_prompt_and_timeout_reach_the_invoke(self) -> None:
-        """The prompt is the call; the timeout is the ceiling the caller chose.
-
-        A dropped timeout silently reverts to the module default, which is what
-        an interactive caller with a tight budget is trying to avoid.
-        """
+        """A dropped timeout would silently revert to the module default, defeating an interactive caller's tight budget."""
         helper = MagicMock()
         helper.model_copy = MagicMock(return_value=MagicMock())
         prompt = [HumanMessage(content="classify this")]
@@ -1541,18 +1770,18 @@ class TestAinvokeStructured:
                 new=AsyncMock(return_value=self._Schema(answer="ok")),
             ) as mock_invoke,
         ):
-            await ainvoke_structured(self._Schema, prompt, label="classifier", timeout=12.0)
+            await ainvoke_structured(
+                self._Schema,
+                prompt,
+                label="classifier",
+                options=StructuredCallOptions(timeout=12.0),
+            )
 
         assert mock_invoke.call_args.args[1] is prompt
-        assert mock_invoke.call_args.kwargs["timeout"] == 12.0
+        assert mock_invoke.call_args.kwargs["options"].timeout == 12.0
 
     async def test_the_aux_lane_runs_on_its_own_sticky_session(self) -> None:
-        """A suffixed session id, bound after ``with_structured_output``.
-
-        Sharing the conversation's id re-pins its provider from a background
-        one-shot; binding before the structured rebuild loses the key entirely,
-        because ``bind_tools`` drops the outer binding's kwargs.
-        """
+        """The session id must be suffixed and bound after with_structured_output, since bind_tools drops the outer binding's kwargs if bound before."""
         bound = MagicMock(name="bound_runnable")
         structured = MagicMock(name="structured_runnable")
         structured.bind = MagicMock(return_value=bound)
@@ -1619,17 +1848,13 @@ class TestStampFallback:
 class TestProviderModelFieldId:
     """Both provider lanes must read the model from the SAME configurable key.
 
-    They historically did not. Gemini's ``model`` attribute was bound to the
-    field id ``"model_name"`` while OpenRouter's ``model_name`` attribute was
-    bound to the field id ``"model"`` — two swapped ids sharing one flat
-    namespace (``prefix_keys=False``). That collision is the entire reason every
-    writer had to set both keys, and why a configurable carrying only one of them
-    silently resolved a *different* model than the one it named.
+    They historically did not: Gemini bound "model_name" while OpenRouter
+    bound "model" to the same flat namespace (prefix_keys=False), so a
+    configurable carrying only one key silently resolved the wrong model.
 
-    Scope: the OpenRouter case is exercised end-to-end through the real registry.
-    The Gemini case is asserted on the field id directly, because the hermetic
-    env blanks ``GOOGLE_API_KEY`` and the provider therefore resolves to ``None``
-    — there is no Gemini client to drive here. The id is the whole contract.
+    Scope: OpenRouter is exercised end-to-end via the real registry; Gemini
+    is asserted on the field id directly, since the hermetic env blanks
+    GOOGLE_API_KEY and there is no client to drive here.
     """
 
     @staticmethod
@@ -1638,10 +1863,7 @@ class TestProviderModelFieldId:
         return getattr(runnable, "model", None)
 
     def test_openrouter_exposes_its_model_under_the_same_id(self) -> None:
-        """Driven through the real wire helper rather than the provider registry:
-        the hermetic fence blanks OPENROUTER_API_KEY, so the registered provider
-        is ``None`` in CI and there is no client to resolve. The client is
-        constructed here with a dummy key — no network, construction only."""
+        """Driven through the real wire helper, not the registry: the hermetic fence blanks OPENROUTER_API_KEY, so the client is built here with a dummy key."""
         llm = _openrouter_wire_configurables(
             ChatOpenRouter(model="vendor/default", api_key=SecretStr("test-key"))
         )
@@ -1656,7 +1878,7 @@ class TestProviderModelFieldId:
 class TestFallbackRunsOnTheOtherProvider:
     """The fallback must actually leave the failed lane.
 
-    Regression: the fallback runnable carried its lane via ``with_config``, but the
+    Regression: the fallback runnable carried its lane via with_config, but the
     invoke re-passed the run's own config — and LangChain merges a passed config
     OVER a bound one, so the just-failed provider, model and pin were all restored
     and the "failover" retried the same dead lane. Nothing caught it because no
@@ -1694,7 +1916,7 @@ class TestFallbackRunsOnTheOtherProvider:
             "hi",
             fallback=RunnableLambda(_record),
             config=failed_lane_config,
-            fallback_config=fallback_config,
+            options=LLMInvokeOptions(fallback_config=fallback_config),
         )
 
         assert result.content == "from-fallback"
@@ -1704,45 +1926,73 @@ class TestFallbackRunsOnTheOtherProvider:
         assert "model_kwargs" not in seen
 
 
-class TestStickyFlipReplayNeverChangesTheAnswer:
-    """The replay warms the provider's chain for the next turn; it must not
-    change this turn's answer. The first invocation streams to the user, the
-    replay is silenced — so returning the replay's text would persist an answer
-    the user never saw and show different content on reload."""
+class TestFallbackRunCarriesTheCallLabel:
+    """The fallback attempt must publish the SAME call label as the primary.
 
-    async def test_the_streamed_answer_is_the_one_returned(self, booked_replay: AsyncMock) -> None:
-        primary = _replaying_primary(
-            _replay_result("what the user watched", prompt=STICKY_FLIP_RETRY_MIN_INPUT, cached=0),
-            _replay_result("a different answer", prompt=STICKY_FLIP_RETRY_MIN_INPUT, cached=7_900),
-        )
+    A turn's callback list is shared by the comms call and its title/follow-up/
+    memory side calls, and the run-level agent name cannot tell them apart — so
+    a fallback attempt that dropped the label would attribute its TTFT sample
+    to the wrong call. Both the async and the sync fallback path label the
+    config they pass to the fallback runnable, and each is asserted here.
+    """
+
+    @pytest.mark.regression
+    async def test_the_async_fallback_run_carries_the_call_label(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def _record(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            seen.update(config or {})
+            return AIMessage(content="from-fallback")
+
+        def _boom(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            raise ConnectionError("primary down")
 
         result = await ainvoke_llm(
-            primary,
-            [HumanMessage(content="hi")],
-            config=_STICKY_LANE,
-            meter_auxiliary=False,
+            RunnableLambda(_boom),
+            "hi",
+            fallback=RunnableLambda(_record),
+            options=LLMInvokeOptions(
+                max_attempts=1,
+                fallback_config=cast(RunnableConfig, {"configurable": {"provider": "gemini"}}),
+            ),
+            label="memory_extraction",
         )
 
-        assert result.content == "what the user watched"
-        assert primary.ainvoke.await_count == 2
+        assert result.content == "from-fallback"
+        assert seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert seen["configurable"] == {"provider": "gemini"}
 
-    async def test_the_discarded_replay_is_still_booked(self, booked_replay: AsyncMock) -> None:
-        """Both requests were billed by the provider, so both must reach COGS —
-        the graph meters the returned answer, this books the thrown-away one."""
-        primary = _replaying_primary(
-            _replay_result("kept", prompt=STICKY_FLIP_RETRY_MIN_INPUT, cached=0),
-            _replay_result("thrown away", prompt=STICKY_FLIP_RETRY_MIN_INPUT, cached=7_900),
+    @pytest.mark.regression
+    def test_the_sync_path_labels_the_call_on_primary_and_fallback(self) -> None:
+        """Labelling adds to each config rather than replacing it, on primary and fallback alike."""
+        primary_seen: dict[str, Any] = {}
+        fallback_seen: dict[str, Any] = {}
+
+        def _primary(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            primary_seen.update(config or {})
+            raise ConnectionError("primary down")
+
+        def _fallback(_input: Any, config: RunnableConfig | None = None) -> AIMessage:
+            fallback_seen.update(config or {})
+            return AIMessage(content="from-fallback")
+
+        result = invoke_llm(
+            RunnableLambda(_primary),
+            "hi",
+            fallback=RunnableLambda(_fallback),
+            config=cast(RunnableConfig, {"configurable": {"user_id": "u1"}}),
+            options=LLMInvokeOptions(
+                max_attempts=1,
+                fallback_config=cast(RunnableConfig, {"configurable": {"provider": "gemini"}}),
+            ),
+            label="memory_extraction",
         )
 
-        await ainvoke_llm(
-            primary,
-            [HumanMessage(content="hi")],
-            config=_STICKY_LANE,
-            meter_auxiliary=False,
-        )
-
-        assert booked_replay.await_count == 1
-        assert booked_replay.await_args.kwargs["cached_tokens"] == 7_900
+        assert result.content == "from-fallback"
+        assert primary_seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert primary_seen["configurable"] == {"user_id": "u1"}
+        assert fallback_seen.get("metadata", {}).get("llm_label") == "memory_extraction"
+        assert fallback_seen["configurable"] == {"provider": "gemini"}
 
 
 class TestFallbackKeepsItsLanesStickySession:
@@ -1765,7 +2015,7 @@ class TestFallbackKeepsItsLanesStickySession:
             [HumanMessage(content="hi")],
             fallback=fallback,
             config=RunnableConfig(configurable={"user_id": "u1", "session_id": "conv-1"}),
-            meter_auxiliary=False,
+            options=LLMInvokeOptions(meter_auxiliary=False),
         )
 
         assert fallback.bind.call_args.kwargs == {"session_id": "conv-1"}
@@ -1780,7 +2030,7 @@ class TestFallbackKeepsItsLanesStickySession:
             [HumanMessage(content="hi")],
             fallback=fallback,
             config=RunnableConfig(configurable={"user_id": "u1"}),
-            meter_auxiliary=False,
+            options=LLMInvokeOptions(meter_auxiliary=False),
         )
 
         fallback.bind.assert_not_called()
@@ -1811,6 +2061,718 @@ class TestTheInvokeTimeoutIsEnforced:
                 self._hanging_primary(),
                 [HumanMessage(content="hi")],
                 label="comms_agent",
-                timeout=0.05,
-                meter_auxiliary=False,
+                options=LLMInvokeOptions(timeout=0.05, meter_auxiliary=False),
             )
+
+
+class TestTheStickyKeyNeverReachesANonOpenRouterFallback:
+    """Binding OpenRouter's sticky session_id onto a Google client raises ValidationError before the request even leaves the process.
+
+    Reachable two ways: the graph lane falls OpenRouter -> Gemini by
+    PROVIDER_PRIORITY, and the memory lane's fallback is Gemini by design.
+    Verified live against the real API: the memory fallback failed with
+    "session_id: Extra inputs are not permitted".
+    """
+
+    @staticmethod
+    def _non_openrouter_fallback(result: AIMessage) -> NonCallableMagicMock:
+        """Build a fallback shaped like production's but on another provider.
+
+        A real ChatGoogleGenerativeAI would be higher fidelity but its gRPC
+        dependency segfaults mutmut's forking workers; the real client is
+        covered by the live probe in the commit message instead.
+        """
+
+        runnable = NonCallableMagicMock(spec=RunnableBinding)
+        runnable.bound = create_fake_llm(["ok"])
+        runnable.with_retry = MagicMock(return_value=runnable)
+        runnable.bind = MagicMock(return_value=runnable)
+        runnable.ainvoke = AsyncMock(return_value=result)
+        return runnable
+
+    def test_an_openrouter_runnable_is_recognised_through_its_wrappers(self) -> None:
+        """The predicate must see through with_structured_output/bind_tools — a fallback is never a bare client."""
+        from app.agents.llm.client import _is_openrouter_wire
+
+        client = ChatOpenRouter(model="m", api_key="k")
+
+        assert _is_openrouter_wire(client) is True
+        assert _is_openrouter_wire(client.bind_tools([])) is True
+        assert _is_openrouter_wire(client.with_structured_output(_Extracted)) is True
+
+    @pytest.mark.regression
+    def test_a_chatopenrouter_at_a_non_openrouter_base_is_not_openrouter_wire(self) -> None:
+        """OpenAI rejects the unknown session_id kwarg, so only OpenRouter's own endpoint is wire."""
+        from app.agents.llm.client import _is_openrouter_wire
+
+        custom_openai = ChatOpenRouter(
+            model="gpt-4.1-mini", api_key="k", base_url="https://api.openai.com/v1"
+        )
+
+        assert _is_openrouter_wire(custom_openai) is False
+        assert _is_openrouter_wire(custom_openai.bind_tools([])) is False
+
+    @pytest.mark.regression
+    def test_bind_session_id_skips_a_custom_openai_lane(self) -> None:
+        """The endpoint, not the provider, gates binding session_id — OpenAI 400s the whole turn if bound."""
+        from app.constants.llm import LLMProviderName
+        from app.override.langgraph_bigtool.create_agent import _bind_session_id
+
+        custom = ChatOpenRouter(
+            model="gpt-4.1-mini", api_key="k", base_url="https://api.openai.com/v1"
+        ).bind_tools([])
+        real = ChatOpenRouter(model="m", api_key="k").bind_tools([])
+
+        skipped = _bind_session_id(
+            custom, {"provider": LLMProviderName.CUSTOM, "session_id": "conv-1"}, "comms"
+        )
+        bound = _bind_session_id(
+            real, {"provider": LLMProviderName.OPENROUTER, "session_id": "conv-1"}, "comms"
+        )
+
+        assert getattr(skipped, "kwargs", {}).get("session_id") is None
+        assert getattr(bound, "kwargs", {}).get("session_id") == "conv-1-comms"
+
+    def test_another_provider_is_not_mistaken_for_openrouter(self) -> None:
+        from app.agents.llm.client import _is_openrouter_wire
+
+        other = create_fake_llm(["ok"])
+
+        assert _is_openrouter_wire(other) is False
+        assert _is_openrouter_wire(other.bind()) is False
+
+    def test_the_walk_terminates_on_a_self_generating_object(self) -> None:
+        from app.agents.llm.client import _is_openrouter_wire
+
+        """A mock invents a fresh child for every attribute access, so an
+        open-ended walk never converges — it hung this file's suite for eight
+        minutes. The walk follows only the two real wrapper types, bounded."""
+        assert _is_openrouter_wire(NonCallableMagicMock()) is False
+
+    def test_a_wrapper_stack_deeper_than_the_bound_is_not_assumed_openrouter(self) -> None:
+        """Running out of hops means the walk never saw an OpenRouter client, so answering yes would bind session_id onto an unknown provider and fail."""
+        from app.agents.llm.client import _WIRE_WALK_MAX_HOPS, _is_openrouter_wire
+
+        node: Runnable = create_fake_llm(["ok"])
+        for _ in range(_WIRE_WALK_MAX_HOPS + 1):
+            binding = NonCallableMagicMock(spec=RunnableBinding)
+            binding.bound = node
+            node = binding
+
+        assert _is_openrouter_wire(node) is False
+
+    async def test_a_gemini_fallback_is_invoked_without_the_sticky_key(self) -> None:
+        """The regression itself: a Gemini structured fallback with a session on the config must reach the model, not raise on an unsupported argument."""
+        primary = TestAinvokeLlm._runnable(side_effect=ConnectionError("aux down"))
+        fallback = self._non_openrouter_fallback(AIMessage(content="ok"))
+
+        await ainvoke_llm(
+            primary,
+            [HumanMessage(content="hi")],
+            config=RunnableConfig(configurable={"user_id": "u1", "session_id": "memory-u1"}),
+            fallback=fallback,
+        )
+
+        fallback.ainvoke.assert_awaited()
+        fallback.bind.assert_not_called()
+
+    async def test_an_openrouter_fallback_still_gets_its_sticky_key(self) -> None:
+        """The gate must not disarm the behaviour it guards: a same-wire fallback still lands back on the conversation's provider."""
+        primary = TestAinvokeLlm._runnable(side_effect=ConnectionError("provider down"))
+        fallback = TestFallbackHandover._bindable_runnable(AIMessage(content="ok"))
+
+        await ainvoke_llm(
+            primary,
+            [HumanMessage(content="hi")],
+            fallback=fallback,
+            config=RunnableConfig(configurable={"user_id": "u1", "session_id": "conv-1"}),
+            options=LLMInvokeOptions(meter_auxiliary=False),
+        )
+
+        assert fallback.bind.call_args.kwargs == {"session_id": "conv-1"}
+
+
+def _result(
+    *,
+    llm_output: dict[str, Any] | None = None,
+    message: AIMessage | None = None,
+) -> LLMResult:
+    """One provider reply in the shape the callback contract delivers it."""
+    generations = [[ChatGeneration(message=message)]] if message is not None else [[]]
+    return LLMResult(generations=cast(Any, generations), llm_output=llm_output)
+
+
+class TestReportedCost:
+    """What OpenRouter says a call cost, dug out of whichever shape carries it.
+
+    This is the number that replaces the flat pricing table, and the table is
+    wrong by more than 10x depending on which upstream served the request — so
+    every shape that can carry a price has to be read, and anything that is not
+    a price has to come back as None rather than as a wrong number.
+    """
+
+    def test_a_non_streaming_reply_carries_the_price_in_llm_output(self) -> None:
+        assert _reported_cost(_result(llm_output={"cost": 0.0042})) == 0.0042
+
+    def test_the_price_is_also_read_from_the_token_usage_block(self) -> None:
+        """The OpenAI-wire shape nests usage accounting under token_usage; a reader missing that level falls back to the table and mislogs the source."""
+        assert _reported_cost(_result(llm_output={"token_usage": {"cost": 0.007}})) == 0.007
+
+    def test_the_top_level_price_wins_over_the_nested_one(self) -> None:
+        result = _result(llm_output={"cost": 0.001, "token_usage": {"cost": 0.009}})
+        assert _reported_cost(result) == 0.001
+
+    def test_a_streamed_reply_carries_the_price_on_the_message_instead(self) -> None:
+        """Streaming leaves llm_output empty; ChatOpenRouter copies the figure onto the message's response_metadata."""
+        streamed = AIMessage(content="x", response_metadata={"cost": 0.0055})
+        assert _reported_cost(_result(llm_output={}, message=streamed)) == 0.0055
+
+    def test_zero_is_a_real_price_and_is_not_confused_with_no_price(self) -> None:
+        """Free and promotional routes genuinely cost 0; reading that as "no price reported" would fall back to the table and invent spend."""
+        assert _reported_cost(_result(llm_output={"cost": 0})) == 0.0
+
+    def test_a_reply_that_reported_no_price_returns_none(self) -> None:
+        assert _reported_cost(_result(llm_output={})) is None
+        assert _reported_cost(_result(llm_output=None)) is None
+        assert _reported_cost(_result(llm_output={"token_usage": {}})) is None
+
+    def test_an_unparseable_price_falls_through_to_the_next_shape(self) -> None:
+        """A non-numeric value is not a price; it must not crash metering or be booked — the next shape, then the table, answers."""
+        streamed = AIMessage(content="x", response_metadata={"cost": 0.002})
+        assert _reported_cost(_result(llm_output={"cost": "n/a"}, message=streamed)) == 0.002
+        assert _reported_cost(_result(llm_output={"cost": "n/a"})) is None
+        # A structured value is a TypeError out of float(), not a ValueError —
+        # catching only one of the two turns a malformed price into a crash on
+        # a call the provider already served and charged for.
+        assert _reported_cost(_result(llm_output={"cost": {"amount": 1}})) is None
+        assert _reported_cost(_result(llm_output={"token_usage": {"cost": ["1"]}})) is None
+
+    def test_a_generation_without_a_message_is_skipped_not_crashed(self) -> None:
+        """Generations also holds plain Generation objects, which have no message at all."""
+        assert _reported_cost(LLMResult(generations=[[Generation(text="x")]])) is None
+
+    @pytest.mark.parametrize("poison", [float("inf"), float("-inf"), float("nan"), -0.5])
+    def test_a_price_that_is_not_a_real_number_is_no_price(self, poison: float) -> None:
+        """A negative or non-finite price would be summed across retries and land in a budget window; fall through to the table instead."""
+        response = LLMResult(generations=[], llm_output={"cost": poison})
+
+        assert _reported_cost(response) is None
+
+
+class TestTheGenerationCallbackAccumulatesCostAcrossAttempts:
+    """A retry or a fallback invokes the model more than once under ONE handler pair, so cost must accumulate like tokens do.
+
+    Keeping only the last attempt's cost would book one attempt's dollars
+    against several attempts' tokens, silently under-counting spend on
+    exactly the calls that went wrong.
+    """
+
+    def test_one_attempt_reports_that_attempts_price(self) -> None:
+        cb = _GenerationIdCallback()
+        cb.on_llm_end(_result(llm_output={"cost": 0.004}))
+        assert cb.cost == 0.004
+
+    def test_a_retry_books_the_sum_of_every_attempt_not_just_the_last(self) -> None:
+        cb = _GenerationIdCallback()
+        cb.on_llm_end(_result(llm_output={"cost": 0.004}))
+        cb.on_llm_end(_result(llm_output={"cost": 0.006}))
+        assert cb.cost == pytest.approx(0.010)
+
+    def test_an_unpriced_attempt_disqualifies_the_whole_call(self) -> None:
+        """A partial sum is not the call's cost — booking it would confidently under-report spend, so the caller falls back to the table."""
+        cb = _GenerationIdCallback()
+        cb.on_llm_end(_result(llm_output={"cost": 0.004}))
+        cb.on_llm_end(_result(llm_output={}))
+        assert cb.cost is None
+
+    def test_a_handler_that_never_ran_reports_no_price(self) -> None:
+        assert _GenerationIdCallback().cost is None
+
+    def test_capturing_a_price_never_costs_the_generation_id(self) -> None:
+        """Both are read off the same reply; a mistake in one must not eat the other."""
+        cb = _GenerationIdCallback()
+        cb.on_llm_end(_result(llm_output={"id": "gen-1", "cost": 0.004}))
+        assert (cb.generation_id, cb.cost) == ("gen-1", 0.004)
+
+
+class TestAuxiliaryCostSource:
+    """The auxiliary lane books a provider price only where it can honestly attribute one, and the llm_call event says which price it booked."""
+
+    @staticmethod
+    def _handler(**usage_by_model: dict[str, Any]) -> UsageMetadataCallbackHandler:
+        handler = UsageMetadataCallbackHandler()
+        handler.usage_metadata = dict(usage_by_model)
+        return handler
+
+    async def test_a_single_model_call_books_the_reported_price(self) -> None:
+        handler = self._handler(gemini={"input_tokens": 10, "output_tokens": 2})
+
+        with (
+            patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.9)) as rec,
+            patch("app.agents.llm.client.log") as mock_log,
+        ):
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "u1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(cost=0.008),
+            )
+
+        assert rec.call_args.kwargs["provider_cost"] == 0.008
+        assert mock_log.info.call_args.kwargs["cost_source"] == "provider"
+
+    async def test_a_fan_out_across_models_falls_back_to_the_table(self) -> None:
+        """One reported figure cannot attribute to one of several models, so every row prices from the table and the event must say so."""
+        handler = self._handler(
+            gemini={"input_tokens": 10, "output_tokens": 2},
+            openrouter={"input_tokens": 20, "output_tokens": 4},
+        )
+
+        with (
+            patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.9)) as rec,
+            patch("app.agents.llm.client.log") as mock_log,
+        ):
+            await _record_auxiliary_usage(
+                handler,
+                "memory_extraction",
+                "u1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(cost=0.008),
+            )
+
+        assert [c.kwargs["provider_cost"] for c in rec.call_args_list] == [None, None]
+        assert {c.kwargs["cost_source"] for c in mock_log.info.call_args_list} == {"table"}
+
+    async def test_no_reported_price_is_logged_as_the_table(self) -> None:
+        handler = self._handler(gemini={"input_tokens": 10, "output_tokens": 2})
+
+        with (
+            patch("app.agents.llm.client.record_llm_call", new=AsyncMock(return_value=0.9)) as rec,
+            patch("app.agents.llm.client.log") as mock_log,
+        ):
+            await _record_auxiliary_usage(
+                handler, "memory_extraction", "u1", context=_AUX_CONTEXT, facts=ResponseFacts()
+            )
+
+        assert rec.call_args.kwargs["provider_cost"] is None
+        assert mock_log.info.call_args.kwargs["cost_source"] == "table"
+
+    async def test_ainvoke_llm_hands_the_accumulated_price_to_the_metering(self) -> None:
+        """The handler being right is worth nothing unless its value is forwarded — a hardcoded None would pass a kwarg-presence check."""
+
+        with (
+            patch("app.agents.llm.client._GenerationIdCallback") as cb_cls,
+            patch("app.agents.llm.client._record_auxiliary_usage", new=AsyncMock()) as rec,
+        ):
+            cb_cls.return_value.facts = ResponseFacts(cost=0.0123)
+            await ainvoke_llm(create_fake_llm(["ok"]), "hi", label="follow_up_actions")
+
+        assert rec.await_args.kwargs["facts"].cost == 0.0123
+
+
+class TestAuxiliaryGenerationIdAttribution:
+    """Which upstream generation each auxiliary ledger row names.
+
+    generation_id is the ONLY handle back to the upstream that served a
+    call, and the ledger exists to be spot-audited against OpenRouter's
+    generation-metadata endpoint. A row whose id is missing cannot be audited
+    at all; a row carrying a NEIGHBOUR's id audits clean against a call that
+    was never it, which is worse than carrying nothing. So each row must name
+    its own call's generation or none.
+    """
+
+    @staticmethod
+    def _handler(**usage_by_model: dict[str, Any]) -> UsageMetadataCallbackHandler:
+        handler = UsageMetadataCallbackHandler()
+        handler.usage_metadata = dict(usage_by_model)
+        return handler
+
+    async def test_the_ledger_row_carries_the_generation_id_its_log_line_reports(self) -> None:
+        """Observed live: every auxiliary doc had no generation_id while its matching llm_call log line carried one — dropped on the way to the ledger."""
+        handler = self._handler(gemini={"input_tokens": 10, "output_tokens": 2})
+
+        with patch(f"{_CLIENT}.record_llm_call", new=AsyncMock(return_value=0.0)) as rec:
+            await _record_auxiliary_usage(
+                handler,
+                "memory:extraction",
+                "u1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(generation_id="gen-its-own"),
+            )
+
+        assert rec.call_args.kwargs["context"].generation_id == "gen-its-own"
+
+    async def test_a_fan_out_across_models_attributes_the_generation_id_to_none_of_them(
+        self,
+    ) -> None:
+        """One id cannot name two provider calls; stamping the single captured id onto every row would misattribute a generation it never served."""
+        handler = self._handler(
+            gemini={"input_tokens": 10, "output_tokens": 2},
+            deepseek={"input_tokens": 5, "output_tokens": 1},
+        )
+
+        with patch(f"{_CLIENT}.record_llm_call", new=AsyncMock(return_value=0.0)) as rec:
+            await _record_auxiliary_usage(
+                handler,
+                "memory:extraction",
+                "u1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(generation_id="gen-one-of-them"),
+            )
+
+        assert [call.kwargs["context"].generation_id for call in rec.call_args_list] == [None, None]
+
+    async def test_two_concurrent_auxiliary_calls_each_record_their_own_generation(self) -> None:
+        """The cross-attribution guard: two one-shots in flight at once must not hand each other's generation ids to the ledger."""
+        seen: dict[str, str | None] = {}
+
+        async def _record(**kwargs: Any) -> float:
+            # Yield mid-flight so the two calls genuinely interleave rather than
+            # running to completion one after the other.
+            await asyncio.sleep(0)
+            seen[kwargs["context"].agent_name] = kwargs["context"].generation_id
+            return 0.0
+
+        with patch(f"{_CLIENT}.record_llm_call", new=AsyncMock(side_effect=_record)):
+            await asyncio.gather(
+                _record_auxiliary_usage(
+                    self._handler(gemini={"input_tokens": 10, "output_tokens": 2}),
+                    "memory:extraction",
+                    "u1",
+                    context=replace(_AUX_CONTEXT, agent_name="memory:extraction"),
+                    facts=ResponseFacts(generation_id="gen-extraction"),
+                ),
+                _record_auxiliary_usage(
+                    self._handler(gemini={"input_tokens": 7, "output_tokens": 3}),
+                    "follow_up_actions",
+                    "u1",
+                    context=replace(_AUX_CONTEXT, agent_name="follow_up_actions"),
+                    facts=ResponseFacts(generation_id="gen-followup"),
+                ),
+            )
+
+        assert seen == {
+            "memory:extraction": "gen-extraction",
+            "follow_up_actions": "gen-followup",
+        }
+
+
+class TestFailedCallsReachTheLedger:
+    """A provider call that never answered is still a fact about the system.
+
+    Without error rows the ledger describes only the calls that worked, so a
+    provider outage reads as a quiet dip in traffic instead of a spike in
+    failures — and the one question you actually want answered during an
+    incident ("what is failing, and how?") has no data behind it.
+    """
+
+    @staticmethod
+    def _runnable(side_effect: Any) -> NonCallableMagicMock:
+        runnable = NonCallableMagicMock()
+        runnable.with_retry = MagicMock(return_value=runnable)
+        runnable.ainvoke = AsyncMock(side_effect=side_effect)
+        return runnable
+
+    async def test_a_failing_call_books_one_error_row_and_still_raises(self) -> None:
+        """One row per call, not per attempt — the retry wrapper is already exhausted by the time this seam sees the exception; the caller still sees the error."""
+        primary = self._runnable(TimeoutError("provider never answered"))
+
+        with patch(f"{_CLIENT}.record_failed_llm_call", new_callable=AsyncMock) as failed:
+            with pytest.raises(TimeoutError):
+                await ainvoke_llm(primary, [HumanMessage(content="hi")], label="memory:extraction")
+
+        failed.assert_awaited_once()
+        context = failed.await_args.kwargs["context"]
+        assert context.agent_name == "memory:extraction"
+        # A failure is described like a success or the two cannot be compared.
+        assert context.channel == "system"
+        assert context.charge_to_budget is False
+
+    async def test_the_error_row_names_the_surface_and_the_model_it_asked_for(self) -> None:
+        """A failed call has no reply, so the row names only the intended model — and needs the surface to tell an outage from one broken client."""
+        primary = self._runnable(TimeoutError("no answer"))
+        primary.model_name = "deepseek/deepseek-v4-flash"
+        config = RunnableConfig(configurable={"user_id": "u1", "conversation_source": "telegram"})
+
+        with patch(f"{_CLIENT}.record_failed_llm_call", new_callable=AsyncMock) as failed:
+            with pytest.raises(TimeoutError):
+                await ainvoke_llm(primary, [HumanMessage(content="hi")], config=config)
+
+        assert failed.await_args.kwargs["model_name"] == "deepseek/deepseek-v4-flash"
+        assert failed.await_args.kwargs["context"].channel == "telegram"
+
+    async def test_the_error_row_classifies_the_failure_and_times_it(self) -> None:
+        """error_family is what an operator groups by, and latency tells a fast death from a hang; the clock is pinned to avoid noise-scale ambiguity."""
+        primary = self._runnable(TimeoutError("deadline exceeded"))
+        clock = iter([100.0])
+        config = RunnableConfig(configurable={"user_id": "u-7"})
+
+        with (
+            patch(f"{_CLIENT}.record_failed_llm_call", new_callable=AsyncMock) as failed,
+            patch.object(client_module.time, "monotonic", lambda: next(clock, 100.0501234)),
+        ):
+            with pytest.raises(TimeoutError):
+                await ainvoke_llm(primary, [HumanMessage(content="hi")], config=config)
+
+        assert isinstance(failed.await_args.kwargs["error"], TimeoutError)
+        # Whose call failed — an error rate with no user cannot be triaged.
+        assert failed.await_args.kwargs["user_id"] == "u-7"
+        assert failed.await_args.kwargs["context"].duration_ms == 50.12
+
+    async def test_a_failure_with_no_user_records_none_rather_than_a_string(self) -> None:
+        """System lanes fail too. "None" would look like a real user id."""
+        primary = self._runnable(TimeoutError("x"))
+
+        with patch(f"{_CLIENT}.record_failed_llm_call", new_callable=AsyncMock) as failed:
+            with pytest.raises(TimeoutError):
+                await ainvoke_llm(primary, [HumanMessage(content="hi")])
+
+        assert failed.await_args.kwargs["user_id"] is None
+
+    async def test_a_cancelled_turn_is_not_recorded_as_a_provider_failure(self) -> None:
+        """The user closing the tab is not the provider failing; recording it would inflate the error rate with our own cancellations."""
+        primary = self._runnable(asyncio.CancelledError())
+
+        with patch(f"{_CLIENT}.record_failed_llm_call", new_callable=AsyncMock) as failed:
+            with pytest.raises(asyncio.CancelledError):
+                await ainvoke_llm(primary, [HumanMessage(content="hi")])
+
+        failed.assert_not_awaited()
+
+    async def test_a_call_the_fallback_rescued_books_no_error_row(self) -> None:
+        """The fallback answering IS the call succeeding; an error row here would double-count a turn the user got a reply for."""
+        primary = self._runnable(ConnectionError("provider down"))
+        fallback = NonCallableMagicMock()
+        fallback.with_retry = MagicMock(return_value=fallback)
+        fallback.ainvoke = AsyncMock(return_value=AIMessage(content="rescued"))
+        fallback.bind = MagicMock(return_value=fallback)
+
+        with patch(f"{_CLIENT}.record_failed_llm_call", new_callable=AsyncMock) as failed:
+            result = await ainvoke_llm(primary, [HumanMessage(content="hi")], fallback=fallback)
+
+        assert result.content == "rescued"
+        failed.assert_not_awaited()
+
+
+class TestRequestedModel:
+    """What a failed call says it was going to ask for.
+
+    There is no reply to read the served model off, so this is the only model
+    identity an error row can carry — and a row that cannot name its model
+    cannot answer "is one model failing, or all of them".
+    """
+
+    def test_a_chat_model_reports_its_model_name(self) -> None:
+        runnable = NonCallableMagicMock()
+        runnable.model_name = "deepseek/deepseek-v4-flash"
+
+        assert _requested_model(runnable) == "deepseek/deepseek-v4-flash"
+
+    def test_a_runnable_that_only_carries_model_is_still_read(self) -> None:
+        """The auxiliary lane's with_structured_output wrapper exposes the model name under a different attribute than a bare chat model."""
+        runnable = NonCallableMagicMock(spec=["model"])
+        runnable.model = "gemini-3-pro"
+
+        assert _requested_model(runnable) == "gemini-3-pro"
+
+    def test_a_runnable_that_names_no_model_is_unknown_not_a_crash(self) -> None:
+        """Metering a failure must not itself fail — an unnameable model is recorded as unknown, which is still a row."""
+        assert _requested_model(NonCallableMagicMock(spec=[])) == UNKNOWN_MODEL_NAME
+
+    def test_a_blank_model_name_is_unknown_rather_than_empty(self) -> None:
+        """An empty string would land in the ledger as a real-looking model that groups with nothing."""
+        runnable = NonCallableMagicMock(spec=["model_name"])
+        runnable.model_name = ""
+
+        assert _requested_model(runnable) == UNKNOWN_MODEL_NAME
+
+
+class TestAuxiliaryResponseFacts:
+    """What the auxiliary seam learns from the provider's own reply.
+
+    Three fields have now been lost at this exact seam in turn — the cost, the
+    generation id, and the upstream name — each because the callback captured
+    only what someone needed that week. Live evidence: all 27 calls in a session
+    were served by Baidu and the ledger knew it for 11, because the 16 auxiliary
+    rows had no provider at all. The callback reads the whole reply once so the
+    next field is not a fourth incident.
+    """
+
+    @staticmethod
+    def _llm_result(**metadata: Any) -> LLMResult:
+        message = AIMessage(content="hi", response_metadata=dict(metadata))
+        return LLMResult(generations=cast(Any, [[ChatGeneration(message=message)]]))
+
+    def test_a_callback_that_never_ran_reports_nothing_known(self) -> None:
+        """Every field must start as None, not empty string, so the ledger can distinguish "the provider did not say" from a real blank value."""
+        facts = _GenerationIdCallback().facts
+
+        assert facts.generation_id is None
+        assert facts.provider is None
+        assert facts.finish_reason is None
+        assert facts.cost is None
+
+    def test_the_upstream_name_is_read_off_the_reply(self) -> None:
+        callback = _GenerationIdCallback()
+
+        callback.on_llm_end(self._llm_result(**{PROVIDER_NAME_METADATA_KEY: "Baidu"}))
+
+        assert callback.provider == "Baidu"
+
+    def test_the_aggregator_is_still_not_an_upstream(self) -> None:
+        callback = _GenerationIdCallback()
+
+        callback.on_llm_end(self._llm_result(**{PROVIDER_NAME_METADATA_KEY: "openrouter"}))
+
+        assert callback.provider is None
+
+    def test_a_reply_that_names_no_upstream_reports_none(self) -> None:
+        callback = _GenerationIdCallback()
+
+        callback.on_llm_end(self._llm_result())
+
+        assert callback.provider is None
+
+    def test_the_finish_reason_is_read_from_generation_info_alone(self) -> None:
+        """The non-streaming path leaves finish_reason in generation_info, never the message — reading only the message reports nothing here."""
+        message = AIMessage(content="hi")
+        generation = ChatGeneration(message=message, generation_info={"finish_reason": "length"})
+        callback = _GenerationIdCallback()
+
+        callback.on_llm_end(LLMResult(generations=cast(Any, [[generation]])))
+
+        assert callback.finish_reason == "length"
+
+    def test_a_generation_carrying_no_message_does_not_stop_the_scan(self) -> None:
+        """Completion-model generations have no message; stopping at the first would skip the chat generation behind it that names the upstream."""
+        plain = Generation(text="raw")
+        chat = ChatGeneration(
+            message=AIMessage(content="hi", response_metadata={PROVIDER_NAME_METADATA_KEY: "Baidu"})
+        )
+        callback = _GenerationIdCallback()
+
+        callback.on_llm_end(LLMResult(generations=cast(Any, [[plain, chat]])))
+
+        assert callback.provider == "Baidu"
+
+    def test_the_finish_reason_is_read_off_the_reply(self) -> None:
+        """The non-streaming path leaves it in generation_info, which never reaches an AIMessage — but the LLMResult here has it."""
+        callback = _GenerationIdCallback()
+
+        callback.on_llm_end(self._llm_result(finish_reason="length"))
+
+        assert callback.finish_reason == "length"
+
+    async def test_the_auxiliary_ledger_row_records_the_upstream(self) -> None:
+        """End to end through the aux route: the seam that already extracts cost and generation id now hands the provider through too."""
+        handler = UsageMetadataCallbackHandler()
+        handler.usage_metadata = {"gemini": {"input_tokens": 10, "output_tokens": 2}}
+
+        with patch(f"{_CLIENT}.record_llm_call", new=AsyncMock(return_value=0.0)) as rec:
+            await _record_auxiliary_usage(
+                handler,
+                "memory:extraction",
+                "u1",
+                context=_AUX_CONTEXT,
+                facts=ResponseFacts(generation_id="gen-1", provider="Baidu", finish_reason="stop"),
+            )
+
+        context = rec.call_args.kwargs["context"]
+        assert context.provider == "Baidu"
+        assert context.finish_reason == "stop"
+
+
+class TestWithUsageHandler:
+    """Attaching the metering handler without disturbing the caller's config.
+
+    Every auxiliary call is metered through the handler this attaches, so a
+    branch that drops it makes that call's spend invisible — and one that
+    mutates the caller's object corrupts a config shared across calls.
+    """
+
+    def test_a_config_with_no_callbacks_gets_the_handler(self) -> None:
+        handler = UsageMetadataCallbackHandler()
+
+        merged = _with_usage_handler(RunnableConfig(), handler)
+
+        assert merged["callbacks"] == [handler]
+
+    def test_an_existing_callback_list_is_appended_to_not_replaced(self) -> None:
+        """Replacing it would silently drop the caller's own callbacks — tracing, streaming — while still metering correctly, so nothing fails."""
+        existing = UsageMetadataCallbackHandler()
+        handler = UsageMetadataCallbackHandler()
+
+        merged = _with_usage_handler(RunnableConfig(callbacks=[existing]), handler)
+
+        assert merged["callbacks"] == [existing, handler]
+
+    def test_the_callers_config_is_never_mutated(self) -> None:
+        """Several callers pass a shared module-level constant; mutating it would attach one call's handler to every later call."""
+        original = RunnableConfig(callbacks=[])
+        handler = UsageMetadataCallbackHandler()
+
+        _with_usage_handler(original, handler)
+
+        assert original["callbacks"] == []
+
+    def test_a_live_manager_is_copied_and_extended(self) -> None:
+        """Graph nodes forward a config whose callbacks is a live manager; mutating it in place would leak this call's handler into the graph run."""
+        manager = MagicMock()
+        copied = MagicMock()
+        manager.copy.return_value = copied
+        handler = UsageMetadataCallbackHandler()
+
+        merged = _with_usage_handler(RunnableConfig(callbacks=manager), handler)
+
+        manager.copy.assert_called_once()
+        copied.add_handler.assert_called_once_with(handler, inherit=True)
+        assert merged["callbacks"] is copied
+
+    def test_no_handler_returns_the_config_untouched(self) -> None:
+        """The graph lane meters itself and passes None — attaching anything here would book every graph call a second time."""
+        config = RunnableConfig(callbacks=[])
+
+        assert _with_usage_handler(config, None) is config
+
+    def test_no_handler_and_no_config_still_yields_a_config(self) -> None:
+        assert _with_usage_handler(None, None) == RunnableConfig()
+
+
+@pytest.mark.unit
+class TestIsOpenrouterWire:
+    """_is_openrouter_wire decides whether the sticky session_id may be bound.
+
+    Only true when the client talks to OpenRouter's own endpoint — a ChatOpenRouter
+    aimed at another OpenAI-compatible base (the DEV_LLM_* lane) must say no, since
+    that endpoint rejects the unknown session_id argument.
+    """
+
+    def test_default_base_is_openrouter(self) -> None:
+        # No base set = OpenRouter's own default endpoint.
+        node = ChatOpenRouter(model="m", api_key="k")
+        assert client_module._is_openrouter_wire(node) is True
+
+    def test_explicit_openrouter_base_is_openrouter(self) -> None:
+        # base set but pointing at openrouter.ai — exercises the substring match,
+        # which the default-None case never reaches.
+        node = ChatOpenRouter(
+            model="m", api_key="k", openrouter_api_base="https://openrouter.ai/api/v1"
+        )
+        assert client_module._is_openrouter_wire(node) is True
+
+    def test_non_openrouter_base_is_not_openrouter(self) -> None:
+        # A ChatOpenRouter aimed at another OpenAI-compatible endpoint is NOT
+        # OpenRouter — kills the getattr-name and base-is-None-only mutants.
+        node = ChatOpenRouter(
+            model="m", api_key="k", openrouter_api_base="https://api.openai.com/v1"
+        )
+        assert client_module._is_openrouter_wire(node) is False
+
+    def test_walks_through_a_binding_to_a_non_openrouter_client(self) -> None:
+        inner = ChatOpenRouter(
+            model="m", api_key="k", openrouter_api_base="https://api.openai.com/v1"
+        )
+        binding = NonCallableMagicMock(spec=RunnableBinding)
+        binding.bound = inner
+        assert client_module._is_openrouter_wire(binding) is False

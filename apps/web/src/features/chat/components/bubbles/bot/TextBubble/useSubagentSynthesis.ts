@@ -5,17 +5,17 @@ import {
   GROUPED_TOOLS,
   type SubagentGroupData,
   type ToolCallEntry,
-  type ToolDataEntry,
   type ToolDataMap,
   type ToolName,
+  type TypedToolDataEntry,
 } from "@/config/registries/toolRegistry";
 import type { EnrichedSubagentGroup, TimelineItem } from "../UnifiedToolThread";
 
 // ── Bucketing ────────────────────────────────────────────────────────────────
 
 interface BucketedToolData {
-  groupedEntries: ToolDataEntry[];
-  individual: ToolDataEntry[];
+  groupedEntries: TypedToolDataEntry[];
+  individual: TypedToolDataEntry[];
   toolCalls: ToolCallEntry[];
   subagentGroups: SubagentGroupData[];
 }
@@ -23,10 +23,10 @@ interface BucketedToolData {
 // Single pass over tool_data: route each entry into the right bucket and
 // collapse tools listed in GROUPED_TOOLS into one entry per tool name.
 function bucketToolData(
-  tool_data: ToolDataEntry[] | null | undefined,
+  tool_data: TypedToolDataEntry[] | null | undefined,
 ): BucketedToolData {
   const grouped = new Map<ToolName, ToolDataMap[ToolName][]>();
-  const individual: ToolDataEntry[] = [];
+  const individual: TypedToolDataEntry[] = [];
   const toolCalls: ToolCallEntry[] = [];
   const subagentGroups: SubagentGroupData[] = [];
 
@@ -57,26 +57,23 @@ function bucketToolData(
     individual.push(entry);
   });
 
-  const groupedEntries: ToolDataEntry[] = Array.from(grouped.entries()).map(
-    ([toolName, dataArray]) => ({
-      tool_name: toolName,
-      tool_category: "",
-      data: dataArray as ToolDataMap[ToolName],
-      timestamp: null,
-    }),
-  );
+  const groupedEntries: TypedToolDataEntry[] = Array.from(
+    grouped.entries(),
+  ).map(([toolName, dataArray]) => ({
+    tool_name: toolName,
+    tool_category: "",
+    data: dataArray as ToolDataMap[ToolName],
+    timestamp: null,
+  }));
 
   return { groupedEntries, individual, toolCalls, subagentGroups };
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
-// Merge consecutive reasoning steps into one. A single continuous thought can
-// arrive as several adjacent reasoning entries (e.g. when an interleaved tool
-// call between them was nested into a subagent group and dropped from this
-// level), which would otherwise render as several separate "Thinking" rows for
-// one block. Only truly adjacent reasoning is merged — a real tool call between
-// two thoughts still separates them, preserving chronological order.
+// Merge consecutive reasoning steps into one: an interleaved tool call
+// nested into a subagent group can drop out of this level, splitting one
+// thought into several "Thinking" rows. Only truly adjacent reasoning merges.
 function coalesceReasoning(calls: ToolCallEntry[]): ToolCallEntry[] {
   const out: ToolCallEntry[] = [];
   for (const tc of calls) {
@@ -117,6 +114,72 @@ function coalesceTimelineReasoning(timeline: TimelineItem[]): TimelineItem[] {
     out.push(item);
   }
   return out;
+}
+
+// ── Stable React keys for streamed entries ──────────────────────────────────
+
+// Payloads mutate in place mid-stream (coalescing reasoning, merging
+// arrays), so a content-derived key remounts the card each frame. Keys use
+// STRUCTURE instead: a stream-stable id, else a fixed anchor slot after the nearest identified sibling.
+function deriveStableKeys<T>(
+  items: T[],
+  stableKey: (item: T) => string | null,
+): string[] {
+  const keys: string[] = [];
+  let anchor = "head";
+  let unanchored = 0;
+  for (const item of items) {
+    const key = stableKey(item);
+    if (key !== null) {
+      anchor = key;
+      unanchored = 0;
+      keys.push(key);
+    } else {
+      keys.push(`${anchor}#${unanchored++}`);
+    }
+  }
+  return keys;
+}
+
+// Root UnifiedToolThread items: identified by tool_call_id or subagent_id when
+// present; reasoning steps carry neither, so they anchor to the nearest
+// preceding identified item instead.
+export function deriveTimelineItemKeys(timeline: TimelineItem[]): string[] {
+  return deriveStableKeys(timeline, (item) =>
+    item.kind === "subagent"
+      ? `sa-${item.data.subagent_id}`
+      : item.data.tool_call_id
+        ? `tc-${item.data.tool_call_id}`
+        : null,
+  );
+}
+
+// Tool-call steps inside one subagent group (scoped by its unique id).
+export function deriveStepKeys(
+  scopeId: string,
+  calls: ToolCallEntry[],
+): string[] {
+  return deriveStableKeys(calls, (tc) =>
+    tc.tool_call_id ? `${scopeId}-tc-${tc.tool_call_id}` : null,
+  );
+}
+
+// processedTools keys: synthesized grouped entries exist once per tool
+// name (their identity); individual entries use tool_call_id, else their
+// creation timestamp (stamped once, never rewritten).
+export function deriveProcessedToolKeys(
+  entries: TypedToolDataEntry[],
+): string[] {
+  return deriveStableKeys(entries, (entry) => {
+    if (GROUPED_TOOLS.has(entry.tool_name)) return `grouped-${entry.tool_name}`;
+    const data: unknown = entry.data;
+    const callId =
+      data !== null && typeof data === "object" && "tool_call_id" in data
+        ? String((data as { tool_call_id?: unknown }).tool_call_id ?? "")
+        : "";
+    if (callId) return `${entry.tool_name}-${callId}`;
+    return entry.timestamp ? `${entry.tool_name}-${entry.timestamp}` : null;
+  });
 }
 
 function extractTaskFromInputs(
@@ -214,18 +277,19 @@ function inferNestingForRootSpawned(
     g.nested_subagents.push(rootSpawned[spawnIdx++]);
   }
 
-  const nestedIds = new Set(
-    finalGroups
-      .filter((g) => g.agent_type === "handoff")
-      .flatMap((g) => g.nested_subagents.map((n) => n.subagent_id)),
-  );
+  const nestedIds = new Set<string>();
+  for (const g of finalGroups) {
+    if (g.agent_type !== "handoff") continue;
+    for (const n of g.nested_subagents) {
+      nestedIds.add(n.subagent_id);
+    }
+  }
   return finalGroups.filter((g) => !nestedIds.has(g.subagent_id));
 }
 
-// Emit a backend subagent group at its originating tool call's position
-// (handoff or spawn). Attaches the call's task/output to the group and
-// records the group id so the trailing "append-unmatched" pass doesn't
-// re-emit it. Returns the matched group, or null if no match was found.
+// Emit a backend subagent group at its originating handoff/spawn call's
+// position, attaching the call's task/output and recording the group id so
+// the trailing append-unmatched pass doesn't re-emit it.
 function emitGroupForCall(
   tc: ToolCallEntry,
   isHandoff: boolean,
@@ -256,11 +320,9 @@ function emitGroupForCall(
   emittedGroupIds.add(matched.subagent_id);
 }
 
-// Walk the executor's tool-call stream once, interleaving backend-provided
-// subagent groups at the position of their originating handoff/spawn call so
-// the rendered timeline matches emission order. Each handoff/spawn tool call
-// is consumed (attaching its inputs.task and outputs to the matched group);
-// every other tool call passes through as a root-level timeline item.
+// Walk the tool-call stream once, interleaving backend subagent groups at
+// their originating handoff/spawn call's position to match emission order.
+// Each handoff/spawn call is consumed; everything else passes through as root-level.
 function buildBackendTimeline(
   toolCalls: ToolCallEntry[],
   subagentGroups: SubagentGroupData[],
@@ -307,10 +369,9 @@ function buildBackendTimeline(
   return timeline;
 }
 
-// ── Synthesis fallback for legacy messages ───────────────────────────────────
-// For chats persisted before subagent_group backend support was added (pre-2025-04).
-// Also handles fast-fail handoffs where _resolve_subagent returns an error
-// before subagent_start is ever emitted (so no backend group exists).
+// Synthesis fallback for legacy messages: chats persisted before
+// subagent_group backend support (pre-2025-04), and fast-fail handoffs
+// where _resolve_subagent errors before subagent_start is ever emitted.
 
 function extractSubagentIdFromInputs(
   inputs: ToolCallEntry["inputs"],
@@ -367,12 +428,9 @@ function makeSyntheticSpawnGroup(
   };
 }
 
-// Build a timeline directly from a tool-call stream when no backend
-// subagent_group entries are present. Handoff/spawn calls become subagent
-// timeline items at their natural position; if a handoff returned
-// synchronously (output already present, i.e. the fast-fail error path), the
-// group is closed immediately so any following executor-level tool calls
-// render at root level instead of getting bundled into the failed handoff.
+// Build a timeline from a tool-call stream with no backend subagent_group
+// entries. Handoff/spawn calls become subagent items in place; a
+// synchronous handoff (fast-fail) closes its group immediately so later calls render at root.
 function buildSyntheticTimeline(toolCalls: ToolCallEntry[]): TimelineItem[] {
   const timeline: TimelineItem[] = [];
   let currentGroup: EnrichedSubagentGroup | null = null;
@@ -403,10 +461,9 @@ function buildSyntheticTimeline(toolCalls: ToolCallEntry[]): TimelineItem[] {
     }
   }
 
-  // Synthetic groups are built by pushing raw tool calls, so their adjacent
-  // reasoning fragments aren't merged yet. Enrich them the same way the backend
-  // path does (buildBackendTimeline via deepEnrichGroup) so fallback timelines
-  // don't render split Thinking rows.
+  // Synthetic groups push raw tool calls, so reasoning isn't merged yet —
+  // enrich them the same way buildBackendTimeline does (deepEnrichGroup) so
+  // fallback timelines don't render split Thinking rows.
   return timeline.map((item) =>
     item.kind === "subagent"
       ? { kind: "subagent" as const, data: deepEnrichGroup(item.data) }
@@ -417,10 +474,10 @@ function buildSyntheticTimeline(toolCalls: ToolCallEntry[]): TimelineItem[] {
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 export const useSubagentSynthesis = (
-  tool_data: ToolDataEntry[] | null | undefined,
+  tool_data: TypedToolDataEntry[] | null | undefined,
 ): {
   timeline: TimelineItem[];
-  processedTools: ToolDataEntry[];
+  processedTools: TypedToolDataEntry[];
 } => {
   return React.useMemo(() => {
     const { groupedEntries, individual, toolCalls, subagentGroups } =

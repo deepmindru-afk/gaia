@@ -13,8 +13,8 @@ from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
 
 
-def to_std_dict(obj: t.Any) -> t.Any:
-    """Recursively convert jsonref proxies to standard python dicts/lists"""
+def to_std_dict(obj: t.Any) -> t.Any:  # noqa: ANN401 -- framework contract
+    """Recursively convert jsonref proxies to standard python dicts/lists."""
     if isinstance(obj, dict):
         return {k: to_std_dict(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -26,8 +26,8 @@ _original_parse_info: Callable[..., t.Any] | None = None
 _applied = False
 
 
-def _patched_parse_info(self: t.Any) -> t.Any:
-    """Patched version that inlines $ref before storing schema"""
+def _patched_parse_info(self: t.Any) -> t.Any:  # noqa: ANN401 -- framework contract
+    """Patched version that inlines $ref before storing schema."""
     if _original_parse_info is None:
         raise RuntimeError("composio_custom_tool_schema_patch.apply() was not called")
     tool_info = _original_parse_info(self)
@@ -42,14 +42,16 @@ def _patched_parse_info(self: t.Any) -> t.Any:
 
 
 def apply() -> None:
-    """Apply the patch to CustomTool.__parse_info"""
+    """Apply the patch to CustomTool.__parse_info."""
     global _applied, _original_parse_info
 
     if _applied:
         return
 
     try:
-        from composio.core.models.custom_tools import CustomTool
+        from composio.core.models.custom_tools import (  # noqa: PLC0415 -- upstream import stays inside apply() so failures log instead of breaking app import
+            CustomTool,
+        )
 
         # Name-mangled private attribute (CustomTool.__parse_info) isn't a
         # public attribute mypy can resolve on the class; the cast to Any

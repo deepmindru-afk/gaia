@@ -4,8 +4,8 @@
 This script does three things:
 1. Fetches real Composio tools per integration toolkit.
 2. Scans source files for custom tools registered via
-   ``@composio.tools.custom_tool(...)``.
-3. Verifies tool names used in ``app/agents/skills/builtin/*/SKILL.md``
+   @composio.tools.custom_tool(...).
+3. Verifies tool names used in app/agents/skills/builtin/*/SKILL.md
    are present in the fetched inventory.
 
 Usage:
@@ -34,7 +34,7 @@ import re
 import sys
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 BACKEND_DIR = Path(__file__).parent.parent
 DEFAULT_OUTPUT_DIR = BACKEND_DIR.parent.parent / ".agents" / "plans" / "composio_tools_output"

@@ -1,7 +1,7 @@
 # from beartype.claw import beartype_this_package
-import stackprinter
 
-# Configure stackprinter for enhanced exception tracebacks
-stackprinter.set_excepthook(style="darkbg2")
+# Nothing is imported here on purpose. The stackprinter excepthook moved to the
+# entrypoints (app/main.py, app/worker.py): importing it here pulled numpy
+# (86 modules, ~0.5 s) into every importer of every app module.
 
 # beartype_this_package()

@@ -1,22 +1,17 @@
 """A finished spawn is recovered, not re-run, when a later sibling pauses the node.
 
-The scenario the spawn-thread lifecycle exists for: one AI message carries two
-``spawn_subagent`` calls. The tool node runs them sequentially — spawn A finishes
-(side effect done), spawn B pauses on an approval ``interrupt()``. LangGraph
-re-runs the WHOLE node on resume, so spawn A's tool function is entered a second
-time. Its checkpoint thread — deliberately retained instead of deleted at finish —
-is what tells that replay A already ran, via ``recover_from_checkpoint``.
+One AI message carries two spawn_subagent calls. The tool node runs them sequentially: spawn A
+finishes (side effect done), spawn B pauses on an approval interrupt(). LangGraph re-runs the
+WHOLE node on resume, so spawn A's tool function is entered a second time; A's checkpoint thread,
+deliberately retained instead of deleted at finish, is what tells that replay A already ran, via
+recover_from_checkpoint.
 
-Real: ``SubagentMiddleware._run_spawn``/``_drive``, the compiled spawn graph
-(``_build_spawn_graph`` via ``get_spawn_graph``), LangGraph interrupt/resume on a
-checkpointer, and ``recover_from_checkpoint``. Replaced, and only these: the LLM
-(message-driven fake, so it behaves identically on a replay), the dynamic-context
-message (external retrieval I/O), and the checkpointer manager (``InMemorySaver``).
-
-The pause is a tool calling ``interrupt()`` before its side effect — the exact
-shape of the HIL gate's pause (which has its own coverage in
-``tests/unit/services/hil/``); the claim under test here is the node-replay
-recovery, not the gate's policy.
+Real: SubagentMiddleware._run_spawn/_drive, the compiled spawn graph, LangGraph interrupt/resume
+on a checkpointer, and recover_from_checkpoint. Replaced, and only these: the LLM (message-driven
+fake, so it behaves identically on a replay), the dynamic-context message (external retrieval I/O)
+and the checkpointer manager (InMemorySaver). The pause is a tool calling interrupt() before its
+side effect -- the HIL gate's exact shape, covered on its own in tests/unit/services/hil/ -- but
+the claim under test here is node-replay recovery, not the gate's policy.
 """
 
 from types import SimpleNamespace
@@ -34,8 +29,8 @@ import pytest
 from app.agents.context.assemble import AssembledContext
 from app.agents.core.subagents import spawn_agent
 from app.agents.core.subagents.spawn_agent import get_spawn_graph
-from app.agents.middleware.factory import create_subagent_middleware
-from app.agents.middleware.subagent import SubagentMiddleware
+from app.agents.middleware.factory import SubagentStackOptions, create_subagent_middleware
+from app.agents.middleware.subagent import SubagentMiddleware, SubagentMiddlewareConfig
 from app.agents.tools.core.tool_runtime_config import ToolRuntimeConfig
 from app.constants.general import FINISH_TASK_NAME
 from app.constants.hil import HIL_RESUME_CONFIG_KEY, LANGGRAPH_INTERRUPT_KEY
@@ -123,16 +118,18 @@ async def test_finished_spawn_is_recovered_not_rerun_when_a_sibling_pauses(
         return graph
 
     middleware = SubagentMiddleware(
-        llm=llm,
-        tool_registry=spawn_tools,
-        tool_space="general",
-        tool_runtime_config=runtime,
-        # The REAL middleware stack, not [] — its tool-invocation wrap chain is what
-        # re-raises GraphInterrupt as control flow; a bare tool node converts it into
-        # an error ToolMessage and the pause never happens (verified by running both).
-        spawn_middleware_factory=lambda space: create_subagent_middleware(
-            enable_subagent=False, subagent_tool_space=space
-        ),
+        SubagentMiddlewareConfig(
+            llm=llm,
+            tool_registry=spawn_tools,
+            tool_space="general",
+            tool_runtime_config=runtime,
+            # The REAL middleware stack, not [] — its tool-invocation wrap chain is what
+            # re-raises GraphInterrupt as control flow; a bare tool node converts it into
+            # an error ToolMessage and the pause never happens (verified by running both).
+            spawn_middleware_factory=lambda space: create_subagent_middleware(
+                subagent=SubagentStackOptions(enabled=False, tool_space=space)
+            ),
+        )
     )
     middleware.set_spawn_graph_provider(provider)
 

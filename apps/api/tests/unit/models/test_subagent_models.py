@@ -1,6 +1,6 @@
-"""Unit tests for `app.models.subagent_models`.
+"""Unit tests for app.models.subagent_models.
 
-Covers the `Subagent` frozen dataclass: required-field construction, default
+Covers the Subagent frozen dataclass: required-field construction, default
 values, immutability, equality, and hashability.
 """
 
@@ -34,7 +34,7 @@ def _make_subagent(**overrides: object) -> Subagent:
         "config": _make_config(),
     }
     fields.update(overrides)
-    return Subagent(**fields)  # type: ignore[arg-type]
+    return Subagent(**fields)  # type: ignore[arg-type]  # fixture spreads an untyped defaults dict into the model
 
 
 class TestSubagentConstruction:
@@ -73,13 +73,13 @@ class TestSubagentImmutability:
         subagent = _make_subagent()
 
         with pytest.raises(dataclasses.FrozenInstanceError):
-            subagent.id = "mutated"  # type: ignore[misc]
+            subagent.id = "mutated"  # type: ignore[misc]  # deliberate write asserts FrozenInstanceError
 
     def test_frozen_blocks_optional_field_assignment(self) -> None:
         subagent = _make_subagent()
 
         with pytest.raises(dataclasses.FrozenInstanceError):
-            subagent.short_name = "x"  # type: ignore[misc]
+            subagent.short_name = "x"  # type: ignore[misc]  # deliberate write asserts FrozenInstanceError
 
 
 class TestSubagentEquality:
@@ -102,13 +102,10 @@ class TestSubagentEquality:
 
 
 class TestSubagentHashability:
-    """`Subagent` is a frozen dataclass, so it requests `__hash__`. But its
-    `config` field is a Pydantic `BaseModel`, which is not hashable by default —
-    so hashing the dataclass propagates a `TypeError`. The dataclass is
-    "frozen" for value-semantic safety, not for use as a dict key.
+    """Subagent is a frozen dataclass, but its config field is a Pydantic BaseModel, which is not hashable by default.
 
     If this assertion ever fails (e.g., Pydantic gains hashability), revisit
-    whether `Subagent` should advertise itself as a hashable key.
+    whether Subagent should advertise itself as a hashable key.
     """
 
     def test_subagent_is_not_hashable(self) -> None:

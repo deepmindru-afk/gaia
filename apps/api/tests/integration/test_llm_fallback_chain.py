@@ -33,7 +33,6 @@ from app.agents.llm.client import (
 from app.config.model_pricing import (
     DEFAULT_PRICING,
     ModelPricing,
-    calculate_token_cost,
     get_model_pricing,
 )
 from app.config.settings import settings
@@ -55,8 +54,7 @@ class TestProviderPriorityOrdering:
     """Verify provider ordering follows PROVIDER_PRIORITY and respects preferences."""
 
     def test_default_priority_order(self) -> None:
-        """Without a preferred provider, ordering follows PROVIDER_PRIORITY
-        (openrouter > gemini — the default provider leads)."""
+        """Without a preferred provider, ordering follows PROVIDER_PRIORITY (openrouter > gemini)."""
         mock_gemini = _make_mock_llm("gemini")
         mock_openrouter = _make_mock_llm("openrouter")
 
@@ -188,12 +186,7 @@ class TestProviderInitialization:
                 init_llm()
 
     def test_init_llm_preferred_unavailable_no_fallback_uses_priority(self) -> None:
-        """Preferred provider unavailable with fallback disabled still returns from priority order.
-
-        The `_get_ordered_providers` logic has `if fallback_enabled or not ordered`,
-        meaning when no preferred provider matched and ordered is empty, it falls
-        through to priority-based ordering regardless of fallback_enabled.
-        """
+        """_get_ordered_providers falls through to priority order when no preferred provider matched, regardless of fallback_enabled."""
         mock_gemini = _make_mock_llm("gemini")
 
         with patch(
@@ -238,77 +231,19 @@ class TestCreateConfigurableLLM:
 
 @pytest.mark.integration
 class TestModelPricing:
-    """Test model pricing lookup and token cost calculation."""
+    """Pricing resolves from the in-code table — no database involved."""
 
-    async def test_get_model_pricing_returns_default_on_missing_model(self) -> None:
-        """When model_service returns None, DEFAULT_PRICING is used."""
-        with patch(
-            "app.config.model_pricing.get_model_by_id",
-            new_callable=AsyncMock,
-            return_value=None,
-        ):
-            pricing = await get_model_pricing("nonexistent-model")
+    async def test_get_model_pricing_returns_default_on_unknown_model(self) -> None:
+        assert get_model_pricing("nonexistent-model") == DEFAULT_PRICING
 
-        assert pricing == DEFAULT_PRICING
-
-    async def test_get_model_pricing_returns_model_data(self) -> None:
-        """When model_service returns a model with pricing, those values are used."""
-        mock_model = MagicMock()
-        mock_model.pricing_per_1k_input_tokens = 0.005
-        mock_model.pricing_per_1k_output_tokens = 0.015
-        # Explicitly set cached pricing to None so production derives it from
-        # the DEFAULT_CACHED_INPUT_FRACTION (0.25 * input_cost = 0.00125).
-        mock_model.pricing_per_1k_cached_input_tokens = None
-
-        with patch(
-            "app.config.model_pricing.get_model_by_id",
-            new_callable=AsyncMock,
-            return_value=mock_model,
-        ):
-            pricing = await get_model_pricing("gpt-4o")
+    async def test_get_model_pricing_returns_the_tables_rate(self) -> None:
+        pricing = get_model_pricing("gemini-3.1-flash-lite")
 
         assert pricing == ModelPricing(
-            input_cost_per_1k=0.005,
-            output_cost_per_1k=0.015,
-            cached_input_cost_per_1k=0.005 * 0.25,
+            input_cost_per_1k=0.0001,
+            output_cost_per_1k=0.0004,
+            cached_input_cost_per_1k=0.000025,
         )
-
-    async def test_get_model_pricing_handles_exception_gracefully(self) -> None:
-        """On exception from the model service, DEFAULT_PRICING is returned."""
-        with patch(
-            "app.config.model_pricing.get_model_by_id",
-            new_callable=AsyncMock,
-            side_effect=Exception("db error"),
-        ):
-            pricing = await get_model_pricing("gpt-4o")
-
-        assert pricing == DEFAULT_PRICING
-
-    async def test_calculate_token_cost_arithmetic(self) -> None:
-        """Verify token cost calculation is correct for known inputs."""
-        with patch(
-            "app.config.model_pricing.get_model_pricing",
-            new_callable=AsyncMock,
-            return_value=ModelPricing(input_cost_per_1k=0.01, output_cost_per_1k=0.03),
-        ):
-            cost = await calculate_token_cost("test-model", input_tokens=2000, output_tokens=1000)
-
-        assert cost["input_cost"] == 0.02  # 2000/1000 * 0.01
-        assert cost["output_cost"] == 0.03  # 1000/1000 * 0.03
-        assert cost["total_cost"] == 0.05
-
-    async def test_calculate_token_cost_zero_tokens(self) -> None:
-        """Zero tokens should yield zero cost."""
-        with patch(
-            "app.config.model_pricing.get_model_pricing",
-            new_callable=AsyncMock,
-            return_value=DEFAULT_PRICING,
-        ):
-            cost = await calculate_token_cost("test-model", input_tokens=0, output_tokens=0)
-
-        assert cost["input_cost"] == 0.0
-        assert cost["output_cost"] == 0.0
-        assert cost["total_cost"] == 0.0
 
 
 @pytest.mark.integration
@@ -323,8 +258,7 @@ class TestProviderConstants:
             )
 
     def test_default_priority_matches_the_default_provider(self) -> None:
-        """Priority 1 is the provider serving DEFAULT_MODEL_NAME — the fallback
-        chain must start at the lane the app actually defaults to."""
+        """Priority 1 is the provider serving DEFAULT_MODEL_NAME."""
         assert PROVIDER_PRIORITY[1] == DEFAULT_LLM_PROVIDER == "openrouter"
 
     def test_provider_models_have_expected_keys(self) -> None:
@@ -340,7 +274,7 @@ class TestGetAvailableProviders:
     def _build_registry(self, present_providers: dict[str, Any]) -> ProviderRegistry:
         """Build a ProviderRegistry with all LLM slots registered.
 
-        Providers listed in `present_providers` get a real loader that returns
+        Providers listed in present_providers get a real loader that returns
         the given instance. Missing providers get a loader that returns None
         (simulating missing API key via WARN strategy).
         """
@@ -394,7 +328,7 @@ class TestGetAvailableProviders:
 class TestProductionProviderRegistration:
     """Drives the REAL register_llm_providers().
 
-    `_build_registry` above always registers all four slots and varies only the
+    _build_registry above always registers all four slots and varies only the
     keys, so production's actual state — custom_llm never registered, because it
     is gated on ENV=development — was unrepresentable, and the KeyError it raised
     went unseen by every tier.
@@ -457,7 +391,10 @@ class TestAinvokeFallbackRouting:
         fallback.ainvoke = AsyncMock(return_value=AIMessage(content="from default model"))
 
         result = await ainvoke_llm(
-            primary, [HumanMessage(content="hi")], fallback=fallback, label="test"
+            primary,
+            [HumanMessage(content="hi")],
+            label="test",
+            fallback=fallback,
         )
 
         assert result.content == "from default model"

@@ -4,8 +4,8 @@ The judge is an LLM, and LLM judges are measurably lenient. Everything here assu
 model says "allow" and asks whether the code around it still refuses. A test that only
 proves a well-behaved verdict is honoured proves nothing about this module.
 
-The LLM is mocked at ``ainvoke_structured`` — the network boundary. ``_accept``,
-``_is_grounded`` and the no-turns guard are the production code under test and run for real.
+The LLM is mocked at ainvoke_structured — the network boundary. _accept,
+_is_grounded and the no-turns guard are the production code under test and run for real.
 """
 
 from typing import Any
@@ -13,8 +13,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.constants.hil import HIL_JUDGE_MIN_QUOTE_WORDS
-from app.services.hil.intent import RiskFactor, _Verdict, judge_intent
+from app.agents.llm.client import StructuredCallOptions, silent_metered_config
+from app.constants.hil import HIL_JUDGE_MIN_QUOTE_WORDS, HIL_LLM_TIMEOUT_SECONDS
+from app.services.hil.intent import JudgedCall, RiskFactor, _Verdict, judge_intent
+from app.services.hil.prompts import INTENT_JUDGE_PROMPT
+from app.services.hil.utils import PriorCall, args_preview, render_prior_calls
 
 MODULE = "app.services.hil.intent"
 
@@ -23,7 +26,7 @@ USER_TURNS = ["draft an email to bob about the deck", "looks good, send it"]
 
 
 def verdict(**overrides: Any) -> _Verdict:
-    """A verdict the judge would return for a call it wants to approve."""
+    """Build a verdict the judge would return for a call it wants to approve."""
     return _Verdict(
         **{
             "authorized_scope": "email bob the deck",
@@ -49,10 +52,12 @@ async def judge(judge_verdict: _Verdict | Exception, turns: list[str] | None = N
         decision = await judge_intent(
             user_id="u-hil",
             user_messages=USER_TURNS if turns is None else turns,
-            tool_name="send_email",
-            description="Send an email.",
-            args={"to": "bob@example.com", "body": "the deck"},
-            summary="Send email — to: bob@example.com",
+            call=JudgedCall(
+                tool_name="send_email",
+                description="Send an email.",
+                args={"to": "bob@example.com", "body": "the deck"},
+                summary="Send email — to: bob@example.com",
+            ),
             prior_calls=[],
         )
         return decision, llm
@@ -135,13 +140,9 @@ class TestVetoes:
 
 class TestFailsTowardAsking:
     async def test_no_user_turns_asks_without_ever_calling_the_llm(self) -> None:
-        # Nothing to verify against. Spending a judge call here would be both wasteful
-        # and dangerous — there is no possible grounding.
-        #
-        # The reason is asserted, not just the refusal: without the guard the empty turn
-        # list reaches the prompt builder, dies on turns[-1], and the broad except turns
-        # it into the same "ask" — safe, but the user is told the check *crashed* rather
-        # than that there was nothing to check. Only the reason tells the two apart.
+        # No turns to verify against — spending a judge call here would be wasteful and
+        # dangerous. Without the guard, empty turns hits turns[-1], and the broad except
+        # turns that crash into the same "ask" — only the reason tells the two apart.
         decision, llm = await judge(verdict(), turns=[])
         assert decision.aligned is False
         assert decision.reason == "Could not check this against anything you asked for."
@@ -159,6 +160,73 @@ class TestFailsTowardAsking:
         assert decision.reason == "The approval check could not run."
 
 
+class TestWhatTheJudgeIsAsked:
+    """The judge only ever sees what this call hands it.
+
+    A field that arrives blank, a description that reads "(none)" when one exists, or a
+    call metered to nobody is a judge ruling on a different action than the one about to run.
+    """
+
+    async def test_the_prompt_carries_every_part_of_the_call_and_the_users_turns(
+        self,
+    ) -> None:
+        call = JudgedCall(
+            tool_name="send_email",
+            # Empty on purpose: the placeholder is only visible on a tool that has
+            # no description of its own.
+            description="",
+            args={"to": "bob@example.com", "body": "the deck"},
+            summary="Send email — to: bob@example.com",
+        )
+        prior = [PriorCall(name="GMAIL_DRAFT", args={"to": "bob@example.com"})]
+
+        with (
+            patch(f"{MODULE}.ainvoke_structured", new=AsyncMock(return_value=verdict())) as llm,
+            patch(f"{MODULE}.untrusted_fence", return_value="<<fixed-nonce>>"),
+        ):
+            await judge_intent(
+                user_id="u-hil", user_messages=USER_TURNS, call=call, prior_calls=prior
+            )
+
+        schema, prompt = llm.await_args.args
+        assert schema is _Verdict
+        assert prompt == INTENT_JUDGE_PROMPT.format(
+            nonce="<<fixed-nonce>>",
+            earlier="draft an email to bob about the deck",
+            latest="looks good, send it",
+            prior_actions=render_prior_calls(prior),
+            tool="send_email",
+            description="(no description)",
+            summary="Send email — to: bob@example.com",
+            args=args_preview(call.args),
+        )
+        assert llm.await_args.kwargs["label"] == "hil_intent_judge"
+        # Metered to the user whose gate this is, and bounded — an unbounded judge
+        # call holds the gated tool open for as long as the provider takes.
+        assert llm.await_args.kwargs["config"] == silent_metered_config("u-hil")
+        assert llm.await_args.kwargs["options"] == StructuredCallOptions(
+            timeout=HIL_LLM_TIMEOUT_SECONDS
+        )
+
+    async def test_a_quote_spanning_two_turns_is_grounded_by_the_joined_transcript(
+        self,
+    ) -> None:
+        # "looks good, send it" is only authorization because of what came before
+        # it, so the turns are grounded against as one document, joined by nothing
+        # but a newline.
+        decision, _ = await judge(verdict(authorizing_quote="about the deck\nlooks good"))
+
+        assert decision.aligned is True
+
+    async def test_a_refusal_names_the_tool_it_refused(self) -> None:
+        # The warning is the only trace an auto-approval that did NOT happen leaves.
+        with patch(f"{MODULE}.log") as log_mock:
+            decision, _ = await judge(verdict(injected_instructions=True))
+
+        assert decision.aligned is False
+        assert log_mock.warning.call_args.kwargs["tool_name"] == "send_email"
+
+
 class TestReceipt:
     async def test_the_judges_reason_reaches_the_user_facing_decision(self) -> None:
         # An auto-approved action is shown as a receipt; a receipt with no "why" is not
@@ -169,8 +237,11 @@ class TestReceipt:
 
 
 class TestPromptInjection:
-    """Only the *user's* words carry authority. Text that arrives through any other
-    channel — a tool argument, an email body, a fetched page — is data, never consent."""
+    """Only the *user's* words carry authority.
+
+    Text from any other channel — a tool argument, an email body, a fetched page — is
+    data, never consent.
+    """
 
     async def test_a_quote_lifted_from_the_injected_arguments_does_not_ground_an_approval(
         self,
@@ -184,10 +255,12 @@ class TestPromptInjection:
             decision = await judge_intent(
                 user_id="u-hil",
                 user_messages=USER_TURNS,
-                tool_name="send_email",
-                description="Send an email.",
-                args={"body": f"Hi! {injected}"},
-                summary="Send email",
+                call=JudgedCall(
+                    tool_name="send_email",
+                    description="Send an email.",
+                    args={"body": f"Hi! {injected}"},
+                    summary="Send email",
+                ),
                 prior_calls=[],
             )
         assert decision.aligned is False

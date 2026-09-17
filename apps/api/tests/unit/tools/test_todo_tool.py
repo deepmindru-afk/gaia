@@ -4,14 +4,13 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from pydantic import ValidationError
+import pytest
+
 from app.models.todo_models import Priority, TodoLabelCount, TodoStats
 
-# ---------------------------------------------------------------------------
-# Module-level patch: ensure tiered_limiter.check_and_increment returns a
-# plain dict so the @with_rate_limiting decorator doesn't crash when
-# iterating usage_info.items() on an AsyncMock.
-# ---------------------------------------------------------------------------
-
+# Module-level patch: check_and_increment must return a plain dict, not an AsyncMock, so
+# @with_rate_limiting doesn't crash iterating usage_info.items().
 _rl_patch = patch(
     "app.decorators.rate_limiting.tiered_limiter.check_and_increment",
     new_callable=AsyncMock,
@@ -26,6 +25,21 @@ _rl_patch.start()
 FAKE_USER_ID = "507f1f77bcf86cd799439011"
 
 MODULE = "app.agents.tools.todo_tool"
+
+
+class _UTCOnlyDateTime(datetime):
+    """datetime stand-in whose now(None) (local time) reads a different date than now(UTC).
+
+    The todo tools' day boundaries must follow the UTC calendar; this clock makes a non-UTC read
+    produce a wrong window the exact-boundary assertions can see, without depending on the run
+    machine's own timezone differing from UTC.
+    """
+
+    @classmethod
+    def now(cls, tz: datetime | None = None) -> datetime:  # type: ignore[override]  # mirrors datetime.now's optional-tz signature deliberately
+        if tz is None:
+            return cls(2026, 6, 14, 20, 0)  # naive local read: previous day
+        return cls(2026, 6, 15, 2, 0, tzinfo=UTC)
 
 
 def _make_config(user_id: str = FAKE_USER_ID) -> dict[str, Any]:
@@ -665,6 +679,7 @@ class TestGetTodoStatistics:
 class TestGetTodayTodos:
     """Tests for the get_today_todos tool."""
 
+    @patch(f"{MODULE}.datetime", _UTCOnlyDateTime)
     @patch(f"{MODULE}.get_stream_writer")
     @patch(f"{MODULE}.get_todos_by_date_range", new_callable=AsyncMock)
     @patch(f"{MODULE}.get_user_id_from_config", return_value=FAKE_USER_ID)
@@ -683,6 +698,13 @@ class TestGetTodayTodos:
 
         assert result["error"] is None
         assert result["count"] == 1
+        # The query window is the full day "now" falls on, as naive datetimes (datetime.combine
+        # keeps time.min/max's null tzinfo) on the UTC clock's calendar date — pinned exactly so a
+        # local-time or None bound cannot slip through.
+        (user_arg, start, end), _ = mock_service.await_args
+        assert user_arg == FAKE_USER_ID
+        assert start == datetime(2026, 6, 15, 0, 0)
+        assert end == datetime(2026, 6, 15, 23, 59, 59, 999999)
 
     @patch(f"{MODULE}.get_stream_writer")
     @patch(f"{MODULE}.get_todos_by_date_range", new_callable=AsyncMock)
@@ -1269,6 +1291,7 @@ class TestDeleteSubtask:
 class TestGetTodosSummary:
     """Tests for the get_todos_summary tool."""
 
+    @patch(f"{MODULE}.datetime", _UTCOnlyDateTime)
     @patch(f"{MODULE}.get_stream_writer")
     @patch(f"{MODULE}.get_all_projects_service", new_callable=AsyncMock)
     @patch(f"{MODULE}.get_all_todos_service", new_callable=AsyncMock)
@@ -1283,9 +1306,8 @@ class TestGetTodosSummary:
         mock_writer_factory: MagicMock,
     ) -> None:
         mock_writer_factory.return_value = _writer_mock()
-        now = datetime.now(UTC)
         todo = _make_todo_response(
-            due_date=now,
+            due_date=datetime(2026, 6, 15, 9, 0, tzinfo=UTC),
             completed=False,
             priority=Priority.HIGH,
             completed_at=None,
@@ -1304,6 +1326,12 @@ class TestGetTodosSummary:
         assert "today" in summary
         assert "stats" in summary
         assert "by_project" in summary
+        # Same day-window contract as get_today_todos, pinned against the same
+        # fake clock: the first gather call fetches today's bounds.
+        (user_arg, start, end), _ = mock_date_range.await_args_list[0]
+        assert user_arg == FAKE_USER_ID
+        assert start == datetime(2026, 6, 15, 0, 0)
+        assert end == datetime(2026, 6, 15, 23, 59, 59, 999999)
 
     @patch(f"{MODULE}.get_stream_writer")
     @patch(f"{MODULE}.get_user_id_from_config", return_value="")
@@ -1340,3 +1368,36 @@ class TestGetTodosSummary:
 
         assert "Error getting todos summary" in result["error"]
         assert result["summary"] is None
+
+
+# Prod, Sep 3 2026: "[TOOL] Error creating todo: 'normal' is not a valid Priority" — the
+# parameter was typed str, so the model only saw allowed values as prose and guessed a synonym;
+# the enum in the schema now refuses the call before the tool body runs.
+
+PRIORITY_TOOL_NAMES = ["create_todo", "list_todos", "update_todo", "semantic_search_todos"]
+
+
+class TestPriorityIsAnEnumInTheToolSchema:
+    @pytest.mark.regression
+    @pytest.mark.parametrize("tool_name", PRIORITY_TOOL_NAMES)
+    def test_schema_enumerates_the_allowed_values(self, tool_name):
+        from app.agents.tools import todo_tool
+
+        schema = getattr(todo_tool, tool_name).tool_call_schema.model_json_schema()
+        enum = schema.get("$defs", {}).get("Priority", {}).get("enum")
+        assert enum == [p.value for p in Priority], schema["properties"]["priority"]
+
+    @pytest.mark.regression
+    async def test_unknown_priority_never_reaches_the_service(self):
+        from app.agents.tools.todo_tool import create_todo
+
+        with (
+            patch(f"{MODULE}.get_stream_writer"),
+            patch(f"{MODULE}.create_todo_service", new=AsyncMock()) as svc,
+            patch(f"{MODULE}.get_user_id_from_config", return_value="u1"),
+        ):
+            with pytest.raises(ValidationError):
+                await create_todo.ainvoke(
+                    {"title": "x", "priority": "normal"}, config=_make_config()
+                )
+        svc.assert_not_awaited()

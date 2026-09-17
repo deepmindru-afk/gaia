@@ -1,53 +1,31 @@
 """Tool-output compaction middleware.
 
-Bounds how much a single tool observation can contribute to the context. Two
-tiers, tried in order — the first tier that can run, runs, and once the decision
-to compact is made SOME tier always runs:
+Bounds how much a single tool observation can contribute to the context.
+Once compaction triggers: (1) workspace spill (optional, lossless) writes
+RAW output to /workspace/sessions/{conv}/tool_outputs/, leaving a pointer
+to mine with query_json/grep — skipped on JuiceFS-less deployments (issue
+#916); (2) with summary_llm, one bounded call digests the output; without
+one, a deterministic preview or head+tail truncation as last resort.
 
-1. Workspace spill (lossless). The output is written to
-   `/workspace/sessions/{conv}/tool_outputs/` and the model is left a pointer it
-   can mine with `query_json`/`grep`. Preferred whenever the workspace exists.
-2. In-context truncation (lossy). No workspace (every native, non-Docker run —
-   see the JuiceFS trade-off in `apps/api/CLAUDE.md`), so there is nowhere to
-   spill; the output is cut to a head + tail with a marker saying plainly that
-   the middle is gone and cannot be recovered.
-
-Tier 2 exists because returning the output unchanged is not a safe degradation:
-it silently removes the only bound on context growth, which is how a native run
-reached 131k median input tokens per case and hit the step limit.
-
-Deliberately NOT an LLM summarization tier: summarizing here costs a model call
-per oversized observation and makes the compacted text nondeterministic (bad for
-evals), and the SWE-bench comparison in "The Complexity Trap" (arXiv 2508.21433)
-found simple observation masking matches LLM summarization's solve rate at half
-the cost. Whole-history summarization is a separate concern and already lives in
-`summarization.py`. This mirrors what Anthropic's `clear_tool_uses_20250919`,
-LangChain's own `ClearToolUsesEdit`, and Hermes' pruning pre-pass all do: replace
-stale/oversized tool results deterministically, no model call.
-
-Two independent triggers (unchanged from the prior VFS-backed version):
-- Per-tool: a single output exceeds `max_output_chars` → compact immediately
-- Thread-level: estimated context usage exceeds `compaction_threshold` →
-  compact any output bigger than `MIN_COMPACTION_SIZE`
-
-The decide-and-compact logic lives in the module-level `compact_tool_output`
-helper and the middleware is a thin wrapper around it, so the tiering is
-testable without a middleware stack. Subagents reach it through that same
-middleware (`create_subagent_middleware` passes `enable_compaction=True`);
-comms deliberately does not compact, having no tools to mine a spilled file.
+Truncation exists because unchanged output removed the only bound on
+context growth (a native run once hit 131k median input tokens and the
+step limit). Triggers: per-tool (exceeds max_output_chars) or thread-level
+(exceeds compaction_threshold, compacting anything over MIN_COMPACTION_SIZE).
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ToolCallRequest
-from langchain_core.messages import AnyMessage, ToolMessage
+from langchain_core.language_models import LanguageModelLike
+from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
 from app.agents.workspace.offload import (
@@ -62,6 +40,10 @@ from app.constants.log_tags import LogTag
 from app.constants.summarization import (
     COMPACTION_FALLBACK_HEAD_CHARS,
     COMPACTION_FALLBACK_TAIL_CHARS,
+    COMPACTION_SUMMARY_INPUT_HEAD_CHARS,
+    COMPACTION_SUMMARY_INPUT_TAIL_CHARS,
+    COMPACTION_SUMMARY_MAX_CHARS,
+    COMPACTION_SUMMARY_TIMEOUT_SECONDS,
     MIN_COMPACTION_SIZE,
 )
 from app.models.agent_models import runtime_configurable
@@ -74,11 +56,14 @@ from app.utils.multimodal import (
 )
 from shared.py.wide_events import log
 
+# The file-format discriminator carried by every offload marker.
+OffloadFmt = Literal["json", "jsonl", "text"]
+
 COMPACTION_TRUNCATED_MARKER = "[Compacted in context]"
 
 
 def estimate_context_usage(messages: Sequence[AnyMessage], context_window: int) -> float:
-    """Estimate the fraction of the context window consumed by ``messages``.
+    """Estimate the fraction of the context window consumed by messages.
 
     Uses the same 4-chars-per-token heuristic as the rest of the agent stack.
     """
@@ -101,11 +86,9 @@ def should_compact_output(
 ) -> tuple[bool, str]:
     """Decide whether a tool output should be spilled to the workspace.
 
-    ``tool_name`` is intentionally unused here — callers already resolve it into
-    ``always_persist``/``excluded`` before calling in; kept as a parameter for
-    call-site readability (and mirrored by the test suite).
-
-    Returns ``(should_compact, reason)``. ``reason`` is empty when not compacting.
+    tool_name is intentionally unused — callers already resolve it into
+    always_persist/excluded, kept for call-site readability. Returns
+    (should_compact, reason); reason is empty when not compacting.
     """
     del tool_name
     if excluded:
@@ -141,21 +124,99 @@ def _summarize_output(content: str, tool_name: str) -> str:
     return f"[{tool_name}] {content}"
 
 
-async def _spill_to_workspace(
-    *,
-    content_str: str,
-    tool_name: str,
-    tool_call_id: str,
-    user_id: str,
-    conversation_id: str,
-    reason: str,
-    status: str,
-    existing_additional_kwargs: dict[str, Any],
-) -> ToolMessage:
-    """Write the RAW output to the workspace and return a compacted, offload-marked ToolMessage.
+_COMPACTION_SUMMARIZER_SYSTEM_PROMPT = """You compress tool outputs for an AI agent's context. Write a dense, factual digest of the tool output below.
+
+Rules:
+- Preserve exactly: record/result counts, IDs, names, dates, statuses, totals, and any errors or warnings (keep errors near-verbatim).
+- For long repetitive collections: state the count and item shape, then quote 2-3 representative items.
+- Keep anything that directly answers what the tool was apparently asked; drop boilerplate, pagination filler, and repetition.
+- Plain text only. No preamble (never start with "Here is" or similar), no commentary about yourself. At most {max_chars} characters."""
+
+
+def _summary_input_sample(content_str: str) -> str:
+    """Head+tail sample of the output sized for the summarizer prompt.
+
+    Mirrors the truncation fallback's rationale: schema/first records live at the
+    front, totals/errors at the end, and the middle of a huge listing carries the
+    least information per char.
+    """
+    if (
+        len(content_str)
+        <= COMPACTION_SUMMARY_INPUT_HEAD_CHARS + COMPACTION_SUMMARY_INPUT_TAIL_CHARS
+    ):
+        return content_str
+    dropped = (
+        len(content_str) - COMPACTION_SUMMARY_INPUT_HEAD_CHARS - COMPACTION_SUMMARY_INPUT_TAIL_CHARS
+    )
+    return (
+        f"{content_str[:COMPACTION_SUMMARY_INPUT_HEAD_CHARS]}\n"
+        f"[... {dropped} middle chars omitted from this sample ...]\n"
+        f"{content_str[-COMPACTION_SUMMARY_INPUT_TAIL_CHARS:]}"
+    )
+
+
+async def _llm_summarize_output(
+    summary_llm: LanguageModelLike, content_str: str, tool_name: str
+) -> str | None:
+    """Digest an oversized tool output into a bounded in-context summary.
+
+    Single attempt under a hard timeout — the compaction path runs inside the
+    tool loop, so a slow endpoint must never stall it. Returns None on any
+    failure (or an empty/unusable response); callers degrade to the deterministic
+    tiers, and the failure is logged loudly rather than swallowed.
+    """
+    prompt = f"Tool: {tool_name}\n\nOutput to digest:\n{_summary_input_sample(content_str)}"
+    try:
+        response = await asyncio.wait_for(
+            summary_llm.ainvoke(
+                [
+                    SystemMessage(
+                        content=_COMPACTION_SUMMARIZER_SYSTEM_PROMPT.format(
+                            max_chars=COMPACTION_SUMMARY_MAX_CHARS
+                        )
+                    ),
+                    HumanMessage(content=prompt),
+                ]
+            ),
+            timeout=COMPACTION_SUMMARY_TIMEOUT_SECONDS,
+        )
+    except Exception as e:
+        log.warning(
+            f"{LogTag.AGENT} LLM compaction summary failed; falling back to deterministic tiers",
+            tool_name=tool_name,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
+        return None
+    response_message = getattr(response, "content", "")
+    if not isinstance(response_message, (str, list)):
+        log.warning(
+            f"{LogTag.AGENT} LLM compaction summary returned an unusable payload",
+            tool_name=tool_name,
+            payload_type=type(response_message).__name__,
+        )
+        return None
+    text = extract_text_content(response_message).strip()
+    if not text:
+        log.warning(
+            f"{LogTag.AGENT} LLM compaction summary was empty; falling back to deterministic tiers",
+            tool_name=tool_name,
+        )
+        return None
+    # Hard cap regardless of what the model returned — the whole point of the
+    # tier is a bounded payload, and a rambling digest would undo the offload.
+    if len(text) > COMPACTION_SUMMARY_MAX_CHARS:
+        text = text[:COMPACTION_SUMMARY_MAX_CHARS].rstrip() + "…[digest truncated]"
+    return text
+
+
+async def _write_raw_output(
+    *, content_str: str, tool_name: str, user_id: str, conversation_id: str
+) -> tuple[OffloadFmt, str]:
+    """Write the RAW output to the workspace; return (fmt, sandbox_path).
 
     The raw content (not a metadata wrapper) is written so query_json/grep can
-    mine it directly, and the sniffed format is marked so the right miner binds.
+    mine it directly. Raises on any storage failure — callers own the fallback.
     """
     fmt = sniff_offload_fmt(content_str)
     ext = {"json": "json", "jsonl": "jsonl", "text": "txt"}[fmt]
@@ -169,7 +230,38 @@ async def _spill_to_workspace(
         relative_path=relative_path,
         content=content_str,
     )
+    return fmt, sandbox_path
 
+
+def _offload_kwargs(
+    *, sandbox_path: str, fmt: OffloadFmt, content_str: str, tool_name: str
+) -> OffloadInfo:
+    return {
+        "path": sandbox_path,
+        "bytes": len(content_str.encode("utf-8")),
+        "fmt": fmt,
+        "producer": tool_name,
+        "records": None,
+    }
+
+
+def _stub_spill_message(
+    *,
+    content_str: str,
+    fmt: OffloadFmt,
+    sandbox_path: str,
+    tool_name: str,
+    tool_call_id: str,
+    reason: str,
+    status: str,
+    existing_additional_kwargs: dict[str, Any],
+) -> ToolMessage:
+    """Build the deterministic-preview spill message for an already-written file.
+
+    The degraded payload shape used when no LLM summarizer produced a digest:
+    heuristic preview plus the file pointer. _write_raw_output wrote the
+    file; this only renders the in-context replacement.
+    """
     summary = _summarize_output(content_str, tool_name)
     size_kb = len(content_str) / 1024
     mine = (
@@ -186,13 +278,9 @@ async def _spill_to_workspace(
         f"for {sandbox_path}.]"
     )
 
-    offload: OffloadInfo = {
-        "path": sandbox_path,
-        "bytes": len(content_str.encode("utf-8")),
-        "fmt": fmt,
-        "producer": tool_name,
-        "records": None,
-    }
+    offload: OffloadInfo = _offload_kwargs(
+        sandbox_path=sandbox_path, fmt=fmt, content_str=content_str, tool_name=tool_name
+    )
 
     log.info(
         f"{LogTag.AGENT} Compacted tool output",
@@ -223,6 +311,74 @@ async def _spill_to_workspace(
     )
 
 
+def _summarized_compact_message(
+    *,
+    summary: str,
+    tool_name: str,
+    tool_call_id: str,
+    reason: str,
+    status: str,
+    content_str: str,
+    spilled: tuple[OffloadFmt, str] | None,
+    existing_additional_kwargs: dict[str, Any],
+) -> ToolMessage:
+    """Build the LLM-summary compaction message, with an optional spill pointer.
+
+    The digest IS the payload. When the raw output was also spilled, a
+    one-line pointer rides along for lossless recovery; otherwise the
+    summary stands alone. spilled is (fmt, sandbox_path) from _write_raw_output.
+    """
+    body = f"[{tool_name} compacted — {reason}] {summary}"
+    additional: dict[str, Any] = {
+        **existing_additional_kwargs,
+        "original_length": len(content_str),
+        "compacted": True,
+        "compaction_reason": reason,
+        "compaction_strategy": "llm_summary",
+    }
+    if spilled:
+        fmt, sandbox_path = spilled
+        mine = "query_json/grep" if fmt in ("json", "jsonl") else "grep"
+        size_kb = len(content_str) / 1024
+        body += (
+            f"\n\n[Full raw output ({size_kb:.1f} KB) saved at {sandbox_path} — if the "
+            f"digest missed something you need, mine just that with {mine}; do NOT "
+            f"read the whole file back into context.]"
+        )
+        additional["workspace_path"] = sandbox_path
+        additional["compaction_strategy"] = "llm_summary_workspace_spill"
+
+    log.info(
+        f"{LogTag.AGENT} Compacted tool output into an LLM summary",
+        tool_name=tool_name,
+        content_chars=len(content_str),
+        summary_chars=len(summary),
+        workspace_spill=bool(spilled),
+        reason=reason,
+    )
+    return ToolMessage(
+        content=body,
+        tool_call_id=tool_call_id,
+        name=tool_name,
+        # Preserve the source status so an error result stays an error after
+        # compaction — same contract as the other tiers.
+        status=status,
+        additional_kwargs=(
+            mark_offload(
+                additional,
+                _offload_kwargs(
+                    sandbox_path=spilled[1],
+                    fmt=spilled[0],
+                    content_str=content_str,
+                    tool_name=tool_name,
+                ),
+            )
+            if spilled
+            else additional
+        ),
+    )
+
+
 def _truncate_in_context(
     *,
     content_str: str,
@@ -232,14 +388,11 @@ def _truncate_in_context(
     status: str,
     existing_additional_kwargs: dict[str, Any],
 ) -> ToolMessage | None:
-    """Compact ``content_str`` in place, keeping its head and tail plus a loud marker.
+    """Compact content_str in place, keeping its head and tail plus a loud marker.
 
-    The fallback tier, used when no workspace file can be written. Unlike the
-    spill this is LOSSY and unrecoverable, so the marker says so explicitly —
-    the model must never mistake a truncated output for the whole thing.
-
-    Returns ``None`` when the output already fits the budget: there is nothing
-    to reclaim, and re-wrapping it would only add noise.
+    The fallback tier, used when no workspace file can be written. Unlike a
+    spill this is LOSSY and unrecoverable, so the marker says so explicitly.
+    Returns None when the output already fits the budget.
     """
     kept = COMPACTION_FALLBACK_HEAD_CHARS + COMPACTION_FALLBACK_TAIL_CHARS
     dropped = len(content_str) - kept
@@ -248,8 +401,8 @@ def _truncate_in_context(
 
     body = (
         f"{COMPACTION_TRUNCATED_MARKER} {tool_name} returned {len(content_str)} chars "
-        f"({reason}). The workspace is unavailable, so the full output could NOT be "
-        f"saved for later and the middle {dropped} chars are gone for good. The first "
+        f"({reason}). The full output could NOT be saved for later and the middle "
+        f"{dropped} chars are gone for good. The first "
         f"{COMPACTION_FALLBACK_HEAD_CHARS} and last {COMPACTION_FALLBACK_TAIL_CHARS} "
         f"chars are below — if you need what was dropped, call the tool again with a "
         f"narrower query rather than assuming this is the complete result.\n\n"
@@ -297,22 +450,22 @@ async def compact_tool_output(
     always_persist: bool = False,
     excluded: bool = False,
     existing_additional_kwargs: dict[str, Any] | None = None,
+    summary_llm: LanguageModelLike | None = None,
 ) -> ToolMessage | None:
-    """Decide-and-spill a tool output. The one canonical compaction path.
+    """Decide-and-compact a tool output. The one canonical compaction path.
 
-    Returns a compacted ``ToolMessage`` when the output was spilled to the
-    workspace, or ``None`` when it should be kept as-is — below threshold,
-    excluded, or the workspace was unavailable (degrades gracefully, matching
-    the middleware's prior behavior).
+    Workspace spill runs first as an OPTIONAL lossless step; an LLM digest
+    is the in-context payload when summary_llm is supplied; deterministic
+    preview and head+tail truncation are the degradation tiers. Returns
+    None when the output should be kept as-is.
     """
-    # Inline media can't be spilled to a text file and re-read — the block IS
-    # the payload the model needs. Each block is bounded at its producer
-    # (ImageCodec), and how many reach a request is bounded at the request
-    # boundary (MediaAdapter), so there is nothing for compaction to do here.
+    # Inline media can't be spilled and re-read — the block IS the payload;
+    # each is already bounded at its producer (ImageCodec) and the request
+    # boundary (MediaAdapter).
     if has_media_blocks(content):
         return None
-    # Text-extract rather than str(): a media-free block list would otherwise be
-    # sized and previewed as its Python repr ("[{'type': 'text', ...}]").
+    # Text-extract rather than str(): a media-free block list would otherwise
+    # be sized/previewed as its Python repr.
     content_str = extract_text_content(content)
     should, reason = should_compact_output(
         content_str,
@@ -326,49 +479,79 @@ async def compact_tool_output(
     if not should:
         return None
 
-    def fallback() -> ToolMessage | None:
-        return _truncate_in_context(
-            content_str=content_str,
-            tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            reason=reason,
-            status=status,
-            existing_additional_kwargs=existing_additional_kwargs or {},
-        )
-
+    # Optional lossless tier — raw bytes preserved whenever a spill target exists.
+    # Missing here is never fatal: every later tier works without a spilled file
+    # (issue #916: JuiceFS is an add-on to compaction, not its foundation).
+    spilled: tuple[OffloadFmt, str] | None = None
     if not user_id or not conversation_id:
         log.warning(
-            f"{LogTag.AGENT} Compaction has no workspace identity; truncating in context instead",
+            f"{LogTag.AGENT} Compaction has no workspace identity; compacting without a spill",
             tool_name=tool_name,
             user_id=("set" if user_id else "missing"),
             conversation_id=("set" if conversation_id else "missing"),
         )
-        return fallback()
+    else:
+        try:
+            spilled = await _write_raw_output(
+                content_str=content_str,
+                tool_name=tool_name,
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+        except JuiceFSUnavailable as e:
+            log.warning(
+                f"{LogTag.AGENT} Workspace unavailable, compacting without a spill",
+                tool_name=tool_name,
+                error_type=type(e).__name__,
+            )
+        except Exception as e:
+            log.error(
+                f"{LogTag.AGENT} Workspace spill failed, compacting without a spill",
+                tool_name=tool_name,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
-    try:
-        return await _spill_to_workspace(
+    # Primary payload — the LLM digest. On failure this degrades to the
+    # deterministic tiers below rather than failing the tool call.
+    if summary_llm is not None:
+        summary = await _llm_summarize_output(summary_llm, content_str, tool_name)
+        if summary is not None:
+            return _summarized_compact_message(
+                summary=summary,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                reason=reason,
+                status=status,
+                content_str=content_str,
+                spilled=spilled,
+                existing_additional_kwargs=existing_additional_kwargs or {},
+            )
+
+    if spilled is not None:
+        return _stub_spill_message(
             content_str=content_str,
+            fmt=spilled[0],
+            sandbox_path=spilled[1],
             tool_name=tool_name,
             tool_call_id=tool_call_id,
-            user_id=user_id,
-            conversation_id=conversation_id,
             reason=reason,
             status=status,
             existing_additional_kwargs=existing_additional_kwargs or {},
         )
-    except JuiceFSUnavailable as e:
-        log.warning(
-            f"{LogTag.AGENT} Workspace unavailable, compacting in context",
-            tool_name=tool_name,
-            error_type=type(e).__name__,
-        )
-    except Exception as e:
-        log.error(
-            f"{LogTag.AGENT} Workspace spill failed, compacting in context instead",
-            tool_name=tool_name,
-            error_type=type(e).__name__,
-        )
-    return fallback()
+
+    log.warning(
+        f"{LogTag.AGENT} No spill and no LLM digest available; truncating in context",
+        tool_name=tool_name,
+    )
+    return _truncate_in_context(
+        content_str=content_str,
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        reason=reason,
+        status=status,
+        existing_additional_kwargs=existing_additional_kwargs or {},
+    )
 
 
 class WorkspaceCompactionMiddleware(AgentMiddleware):
@@ -389,6 +572,7 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
         always_persist_tools: list[str] | None = None,
         context_window: int = DEFAULT_MAX_TOKENS,
         excluded_tools: set[str] | None = None,
+        summary_llm: LanguageModelLike | None = None,
     ) -> None:
         super().__init__()
         self.compaction_threshold = compaction_threshold
@@ -396,6 +580,9 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
         self.always_persist_tools = always_persist_tools or []
         self.context_window = context_window
         self.excluded_tools = excluded_tools or set()
+        # The graph's chat LLM. Invoked with the request's configurable bound
+        # (same as the model node), so digests ride the conversation's model.
+        self.summary_llm = summary_llm
 
     async def awrap_tool_call(
         self,
@@ -419,6 +606,12 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
         configurable = runtime_configurable(request)
         thread_id = configurable.get("thread_id")
 
+        # Same per-request routing the model node does: bind this request's
+        # configurable so the digest rides the conversation's chosen model.
+        summary_llm = self.summary_llm
+        if summary_llm is not None and hasattr(summary_llm, "with_config"):
+            summary_llm = summary_llm.with_config(configurable=configurable)
+
         compacted = await compact_tool_output(
             content=result.content if hasattr(result, "content") else str(result),
             tool_name=tool_name,
@@ -432,19 +625,18 @@ class WorkspaceCompactionMiddleware(AgentMiddleware):
             always_persist=tool_name in self.always_persist_tools,
             excluded=tool_name in self.excluded_tools,
             existing_additional_kwargs=getattr(result, "additional_kwargs", {}),
+            summary_llm=summary_llm,
         )
         result = compacted if compacted is not None else result
 
-        # Whether we just offloaded the output or the tool self-offloaded (gmail,
-        # which is excluded from compaction), surface the file-mining tools the
-        # moment a marker is present. Keyed on the offload itself, so it covers
-        # every producer uniformly.
+        # Covers both this offload and a tool's own self-offload (gmail,
+        # excluded from compaction) uniformly, keyed on the marker itself.
         return self._bind_offload_tools(result, request)
 
     def _bind_offload_tools(
         self, result: ToolMessage, request: ToolCallRequest
     ) -> ToolMessage | Command[Any]:
-        """Append query_json/grep to ``selected_tool_ids`` if ``result`` carries an offload marker.
+        """Append query_json/grep to selected_tool_ids if result carries an offload marker.
 
         Binds only the mining tools not already selected — selected_tool_ids is an
         append-only reducer, so this avoids re-binding the same tool every offload

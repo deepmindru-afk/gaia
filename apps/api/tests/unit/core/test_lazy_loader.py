@@ -24,15 +24,11 @@ def _uid(prefix: str = "test") -> str:
 
 
 class _AcquireSignalingLock:
-    """A `threading.Lock` stand-in that fires an event the instant `acquire()`
-    is called, before it blocks on the real lock.
+    """A threading.Lock stand-in that fires an event the instant acquire() is called, before blocking on the real lock.
 
-    Used to deterministically prove a second thread has passed its outer
-    quick-check and reached `with self._lock:` — without this, a plain
-    `threading.Event` set right before the call to `get()`/`aget()` leaves a
-    window where the thread hasn't actually reached the lock statement yet,
-    so a caller could race past the outer check via ordinary scheduling
-    luck rather than the deliberately red/green-checked inner branch.
+    Proves a second thread has actually reached the lock statement — a bare
+    threading.Event set before get()/aget() would leave a window where the
+    thread hasn't reached it yet.
     """
 
     def __init__(self, about_to_acquire: threading.Event) -> None:
@@ -57,20 +53,11 @@ class _AcquireSignalingLock:
 def _run_two_threaded_lock_race(
     second_call: Callable[[LazyLoader], bool | None],
 ) -> tuple[bool | None, bool | None, int]:
-    """Run the double-checked-locking race deterministically and report both
-    callers' results plus how many times the loader actually ran.
+    """Run the double-checked-locking race deterministically and report both callers' results and the loader call count.
 
-    Thread A holds `loader._lock` blocked inside the loader function; thread
-    B is proven (via `_AcquireSignalingLock`) to have reached `with
-    self._lock:` before A's `_is_configured` flip is released — so `B`'s
-    result and the loader call count prove whether B took the inner
-    double-check fast path or wastefully re-ran the loader.
-
-    `second_call` is B's actual call (`loader.get()` or
-    `asyncio.run(loader.aget())`), so the same race harness proves the fast
-    path for both the sync `get()` double-check and the
-    `aget()`-on-a-sync-loader double-check without duplicating the
-    coordination.
+    Thread A holds loader._lock inside the loader function; thread B is
+    proven via _AcquireSignalingLock to reach the lock before A's flip
+    releases. second_call parameterizes B's actual call (get() or aget()).
     """
     call_count = 0
     entered_loader = threading.Event()
@@ -88,7 +75,7 @@ def _run_two_threaded_lock_race(
         strategy=MissingKeyStrategy.SILENT,
     )
     b_about_to_acquire = threading.Event()
-    loader._lock = _AcquireSignalingLock(b_about_to_acquire)  # type: ignore[assignment]
+    loader._lock = _AcquireSignalingLock(b_about_to_acquire)  # type: ignore[assignment]  # test swaps the private lock for a signaling double
 
     first_result: list[bool | None] = []
     second_result: list[bool | None] = []
@@ -296,8 +283,7 @@ class TestLazyLoaderSyncGet:
             loader.get()
 
     def test_get_global_context_second_call_takes_outer_fast_path(self):
-        """A second get() on an already-configured global-context loader hits
-        the outer quick-check (no lock) and must not re-run the loader."""
+        """A second get() on an already-configured global-context loader hits the outer quick-check (no lock) and must not re-run the loader."""
         call_count = 0
 
         def counting_loader():
@@ -314,11 +300,7 @@ class TestLazyLoaderSyncGet:
         assert call_count == 1
 
     def test_get_double_check_lock_returns_true_without_reinit(self):
-        """A caller that loses the race and blocks on the lock sees
-        `_is_configured` already flipped to True by the time it acquires the
-        lock, and must take the inner double-check fast path instead of
-        calling the loader again. See `_run_two_threaded_lock_race` for how
-        the race is made deterministic."""
+        """A caller that loses the race sees _is_configured already True by the time it acquires the lock, and must take the inner fast path instead of re-running the loader."""
         first, second, call_count = _run_two_threaded_lock_race(lambda loader: loader.get())
 
         assert first is True
@@ -411,8 +393,7 @@ class TestLazyLoaderAsyncGet:
         assert result is True
 
     async def test_aget_global_context_second_call_takes_outer_fast_path(self):
-        """A second aget() on an already-configured global-context loader
-        hits the outer quick-check and must not re-run the async loader."""
+        """A second aget() on an already-configured global-context loader hits the outer quick-check and must not re-run the async loader."""
         call_count = 0
 
         async def counting_loader():
@@ -429,15 +410,7 @@ class TestLazyLoaderAsyncGet:
         assert call_count == 1
 
     async def test_aget_async_double_check_lock_returns_true_without_reinit(self):
-        """Task B, which loses the race for the async lock while task A is
-        still initializing, must see `_is_configured` already True on the
-        inner double-check and return without re-running the loader.
-
-        Coordinated purely with `asyncio.Event` and `asyncio.sleep(0)` yields
-        — deterministic cooperative scheduling, not a wall-clock race: only
-        one coroutine ever runs at a time, and control only passes at an
-        explicit `await`.
-        """
+        """Task B, losing the race for the async lock while task A initializes, must see _is_configured already True and skip re-running the loader; coordinated deterministically via asyncio.Event and sleep(0) yields."""
         call_count = 0
         release_loader = asyncio.Event()
 
@@ -473,14 +446,7 @@ class TestLazyLoaderAsyncGet:
         assert call_count == 1  # task B never re-ran the loader
 
     async def test_aget_sync_loader_double_check_lock_returns_true_without_reinit(self):
-        """A sync loader accessed only via `aget()`: a second caller that
-        blocks on `self._lock` (the branch at line ~213-222, taken when
-        `is_async` is False) must see `_is_configured` already True on the
-        inner double-check and skip re-initialization. Same
-        `_AcquireSignalingLock`-coordinated race as the sync `get()`
-        double-check test (both share `self._lock`) — see
-        `_run_two_threaded_lock_race`; only B's call differs here
-        (`asyncio.run(loader.aget())` instead of `loader.get()`)."""
+        """A sync loader accessed only via aget(): a second caller blocking on self._lock must see _is_configured already True and skip re-initialization, sharing the race harness with the sync get() double-check test."""
         first, second, call_count = _run_two_threaded_lock_race(
             lambda loader: asyncio.run(loader.aget())
         )
@@ -511,6 +477,69 @@ class TestLazyLoaderReset:
         ll._instance = "cached"
         ll.reset()
         assert ll._instance is None
+
+    def test_reset_async_loader_inside_a_running_loop_fails_loud(self):
+        """Inside a running loop a sync clear races any in-flight aget() — fail loud instead of resetting something the initializer overwrites."""
+
+        async def loader():
+            return 1
+
+        async def scenario():
+            ll = LazyLoader(loader, strategy=MissingKeyStrategy.SILENT)
+            ll._instance = "cached"
+            ll._is_configured = True
+            with pytest.raises(RuntimeError) as exc_info:
+                ll.reset()
+            # Exact message: it is the migration instruction for callers.
+            assert str(exc_info.value) == (
+                f"reset() for async provider '{ll.provider_name}' called inside a "
+                "running event loop, where it could be overwritten by an in-flight "
+                "initialization — await areset() instead, which takes the async lock"
+            )
+            # Fail loud must not half-reset behind the caller's back.
+            assert ll._instance == "cached"
+            assert ll._is_configured is True
+
+        asyncio.run(scenario())
+
+    async def test_areset_cannot_be_overwritten_by_an_in_flight_initialization(self):
+        """The awaited reset takes the async lock, so an initialization still inside loader_func cannot repopulate the instance after it."""
+        gate = asyncio.Event()
+        release = asyncio.Event()
+
+        async def loader():
+            gate.set()
+            await release.wait()
+            return 1
+
+        ll = LazyLoader(loader, strategy=MissingKeyStrategy.SILENT)
+        init_task = asyncio.create_task(ll.aget())
+        await gate.wait()  # loader_func running, holding _async_lock
+
+        reset_task = asyncio.create_task(ll.areset())
+        await asyncio.sleep(0)  # let areset block on the held lock
+        assert not reset_task.done()  # it did NOT barge in and clear early
+
+        release.set()
+        await asyncio.gather(init_task, reset_task)
+
+        # The initializer ran to completion, but the reset happened AFTER it:
+        # nothing survived.
+        assert ll._instance is None
+        assert ll._is_configured is False
+        assert not ll.is_initialized()
+
+    def test_reset_async_loader_without_a_loop_takes_the_async_lock(self):
+        """No running loop: the reset goes through areset(), which demands the provider's async lock."""
+
+        async def loader():
+            return 1
+
+        ll = LazyLoader(loader, strategy=MissingKeyStrategy.SILENT)
+        ll._async_lock = None
+        ll._instance = "cached"
+        with pytest.raises(RuntimeError, match="Async lock not initialized"):
+            ll.reset()
 
     def test_reset_global_context(self):
         loader = LazyLoader(

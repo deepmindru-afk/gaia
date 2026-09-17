@@ -1,3 +1,7 @@
+import type { ImageData, ReplyToMessageData } from "@gaia/shared/api/generated";
+
+export type { ImageData, ReplyToMessageData } from "@gaia/shared/api/generated";
+
 import type { ApprovalDecisionPayload, ToolDataEntry } from "@gaia/shared/chat";
 import { getAuthToken } from "@/features/auth/utils/auth-storage";
 import { ApiError, apiService } from "@/lib/api";
@@ -53,20 +57,8 @@ export interface ApiConversationDetail {
   updatedAt?: string;
 }
 
-export interface ImageData {
-  url: string;
-  prompt: string;
-  improvedPrompt?: string;
-}
-
 export interface MemoryData {
   [key: string]: unknown;
-}
-
-export interface ReplyToMessageData {
-  id: string;
-  content: string;
-  role: "user" | "assistant";
 }
 
 export interface Message {
@@ -83,6 +75,12 @@ export interface Message {
   pinned?: boolean;
   metadata?: Record<string, unknown>;
   replyToMessage?: ReplyToMessageData | null;
+  /**
+   * Set when the turn producing this message failed. The streamed text (if
+   * any) is preserved alongside it — mirrors web's FailedResponse, which shows
+   * the partial bubble plus a retry affordance instead of wiping the text.
+   */
+  error?: string;
 }
 
 export interface ConversationDetail {

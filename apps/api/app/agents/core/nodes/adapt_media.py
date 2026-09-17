@@ -1,8 +1,8 @@
 """Pre-model hook that fits the inline media in history to the active model lane.
 
-Media enters ToolMessages on any lane whose tools can produce it (the `read`
+Media enters ToolMessages on any lane whose tools can produce it (the read
 tool, MCP tools). Per model call this node rewrites those messages into what the
-lane can actually receive — see `app/agents/llm/vision/`. Hook output feeds the
+lane can actually receive — see app/agents/llm/vision/. Hook output feeds the
 model request only; persisted history keeps the canonical block shape.
 """
 
@@ -23,7 +23,7 @@ async def adapt_media_node(
     # Unused here, but execute_hooks() calls every pre-model hook as
     # (state, config, store) — the 3-arg signature is mandatory, so dropping
     # this would be a runtime TypeError, not a cleanup.
-    store: BaseStore,  # NOSONAR python:S1172
+    store: BaseStore,  # NOSONAR python:S1172  # noqa: ARG001 -- framework contract
 ) -> T:
     messages = state["messages"]
     adapted = await adapt_media_for_model(messages, config)

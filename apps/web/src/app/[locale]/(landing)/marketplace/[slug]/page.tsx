@@ -1,10 +1,9 @@
+import type { IntegrationsConfigResponse } from "@shared/api/generated";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
-
 import JsonLd from "@/components/seo/JsonLd";
 import { getComparison } from "@/features/comparisons/data/comparisonsData";
-import type { IntegrationConfigResponse } from "@/features/integrations/api/integrationsApi";
 import type {
   CommunityIntegration,
   CommunityIntegrationsResponse,
@@ -84,7 +83,7 @@ async function getAllIntegrations(): Promise<CommunityIntegration[]> {
         return {
           items: data.integrations ?? [],
           total: data.total ?? 0,
-          hasMore: data.hasMore !== false,
+          hasMore: data.has_more !== false,
         };
       },
       100,
@@ -106,10 +105,14 @@ async function getNativeIntegrationSlugs(): Promise<string[]> {
       next: { revalidate: 60 },
     });
     if (!response.ok) return [];
-    const data = (await response.json()) as IntegrationConfigResponse;
-    return data.integrations
-      .filter((i) => i.id && i.available !== false)
-      .map((i) => i.id);
+    const data = (await response.json()) as IntegrationsConfigResponse;
+    const slugs: string[] = [];
+    for (const integration of data.integrations) {
+      if (integration.id && integration.available !== false) {
+        slugs.push(integration.id);
+      }
+    }
+    return slugs;
   } catch (error) {
     console.error(
       "[SSG Marketplace] Failed to fetch native integration slugs:",
@@ -351,7 +354,7 @@ export default async function IntegrationPage({ params }: Props) {
     },
     {
       question: `Is the ${integration.name} integration free?`,
-      answer: `Yes. GAIA offers a generous free tier that includes access to community integrations like ${integration.name}. You can connect ${integration.name}, run automations, and use all available tools at no cost. Paid plans unlock higher usage limits and advanced workflow features.`,
+      answer: `Community integrations like ${integration.name} are included with every GAIA plan at no extra charge — connect it, run automations, and use all available tools as part of your subscription. Paid plans unlock higher usage limits and advanced workflow features.`,
     },
     {
       question: `What can GAIA do with ${integration.name}?`,
