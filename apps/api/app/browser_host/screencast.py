@@ -270,13 +270,16 @@ async def _read_favicon(mux: CdpMux, page_session: str) -> str | None:
 
 async def _refresh_meta(
     mux: CdpMux, target_id: str, meta: _PageMeta, page_session: str | None = None
-) -> None:
+) -> bool:
+    """Reload the tab metadata from the target; returns whether the url changed."""
     info = await cdp_call(mux, "Target.getTargetInfo", {"targetId": target_id})
     target_info = info.get("targetInfo", {})
+    previous_url = meta.url
     meta.url = target_info.get("url")
     meta.title = target_info.get("title")
     if page_session:
         meta.favicon = await _read_favicon(mux, page_session)
+    return meta.url != previous_url
 
 
 def _image_params() -> dict[str, Any]:
@@ -336,9 +339,7 @@ async def _capture_page(
     mux: CdpMux, page_session: str, target_id: str, meta: _PageMeta
 ) -> dict[str, Any]:
     """Refresh the tab metadata off the target, then capture the page itself."""
-    previous_url = meta.url
-    await _refresh_meta(mux, target_id, meta)
-    if meta.url != previous_url:
+    if await _refresh_meta(mux, target_id, meta):
         # frameNavigated reaches only the session that navigated, so on an engine
         # that isolates them a changed url is the viewer's one sign that the icon
         # it is showing belongs to a page that is gone.

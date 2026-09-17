@@ -28,6 +28,10 @@ from shared.py.wide_events import log
 # client frame can never collide the way two independent counters would.
 _FIRST_MESSAGE_ID = 1
 
+# Every path that ends a session's connection reports it the same way, so a
+# caller can match on one message rather than three near-identical copies.
+_CONNECTION_CLOSED = "browser session connection closed"
+
 CdpFrame = dict[str, Any]
 FrameSink = Callable[[CdpFrame], None]
 # A sink plus the CDP session id it claims, or None when it takes the open stream.
@@ -95,7 +99,7 @@ class CdpMux:
         ws, self._ws = self._ws, None
         if ws is not None:
             await ws.close()
-        self._mark_closed(CdpConnectionClosed("browser session connection closed"))
+        self._mark_closed(CdpConnectionClosed(_CONNECTION_CLOSED))
 
     @property
     def closed(self) -> bool:
@@ -185,7 +189,7 @@ class CdpMux:
         # The socket outlives an engine-side hang-up (close() still has to release
         # it), so the end of the read loop — not a None ws — is what says it is over.
         if ws is None or self._closed.is_set():
-            raise CdpConnectionClosed("browser session connection closed")
+            raise CdpConnectionClosed(_CONNECTION_CLOSED)
         await ws.send(json.dumps(message))
 
     async def _read_loop(self) -> None:
@@ -200,7 +204,7 @@ class CdpMux:
         except Exception as exc:
             self._mark_closed(exc)
         else:
-            self._mark_closed(CdpConnectionClosed("browser session connection closed"))
+            self._mark_closed(CdpConnectionClosed(_CONNECTION_CLOSED))
 
     def _dispatch(self, raw: str) -> None:
         try:

@@ -9,6 +9,7 @@ message instead of a pasted link.
 
 from app.constants.browser import (
     BROWSER_CREDENTIALS_SAVED_NOTE,
+    BrowserSessionStatus,
     BROWSER_TASK_FAILED_PREFIX,
     HandoffStatus,
     SensitiveCategory,
@@ -110,6 +111,10 @@ class BotProgressDelivery:
         # user-facing summary right after. This just closes out the progress.
         if snapshot.success:
             msg = "✅ Done."
+        elif snapshot.status is BrowserSessionStatus.CANCELLED:
+            # The user stopped this themselves, so telling them it could not be
+            # finished reads as a failure they did not cause.
+            msg = "🛑 Stopped."
         else:
             reason = _failure_reason(snapshot.summary)
             msg = f"⚠️ Couldn't finish that: {reason}" if reason else "⚠️ Couldn't finish that."

@@ -534,6 +534,16 @@ class TestBotProgressDeliveryResult:
             msg = mp.call_args[0][2][0]
             assert msg == "⚠️ Couldn't finish that: Failed"
 
+    async def test_a_user_cancelled_run_reads_as_stopped_not_as_a_failure(self, delivery):
+        snap = BrowserResultSnapshot(
+            status="cancelled", success=False, summary="Browser task was cancelled.", steps=2
+        )
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+            assert mp.call_args[0][2][0] == "🛑 Stopped."
+
     async def test_failure_message_empty_summary_uses_bare_sentence(self, delivery):
         snap = BrowserResultSnapshot(status="failed", success=False, summary="", steps=2)
         with patch(
