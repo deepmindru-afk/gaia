@@ -12,10 +12,17 @@ under the same names, so consumers keep importing from there.
 from collections.abc import Mapping
 from typing import Any, Literal, TypedDict, cast
 
+from pydantic import BaseModel, ConfigDict
+
 #: All home_timezone_from_config needs of a run config: a string-keyed mapping
 #: it reads configurable out of. Naming RunnableConfig here pulled langchain_core
 #: into every importer. RunnableConfig is a TypedDict and satisfies this.
 AgentRunConfig = Mapping[str, object]
+
+#: langgraph.constants.CONF, spelled out. Importing it would pull langgraph
+#: into this leaf and undo the whole point of the module; the key is part of
+#: LangGraph's public config shape. tests/meta pins the two together.
+CONFIGURABLE_KEY = "configurable"
 
 
 #: The execution mode a run is in. ``background`` runs have no user waiting on
@@ -47,6 +54,10 @@ class AgentConfigurable(TypedDict, total=False):
     ``RunnableConfig``.
     """
 
+    # Stamped at the top level by build_agent_config and folded in here by
+    # LangGraph's ensure_config before a node runs.
+    agent_name: str
+
     # --- identity: who and which conversation ------------------------------
     #: LangGraph's checkpoint thread. For child agents this is the WRAPPED
     #: thread (``<integration>_executor_<conv>``), never the conversation id.
@@ -64,37 +75,30 @@ class AgentConfigurable(TypedDict, total=False):
     #: judge grounds gated calls against these, so they are never an agent's
     #: paraphrase of the request.
     user_messages: list[str] | None
-    #: The live turn's request as typed, NOT clipped: user_messages is capped at
-    #: HIL_JUDGE_MAX_TURN_CHARS so it cannot be the verbatim copy. Set once by
-    #: comms; absent for non-chat roots, which have no literal user turn.
+    #: The live turn's request, exactly as typed and NOT clipped (unlike
+    #: ``user_messages``, which is capped per turn). Established once by comms
+    #: and inherited parent-overrides. Absent for non-chat roots.
     user_request: str | None
     user_message_id: str
-    #: The comms turn's own bot message id. Threaded into call_executor so a HIL
-    #: pause that resumes reconciles onto this SAME message instead of minting a
-    #: rival one. See ExecutorRun.bot_message_id and _record_pause.
+    #: The live comms turn's own bot message id. Threaded into ``call_executor``
+    #: so a resumed HIL pause reconciles onto this SAME message, not a new one.
     bot_message_id: str
-    #: Onboarding preferences and writing style, set once at a run tree's root
-    #: and inherited unchanged by every child. Absent when the root had none; the
-    #: context sections that read them degrade to no section rather than guess.
+    #: Onboarding preferences / writing style, established once at a run tree's
+    #: root and inherited unchanged by every child agent. Absent when the root
+    #: had none; the context sections that read them degrade to no section.
     user_preferences: dict[str, Any] | None
     writing_style: dict[str, Any] | None
-    #: One id for the WHOLE user turn, minted at the top-level build_agent_config
-    #: and inherited by every child. The accounting middleware keys the tree's
-    #: aggregate token ceiling on it, so it binds across the tree, not per graph.
+    #: One id for the WHOLE user turn, minted at the top-level
+    #: ``build_agent_config`` call and inherited by every child agent, so the
+    #: accounting middleware's token ceiling binds across the tree.
     root_request_id: str
 
     # --- model selection ----------------------------------------------------
-
-    #: THE model selection: a serialized ModelLane, resolved once per turn and
-    #: inherited verbatim by every child, queue hop and HIL resume. The only
-    #: model key GAIA code reads.
-
-    #: Absent on a bag written before lanes existed; ModelLane.from_configurable
-    #: returns None for those and the caller resolves a fresh lane.
+    #: THE model selection, resolved once per turn and inherited verbatim.
+    #: **This is the only model key GAIA code reads.**
     lane: dict[str, Any]
-    #: LangChain's own binding keys, written from the lane and read ONLY by its
-    #: field resolution. Never read these in GAIA code: they are the expansion,
-    #: not the decision. Read lane.
+    #: LangChain's own binding keys, written from ``lane`` and read ONLY by
+    #: LangChain's field resolution — the expansion, not the decision.
     provider: str
     model: str
     model_kwargs: dict[str, Any]
@@ -118,18 +122,18 @@ class AgentConfigurable(TypedDict, total=False):
     #: category (``SourceCategory`` value).
     conversation_source: str | None
     source_category: str
-    #: The resolved plan tier, stamped by resolve_lane and inherited by children.
-    #: The budget wall reads it to avoid a Redis plan lookup on the hot path;
-    #: absent, the wall derives the tier from the cached plan itself.
+    #: The user's resolved plan tier, stamped by ``resolve_lane`` and inherited
+    #: by children; the budget wall reads it to avoid a Redis lookup, and
+    #: derives the tier from the cached plan itself when absent.
     plan_type: str
 
     # --- workflow context (must survive queueing) ---------------------------
     workflow_id: str
     workflow_title: str
     workflow_notify_on_completion: bool
-    #: A replay stopped partway in THIS fire: its own record of what already ran.
-    #: Carried to the executor verbatim because comms cannot be trusted to
-    #: transcribe "do not repeat these" into its task.
+    #: A playbook replay stopped partway and the agent is finishing it: the
+    #: replay's own record of what already ran, carried verbatim to the
+    #: executor since comms can't be trusted to transcribe it into its task.
     playbook_fallback: str | None
     #: The calls a stopped replay made this fire, as ``RecordedCall`` dumps, so a
     #: rewrite may freeze them. See ``PLAYBOOK_REPLAYED_CALLS_KEY``.
@@ -146,8 +150,7 @@ class AgentConfigurable(TypedDict, total=False):
     #: a replayed call from a fresh one. Keyed by ``HIL_RESUME_CONFIG_KEY``.
     hil_resume_replay: bool
     #: DEV-ONLY: the DEV_MODEL_OPTIONS key picked for the executor in the dev
-    #: model switcher. The executor builds its own configurable rather than
-    #: inheriting comms's lane wholesale, so the choice rides down here.
+    #: model switcher, since the executor builds its own configurable.
     dev_executor_model: str
 
 
@@ -168,4 +171,54 @@ def agent_configurable(config: AgentRunConfig | None) -> AgentConfigurable:
     sites that mutate a live bag index ``config["configurable"]`` directly and
     keep today's ``KeyError`` when it is absent.
     """
-    return cast(AgentConfigurable, (config or {}).get("configurable") or {})
+    return cast(AgentConfigurable, (config or {}).get(CONFIGURABLE_KEY) or {})
+
+
+class AgentConfigurableView(BaseModel):
+    """The GAIA-owned keys of a ``configurable``, parsed once for attribute reads.
+
+    :class:`AgentConfigurable` describes the live bag LangGraph owns; this is
+    how a consumer READS it, instead of guessing at string keys. Every field is
+    optional because the bag may be partial (see ``AgentConfigurable``); the two
+    workflow defaults match what ``build_agent_config`` writes for a workflow
+    run. ``model_fields_set`` still tells an absent key from one carried as
+    ``None`` where that matters (``session_id`` inheritance).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    thread_id: str | None = None
+    conversation_id: str | None = None
+    session_id: str | None = None
+    user_id: str | None = None
+    email: str | None = None
+    user_name: str | None = None
+    user_timezone: str | None = None
+    user_messages: list[str] | None = None
+    user_request: str | None = None
+    user_preferences: dict[str, object] | None = None
+    writing_style: dict[str, object] | None = None
+    root_request_id: str | None = None
+    lane: dict[str, object] | None = None
+    #: LangChain's binding key — logged, never used to pick a model (read ``lane``).
+    model: str | None = None
+    selected_tool: str | None = None
+    tool_category: str | None = None
+    subagent_id: str | None = None
+    vfs_session_id: str | None = None
+    stream_id: str | None = None
+    active_todo_id: str | None = None
+    execution_mode: ExecutionMode | None = None
+    conversation_source: str | None = None
+    source_category: str | None = None
+    plan_type: str | None = None
+    workflow_id: str | None = None
+    workflow_title: str = ""
+    workflow_notify_on_completion: bool = True
+    langfuse_trace_id: str | None = None
+    langfuse_tags: list[str] | None = None
+
+
+def read_agent_configurable(config: AgentRunConfig | None) -> AgentConfigurableView:
+    """Return agent_configurable, parsed into AgentConfigurableView."""
+    return AgentConfigurableView.model_validate(agent_configurable(config))

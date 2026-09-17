@@ -6336,6 +6336,17 @@
             ],
             "title": "Eventtype"
           },
+          "htmlLink": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Htmllink"
+          },
           "id": {
             "anyOf": [
               {
@@ -28644,7 +28655,7 @@
     },
     "/api/v1/notifications": {
       "get": {
-        "description": "Get user's notifications with pagination",
+        "description": "Get user's notifications with pagination.",
         "operationId": "notification_get_notifications",
         "parameters": [
           {
@@ -28761,7 +28772,7 @@
     },
     "/api/v1/notifications/bulk-actions": {
       "post": {
-        "description": "Perform bulk actions on multiple notifications",
+        "description": "Perform bulk actions on multiple notifications.",
         "operationId": "notification_bulk_actions",
         "requestBody": {
           "content": {
@@ -29007,7 +29018,7 @@
     },
     "/api/v1/notifications/register-device": {
       "post": {
-        "description": "Register a device token for push notifications",
+        "description": "Register a device token for push notifications.",
         "operationId": "notification_register_device_token",
         "requestBody": {
           "content": {
@@ -29069,7 +29080,7 @@
     },
     "/api/v1/notifications/unregister-device": {
       "post": {
-        "description": "Unregister a device token",
+        "description": "Unregister a device token.",
         "operationId": "notification_unregister_device_token",
         "requestBody": {
           "content": {

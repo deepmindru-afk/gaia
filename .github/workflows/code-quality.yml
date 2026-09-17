@@ -320,14 +320,11 @@ jobs:
           # shellcheck source=scripts/ci/lib/log.sh
           source scripts/ci/lib/log.sh
           echo "::group::Biome check"
-          # Drop top-level paths that biome.json explicitly excludes via `!!`
-          # negation (apps/api, apps/voice-agent, apps/web/public, infra, docs,
-          # .github, etc.). Biome errors out with exit 1 when every input path
-          # is excluded by config, so the lane must not feed it those paths
-          # in the first place. Keep this list in sync with biome.json
-          # `files.includes` negations.
-          FILES=$(scripts/ci/changes.sh files ts tsx js jsx json jsonc css \
-            | grep -Ev '^(apps/api|apps/voice-agent|apps/web/public|infra|docs|\.github|\.claude|\.agents|\.husky|\.yarn|\.vscode|\.idea|\.mise|\.opencode|\.worktrees|\.jscpd-report)/' || true)
+          # biome.json's `files.includes` is the one source of what biome checks:
+          # changed paths it excludes are dropped by biome itself, and
+          # --no-errors-on-unmatched keeps an all-excluded diff (e.g. only the
+          # generated API types) from exiting 1.
+          FILES=$(scripts/ci/changes.sh files ts tsx js jsx json jsonc css)
           if [ "$FILES" = "__FULL__" ]; then
             FILES="."
           fi
@@ -343,7 +340,7 @@ jobs:
           # $FILES is unquoted on purpose: it is a newline-delimited path list
           # and must word-split into one argument per file.
           BIOME_STATUS=0
-          BIOME_OUT=$(pnpm exec biome check $FILES 2>&1) || BIOME_STATUS=$?
+          BIOME_OUT=$(pnpm exec biome check --no-errors-on-unmatched $FILES 2>&1) || BIOME_STATUS=$?
           echo "$BIOME_OUT"
           echo "::endgroup::"
           # Dead-suppression gate: biome emits `suppressions/unused` as a
@@ -969,6 +966,17 @@ jobs:
           python3 tools/lints/check_plr_complexity.py
           echo "::endgroup::"
           echo "plr-complexity-ratchet: OK"
+      - name: Typed-boundaries ratchet (touch a grandfathered file, fix it now)
+        id: typed-boundaries
+        continue-on-error: true
+        # No dict[str, Any] signature and no value["key"] read outside the
+        # boundary modules -- the debt is grandfathered per file until a PR
+        # touches that file. See tools/lints/README.md#typed-boundaries.
+        run: |
+          echo "::group::typed-boundaries ratchet"
+          python3 tools/lints/check_typed_boundaries.py
+          echo "::endgroup::"
+          echo "typed-boundaries: OK"
       - name: Import cost of the base layers (trend; not gating yet)
         id: import-cost
         continue-on-error: true
@@ -1075,6 +1083,7 @@ jobs:
           LINT_IMPORTS: ${{ steps.lint-imports.outcome }}
           IGNORE_WHYS: ${{ steps.ignore-whys.outcome }}
           PLR_COMPLEXITY: ${{ steps.plr-complexity.outcome }}
+          TYPED_BOUNDARIES: ${{ steps.typed-boundaries.outcome }}
           IMPORT_COST: ${{ steps.import-cost.outcome }}
           XENON: ${{ steps.xenon.outcome }}
           INTERROGATE: ${{ steps.interrogate.outcome }}
@@ -1088,6 +1097,7 @@ jobs:
             "lint-imports=$LINT_IMPORTS" \
             "ignore-whys=$IGNORE_WHYS" \
             "plr-complexity=$PLR_COMPLEXITY" \
+            "typed-boundaries=$TYPED_BOUNDARIES" \
             "import-cost=$IMPORT_COST" \
             "xenon=$XENON" \
             "interrogate=$INTERROGATE" \

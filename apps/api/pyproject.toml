@@ -359,6 +359,11 @@ ignore_imports = [
   "app.utils.notes_utils -> langchain_core",
   "app.utils.research_utils -> langchain_core",
   "app.utils.workflow_utils -> langchain_core",
+  # Their whole job is a langchain value: stream_utils reshapes AIMessage,
+  # todo_vector_utils builds Document. The type IS the input, so there is no
+  # shared piece to move down into a leaf.
+  "app.utils.stream_utils -> langchain_core",
+  "app.utils.todo_vector_utils -> langchain_core",
   "app.utils.workflow_utils -> langgraph",
   "app.utils.integration_checker -> langgraph",
   "app.utils.integration_checker -> app.models.agent_models",

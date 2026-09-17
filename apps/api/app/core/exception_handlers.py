@@ -40,10 +40,9 @@ async def validation_error_handler(
     exc: RequestValidationError,
 ) -> Response:
     """Log validation errors with field-level detail and return 422."""
-    errors = [
-        ValidationIssue(loc=list(err["loc"]), msg=err["msg"], type=err["type"])
-        for err in exc.errors()
-    ]
+    # Each entry is pydantic's ErrorDetails; the undeclared keys (input, ctx,
+    # url) are ignored by the model.
+    errors = [ValidationIssue.model_validate(err) for err in exc.errors()]
     wide_log.warning(
         "validation_failed",
         validation_errors=[issue.model_dump() for issue in errors],

@@ -1,7 +1,6 @@
 """The application-wide rate limiter and the middleware that applies it."""
 
 from collections.abc import Callable
-from typing import Any
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute, iter_route_contexts
@@ -26,7 +25,7 @@ limiter = Limiter(
 )
 
 
-def find_route_handler(app: FastAPI, scope: Scope) -> Callable[..., Any] | None:
+def find_route_handler(app: FastAPI, scope: Scope) -> Callable[..., object] | None:
     """Find the endpoint a request will reach, seeing through FastAPI's lazy routers.
 
     FastAPI 0.139 defers router inclusion, so app.routes holds wrappers with no

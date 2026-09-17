@@ -10,12 +10,10 @@ Pure ASGI, not BaseHTTPMiddleware: the latter re-raises through its own task
 group and would reintroduce the layering this exists to avoid.
 """
 
-from collections.abc import MutableMapping
-from typing import Any
-
 from starlette.requests import Request
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.api.v1.middleware.asgi_scope import AsgiMessage, AsgiScope
 from app.core.unhandled_errors import capture_unhandled_exception, internal_error_response
 from shared.py.wide_events import log
 
@@ -27,15 +25,16 @@ class UnhandledExceptionMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        parsed = AsgiScope.model_validate(scope)
+        if parsed.type != "http":
             await self.app(scope, receive, send)
             return
 
         response_started = False
 
-        async def send_wrapper(message: MutableMapping[str, Any]) -> None:
+        async def send_wrapper(message: Message) -> None:
             nonlocal response_started
-            if message["type"] == "http.response.start":
+            if AsgiMessage.model_validate(message).type == "http.response.start":
                 response_started = True
             await send(message)
 
@@ -53,7 +52,7 @@ class UnhandledExceptionMiddleware:
                 "unhandled_exception",
                 error_type=type(exc).__name__,
                 error=str(exc),
-                path=scope.get("path", ""),
+                path=parsed.path,
             )
             capture_unhandled_exception(Request(scope), exc)
             envelope = internal_error_response()

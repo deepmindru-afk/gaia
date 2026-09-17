@@ -29,7 +29,12 @@ from app.models.bot_models import (
 )
 from app.models.payment_models import PlanType
 from app.models.platform_models import PlatformLinkCompletion, PlatformLinkResult
-from app.models.user_models import OnboardingNeed, OnboardingPreferences
+from app.models.user_models import (
+    AuthenticatedUser,
+    OnboardingNeed,
+    OnboardingPreferences,
+    UserDocument,
+)
 from app.services.outbound_delivery import OutboundResult
 from app.services.platform_link_code_service import LinkCodeClaim, PlatformLinkCodePayload
 from app.services.platform_link_completion import PostLinkSideEffectError
@@ -297,11 +302,9 @@ COMPLETE_PATCH = "app.api.v1.endpoints.bot_links.complete_platform_link"
 USER_PATCH = "app.api.v1.endpoints.bot_links.get_user_by_id"
 CONTACT_PATCH = "app.api.v1.endpoints.bot_links.build_first_contact"
 PERSIST_PATCH = "app.api.v1.endpoints.bot_links._persist_first_contact"
-# Patched on the class itself, not on a name bound in the endpoint module: the
-# endpoint calls it through ``PlatformLinkService``, so both sites see it.
-LINKED_LOOKUP_PATCH = (
-    "app.services.platform_link_service.PlatformLinkService.get_user_by_platform_id"
-)
+# The repository lookup under ``resolve_bot_user``: patched there so the endpoint's
+# real document -> AuthenticatedUser build still runs.
+LINKED_LOOKUP_PATCH = "app.utils.auth_utils.user_repository.get_by_platform_id"
 
 
 #: Link completion's own module, patched whole when a test needs the real
@@ -409,7 +412,7 @@ class TestRedeemLinkCode:
         _first_contact: AsyncMock,
     ):
         """The greeting and connect links are composed off the linked GAIA account, not the platform profile, or they'd greet the wrong person."""
-        _linked_user.return_value = {"_id": "user1", "name": "Aryan Randeriya"}
+        _linked_user.return_value = UserDocument(id="user1", name="Aryan Randeriya")
         with (
             patch(
                 CLAIM_PATCH,
@@ -430,8 +433,7 @@ class TestRedeemLinkCode:
         self, _auth: AsyncMock, client: AsyncClient, _linked_user: AsyncMock
     ):
         """No chat turn ran, so nothing else writes this; without it the user's next message lands in an empty thread."""
-        linked_user = {"_id": "user1", "name": "Aryan Randeriya"}
-        _linked_user.return_value = linked_user
+        _linked_user.return_value = UserDocument(id="user1", name="Aryan Randeriya")
         with (
             patch(
                 CLAIM_PATCH,
@@ -446,7 +448,7 @@ class TestRedeemLinkCode:
 
         assert response.status_code == 200
         mock_persist.assert_awaited_once_with(
-            "user1", RedeemLinkCodeRequest(**REDEEM_BODY), linked_user, BUBBLES
+            "user1", RedeemLinkCodeRequest(**REDEEM_BODY), BUBBLES
         )
 
     @patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new_callable=AsyncMock)
@@ -589,7 +591,7 @@ class TestRedeemLinkCode:
             patch(COMPLETE_PATCH, new_callable=AsyncMock) as mock_complete,
             patch(PERSIST_PATCH, new_callable=AsyncMock) as mock_persist,
         ):
-            _already_linked.return_value = {"_id": "user1", "name": "Aryan Randeriya"}
+            _already_linked.return_value = UserDocument(id="user1", name="Aryan Randeriya")
             response = await client.post(f"{BOT_BASE}/redeem-link-code", json=REDEEM_BODY)
 
         assert response.status_code == 200
@@ -706,7 +708,7 @@ class TestRedeemLinkCode:
         request.state = _make_request()
         body = RedeemLinkCodeRequest(**REDEEM_BODY)
         # The link the first redemption wrote before it fell over.
-        _already_linked.return_value = {"_id": "user1", "name": "Aryan Randeriya"}
+        _already_linked.return_value = UserDocument(id="user1", name="Aryan Randeriya")
 
         with (
             patch("app.api.v1.endpoints.bot_links.require_bot_api_key", new=AsyncMock()),
@@ -760,7 +762,7 @@ class TestRedeemLinkCode:
             patch(
                 LINKED_LOOKUP_PATCH,
                 new_callable=AsyncMock,
-                return_value={"_id": "user1"},
+                return_value=UserDocument(id="user1"),
             ),
         ):
             async with log_context("redeem_link_code_test"):
@@ -1143,14 +1145,13 @@ class TestPersistFirstContact:
     async def test_writes_the_opener_and_the_bundle_as_the_threads_first_turns(self):
         """The opener stored is the user's actual editable message, not the canned prefilled text."""
         body = RedeemLinkCodeRequest(**REDEEM_BODY, first_message=OWN_MESSAGE)
-        user = {"_id": "user1", "name": "Aryan Randeriya"}
         with (
             patch(SESSION_PATCH, new_callable=AsyncMock, return_value="conv-1") as session,
             patch(UPDATE_PATCH, new_callable=AsyncMock) as update,
         ):
-            await _persist_first_contact("user1", body, user, BUBBLES)
+            await _persist_first_contact("user1", body, BUBBLES)
 
-        actor = {"_id": "user1", "name": "Aryan Randeriya", "user_id": "user1"}
+        actor = AuthenticatedUser(user_id="user1")
         session.assert_awaited_once_with("telegram", "TG42", None, actor, is_dm=True)
         update.assert_awaited_once()
         request = update.await_args.args[0]
@@ -1174,9 +1175,7 @@ class TestPersistFirstContact:
             patch(SESSION_PATCH, new_callable=AsyncMock, return_value="conv-1"),
             patch(UPDATE_PATCH, new_callable=AsyncMock) as update,
         ):
-            await _persist_first_contact(
-                "user1", RedeemLinkCodeRequest(**REDEEM_BODY), None, BUBBLES
-            )
+            await _persist_first_contact("user1", RedeemLinkCodeRequest(**REDEEM_BODY), BUBBLES)
 
         (reply,) = update.await_args.args[0].messages
         assert (reply.type, reply.response) == ("bot", NEW_MESSAGE_BREAKER.join(BUBBLES))
@@ -1186,10 +1185,8 @@ class TestPersistFirstContact:
             patch(SESSION_PATCH, new_callable=AsyncMock, return_value="conv-1") as session,
             patch(UPDATE_PATCH, new_callable=AsyncMock),
         ):
-            await _persist_first_contact(
-                "user1", RedeemLinkCodeRequest(**REDEEM_BODY), None, BUBBLES
-            )
-        assert session.await_args.args[3] == {"user_id": "user1"}
+            await _persist_first_contact("user1", RedeemLinkCodeRequest(**REDEEM_BODY), BUBBLES)
+        assert session.await_args.args[3] == AuthenticatedUser(user_id="user1")
 
     async def test_a_failed_write_is_logged_and_never_raised(self):
         """The link already succeeded and the code is spent; a transcript failure must not turn that into an unretryable error."""
@@ -1198,9 +1195,7 @@ class TestPersistFirstContact:
             patch(UPDATE_PATCH, new_callable=AsyncMock) as update,
             patch(LOG_PATCH) as mock_log,
         ):
-            await _persist_first_contact(
-                "user1", RedeemLinkCodeRequest(**REDEEM_BODY), None, BUBBLES
-            )
+            await _persist_first_contact("user1", RedeemLinkCodeRequest(**REDEEM_BODY), BUBBLES)
         update.assert_not_awaited()
         # error, not warning: nothing retries this, so the thread is permanently
         # missing the introduction GAIA already sent.

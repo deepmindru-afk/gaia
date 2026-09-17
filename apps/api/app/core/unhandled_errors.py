@@ -7,6 +7,7 @@ ServerErrorMiddleware, so the two cannot report the same crash differently.
 from fastapi import Request, status
 from fastapi.responses import UJSONResponse
 
+from app.constants.analytics import POSTHOG_PROVIDER_KEY
 from app.core.lazy_loader import providers
 from app.schemas.errors import ErrorEnvelope, error_response
 
@@ -33,12 +34,18 @@ def capture_unhandled_exception(request: Request, exc: Exception) -> None:
     # Guard like PostHogRequestContextMiddleware: this runs even in apps built
     # without the production lifespan (tests, scripts), where the provider is
     # never registered and providers.get would raise KeyError.
-    posthog_client = providers.get("posthog") if providers.is_available("posthog") else None
+    posthog_client = (
+        providers.get(POSTHOG_PROVIDER_KEY)
+        if providers.is_available(POSTHOG_PROVIDER_KEY)
+        else None
+    )
     if posthog_client is None:
         return
-    user = getattr(request.state, "user", None)
-    user_id = user.get("user_id") if user else None
-    if user_id:
-        posthog_client.capture_exception(exc, distinct_id=str(user_id))
+    # Read by attribute rather than through AuthenticatedUser: the embedding
+    # sidecar shares this module and must stay free of app.config.settings,
+    # which importing the user model (or the auth middleware) would load.
+    user_id = getattr(getattr(request.state, "user", None), "user_id", None)
+    if isinstance(user_id, str) and user_id:
+        posthog_client.capture_exception(exc, distinct_id=user_id)
     else:
         posthog_client.capture_exception(exc)

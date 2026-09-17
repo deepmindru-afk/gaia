@@ -22,7 +22,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     # Raises WebSocketException on any auth failure, and never yields a user
     # without a string id, so there is no unauthenticated path past this line.
     user = await get_current_user_ws(websocket)
-    user_id = str(user["user_id"])
+    user_id = user.user_id
     log.set(user={"id": user_id})
 
     # Accept the connection now that we've verified the user

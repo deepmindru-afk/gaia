@@ -2610,7 +2610,7 @@ export interface paths {
         };
         /**
          * Get Notifications
-         * @description Get user's notifications with pagination
+         * @description Get user's notifications with pagination.
          */
         get: operations["notification_get_notifications"];
         put?: never;
@@ -2699,7 +2699,7 @@ export interface paths {
         put?: never;
         /**
          * Bulk Actions
-         * @description Perform bulk actions on multiple notifications
+         * @description Perform bulk actions on multiple notifications.
          */
         post: operations["notification_bulk_actions"];
         delete?: never;
@@ -2767,7 +2767,7 @@ export interface paths {
         put?: never;
         /**
          * Register Device Token
-         * @description Register a device token for push notifications
+         * @description Register a device token for push notifications.
          */
         post: operations["notification_register_device_token"];
         delete?: never;
@@ -2787,7 +2787,7 @@ export interface paths {
         put?: never;
         /**
          * Unregister Device Token
-         * @description Unregister a device token
+         * @description Unregister a device token.
          */
         post: operations["notification_unregister_device_token"];
         delete?: never;
@@ -8312,6 +8312,8 @@ export interface components {
             end?: components["schemas"]["GoogleCalendarEventDateTime"] | null;
             /** Eventtype */
             eventType?: string | null;
+            /** Htmllink */
+            htmlLink?: string | null;
             /** Id */
             id?: string | null;
             /** Recurrence */

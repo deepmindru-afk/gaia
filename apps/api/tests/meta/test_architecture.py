@@ -13,6 +13,7 @@ import logging
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 os.environ.setdefault("ENV", "development")
 
@@ -105,3 +106,25 @@ def test_no_stateful_service_classes() -> None:
                 ):
                     offenders.append(f"{path}: class {name}")
     assert not offenders, "stateful service classes:\n" + "\n".join(offenders[:20])
+
+
+def test_the_embedding_sidecar_imports_without_settings() -> None:
+    """The sidecar boots with no API secrets, so its import graph must not reach settings."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.services.embedding_sidecar.server"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[2],
+        env={"ENV": "test", "PATH": os.environ["PATH"], "LOG_LEVEL": "ERROR"},
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_the_configurable_key_matches_langgraphs() -> None:
+    """app.models.agent_config spells langgraph's CONF out to stay a leaf."""
+    from langgraph.constants import CONF
+
+    from app.models.agent_config import CONFIGURABLE_KEY
+
+    assert CONFIGURABLE_KEY == CONF

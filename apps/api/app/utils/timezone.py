@@ -21,7 +21,7 @@ import re
 from zoneinfo import ZoneInfo, available_timezones
 
 from app.constants.log_tags import LogTag
-from app.models.agent_config import AgentRunConfig, agent_configurable
+from app.models.agent_config import AgentRunConfig, read_agent_configurable
 from shared.py.wide_events import log
 
 
@@ -223,7 +223,7 @@ def home_timezone_from_config(config: AgentRunConfig) -> Timezone:
     Falls back to UTC with a loud warning — the silent-UTC drift that fires
     scheduled work at the wrong hour.
     """
-    raw = agent_configurable(config).get("user_timezone")
+    raw = read_agent_configurable(config).user_timezone
     if raw:
         log.set(timezone_source=TimezoneSource.AGENT_CONFIG.value, user_timezone=raw)
         return Timezone.parse(raw)

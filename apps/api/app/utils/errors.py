@@ -11,7 +11,6 @@ structured error onto the wide event so it appears in the final log.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass
@@ -23,8 +22,8 @@ class AppError(Exception):
     fix: str = ""
     status_code: int = 500
     code: str = ""
-    public: dict[str, Any] = field(default_factory=dict)
-    meta: dict[str, Any] = field(default_factory=dict)
+    public: dict[str, object] = field(default_factory=dict)
+    meta: dict[str, object] = field(default_factory=dict)
 
     def __str__(self) -> str:
         # The dataclass-generated __init__ never populates Exception.args, so
@@ -32,9 +31,9 @@ class AppError(Exception):
         # f-string logging and any str(exc) callers see a meaningful error.
         return self.message
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         """Render the wide-event payload: everything the error knows, public or not."""
-        d: dict[str, Any] = {"message": self.message}
+        d: dict[str, object] = {"message": self.message}
         if self.why:
             d["why"] = self.why
         if self.fix:
@@ -52,7 +51,7 @@ def create_error(
     fix: str = "",
     status_code: int = 500,
     code: str = "",
-    public: dict[str, Any] | None = None,
+    public: dict[str, object] | None = None,
     **meta: object,
 ) -> AppError:
     """Create a structured AppError; keyword extras become wide-event-only meta."""

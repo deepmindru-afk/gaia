@@ -15,15 +15,20 @@ from app.constants.hil import HIL_RESUME_CONFIG_KEY
 # without the middleware stack. Re-exported here, the import site consumers use.
 from app.models.agent_config import (
     AgentConfigurable,
+    AgentConfigurableView,
     AgentRunConfig,
     ExecutionMode,
     agent_configurable,
+    read_agent_configurable,
 )
+from app.models.chat_models import ToolDataEntry
+from app.models.user_models import AuthenticatedUser
 
 __all__ = [
     "CONFIGURABLE_OWNED_KEYS",
     "CONFIGURABLE_RUN_SCOPED_KEYS",
     "AgentConfigurable",
+    "AgentConfigurableView",
     "AgentMiddlewareStack",
     "AgentRunConfig",
     "AgentRunnableConfig",
@@ -32,6 +37,7 @@ __all__ = [
     "ExecutionMode",
     "SilentRunResult",
     "agent_configurable",
+    "read_agent_configurable",
     "config_agent_name",
     "current_run_config",
     "runtime_configurable",
@@ -49,13 +55,13 @@ AgentMiddlewareStack = list[AnyAgentMiddleware]
 class AgentUserContext(TypedDict, total=False):
     """The user fields ``build_agent_config`` reads — nothing more.
 
-    Deliberately narrower than :class:`~app.models.user_models.AuthenticatedUser`,
-    which is assignable to it: only the top-level entries (chat, background
-    narration) hold a real request auth context. Every child agent — executor,
-    handoff subagents, spawn, the workflow author — reconstructs a bare identity
-    bag from its parent's ``configurable``, and typing those as
-    ``AuthenticatedUser`` would claim they carry auth-path flags and the whole
-    user document, which they do not.
+    Deliberately narrower than AuthenticatedUser, which agent_user_context
+    narrows to it: only the top-level entries (chat, background narration) hold
+    a real request auth context. Every child agent — executor, handoff
+    subagents, spawn, the workflow author — reconstructs a bare identity bag
+    from its parent's configurable, and typing those as AuthenticatedUser would
+    claim they carry auth-path flags and the whole user document, which they
+    do not.
 
     ``total=False`` because those child bags omit ``timezone`` (they inherit the
     resolved zone from the parent configurable instead).
@@ -65,6 +71,19 @@ class AgentUserContext(TypedDict, total=False):
     email: str | None
     name: str | None
     timezone: str | None
+
+
+def agent_user_context(user: AuthenticatedUser) -> AgentUserContext:
+    """Narrow an AuthenticatedUser to the identity bag a top-level run hands build_agent_config.
+
+    The ONE place that narrowing happens.
+    """
+    return {
+        "user_id": user.user_id,
+        "email": user.email,
+        "name": user.name,
+        "timezone": user.timezone,
+    }
 
 
 def current_run_config() -> RunnableConfig:
@@ -89,9 +108,8 @@ def config_agent_name(config: RunnableConfig | None) -> str:
     ensure_config folds every non-standard top-level key into configurable
     before a node sees the config — so inside a graph the key only exists there.
     """
-    bag = cast(dict[str, Any], config or {})
-    name = (bag.get("configurable") or {}).get("agent_name") or bag.get("agent_name")
-    return str(name) if name else "unknown"
+    configurable: AgentConfigurable = agent_configurable(config)
+    return configurable.get("agent_name") or "unknown"
 
 
 def runtime_configurable(request: ToolCallRequest) -> AgentConfigurable:
@@ -108,6 +126,18 @@ def runtime_configurable(request: ToolCallRequest) -> AgentConfigurable:
     if not isinstance(config, dict):
         return {}
     return agent_configurable(cast(RunnableConfig, config))
+
+
+class LlmCallMetadata(TypedDict, total=False):
+    """The run-metadata keys the TTFT callback reads off one LLM call.
+
+    lane_* is stamped by build_agent_config for the whole run; llm_label by
+    ainvoke_llm per call (under LLM_LABEL_METADATA_KEY).
+    """
+
+    lane_provider: str
+    lane_model: str
+    llm_label: str
 
 
 class AgentRunnableConfig(RunnableConfig):
@@ -140,7 +170,7 @@ class SilentRunResult:
     """
 
     message: str
-    tool_data: dict[str, Any]
+    tool_data: list[ToolDataEntry]
     queued_task_id: str | None = None
     #: The executor this turn delegated to ended in an error. ``message`` is
     #: then comms' account of that error, not a result; ``executor_failure``

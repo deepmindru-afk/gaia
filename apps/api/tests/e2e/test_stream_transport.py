@@ -36,14 +36,15 @@ from app.constants.cache import STREAM_EVENTS_PREFIX, STREAM_TURN_DEDUP_PREFIX
 from app.core.stream_manager import stream_manager
 from app.db.redis import redis_cache
 from app.models.payment_models import PlanType
+from app.models.user_models import AuthenticatedUser
 from app.utils.agent_utils import format_sse_data
 from tests.conftest import FAKE_USER, FAKE_USER_2
 from tests.e2e._harness.transcript import DONE, Transcript
 
 pytestmark = pytest.mark.e2e
 
-OWNER_ID: str = FAKE_USER["user_id"]
-INTRUDER_ID: str = FAKE_USER_2["user_id"]
+OWNER_ID: str = FAKE_USER.user_id
+INTRUDER_ID: str = FAKE_USER_2.user_id
 
 #: A turn's worth of frames, distinct enough that a duplicated replay is visible.
 TURN_FRAMES = [
@@ -84,11 +85,11 @@ async def fake_redis() -> AsyncIterator[fakeredis.aioredis.FakeRedis]:
 
 
 @pytest.fixture
-def as_user(test_app: FastAPI) -> Iterator[Callable[[dict[str, Any]], None]]:
+def as_user(test_app: FastAPI) -> Iterator[Callable[[AuthenticatedUser], None]]:
     """Swap the authenticated principal for one test, restoring the app after."""
     original = test_app.dependency_overrides.get(get_current_user)
 
-    def _set(user: dict[str, Any]) -> None:
+    def _set(user: AuthenticatedUser) -> None:
         test_app.dependency_overrides[get_current_user] = lambda: user
 
     yield _set
@@ -153,7 +154,7 @@ def stub_turn(monkeypatch: pytest.MonkeyPatch, runs: list[dict[str, Any]]) -> No
 
 class TestSubscribeAuthorization:
     async def test_owner_receives_the_whole_turn(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
         """Positive control: without this, the 403/404 tests prove nothing."""
         as_user(FAKE_USER)
@@ -166,7 +167,7 @@ class TestSubscribeAuthorization:
         assert transcript.final_text() == "Hello there, friend!"
 
     async def test_another_users_stream_is_refused_and_leaks_nothing(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
         as_user(FAKE_USER_2)
         stream_id = await seed_cancelled_turn(OWNER_ID, TURN_FRAMES)
@@ -177,7 +178,7 @@ class TestSubscribeAuthorization:
         assert "Hello" not in response.text
 
     async def test_unknown_stream_is_404(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
         as_user(FAKE_USER)
 
@@ -186,9 +187,9 @@ class TestSubscribeAuthorization:
         assert response.status_code == 404
 
     async def test_principal_without_user_id_is_400(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
-        as_user({**FAKE_USER, "user_id": None})
+        as_user(FAKE_USER.model_copy(update={"user_id": ""}))
         stream_id = await seed_cancelled_turn(OWNER_ID, TURN_FRAMES)
 
         response = await client.get(f"/api/v1/stream/{stream_id}")
@@ -225,7 +226,7 @@ class TestAlreadyCompleteShortCircuit:
     """
 
     async def test_a_completed_turn_replays_its_whole_log_then_closes_once(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
         as_user(FAKE_USER)
         stream_id = await seed_completed_turn(OWNER_ID, TURN_FRAMES)
@@ -239,7 +240,7 @@ class TestAlreadyCompleteShortCircuit:
         assert transcript.kinds()[-1] == DONE
 
     async def test_an_expired_log_still_short_circuits_to_a_bare_done(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
         """With nothing left to replay, the attach must not idle on keepalives until it times out."""
         as_user(FAKE_USER)
@@ -259,7 +260,7 @@ class TestAlreadyCompleteShortCircuit:
 
 class TestLastEventIdReplay:
     async def test_reconnect_resumes_after_the_cursor_byte_for_byte(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
         """Live and replay share subscribe_stream and differ only in the start cursor, so the reconnect body must equal the exact byte tail of the first attach."""
         as_user(FAKE_USER)
@@ -283,7 +284,7 @@ class TestLastEventIdReplay:
         assert tail.final_text() == ", friend!"
 
     async def test_reconnect_without_the_header_replays_the_whole_turn(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
         """The control for the test above: absent cursor means replay from 0-0."""
         as_user(FAKE_USER)
@@ -296,7 +297,7 @@ class TestLastEventIdReplay:
         assert Transcript.from_sse(again.text).final_text() == "Hello there, friend!"
 
     async def test_resuming_from_the_last_frame_yields_no_duplicates(
-        self, client: AsyncClient, as_user: Callable[[dict[str, Any]], None]
+        self, client: AsyncClient, as_user: Callable[[AuthenticatedUser], None]
     ) -> None:
         as_user(FAKE_USER)
         stream_id = await seed_cancelled_turn(OWNER_ID, TURN_FRAMES)
@@ -322,7 +323,7 @@ class TestTurnDedup:
     async def test_retried_send_is_rejected_and_runs_the_turn_once(
         self,
         client: AsyncClient,
-        as_user: Callable[[dict[str, Any]], None],
+        as_user: Callable[[AuthenticatedUser], None],
         monkeypatch: pytest.MonkeyPatch,
         fake_redis: fakeredis.aioredis.FakeRedis,
     ) -> None:
@@ -345,7 +346,7 @@ class TestTurnDedup:
     async def test_a_different_turn_id_is_accepted(
         self,
         client: AsyncClient,
-        as_user: Callable[[dict[str, Any]], None],
+        as_user: Callable[[AuthenticatedUser], None],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         as_user(FAKE_USER)
@@ -361,7 +362,7 @@ class TestTurnDedup:
     async def test_the_claim_is_namespaced_per_user(
         self,
         client: AsyncClient,
-        as_user: Callable[[dict[str, Any]], None],
+        as_user: Callable[[AuthenticatedUser], None],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Two users can collide on a turn_id — it is client-generated."""
@@ -380,7 +381,7 @@ class TestTurnDedup:
     async def test_sends_without_a_turn_id_are_never_deduped(
         self,
         client: AsyncClient,
-        as_user: Callable[[dict[str, Any]], None],
+        as_user: Callable[[AuthenticatedUser], None],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         as_user(FAKE_USER)
@@ -498,7 +499,7 @@ class TestClientDisconnect:
     async def test_turn_completes_and_persists_after_the_client_is_gone(
         self,
         test_app: FastAPI,
-        as_user: Callable[[dict[str, Any]], None],
+        as_user: Callable[[AuthenticatedUser], None],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The turn outlives the connection (the apps/api/CLAUDE.md claim): swapping asyncio.create_task(run_chat_stream_background(...)) for a bare await deadlocks this test. Runs over raw ASGI, not ASGITransport, since httpx never emits http.disconnect; scope spec_version 2.3 matches uvicorn so Starlette's own disconnect handling fires as in production. GAIA's own is_disconnected() is pinned separately by TestClientDisconnect above and could be deleted without failing this test."""

@@ -26,7 +26,7 @@ from app.core.app_factory import create_app
 from app.models.payment_models import PlanType, UserSubscriptionStatus
 from app.schemas.errors import ERROR_RESPONSES, ErrorEnvelope
 from app.utils.errors import AppError
-from tests.factories import make_user
+from tests.factories import make_authenticated_user
 
 ALLOWED_ORIGIN = "http://localhost:3000"
 ORIGIN_HEADER = {"Origin": ALLOWED_ORIGIN}
@@ -145,7 +145,7 @@ async def authed_stack(restore_timeout_default):
     with patch.object(
         WorkOSAuthMiddleware,
         "_authenticate_session",
-        new=AsyncMock(return_value=(make_user(user_id="probe-user"), None)),
+        new=AsyncMock(return_value=(make_authenticated_user(user_id="probe-user"), None)),
     ):
         async with _client(_build_app()) as client:
             client.cookies.set("wos_session", "probe-session")
