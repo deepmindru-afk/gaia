@@ -19,7 +19,6 @@ import hashlib
 import math
 import re
 import time
-from typing import cast
 
 import httpx
 
@@ -55,6 +54,7 @@ from app.decorators.caching import Cacheable
 from app.memory import chroma_store, pg_store
 from app.memory.embeddings import embed_query, rerank
 from app.memory.mappers import row_to_entry
+from app.memory.pg_store.episodes import entry_text
 from app.memory.user_time import local_today
 from app.models.memory_db_models import MemoryRecord
 from app.models.memory_models import MemoryEntry, MemorySearchResult
@@ -74,20 +74,22 @@ class EpisodeHit:
     score: float | None = None
 
 
-def _recall_cache_key(_func_name: str, *args: object, **kwargs: object) -> str:
+def _recall_cache_key(
+    _func_name: str,
+    user_id: str,
+    query: str,
+    *,
+    limit: int = DEFAULT_RECALL_LIMIT,
+    category_prefix: str | None = None,
+    kinds: list[MemoryKind] | None = None,
+    include_graph_expansion: bool = True,
+) -> str:
     """Build the cache key for recall: user:{id}:memories:{digest}.
 
     The prefix must match MEMORY_SEARCH_CACHE_PATTERN, invalidated on every
     ingestion. All non-user parameters are digested so calls differing in
-    any knob never collide. Args are read positionally or by keyword.
+    any knob never collide.
     """
-    user_id = args[0] if args else kwargs["user_id"]
-    query = args[1] if len(args) > 1 else kwargs["query"]
-    limit = kwargs.get("limit", DEFAULT_RECALL_LIMIT)
-    category_prefix = kwargs.get("category_prefix")
-    kinds = cast(list[MemoryKind] | None, kwargs.get("kinds"))
-    include_graph_expansion = kwargs.get("include_graph_expansion", True)
-
     kinds_part = ",".join(sorted(kind.value for kind in kinds)) if kinds else ""
     payload = f"{query}|{limit}|{category_prefix}|{kinds_part}|{include_graph_expansion}"
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
@@ -132,15 +134,19 @@ async def recall(
     candidates = await _hydrate_candidates(
         user_id, fused_ids, fts_hits, category_prefix=category_prefix, kinds=kinds
     )
+    timings["hydrate_ms"] = _elapsed_ms(stage)
+
+    stage = time.perf_counter()
     siblings = (
         await _graph_siblings(user_id, candidates, kinds=kinds)
         if include_graph_expansion and candidates
         else []
     )
-    # The rerank budget caps the BASE pool only; capping the combined pool would
-    # discard every sibling once base retrieval alone fills the budget.
-    candidates = candidates[:RERANK_CANDIDATES] + siblings
-    timings["hydrate_ms"] = _elapsed_ms(stage)
+    # The rerank budget caps the BASE pool only (capping the combined pool would
+    # drop siblings once base fills the budget) and never below the caller's
+    # limit, so a 20-result search is not truncated; chat asks for 8 and keeps it.
+    candidates = candidates[: max(RERANK_CANDIDATES, limit)] + siblings
+    timings["siblings_ms"] = _elapsed_ms(stage)
 
     stage = time.perf_counter()
     # Rerank the combined base+sibling pool together so siblings compete on real
@@ -153,7 +159,9 @@ async def recall(
     timings["rerank_ms"] = _elapsed_ms(stage)
 
     kept = _cap_weak_results(_drop_below_relevance(scored))[:limit]
+    stage = time.perf_counter()
     entries = await _build_entries(kept)
+    timings["build_ms"] = _elapsed_ms(stage)
 
     timings["total_ms"] = _elapsed_ms(started)
     log.set(
@@ -195,13 +203,15 @@ async def recall_episodes(
         _episode_summary_search(user_id, query, limit),
     )
 
-    hits = [
-        EpisodeHit(date=date, text=entry.get("text", ""), time=entry.get("time"))
-        for date, entry in entry_rows
-    ]
+    hits = [_episode_hit(date, entry) for date, entry in entry_rows]
     seen_dates = {hit.date for hit in hits}
     hits.extend(hit for hit in summary_hits if hit.date not in seen_dates)
     return hits[:limit]
+
+
+def _episode_hit(date: date_type, entry: pg_store.EpisodeEntry) -> EpisodeHit:
+    """Return one journal match carrying its date; old rows can lack a time."""
+    return EpisodeHit(date=date, text=entry_text(entry), time=entry.get("time"))
 
 
 async def _embed_query_interactive(query: str) -> list[float] | None:
@@ -468,7 +478,6 @@ async def _build_entries(scored: list[tuple[MemoryRecord, float]]) -> list[Memor
     unless that parent is forgotten or expired — deleted content must never
     ride back into the prompt via its successor.
     """
-    entities_by_memory = await pg_store.get_entities_for_memories([row.id for row, _ in scored])
     parent_ids = [
         str(row.parent_id)
         for row, _ in scored
@@ -478,12 +487,19 @@ async def _build_entries(scored: list[tuple[MemoryRecord, float]]) -> list[Memor
     if parent_ids:
         user_id = scored[0][0].user_id
         now = datetime.now(UTC)
+        # Independent lookups: gather them into one round instead of two.
+        entities_by_memory, parent_rows = await asyncio.gather(
+            pg_store.get_entities_for_memories([row.id for row, _ in scored]),
+            pg_store.get_memories_by_ids(user_id, parent_ids),
+        )
         parents = {
             str(parent.id): parent
-            for parent in await pg_store.get_memories_by_ids(user_id, parent_ids)
+            for parent in parent_rows
             if not parent.is_forgotten
             and (parent.forget_after is None or parent.forget_after > now)
         }
+    else:
+        entities_by_memory = await pg_store.get_entities_for_memories([row.id for row, _ in scored])
     entries = []
     for row, score in scored:
         entry = row_to_entry(
