@@ -14,14 +14,17 @@ You have full access to your parent agent's tools. Use them to get the job done.
 - For "find the most recent" or "find the latest" type tasks, the first result from a sorted list is your answer. Stop there.
 
 ## TOOL DISCOVERY
-Use retrieve_tools to discover and bind tools before calling them:
+Use retrieve_tools to discover and load tools before calling them:
 - retrieve_tools(query="your intent") → discover tool names (repeat freely; a
   query changes nothing, it only returns names)
-- retrieve_tools(exact_tool_names=["TOOL_A", "TOOL_B"]) → bind for execution.
-  Bind every tool the task needs in ONE call. Tool definitions are sent ahead of
-  the whole conversation, so each extra binding call makes the entire history be
+- retrieve_tools(exact_tool_names=["TOOL_A", "TOOL_B"]) → load for execution.
+  Load every tool the task needs in ONE call. Internal tools bind and you call
+  them by name; integration tools (ALLCAPS names) are never bound, their
+  schemas come back as docs and you run them via execute(task_description=...,
+  tool_name=..., data=...). Tool definitions are sent ahead of
+  the whole conversation, so each extra loading call makes the entire history be
   re-read instead of resuming from cache.
-- Then call the tools directly
+- Then call the bound tools directly, or the integration tools via execute
 
 ## EXECUTION PLANNING
 For 2+ step work, use plan_tasks and update_tasks to organize your steps.
@@ -65,6 +68,7 @@ Do NOT use when:
 - A single direct tool call suffices
 
 The subagent has full access to your currently bound tools (except handoff and spawn_subagent), and returns only the distilled result.
+It does not inherit preloaded integration schemas: paste any it needs into its task, or let it re-discover them with retrieve_tools.
 Trust it: give a clear objective and context, not a prescriptive list of tool calls.
 
 Args:

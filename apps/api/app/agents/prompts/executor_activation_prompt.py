@@ -22,19 +22,23 @@ Integrations are not separate agents you hand work to. You activate one, then do
 the work yourself with its tools in your own hands.
 
 activate_integration(integration_id) loads an integration into THIS conversation:
-its tools become retrievable, its operating notes and the user's standing
-preferences for it land in your context, and its skills become readable. No second
+its most-used tools arrive as schemas in the reply (run them via execute, never
+by name), its helpers bind immediately, the rest become retrievable, and its
+operating notes and the user's standing preferences for it land in your context,
+and its skills become readable. No second
 agent, no separate context window, no cold start. You keep everything you have
 already gathered this turn, which is exactly what handing work to a subagent used
 to throw away.
 
-The flow is always the same three steps:
+The flow is always the same:
   1. activate_integration(integration_id="gmail")
-  2. retrieve_tools(exact_tool_names=[...])  <- bind every tool the task needs, in ONE call
-  3. call those tools yourself
+  2. run the preloaded tools through execute(task_description=..., tool_name=...,
+     data=...) built from the schemas in the reply; call bound helpers directly
+  3. retrieve_tools (which searches the active integration too) for anything
+     else, then execute those the same way
 
 Activate once per integration per turn. A second activation of the same one is
-wasted work: its tools are already retrievable and its notes are already in your
+wasted work: its tools are already preloaded and retrievable and its notes are already in your
 context. Activating several DIFFERENT integrations in a turn is normal and cheap,
 so when a task spans gmail and calendar, activate both up front rather than
 discovering the second one halfway through.
@@ -57,12 +61,12 @@ _WORKING_CONTRACT = """Working an activated integration
 - The notes activation returns encode the user's standing preferences for that integration. They beat your defaults; read them before acting.
 
 spawn_subagent (context isolation)
-- A spawn is a fresh worker with no memory of this conversation. It inherits the tools you have bound, including everything activation just made retrievable.
+- A spawn is a fresh worker with no memory of this conversation. It inherits the tools you have bound (the helpers activation bound, not the preloaded schemas). A spawn that needs an integration tool either needs its schema pasted into its task text or must re-discover it itself with retrieve_tools, which searches your active integrations.
 - Spawns run ONE AT A TIME, not side by side. Issuing several does not make them finish sooner, it just adds turns. Spawning is for keeping bulky intermediate work out of your context, never for speed.
 - Use it when a step produces far more output than its answer is worth: mining a large file, extracting from a long document, scanning many items to report a few.
 - It returns once, and only what it returns survives. Put everything it needs in the task text, and require it to hand back every finding, id, and path.
 - Do NOT spawn for a call you could make yourself. A spawn costs a whole model turn; a direct tool call does not.
-- Default to acting directly with the activated tools. Reach for a spawn when the output would bury you, not by habit.
+- Default to acting yourself with the activated tools via execute. Reach for a spawn when the output would bury you, not by habit.
 
 """
 
@@ -82,8 +86,9 @@ _PHRASE_REWRITES: tuple[tuple[str, str], ...] = (
         "(create_tracked_todo, a direct tool, no activation)",
     ),
     (
-        "3. execute directly or delegate (handoff/spawn_subagent)",
-        "3. execute directly, or spawn_subagent to parallelise independent chunks",
+        "3. act on them yourself or delegate (handoff/spawn_subagent)",
+        "3. act on them yourself (bound tools by name, integration tools via execute), "
+        "or spawn_subagent to parallelise independent chunks",
     ),
     (
         "→ handoff directly to subagent:gaia_knowledge_guide. Always available, "

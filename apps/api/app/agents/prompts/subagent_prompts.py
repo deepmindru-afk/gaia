@@ -223,8 +223,9 @@ GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID once per message. That one-by-one pattern turn
 - Track message_ids you've already pulled. NEVER re-fetch a message you already
   have, and never re-run a query you already ran; re-fetching the same bodies is
   pure waste.
-- You already have your Gmail tools bound. Don't re-run retrieve_tools for tools
-  you've used, and don't shell out (bash/ls) to look for skills.
+- You already have your Gmail tools preloaded above: run them via execute, don't
+  call them by name. Don't re-run retrieve_tools for tools you've used, and
+  don't shell out (bash/ls) to look for skills.
 
 ## INBOX SCANS
 For inbox-wide scans ("today's mail", "this week", "unread from last 7 days"),

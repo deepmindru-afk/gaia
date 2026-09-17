@@ -1280,6 +1280,7 @@ def _blocking_ctx() -> SimpleNamespace:
         integration_id="gmail",
         configurable={},
         config={},
+        initial_state={"intent": "triage the inbox"},
     )
 
 
@@ -1372,6 +1373,103 @@ class TestBlockingHandoffLifecycleEvents:
 
         assert result == "recovered"
         rerun.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+class TestBlockingRunRegistration:
+    """Blocking handoffs register in RunningSubagents like background ones.
+
+    Without this, list_running_subagents only ever shows background work: a
+    parallel list/message call landing mid-run reports nothing live.
+    """
+
+    @staticmethod
+    def _live_ctx() -> SimpleNamespace:
+        return SimpleNamespace(
+            agent_name="gmail_agent",
+            integration_id="gmail",
+            configurable={"conversation_id": "c1"},
+            config={"configurable": {"thread_id": "t1"}},
+            initial_state={"intent": "triage the inbox"},
+        )
+
+    @staticmethod
+    def _dispatch() -> _HandoffDispatch:
+        return _HandoffDispatch(
+            metadata=None,
+            agent_name="gmail_agent",
+            integration_id="gmail",
+            tool_call_id="tc1",
+        )
+
+    async def test_registers_with_live_ids_and_deregisters_on_completion(self):
+        writer = MagicMock()
+        registry = MagicMock()
+        registry.register = AsyncMock()
+        registry.deregister = AsyncMock()
+        with (
+            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
+            patch(
+                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                new_callable=AsyncMock,
+                return_value=SubagentOutcome(text="done"),
+            ),
+            patch(
+                "app.agents.core.subagents.handoff_tools.RunningSubagents",
+                return_value=registry,
+            ) as running_cls,
+        ):
+            result = await _run_blocking_handoff(self._live_ctx(), self._dispatch())
+
+        assert result == "done"
+        running_cls.assert_called_with("c1")
+        registered = registry.register.await_args.args[0]
+        assert registered.subagent_id == subagent_row_id("tc1")
+        assert registered.subagent_thread_id == "t1"
+        assert registered.integration_id == "gmail"
+        assert "triage" in registered.task_summary
+        registry.deregister.assert_awaited_once_with(subagent_row_id("tc1"))
+
+    async def test_deregisters_even_when_the_run_raises(self):
+        writer = MagicMock()
+        registry = MagicMock()
+        registry.register = AsyncMock()
+        registry.deregister = AsyncMock()
+        with (
+            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
+            patch(
+                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("graph exploded"),
+            ),
+            patch(
+                "app.agents.core.subagents.handoff_tools.RunningSubagents",
+                return_value=registry,
+            ),
+            pytest.raises(RuntimeError, match="graph exploded"),
+        ):
+            await _run_blocking_handoff(self._live_ctx(), self._dispatch())
+
+        registry.register.assert_awaited_once()
+        registry.deregister.assert_awaited_once_with(subagent_row_id("tc1"))
+
+    async def test_no_ids_means_no_registration(self):
+        """Recovery probes and id-less runs must not write registry junk."""
+        writer = MagicMock()
+        with (
+            patch("app.agents.core.subagents.handoff_tools.get_stream_writer", return_value=writer),
+            patch(
+                "app.agents.core.subagents.handoff_tools.execute_subagent_stream",
+                new_callable=AsyncMock,
+                return_value=SubagentOutcome(text="done"),
+            ),
+            patch(
+                "app.agents.core.subagents.handoff_tools.RunningSubagents",
+            ) as running_cls,
+        ):
+            await _run_blocking_handoff(_blocking_ctx(), self._dispatch())
+
+        running_cls.assert_not_called()
 
     async def test_every_run_across_an_approval_pause_reaches_the_call_record(self):
         """One task can gate several destructive calls in sequence, so the run

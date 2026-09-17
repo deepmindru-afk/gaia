@@ -1269,10 +1269,13 @@ class TestDiscoveryZeroMatchSignal:
         )
 
     def test_the_found_instruction_survives_verbatim(self) -> None:
-        """Two of these clauses exist because the model got them wrong: binding
-        a subagent, and offering an unconnected integration as if it worked."""
+        """Three of these clauses exist because the model got them wrong: binding
+        a subagent, calling an integration tool by name instead of via execute,
+        and offering an unconnected integration as if it worked."""
         assert _render(["x"], options=_DiscoveryOptions(total_candidates=1))["next"] == (
-            "Bind with retrieve_tools(exact_tool_names=[...]) then call the tool. "
+            "Load with retrieve_tools(exact_tool_names=[...]): internal tools bind "
+            "and are called by name, integration tools (ALLCAPS) return schemas to "
+            "run via execute and are never bound. "
             'Subagents are NOT bindable: use handoff(subagent_id="<id>", task="..."). '
             "Anything under subagents_needing_connection is unusable until the user "
             "connects it, so ask them first."

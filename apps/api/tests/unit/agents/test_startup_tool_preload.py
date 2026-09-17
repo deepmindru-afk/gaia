@@ -240,6 +240,9 @@ class TestFactoryDoesNotBindIntegrationTools:
         initial_ids = list(captured["tools_config"].initial_tool_ids)
         assert "query_json" in initial_ids
         assert "GMAIL_FETCH_MESSAGES" not in initial_ids
+        # The proxy itself always binds: preloaded docs are unusable without it.
+        assert "execute" in initial_ids
+        assert "get_tool_schema" in initial_ids
 
 
 @pytest.mark.unit

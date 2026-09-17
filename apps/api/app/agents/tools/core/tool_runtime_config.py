@@ -83,11 +83,17 @@ def build_provider_parent_tool_runtime_config(
         # INTERNAL tools are immediately available at agent startup. Declared
         # integration tools never reach here — the subagent factory splits
         # them into preloaded docs before calling this.
+        #
+        # execute/get_tool_schema ALWAYS bind: the whole retrieval/preload
+        # design assumes the proxy is callable, and nothing else puts these
+        # names into this list.
         extra_auto_bind = list(auto_bind_tool_names or [])
         initial = [
             "search_memory",
             "read",
             "bash",
+            "execute",
+            "get_tool_schema",
             *finish,
             *todo_tool_names,
             *extra_auto_bind,

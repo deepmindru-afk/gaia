@@ -791,7 +791,9 @@ def _render_discovery_response(
         )
     else:
         payload["next"] = (
-            "Bind with retrieve_tools(exact_tool_names=[...]) then call the tool. "
+            "Load with retrieve_tools(exact_tool_names=[...]): internal tools bind "
+            "and are called by name, integration tools (ALLCAPS) return schemas to "
+            "run via execute and are never bound. "
             'Subagents are NOT bindable: use handoff(subagent_id="<id>", task="..."). '
             "Anything under subagents_needing_connection is unusable until the user "
             "connects it, so ask them first."

@@ -11,6 +11,7 @@ Subagent identity/metadata comes from agents/core/subagents/registry.py
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import re
 import time
 from typing import Annotated, Any
@@ -26,6 +27,7 @@ from langgraph.types import Command
 
 from app.agents.context.tiers import AgentTier
 from app.agents.core.background.bg_results import try_claim_bg_dispatch
+from app.agents.core.background.running_registry import RunningSubagents
 from app.agents.core.background.session import (
     claim_bg_integration,
     has_bg_integration,
@@ -66,7 +68,12 @@ from app.db.redis import get_cache, set_cache
 from app.db.repositories.integrations import integration_repository
 from app.helpers.agent_helpers import AgentIdentity, AgentThread, build_agent_config
 from app.helpers.namespace_utils import derive_integration_namespace
-from app.models.agent_models import AgentConfigurable, AgentUserContext, agent_configurable
+from app.models.agent_models import (
+    AgentConfigurable,
+    AgentUserContext,
+    RunningSubagent,
+    agent_configurable,
+)
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
 from app.models.subagent_models import Subagent
 from app.services.feature_flags import is_integration_activation_enabled
@@ -645,40 +652,65 @@ async def _run_blocking_handoff(
     )
     start_time = time.monotonic()
 
-    # When the executor resumes, THIS node re-runs from the top over a subagent thread
-    # that already holds work — parked on its interrupt, or finished before a LATER
-    # sibling in the same node paused. Either way, re-invoking it fresh would redo
-    # everything it already did, so an existing checkpoint means "recover, don't rerun".
-    # A recoverable checkpoint can only exist on a resume replay, so fresh runs skip the
-    # probe (a per-handoff Postgres read) entirely.
-    recovered = await recover_from_checkpoint(ctx) if probe_parked else None
-    if recovered is not None:
-        outcome = recovered
-    else:
-        outcome = await execute_subagent_stream(
-            ctx=ctx,
-            stream_writer=writer,
-            integration_metadata=metadata,
+    # Blocking runs register exactly like background ones: without this,
+    # list_running_subagents only ever shows background work, so a parallel
+    # list/message call landing mid-run reports nothing live. Deregistered in
+    # `finally`, so pauses (which raise) read as parked, not running — the
+    # same line the background path draws.
+    blocking_conversation_id = str(ctx.configurable.get("conversation_id") or "")
+    blocking_thread_id = str(agent_configurable(ctx.config).get("thread_id", ""))
+    blocking_record = (
+        RunningSubagent(
             subagent_id=sa_id,
+            subagent_thread_id=blocking_thread_id,
+            integration_id=integration_id,
+            agent_name=agent_name,
+            task_summary=str(ctx.initial_state.get("intent", ""))[:200],
+            started_at=datetime.now(UTC).isoformat(),
         )
+        if blocking_conversation_id and blocking_thread_id
+        else None
+    )
+    if blocking_record is not None:
+        await RunningSubagents(blocking_conversation_id).register(blocking_record)
+    try:
+        # When the executor resumes, THIS node re-runs from the top over a subagent thread
+        # that already holds work — parked on its interrupt, or finished before a LATER
+        # sibling in the same node paused. Either way, re-invoking it fresh would redo
+        # everything it already did, so an existing checkpoint means "recover, don't rerun".
+        # A recoverable checkpoint can only exist on a resume replay, so fresh runs skip the
+        # probe (a per-handoff Postgres read) entirely.
+        recovered = await recover_from_checkpoint(ctx) if probe_parked else None
+        if recovered is not None:
+            outcome = recovered
+        else:
+            outcome = await execute_subagent_stream(
+                ctx=ctx,
+                stream_writer=writer,
+                integration_metadata=metadata,
+                subagent_id=sa_id,
+            )
 
-    # The subagent was invoked imperatively, so its GraphInterrupt never reaches
-    # the executor's runtime — bubble each pause up explicitly. A LOOP, not an if:
-    # one task can gate several destructive calls in sequence ("send both emails"), # and each pause must suspend the executor again. resume_for_gate() raises on the
-    # first pass (pausing the executor) and returns THIS gate's own decision on the
-    # replay — recovery fast-forwards to the latest park, so an earlier gate's already
-    # -applied decision must not be replayed onto it (matched out by approval_id).
-    run_messages: list[AnyMessage] = list(outcome.run_messages)
-    while outcome.paused:
-        decision = resume_for_gate(outcome.interrupt)
-        outcome = await execute_subagent_stream(
-            ctx=ctx,
-            stream_writer=writer,
-            integration_metadata=metadata,
-            subagent_id=sa_id,
-            resume=Command(resume=decision),
-        )
-        run_messages.extend(outcome.run_messages)
+        # The subagent was invoked imperatively, so its GraphInterrupt never reaches
+        # the executor's runtime — bubble each pause up explicitly. A LOOP, not an if:
+        # one task can gate several destructive calls in sequence ("send both emails"), # and each pause must suspend the executor again. resume_for_gate() raises on the
+        # first pass (pausing the executor) and returns THIS gate's own decision on the
+        # replay — recovery fast-forwards to the latest park, so an earlier gate's already
+        # -applied decision must not be replayed onto it (matched out by approval_id).
+        run_messages: list[AnyMessage] = list(outcome.run_messages)
+        while outcome.paused:
+            decision = resume_for_gate(outcome.interrupt)
+            outcome = await execute_subagent_stream(
+                ctx=ctx,
+                stream_writer=writer,
+                integration_metadata=metadata,
+                subagent_id=sa_id,
+                resume=Command(resume=decision),
+            )
+            run_messages.extend(outcome.run_messages)
+    finally:
+        if blocking_record is not None:
+            await RunningSubagents(blocking_conversation_id).deregister(sa_id)
 
     writer(
         {
@@ -922,7 +954,7 @@ async def handoff(
         bool,
         "If True, run the subagent in the background and return immediately. "
         "Use for parallel subagent dispatch: call wait_for_subagents() after "
-        "all background handoffs to collect results. Default False (blocking).",
+        "all background handoffs to collect results. Default False (blocking)."
     ] = False,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> str:
