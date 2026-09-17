@@ -19,7 +19,7 @@ import { BOT_PLATFORM_LABELS, isBotPlatform } from "@/config/botPlatforms";
 import { useBrowserTasks } from "../hooks/useBrowserTasks";
 import type { BrowserTask, BrowserTaskStatus } from "../types";
 import { formatRelativeDate } from "../utils";
-import { PLATFORM_GLYPHS } from "./platformGlyphMap";
+import { PlatformGlyph } from "./PlatformGlyph";
 
 const STATUS_META: Record<
   BrowserTaskStatus,
@@ -40,7 +40,78 @@ function MetaDot() {
   return <span className="size-[3px] rounded-full bg-zinc-600" />;
 }
 
-function TaskRow({
+function TaskThumb({
+  thumb,
+  hasRecap,
+}: {
+  thumb: string | undefined;
+  hasRecap: boolean;
+}) {
+  return (
+    <div className="relative size-11 shrink-0 overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5">
+      {thumb ? (
+        <Image
+          src={thumb}
+          alt=""
+          width={64}
+          height={64}
+          className="size-full object-cover"
+          unoptimized
+        />
+      ) : (
+        <div className="flex size-full items-center justify-center">
+          <AiWebBrowsingIcon className="size-4 text-zinc-600" />
+        </div>
+      )}
+      {hasRecap && (
+        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100">
+          <PlayIcon className="size-4 text-white" />
+        </span>
+      )}
+    </div>
+  );
+}
+
+function TaskMeta({ task }: { task: BrowserTask }) {
+  const meta = STATUS_META[task.status];
+  const platform = isBotPlatform(task.source) ? task.source : null;
+  return (
+    <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+      <span className={`size-1.5 rounded-full ${meta.dot}`} />
+      <span className={meta.text}>{meta.label}</span>
+      {task.created_at && (
+        <>
+          <MetaDot />
+          <span>{formatRelativeDate(task.created_at)}</span>
+        </>
+      )}
+      {task.steps > 0 && (
+        <>
+          <MetaDot />
+          <span>
+            {task.steps} {task.steps === 1 ? "step" : "steps"}
+          </span>
+        </>
+      )}
+      {platform && (
+        <>
+          <MetaDot />
+          <Tooltip
+            content={`This chat was on ${BOT_PLATFORM_LABELS[platform]}`}
+            size="sm"
+            closeDelay={0}
+          >
+            <span className="inline-flex">
+              <PlatformGlyph platform={platform} className="size-4" />
+            </span>
+          </Tooltip>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TaskActions({
   task,
   onDelete,
   isDeleting,
@@ -50,117 +121,69 @@ function TaskRow({
   isDeleting: boolean;
 }) {
   const router = useRouter();
-  const [recapOpen, setRecapOpen] = useState(false);
-  const hasRecap = task.frames.length > 0;
-  const meta = STATUS_META[task.status];
-  const thumb = task.frames[0]?.url;
-  const platform = isBotPlatform(task.source) ? task.source : null;
-  const PlatformGlyph = platform ? PLATFORM_GLYPHS[platform] : null;
   const canOpenChat =
     IN_APP_SOURCES.has(task.source) && task.conversation_id.length > 0;
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+      {canOpenChat && (
+        <Button
+          isIconOnly
+          size="sm"
+          variant="light"
+          radius="full"
+          className="text-zinc-400"
+          aria-label="Open conversation"
+          onPress={() => router.push(`/c/${task.conversation_id}`)}
+        >
+          <Comment01Icon className="size-4" />
+        </Button>
+      )}
+      <Button
+        isIconOnly
+        size="sm"
+        variant="light"
+        color="danger"
+        radius="full"
+        aria-label="Delete task"
+        isLoading={isDeleting}
+        onPress={() => onDelete(task.id)}
+      >
+        {!isDeleting && <Delete02Icon className="size-4" />}
+      </Button>
+    </div>
+  );
+}
+
+function TaskRow({
+  task,
+  onDelete,
+  isDeleting,
+}: {
+  task: BrowserTask;
+  onDelete: (id: string) => void;
+  isDeleting: boolean;
+}) {
+  const [recapOpen, setRecapOpen] = useState(false);
+  const hasRecap = task.frames.length > 0;
+  const openRecap = hasRecap ? () => setRecapOpen(true) : undefined;
 
   return (
     <>
       <div
         className={`group flex items-center gap-3 rounded-2xl bg-zinc-800/40 p-2.5 transition-colors ${hasRecap ? "cursor-pointer hover:bg-zinc-800/80" : ""}`}
-        onClick={hasRecap ? () => setRecapOpen(true) : undefined}
-        onKeyDown={
-          hasRecap
-            ? (e) => {
-                if (e.key === "Enter") setRecapOpen(true);
-              }
-            : undefined
-        }
+        onClick={openRecap}
+        onKeyDown={openRecap && ((e) => e.key === "Enter" && openRecap())}
         role={hasRecap ? "button" : undefined}
         tabIndex={hasRecap ? 0 : undefined}
       >
-        <div className="relative size-11 shrink-0 overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5">
-          {thumb ? (
-            <Image
-              src={thumb}
-              alt=""
-              width={64}
-              height={64}
-              className="size-full object-cover"
-              unoptimized
-            />
-          ) : (
-            <div className="flex size-full items-center justify-center">
-              <AiWebBrowsingIcon className="size-4 text-zinc-600" />
-            </div>
-          )}
-          {hasRecap && (
-            <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100">
-              <PlayIcon className="size-4 text-white" />
-            </span>
-          )}
-        </div>
-
+        <TaskThumb thumb={task.frames[0]?.url} hasRecap={hasRecap} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-zinc-100">
             {task.task}
           </p>
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
-            <span className={`size-1.5 rounded-full ${meta.dot}`} />
-            <span className={meta.text}>{meta.label}</span>
-            {task.created_at && (
-              <>
-                <MetaDot />
-                <span>{formatRelativeDate(task.created_at)}</span>
-              </>
-            )}
-            {task.steps > 0 && (
-              <>
-                <MetaDot />
-                <span>
-                  {task.steps} {task.steps === 1 ? "step" : "steps"}
-                </span>
-              </>
-            )}
-            {PlatformGlyph && platform && (
-              <>
-                <MetaDot />
-                <Tooltip
-                  content={`This chat was on ${BOT_PLATFORM_LABELS[platform]}`}
-                  size="sm"
-                  closeDelay={0}
-                >
-                  <span className="inline-flex">
-                    <PlatformGlyph className="size-4" />
-                  </span>
-                </Tooltip>
-              </>
-            )}
-          </div>
+          <TaskMeta task={task} />
         </div>
-
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-          {canOpenChat && (
-            <Button
-              isIconOnly
-              size="sm"
-              variant="light"
-              radius="full"
-              className="text-zinc-400"
-              aria-label="Open conversation"
-              onPress={() => router.push(`/c/${task.conversation_id}`)}
-            >
-              <Comment01Icon className="size-4" />
-            </Button>
-          )}
-          <Button
-            isIconOnly
-            size="sm"
-            variant="light"
-            color="danger"
-            radius="full"
-            aria-label="Delete task"
-            isLoading={isDeleting}
-            onPress={() => onDelete(task.id)}
-          >
-            {!isDeleting && <Delete02Icon className="size-4" />}
-          </Button>
-        </div>
+        <TaskActions task={task} onDelete={onDelete} isDeleting={isDeleting} />
       </div>
 
       {hasRecap && (

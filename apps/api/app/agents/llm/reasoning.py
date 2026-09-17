@@ -1,9 +1,8 @@
 """Reading a model's "thinking" off a streamed chunk.
 
-Deliberately dependency-free (langchain only): both the comms stream and the
-subagent runner need it, and agent_utils — the obvious-looking home — pulls
-in the tool and subagent registries, so putting it there made
-agent_utils -> subagents.registry -> subagent_runner -> agent_utils a cycle.
+Shared by the comms stream and the subagent runner. It lives under
+agents/llm rather than utils (app.utils may not import the model stack) or
+agent_utils (which would close an agent_utils -> subagent_runner cycle).
 """
 
 from __future__ import annotations

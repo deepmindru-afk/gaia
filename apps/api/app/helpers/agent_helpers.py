@@ -19,6 +19,7 @@ from app.agents.core.graph_manager import CompiledAgentGraph
 from app.agents.core.interruption import record_interruption
 from app.agents.core.subagents.registry import get_subagent_by_id
 from app.agents.llm.lane import AgentRole, ModelLane, resolve_lane
+from app.agents.llm.reasoning import extract_reasoning_delta
 from app.agents.llm.ttft import LLMTtftCallback
 from app.config.langfuse import build_langfuse_callback
 from app.constants.analytics import POSTHOG_PROVIDER_KEY
@@ -71,7 +72,6 @@ from app.utils.agent_utils import (
 from app.utils.general_utils import clip_text
 from app.utils.message_breaks import append_message_bubble
 from app.utils.multimodal import MessageContent, extract_text_content, has_media_blocks
-from app.utils.reasoning import extract_reasoning_delta
 from app.utils.stream_publishers import TodoProgressSnapshot
 from shared.py.wide_events import log
 

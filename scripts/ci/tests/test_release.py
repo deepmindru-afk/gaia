@@ -68,7 +68,7 @@ def _write_stub(directory: Path, name: str, body: str) -> None:
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
-    """A throwaway repo root with a gaia-connect module and stubbed externals."""
+    """Build a throwaway repo root with a gaia-connect module and stubbed externals."""
     (tmp_path / "tools" / "gaia-connect").mkdir(parents=True)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

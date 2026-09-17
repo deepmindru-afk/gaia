@@ -318,7 +318,7 @@ def _is_not_name(node, name: str) -> bool:
 
 
 def _early_exit_on_falsy(stmt, name: str) -> bool:
-    """True for ``if not name: <exit>`` — everything after runs only on truthy.
+    """Return True for ``if not name: <exit>`` — everything after runs only on truthy.
 
     An ``or`` chain holding ``not name`` is the same guard for that name: a falsy
     value makes the whole test true, so ``if not w or not h: return`` leaves
@@ -848,7 +848,7 @@ def _node_span(node):
 
 
 def _literal_equals(node, expected: object) -> bool:
-    """True when ``node`` is a literal equal to ``expected``, same type and all."""
+    """Return True when ``node`` is a literal equal to ``expected``, same type and all."""
     try:
         value = ast.literal_eval(node)
     except (ValueError, SyntaxError):
@@ -858,7 +858,7 @@ def _literal_equals(node, expected: object) -> bool:
 
 
 def _argument_at(span, line_no: int, col: int, orig_line: str) -> bool:
-    """True when the mutation's column, or its whole line, is the argument at ``span``.
+    """Return True when the mutation's column, or its whole line, is the argument at ``span``.
 
     The column alone is not enough for an argument mutmut DELETED off its own
     line: the body then shifts up, so the "differing column" is computed against
@@ -875,7 +875,7 @@ def _argument_at(span, line_no: int, col: int, orig_line: str) -> bool:
 
 
 def _argument_deleted(orig_line: str, mut_line: str, span, keyword: str | None) -> bool:
-    """True when the mutant DELETED the argument at ``span`` rather than re-valuing it.
+    """Return True when the mutant DELETED the argument at ``span`` rather than re-valuing it.
 
     mutmut removes the argument's text and its separator, so what is left of the
     original line is exactly what the mutant line must be. The second branch is
@@ -901,7 +901,7 @@ def _argument_deleted(orig_line: str, mut_line: str, span, keyword: str | None) 
 def _unobservable_default_argument(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
-    """True when the mutation only deleted an argument whose value IS the callee's default.
+    """Return True when the mutation only deleted an argument whose value IS the callee's default.
 
     ``BrowserConfig(headless=True, ...)`` states a value the class already
     defaults to, so dropping it constructs a byte-identical object and no test
@@ -949,7 +949,7 @@ _SERIALISING_CACHE_SETTERS = {"redis_cache.set", "set_cache"}
 
 
 def _value_argument(node):
-    """The ``value`` argument of a cache set call — second positional, or the kwarg."""
+    """Return the ``value`` argument of a cache set call — second positional, or the kwarg."""
     for kw in node.keywords:
         if kw.arg == "value":
             return kw.value
@@ -959,7 +959,7 @@ def _value_argument(node):
 def _unobservable_serialised_model_argument(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
-    """True when a cache write's ``model=C`` is dropped/None'd while the value IS a ``C(...)``.
+    """Return True when a cache write's ``model=C`` is dropped/None'd while the value IS a ``C(...)``.
 
     ``redis_cache.set`` serialises with ``TypeAdapter(model or Any).dump_json``,
     so ``model=`` only changes the bytes written when it has to coerce the value.
@@ -1000,7 +1000,7 @@ def _unobservable_serialised_model_argument(
 
 
 def _hostname_is_none(value: object) -> bool:
-    """True when the default names no host: it is None, or a string urlparse finds no host in.
+    """Return True when the default names no host: it is None, or a string urlparse finds no host in.
 
     Any other literal (an int, bytes) is not something this rule can reason
     about, so it answers False and the mutant stays a survivor. Only ValueError
@@ -1023,7 +1023,7 @@ def _hostname_is_none(value: object) -> bool:
 def _unobservable_urlparse_host_default(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
-    """True when the mutation changed a ``.get()`` default that urlparse reads as no host.
+    """Return True when the mutation changed a ``.get()`` default that urlparse reads as no host.
 
     ``urlparse(origin.get("origin", "")).hostname`` is None for every value that
     is not a URL — "", None (what the lookup returns once mutmut drops the
@@ -1095,7 +1095,7 @@ _TOOL_DUMP_LINT_SCOPE = "app/agents/tools/"
 def _rejected_by_tool_dump_boundary(
     module_rel: str, path: str, line_no: int, col: int, orig_line: str
 ) -> bool:
-    """True when the mutation rewrote a ``mode="json"`` on a tools-tree ``model_dump``.
+    """Return True when the mutation rewrote a ``mode="json"`` on a tools-tree ``model_dump``.
 
     Not an equivalence claim — whether the dumped bytes differ depends on the
     model's fields. It is a different guard: tools/lints/tool_dump_boundary.py

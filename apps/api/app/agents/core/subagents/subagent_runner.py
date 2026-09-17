@@ -31,6 +31,7 @@ from app.agents.core.graph_manager import (
 )
 from app.agents.core.subagents.registry import get_subagent_by_id
 from app.agents.llm.lane import AgentRole, dev_option
+from app.agents.llm.reasoning import extract_reasoning_delta
 from app.agents.prompts.workflow_prompts import (
     WORKFLOW_AUTO_NOTIFY_SECTION,
     WORKFLOW_SILENT_NOTIFY_SECTION,
@@ -58,7 +59,6 @@ from app.services.files import FileService
 from app.services.latency_metrics import observe_subagent_run
 from app.utils.agent_utils import IntegrationMetadata, StreamWriterCallable
 from app.utils.multimodal import extract_text_content
-from app.utils.reasoning import extract_reasoning_delta
 from app.utils.stream_utils import extract_tool_entries_from_update
 from shared.py.wide_events import log
 

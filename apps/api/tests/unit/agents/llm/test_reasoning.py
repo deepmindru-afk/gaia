@@ -14,7 +14,7 @@ class TestExtractReasoningDelta:
     def test_reads_standard_reasoning_content_blocks(self) -> None:
         from langchain_core.messages import AIMessageChunk
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         chunk = AIMessageChunk(
             content=[
@@ -28,7 +28,7 @@ class TestExtractReasoningDelta:
         """DeepSeek-style providers put thinking in additional_kwargs — LangChain."""
         from langchain_core.messages import AIMessageChunk
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         chunk = AIMessageChunk(content="", additional_kwargs={"reasoning_content": "thinking"})
         assert extract_reasoning_delta(chunk) == "thinking"
@@ -37,7 +37,7 @@ class TestExtractReasoningDelta:
         """Covers the branch a normalised AIMessageChunk can no longer reach: a."""
         from types import SimpleNamespace
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         raw = SimpleNamespace(content_blocks=[], additional_kwargs={"reasoning_content": "raw"})
         assert extract_reasoning_delta(raw) == "raw"  # type: ignore[arg-type]  # passes a SimpleNamespace stub in place of the real AIMessageChunk
@@ -46,7 +46,7 @@ class TestExtractReasoningDelta:
         """Not every provider's blocks arrive as dicts — LangChain also hands back block objects."""
         from types import SimpleNamespace
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         chunk = SimpleNamespace(
             content_blocks=[
@@ -61,7 +61,7 @@ class TestExtractReasoningDelta:
         """Type is optional on a block object — a provider that omits it must."""
         from types import SimpleNamespace
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         chunk = SimpleNamespace(
             content_blocks=[
@@ -76,7 +76,7 @@ class TestExtractReasoningDelta:
         """The "" default is what makes a reasoning-typed block with no text a."""
         from types import SimpleNamespace
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         chunk = SimpleNamespace(
             content_blocks=[SimpleNamespace(type="reasoning")], additional_kwargs={}
@@ -87,7 +87,7 @@ class TestExtractReasoningDelta:
         """One chunk can carry the thinking split across blocks; anything joined."""
         from langchain_core.messages import AIMessageChunk
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         chunk = AIMessageChunk(
             content=[
@@ -101,7 +101,7 @@ class TestExtractReasoningDelta:
         """Providers/versions that expose no content_blocks at all must not."""
         from types import SimpleNamespace
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         chunk = SimpleNamespace(additional_kwargs={"reasoning_content": "raw"})
         assert extract_reasoning_delta(chunk) == "raw"  # type: ignore[arg-type]  # SimpleNamespace stub stands in for the real AIMessageChunk
@@ -109,7 +109,7 @@ class TestExtractReasoningDelta:
     def test_a_chunk_missing_additional_kwargs_entirely_yields_nothing(self) -> None:
         from types import SimpleNamespace
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         assert extract_reasoning_delta(SimpleNamespace(content_blocks=[])) == ""  # type: ignore[arg-type]  # SimpleNamespace stub stands in for the real AIMessageChunk
 
@@ -117,7 +117,7 @@ class TestExtractReasoningDelta:
         """Some providers put a structured value in reasoning_content; the."""
         from types import SimpleNamespace
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         chunk = SimpleNamespace(
             content_blocks=[], additional_kwargs={"reasoning_content": ["a", "b"]}
@@ -128,6 +128,6 @@ class TestExtractReasoningDelta:
         """Returns "" rather than None so the caller emits no frame at all for a."""
         from langchain_core.messages import AIMessageChunk
 
-        from app.utils.reasoning import extract_reasoning_delta
+        from app.agents.llm.reasoning import extract_reasoning_delta
 
         assert extract_reasoning_delta(AIMessageChunk(content="hello")) == ""

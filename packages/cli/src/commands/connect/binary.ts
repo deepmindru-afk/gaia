@@ -81,7 +81,8 @@ export async function ensureConnectBinary(
   const temp = `${target}.${process.pid}.tmp`;
   try {
     await fs.writeFile(temp, binary);
-    if (platform !== "win32") await fs.chmod(temp, 0o755);
+    // Owner-only: the binary is fetched for, and run by, this user alone.
+    if (platform !== "win32") await fs.chmod(temp, 0o700);
     await fs.rename(temp, target);
   } catch (error) {
     await fs.rm(temp, { force: true });

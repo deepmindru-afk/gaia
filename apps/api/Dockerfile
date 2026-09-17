@@ -99,7 +99,7 @@ ARG OBSCURA_COMMIT=727cc46d56290995245fbe790caed52fc699452a
 RUN git clone https://github.com/h4ckf0r0day/obscura /obscura \
     && git -C /obscura checkout ${OBSCURA_COMMIT}
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cd /obscura && cargo build --release -p obscura-cli --bins --features render,stealth
+    cd /obscura && cargo build --locked --release -p obscura-cli --bins --features render,stealth
 
 # ---- Runtime: minimal production image ----
 FROM python:3.12-slim AS runtime
