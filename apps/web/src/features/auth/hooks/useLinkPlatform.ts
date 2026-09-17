@@ -1,5 +1,6 @@
 "use client";
 
+import { ApiError } from "@shared/api";
 import { useIsRestoring } from "@tanstack/react-query";
 import confetti from "canvas-confetti";
 import { useEffect, useState } from "react";
@@ -10,9 +11,8 @@ import {
   isBotPlatform,
 } from "@/config/botPlatforms";
 import { useAuth } from "@/features/auth/hooks/useAuth";
-import { apiService } from "@/lib/api/service";
+import { api } from "@/lib/api/typed";
 import { toast } from "@/lib/toast";
-import { getErrorFix, getErrorMessage } from "@/utils/interceptorUtils";
 
 /** Copy for a failure the backend did not describe itself. */
 function fallbackMessage(status: number | undefined): string {
@@ -24,18 +24,17 @@ function fallbackMessage(status: number | undefined): string {
 }
 
 /**
- * The backend's own words for a failed link, read through the shared
- * extractor: `AppError` serialises `{ message, why, fix }` at the top level of
- * the body, so a hand-rolled `data.detail` read finds nothing and every
- * failure degrades to generic copy. The `fix` is appended because it is the
- * half that tells the user what to do next.
+ * The backend's own words for a failed link, read off the error envelope.
+ *
+ * `AppError` serialises `{ message, why, fix }` at the top level of the body;
+ * the `fix` is appended because it is the half that tells the user what to do
+ * next.
  */
 function resolveError(err: unknown): string {
-  const response = (err as { response?: { status?: number; data?: unknown } })
-    ?.response;
+  const apiError = err instanceof ApiError ? err : undefined;
   const message =
-    getErrorMessage(response?.data) ?? fallbackMessage(response?.status);
-  const fix = getErrorFix(response?.data);
+    apiError?.envelope?.message ?? fallbackMessage(apiError?.status);
+  const fix = apiError?.envelope?.fix;
   return fix ? `${message} ${fix}` : message;
 }
 
@@ -65,8 +64,8 @@ export function useLinkPlatform(platform: string | null, token: string | null) {
   const [isLinked, setIsLinked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountInfo, setAccountInfo] = useState<{
-    username?: string;
-    displayName?: string;
+    username?: string | null;
+    displayName?: string | null;
   } | null>(null);
 
   // The persisted query cache restores asynchronously, so every auth decision
@@ -83,15 +82,12 @@ export function useLinkPlatform(platform: string | null, token: string | null) {
 
   useEffect(() => {
     if (token) {
-      apiService
-        .get(`/bot/link-token-info/${encodeURIComponent(token)}`, {
+      api
+        .get("/api/v1/bot/link-token-info/{token}", {
+          path: { token },
           silent: true,
         })
-        .then((data) => {
-          const { username, display_name } = data as {
-            username?: string;
-            display_name?: string;
-          };
+        .then(({ username, display_name }) => {
           setAccountInfo({
             username,
             displayName: display_name,
@@ -108,14 +104,15 @@ export function useLinkPlatform(platform: string | null, token: string | null) {
   useLinkConfetti(isLinked);
 
   const handleLink = async () => {
+    if (!platform || !token) return;
     setIsLinking(true);
     setError(null);
     try {
-      await apiService.post(
-        `/platform-links/${platform}`,
-        { token },
-        { silent: true },
-      );
+      await api.post("/api/v1/platform-links/{platform}", {
+        path: { platform },
+        body: { token },
+        silent: true,
+      });
       setIsLinked(true);
       toast.success("Account linked successfully!");
     } catch (err: unknown) {

@@ -9,6 +9,7 @@
  * reached the screen, and a 429 read "Failed to link account."
  */
 
+import { ApiError } from "@shared/api";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,8 +26,8 @@ vi.mock("@/features/auth/hooks/useAuth", () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }));
 
-vi.mock("@/lib/api/service", () => ({
-  apiService: {
+vi.mock("@/lib/api/typed", () => ({
+  api: {
     post: (...args: unknown[]) => post(...args),
     get: (...args: unknown[]) => get(...args),
   },
@@ -38,10 +39,9 @@ vi.mock("@/lib/toast", () => ({
 
 import { useLinkPlatform } from "@/features/auth/hooks/useLinkPlatform";
 
-/** An axios rejection carrying the backend's structured error body. */
-const apiError = (status: number, data: unknown) => ({
-  response: { status, data },
-});
+/** What the typed client throws for a non-2xx: the status plus the envelope. */
+const apiError = (status: number, data: unknown) =>
+  ApiError.fromBody(status, data);
 
 async function link(rejection: unknown) {
   post.mockRejectedValue(rejection);

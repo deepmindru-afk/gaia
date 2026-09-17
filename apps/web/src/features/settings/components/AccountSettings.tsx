@@ -14,12 +14,13 @@ import type React from "react";
 import { useRef, useState } from "react";
 import { authApi } from "@/features/auth/api/authApi";
 import {
-  setCurrentUser,
+  patchCurrentUser,
   useCurrentUser,
 } from "@/features/auth/hooks/useCurrentUser";
 import { SettingsPage } from "@/features/settings/components/ui/SettingsPage";
 import { SettingsRow } from "@/features/settings/components/ui/SettingsRow";
 import { SettingsSection } from "@/features/settings/components/ui/SettingsSection";
+import { binaryField } from "@/lib/api/typed";
 import { toast } from "@/lib/toast";
 import type { ModalAction } from "./SettingsMenu";
 
@@ -42,7 +43,7 @@ export default function AccountSection({
 
       const response = await authApi.updateName(editedName);
 
-      setCurrentUser(queryClient, response);
+      patchCurrentUser(queryClient, { name: response.name });
 
       setIsEditing(false);
       toast.success("Name updated!", { id: "update-name" });
@@ -62,12 +63,11 @@ export default function AccountSection({
       setIsLoading(true);
       toast.loading("Uploading profile picture...", { id: "update-picture" });
 
-      const formData = new FormData();
-      formData.append("picture", file);
+      const response = await authApi.updateProfile({
+        picture: binaryField(file),
+      });
 
-      const response = await authApi.updateProfile(formData);
-
-      setCurrentUser(queryClient, response);
+      patchCurrentUser(queryClient, { picture: response.picture });
     } catch (error) {
       console.error("Profile picture update error:", error);
     } finally {

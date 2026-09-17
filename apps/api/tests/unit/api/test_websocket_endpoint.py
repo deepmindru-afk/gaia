@@ -10,6 +10,7 @@ and the fan-out belong to the manager and live in
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi.exceptions import WebSocketException
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
@@ -44,28 +45,18 @@ def _clean_connections():
 
 
 class TestWebsocketAuthGate:
-    """/ws/connect — the invalid-user branch must never accept or register."""
+    """/ws/connect — a rejected dial must never accept or register."""
 
     @patch("app.core.websocket_manager.websocket_manager.add_connection", new=MagicMock())
-    async def test_missing_user_id_closes_without_accepting(self):
+    async def test_auth_rejection_propagates_without_accepting(self):
+        """The dependency raises rather than returning an empty dict typed AuthenticatedUser."""
         ws = _ws()
         with patch(
             "app.api.v1.endpoints.websocket.get_current_user_ws",
-            new=AsyncMock(return_value={}),
+            new=AsyncMock(side_effect=WebSocketException(code=1008, reason="no session")),
         ):
-            await websocket_endpoint(ws)
-
-        ws.accept.assert_not_awaited()
-        websocket_manager.add_connection.assert_not_called()
-
-    @patch("app.core.websocket_manager.websocket_manager.add_connection", new=MagicMock())
-    async def test_non_string_user_id_closes_without_accepting(self):
-        ws = _ws()
-        with patch(
-            "app.api.v1.endpoints.websocket.get_current_user_ws",
-            new=AsyncMock(return_value={"user_id": 12345}),
-        ):
-            await websocket_endpoint(ws)
+            with pytest.raises(WebSocketException):
+                await websocket_endpoint(ws)
 
         ws.accept.assert_not_awaited()
         websocket_manager.add_connection.assert_not_called()

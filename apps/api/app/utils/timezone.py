@@ -20,7 +20,6 @@ Two distinct concepts (do not cross them):
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone as _timezone, tzinfo as _tzinfo
 from enum import Enum
@@ -29,14 +28,8 @@ import re
 from zoneinfo import ZoneInfo, available_timezones
 
 from app.constants.log_tags import LogTag
+from app.models.agent_config import AgentRunConfig, agent_configurable
 from shared.py.wide_events import log
-
-#: What ``home_timezone_from_config`` actually needs of a LangGraph run config:
-#: a string-keyed mapping it reads ``configurable`` out of. Spelling it
-#: ``RunnableConfig`` pulled langchain_core into every importer of this module —
-#: app.models.user_models, and so every test worker at collection time — to
-#: describe a read of one key. ``RunnableConfig`` is a TypedDict and satisfies it.
-AgentRunConfig = Mapping[str, object]
 
 
 # ``±HH:MM`` fixed-offset form (e.g. "+05:30", "-08:00").
@@ -241,13 +234,6 @@ def home_timezone_from_config(config: AgentRunConfig) -> Timezone:
     Falls back to UTC with a loud warning — the silent-UTC drift that fires
     scheduled work at the wrong hour.
     """
-    # Lazy: app.models.agent_models pulls langchain's agent middleware, whose
-    # langchain_core import tries `transformers` (~1.5 s); this util is imported
-    # by user_models, i.e. by every test worker at collection time.
-    from app.models.agent_models import (  # noqa: PLC0415 -- keeps transformers out of every test worker's collection
-        agent_configurable,
-    )
-
     raw = agent_configurable(config).get("user_timezone")
     if raw:
         log.set(timezone_source=TimezoneSource.AGENT_CONFIG.value, user_timezone=raw)

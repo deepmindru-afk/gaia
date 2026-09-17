@@ -3,27 +3,34 @@ import {
   fetchEventSource,
 } from "@microsoft/fetch-event-source";
 import type {
+  ConversationSummary,
+  ConversationSyncItem,
+  ConversationSyncRow,
+  MessageModelOutput,
+  SystemPurpose as SystemPurposeLiteral,
+} from "@shared/api/generated";
+
+export type { ConversationSyncItem } from "@shared/api/generated";
+
+import { ApiError, toErrorEnvelope } from "@shared/api";
+import type {
   ApprovalDecisionPayload,
   BatchApprovalDecisionPayload,
-  BatchApprovalDecisionResponse,
 } from "@shared/chat";
-
 import type { DesktopToolResult } from "@shared/desktop-tools";
 import { getSubscriptionRequiredDetail } from "@shared/types/subscription";
-import { apiService } from "@/lib/api/service";
+import { apiBaseUrl, clientHeaders } from "@/lib/api/client";
+import { api, binaryField, formDataSerializer } from "@/lib/api/typed";
 import { desktopClientHeaders } from "@/lib/electron/api";
 import { streamLog, streamLogError } from "@/lib/streamLogger";
-import { getBrowserTimezone } from "@/lib/timezone";
 import { toast } from "@/lib/toast";
 import { useComposerStore } from "@/stores/composerStore";
 import type { SelectedCalendarEventData } from "@/stores/composerStore.types";
 import { useUpgradeModalStore } from "@/stores/upgradeModalStore";
 import type { MessageType } from "@/types/features/convoTypes";
-import type { ArtifactData } from "@/types/features/toolDataTypes";
 import type { WorkflowData } from "@/types/features/workflowTypes";
-import type { FileData } from "@/types/shared/fileTypes";
+import type { AttachedFileData } from "@/types/shared/fileTypes";
 import {
-  getErrorMessage,
   handleRateLimitError,
   subscriptionRequiredOfferFromDetail,
 } from "@/utils/interceptorUtils";
@@ -78,7 +85,7 @@ export interface ChatStreamRequest {
   onClose: (sawDone: boolean) => void;
   onError: (err: Error) => void;
   controller: AbortController;
-  fileData: FileData[];
+  fileData: AttachedFileData[];
   selectedTool: string | null;
   toolCategory: string | null;
   selectedWorkflow: WorkflowData | null;
@@ -91,146 +98,64 @@ export interface ChatStreamRequest {
   isOnboardingDemo: boolean;
 }
 
-export interface FileUploadResponse {
-  fileId: string;
-  fileName: string;
-  fileSize: number;
-  contentType: string;
-  url?: string;
-  description?: string;
-  message?: string;
-}
+/** The API's enum; the members are the ones the web reads by name. */
 
-export interface GenerateImageResponse {
-  url: string;
-  improved_prompt?: string;
-}
+export type SystemPurpose = SystemPurposeLiteral;
 
-export enum SystemPurpose {
-  EMAIL_PROCESSING = "email_processing",
-  WORKFLOW_EXECUTION = "workflow_execution",
+export const SystemPurpose = {
+  EMAIL_PROCESSING: "email_processing",
+  WORKFLOW_EXECUTION: "workflow_execution",
   /** The seeded Getting-started thread: the user's first screen after onboarding. */
-  GETTING_STARTED = "getting_started",
-  OTHER = "other",
-}
+  GETTING_STARTED: "getting_started",
+  OTHER: "other",
+} as const satisfies Record<string, SystemPurposeLiteral>;
 
-export enum ConversationSource {
-  WEB = "web",
-  MOBILE = "mobile",
-  DESKTOP = "desktop",
-  TELEGRAM = "telegram",
-  DISCORD = "discord",
-  SLACK = "slack",
-  WHATSAPP = "whatsapp",
-  WORKFLOW_SYSTEM = "workflow_system",
-}
+export type Conversation = ConversationSummary;
 
-export interface Conversation {
-  _id: string;
-  user_id: string;
-  conversation_id: string;
-  description: string;
-  starred?: boolean;
-  is_system_generated?: boolean;
-  system_purpose?: SystemPurpose;
-  is_unread?: boolean;
-  source?: ConversationSource;
-  createdAt: string;
-  updatedAt?: string;
-}
+/**
+ * The stored message as the chat UI holds it. The client message adds its
+ * own transient flags (loading/queued/failed) and reads the API's nullable
+ * fields as optional; this is the one place that conversion is stated.
+ */
+export const toClientMessages = (
+  messages: MessageModelOutput[],
+): MessageType[] => messages as unknown as MessageType[];
 
-export interface ConversationWithMessages {
-  id: string;
-  title: string;
-  messages: MessageType[];
-}
-
-export interface FetchConversationsResponse {
-  conversations: Conversation[];
-  total: number;
-  page: number;
-  limit: number;
-  total_pages: number;
-}
-
-export interface ConversationSyncItem {
-  conversation_id: string;
-  last_updated?: string;
-}
-
-export interface SyncedConversation {
-  conversation_id: string;
-  description: string;
-  starred?: boolean;
-  is_system_generated?: boolean;
-  system_purpose?: SystemPurpose;
-  is_unread?: boolean;
-  createdAt: string;
-  updatedAt?: string;
-  messages: MessageType[];
-  artifacts?: ArtifactData[];
-  /** Stream id of the conversation's in-flight turn, null when idle — the
-   *  re-attach discovery for reloads, carried on the sync response so opening
-   *  a conversation costs a single request. */
-  active_stream_id: string | null;
-}
+export type SyncedConversation = ConversationSyncRow;
 
 export const chatApi = {
   // Fetch conversations with pagination
-  fetchConversations: async (
-    page = 1,
-    limit = 20,
-  ): Promise<FetchConversationsResponse> => {
-    return apiService.get<FetchConversationsResponse>(
-      `/conversations?page=${page}&limit=${limit}`,
-      {
-        errorMessage: "Failed to fetch conversations",
-      },
-    );
-  },
+  fetchConversations: (page = 1, limit = 20) =>
+    api.get("/api/v1/conversations", {
+      query: { page, limit },
+      errorMessage: "Failed to fetch conversations",
+    }),
 
   // Batch sync conversations - only fetch stale conversations
-  batchSyncConversations: async (
-    conversations: ConversationSyncItem[],
-  ): Promise<{ conversations: SyncedConversation[] }> => {
-    return apiService.post(
-      "/conversations/batch-sync",
-      { conversations },
-      {
-        errorMessage: "Failed to sync conversations",
-        silent: true,
-      },
-    );
-  },
+  batchSyncConversations: (conversations: ConversationSyncItem[]) =>
+    api.post("/api/v1/conversations/batch-sync", {
+      body: { conversations },
+      errorMessage: "Failed to sync conversations",
+      silent: true,
+    }),
 
   // File upload
-  uploadFile: async (
-    file: File,
-    conversationId?: string,
-  ): Promise<FileUploadResponse> => {
-    const formData = new FormData();
-    formData.append("file", file);
-    if (conversationId) {
-      formData.append("conversation_id", conversationId);
-    }
-
+  uploadFile: (file: File, conversationId?: string) =>
     // No errorMessage override: let the backend detail surface (e.g. the 413
     // "File size exceeds the N MB limit." or 415 unsupported-type message)
     // instead of masking it with a generic "Failed to upload file".
-    return apiService.post<FileUploadResponse>("/upload", formData);
-  },
+    api.post("/api/v1/upload", {
+      body: { file: binaryField(file), conversation_id: conversationId },
+      bodySerializer: formDataSerializer,
+    }),
 
   // Generate image
-  generateImage: async (prompt: string): Promise<GenerateImageResponse> => {
-    return apiService.post<GenerateImageResponse>(
-      "/image/generate",
-      { message: prompt },
-      {
-        successMessage: "Image generated successfully",
-        errorMessage: "Failed to generate image",
-      },
-    );
-  },
+  generateImage: (prompt: string) =>
+    api.post("/api/v1/image/generate", {
+      body: { message: prompt },
+      successMessage: "Image generated successfully",
+      errorMessage: "Failed to generate image",
+    }),
 
   // Pin/unpin message
   togglePinMessage: async (
@@ -238,10 +163,11 @@ export const chatApi = {
     messageId: string,
     pinned: boolean,
   ): Promise<void> => {
-    return apiService.put(
-      `/conversations/${conversationId}/messages/${messageId}/pin`,
-      { pinned },
+    await api.put(
+      "/api/v1/conversations/{conversation_id}/messages/{message_id}/pin",
       {
+        path: { conversation_id: conversationId, message_id: messageId },
+        body: { pinned },
         successMessage: pinned ? "Message pinned" : "Message unpinned",
         errorMessage: `Failed to ${pinned ? "pin" : "unpin"} message`,
       },
@@ -255,25 +181,21 @@ export const chatApi = {
     messageId: string,
     isPositive: boolean,
   ): Promise<void> => {
-    return apiService.post(
-      `/messages/${messageId}/feedback`,
-      { is_positive: isPositive },
-      {
-        silent: true,
-        errorMessage: "Failed to record feedback",
-      },
-    );
+    await api.post("/api/v1/messages/{message_id}/feedback", {
+      path: { message_id: messageId },
+      body: { is_positive: isPositive },
+      silent: true,
+      errorMessage: "Failed to record feedback",
+    });
   },
 
   // Fetch messages for a conversation
   fetchMessages: async (conversationId: string): Promise<MessageType[]> => {
-    const response = await apiService.get<ConversationWithMessages>(
-      `/conversations/${conversationId}`,
-      {
-        errorMessage: "Failed to fetch messages",
-      },
-    );
-    return response.messages;
+    const response = await api.get("/api/v1/conversations/{conversation_id}", {
+      path: { conversation_id: conversationId },
+      errorMessage: "Failed to fetch messages",
+    });
+    return toClientMessages(response.messages ?? []);
   },
 
   // Star/unstar conversation
@@ -281,21 +203,20 @@ export const chatApi = {
     conversationId: string,
     starred: boolean,
   ): Promise<void> => {
-    return apiService.put(
-      `/conversations/${conversationId}/star`,
-      { starred },
-      {
-        successMessage: starred
-          ? "Conversation starred"
-          : "Conversation unstarred",
-        errorMessage: `Failed to ${starred ? "star" : "unstar"} conversation`,
-      },
-    );
+    await api.put("/api/v1/conversations/{conversation_id}/star", {
+      path: { conversation_id: conversationId },
+      body: { starred },
+      successMessage: starred
+        ? "Conversation starred"
+        : "Conversation unstarred",
+      errorMessage: `Failed to ${starred ? "star" : "unstar"} conversation`,
+    });
   },
 
   // Delete conversation
   deleteConversation: async (conversationId: string): Promise<void> => {
-    return apiService.delete(`/conversations/${conversationId}`, {
+    await api.delete("/api/v1/conversations/{conversation_id}", {
+      path: { conversation_id: conversationId },
       successMessage: "Conversation deleted",
       errorMessage: "Failed to delete conversation",
     });
@@ -303,7 +224,7 @@ export const chatApi = {
 
   // Delete all conversations
   deleteAllConversations: async (): Promise<void> => {
-    return apiService.delete("/conversations", {
+    await api.delete("/api/v1/conversations", {
       successMessage: "All conversations deleted",
       errorMessage: "Failed to delete conversations",
     });
@@ -314,24 +235,26 @@ export const chatApi = {
     conversationId: string,
     title: string,
   ): Promise<void> => {
-    return apiService.put(
-      `/conversations/${conversationId}/description`,
-      { description: title },
-      {
-        successMessage: "Conversation renamed",
-        errorMessage: "Failed to rename conversation",
-      },
-    );
+    await api.put("/api/v1/conversations/{conversation_id}/description", {
+      path: { conversation_id: conversationId },
+      body: { description: title },
+      successMessage: "Conversation renamed",
+      errorMessage: "Failed to rename conversation",
+    });
   },
 
   // Mark conversation as read
   markAsRead: async (conversationId: string): Promise<void> => {
-    return apiService.patch(`/conversations/${conversationId}/read`, {});
+    await api.patch("/api/v1/conversations/{conversation_id}/read", {
+      path: { conversation_id: conversationId },
+    });
   },
 
   // Mark conversation as unread
   markAsUnread: async (conversationId: string): Promise<void> => {
-    return apiService.patch(`/conversations/${conversationId}/unread`, {});
+    await api.patch("/api/v1/conversations/{conversation_id}/unread", {
+      path: { conversation_id: conversationId },
+    });
   },
 
   // Fetch chat stream
@@ -365,136 +288,133 @@ export const chatApi = {
     const { useDefaultModels, commsModel, executorModel } =
       useComposerStore.getState();
 
-    await fetchEventSource(
-      `${process.env.NEXT_PUBLIC_API_BASE_URL}chat-stream`,
-      {
-        openWhenHidden: true,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "text/event-stream",
-          "x-timezone": getBrowserTimezone(),
-          ...desktopClientHeaders(),
-        },
-        credentials: "include",
-        signal: controller.signal,
-        // Default onopen only validates content-type; a 409 (duplicate turn_id
-        // claim) must surface as a typed error so the session can reconcile
-        // instead of showing a failure for a send that IS being processed.
-        async onopen(response) {
-          if (response.status === HTTP_CONFLICT) {
-            throw new DuplicateTurnError();
-          }
-          // Paid-only gate: the user isn't on Pro. This is the core gated
-          // endpoint, so this is the request most likely to hit it — the
-          // axios interceptor never sees this request (it isn't axios), so
-          // the paywall has to be opened here directly. Throw typed so
-          // failure handling (turnSession.ts) skips its generic error toast.
-          if (response.status === HTTP_PAYMENT_REQUIRED) {
-            const data: unknown = await response.json().catch(() => undefined);
-            const detail = getSubscriptionRequiredDetail(data);
-            if (detail) {
-              useUpgradeModalStore
-                .getState()
-                .openModal(subscriptionRequiredOfferFromDetail(detail), {
-                  source: "chat_stream_402",
-                });
-            }
-            throw new SubscriptionRequiredError(detail?.message);
-          }
-          // Usage wall (message count or cost budget exhausted): render the
-          // rate-limit upsell UI here — the axios interceptor never sees this
-          // request — and throw typed so failure handling skips its generic toast.
-          if (response.status === HTTP_TOO_MANY_REQUESTS) {
-            const data: unknown = await response.json().catch(() => undefined);
-            if (!handleRateLimitError(data)) {
-              toast.error("Too many requests. Please try again later.");
-            }
-            throw new RateLimitError(getErrorMessage(data));
-          }
-          if (
-            !response.ok ||
-            !response.headers.get("content-type")?.includes("text/event-stream")
-          ) {
-            throw new Error(
-              `Unexpected chat-stream response (${response.status})`,
-            );
-          }
-        },
-        body: JSON.stringify({
-          conversation_id: conversationId,
-          turn_id: turnId,
-          message: inputText,
-          fileIds: fileData.map((file) => file.fileId),
-          fileData,
-          selectedTool,
-          toolCategory,
-          selectedWorkflow,
-          selectedCalendarEvent,
-          replyToMessage,
-          is_onboarding_demo: isOnboardingDemo,
-          use_default_models: useDefaultModels,
-          comms_model: useDefaultModels ? null : commsModel,
-          executor_model: useDefaultModels ? null : executorModel,
-          messages: history.slice(-30),
-        }),
-
-        onmessage(event) {
-          // Transport-level record of the raw frame, before any parsing or
-          // dispatch can drop it. This and the executor subscription below are
-          // the app's only two SSE readers, so nothing bypasses the recording.
-          streamLog("sse", "frame", {
-            conversationId,
-            detail: { raw: event.data },
-          });
-          const errorResult = onMessage(event);
-
-          if (event.data === "[DONE]") {
-            doneReceived = true;
-            onClose(true);
-            return;
-          }
-
-          // onMessage is async — surface errors from the Promise. No queue/gate
-          // needed: conversation binding updates the Zustand store synchronously
-          // before any awaits, so subsequent events can render immediately.
-          if (errorResult instanceof Promise) {
-            errorResult.then((err) => {
-              if (err) {
-                console.error("[chatApi] Stream event error:", err);
-                onError(new Error(err));
-                controller.abort();
-              }
-            });
-          } else if (errorResult) {
-            console.error("[chatApi] Stream event error:", errorResult);
-            onError(new Error(errorResult));
-            controller.abort();
-          }
-        },
-        onclose() {
-          streamLog("sse", "connection-closed", { conversationId });
-          // Only call onClose if [DONE] didn't already trigger it.
-          // Connection drops without [DONE] (e.g. network failure) still need cleanup.
-          if (!doneReceived) {
-            onClose(false);
-          }
-        },
-        onerror: (err) => {
-          streamLogError("sse", "connection-error", {
-            conversationId,
-            detail: { message: err.message },
-          });
-          console.error("[chatApi] Stream error:", {
-            error: err,
-            message: err.message,
-            stack: err.stack,
-          });
-          onError(err);
-          throw err; // This stops any retry attempts
-        },
+    await fetchEventSource(`${apiBaseUrl}/chat-stream`, {
+      openWhenHidden: true,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        ...clientHeaders(),
+        ...desktopClientHeaders(),
       },
-    );
+      credentials: "include",
+      signal: controller.signal,
+      // Default onopen only validates content-type; a 409 (duplicate turn_id
+      // claim) must surface as a typed error so the session can reconcile
+      // instead of showing a failure for a send that IS being processed.
+      async onopen(response) {
+        if (response.status === HTTP_CONFLICT) {
+          throw new DuplicateTurnError();
+        }
+        // Paid-only gate: the user isn't on Pro. This is the core gated
+        // endpoint, so this is the request most likely to hit it — the
+        // axios interceptor never sees this request (it isn't axios), so
+        // the paywall has to be opened here directly. Throw typed so
+        // failure handling (turnSession.ts) skips its generic error toast.
+        if (response.status === HTTP_PAYMENT_REQUIRED) {
+          const data: unknown = await response.json().catch(() => undefined);
+          const detail = getSubscriptionRequiredDetail(data);
+          if (detail) {
+            useUpgradeModalStore
+              .getState()
+              .openModal(subscriptionRequiredOfferFromDetail(detail), {
+                source: "chat_stream_402",
+              });
+          }
+          throw new SubscriptionRequiredError(detail?.message);
+        }
+        // Usage wall (message count or cost budget exhausted): render the
+        // rate-limit upsell UI here — the axios interceptor never sees this
+        // request — and throw typed so failure handling skips its generic toast.
+        if (response.status === HTTP_TOO_MANY_REQUESTS) {
+          const data: unknown = await response.json().catch(() => undefined);
+          if (!handleRateLimitError(data)) {
+            toast.error("Too many requests. Please try again later.");
+          }
+          throw new RateLimitError(toErrorEnvelope(data)?.message);
+        }
+        if (
+          !response.ok ||
+          !response.headers.get("content-type")?.includes("text/event-stream")
+        ) {
+          throw new Error(
+            `Unexpected chat-stream response (${response.status})`,
+          );
+        }
+      },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        turn_id: turnId,
+        message: inputText,
+        fileIds: fileData.map((file) => file.fileId),
+        fileData,
+        selectedTool,
+        toolCategory,
+        selectedWorkflow,
+        selectedCalendarEvent,
+        replyToMessage,
+        is_onboarding_demo: isOnboardingDemo,
+        use_default_models: useDefaultModels,
+        comms_model: useDefaultModels ? null : commsModel,
+        executor_model: useDefaultModels ? null : executorModel,
+        messages: history.slice(-30),
+      }),
+
+      onmessage(event) {
+        // Transport-level record of the raw frame, before any parsing or
+        // dispatch can drop it. This and the executor subscription below are
+        // the app's only two SSE readers, so nothing bypasses the recording.
+        streamLog("sse", "frame", {
+          conversationId,
+          detail: { raw: event.data },
+        });
+        const errorResult = onMessage(event);
+
+        if (event.data === "[DONE]") {
+          doneReceived = true;
+          onClose(true);
+          return;
+        }
+
+        // onMessage is async — surface errors from the Promise. No queue/gate
+        // needed: conversation binding updates the Zustand store synchronously
+        // before any awaits, so subsequent events can render immediately.
+        if (errorResult instanceof Promise) {
+          errorResult.then((err) => {
+            if (err) {
+              console.error("[chatApi] Stream event error:", err);
+              onError(new Error(err));
+              controller.abort();
+            }
+          });
+        } else if (errorResult) {
+          console.error("[chatApi] Stream event error:", errorResult);
+          onError(new Error(errorResult));
+          controller.abort();
+        }
+      },
+      onclose() {
+        streamLog("sse", "connection-closed", { conversationId });
+        // Only call onClose if [DONE] didn't already trigger it.
+        // Connection drops without [DONE] (e.g. network failure) still need cleanup.
+        if (!doneReceived) {
+          onClose(false);
+        }
+      },
+      onerror: (err) => {
+        streamLogError("sse", "connection-error", {
+          conversationId,
+          detail: { message: err.message },
+        });
+        console.error("[chatApi] Stream error:", {
+          error: err,
+          message: err.message,
+          stack: err.stack,
+        });
+        onError(err);
+        throw err; // This stops any retry attempts
+      },
+    });
   },
 
   subscribeToExecutorStream: async (
@@ -507,45 +427,42 @@ export const chatApi = {
   ): Promise<void> => {
     let doneReceived = false;
 
-    await fetchEventSource(
-      `${process.env.NEXT_PUBLIC_API_BASE_URL}stream/${streamId}`,
-      {
-        method: "GET",
-        openWhenHidden: true,
-        headers: {
-          Accept: "text/event-stream",
-          ...desktopClientHeaders(),
-          // Resume cursor — the backend replays everything after this entry.
-          ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
-        },
-        credentials: "include",
-        signal,
-        onmessage(event) {
-          streamLog("sse", "frame", {
-            detail: { raw: event.data, streamId },
-          });
-          if (event.data === "[DONE]") {
-            doneReceived = true;
-            onClose(true);
-            return;
-          }
-          onMessage(event);
-        },
-        onclose() {
-          streamLog("sse", "connection-closed");
-          if (!doneReceived) {
-            onClose(false);
-          }
-        },
-        onerror(err) {
-          streamLogError("sse", "connection-error", {
-            detail: { message: err.message },
-          });
-          onError(err);
-          throw err; // stops retry attempts
-        },
+    await fetchEventSource(`${apiBaseUrl}/stream/${streamId}`, {
+      method: "GET",
+      openWhenHidden: true,
+      headers: {
+        Accept: "text/event-stream",
+        ...desktopClientHeaders(),
+        // Resume cursor — the backend replays everything after this entry.
+        ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
       },
-    );
+      credentials: "include",
+      signal,
+      onmessage(event) {
+        streamLog("sse", "frame", {
+          detail: { raw: event.data, streamId },
+        });
+        if (event.data === "[DONE]") {
+          doneReceived = true;
+          onClose(true);
+          return;
+        }
+        onMessage(event);
+      },
+      onclose() {
+        streamLog("sse", "connection-closed");
+        if (!doneReceived) {
+          onClose(false);
+        }
+      },
+      onerror(err) {
+        streamLogError("sse", "connection-error", {
+          detail: { message: err.message },
+        });
+        onError(err);
+        throw err; // stops retry attempts
+      },
+    });
   },
 
   /**
@@ -553,7 +470,8 @@ export const chatApi = {
    * backend, where the awaiting agent tool picks it up via Redis.
    */
   postDesktopToolResult: async (result: DesktopToolResult): Promise<void> => {
-    await apiService.post("/desktop/tool-result", result, {
+    await api.post("/api/v1/desktop/tool-result", {
+      body: result,
       silent: true,
     });
   },
@@ -568,13 +486,13 @@ export const chatApi = {
     decision: ApprovalDecisionPayload,
   ): Promise<void> => {
     try {
-      await apiService.post(`/approvals/${approvalId}/decision`, decision, {
+      await api.post("/api/v1/approvals/{approval_id}/decision", {
+        path: { approval_id: approvalId },
+        body: decision,
         silent: true,
       });
     } catch (error) {
-      const status = (error as { response?: { status?: number } })?.response
-        ?.status;
-      if (status === HTTP_GONE) return;
+      if (error instanceof ApiError && error.status === HTTP_GONE) return;
       throw error;
     }
   },
@@ -584,13 +502,9 @@ export const chatApi = {
    * "Approve all"/"Decline all"). Per-approval outcomes come back in the
    * response — an already-resolved item never fails the rest.
    */
-  postApprovalBatchDecision: async (
-    payload: BatchApprovalDecisionPayload,
-  ): Promise<BatchApprovalDecisionResponse> => {
-    return apiService.post<BatchApprovalDecisionResponse>(
-      "/approvals/batch-decision",
-      payload,
-      { silent: true },
-    );
-  },
+  postApprovalBatchDecision: async (payload: BatchApprovalDecisionPayload) =>
+    api.post("/api/v1/approvals/batch-decision", {
+      body: payload,
+      silent: true,
+    }),
 };

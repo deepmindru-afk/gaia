@@ -20,6 +20,26 @@
  *   evlog-map-bots [--json] [--min-score N] [--min-entries N] [--files-from F]
  *                       Observability score for the bots' wide-event entry
  *                       points. Implementation in lib/evlog-map-bots.mjs.
+ *   api-schema [--write]
+ *                       Regenerate apps/api/openapi.json and the TypeScript
+ *                       types in libs/shared/ts/src/api/generated, then fail
+ *                       if either differs from what is committed. --write
+ *                       regenerates without checking (what `mise api:types`
+ *                       runs).
+ *   api-schema-types    Four rules over every .ts/.tsx outside the generated
+ *                       dir, each failing on the hand-written twin of a
+ *                       Pydantic model: a declaration NAMED after a component
+ *                       schema; any declaration at all inside an API-type
+ *                       directory (API_TYPE_DIRS) that is not a re-export or
+ *                       an alias of a generated name; a declaration whose
+ *                       FIELDS are a component schema's fields under another
+ *                       name; and an untyped `apiService` call in web feature
+ *                       code. The last two ratchet against the baselines in
+ *                       scripts/ci/baselines.
+ *   api-client-imports  Fail when a file outside apps/mobile/src/lib imports
+ *                       the raw mobile API client, ratcheted against a
+ *                       baseline. The web half of that boundary is Biome's
+ *                       style/noRestrictedImports, scoped by an override.
  *
  * Env contract: CHANGED_FILES (see lib/explicit-file-list.mjs) scopes the
  * file-walking gates to a lane's changed files; empty means full scan.
@@ -27,11 +47,31 @@
  * (default master).
  */
 import { execFileSync, execSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { explicitFileList } from "./lib/explicit-file-list.mjs";
 import { runEvlogMapBots } from "./lib/evlog-map-bots.mjs";
+import {
+  BASELINES,
+  DTS_IGNORE_PATTERN,
+  GENERATED_DIR,
+  MOBILE_API_LIB,
+  MOBILE_IMPORTS_BASELINE,
+  MOBILE_SRC,
+  handWrittenDeclsIn,
+  isApiTypeDir,
+  isTestFile,
+  isWebFeatureFile,
+  rawClientImportLines,
+  readBaseline,
+  reportBaseline,
+  schemaComponents,
+  schemaFieldSets,
+  schemaTwinsIn,
+  shapeTwinsIn,
+  untypedCallLines,
+} from "./lib/api-contract.mjs";
 
 // ---------------------------------------------------------------------------
 // file-sizes
@@ -640,6 +680,257 @@ function cmdDuplication() {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// api-schema
+//
+// The contract between the API and every TypeScript consumer is the committed
+// openapi.json plus the types generated from it. Both are build outputs, so
+// the only honest check is to rebuild them and diff: a route change that was
+// committed without `mise api:types` shows up here as a dirty tree.
+// ---------------------------------------------------------------------------
+
+const OPENAPI_JSON = "apps/api/openapi.json";
+const GENERATED_TYPES = "libs/shared/ts/src/api/generated/schema.d.ts";
+const API_SCHEMA_DRIFT_MESSAGE =
+  "API schema drifted — run `mise api:types` and commit";
+
+function regenerateApiSchema() {
+  const opts = { stdio: "inherit" };
+  execFileSync(
+    "uv",
+    [
+      "run",
+      "--frozen",
+      "--project",
+      "apps/api",
+      "--group",
+      "backend",
+      "--group",
+      "dev",
+      "python",
+      "apps/api/scripts/export_openapi.py",
+    ],
+    { ...opts, env: { ...process.env, LOG_LEVEL: "ERROR" } },
+  );
+  execFileSync(
+    "pnpm",
+    [
+      "exec",
+      "openapi-typescript",
+      OPENAPI_JSON,
+      "--alphabetize",
+      // A field with a default is optional on the wire for a request body; a
+      // response-only model marks it required itself (ResponseModel).
+      "--default-non-nullable=false",
+      // One exported alias per component schema, under the API's own name
+      // (`TodoResponse`, not `Schema<"TodoResponse">`): navigable, greppable,
+      // and identical to the Pydantic class it came from.
+      "--root-types",
+      "--root-types-no-schema-prefix",
+      "--root-types-keep-casing",
+      "--output",
+      GENERATED_TYPES,
+    ],
+    opts,
+  );
+}
+
+function cmdApiSchema(argv) {
+  regenerateApiSchema();
+  if (argv.includes("--write")) return;
+
+  const dirty = execFileSync(
+    "git",
+    ["status", "--porcelain", "--", OPENAPI_JSON, GENERATED_TYPES],
+    { encoding: "utf8" },
+  ).trim();
+  if (dirty) {
+    console.log(dirty);
+    console.error(`❌ ${API_SCHEMA_DRIFT_MESSAGE}`);
+    process.exit(1);
+  }
+  console.log("✅ openapi.json and the generated API types match the routes.");
+}
+
+// ---------------------------------------------------------------------------
+// api-schema-types
+// ---------------------------------------------------------------------------
+
+// The size gates ignore every `.d.ts`; this gate must not. The generated file
+// is already exempt by GENERATED_DIR, so every other `.d.ts` is hand-written
+// and a twin declared in one drifts exactly like a twin declared in a `.ts`.
+const apiTypesShouldIgnore = (p) =>
+  IGNORE_PATTERNS.some(
+    (rx) => rx.source !== DTS_IGNORE_PATTERN.source && rx.test(p),
+  );
+
+const DECLARED_BASELINE = "api-declared-types.txt";
+const SHAPE_BASELINE = "api-shape-twins.txt";
+
+function cmdApiSchemaTypes(argv) {
+  const schemas = schemaComponents(OPENAPI_JSON);
+  const names = new Set(Object.keys(schemas));
+  const fieldSets = schemaFieldSets(schemas);
+  const declaredBaseline = readBaseline(DECLARED_BASELINE);
+  const shapeBaseline = readBaseline(SHAPE_BASELINE);
+  // existsSync: `git ls-files` still lists a file deleted but not yet staged.
+  const scanned = typesFiles(argv).filter(
+    (file) =>
+      !file.startsWith(GENERATED_DIR) &&
+      !apiTypesShouldIgnore(file) &&
+      existsSync(file),
+  );
+
+  const violations = [];
+  const untyped = [];
+  const declared = [];
+  const shaped = [];
+  const declaredSeen = new Set();
+  const shapeSeen = new Set();
+  for (const file of scanned) {
+    const src = readFileSync(file, "utf8");
+    const found = schemaTwinsIn(src, names);
+    if (found.length > 0) violations.push({ file, names: found });
+    if (isApiTypeDir(file) && !isTestFile(file)) {
+      for (const name of handWrittenDeclsIn(src, names)) {
+        const entry = `${file}:${name}`;
+        declaredSeen.add(entry);
+        if (!declaredBaseline.has(entry)) declared.push(entry);
+      }
+    }
+    if (!isTestFile(file)) {
+      for (const twin of shapeTwinsIn(src, fieldSets)) {
+        const entry = `${file}:${twin.name}=${twin.schema}`;
+        shapeSeen.add(entry);
+        if (!shapeBaseline.has(entry)) shaped.push({ entry, ...twin });
+      }
+    }
+    if (isWebFeatureFile(file)) {
+      const lines = untypedCallLines(file);
+      if (lines.length > 0) untyped.push({ file, lines });
+    }
+  }
+
+  if (declared.length > 0) {
+    console.log(
+      `\n❌ api-schema-types: ${declared.length} hand-declared type(s) in an API-type directory:\n`,
+    );
+    for (const entry of declared) console.log(`  ${entry}`);
+    console.log(
+      "\nWhy: these directories name the API contract and nothing else, so every type there" +
+        ' must be `export type { X } from "@gaia/shared/api/generated"` or `export type Y = X`' +
+        " naming a generated type. A declaration with fields of its own is a copy that drifts.",
+    );
+  }
+  if (shaped.length > 0) {
+    console.log(
+      `\n❌ api-schema-types: ${shaped.length} type(s) have the fields of an API model under another name:\n`,
+    );
+    for (const twin of shaped) {
+      console.log(
+        `  ${twin.entry} — ${twin.shared}/${twin.of} fields match ${twin.schema}`,
+      );
+    }
+    console.log(
+      "\nWhy: renaming a Pydantic model's shape does not make it a different type — it makes it" +
+        " a twin the generator cannot update. Import the generated type, or say why the shapes" +
+        ` genuinely differ by adding the line to ${BASELINES}${SHAPE_BASELINE}.`,
+    );
+  }
+  if (violations.length > 0) {
+    console.log(
+      `\n❌ api-schema-types: ${violations.length} file(s) hand-write a type that mirrors an API model:\n`,
+    );
+    for (const v of violations) {
+      for (const name of v.names) {
+        console.log(
+          `  ${v.file}: ${name} — import type { ${name} } from "@gaia/shared/api/generated"`,
+        );
+      }
+    }
+    console.log(
+      "\nWhy: a hand-written twin of a Pydantic model drifts the moment the model changes;" +
+        " the generated type is regenerated by `mise api:types` and cannot.",
+    );
+  }
+  if (untyped.length > 0) {
+    console.log(
+      `\n❌ api-schema-types: ${untyped.length} file(s) call the untyped apiService outside apps/web/src/lib/api:\n`,
+    );
+    for (const u of untyped) {
+      console.log(
+        `  ${u.file}:${u.lines.join(",")} — use \`api\` from "@/lib/api/typed" (the path-typed client)`,
+      );
+    }
+    console.log(
+      "\nWhy: apiService takes any URL and any type argument, so a typo in the path or a" +
+        " guessed response shape compiles; the typed client checks both against openapi.json.",
+    );
+  }
+  reportBaseline(DECLARED_BASELINE, declaredBaseline, declaredSeen);
+  reportBaseline(SHAPE_BASELINE, shapeBaseline, shapeSeen);
+  if (
+    violations.length > 0 ||
+    untyped.length > 0 ||
+    declared.length > 0 ||
+    shaped.length > 0
+  ) {
+    process.exit(1);
+  }
+  console.log(
+    "✅ No hand-written twins of API schema types; every web API call is path-typed.",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// api-client-imports
+// ---------------------------------------------------------------------------
+// The mobile app's raw request engine. Unlike the web's, it has 124 live call
+// sites, so the boundary ships as a ratchet against a baseline rather than as
+// a Biome rule that would have to be switched off to stay green. The web's
+// half of the same boundary IS a Biome rule — `style/noRestrictedImports`,
+// scoped by an override to everything outside `apps/web/src/lib/api`.
+
+
+function cmdApiClientImports(argv) {
+  const baseline = readBaseline(MOBILE_IMPORTS_BASELINE);
+  const scanned = typesFiles(argv).filter(
+    (file) =>
+      file.startsWith(MOBILE_SRC) &&
+      !file.startsWith(MOBILE_API_LIB) &&
+      !isTestFile(file) &&
+      existsSync(file),
+  );
+
+  const violations = [];
+  const seen = new Set();
+  for (const file of scanned) {
+    const lines = rawClientImportLines(file, readFileSync(file, "utf8"));
+    if (lines.length === 0) continue;
+    seen.add(file);
+    if (!baseline.has(file)) violations.push({ file, lines });
+  }
+
+  if (violations.length > 0) {
+    console.log(
+      `\n❌ api-client-imports: ${violations.length} file(s) import the raw mobile API client outside apps/mobile/src/lib:\n`,
+    );
+    for (const v of violations) {
+      console.log(`  ${v.file}:${v.lines.join(",")}`);
+    }
+    console.log(
+      "\nWhy: apiService takes any URL and any type argument, so a typo in the path or a guessed" +
+        " response shape compiles. Route the call through a typed client in apps/mobile/src/lib.",
+    );
+  }
+  reportBaseline(MOBILE_IMPORTS_BASELINE, baseline, seen);
+  if (violations.length > 0) process.exit(1);
+  console.log(
+    `✅ No new raw mobile API client imports (${seen.size} baselined call site file(s) left).`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // dispatch
 // ---------------------------------------------------------------------------
@@ -655,6 +946,9 @@ function usage() {
       "  duplication                            copy-paste density on changed lines",
       "  evlog-map-bots [--json] [--min-score N] [--min-entries N] [--files-from F]",
       "                                         observability score for bot entry points",
+      "  api-schema [--write]                   regenerate openapi.json + TS types, fail on drift",
+      "  api-schema-types                       no hand-written twin of an API schema type, no untyped apiService call in web features",
+      "  api-client-imports                     no raw mobile API client import outside apps/mobile/src/lib",
     ].join("\n"),
   );
 }
@@ -677,6 +971,15 @@ function main() {
       break;
     case "evlog-map-bots":
       runEvlogMapBots(rest);
+      break;
+    case "api-schema":
+      cmdApiSchema(rest);
+      break;
+    case "api-schema-types":
+      cmdApiSchemaTypes(rest);
+      break;
+    case "api-client-imports":
+      cmdApiClientImports(rest);
       break;
     default:
       console.error(`checks.mjs: unknown subcommand '${sub ?? ""}'`);

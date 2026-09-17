@@ -48,9 +48,11 @@ async def get_latest_desktop_release() -> DesktopReleaseResponse:
     except httpx.HTTPError as exc:
         raise create_error(
             message="Could not reach GitHub to resolve the latest desktop release",
-            why=str(exc),
+            why="GitHub's releases API did not answer",
             fix="Retry shortly; the download page falls back to the GitHub releases list",
             status_code=502,
+            error_type=type(exc).__name__,
+            error=str(exc),
         ) from exc
 
     latest = next(

@@ -177,6 +177,7 @@
     "next-intl": "^4.13.2",
     "next-llms-txt": "^1.0.2",
     "onnxruntime-web": "^1.27.0",
+    "openapi-fetch": "^0.17.0",
     "postcss": "^8.5.16",
     "posthog-js": "^1.422.5",
     "react": "19.1.0",

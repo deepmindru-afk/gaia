@@ -31,7 +31,7 @@ from app.models.todo_models import (
     TodoStats,
     TodoUpdate,
 )
-from app.models.trigger_subscription_models import SubscriptionStatus
+from app.models.trigger_subscription_models import TriggerSubscriptionStatus
 
 # Top-N labels surfaced in the stats aggregation (mirrors the legacy pipeline).
 _STATS_LABEL_LIMIT = 50
@@ -389,7 +389,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
                 "trigger_subscriptions": {
                     "$elemMatch": {
                         "composio_trigger_ids": composio_trigger_id,
-                        "status": SubscriptionStatus.ACTIVE.value,
+                        "status": TriggerSubscriptionStatus.ACTIVE.value,
                     }
                 },
             }
@@ -408,7 +408,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
                 "trigger_subscriptions": {
                     "$elemMatch": {
                         "trigger_name": trigger_name,
-                        "status": SubscriptionStatus.ACTIVE.value,
+                        "status": TriggerSubscriptionStatus.ACTIVE.value,
                     }
                 },
             }
@@ -426,7 +426,7 @@ class TodosRepository(UserScopedRepository[TodoDocument, TodoUpdate]):
                 "trigger_subscriptions": {
                     "$elemMatch": {
                         "trigger_name": trigger_name,
-                        "status": SubscriptionStatus.PAUSED.value,
+                        "status": TriggerSubscriptionStatus.PAUSED.value,
                     }
                 },
             }
