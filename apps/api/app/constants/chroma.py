@@ -47,8 +47,7 @@ TOOLS_SEED_LOCK_ACQUIRE_TIMEOUT_SECONDS = 120
 # ~1.6k-tool catalog batches in a minute or two).
 TOOLS_SEED_LOCK_MAX_HOLD_SECONDS = 300
 
-# The gaia_knowledge corpus snapshot is reloaded after this long. An in-process
-# write (add_knowledge_batch / clear_knowledge) drops the snapshot directly; a
-# re-populate from the offline script — a separate process — is picked up within
-# this TTL, so the TTL is the cross-process bound.
+# The gaia_knowledge corpus snapshot is reloaded after this long. In-process
+# writes drop the snapshot directly; a re-populate from the offline script is a
+# separate process and is picked up within this TTL, the cross-process bound.
 GAIA_KNOWLEDGE_SNAPSHOT_TTL_SECONDS = ONE_HOUR_TTL

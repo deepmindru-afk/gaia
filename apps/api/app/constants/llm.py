@@ -28,18 +28,18 @@ class LLMProviderKey(StrEnum):
 
 
 class DevModelOption(TypedDict):
-    """One entry of the DEV-ONLY model menu (``DEV_MODEL_OPTIONS`` below).
+    """One entry of the DEV-ONLY model menu (DEV_MODEL_OPTIONS below).
 
     A TypedDict, not a model: it is a fixed in-process shape that is only ever
     spread onto a LangGraph configurable, so it crosses no validation boundary.
 
-    ``model_kwargs`` and ``reasoning``'s effort payload stay ``dict[str, Any]``
-    because that is exactly how ``ChatOpenRouter`` declares the fields they are
-    bound to — free-form OpenRouter request params, not a shape we own.
+    model_kwargs and reasoning's effort payload stay dict[str, Any] because
+    that is how ChatOpenRouter declares them: free-form OpenRouter request
+    params, not a shape we own.
     """
 
-    #: Keyed the same as ``PROVIDER_MODELS``/``PROVIDER_PRIORITY`` — the enum is
-    #: what stops the menu naming a lane the client cannot resolve.
+    #: Keyed like PROVIDER_MODELS and PROVIDER_PRIORITY; the enum stops the menu
+    #: naming a lane the client cannot resolve.
     provider: LLMProviderName
     model: str
     model_kwargs: dict[str, Any] | None
@@ -151,10 +151,9 @@ TOOL_TIMEOUT_EXEMPT_TOOLS = frozenset(
     }
 )
 
-# Run-metadata key under which ``ainvoke_llm``/``invoke_llm`` publish the call's
-# ``label`` so callbacks (TTFT) can attribute a sample to the call that made it —
-# a turn's callback list is shared by the comms call and its title/follow-up/
-# memory side calls, and the run-level agent name cannot tell them apart.
+# Run-metadata key carrying each call's label so TTFT callbacks can attribute a
+# sample: one turn's callback list is shared by the comms call and its title,
+# follow-up and memory side calls, which the run-level agent name cannot separate.
 LLM_LABEL_METADATA_KEY = "llm_label"
 
 # Attempts for the model-level transient-error retry before the caller falls back

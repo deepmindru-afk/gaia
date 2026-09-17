@@ -51,13 +51,9 @@ let splashWindow: BrowserWindow | null = null;
 /**
  * Create and display the splash screen.
  *
- * This **must** be the very first visual operation in the
- * startup flow — no blocking code should run before it.
- *
- * Opens a centered loader (see {@link getLoaderBounds}) with `hiddenInset`
- * chrome and a dark background. The main window opens at these same bounds
- * and then maximises (see windows/main.ts), so the boot reads as the loader
- * scaling up into the full app.
+ * Must be the first visual operation in startup — nothing blocking before it.
+ * The main window opens at these same bounds and then maximises (windows/main.ts),
+ * so the two must keep using getLoaderBounds.
  */
 export function createSplashWindow(): void {
   const { x, y, width, height } = getLoaderBounds();

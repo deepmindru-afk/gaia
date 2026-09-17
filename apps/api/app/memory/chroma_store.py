@@ -22,16 +22,9 @@ from app.constants.memory import (
 from app.db.chroma.chromadb import ChromaClient
 from app.db.chroma.noop_embedding import NoOpEmbeddingFunction
 
-# Collections are cached per event loop: an asyncio.Lock (and Chroma's async
-# client) binds to the loop that first uses it, so sharing one cache/lock
-# across loops raises "bound to a different event loop" in any context that
-# runs multiple loops (test workers, scripts, background runners). The owning
-# loop is stored so entries for closed loops are dropped on access: a closed
-# loop never runs again, so without this every short-lived loop leaks an
-# entry. Holding the owner also pins its id, so a recycled id can never
-# collide with a live entry. Each thread runs its own loop and reaches this
-# registry, so the eviction and the get-or-create share one lock — an
-# unguarded delete races a second thread deleting the same key.
+# Collections are cached per event loop: an asyncio.Lock and Chroma's async
+# client bind to the loop that first uses them. The owning loop is stored so
+# closed loops are evicted on access, under one lock shared with get-or-create.
 _loop_states: dict[
     int, tuple[dict[str, AsyncCollection], asyncio.Lock, asyncio.AbstractEventLoop]
 ] = {}

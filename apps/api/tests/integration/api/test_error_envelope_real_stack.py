@@ -1,11 +1,11 @@
 """Every non-2xx the real stack emits is a readable ErrorEnvelope.
 
 The unit suite proves the envelope for handlers registered on a bare app. This
-tier drives the app the browser talks to — the real ``create_app()`` with the
-real middleware stack, nothing patched out — because three of the error paths
-only exist there: the default-limit 429 answered by ``SlowAPIMiddleware``, the
-500 that has to carry CORS headers to be readable at all, and the serializer
-that has to cope with whatever an ``AppError`` puts on the wire.
+tier drives the real create_app() with the real middleware stack, nothing
+patched out, because three error paths only exist there: the default-limit 429
+answered by SlowAPIMiddleware, the 500 that has to carry CORS headers to be
+readable at all, and the serializer coping with whatever an AppError puts on
+the wire.
 """
 
 from datetime import UTC, datetime

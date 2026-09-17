@@ -1,13 +1,10 @@
 import { apiauth } from "@/lib/api/client";
 
 /**
- * KNOWN BROKEN: the API serves no `/api/v1/team` route — it is absent from
- * `apps/api/openapi.json`, so every call here 404s and the blog editor's
- * author picker has never been able to populate. That is also why this is the
- * one caller left on the raw axios instance: the path-typed client only
- * accepts paths the schema declares, and there is nothing to type against.
- * Either the API grows the route or this module and the author picker in
- * `CreateBlogPage` go — it is a product call, not a mechanical one.
+ * KNOWN BROKEN: no /api/v1/team route exists, so every call here 404s and the
+ * blog editor's author picker never populates. It is also why this is the one
+ * caller left on raw axios — the path-typed client has no schema path to accept.
+ * Resolving it (grow the route, or delete this and the picker) is a product call.
  */
 
 export interface TeamMember {

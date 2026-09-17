@@ -2,9 +2,9 @@
 
 Every TypeScript type is imported under its component's name, so a name
 pydantic built from a module path or a generic's type arguments renames a
-client type when unrelated code moves; and a hand-written ``$ref`` outlives the
-model it names the moment pydantic splits that model into ``-Input``/
-``-Output``, leaving the body typed ``unknown`` with nothing failing.
+client type when unrelated code moves; and a hand-written ref outlives the
+model it names the moment pydantic splits that model into Input/Output,
+leaving the body typed unknown with nothing failing.
 """
 
 from typing import Any
@@ -26,12 +26,7 @@ def test_every_ref_in_the_exported_document_resolves(app: FastAPI) -> None:
 
 
 def test_a_dual_use_envelope_dangles_the_hand_written_ref() -> None:
-    """``HTML_ROUTE_ERROR_RESPONSES`` writes the envelope's ref by hand.
-
-    A model used as both a request and a response body exports as
-    ``ErrorEnvelopeInput``/``ErrorEnvelopeOutput``, and that literal ref then
-    points at nothing.
-    """
+    """A hand-written envelope ref dangles once the model splits into Input/Output."""
     document = _document(
         {"ErrorEnvelope-Input": {}, "ErrorEnvelope-Output": {}},
         {"/page": {"get": {"responses": dict(HTML_ROUTE_ERROR_RESPONSES)}}},
@@ -41,7 +36,7 @@ def test_a_dual_use_envelope_dangles_the_hand_written_ref() -> None:
 
 
 def test_a_generic_parameterisation_is_refused() -> None:
-    """``Model[dict[str, Any]]`` exports as ``Model_dict_str__Any__`` — a name, not a type."""
+    """Model[dict[str, Any]] exports as Model_dict_str__Any__ — a name, not a type."""
     with pytest.raises(SystemExit, match="NotificationResponse_dict_str__Any__"):
         _with_identifier_component_names(_document({"NotificationResponse_dict_str__Any__": {}}))
 

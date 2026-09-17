@@ -25,11 +25,10 @@ def internal_error_response() -> UJSONResponse:
 def capture_unhandled_exception(request: Request, exc: Exception) -> None:
     """Attribute a crash to the user who hit it, in PostHog.
 
-    PostHogRequestContextMiddleware identifies inside ``with new_context():``
-    around call_next, so an exception propagating out of it unwinds that
-    context before it can be read — every 500 would otherwise land on a fresh
-    anonymous profile. ``request.state`` survives because it lives on the
-    request object, not a contextvar.
+    PostHogRequestContextMiddleware identifies inside a context around
+    call_next, which an escaping exception unwinds before it can be read, so
+    every 500 would land on an anonymous profile. request.state survives
+    because it lives on the request object, not a contextvar.
     """
     # Guard like PostHogRequestContextMiddleware: this runs even in apps built
     # without the production lifespan (tests, scripts), where the provider is

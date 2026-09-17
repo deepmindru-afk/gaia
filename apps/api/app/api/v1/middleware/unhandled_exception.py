@@ -1,14 +1,13 @@
 """Catch-all that turns a crash into the envelope while CORS can still see it.
 
-Starlette answers an uncaught exception in ``ServerErrorMiddleware``, which
-wraps the whole application — outside ``CORSMiddleware``. The 500 envelope it
-returns therefore carries no ``Access-Control-Allow-Origin``, so a browser
-refuses to read it and the web app shows a generic network failure instead of
-the error. This middleware is added innermost, inside CORS, and converts the
-exception there; the outer handler stays as a last resort.
+Starlette answers an uncaught exception in ServerErrorMiddleware, which wraps
+the whole application — outside CORSMiddleware. The 500 envelope it returns
+therefore carries no Access-Control-Allow-Origin, so a browser refuses to read
+it. This middleware is added innermost, inside CORS, and converts the exception
+there; the outer handler stays as a last resort.
 
-Pure ASGI (not BaseHTTPMiddleware) because BaseHTTPMiddleware re-raises through
-its own task group and would reintroduce the layering it exists to avoid.
+Pure ASGI, not BaseHTTPMiddleware: the latter re-raises through its own task
+group and would reintroduce the layering this exists to avoid.
 """
 
 from collections.abc import MutableMapping

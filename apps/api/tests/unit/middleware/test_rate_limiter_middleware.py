@@ -1,9 +1,8 @@
 """The default rate limit has to reach routes that live behind a lazy router.
 
-FastAPI 0.139 defers router inclusion: ``app.routes`` holds ``_IncludedRouter``
-wrappers with no ``.endpoint``, so slowapi's own handler lookup returned None
-for every included route and ``_should_exempt`` then exempted it — the default
-limit applied to nothing at all.
+FastAPI 0.139 defers router inclusion, so app.routes holds wrappers with no
+.endpoint: slowapi's own handler lookup returned None for every included route
+and _should_exempt then exempted it — the default limit applied to nothing.
 """
 
 from fastapi import APIRouter, FastAPI

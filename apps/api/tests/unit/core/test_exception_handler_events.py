@@ -2,9 +2,8 @@
 
 The response body has its own tests; this is the other half of the contract.
 Every field here is queried in Loki when someone asks why a request failed —
-``status_code``, ``path`` and ``method`` are what makes one findable at all,
-and the 500-vs-4xx split is what ``level="ERROR"`` searches rely on. None of it
-was asserted anywhere, so any of it could be renamed or dropped silently.
+status_code, path and method are what makes one findable at all, and the
+500-vs-4xx split is what the ERROR-level searches rely on.
 """
 
 import json

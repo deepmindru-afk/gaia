@@ -1,10 +1,9 @@
 """The per-user device manifest cache and its invalidation contract.
 
-``get_device_manifest`` is the only device read on the per-turn context path; it
-is cached for a day and kept correct by clearing on every *structural* device or
+get_device_manifest is the only device read on the per-turn context path; it is
+cached for a day and kept correct by clearing on every structural device or
 server write. These tests pin both halves: the cache serves repeats, and every
-writer clears it (so a revoked device can never linger, and a newly paired one
-can never be hidden).
+writer clears it, so a revoked device never lingers and a new one is never hidden.
 """
 
 import contextlib

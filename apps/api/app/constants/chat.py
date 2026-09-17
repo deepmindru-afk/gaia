@@ -37,9 +37,8 @@ class ConversationSource(str, Enum):
 class SourceCategory(str, Enum):
     """Generalized origin of a graph invocation.
 
-    Coarser than ``ConversationSource``: every specific channel rolls up to one
-    of these so traces and tools can branch on "where did this run come from"
-    without enumerating every platform.
+    Coarser than ConversationSource: every channel rolls up to one of these so
+    traces and tools branch on origin without enumerating every platform.
     """
 
     BG = "bg"  # autonomous background work (workflows, scheduled todos, sweeps)
@@ -48,10 +47,10 @@ class SourceCategory(str, Enum):
 
     @classmethod
     def from_source(cls, source: "ConversationSource | str | None") -> "SourceCategory":
-        """Map a specific ``ConversationSource`` to its category.
+        """Map a specific ConversationSource to its category.
 
-        Unknown / unset sources fall back to ``BG`` — the only callers that
-        leave the source blank are the silent background paths.
+        Unknown or unset sources fall back to BG: only the silent background
+        paths leave the source blank.
         """
         channel = ConversationSource.coerce(source)
         if channel in _UI_SOURCES:
@@ -61,10 +60,9 @@ class SourceCategory(str, Enum):
         return cls.BG
 
 
-# Specific channels that belong to each generalized category. Single source of
-# truth for "which conversation sources are messaging-platform bots" — reused by
-# delivery routing and the web conversation-list filter. Members are enums so all
-# comparisons happen on ConversationSource, never raw strings.
+# Which channels belong to each category, and the single source of truth for
+# "which sources are messaging-platform bots" — used by delivery routing and the
+# web conversation-list filter. Members are enums, so comparisons never use str.
 _UI_SOURCES: frozenset[ConversationSource] = frozenset(
     {ConversationSource.WEB, ConversationSource.MOBILE, ConversationSource.DESKTOP}
 )
@@ -78,10 +76,9 @@ BOT_CONVERSATION_SOURCES: frozenset[ConversationSource] = frozenset(
     }
 )
 
-# Max characters of an uploaded file's summary inlined into the agent's turn
-# context. Sized so small files (images, short PDFs) come through in full; only
-# large multi-page summaries truncate, with the complete text always available in
-# the `<file>.summary.md` sidecar.
+# Max characters of an uploaded file's summary inlined into the turn context.
+# Small files (images, short PDFs) come through in full; only large multi-page
+# summaries truncate, with the full text in the <file>.summary.md sidecar.
 UPLOADED_FILE_INLINE_SUMMARY_MAX_CHARS = 4000
 
 # Upper bound for a single incoming chat message, rejected at the request

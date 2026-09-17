@@ -4,10 +4,9 @@ from typing import Any, NotRequired
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-# The channel vocabulary itself lives in ``app.constants.chat``, a leaf with no
-# model imports, so ``app.constants.outbound`` can derive the outbound queue set
-# from it without dragging the model stack in. Re-exported here under the same
-# names because this module is the import site every consumer already uses.
+# The channel vocabulary lives in app.constants.chat, a leaf, so
+# app.constants.outbound can derive the outbound queue set without the model
+# stack. Re-exported here because this is the import site consumers use.
 from app.constants.chat import BOT_CONVERSATION_SOURCES, ConversationSource, SourceCategory
 from app.models.message_models import FileData, ReplyToMessageData, SelectedWorkflowData
 

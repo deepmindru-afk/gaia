@@ -12,11 +12,9 @@ under the same names, so consumers keep importing from there.
 from collections.abc import Mapping
 from typing import Any, Literal, TypedDict, cast
 
-#: What ``home_timezone_from_config`` actually needs of a LangGraph run config:
-#: a string-keyed mapping it reads ``configurable`` out of. Spelling it
-#: ``RunnableConfig`` pulled langchain_core into every importer of this module —
-#: app.models.user_models, and so every test worker at collection time — to
-#: describe a read of one key. ``RunnableConfig`` is a TypedDict and satisfies it.
+#: All home_timezone_from_config needs of a run config: a string-keyed mapping
+#: it reads configurable out of. Naming RunnableConfig here pulled langchain_core
+#: into every importer. RunnableConfig is a TypedDict and satisfies this.
 AgentRunConfig = Mapping[str, object]
 
 
@@ -66,49 +64,37 @@ class AgentConfigurable(TypedDict, total=False):
     #: judge grounds gated calls against these, so they are never an agent's
     #: paraphrase of the request.
     user_messages: list[str] | None
-    #: The live turn's request, exactly as the user typed it and NOT clipped
-    #: (``user_messages`` is capped at ``HIL_JUDGE_MAX_TURN_CHARS`` per turn, so it
-    #: cannot serve as the verbatim copy). Established once by comms and inherited
-    #: parent-overrides, same rule as ``user_messages``. ``call_executor`` folds it
-    #: into the executor brief so the worker tier always sees the user's own words
-    #: next to the comms agent's paraphrase of them. Absent for non-chat roots
-    #: (workflow/trigger runs), which have no literal user turn.
+    #: The live turn's request as typed, NOT clipped: user_messages is capped at
+    #: HIL_JUDGE_MAX_TURN_CHARS so it cannot be the verbatim copy. Set once by
+    #: comms; absent for non-chat roots, which have no literal user turn.
     user_request: str | None
     user_message_id: str
-    #: The live comms turn's own bot message id (chat stream's ``state.bot_message_id``).
-    #: Threaded into ``call_executor`` so a HIL pause that later resumes can reconcile
-    #: its result onto this SAME message instead of minting a rival one — see
-    #: ``ExecutorRun.bot_message_id`` and ``executor_runner._record_pause``.
+    #: The comms turn's own bot message id. Threaded into call_executor so a HIL
+    #: pause that resumes reconciles onto this SAME message instead of minting a
+    #: rival one. See ExecutorRun.bot_message_id and _record_pause.
     bot_message_id: str
-    #: Onboarding preferences / writing style, established once at the root of
-    #: a run tree (wherever a full user document is already in hand — comms,
-    #: background narration, the dev direct-invoke entrypoint) and inherited
-    #: unchanged by every child agent, same as ``user_messages``. Absent when
-    #: the root itself had none; the context sections that read them degrade
-    #: to no section rather than guessing.
+    #: Onboarding preferences and writing style, set once at a run tree's root
+    #: and inherited unchanged by every child. Absent when the root had none; the
+    #: context sections that read them degrade to no section rather than guess.
     user_preferences: dict[str, Any] | None
     writing_style: dict[str, Any] | None
-    #: One id for the WHOLE user turn: minted at the top-level
-    #: ``build_agent_config`` call and inherited by every child agent (executor,
-    #: handoff subagents, spawn loops). The accounting middleware keys the
-    #: request tree's aggregate token ceiling on it, so the per-request ceiling
-    #: binds across the tree instead of resetting per graph.
+    #: One id for the WHOLE user turn, minted at the top-level build_agent_config
+    #: and inherited by every child. The accounting middleware keys the tree's
+    #: aggregate token ceiling on it, so it binds across the tree, not per graph.
     root_request_id: str
 
     # --- model selection ----------------------------------------------------
-    #: THE model selection: a serialized :class:`~app.agents.llm.lane.ModelLane`,
-    #: resolved once per turn and inherited verbatim by every child agent, queue
-    #: hop and HIL resume. **This is the only model key GAIA code reads.**
-    #:
-    #: Absent on a bag written before lanes existed (an in-flight queue item, a
-    #: stored HIL ``resume_item``); ``ModelLane.from_configurable`` returns
-    #: ``None`` for those and the caller resolves a fresh lane.
+
+    #: THE model selection: a serialized ModelLane, resolved once per turn and
+    #: inherited verbatim by every child, queue hop and HIL resume. The only
+    #: model key GAIA code reads.
+
+    #: Absent on a bag written before lanes existed; ModelLane.from_configurable
+    #: returns None for those and the caller resolves a fresh lane.
     lane: dict[str, Any]
-    #: LangChain's own binding keys, written from the lane by
-    #: ``build_agent_config`` and read ONLY by LangChain's field resolution:
-    #: ``provider`` selects the configurable_alternative, the rest are
-    #: ConfigurableFields. Never read these in GAIA code — they are the
-    #: expansion, not the decision. Read ``lane``.
+    #: LangChain's own binding keys, written from the lane and read ONLY by its
+    #: field resolution. Never read these in GAIA code: they are the expansion,
+    #: not the decision. Read lane.
     provider: str
     model: str
     model_kwargs: dict[str, Any]
@@ -132,21 +118,18 @@ class AgentConfigurable(TypedDict, total=False):
     #: category (``SourceCategory`` value).
     conversation_source: str | None
     source_category: str
-    #: The user's resolved plan tier (``PlanType`` value), stamped by
-    #: ``resolve_lane`` on the top-level configurable and inherited by
-    #: children. The accounting middleware's budget wall reads it to avoid a
-    #: Redis plan lookup on the hot path; absent, the wall derives the tier
-    #: from the cached plan itself.
+    #: The resolved plan tier, stamped by resolve_lane and inherited by children.
+    #: The budget wall reads it to avoid a Redis plan lookup on the hot path;
+    #: absent, the wall derives the tier from the cached plan itself.
     plan_type: str
 
     # --- workflow context (must survive queueing) ---------------------------
     workflow_id: str
     workflow_title: str
     workflow_notify_on_completion: bool
-    #: A playbook replay stopped partway in THIS fire and the agent is finishing
-    #: it: the replay's own record of what already ran. Carried to the executor
-    #: verbatim (``call_executor`` folds it into the heal brief) because comms
-    #: cannot be trusted to transcribe "do not repeat these" into its task.
+    #: A replay stopped partway in THIS fire: its own record of what already ran.
+    #: Carried to the executor verbatim because comms cannot be trusted to
+    #: transcribe "do not repeat these" into its task.
     playbook_fallback: str | None
     #: The calls a stopped replay made this fire, as ``RecordedCall`` dumps, so a
     #: rewrite may freeze them. See ``PLAYBOOK_REPLAYED_CALLS_KEY``.

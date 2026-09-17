@@ -19,7 +19,7 @@ lane without grepping the workflow first.
 | Which tests a diff can reach | `test_impact.py` | `record`, `select`, `fetch` |
 | What this PR changed | `changes.sh` | `files`, `py-source`, `docker-inputs` |
 | Standing dependency + pin gates | `audit.sh` | `pnpm`, `playwright-pin`, `alert-rule-tools`, `evlog` |
-| Static hygiene over the TS/JS surface | `checks.mjs` | `file-sizes`, `components-per-file`, `types-location`, `duplication`, `evlog-map-bots`, `api-schema`, `api-schema-types`, `api-client-imports` |
+| Static hygiene over the TS/JS surface | `checks.mjs` | `file-sizes`, `components-per-file`, `types-location`, `duplication`, `evlog-map-bots`, `api-schema`, `api-schema-types`, `api-client-imports`, `doc-comments` |
 | Turning a run's output into a verdict | `verdict.py` | `emit`, `consolidate`, `dir`, `check-ownership`, `pytest-verdict`, `regression-proof-select`, `regression-proof-verdict`, `collect`, `step-outcomes`, `mirror-previous-gate` |
 | Publishing what a green master produced | `release.sh` | `resolve-image-tags`, `promote-latest`, `dispatch-cli-publish`, `disable-cf-builds` |
 | The release-metadata guards | `release.mjs` | `validate-manifest`, `verify-cli` |
@@ -50,7 +50,8 @@ observability scanner behind `checks.mjs evlog-map-bots`),
 `api-contract.mjs` (the twin/boundary detector behind `checks.mjs
 api-schema-types` and `api-client-imports` — pure functions over a file's
 source text plus openapi.json, with the file list, baselines and reporting
-left in checks.mjs) and
+left in checks.mjs), `doc-comments.mjs` (the JSDoc/line-comment content gate
+behind `checks.mjs doc-comments`) and
 `mutation_matrix.py` (the AST detector behind `mutation.sh matrix`),
 `mutation_gap.py` (the executable-line detector behind the no-covering-test
 verdict) and `mutation_report.py` (the grouped human report, the shard's

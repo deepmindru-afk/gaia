@@ -592,10 +592,9 @@ async def reconcile_device_servers(user_id: str, device_id: str, reported_keys: 
         )
 
 
-#: Generation scoped so a write orphans the previous manifest key instead of
-#: deleting it: a read that computed before the write and stores after it lands
-#: under the old generation and is never served. The TTL bounds orphaned keys; it
-#: is not the invalidation mechanism.
+#: Generation scoped so a write orphans the previous manifest key: a read that
+#: computed before the write and stores after it lands under the old generation
+#: and is never served. The TTL only bounds orphaned keys.
 _DEVICE_MANIFEST_POLICY = CachePolicy(prefix=DEVICE_MANIFEST_CACHE_PREFIX, query_ttl=ONE_DAY_TTL)
 
 
@@ -638,7 +637,7 @@ async def _compute_device_manifest(user_id: str) -> list[DeviceManifestEntry]:
 
 
 async def _invalidate_device_manifest(user_id: str) -> None:
-    """Orphan ``user_id``'s cached device manifest after a structural write."""
+    """Orphan the user's cached device manifest after a structural write."""
     await bump_generation(_DEVICE_MANIFEST_POLICY, user_id)
 
 

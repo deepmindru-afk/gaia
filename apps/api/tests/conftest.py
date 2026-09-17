@@ -80,13 +80,9 @@ _always_patches = [
     patch("shared.py.secrets.inject_infisical_secrets", return_value=None),
 ]
 
-# Started by the _rate_limiting_fence fixture, NOT in the import-time loop
-# below. patch() only resolves its string target when start() runs, and
-# app.decorators.rate_limiting drags in the tiered limiter -> the middleware
-# package -> workos, langgraph and the payment/cost services: ~3 s of import
-# that a process which never rate-limits anything (collection, a unit file, a
-# mutation stats run) has no reason to pay. A session fixture starts them
-# before the first test and the fence is unchanged from a test's point of view.
+# Started by the _rate_limiting_fence fixture, NOT the import-time loop below:
+# patch() resolves its target only when start() runs, and rate_limiting drags in
+# workos, langgraph and the payment services — ~3 s a collection need not pay.
 _rate_limiting_patches = [
     patch(
         "app.decorators.rate_limiting.payment_service.get_user_subscription_status",
@@ -102,36 +98,23 @@ _rate_limiting_patches = [
 
 # ---------------------------------------------------------------------------
 # Redis fence — mirror of the MongoDB fence, at the same gate.
-#
-# The unit tier is contractually hermetic (no I/O). MongoDB is fenced by the
-# _get_mongodb_instance patch below, but Redis was not: any code path reaching
-# app.db.redis.redis_cache.client opened a real socket to REDIS_URL. On a CI
-# runner where that port is firewalled the socket hangs to the pytest timeout,
-# and the mutation lane — which runs each module's test files in ISOLATION —
-# has no lucky ordering to mask it. Fence it the way Mongo is: patch the
-# connection seam so a hermetic run gets an in-process client whose awaited
-# commands never touch the network. Under USE_REAL_SERVICES=1 nothing is
-# patched and the real client is reached untouched.
-#
-# The seam is redis.asyncio.from_url, the lowest point that builds a connection
-# pool, NOT the app's _new_client wrapper around it. Patching the wrapper leaves
-# RedisCache's own construction logic unrun and silently defeats the tests of
-# that class, which patch from_url themselves (3 of them in unit/db).
-#
-# Not fakeredis, though it is already a dev dependency. Measured: a module-level
-# FakeServer binds its asyncio primitives to the first event loop that touches
-# it, so pytest-asyncio's per-test loops raise "Queue is bound to a different
-# event loop" (13 tests), and real lock/SET-NX semantics change control flow so
-# downstream calls never happen (39 more) — 121 failures in all. A library that
-# keeps per-loop state cannot back one import-time singleton shared by every
-# loop in the session; this stand-in is stateless, so it can.
-#
-# Benign defaults keep hermetic tests correct: reads report "nothing there"
-# (llen/exists -> 0, get/lpop/getdel -> None, lrange/keys -> [], hgetall -> {}),
-# writes report success (set/setex/rpush/expire/... truthy), and pipeline() is
-# an async context manager whose execute() returns one benign result per queued
-# command. Tests needing specific Redis behaviour still opt in via the mock_redis
-# fixture or a local patch.object — both rebind the reference and win over this.
+
+# The unit tier is hermetic, but Redis was not fenced: any path reaching
+# redis_cache.client opened a real socket, which hangs where the port is
+# firewalled. The mutation lane runs each module's test files in ISOLATION.
+
+# The seam is redis.asyncio.from_url, NOT the app's _new_client wrapper around
+# it: patching the wrapper leaves RedisCache's construction unrun and defeats
+# the three unit/db tests that patch from_url themselves.
+
+# Not fakeredis, though it is a dev dependency. A module-level FakeServer binds
+# its asyncio primitives to one event loop, so per-test loops fail and real
+# SET-NX semantics reroute control flow — 121 failures measured.
+
+# Benign defaults keep hermetic tests correct: reads report nothing there,
+# writes report success, pipeline() is an async CM. Tests needing specific
+# behaviour opt in via mock_redis or patch.object, which rebind and win.
+
 _REDIS_COMMAND_RESULTS: dict[str, object] = {
     "ping": True,
     "get": None,
@@ -199,11 +182,9 @@ class _FenceRedisPubSub:
     async def get_message(
         self, *_args: object, timeout: float | None = None, **_kwargs: object
     ) -> None:
-        # Honor the poll timeout the way real pubsub does: sleep (yielding to the
-        # event loop) and report "no message". A tight return-None loop would
-        # never suspend, so a `while True` polling consumer (the device
-        # up-listener) could never be cancelled — task.cancel() has no
-        # suspension point to be delivered at.
+        # Honor the poll timeout as real pubsub does: sleep, then report no
+        # message. A tight return-None loop never suspends, so a while-True
+        # consumer could never be cancelled — cancel() needs a suspension point.
         await asyncio.sleep(timeout if isinstance(timeout, (int, float)) and timeout > 0 else 0)
 
     def __getattr__(self, name: str) -> Callable[..., Awaitable[None]]:
@@ -253,10 +234,9 @@ class _FenceAsyncRedis:
         result = _REDIS_COMMAND_RESULTS.get(name)
 
         async def _command(*_args: object, **_kwargs: object) -> object:
-            # Yield to the event loop before returning, as a real awaited redis
-            # command always suspends — so a `while True: await client.<cmd>()`
-            # polling loop stays cancellable rather than spinning without ever
-            # giving task.cancel() a suspension point to fire at.
+            # Yield to the loop before returning, as a real awaited command
+            # always suspends, so a while-True polling loop stays cancellable
+            # instead of spinning with no suspension point for cancel().
             await asyncio.sleep(0)
             return result
 
@@ -287,14 +267,9 @@ _patches = [*_always_patches, *_infra_patches]
 for p in _patches:
     p.start()
 
-# Unlike Mongo's _get_mongodb_instance (called lazily on first use), RedisCache
-# builds its client eagerly in __init__ (redis.from_url is lazy, so no socket —
-# but the object is a REAL client), and importing app.models.payment_models
-# above already ran that constructor before the from_url patch started. The
-# patch fences future construction (the redis_cache.client re-init path and any
-# new RedisCache()); re-point the singleton built at import at the fake too, so
-# every access path — redis_cache.client, redis_cache.redis, and the module-level
-# helpers that read self.redis directly — is fenced.
+# RedisCache builds its client eagerly in __init__, and the imports above ran
+# that constructor before the patch started. The patch fences future
+# construction; re-point the singleton built at import so every path is fenced.
 if not _USE_REAL_SERVICES:
     _redis_module = importlib.import_module("app.db.redis")
     _redis_module.redis_cache.redis = _fence_redis_client

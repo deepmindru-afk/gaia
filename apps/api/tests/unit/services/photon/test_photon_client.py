@@ -65,9 +65,9 @@ def _assert_photon_error(
 ) -> None:
     """Every Photon failure is the same 502 contract, with the diagnostic off the wire.
 
-    ``why`` is read by the user, so it says the same operator-safe thing every
-    time; which internal endpoint failed and what the provider said live in
-    ``meta`` for the wide event.
+    The why is read by the user, so it says the same operator-safe thing every
+    time; which internal endpoint failed and what the provider said live in meta
+    for the wide event.
     """
     assert exc.message == message
     assert exc.why == photon_client._UPSTREAM_WHY
