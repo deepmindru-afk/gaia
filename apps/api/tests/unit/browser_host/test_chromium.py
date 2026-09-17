@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -48,7 +49,7 @@ async def _cancel(*tasks: asyncio.Task[Any]) -> None:
 
 @pytest.mark.unit
 async def test_cdp_call_raises_cdptimeouterror_instead_of_hanging_forever() -> None:
-    """cdp_use's send_raw awaits its future with no timeout of its own."""
+    """CdpMux.send_raw awaits its future with no timeout of its own."""
     transport = FakeMux(hang_on="Target.getTargets", hang_call_count=1)
 
     # The whole point of the fix: control comes back, instead of parking on a
@@ -166,7 +167,7 @@ async def test_healthz_reports_unresponsive_when_cdp_probe_times_out(
     """Process liveness alone must not be enough to report ok."""
     monkeypatch.setattr(chromium, "_CDP_HEALTH_TIMEOUT_SECONDS", 0.05)
     host = make_host()
-    host._cdp = FakeMux(hang_on="Target.getTargets", hang_call_count=1)
+    host._root_mux = FakeMux(hang_on="Target.getTargets", hang_call_count=1)
 
     result = await host.healthz()
 
@@ -181,7 +182,7 @@ async def test_healthz_reports_unresponsive_when_cdp_probe_times_out(
 @pytest.mark.unit
 async def test_healthz_reports_responsive_when_cdp_probe_succeeds() -> None:
     host = make_host()
-    host._cdp = FakeMux({"Target.getTargets": {"targetInfos": []}})
+    host._root_mux = FakeMux({"Target.getTargets": {"targetInfos": []}})
 
     result = await host.healthz()
 
@@ -194,11 +195,11 @@ async def test_healthz_reports_responsive_when_cdp_probe_succeeds() -> None:
 
 
 @pytest.mark.unit
-async def test_healthz_probes_the_root_client_not_any_session_connection() -> None:
+async def test_healthz_probes_the_root_connection_not_any_session_connection() -> None:
     """A health probe asks whether the engine answers at all, so it stays on the root socket."""
     host = make_host()
     root = FakeMux({"Target.getTargets": {"targetInfos": []}})
-    host._cdp = root
+    host._root_mux = root
     session = make_session(mux=FakeMux())
     host._sessions["s1"] = session
 
@@ -246,7 +247,7 @@ async def test_reap_idle_spares_a_session_someone_is_watching(
     monkeypatch.setattr(settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 60)
     monkeypatch.setattr(chromium, "time", SimpleNamespace(monotonic=lambda: 1000.0))
     host = make_host()
-    watched = make_session(session_id="watched", context_id="ctx-watched", viewer_count=1)
+    watched = replace(make_session(session_id="watched", context_id="ctx-watched"), viewer_count=1)
     host._sessions = {"watched": watched}
 
     await host._reap_idle()
@@ -371,12 +372,12 @@ async def test_recover_crash_closes_the_connection_of_every_dead_session() -> No
 
 @pytest.mark.unit
 async def test_focused_target_id_asks_the_sessions_own_connection() -> None:
-    """Obscura isolates every connection, so asking the root client returns another world's targets."""
+    """Obscura isolates every connection, so asking the root connection returns another world's targets."""
     host = make_host()
     root = FakeMux(
         {"Target.getTargets": {"targetInfos": [{"type": "page", "targetId": "wrong-world"}]}}
     )
-    host._cdp = root
+    host._root_mux = root
     session = make_session(
         target_id="t-primary",
         mux=FakeMux(
@@ -399,10 +400,10 @@ async def test_focused_target_id_asks_the_sessions_own_connection() -> None:
 
 @pytest.mark.unit
 async def test_dump_origins_asks_the_sessions_own_connection() -> None:
-    """The pages a session can see live on its connection, never on the host's root client."""
+    """The pages a session can see live on its connection, never on the host's root connection."""
     host = make_host()
     root = FakeMux({"Target.getTargets": {"targetInfos": []}})
-    host._cdp = root
+    host._root_mux = root
     session = make_session(
         mux=FakeMux(
             {

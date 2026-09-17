@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import replace
 import os
 from pathlib import Path
 import subprocess
@@ -386,9 +387,7 @@ def test_get_returns_none_for_unknown() -> None:
 @pytest.mark.unit
 def test_get_returns_session() -> None:
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions["s1"] = s
     assert host.get("s1") is s
 
@@ -396,9 +395,7 @@ def test_get_returns_session() -> None:
 @pytest.mark.unit
 def test_touch_updates_monotonic(monkeypatch: pytest.MonkeyPatch) -> None:
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions["s1"] = s
     monkeypatch.setattr(time, "monotonic", lambda: 42.0)
     host.touch("s1")
@@ -419,9 +416,7 @@ def test_touch_noop_for_unknown() -> None:
 @pytest.mark.unit
 def test_add_viewer_increments_and_touches(monkeypatch: pytest.MonkeyPatch) -> None:
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions["s1"] = s
     monkeypatch.setattr(time, "monotonic", lambda: 99.0)
     host.add_viewer("s1")
@@ -445,12 +440,8 @@ def test_add_viewer_noop_for_unknown() -> None:
 @pytest.mark.unit
 def test_remove_viewer_decrements_and_clamps(monkeypatch: pytest.MonkeyPatch) -> None:
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1",
-        context_id="ctx1",
-        target_id="t1",
-        created_at=0,
-        last_activity_at=5.0,
+    s = replace(
+        make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=5.0),
         viewer_count=1,
     )
     host._sessions["s1"] = s
@@ -472,21 +463,6 @@ def test_remove_viewer_noop_for_unknown() -> None:
 
 
 @pytest.mark.unit
-def test_require_cdp_raises_when_none() -> None:
-    host = ChromiumHost()
-    with pytest.raises(RuntimeError, match="not connected"):
-        host._require_cdp()
-
-
-@pytest.mark.unit
-def test_require_cdp_returns_when_set() -> None:
-    host = ChromiumHost()
-    fake = MagicMock()
-    host._cdp = fake
-    assert host._require_cdp() is fake
-
-
-@pytest.mark.unit
 def test_get_internal_raises_session_not_found() -> None:
     host = ChromiumHost()
     with pytest.raises(SessionNotFoundError):
@@ -496,9 +472,7 @@ def test_get_internal_raises_session_not_found() -> None:
 @pytest.mark.unit
 def test_get_internal_returns_session() -> None:
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions["s1"] = s
     assert host._get("s1") is s
 
@@ -533,9 +507,7 @@ async def test_reserve_slot_at_capacity_raises(monkeypatch: pytest.MonkeyPatch) 
 async def test_reserve_slot_counts_existing_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 2)
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions["s1"] = s
     host._pending_slots = 1  # 1 session + 1 pending = 2 => at capacity
     from app.browser_host.chromium import AtCapacityError
@@ -602,9 +574,7 @@ async def test_estimate_session_cost_is_measured_average_floored(
     host = ChromiumHost()
     host._base_memory_mb = 100.0
     host._sessions = {
-        f"s{i}": make_session(
-            session_id=f"s{i}", context_id="c", target_id="t", created_at=0, last_activity_at=0
-        )
+        f"s{i}": make_session(session_id=f"s{i}", context_id="c", target_id="t", last_activity_at=0)
         for i in range(3)
     }
     # overhead 300 / 3 sessions = 100/session, above the floor
@@ -628,7 +598,6 @@ async def test_reap_idle_shortens_ttl_under_memory_pressure(
         session_id="s1",
         context_id="c1",
         target_id="t1",
-        created_at=0.0,
         last_activity_at=time.monotonic() - 100,
     )
     host._sessions = {"s1": idle}
@@ -764,9 +733,7 @@ async def test_seed_cookies_with_cookies() -> None:
 async def test_dump_storage_state_when_chromium_down() -> None:
     host = ChromiumHost()
     host._proc = None  # chromium_up false
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     result = await host._dump_storage_state(s)
     assert result == {"cookies": [], "origins": []}
 
@@ -977,9 +944,7 @@ async def test_dump_origins_detaches_even_when_evaluate_raises() -> None:
 async def test_focused_page_meta_when_chromium_down() -> None:
     host = ChromiumHost()
     host._proc = None
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     url, title = await host._focused_page_meta(s)
     assert url is None and title is None
 
@@ -1152,9 +1117,7 @@ async def test_focused_target_id_raises_for_unknown_session() -> None:
 @pytest.mark.unit
 async def test_session_info_returns_expected_shape() -> None:
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=10, last_activity_at=20
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=20)
     host._sessions["s1"] = s
     host._proc = MagicMock(returncode=None)
     host._focused_page_meta = AsyncMock(return_value=("https://example.com", "Example"))
@@ -1173,9 +1136,7 @@ async def test_session_info_live_false_when_chromium_down() -> None:
         session_id="s1",
         context_id="ctx1",
         target_id="t1",
-        created_at=0,
         last_activity_at=0,
-        dead=False,
     )
     host._sessions["s1"] = s
     host._proc = None
@@ -1187,14 +1148,7 @@ async def test_session_info_live_false_when_chromium_down() -> None:
 @pytest.mark.unit
 async def test_session_info_live_false_when_dead() -> None:
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1",
-        context_id="ctx1",
-        target_id="t1",
-        created_at=0,
-        last_activity_at=0,
-        dead=True,
-    )
+    s = replace(make_session(session_id="s1", context_id="ctx1", target_id="t1"), dead=True)
     host._sessions["s1"] = s
     host._proc = MagicMock(returncode=None)
     host._focused_page_meta = AsyncMock(return_value=("https://example.com", "Title"))
@@ -1229,24 +1183,23 @@ async def test_healthz_chromium_down_reports_not_ok() -> None:
 async def test_healthz_counts_sessions() -> None:
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions["s1"] = s
-    host._cdp_call = AsyncMock(return_value={"targetInfos": []})
+    host._root_mux = FakeMux()
     result = await host.healthz()
     assert result["sessions"] == 1
     assert result["ok"] is True
 
 
 @pytest.mark.unit
-async def test_healthz_cdp_exception_reports_unresponsive(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_healthz_reports_unresponsive_when_the_root_connection_is_not_open() -> None:
+    """An alive process with no root connection is not a healthy host."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
-    host._cdp_call = AsyncMock(side_effect=RuntimeError("wedged"))
+
     result = await host.healthz()
-    assert result["ok"] is False
-    assert result["cdp_responsive"] is False
+
+    assert result == {"ok": False, "sessions": 0, "chromium_up": True, "cdp_responsive": False}
 
 
 # ---------------------------------------------------------------------------
@@ -1294,7 +1247,7 @@ async def test_stop_no_reaper_still_shuts_down() -> None:
 
 
 # ---------------------------------------------------------------------------
-# create_context / dispose_context integration with mocked _cdp_call
+# create_context / dispose_context integration over a fake session connection
 # ---------------------------------------------------------------------------
 
 
@@ -1373,7 +1326,7 @@ async def test_create_context_at_capacity_raises(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 1)
     host = make_host()
     host._sessions["existing"] = make_session(
-        session_id="existing", context_id="ctx0", target_id="t0", created_at=0, last_activity_at=0
+        session_id="existing", context_id="ctx0", target_id="t0", last_activity_at=0
     )
     from app.browser_host.chromium import AtCapacityError
 
@@ -1403,7 +1356,7 @@ async def test_dispose_context_raises_when_unknown() -> None:
 
 @pytest.mark.unit
 async def test_dispose_context_pop_tolerates_concurrent_removal() -> None:
-    """The finally block's pop must not KeyError if another coroutine (e.g."""
+    """The finally block's pop must not KeyError when a concurrent caller already removed the session."""
     host = make_host()
     s = make_session()
     host._sessions["s1"] = s
@@ -1445,9 +1398,9 @@ async def test_launch_builds_correct_args_headed_false_shell(
     mock_create = AsyncMock(return_value=mock_proc)
     monkeypatch.setattr(chromium.asyncio, "create_subprocess_exec", mock_create)
     host._await_cdp_ready = AsyncMock(return_value="ws://127.0.0.1:9222")
-    mock_cdp = MagicMock()
-    mock_cdp.start = AsyncMock()
-    with patch.object(chromium, "CDPClient", return_value=mock_cdp):
+    mock_mux = MagicMock()
+    mock_mux.start = AsyncMock()
+    with patch.object(chromium, "CdpMux", return_value=mock_mux):
         await host._launch()
     # check args contain expected flags
     args = mock_create.call_args[0]
@@ -1478,9 +1431,9 @@ async def test_launch_headed_false_full_browser_uses_headless_new(
         chromium.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc)
     )
     host._await_cdp_ready = AsyncMock(return_value="ws://x")
-    mock_cdp = MagicMock()
-    mock_cdp.start = AsyncMock()
-    with patch.object(chromium, "CDPClient", return_value=mock_cdp):
+    mock_mux = MagicMock()
+    mock_mux.start = AsyncMock()
+    with patch.object(chromium, "CdpMux", return_value=mock_mux):
         await host._launch()
         args = chromium.asyncio.create_subprocess_exec.call_args[0]
         assert "--headless=new" in args
@@ -1504,9 +1457,9 @@ async def test_launch_headed_true_no_headless_flag(
         AsyncMock(return_value=MagicMock(returncode=None)),
     )
     host._await_cdp_ready = AsyncMock(return_value="ws://x")
-    mock_cdp = MagicMock()
-    mock_cdp.start = AsyncMock()
-    with patch.object(chromium, "CDPClient", return_value=mock_cdp):
+    mock_mux = MagicMock()
+    mock_mux.start = AsyncMock()
+    with patch.object(chromium, "CdpMux", return_value=mock_mux):
         await host._launch()
         args = chromium.asyncio.create_subprocess_exec.call_args[0]
         assert "--headless" not in args and "--headless=new" not in args
@@ -1731,9 +1684,9 @@ async def test_read_devtools_port_non_digit_then_digit(
 @pytest.mark.unit
 async def test_shutdown_chromium_stops_cdp_and_terminates_proc() -> None:
     host = ChromiumHost()
-    mock_cdp = MagicMock()
-    mock_cdp.stop = AsyncMock()
-    host._cdp = mock_cdp
+    mock_mux = MagicMock()
+    mock_mux.close = AsyncMock()
+    host._root_mux = mock_mux
     mock_proc = MagicMock(returncode=None)
     mock_proc.terminate = MagicMock()
     mock_proc.wait = AsyncMock(return_value=0)
@@ -1741,8 +1694,8 @@ async def test_shutdown_chromium_stops_cdp_and_terminates_proc() -> None:
     host._proc = mock_proc
     host._root_ws_url = "ws://x"
     await host._shutdown_chromium()
-    mock_cdp.stop.assert_awaited_once()
-    assert host._cdp is None
+    mock_mux.close.assert_awaited_once()
+    assert host._root_mux is None
     assert host._proc is None
     assert host._root_ws_url is None
     mock_proc.terminate.assert_called_once()
@@ -1751,18 +1704,18 @@ async def test_shutdown_chromium_stops_cdp_and_terminates_proc() -> None:
 @pytest.mark.unit
 async def test_shutdown_chromium_cdp_stop_failure_suppressed() -> None:
     host = ChromiumHost()
-    mock_cdp = MagicMock()
-    mock_cdp.stop = AsyncMock(side_effect=RuntimeError("boom"))
-    host._cdp = mock_cdp
+    mock_mux = MagicMock()
+    mock_mux.close = AsyncMock(side_effect=RuntimeError("boom"))
+    host._root_mux = mock_mux
     host._proc = None
     await host._shutdown_chromium()
-    assert host._cdp is None
+    assert host._root_mux is None
 
 
 @pytest.mark.unit
 async def test_shutdown_chromium_kills_when_terminate_times_out() -> None:
     host = ChromiumHost()
-    host._cdp = None
+    host._root_mux = None
     mock_proc = MagicMock(returncode=None)
     mock_proc.terminate = MagicMock()
     mock_proc.kill = MagicMock()
@@ -1781,18 +1734,18 @@ async def test_shutdown_chromium_kills_when_terminate_times_out() -> None:
 @pytest.mark.unit
 async def test_shutdown_chromium_noop_when_no_proc_and_no_cdp() -> None:
     host = ChromiumHost()
-    host._cdp = None
+    host._root_mux = None
     host._proc = None
     host._root_ws_url = None
     await host._shutdown_chromium()
-    assert host._cdp is None
+    assert host._root_mux is None
     assert host._proc is None
 
 
 @pytest.mark.unit
 async def test_shutdown_chromium_proc_already_dead_no_terminate() -> None:
     host = ChromiumHost()
-    host._cdp = None
+    host._root_mux = None
     mock_proc = MagicMock(returncode=0)
     mock_proc.terminate = MagicMock()
     host._proc = mock_proc
@@ -1817,24 +1770,21 @@ async def test_reap_idle_removes_stale_without_viewer(monkeypatch: pytest.Monkey
         session_id="old",
         context_id="ctx-old",
         target_id="t1",
-        created_at=0,
         last_activity_at=now - 20,
-        viewer_count=0,
     )
     s_fresh = make_session(
         session_id="fresh",
         context_id="ctx-fresh",
         target_id="t2",
-        created_at=0,
         last_activity_at=now - 5,
-        viewer_count=0,
     )
-    s_watched = make_session(
-        session_id="watched",
-        context_id="ctx-watched",
-        target_id="t3",
-        created_at=0,
-        last_activity_at=now - 20,
+    s_watched = replace(
+        make_session(
+            session_id="watched",
+            context_id="ctx-watched",
+            target_id="t3",
+            last_activity_at=now - 20,
+        ),
         viewer_count=1,
     )
     host._sessions = {"old": s_old, "fresh": s_fresh, "watched": s_watched}
@@ -1856,9 +1806,7 @@ async def test_reap_idle_skips_when_none_stale(monkeypatch: pytest.MonkeyPatch) 
         session_id="s1",
         context_id="ctx1",
         target_id="t1",
-        created_at=0,
         last_activity_at=time.monotonic(),
-        viewer_count=0,
     )
     host._sessions["s1"] = s
     await host._reap_idle()
@@ -1871,12 +1819,8 @@ async def test_recover_crash_marks_dead_clears_and_relaunches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = ChromiumHost()
-    s1 = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
-    s2 = make_session(
-        session_id="s2", context_id="ctx2", target_id="t2", created_at=0, last_activity_at=0
-    )
+    s1 = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
+    s2 = make_session(session_id="s2", context_id="ctx2", target_id="t2", last_activity_at=0)
     host._sessions = {"s1": s1, "s2": s2}
     host._shutdown_chromium = AsyncMock()
     host._launch = AsyncMock()
@@ -1896,19 +1840,6 @@ async def test_recover_crash_with_no_sessions_still_relaunches() -> None:
     await host._recover_crash()
     host._shutdown_chromium.assert_awaited_once()
     host._launch.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# _cdp_call wrapper
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-async def test_cdp_call_wrapper_raises_when_no_cdp() -> None:
-    host = ChromiumHost()
-    host._cdp = None
-    with pytest.raises(RuntimeError, match="not connected"):
-        await host._cdp_call("Page.enable")
 
 
 # ---------------------------------------------------------------------------
@@ -2026,9 +1957,7 @@ async def test_reap_idle_handles_gone_session_between_stale_and_lock() -> None:
         session_id="ghost",
         context_id="ctx-ghost",
         target_id="t",
-        created_at=0,
         last_activity_at=0,
-        viewer_count=0,
     )
     # Inject a FakeSessions that pretends ghost is in values() for stale computation
     # but returns None on get (simulating concurrent deletion).
@@ -2049,13 +1978,13 @@ async def test_reap_idle_continues_past_a_gone_session_to_reap_the_next_one() ->
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
     first = make_session(
-        session_id="first", context_id="ctx-first", target_id="t1", created_at=0, last_activity_at=0
+        session_id="first", context_id="ctx-first", target_id="t1", last_activity_at=0
     )
     gone = make_session(
-        session_id="gone", context_id="ctx-gone", target_id="t2", created_at=0, last_activity_at=0
+        session_id="gone", context_id="ctx-gone", target_id="t2", last_activity_at=0
     )
     last = make_session(
-        session_id="last", context_id="ctx-last", target_id="t3", created_at=0, last_activity_at=0
+        session_id="last", context_id="ctx-last", target_id="t3", last_activity_at=0
     )
     # Insertion order matters: `stale` is built by iterating self._sessions,
     # so processing order is first -> gone -> last.
@@ -2083,12 +2012,10 @@ async def test_reap_idle_continues_past_a_gone_session_to_reap_the_next_one() ->
 
 @pytest.mark.unit
 async def test_reap_idle_pop_tolerates_concurrent_removal() -> None:
-    """The pop of a stale session must not KeyError if another coroutine (e.g."""
+    """The pop of a stale session must not KeyError when a concurrent dispose already removed it."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
-    stale = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    stale = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions = {"s1": stale}
 
     with patch.object(chromium.time, "monotonic", return_value=9999):
@@ -2187,7 +2114,7 @@ async def test_create_context_end_to_end_real_stack(monkeypatch: pytest.MonkeyPa
     assert session.target_id == "t-e2e"
     assert host.get(session.session_id) is session
     assert host._pending_slots == 0
-    # verify low-level calls were made (proves real _cdp_call/cdp_call exercised)
+    # verify low-level calls were made (proves the real cdp_call was exercised)
     methods = [c[0] for c in mux.calls]
     assert "Target.createBrowserContext" in methods
     assert "Browser.setDownloadBehavior" in methods
@@ -2307,7 +2234,6 @@ async def test_dispose_context_dump_failure_still_clears_and_logs() -> None:
         session_id="s-fail",
         context_id="ctx-fail",
         target_id="t-fail",
-        created_at=0,
         last_activity_at=0,
     )
     host._sessions["s-fail"] = s
@@ -2444,9 +2370,9 @@ async def test_focused_page_meta_real(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.unit
 async def test_healthz_real_responsive_and_unresponsive(monkeypatch: pytest.MonkeyPatch) -> None:
-    # responsive — the health probe is the one thing that stays on the root client
+    # responsive — the health probe is the one thing that stays on the root connection
     host = make_host()
-    host._cdp = FakeMux({"Target.getTargets": {"targetInfos": []}})
+    host._root_mux = FakeMux({"Target.getTargets": {"targetInfos": []}})
     host._sessions["s1"] = make_session(context_id="ctx-low")
     res = await host.healthz()
     assert res["ok"] is True
@@ -2460,7 +2386,7 @@ async def test_healthz_real_responsive_and_unresponsive(monkeypatch: pytest.Monk
 
     fake = MagicMock()
     fake.send_raw = hanging
-    host2._cdp = fake
+    host2._root_mux = fake
     monkeypatch.setattr(chromium, "_CDP_HEALTH_TIMEOUT_SECONDS", 0.05)
     res2 = await host2.healthz()
     assert res2["ok"] is False
@@ -2529,9 +2455,9 @@ async def test_launch_real_arg_composition_headed_false_shell(
         chromium.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc)
     )
     host._await_cdp_ready = AsyncMock(return_value="ws://127.0.0.1:9222")
-    mock_cdp = MagicMock()
-    mock_cdp.start = AsyncMock()
-    with patch.object(chromium, "CDPClient", return_value=mock_cdp):
+    mock_mux = MagicMock()
+    mock_mux.start = AsyncMock()
+    with patch.object(chromium, "CdpMux", return_value=mock_mux):
         await host._launch()
     args = chromium.asyncio.create_subprocess_exec.call_args[0]
     assert "--remote-debugging-port=0" in args
@@ -2539,7 +2465,7 @@ async def test_launch_real_arg_composition_headed_false_shell(
     assert any("max-old-space-size=512" in a for a in args)
     assert any("window-size" in a for a in args)
     assert host._user_data_dir is not None
-    assert host._cdp is mock_cdp
+    assert host._root_mux is mock_mux
     assert host._proc is mock_proc
 
 
@@ -2584,11 +2510,11 @@ async def test_read_devtools_port_handles_whitespace_and_empty_then_valid(tmp_pa
 @pytest.mark.unit
 async def test_shutdown_chromium_clears_state_even_without_cdp() -> None:
     host = ChromiumHost()
-    host._cdp = None
+    host._root_mux = None
     host._proc = None
     host._root_ws_url = None
     await host._shutdown_chromium()
-    assert host._cdp is None
+    assert host._root_mux is None
     assert host._proc is None
 
 
@@ -2603,17 +2529,13 @@ async def test_reap_idle_via_real_lock(monkeypatch: pytest.MonkeyPatch) -> None:
         session_id="stale",
         context_id="ctx-stale",
         target_id="t",
-        created_at=0,
         last_activity_at=now - 20,
-        viewer_count=0,
     )
     s_keep = make_session(
         session_id="keep",
         context_id="ctx-keep",
         target_id="t",
-        created_at=0,
         last_activity_at=now - 5,
-        viewer_count=0,
     )
     host._sessions = {"stale": s_stale, "keep": s_keep}
     await host._reap_idle()
@@ -2628,9 +2550,7 @@ async def test_reap_idle_via_real_lock(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.unit
 async def test_recover_crash_real_marks_dead() -> None:
     host = ChromiumHost()
-    s = make_session(
-        session_id="s1", context_id="ctx1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    s = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
     host._sessions["s1"] = s
     host._shutdown_chromium = AsyncMock()
     host._launch = AsyncMock()
@@ -2695,9 +2615,7 @@ async def test_touch_and_viewer_real() -> None:
         session_id="sv",
         context_id="ctx",
         target_id="t",
-        created_at=0,
         last_activity_at=0,
-        viewer_count=0,
     )
     host._sessions["sv"] = s
     with patch.object(chromium.time, "monotonic", return_value=42.0):
@@ -3107,7 +3025,7 @@ async def test_focused_page_meta_asks_chromium_for_every_target() -> None:
     )
 
     assert await host._focused_page_meta(session) == ("https://a.test/x", "A")
-    # On the session's own connection, never the host's root client.
+    # On the session's own connection, never the host's root connection.
     assert session.mux.calls == [("Target.getTargets", {}, None)]
 
 
@@ -3130,7 +3048,7 @@ async def test_focused_target_id_asks_chromium_for_every_target_and_prefers_the_
     host._sessions["s1"] = session
 
     assert await host.focused_target_id("s1") == "t-c"
-    # On the session's own connection, never the host's root client.
+    # On the session's own connection, never the host's root connection.
     assert session.mux.calls == [("Target.getTargets", {}, None)]
 
 
@@ -3138,23 +3056,27 @@ async def test_focused_target_id_asks_chromium_for_every_target_and_prefers_the_
 
 
 @pytest.mark.unit
-async def test_healthz_probes_with_the_tighter_health_budget() -> None:
+async def test_healthz_probes_the_root_connection_with_the_tighter_health_budget() -> None:
+    """The healthcheck must give up inside the orchestrator's timeout, not the 20s call budget."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
-    host._cdp_call = AsyncMock(return_value={"targetInfos": []})
+    host._root_mux = FakeMux()
+    probe = AsyncMock(return_value={"targetInfos": []})
 
-    await host.healthz()
+    with patch.object(chromium, "cdp_call", new=probe):
+        await host.healthz()
 
-    host._cdp_call.assert_awaited_once_with(
-        "Target.getTargets", {}, timeout=chromium._CDP_HEALTH_TIMEOUT_SECONDS
-    )
+    assert probe.await_args.args == (host._root_mux, "Target.getTargets", {})
+    assert probe.await_args.kwargs == {"timeout": chromium._CDP_HEALTH_TIMEOUT_SECONDS}
 
 
 @pytest.mark.unit
 async def test_healthz_logs_the_real_failure_type_when_the_probe_blows_up() -> None:
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
-    host._cdp_call = AsyncMock(side_effect=_Wedged("wedged"))
+    wedged = FakeMux()
+    wedged.send_error = _Wedged("wedged")
+    host._root_mux = wedged
 
     with patch.object(chromium, "log") as mock_log:
         result = await host.healthz()
@@ -3179,7 +3101,6 @@ async def test_reap_idle_logs_each_reaped_session(monkeypatch: pytest.MonkeyPatc
         session_id="old",
         context_id="ctx-old",
         target_id="t1",
-        created_at=0.0,
         last_activity_at=900.0,
     )
 
@@ -3278,10 +3199,10 @@ async def test_launch_composes_the_full_argv_in_order(
     spawn = AsyncMock(return_value=proc)
     monkeypatch.setattr(chromium.asyncio, "create_subprocess_exec", spawn)
     host._await_cdp_ready = AsyncMock(return_value="ws://ready")
-    cdp = MagicMock()
-    cdp.start = AsyncMock()
+    root_mux = MagicMock()
+    root_mux.start = AsyncMock()
 
-    with patch.object(chromium, "CDPClient", return_value=cdp) as cdp_ctor:
+    with patch.object(chromium, "CdpMux", return_value=root_mux) as mux_ctor:
         await host._launch()
 
     assert prefixes == ["gaia-browser-host-"]
@@ -3299,10 +3220,10 @@ async def test_launch_composes_the_full_argv_in_order(
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
     }
-    cdp_ctor.assert_called_once_with("ws://ready")
-    cdp.start.assert_awaited_once()
+    mux_ctor.assert_called_once_with("ws://ready")
+    root_mux.start.assert_awaited_once()
     assert host._root_ws_url == "ws://ready"
-    assert host._cdp is cdp
+    assert host._root_mux is root_mux
     assert host._user_data_dir == user_dir
 
 
@@ -3387,7 +3308,7 @@ async def test_shutdown_chromium_gives_terminate_five_seconds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = ChromiumHost()
-    host._cdp = None
+    host._root_mux = None
     proc = MagicMock(returncode=None)
     proc.wait = AsyncMock(return_value=0)
     host._proc = proc
@@ -3408,9 +3329,9 @@ async def test_shutdown_chromium_gives_terminate_five_seconds(
 @pytest.mark.unit
 async def test_shutdown_chromium_warns_with_the_real_stop_failure_type() -> None:
     host = ChromiumHost()
-    cdp = MagicMock()
-    cdp.stop = AsyncMock(side_effect=_Wedged("dead socket"))
-    host._cdp = cdp
+    root_mux = MagicMock()
+    root_mux.close = AsyncMock(side_effect=_Wedged("dead socket"))
+    host._root_mux = root_mux
     host._proc = None
 
     with patch.object(chromium, "log") as mock_log:
@@ -3450,7 +3371,7 @@ def test_new_host_holds_nothing_and_reserves_nothing() -> None:
     assert host._sessions == {}
     assert host._reaper_task is None
     assert host._proc is None
-    assert host._cdp is None
+    assert host._root_mux is None
     assert host._root_ws_url is None
     assert host._chromium_path is None
     assert host._user_data_dir is None
@@ -3469,15 +3390,12 @@ def test_remove_viewer_drops_exactly_one_watcher() -> None:
 
 
 @pytest.mark.unit
-def test_require_cdp_and_get_name_what_is_missing() -> None:
+def test_get_names_the_missing_session() -> None:
     host = ChromiumHost()
 
-    with pytest.raises(RuntimeError) as no_cdp:
-        host._require_cdp()
     with pytest.raises(SessionNotFoundError) as no_session:
         host._get("ghost")
 
-    assert str(no_cdp.value) == "browser host CDP client is not connected"
     assert no_session.value.args == ("ghost",)
 
 
@@ -3602,7 +3520,6 @@ def _idle_session(idle_for: float) -> HostSession:
         session_id="s1",
         context_id="c1",
         target_id="t1",
-        created_at=0.0,
         last_activity_at=time.monotonic() - idle_for,
     )
 
@@ -3878,9 +3795,9 @@ async def test_launch_samples_the_engine_process_it_just_started(
         AsyncMock(return_value=MagicMock(returncode=None, pid=os.getpid())),
     )
     host._await_cdp_ready = AsyncMock(return_value="ws://127.0.0.1:9222")
-    mock_cdp = MagicMock()
-    mock_cdp.start = AsyncMock()
-    with patch.object(chromium, "CDPClient", return_value=mock_cdp):
+    mock_mux = MagicMock()
+    mock_mux.start = AsyncMock()
+    with patch.object(chromium, "CdpMux", return_value=mock_mux):
         await host._launch()
 
     host._sessions["s1"] = make_session()
@@ -3980,9 +3897,9 @@ async def test_launch_binds_the_sampler_to_the_engine_pid_not_the_host_process(
         return _FixedSampler()
 
     monkeypatch.setattr(ProcessSampler, "for_pid", record)
-    mock_cdp = MagicMock()
-    mock_cdp.start = AsyncMock()
-    with patch.object(chromium, "CDPClient", return_value=mock_cdp):
+    mock_mux = MagicMock()
+    mock_mux.start = AsyncMock()
+    with patch.object(chromium, "CdpMux", return_value=mock_mux):
         await host._launch()
 
     assert sampled_pids == [31337]

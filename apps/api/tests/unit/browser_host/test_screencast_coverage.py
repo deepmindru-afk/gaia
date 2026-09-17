@@ -856,7 +856,7 @@ async def test_read_favicon_returns_none_for_a_missing_or_non_string_value(
 
 @pytest.mark.unit
 async def test_read_favicon_swallows_evaluation_failure_and_names_the_exception() -> None:
-    """A page that blocks evaluation must not break the tab's real metadata, but a."""
+    """A page that blocks evaluation costs the favicon only, and the failure is logged by type."""
     with (
         patch.object(screencast, "cdp_call", new=AsyncMock(side_effect=TimeoutError("boom"))),
         patch.object(screencast.log, "warning") as mock_warning,

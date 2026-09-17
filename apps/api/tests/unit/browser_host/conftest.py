@@ -7,8 +7,8 @@ existing behaviour tests stay hermetic and fast; the memory-gate tests override
 chromium.memory_usage_mb themselves to simulate pressure.
 
 FakeMux stands in for a session's one engine connection. make_host deliberately
-leaves the host's root CDP client unset, so any session work that regressed to
-the shared client fails loudly instead of silently crossing connections. The
+leaves the host's root connection unset, so any session work that regressed to
+the shared connection fails loudly instead of silently crossing connections. The
 live view's paced capture is parked by default so it cannot tick mid-test.
 """
 
@@ -200,7 +200,7 @@ def install_mux(monkeypatch: pytest.MonkeyPatch, fake: FakeMux | None = None) ->
 
 
 def make_host() -> ChromiumHost:
-    """Build a started-looking host with NO root CDP client, so session work must ride a mux."""
+    """Build a started-looking host with NO root connection, so session work must ride its own mux."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)  # chromium_up == True
     host._root_ws_url = FAKE_ROOT_WS_URL
@@ -213,19 +213,18 @@ def make_session(
     target_id: str = "t1",
     *,
     mux: FakeMux | None = None,
-    created_at: float = 0.0,
     last_activity_at: float = 0.0,
-    viewer_count: int = 0,
-    dead: bool = False,
 ) -> HostSession:
-    """Build a HostSession carrying a FakeMux, since a session is now a connection."""
+    """Build a HostSession carrying a FakeMux, since a session is now a connection.
+
+    created_at, viewer_count and dead are not parameters: the handful of tests
+    that vary one say so with dataclasses.replace at the call site.
+    """
     return HostSession(
         session_id=session_id,
         context_id=context_id,
         target_id=target_id,
         mux=cast(CdpMux, mux if mux is not None else FakeMux()),
-        created_at=created_at,
+        created_at=0.0,
         last_activity_at=last_activity_at,
-        viewer_count=viewer_count,
-        dead=dead,
     )

@@ -2,10 +2,10 @@
 
 The host launches a single Chromium and multiplexes every session onto its own
 Target.createBrowserContext: cookies and storage never cross contexts, and a
-second context costs a fraction of a second Chromium. All context lifecycle
-(create / seed / dump / dispose) flows through one root CDP connection.
+second context costs a fraction of a second Chromium. Each session's context
+lifecycle (create / seed / dump / dispose) rides that session's own connection.
 
-ChromiumHost owns the Chromium subprocess and its root CDP client, the live
+ChromiumHost owns the Chromium subprocess and its root CDP connection, the live
 session registry (context id, primary page, activity, viewers), an idle reaper
 that disposes untouched, unwatched contexts, and a process-exit watcher that
 relaunches a dead engine the instant it dies and marks its sessions dead.
@@ -28,7 +28,6 @@ from typing import Any
 import uuid
 
 from browser_use.browser.profile import CHROME_DEFAULT_ARGS
-from cdp_use.client import CDPClient
 import httpx
 from playwright.sync_api import StorageState, StorageStateCookie, sync_playwright
 
@@ -60,9 +59,9 @@ _HEADLESS_SHELL_BINARIES = ("headless_shell", "chrome-headless-shell", "headless
 # Poll budget for Chromium to publish its DevTools endpoint after launch.
 _CDP_READY_TIMEOUT_SECONDS = 30.0
 _CDP_READY_POLL_SECONDS = 0.2
-# Every CDP round-trip is bounded: neither CdpMux nor cdp_use.CDPClient puts a
-# timeout on the response future, so a wedged renderer would otherwise freeze the
-# session lock and the reaper while the process stays alive and looks healthy.
+# Every CDP round-trip is bounded: CdpMux puts no timeout on the response future,
+# so a wedged renderer would otherwise freeze the session lock and the reaper
+# while the process stays alive and looks healthy.
 _CDP_CALL_TIMEOUT_SECONDS = 20.0
 # The health probe backs a container healthcheck, so it must give up well inside
 # the orchestrator's own timeout rather than share the generous call budget.
@@ -207,12 +206,12 @@ class ChromiumHost:
 
     Named for its default engine, but fronts either Chromium (headless-shell) or
     the Obscura CDP server, selected by settings.BROWSER_ENGINE. Everything
-    past launch — contexts, the CDP client, proxy, screencast — speaks plain CDP
-    and is identical for both."""
+    past launch — contexts, the CDP connection, proxy, screencast — speaks plain
+    CDP and is identical for both."""
 
     def __init__(self) -> None:
         self._proc: asyncio.subprocess.Process | None = None
-        self._cdp: CDPClient | None = None
+        self._root_mux: CdpMux | None = None
         self._root_ws_url: str | None = None
         self._chromium_path: str | None = None
         self._user_data_dir: str | None = None
@@ -250,7 +249,7 @@ class ChromiumHost:
         log.info(f"{LogTag.BROWSER} browser host started")
 
     async def stop(self) -> None:
-        """Tear everything down: reaper, process watcher, CDP client, engine process."""
+        """Tear everything down: reaper, process watcher, root CDP connection, engine process."""
         self._stopping.set()
         if self._reaper_task is not None:
             self._reaper_task.cancel()
@@ -448,9 +447,12 @@ class ChromiumHost:
         orchestrator restart the host.
         """
         responsive = False
-        if self.chromium_up:
+        root_mux = self._root_mux
+        if self.chromium_up and root_mux is not None:
             try:
-                await self._cdp_call("Target.getTargets", {}, timeout=_CDP_HEALTH_TIMEOUT_SECONDS)
+                await cdp_call(
+                    root_mux, "Target.getTargets", {}, timeout=_CDP_HEALTH_TIMEOUT_SECONDS
+                )
                 responsive = True
             except Exception as exc:
                 log.error(
@@ -483,29 +485,11 @@ class ChromiumHost:
 
     # --- internals ---
 
-    def _require_cdp(self) -> CDPClient:
-        if self._cdp is None:
-            raise RuntimeError("browser host CDP client is not connected")
-        return self._cdp
-
     def _get(self, session_id: str) -> HostSession:
         session = self._sessions.get(session_id)
         if session is None:
             raise SessionNotFoundError(session_id)
         return session
-
-    async def _cdp_call(
-        self,
-        method: str,
-        params: dict[str, Any] | None = None,
-        *,
-        session_id: str | None = None,
-        timeout: float = _CDP_CALL_TIMEOUT_SECONDS,
-    ) -> dict[str, Any]:
-        """Run a bounded round-trip on the root CDP connection."""
-        return await cdp_call(
-            self._require_cdp(), method, params, session_id=session_id, timeout=timeout
-        )
 
     def _estimate_session_cost_mb(self) -> float:
         """Adaptive MB to reserve for the next session: measured average, floored.
@@ -672,9 +656,9 @@ class ChromiumHost:
         )
         self._sampler = ProcessSampler.for_pid(self._proc.pid)
         self._root_ws_url = await self._await_cdp_ready()
-        cdp = CDPClient(self._root_ws_url)
-        await cdp.start()
-        self._cdp = cdp
+        root_mux = CdpMux(self._root_ws_url)
+        await root_mux.start()
+        self._root_mux = root_mux
 
     async def _watch_loop(self) -> None:
         """Relaunch the engine the moment its process exits, not on the reaper's sweep.
@@ -776,15 +760,15 @@ class ChromiumHost:
         raise RuntimeError("Chromium did not write DevToolsActivePort in time")
 
     async def _shutdown_chromium(self) -> None:
-        if self._cdp is not None:
+        if self._root_mux is not None:
             try:
-                await self._cdp.stop()
+                await self._root_mux.close()
             except Exception as exc:  # a dead socket on shutdown is not actionable
                 log.warning(
                     f"{LogTag.BROWSER} browser host CDP stop failed",
                     error_type=type(exc).__name__,
                 )
-            self._cdp = None
+            self._root_mux = None
         if self._proc is not None and self._proc.returncode is None:
             self._proc.terminate()
             try:

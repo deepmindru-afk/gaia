@@ -9,8 +9,8 @@ message instead of a pasted link.
 
 from app.constants.browser import (
     BROWSER_CREDENTIALS_SAVED_NOTE,
-    BrowserSessionStatus,
     BROWSER_TASK_FAILED_PREFIX,
+    BrowserSessionStatus,
     HandoffStatus,
     SensitiveCategory,
 )

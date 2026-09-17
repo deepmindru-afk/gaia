@@ -48,10 +48,10 @@ async def test_launch_obscura_builds_the_serve_command(
     spawn = AsyncMock(return_value=proc)
     monkeypatch.setattr(chromium.asyncio, "create_subprocess_exec", spawn)
     host._await_cdp_ready = AsyncMock(return_value="ws://ready")  # type: ignore[method-assign]  # rebinds the _await_cdp_ready method with an AsyncMock fake
-    cdp = MagicMock()
-    cdp.start = AsyncMock()
+    root_mux = MagicMock()
+    root_mux.start = AsyncMock()
 
-    with patch.object(chromium, "CDPClient", return_value=cdp):
+    with patch.object(chromium, "CdpMux", return_value=root_mux):
         await host._launch()
 
     assert list(spawn.call_args.args) == [

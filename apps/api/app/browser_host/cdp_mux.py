@@ -55,7 +55,7 @@ def sinks_for(subscriptions: Sequence[Subscription], frame: CdpFrame) -> list[Fr
 
 
 class CdpTransport(Protocol):
-    """What a CDP round-trip needs of its transport, satisfied by cdp_use and by CdpMux."""
+    """All a CDP round-trip needs of its transport, so cdp_call can take a test double too."""
 
     async def send_raw(
         self,
@@ -137,10 +137,10 @@ class CdpMux:
         params: CdpFrame | None = None,
         session_id: str | None = None,
     ) -> CdpFrame:
-        """Issue one CDP command and return its result, matching cdp_use's contract.
+        """Issue one CDP command and return its result.
 
-        Raises RuntimeError carrying the CDP error object, so callers that already
-        handle cdp_use failures keep working.
+        Raises RuntimeError carrying the engine's own error object, so a failed
+        command is a failure rather than an empty result the caller misreads.
         """
         message: CdpFrame = {"method": method, "params": params or {}}
         if session_id:

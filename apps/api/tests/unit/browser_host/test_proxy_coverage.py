@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import json
 from typing import Any
@@ -510,6 +511,12 @@ def _sent(client_ws: MagicMock) -> list[dict[str, Any]]:
     return [json.loads(call[0][0]) for call in client_ws.send_text.call_args_list]
 
 
+async def _never_speaks() -> str:
+    """Stand in for a connected client that is simply sitting idle."""
+    await asyncio.Event().wait()
+    raise AssertionError("an idle client never sends")
+
+
 @pytest.mark.unit
 async def test_run_cdp_proxy_refuses_and_forwards() -> None:
     """The upstream refusal and the downstream context filter, over one mux."""
@@ -563,6 +570,22 @@ async def test_run_cdp_proxy_delivers_a_reply_from_the_sink_to_the_client() -> N
     await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
 
     assert _sent(client_ws) == [{"id": 77, "result": {"frameId": "f1"}}]
+
+
+@pytest.mark.unit
+async def test_run_cdp_proxy_returns_when_the_engine_drops_the_connection() -> None:
+    """An idle client has nothing to fail on, so the mux closing is what ends the proxy."""
+    mux = FakeMux()
+    client_ws = MagicMock()
+    client_ws.send_text = AsyncMock()
+    client_ws.receive_text = _never_speaks
+
+    proxying = asyncio.create_task(
+        proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
+    )
+    mux.close_signal.set()  # the engine hung up
+
+    await asyncio.wait_for(proxying, timeout=1.0)
 
 
 @pytest.mark.unit

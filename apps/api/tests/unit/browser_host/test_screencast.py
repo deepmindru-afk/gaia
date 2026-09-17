@@ -143,8 +143,8 @@ def test_mouse_params_passes_modifiers_through() -> None:
 
 
 # --- run_live_view over the shared mux -------------------------------------
-# Regression: the viewer used to own its own CDPClient. It now borrows the
-# session's one connection, so closing it or leaking its sink breaks the session.
+# Regression: the viewer used to own its own engine connection. It now borrows
+# the session's one connection, so closing it or leaking its sink breaks the session.
 
 
 async def _run_with_pump(
@@ -206,6 +206,30 @@ async def test_run_live_view_does_not_close_the_shared_mux() -> None:
         await screencast.run_live_view(host, make_session(_SESSION_ID, mux=mux), MagicMock())
 
     assert mux.closed is False
+
+
+@pytest.mark.unit
+async def test_run_live_view_returns_when_the_engine_drops_the_connection() -> None:
+    """An idle viewer has nothing to fail on, so the mux closing is what ends the view."""
+    mux = make_mux()
+    host = MagicMock()
+    host.focused_target_id = AsyncMock(return_value="target-1")
+    client_ws = MagicMock()
+    client_ws.send_text = AsyncMock()
+
+    async def never_speaks() -> str:
+        await asyncio.Event().wait()
+        raise AssertionError("an idle viewer never sends")
+
+    client_ws.receive_text = never_speaks
+
+    viewing = asyncio.create_task(
+        screencast.run_live_view(host, make_session(_SESSION_ID, mux=mux), client_ws)
+    )
+    mux.close_signal.set()  # the engine hung up
+
+    await asyncio.wait_for(viewing, timeout=1.0)
+    host.remove_viewer.assert_called_once_with(_SESSION_ID)
 
 
 @pytest.mark.unit
@@ -348,7 +372,7 @@ async def test_run_live_view_ignores_navigation_on_another_page_session() -> Non
 # repainted, so an agent-driven page freezes the viewer on its first frame.
 
 
-def _fail_capture(mux: FakeMux, exc: Exception) -> None:
+def _fail_capture(monkeypatch: pytest.MonkeyPatch, mux: FakeMux, exc: Exception) -> None:
     """Make every Page.captureScreenshot on this mux raise, leaving other calls alone."""
     send_raw = mux.send_raw
 
@@ -360,7 +384,7 @@ def _fail_capture(mux: FakeMux, exc: Exception) -> None:
             raise exc
         return result
 
-    mux.send_raw = send  # type: ignore[method-assign]
+    monkeypatch.setattr(mux, "send_raw", send)
 
 
 @pytest.mark.unit
@@ -434,7 +458,7 @@ async def test_live_view_survives_a_failing_capture_and_logs_it(
 ) -> None:
     monkeypatch.setattr(screencast, "_PULL_INTERVAL_SECONDS", 0)
     mux = make_mux()
-    _fail_capture(mux, RuntimeError("capture refused"))
+    _fail_capture(monkeypatch, mux, RuntimeError("capture refused"))
 
     async def wait_out_several_ticks() -> None:
         for _ in range(8):
