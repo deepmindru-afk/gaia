@@ -62,6 +62,18 @@ repos:
         pass_filenames: false
         priority: 0
 
+      - id: gaia-import-cost
+        name: Base-layer import cost (constants/config/utils/models stay cheap)
+        language: system
+        # Same cwd=apps/api rule as the hooks around it, and the repo venv
+        # python because the check imports the real modules. `--report` matches
+        # the CI step: it measures and prints, and gates nothing until the base
+        # layers stop importing upward (tools/lints/check_import_cost.py).
+        entry: ../../.venv/bin/python ../../tools/lints/check_import_cost.py --report
+        files: ^(app/(constants|config|utils|models)/.*\.py|app/(main|worker)\.py|tests/conftest\.py)$
+        pass_filenames: false
+        priority: 0
+
       - id: gaia-ignore-whys
         name: Ruff/mypy escape hatches must carry a why-comment
         language: system

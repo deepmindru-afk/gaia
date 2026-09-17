@@ -19,7 +19,6 @@ from enum import StrEnum
 from typing import Any
 
 from app.agents.llm.client import PROVIDER_MODELS, next_fallback_provider
-from app.agents.llm.types import DevModelOption, LLMProviderName
 from app.config.rate_limits import RateLimitPeriod, get_reset_time, get_time_window_key
 from app.config.settings import settings
 from app.constants.cache import COST_BUDGET_NOTIFIED_KEY
@@ -38,6 +37,8 @@ from app.constants.llm import (
     PRO_MONTHLY_COST_BUDGET_USD,
     PROVIDER_FIELD_ID,
     REASONING_FIELD_ID,
+    DevModelOption,
+    LLMProviderName,
 )
 from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache

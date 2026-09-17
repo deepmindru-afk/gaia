@@ -3,7 +3,7 @@
 The scripts under test are the real lane scripts, and they reach for the job's
 shared state through the environment:
 
-* `lib/cpu-slots.sh` — `mutation.sh shard` and `pytest.sh slice` take nproc-2
+* `lib/cpu-slots.sh` — `mutation.sh shard` and `pytest.sh slice` take their
   host tokens before their first real step. Run on the self-hosted box with
   the pool inherited, each sandboxed shard in this suite queued behind the
   real mutation shards for the semaphore's full 600 s fail-open wait, and the
@@ -26,8 +26,10 @@ import shutil
 
 import pytest
 
-# More than any lane requests (nproc-2 on the 16-core box), so a test only
-# waits when it deliberately makes a smaller pool of its own.
+# More than any lane requests (a mutation shard takes nproc/2 on the 16-thread
+# box), so a test only waits when it deliberately makes a smaller pool of its
+# own. A test that proves the DEFAULT pool size must pass an empty
+# GAIA_CPU_TOKENS rather than drop the key, which would inherit this one.
 PRIVATE_POOL_TOKENS = "64"
 
 

@@ -13,12 +13,8 @@ Environment characteristics (env, service, commit) are injected into every
 event at the middleware level — no per-file boilerplate required.
 """
 
-import asyncio
-from collections.abc import Awaitable, Callable
-from functools import wraps
 from http import HTTPStatus
 import time
-from typing import ParamSpec, TypeVar, cast
 
 from fastapi import Request
 from pydantic import BaseModel, ConfigDict
@@ -47,79 +43,6 @@ class _WideEventFields(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     user: _WideEventUser = _WideEventUser()
-
-
-P = ParamSpec("P")
-R = TypeVar("R")
-
-
-def log_function_call(
-    func: Callable[P, Awaitable[R]] | Callable[P, R],
-) -> Callable[P, Awaitable[R]] | Callable[P, R]:
-    """Log a function call's execution time, wrapping both sync and async functions.
-
-    A call over 1s emits a warning into the wide event's warnings[]; an exception
-    emits an error into errors[].
-    """
-
-    func_name = func.__qualname__
-
-    if asyncio.iscoroutinefunction(func):
-        async_func = cast(Callable[P, Awaitable[R]], func)
-
-        @wraps(func)
-        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            start_time = time.time()
-            try:
-                result = await async_func(*args, **kwargs)
-                execution_time = time.time() - start_time
-                if execution_time > 1.0:
-                    wide_log.warning(
-                        "slow function",
-                        function=func_name,
-                        duration_ms=round(execution_time * 1000, 2),
-                    )
-                return result
-            except Exception as e:
-                execution_time = time.time() - start_time
-                wide_log.error(
-                    "function failed",
-                    function=func_name,
-                    duration_ms=round(execution_time * 1000, 2),
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                raise
-
-        return async_wrapper
-
-    sync_func = cast(Callable[P, R], func)
-
-    @wraps(func)
-    def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        start_time = time.time()
-        try:
-            result = sync_func(*args, **kwargs)
-            execution_time = time.time() - start_time
-            if execution_time > 1.0:
-                wide_log.warning(
-                    "slow function",
-                    function=func_name,
-                    duration_ms=round(execution_time * 1000, 2),
-                )
-            return result
-        except Exception as e:
-            execution_time = time.time() - start_time
-            wide_log.error(
-                "function failed",
-                function=func_name,
-                duration_ms=round(execution_time * 1000, 2),
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            raise
-
-    return sync_wrapper
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):

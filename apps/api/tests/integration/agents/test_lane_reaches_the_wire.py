@@ -26,8 +26,12 @@ import pytest
 
 from app.agents.llm.client import _openrouter_wire_configurables, without_sdk_retry
 from app.agents.llm.lane import ModelLane
-from app.agents.llm.types import LLMProviderName
-from app.constants.llm import DEFAULT_MAX_TOKENS, DEFAULT_MODEL_NAME, PAID_MODEL_NAME
+from app.constants.llm import (
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MODEL_NAME,
+    PAID_MODEL_NAME,
+    LLMProviderName,
+)
 
 #: A provider-routing pin, in the shape a DEV_MODEL_OPTIONS entry carries one. The
 #: paid lane no longer pins — session_id sticky routing replaced it — but a dev

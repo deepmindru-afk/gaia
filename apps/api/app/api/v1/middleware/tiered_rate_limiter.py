@@ -41,9 +41,8 @@ from app.services.usage_service import UsageService
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log, spawn_logged_task
 
-# UsageInfo is imported (not defined here) but re-exported for
-# `app.api.v1.middleware.__init__` — explicit re-export required under
-# no_implicit_reexport.
+# UsageInfo is imported (not defined here) but re-exported for callers that
+# read a limiter result — explicit re-export required under no_implicit_reexport.
 __all__ = ["UsageInfo"]
 
 P = ParamSpec("P")

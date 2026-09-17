@@ -26,7 +26,6 @@ from app.agents.llm.lane import (
     dev_option_for,
     resolve_lane,
 )
-from app.agents.llm.types import LLMProviderName
 from app.config.rate_limits import RateLimitPeriod
 from app.constants.cache import COST_BUDGET_NOTIFIED_KEY
 from app.constants.llm import (
@@ -39,6 +38,7 @@ from app.constants.llm import (
     PAID_MODEL_NAME,
     PAID_MODEL_PROVIDER,
     PRO_MONTHLY_COST_BUDGET_USD,
+    LLMProviderName,
 )
 from app.constants.log_tags import LogTag
 from app.models.notification.notification_models import (

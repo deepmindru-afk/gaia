@@ -20,7 +20,6 @@ from app.agents.core.interruption import record_interruption
 from app.agents.core.subagents.registry import get_subagent_by_id
 from app.agents.llm.lane import AgentRole, ModelLane, resolve_lane
 from app.agents.llm.ttft import LLMTtftCallback
-from app.agents.llm.types import DevModelOption
 from app.config.langfuse import build_langfuse_callback
 from app.constants.analytics import POSTHOG_PROVIDER_KEY
 from app.constants.cache import (
@@ -30,6 +29,7 @@ from app.constants.cache import (
 from app.constants.hil import HIL_JUDGE_MAX_TURN_CHARS, HIL_JUDGE_MAX_USER_TURNS
 from app.constants.llm import (
     AGENT_RECURSION_LIMIT,
+    DevModelOption,
 )
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import providers

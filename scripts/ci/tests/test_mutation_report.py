@@ -558,6 +558,42 @@ def test_a_mutmut_child_that_produced_nothing_is_an_error_not_a_pass(tmp_path: P
     assert verdict["summary"] == "mutmut produced no results — the child did not run"
 
 
+def test_a_module_mutmut_left_without_state_says_how_many_tests_timed_out(
+    tmp_path: Path,
+) -> None:
+    """The no-state exit reports WHY, so the gate is not handed a bare failure.
+
+    A per-test timeout inside the stats run aborts mutmut before a single mutant
+    is graded. Without a record this reaches the gate as "the lane failed and
+    has not adopted the verdict contract", which reads like a weak suite when it
+    is a slow box — and hides that no survivor was measured at all.
+    """
+    root = _sandbox(
+        tmp_path,
+        "echo 'FAILED tests/unit/test_x.py::test_slow - Failed: Timeout (>120.0s)';"
+        " mkdir -p mutants; exit 1",
+    )
+    result = _run_shard(root)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "no state produced" in result.stdout
+    verdict = json.loads((root / "verdicts/mutation/app/services/x.py.json").read_text())
+    assert verdict["status"] == "error"
+    assert "1 test(s) hit the 120s per-test timeout" in verdict["summary"]
+    assert "no survivors were measured" in verdict["summary"]
+
+
+def test_a_no_state_module_that_did_not_time_out_says_so(tmp_path: Path) -> None:
+    """The same exit with no timeout must not claim one — zero is its own answer."""
+    root = _sandbox(tmp_path, "echo 'some other mutmut explosion'; mkdir -p mutants; exit 1")
+    result = _run_shard(root)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    verdict = json.loads((root / "verdicts/mutation/app/services/x.py.json").read_text())
+    assert verdict["status"] == "error"
+    assert "no test hit the 120s per-test timeout" in verdict["summary"]
+
+
 def test_a_run_that_generated_no_mutants_is_a_skip_not_a_pass(tmp_path: Path) -> None:
     """Mutmut ran and found nothing to mutate: honest, but still not proof.
 

@@ -119,3 +119,12 @@ def test_the_embedding_sidecar_imports_without_settings() -> None:
         env={"ENV": "test", "PATH": os.environ["PATH"], "LOG_LEVEL": "ERROR"},
     )
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_the_configurable_key_matches_langgraphs() -> None:
+    """app.models.agent_config spells langgraph's CONF out to stay a leaf."""
+    from langgraph.constants import CONF
+
+    from app.models.agent_config import CONFIGURABLE_KEY
+
+    assert CONFIGURABLE_KEY == CONF

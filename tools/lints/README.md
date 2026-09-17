@@ -341,6 +341,58 @@ and a review, not a convenience.
 (file, rule): a listed file only stays quiet while untouched; the PR that
 touches it fixes its violations and deletes the line. Deferrals work as for the
 PLR ratchet.
+## import-cost
+
+Not an AST rule — it imports the real modules in fresh subprocesses under
+`python -X importtime`, so it is a standalone script/hook rather than
+something through `run.py`:
+
+```bash
+python3 tools/lints/check_import_cost.py            # check (exits 1 over budget)
+python3 tools/lints/check_import_cost.py --report   # every module's cost, gates nothing
+```
+
+**Rule:** every git-tracked module under `apps/api/app/{constants,config,utils,models}`
+must import, ON ITS OWN, inside `MODULE_BUDGET_MS`; the three entry points
+(`tests.conftest`, `app.main`, `app.worker`) have their own budgets in
+`ENTRY_BUDGET_MS`. "On its own" is literal: each module is imported alone in
+a fresh subprocess, so its cost is its own body plus everything it is the
+first to import — which is what `-X importtime` reports as the cumulative
+column for the root of a lone import.
+
+**Why:** a base-layer module is imported by everything above it, so its cost
+is paid by every test session, every worker boot and every CLI start.
+`import app.constants.llm` measured 1.6 s and pulled transformers,
+langchain_core and langsmith; a constants module must be a leaf. Plugin
+autoload and this import graph together were 3.2 s and 2.8 s of a 7.4 s
+pytest run that executed 0.24 s of test.
+
+**No list, no baseline.** Nothing here names a package. Which modules are
+measured is discovered from `git ls-files`, so a new file is covered the
+moment it is committed; how expensive a package is, is measured rather than
+asserted. Where a heavy package may be imported FROM is a separate question
+and belongs in `[tool.importlinter]`'s layers contract, not in a list here.
+
+**Fix:** the failure prints the most expensive path out of the module —
+`app.utils.chat_utils -> app.agents.llm.chatbot (6487 ms) -> ...`. Cut the
+first edge. A base-layer module must not reach up into a layer above it, and
+a type-only import is still a runtime import in this repo (no
+`TYPE_CHECKING`), so move the shared type down rather than importing the
+heavy module to name it.
+
+**Noise:** the box runs the test and mutation lanes on the same cores, so a
+single slow read is a coin flip. One sweep decides the common case; only a
+module that blew its budget is re-measured (`CONFIRM_RUNS`), and the cheapest
+reading wins. Re-running the whole sweep three times costs six minutes to
+change no answer.
+
+**Status (2026-09-17):** the CI step runs with `--report` and gates nothing.
+Measured on the home box, every module under `app/utils` and `app/models`
+costs 6-15 s alone, because those layers import upward
+(`app.utils.chat_utils` -> `app.agents.llm.chatbot`). Gating today would red
+~200 modules on a PR that caused none of them. Drop `--report` from the step
+in `code-quality.yml` and from `scripts/dev/verify-lanes.json` once the
+layering is fixed — that is the whole change.
 
 ---
 

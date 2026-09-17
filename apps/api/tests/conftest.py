@@ -8,7 +8,8 @@ Provides:
 - Reusable fake user and auth fixtures
 """
 
-from collections.abc import AsyncGenerator, Callable, Iterator
+import asyncio
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 import contextlib
 from contextlib import asynccontextmanager
 import importlib
@@ -78,6 +79,12 @@ _always_patches = [
     # is inert for _ensure_infisical_loaded; patch the settings binding too.
     patch("app.config.settings.inject_infisical_secrets", return_value=None),
     patch("shared.py.secrets.inject_infisical_secrets", return_value=None),
+]
+
+# Started by the _rate_limiting_fence fixture, NOT the import-time loop below:
+# patch() resolves its target only when start() runs, and rate_limiting drags in
+# workos, langgraph and the payment services — ~3 s a collection need not pay.
+_rate_limiting_patches = [
     patch(
         "app.decorators.rate_limiting.payment_service.get_user_subscription_status",
         new_callable=AsyncMock,
@@ -90,9 +97,158 @@ _always_patches = [
     ),
 ]
 
-# Only mock MongoDB when real services are NOT available. When
-# USE_REAL_SERVICES=1 the Dagger container has real MongoDB running and
-# integration/e2e/service tests should reach it.
+# ---------------------------------------------------------------------------
+# Redis fence — mirror of the MongoDB fence, at the same gate.
+
+# The unit tier is hermetic, but Redis was not fenced: any path reaching
+# redis_cache.client opened a real socket, which hangs where the port is
+# firewalled. The mutation lane runs each module's test files in ISOLATION.
+
+# The seam is redis.asyncio.from_url, NOT the app's _new_client wrapper around
+# it: patching the wrapper leaves RedisCache's construction unrun and defeats
+# the three unit/db tests that patch from_url themselves.
+
+# Not fakeredis, though it is a dev dependency. A module-level FakeServer binds
+# its asyncio primitives to one event loop, so per-test loops fail and real
+# SET-NX semantics reroute control flow — 121 failures measured.
+
+# Benign defaults keep hermetic tests correct: reads report nothing there,
+# writes report success, pipeline() is an async CM. Tests needing specific
+# behaviour opt in via mock_redis or patch.object, which rebind and win.
+
+_REDIS_COMMAND_RESULTS: dict[str, object] = {
+    "ping": True,
+    "get": None,
+    "set": True,
+    "setex": True,
+    "getdel": None,
+    "delete": 0,
+    "exists": 0,
+    "expire": True,
+    "ttl": -2,
+    "keys": [],
+    "incr": 1,
+    "llen": 0,
+    "lpop": None,
+    "lrange": [],
+    "ltrim": True,
+    "rpush": 1,
+    "hset": 1,
+    "hgetall": {},
+    "publish": 0,
+    "xadd": "0-0",
+    "xread": [],
+    "eval": None,
+}
+
+
+class _FenceRedisPipeline:
+    """Async-CM pipeline: each buffered command yields its benign default on execute()."""
+
+    def __init__(self) -> None:
+        self._queued: list[str] = []
+
+    async def __aenter__(self) -> "_FenceRedisPipeline":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Callable[..., "_FenceRedisPipeline"]:
+        def _buffer(*_args: object, **_kwargs: object) -> _FenceRedisPipeline:
+            self._queued.append(name)
+            return self
+
+        return _buffer
+
+    async def execute(self) -> list[object]:
+        await asyncio.sleep(0)
+        results = [_REDIS_COMMAND_RESULTS.get(name) for name in self._queued]
+        self._queued.clear()
+        return results
+
+    async def reset(self) -> None:
+        self._queued.clear()
+
+
+class _FenceRedisPubSub:
+    """No-op async pub/sub — never yields a message, never opens a socket."""
+
+    async def __aenter__(self) -> "_FenceRedisPubSub":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def get_message(
+        self, *_args: object, timeout: float | None = None, **_kwargs: object
+    ) -> None:
+        # Honor the poll timeout as real pubsub does: sleep, then report no
+        # message. A tight return-None loop never suspends, so a while-True
+        # consumer could never be cancelled — cancel() needs a suspension point.
+        await asyncio.sleep(timeout if isinstance(timeout, (int, float)) and timeout > 0 else 0)
+
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[None]]:
+        async def _noop(*_args: object, **_kwargs: object) -> None:
+            await asyncio.sleep(0)
+
+        return _noop
+
+
+class _FenceRedisLock:
+    """No-op async lock — acquisition always succeeds, release is a no-op."""
+
+    async def __aenter__(self) -> "_FenceRedisLock":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def acquire(self, *_args: object, **_kwargs: object) -> bool:
+        await asyncio.sleep(0)
+        return True
+
+    async def release(self, *_args: object, **_kwargs: object) -> None:
+        await asyncio.sleep(0)
+
+
+class _FenceAsyncRedis:
+    """In-process stand-in for redis.asyncio.Redis (see the fence comment above).
+
+    Awaited commands return benign defaults and never open a socket; pipeline(),
+    pubsub() and lock() hand back their own no-op async helpers.
+    """
+
+    def pipeline(self, transaction: bool = True) -> _FenceRedisPipeline:
+        return _FenceRedisPipeline()
+
+    def pubsub(self, **_kwargs: object) -> _FenceRedisPubSub:
+        return _FenceRedisPubSub()
+
+    def lock(self, *_args: object, **_kwargs: object) -> _FenceRedisLock:
+        return _FenceRedisLock()
+
+    async def aclose(self) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[object]]:
+        result = _REDIS_COMMAND_RESULTS.get(name)
+
+        async def _command(*_args: object, **_kwargs: object) -> object:
+            # Yield to the loop before returning, as a real awaited command
+            # always suspends, so a while-True polling loop stays cancellable
+            # instead of spinning with no suspension point for cancel().
+            await asyncio.sleep(0)
+            return result
+
+        return _command
+
+
+_fence_redis_client = _FenceAsyncRedis()
+
+# Only mock MongoDB/Redis when real services are NOT available. When
+# USE_REAL_SERVICES=1 the Dagger container has real MongoDB/Redis running and
+# integration/e2e/service tests should reach them.
 _infra_patches = (
     []
     if _USE_REAL_SERVICES
@@ -101,12 +257,26 @@ _infra_patches = (
             "app.db.mongodb.collections._get_mongodb_instance",
             return_value=MagicMock(),
         ),
+        patch(
+            "app.db.redis.redis.from_url",
+            return_value=_fence_redis_client,
+        ),
     ]
 )
 
 _patches = [*_always_patches, *_infra_patches]
 for p in _patches:
     p.start()
+
+# RedisCache builds its client eagerly in __init__, and the imports above ran
+# that constructor before the patch started. The patch fences future
+# construction; re-point the singleton built at import so every path is fenced.
+if not _USE_REAL_SERVICES:
+    _redis_module = importlib.import_module("app.db.redis")
+    _redis_module.redis_cache.redis = _fence_redis_client
+    assert _redis_module.redis_cache.client is _fence_redis_client, (
+        "hermetic fence broken: redis_cache is not bound to the in-process fake"
+    )
 
 # Fail loud if the Infisical fence is ever re-pointed at the real vault.
 # importlib (not a top-level import) keeps E402 clean after the patch loop.
@@ -159,6 +329,18 @@ def _hermetic_allowed_keys() -> frozenset[str]:
 _HERMETIC_FAKE_KEYS = {
     "GOOGLE_API_KEY": "sk-hermetic-test-key-not-real",  # pragma: allowlist secret
 }
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _rate_limiting_fence() -> Iterator[None]:
+    """Mock the tiered limiter and the subscription lookup for the whole session."""
+    for p in _rate_limiting_patches:
+        p.start()
+    try:
+        yield
+    finally:
+        for p in reversed(_rate_limiting_patches):
+            p.stop()
 
 
 @pytest.fixture(scope="session", autouse=True)

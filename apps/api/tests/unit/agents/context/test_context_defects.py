@@ -28,7 +28,7 @@ from tests._harness.context_chain import (
 from tests._harness.context_sources import ContextSources, memory
 
 from app.agents.context.slots import PromptSlot
-from app.agents.llm.types import LLMProviderName
+from app.constants.llm import LLMProviderName
 
 VOLATILE_SOURCES = ContextSources(
     core_memory="- Prefers short answers.",
