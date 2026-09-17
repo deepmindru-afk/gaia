@@ -481,12 +481,11 @@ class TestBuildExecutorGraph:
         expected = ["activate_integration", *EXECUTOR_INITIAL_TOOL_IDS]
         assert kwargs["tools_config"].initial_tool_ids == expected
 
-    async def test_activation_flag_keeps_wait_for_subagents(self, monkeypatch):
-        """wait_for_subagents is handoff's pair, and handoff stays bound under
-        activation for per-user MCP, so its collector stays too.
+    async def test_no_join_tool_in_either_mode(self, monkeypatch):
+        """Neither wait_for_subagents nor any successor is bound: background
+        results arrive via the executor inbox and steering needs no join.
         """
         from app.config.settings import settings
-        from app.constants.general import WAIT_FOR_SUBAGENTS_NAME
 
         monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
 
@@ -500,8 +499,10 @@ class TestBuildExecutorGraph:
             call = deps["mocks"][f"{_MOD}.create_agent"].call_args
             kwargs, registry = call.kwargs, call.args[1]
 
-        assert WAIT_FOR_SUBAGENTS_NAME in kwargs["tools_config"].initial_tool_ids
-        assert WAIT_FOR_SUBAGENTS_NAME in registry
+        assert "wait_for_subagents" not in kwargs["tools_config"].initial_tool_ids
+        assert "collect_subagent_results" not in kwargs["tools_config"].initial_tool_ids
+        assert "wait_for_subagents" not in registry
+        assert "collect_subagent_results" not in registry
 
     async def test_yields_compiled_graph_postgres(self):
         fake_cp = MagicMock(name="postgres_checkpointer")
@@ -570,7 +571,6 @@ class TestBuildExecutorGraph:
                 "read",
                 "bash",
                 "deep_research",
-                "wait_for_subagents",
                 "list_running_subagents",
                 "message_subagent",
                 "cancel_subagent",

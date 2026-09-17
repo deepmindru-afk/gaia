@@ -18,7 +18,6 @@ from langgraph.errors import GraphInterrupt
 import pytest
 
 from app.agents.core.subagents.subagent_runner import recover_from_checkpoint
-from app.constants.general import WAIT_FOR_SUBAGENTS_NAME
 from app.constants.hil import (
     HIL_EXEMPT_TOOLS,
     HIL_PAUSING_TOOLS,
@@ -133,15 +132,14 @@ class TestFinishedSubagentIsNotDrivenTwice:
         assert outcome.text == "Task completed."
 
 
-class TestJoinToolIsNeverGated:
-    """Bug: ``wait_for_subagents`` was absent from ``HIL_EXEMPT_TOOLS`` and is registered
-    directly into the executor's tool dict rather than the ToolRegistry — so the gate sent
-    it to the LLM destructive classifier, which fails CLOSED. A classifier outage would
-    gate the very join that collects parked approvals.
+class TestExemptToolsAreNeverGated:
+    """The join tool is gone, but the regression coverage stays: HIL_EXEMPT_TOOLS
+    must keep covering every bound orchestration tool, or the gate sends one to
+    the LLM destructive classifier, which fails CLOSED.
     """
 
     def test_the_join_tool_is_exempt(self) -> None:
-        assert WAIT_FOR_SUBAGENTS_NAME in HIL_EXEMPT_TOOLS
+        assert {"handoff", "spawn_subagent"} <= HIL_EXEMPT_TOOLS
 
     async def test_the_gate_runs_it_without_resolving_any_policy(self) -> None:
         ran = False
@@ -152,7 +150,7 @@ class TestJoinToolIsNeverGated:
             return ToolMessage(content="collected", tool_call_id="call-1")
 
         with patch(f"{GATE}.resolve_policy", new=AsyncMock()) as policy:
-            result = await run_through_gate(make_request(name=WAIT_FOR_SUBAGENTS_NAME), handler)
+            result = await run_through_gate(make_request(name="handoff"), handler)
 
         assert ran is True
         assert result.content == "collected"
@@ -165,8 +163,8 @@ class TestJoinToolIsNeverGated:
 
 
 class TestExemptSiblingsThatPauseSuppressAutoApproval:
-    """Bug: the sibling guard skipped every exempt tool, but ``handoff`` and
-    ``wait_for_subagents`` are exempt AND can pause. A gated tool sharing a message with
+    """Bug: the sibling guard skipped every exempt tool, but ``handoff`` is
+    exempt AND can pause. A gated tool sharing a message with
     one of them auto-ran, then ran a SECOND time when the pause re-ran the whole node.
     """
 
@@ -184,7 +182,7 @@ class TestExemptSiblingsThatPauseSuppressAutoApproval:
         ):
             yield
 
-    @pytest.mark.parametrize("pausing_tool", ["handoff", WAIT_FOR_SUBAGENTS_NAME])
+    @pytest.mark.parametrize("pausing_tool", ["handoff", "spawn_subagent"])
     async def test_a_pausing_sibling_blocks_auto_approval(self, pausing_tool: str) -> None:
         request = make_request(
             call_id="call-1",
@@ -544,7 +542,7 @@ class TestCancelledRunIsNotResurrectedByItsApproval:
             counts = await sweep_approvals()
             await drain_spawned_tasks()
 
-        assert counts == {"expired": 0, "redispatched": 0}
+        assert counts == {"expired": 0, "redispatched": 0, "deferred_subagent": 0}
         assert runner.await_count == 0
 
     async def test_clearing_the_resume_context_actually_unsets_the_field(self) -> None:

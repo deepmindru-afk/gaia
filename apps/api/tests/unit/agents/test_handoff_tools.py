@@ -1559,8 +1559,7 @@ class TestHandoffRejectionMessages:
 
         assert rejection == (
             "The gmail_agent subagent is paused waiting for the user's approval. "
-            "Call wait_for_subagents() to collect its outcome before sending it "
-            "new tasks."
+            "Its outcome will be delivered on resolution; send it nothing meanwhile."
         )
         assert probed == [ctx]
 
@@ -1588,7 +1587,7 @@ class TestHandoffRejectionMessages:
 
         assert rejection == (
             "A background gmail_agent subagent is already running on this "
-            "integration. Call wait_for_subagents() to collect it first."
+            "integration. Steer it with message_subagent or wait for its result to arrive."
         )
 
     async def test_a_background_handoff_is_left_to_the_session_slot_claim(self):
@@ -1799,7 +1798,7 @@ class TestHandoffPassesTheRunModeToTheRejectionCheck:
 
         assert result == (
             "A background gmail_agent subagent is already running on this "
-            "integration. Call wait_for_subagents() to collect it first."
+            "integration. Steer it with message_subagent or wait for its result to arrive."
         )
 
     async def test_a_background_handoff_is_not_refused_by_that_same_slot(self) -> None:

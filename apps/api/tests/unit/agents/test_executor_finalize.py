@@ -545,9 +545,6 @@ def _real_lock_lifecycle(cache: _FakeRedisCache):
             patch.object(er, "deliver_result", new_callable=AsyncMock)
         ).return_value = (None, None)
         stack.enter_context(patch.object(er, "build_returned_to_frontend_note", return_value=""))
-        stack.enter_context(
-            patch.object(er, "_queue_collection_if_uncollected", new_callable=AsyncMock)
-        )
         stack.enter_context(patch.object(er, "ExecutorInbox")).return_value.read = AsyncMock(
             return_value=[]
         )

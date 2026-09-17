@@ -260,7 +260,6 @@ _SPECIAL_TOOLS: dict[str, tuple[str, str | None, bool]] = {
     "cancel_executor": ("cancel_executor", "Cancelling the task", False),
     "handoff": ("handoff", None, False),  # message will be set from args
     "spawn_subagent": ("spawn_subagent", "Spawn subagent", False),
-    "wait_for_subagents": ("wait_for_subagents", "Wait for subagents", False),
     "plan_tasks": ("plan_tasks", "Plan tasks", False),
     # Synthetic card a replayed workflow run leads with — never a callable
     # tool. The playbooks category carries the icon the authoring tools use.

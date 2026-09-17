@@ -127,7 +127,6 @@ TOOL_TIMEOUT_EXEMPT_TOOLS = frozenset(
         "cancel_executor",
         "spawn_subagent",
         "handoff",
-        "wait_for_subagents",
         "deep_research",
         # bash carries its own deadline all the way down: the e2b server-side
         # command timeout (its `timeout` arg, capped at BASH_MAX_TIMEOUT_SECONDS)

@@ -5,29 +5,28 @@ subagent graph, appends the final result to the conversation's durable
 results bucket (Redis — it must survive the executor's approval pause), and
 decrements the in-process pending counter.
 
-The executor calls wait_for_subagents() to block until all background
-subagents complete or park, collect their results, and — when any parked on a
-HIL approval — pause the executor once for the whole batch.
+The executor never collects: landed results go straight to its inbox, and a
+parked approval stamps its record and announces itself the same way, so the
+executor stays free to steer or keep working.
 """
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import time
+from uuid import uuid4
 
-from app.agents.core.background.bg_results import append_bg_subagent_result
+from app.agents.core.background.executor_channel import ExecutorInbox
 from app.agents.core.background.executor_queue import claim_collection_wake, is_executor_busy
 from app.agents.core.background.executor_runner import deliver_to_executor
 from app.agents.core.background.redis_writer import make_redis_stream_writer
 from app.agents.core.background.running_registry import RunningSubagents
-from app.agents.core.background.session import (
-    decrement_pending_subagents,
-    release_bg_integration,
-)
+from app.agents.core.background.session import release_bg_integration
 from app.agents.core.subagents.call_record import append_call_record
 from app.agents.core.subagents.subagent_runner import (
     SubagentExecutionContext,
     execute_subagent_stream,
 )
+from app.constants.agents import AgentTag
 from app.constants.executor import EXECUTOR_COLLECTION_TASK
 from app.constants.log_tags import LogTag
 from app.models.agent_models import AgentConfigurable, RunningSubagent
@@ -68,9 +67,9 @@ async def run_subagent_background(
     caught and stored as the subagent's result text.
 
     A HIL pause is not an error: the subagent's graph is checkpointed, so this
-    stamps the approval record with the thread id and exits. The
-    wait_for_subagents join rediscovers it durably, pauses the executor for the
-    user's decision, and resumes the subagent when it lands.
+    stamps the approval record with the thread id, announces the pause to the
+    executor inbox, and exits. Reviewing the parked approval belongs to the
+    HIL rework; until then the record waits out its TTL.
 
     Args:
         ctx: Fully prepared SubagentExecutionContext.
@@ -172,7 +171,7 @@ async def run_subagent_background(
                 agent_name=ctx.agent_name,
                 stream_id=stream_id,
             )
-            await append_bg_subagent_result(conversation_id, ctx.agent_name, result)
+            await _deliver_result(conversation_id, ctx.agent_name, result)
         except Exception as e:
             log.error(
                 f"{LogTag.AGENT} Background subagent failed",
@@ -180,16 +179,14 @@ async def run_subagent_background(
                 stream_id=stream_id,
                 error=str(e),
             )
-            await _append_error_result(conversation_id, ctx.agent_name, e)
+            await _deliver_result(
+                conversation_id, ctx.agent_name, f"Error from {ctx.agent_name}: {e!s}"
+            )
         finally:
             if subagent_id:
                 await RunningSubagents(conversation_id).deregister(subagent_id)
             if integration_id:
                 release_bg_integration(stream_id, integration_id)
-            # Decrement AFTER appending the result (or stamping the park) so any
-            # wait_for_subagents that wakes on the count change sees this subagent's
-            # terminal state.
-            decrement_pending_subagents(stream_id)
             await _wake_if_executor_rested(conversation_id, ctx.configurable)
 
 
@@ -220,13 +217,28 @@ async def _wake_if_executor_rested(conversation_id: str, configurable: AgentConf
         )
 
 
+async def _deliver_result(conversation_id: str, agent_name: str, result: str) -> None:
+    """Hand a finished background result to the executor's inbox.
+
+    The drain hook injects it before the executor's next reasoning step, so no
+    collect call is needed: results (and failures) arrive on their own whether
+    the executor is mid-turn or rested (the wake below starts a turn that reads
+    the same inbox). Agent-prefixed, because an inbox entry carries no
+    attribution of its own.
+    """
+    await ExecutorInbox(conversation_id).append(
+        str(uuid4()), f"{agent_name}: {result}", AgentTag.SUBAGENT_RESULT
+    )
+
+
 async def _park(
     ctx: SubagentExecutionContext, interrupt: dict[str, object], stream_id: str
 ) -> None:
-    """Record a HIL-paused subagent durably so the join can resume it later.
+    """Record a HIL-paused subagent durably and say so out loud.
 
-    No result is appended — the subagent's real result is collected by the join
-    after the user's decision resumes its checkpointed thread.
+    No result is appended — there is none yet. But the pause itself is
+    announced to the executor inbox: parked work with no witness rots silently
+    until expiry, and the HIL rework that will review it is not built yet.
     """
     approval_id = str(interrupt.get("approval_id", ""))
     thread_id = str(ctx.configurable.get("thread_id", ""))
@@ -242,6 +254,15 @@ async def _park(
         subagent_thread_id=thread_id,
         subagent_agent_name=ctx.agent_name,
     )
+    conversation_id = str(ctx.configurable.get("conversation_id", ""))
+    if conversation_id:
+        await ExecutorInbox(conversation_id).append(
+            str(uuid4()),
+            f"{ctx.agent_name} is paused waiting for the user's approval "
+            f"(approval {approval_id}). Background approvals cannot be reviewed "
+            "yet; the request stays pending until it times out.",
+            AgentTag.SUBAGENT_RESULT,
+        )
     log.info(
         f"{LogTag.HIL} Background subagent parked on approval",
         agent_name=ctx.agent_name,
@@ -254,9 +275,7 @@ async def _park(
 async def _append_error_result(conversation_id: str, agent_name: str, error: Exception) -> None:
     """Best-effort error result; never let a Redis failure escape the task."""
     try:
-        await append_bg_subagent_result(
-            conversation_id, agent_name, f"Error from {agent_name}: {error!s}"
-        )
+        await _deliver_result(conversation_id, agent_name, f"Error from {agent_name}: {error!s}")
     except Exception as redis_error:  # create_task coroutine must not raise
         log.error(
             f"{LogTag.AGENT} Could not store bg subagent error result",

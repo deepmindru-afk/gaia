@@ -30,7 +30,6 @@ from app.agents.core.background.executor_queue import (
     build_lock_value,
     build_run_item,
     claim_collection_wake,
-    clear_collection_marker,
     extend_lock_if_owned,
     get_lock_holder,
     get_lock_state,
@@ -321,20 +320,13 @@ class TestCollectionWake:
         assert await claim_collection_wake(CONVERSATION) is True
         assert await claim_collection_wake(CONVERSATION) is False
 
-    async def test_clearing_the_marker_lets_the_next_landing_wake_again(self, redis) -> None:
-        await claim_collection_wake(CONVERSATION)
-
-        await clear_collection_marker(CONVERSATION)
-
-        assert await claim_collection_wake(CONVERSATION) is True
-
     async def test_the_claim_is_per_conversation(self, redis) -> None:
         assert await claim_collection_wake(CONVERSATION) is True
         assert await claim_collection_wake("conv-2") is True
 
-    async def test_the_marker_expires_so_a_lost_join_cannot_mute_collection(self, redis) -> None:
-        """Crash insurance: a run that dies between claiming and joining would
-        otherwise suppress every future wake-up for that conversation forever."""
+    async def test_the_marker_expires_so_a_lost_run_cannot_mute_collection(self, redis) -> None:
+        """Crash insurance: a run that dies after claiming would otherwise
+        suppress every future wake-up for that conversation forever."""
         await claim_collection_wake(CONVERSATION)
 
         assert await redis.ttl(COLLECT_KEY) == EXECUTOR_COLLECT_MARKER_TTL

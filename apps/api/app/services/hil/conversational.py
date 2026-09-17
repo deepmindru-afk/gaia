@@ -21,7 +21,7 @@ A reply that accepts but changes anything ("yes but cc finance") is a deny with
 the change as feedback, so the agent re-proposes rather than silently running the
 wrong action (enforced by the prompt and by ``_no_arg_edit``).
 
-Several approvals pending (a wait_for_subagents batch) → per-item approve / deny /
+Several approvals pending → per-item approve / deny /
 leave against the numbered list: "yes" approves all, "no" declines all; a
 selective reply decides only what it names. Unnamed actions are DENIED when the
 reply is exclusive ("just the email") and LEFT pending when it is a non-exclusive

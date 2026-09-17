@@ -16,12 +16,9 @@ from app.agents.core.background.session import (
     claim_bg_integration,
     claim_tool_output,
     create_session,
-    decrement_pending_subagents,
     get_or_create_session,
-    get_pending_subagents,
     get_session,
     has_bg_integration,
-    increment_pending_subagents,
     mark_executor_spawned,
     note_tool_output_owner,
     release_bg_integration,
@@ -57,14 +54,12 @@ class TestSessionRegistry:
     def test_teardown_leaves_no_residue(self) -> None:
         create_session("s1", RunKind.QUEUED)
         mark_executor_spawned("s1")
-        increment_pending_subagents("s1")
         claim_bg_integration("s1", "gmail")
 
         teardown_session("s1")
 
         assert get_session("s1") is None
         assert was_executor_spawned("s1") is False
-        assert get_pending_subagents("s1") == 0
         assert has_bg_integration("s1", "gmail") is False
 
     def test_teardown_is_idempotent(self) -> None:
@@ -177,22 +172,6 @@ class TestOwnershipRule:
         assert run.executor_owns_tool_data is False
 
 
-class TestSubagentCoordination:
-    def test_counter_increments_and_decrements(self) -> None:
-        create_session("s1", RunKind.LIVE)
-        assert increment_pending_subagents("s1") == 1
-        assert increment_pending_subagents("s1") == 2
-        assert decrement_pending_subagents("s1") == 1
-        assert get_pending_subagents("s1") == 1
-
-    def test_counter_floors_at_zero(self) -> None:
-        create_session("s1", RunKind.LIVE)
-        assert decrement_pending_subagents("s1") == 0
-        assert get_pending_subagents("s1") == 0
-
-    def test_counter_for_missing_session_is_zero(self) -> None:
-        assert get_pending_subagents("missing") == 0
-        assert decrement_pending_subagents("missing") == 0
 
     def test_integration_slot_claim_is_exclusive_until_released(self) -> None:
         # The slot is what stops two concurrent background handoffs to the same

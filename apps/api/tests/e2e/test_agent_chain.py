@@ -302,14 +302,6 @@ async def run_chain(
             new=AsyncMock(return_value=[]),
         ),
         patch(
-            "app.agents.core.background.executor_runner.has_bg_subagent_results",
-            new=AsyncMock(return_value=False),
-        ),
-        patch(
-            "app.agents.core.background.executor_runner.list_parked_subagents_for_conversation",
-            new=AsyncMock(return_value=[]),
-        ),
-        patch(
             "app.agents.core.subagents.handoff_tools.list_parked_subagents_for_conversation",
             new=AsyncMock(return_value=[]),
         ),

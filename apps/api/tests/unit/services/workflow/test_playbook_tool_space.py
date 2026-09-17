@@ -348,6 +348,8 @@ class TestToolSpaceDenial:
             "search_memory",
             "read",
             "bash",
+            "execute",
+            "get_tool_schema",
             "finish_task",
             "posthog_fast",
         ]
@@ -359,7 +361,13 @@ class TestToolSpaceDenial:
         space = self._space(_subagent(mcp=False, include_finish_task=False))
 
         assert space.runtime is not None
-        assert space.runtime.initial_tool_names == ["search_memory", "read", "bash"]
+        assert space.runtime.initial_tool_names == [
+            "search_memory",
+            "read",
+            "bash",
+            "execute",
+            "get_tool_schema",
+        ]
 
     def test_tools_with_no_subagent_behind_them_have_no_runtime_bound(self) -> None:
         space = self._space(None)

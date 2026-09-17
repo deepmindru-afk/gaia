@@ -54,11 +54,9 @@ class StreamSession:
     executor_spawned: bool = False
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
     tool_events: list[dict[str, Any]] = field(default_factory=list)
-    pending_subagents: int = 0
     # Integrations with a background handoff in flight this run. Guards against a
     # second concurrent handoff to the same integration, whose subagent would share
-    # the deterministic checkpoint thread id and corrupt it. (Results live in Redis —
-    # see ``bg_results`` — because they must survive the executor's approval pause.)
+    # the deterministic checkpoint thread id and corrupt it.
     bg_integrations: set[str] = field(default_factory=set)
     # Voice-mode streams: the executor's finalize step publishes a TTS-only
     # ``voice_tts`` frame with its narrated answer for the voice agent to speak.
@@ -278,28 +276,6 @@ def signal_executor_done(stream_id: str) -> None:
         session.done_event.set()
 
 
-# ── Background subagent coordination ─────────────────────────────────
-# Incremented by handoff(background=True), decremented by
-# run_subagent_background. wait_for_subagents polls the counter and drains
-# the results once it hits zero.
-
-
-def increment_pending_subagents(stream_id: str) -> int:
-    """Increment pending background subagent count. Returns new count."""
-    session = get_or_create_session(stream_id)
-    session.pending_subagents += 1
-    return session.pending_subagents
-
-
-def decrement_pending_subagents(stream_id: str) -> int:
-    """Decrement pending background subagent count. Returns new count (min 0)."""
-    session = _sessions.get(stream_id)
-    if session is None:
-        return 0
-    session.pending_subagents = max(0, session.pending_subagents - 1)
-    return session.pending_subagents
-
-
 def note_tool_output_owner(stream_id: str, tool_call_id: str, subagent_id: str | None) -> None:
     """Record which run announced this call, so only it may stream the result."""
     session = _sessions.get(stream_id)
@@ -333,12 +309,6 @@ def claim_tool_output(stream_id: str, tool_call_id: str, subagent_id: str | None
         return False
     session.streamed_tool_outputs.add(tool_call_id)
     return True
-
-
-def get_pending_subagents(stream_id: str) -> int:
-    """Return number of pending background subagents for a stream."""
-    session = _sessions.get(stream_id)
-    return session.pending_subagents if session else 0
 
 
 def claim_bg_integration(stream_id: str, integration_id: str) -> bool:

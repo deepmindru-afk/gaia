@@ -38,9 +38,7 @@ from app.agents.tools.subagent_control_tool import (
     message_subagent,
 )
 from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_tools
-from app.agents.tools.wait_for_subagents_tool import wait_for_subagents as wait_for_subagents_tool
 from app.config.settings import settings
-from app.constants.general import WAIT_FOR_SUBAGENTS_NAME
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
 from app.override.langgraph_bigtool.agent_config import (
@@ -66,7 +64,6 @@ EXECUTOR_INITIAL_TOOL_IDS = [
     "read",
     "bash",
     "deep_research",
-    "wait_for_subagents",
     "list_running_subagents",
     "message_subagent",
     "cancel_subagent",
@@ -121,7 +118,7 @@ async def build_executor_graph(
     # bound unconditionally (its entry guard enforces the per-user experiment);
     # the prompt each run gets decides whether the model reaches for it.
     activation_mode = settings.ENABLE_INTEGRATION_ACTIVATION
-    tool_dict.update({"handoff": handoff_tool, WAIT_FOR_SUBAGENTS_NAME: wait_for_subagents_tool})
+    tool_dict.update({"handoff": handoff_tool})
     tool_dict.update({"activate_integration": activate_integration})
     # Executor-only tools to steer or cancel a specific running subagent by id.
     tool_dict.update(
@@ -135,7 +132,6 @@ async def build_executor_graph(
     # through handoff, never by activating in-context themselves.
     excluded_subagent_tools = {
         "handoff",
-        WAIT_FOR_SUBAGENTS_NAME,
         "list_running_subagents",
         "message_subagent",
         "cancel_subagent",

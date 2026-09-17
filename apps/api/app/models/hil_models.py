@@ -112,16 +112,14 @@ class HILApprovalRecord(MongoDocument):
     # a crashed resume the sweep re-dispatches.
     resumed_at: datetime | None = None
     # Set only when a *detached background subagent* parked on this approval. The
-    # subagent's graph is checkpointed under this deterministic thread id, so the
-    # executor's wait_for_subagents join can rediscover and resume it after the
-    # executor's own pause — durable state, never the in-process session. ``None`` for
-    # every other approval (interactive tool calls, blocking handoffs).
+    # subagent's graph is checkpointed under this deterministic thread id — durable
+    # state, never the in-process session — for the HIL rework to resume. ``None``
+    # for every other approval (interactive tool calls, blocking handoffs).
     subagent_thread_id: str | None = None
     subagent_agent_name: str | None = None
-    # Stamped by the join once the parked subagent has been resumed and its result
-    # collected. Distinct from ``resumed_at`` (which records that a decision dispatched
-    # the *executor*): a batch decision wakes the executor once, then each parked
-    # subagent is collected individually across join rounds.
+    # Reserved for the HIL rework: stamped once a parked subagent has been resumed
+    # and its result collected. Distinct from ``resumed_at`` (which records that a
+    # decision dispatched the *executor*). Unused until a resume driver exists.
     subagent_collected_at: datetime | None = None
 
 

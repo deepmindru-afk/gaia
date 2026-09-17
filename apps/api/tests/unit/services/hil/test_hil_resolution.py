@@ -207,10 +207,11 @@ class TestUnresumableRecords:
     async def test_an_early_decision_on_a_parked_subagent_decides_without_dispatch(
         self, resume: Any
     ) -> None:
-        # The user answers a parked subagent's card BEFORE the executor reaches its
-        # join (so no resume_item exists yet). With a live executor (busy lock held)
-        # the decision must land — the running executor collects it durably — and
-        # must NOT dispatch or stamp a resume.
+        # The user answers a parked subagent's card BEFORE any resume context
+        # exists. With a live executor (busy lock held) the decision still lands
+        # durably — and must NOT dispatch or stamp a resume. Resuming the parked
+        # thread belongs to the HIL rework; until then the record waits out its
+        # TTL and the sweep expires it.
         record = make_record(resume_item=None, subagent_thread_id="gmail_executor_conv-1")
         with (
             patch(f"{MODULE}.get_approval", new=AsyncMock(return_value=record)),
@@ -426,7 +427,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 1, "redispatched": 0}
+        assert counts == {"expired": 1, "redispatched": 0, "deferred_subagent": 0}
         assert decided.await_args.args[1] == "timeout"
         assert resume.runner.call_args.kwargs["resume"].resume["status"] == "timeout"
 
@@ -440,7 +441,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 0, "redispatched": 1}
+        assert counts == {"expired": 0, "redispatched": 1, "deferred_subagent": 0}
         assert resume.runner.call_args.kwargs["resume"].resume["status"] == "approved"
 
     async def test_a_stranded_abandoned_record_redispatches_as_a_denial(self, resume: Any) -> None:
@@ -468,7 +469,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 0, "redispatched": 0}
+        assert counts == {"expired": 0, "redispatched": 0, "deferred_subagent": 0}
         assert resume.runner.call_count == 0
 
     async def test_one_bad_record_does_not_strand_the_rest_of_the_expiry_pass(
@@ -491,7 +492,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 1, "redispatched": 0}
+        assert counts == {"expired": 1, "redispatched": 0, "deferred_subagent": 0}
         assert resume.runner.call_count == 1  # only the good record's run resumed
 
     async def test_one_failed_redispatch_does_not_abort_the_rest_of_the_sweep(
@@ -519,7 +520,7 @@ class TestSweep:
         ):
             counts = await sweep_approvals()
 
-        assert counts == {"expired": 0, "redispatched": 1}
+        assert counts == {"expired": 0, "redispatched": 1, "deferred_subagent": 0}
         assert resume.runner.call_count == 1  # only the good record's run resumed
 
 
@@ -601,3 +602,52 @@ class TestCancelledRunApprovals:
         ):
             assert await cancel_conversation_approvals(CONVERSATION_ID, USER_ID) == []
         assert decided.await_count == 0
+
+
+class TestSubagentParksHaveNoResumeDriver:
+    """Until the HIL rework supplies one, subagent-parked approvals must neither
+    dispatch doomed resume runs nor retry forever — they wait out their TTL
+    while the expiry pass still closes them."""
+
+    async def test_sweep_defers_subagent_thread_records_without_dispatch(self) -> None:
+        record = make_record(
+            approval_id="appr-9",
+            status="approved",
+            subagent_thread_id="gmail_executor_conv-1",
+        )
+        with (
+            patch(f"{MODULE}.list_expired_pending", new=AsyncMock(return_value=[])),
+            patch(
+                f"{MODULE}.list_decided_unresumed", new=AsyncMock(return_value=[record])
+            ),
+            patch(f"{MODULE}._dispatch_resume", new=AsyncMock()) as dispatch,
+        ):
+            result = await sweep_approvals()
+
+        dispatch.assert_not_awaited()
+        assert result == {"expired": 0, "redispatched": 0, "deferred_subagent": 1}
+
+    async def test_dispatch_refuses_subagent_thread_records_loudly(
+        self, resume: Any
+    ) -> None:
+        from app.services.hil.resolution import _dispatch_resume
+
+        record = make_record(subagent_thread_id="gmail_executor_conv-1")
+        with pytest.raises(ApprovalNotResumableError):
+            await _dispatch_resume(record, resume_status="approved", feedback=None, scope="once")
+
+        resume.claim.assert_not_awaited()
+        resume.runner.assert_not_awaited()
+        resume.mark_resumed.assert_not_awaited()
+
+    async def test_executor_gate_pauses_still_dispatch(self, resume: Any) -> None:
+        from app.services.hil.resolution import _dispatch_resume
+
+        record = make_record(subagent_thread_id=None)
+        await _dispatch_resume(
+            record, resume_status="approved", feedback=None, scope="once"
+        )
+        await asyncio.sleep(0)
+
+        resume.runner.assert_awaited_once()
+        resume.mark_resumed.assert_awaited_once()

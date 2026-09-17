@@ -9,7 +9,7 @@ for every tool in the app.
 from typing import Final, Literal
 
 from app.constants.cache import EXECUTOR_BUSY_TTL
-from app.constants.general import FINISH_TASK_NAME, WAIT_FOR_SUBAGENTS_NAME
+from app.constants.general import FINISH_TASK_NAME
 
 # The launch switch is ``HIL_DEFAULT_MODE`` in app/models/hil_models.py (the
 # default mode is a HILPreferences field default, so it lives with the model).
@@ -142,7 +142,7 @@ HIL_DECLINE_MEMORY_TTL_SECONDS = 1800
 HIL_BG_RESULTS_KEY_PREFIX = "hil:bg_results:"
 HIL_BG_RESULTS_TTL_SECONDS = 7200
 
-# Interrupt payload type for the wait_for_subagents join pause. Carries the whole
+# Interrupt payload type for a parked-approval batch pause. Carries the whole
 # batch of parked-subagent approvals, unlike the gate's single "hil_approval".
 HIL_BATCH_INTERRUPT_TYPE = "hil_approval_batch"
 
@@ -165,7 +165,6 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
         "cancel_executor",
         "handoff",
         "spawn_subagent",
-        WAIT_FOR_SUBAGENTS_NAME,
         FINISH_TASK_NAME,
         "plan_tasks",
         "update_tasks",
@@ -175,12 +174,11 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
 )
 
 # The exempt tools that can nonetheless PAUSE the run: ``handoff`` and
-# ``spawn_subagent`` bubble up their child graph's gate interrupt,
-# ``wait_for_subagents`` interrupts for the parked-approval batch. A gated sibling of
+# ``spawn_subagent`` bubble up their child graph's gate interrupt. A gated sibling of
 # one of these must never auto-run: the pause re-runs the whole tool node, so anything
 # that already executed would execute a second time (see ``policy.has_pausing_sibling``).
 HIL_PAUSING_TOOLS: frozenset[str] = frozenset(
-    {"handoff", "spawn_subagent", WAIT_FOR_SUBAGENTS_NAME}
+    {"handoff", "spawn_subagent"}
 )
 
 # tool_data entry name for the approval card (mirrored in @gaia/shared/chat).

@@ -3,8 +3,8 @@
 Under ENABLE_INTEGRATION_ACTIVATION the executor leads with `activate_integration`
 and keeps `handoff` bound solely for per-user MCP integrations that cannot be
 activated in-context. So the prompt teaches handoff only as that fallback, and
-never teaches `wait_for_subagents` (bound but not model-facing here). Anything
-else would produce calls that mislead the model, invisible until someone reads a
+no join tool at all: background outcomes arrive on their own. Anything else
+would produce calls that mislead the model, invisible until someone reads a
 transcript, so it is pinned here instead.
 """
 
@@ -41,15 +41,19 @@ class TestNoUnboundToolsTaught:
         offending = [
             line.strip()
             for line in activation_prompt.splitlines()
-            if "wait_for_subagents" in line.lower()
+            if "wait_for_subagents" in line.lower() or "collect_subagent_results" in line.lower()
         ]
-        assert offending == [], f"activation prompt still names wait_for_subagents: {offending}"
+        assert offending == [], f"activation prompt still names a join tool: {offending}"
+
+    def test_background_outcomes_arrive_without_a_join_call(self, activation_prompt) -> None:
+        assert "arrive" in activation_prompt
 
     def test_the_baseline_prompt_does_name_them(self) -> None:
         """Guards the rewrites from passing vacuously if the source prompt drops
         handoff on its own — then these rewrites are dead code, not protection."""
         assert "handoff" in EXECUTOR_AGENT_PROMPT.lower()
-        assert "wait_for_subagents" in EXECUTOR_AGENT_PROMPT.lower()
+        assert "wait_for_subagents" not in EXECUTOR_AGENT_PROMPT.lower()
+        assert "collect_subagent_results" not in EXECUTOR_AGENT_PROMPT.lower()
 
     def test_teaches_activation_and_spawn(self, activation_prompt) -> None:
         assert "activate_integration" in activation_prompt

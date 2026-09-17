@@ -252,19 +252,14 @@ async def claim_collection_wake(conversation_id: str) -> bool:
 
     The "rest" contract: an executor may end its turn while background subagents
     are still running. When their work lands, someone has to make sure an
-    executor sees it. The SETNX marker keeps that to one wake at a time — the
-    join clears it when it actually runs — so N landings do not produce N wakes.
+    executor sees it. The SETNX marker keeps that to one wake at a time — it
+    self-cleans on TTL — so N landings do not produce N wakes.
     """
     if not redis_cache.client:
         return False
     marker = f"{EXECUTOR_COLLECT_MARKER_PREFIX}{conversation_id}"
     return bool(await redis_cache.client.set(marker, "1", nx=True, ex=EXECUTOR_COLLECT_MARKER_TTL))
 
-
-async def clear_collection_marker(conversation_id: str) -> None:
-    """A join is running — future landings may queue a fresh collection turn."""
-    if redis_cache.client:
-        await redis_cache.client.delete(f"{EXECUTOR_COLLECT_MARKER_PREFIX}{conversation_id}")
 
 
 def decode_raw_item(raw: bytes | memoryview | str) -> str:

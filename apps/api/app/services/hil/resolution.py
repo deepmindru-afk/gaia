@@ -270,13 +270,13 @@ async def _resolve_record(
     # report success for an action that will silently not run.
     #
     # Exception: a parked-subagent record (stamped ``subagent_thread_id``) decided
-    # BEFORE the executor reaches its join has no resume context yet — and needs
-    # none, PROVIDED a collector is actually alive. The busy lock is that proof:
-    # held means an executor run (running or parked) will reach a join and read
-    # this decision durably. A finished executor (fire-and-forget dispatch, or
-    # one that never called wait_for_subagents) means nobody will ever collect —
-    # accepting the decision then is a false "going ahead" for an action that
-    # will never run, so it must fail loudly instead.
+    # BEFORE any resume context exists needs none for deny/timeout/abandon — and
+    # can never gain one for approve until the HIL rework supplies a resume
+    # driver. The busy lock is that proof for live collectors: held means an
+    # executor run is around to read this decision durably. A finished executor
+    # means nobody will ever collect — accepting the decision then is a false
+    # "going ahead" for an action that will never run, so it must fail loudly
+    # instead.
     if record.resume_item is None:
         collector_alive = record.subagent_thread_id is not None and await is_executor_busy(
             record.conversation_id
@@ -306,9 +306,9 @@ async def _resolve_record(
     log.set(hil={"approval_id": record.approval_id, "decision": kind, "tool": record.tool_name})
     resume_status = "denied" if kind == "abandon" else _TERMINAL_STATUS[kind]
     if record.resume_item is None:
-        # No run to dispatch: either a live collector (a parked subagent whose executor
-        # reads this decision at its join) or an un-resumable deny/timeout/abandon closed
-        # in place. Nothing to resume here either way.
+        # No run to dispatch: either a parked subagent whose decision waits for
+        # the HIL rework's resume driver, or an un-resumable deny/timeout/abandon
+        # closed in place. Nothing to resume here either way.
         log.info(
             f"{LogTag.HIL} Decision recorded without a resume dispatch",
             approval_id=record.approval_id,
@@ -335,6 +335,17 @@ async def _dispatch_resume(
     of the claim skips dispatch — its decision is already durable on the record,
     and the in-flight join round or the sweep collects it.
     """
+    if record.subagent_thread_id:
+        # Subagent-parked approvals have no resume driver until the HIL rework:
+        # the join that rediscovered their threads is gone. Refuse loudly so the
+        # decision surfaces as not-resumable instead of dispatching a run that
+        # cannot collect it; expiry still closes the record.
+        log.error(
+            f"{LogTag.HIL} Subagent-parked approval cannot resume without the join (HIL rework)",
+            approval_id=record.approval_id,
+            integration_name=record.integration_name,
+        )
+        raise ApprovalNotResumableError()
     if not await claim_resume_dispatch(record.conversation_id):
         log.info(
             f"{LogTag.HIL} Resume already in flight for conversation; decision will be "
@@ -412,7 +423,20 @@ async def sweep_approvals() -> dict[str, int]:
             )
 
     redispatched = 0
+    deferred_subagent = 0
     for record in await list_decided_unresumed(HIL_DECIDED_UNRESUMED_GRACE_SECONDS):
+        # Subagent-parked approvals have no resume driver until the HIL rework:
+        # the join that rediscovered their threads is gone. Redispatching would
+        # wake executor runs that cannot collect them, every sweep, forever —
+        # so skip loudly instead. Expiry above still closes them.
+        if record.subagent_thread_id:
+            deferred_subagent += 1
+            log.warning(
+                f"{LogTag.HIL} Sweep deferring subagent-parked approval (no resume driver)",
+                approval_id=record.approval_id,
+                integration_name=record.integration_name,
+            )
+            continue
         try:
             resume_status = "denied" if record.status == "abandoned" else record.status
             await _dispatch_resume(
@@ -427,6 +451,11 @@ async def sweep_approvals() -> dict[str, int]:
                 error_type=type(e).__name__,
             )
 
-    if expired or redispatched:
-        log.info(f"{LogTag.HIL} Approval sweep", expired=expired, redispatched=redispatched)
-    return {"expired": expired, "redispatched": redispatched}
+    if expired or redispatched or deferred_subagent:
+        log.info(
+            f"{LogTag.HIL} Approval sweep",
+            expired=expired,
+            redispatched=redispatched,
+            deferred_subagent=deferred_subagent,
+        )
+    return {"expired": expired, "redispatched": redispatched, "deferred_subagent": deferred_subagent}

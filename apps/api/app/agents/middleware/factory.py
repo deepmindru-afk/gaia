@@ -21,7 +21,6 @@ from app.agents.middleware.loop_guard import LoopGuardMiddleware
 from app.agents.middleware.media import MediaDescriptionMiddleware
 from app.agents.middleware.style_guard import StyleGuardMiddleware
 from app.agents.middleware.subagent import SubagentMiddleware, SubagentMiddlewareConfig
-from app.agents.middleware.subagent_join import SubagentJoinMiddleware
 from app.agents.middleware.summarization import (
     WorkspaceArchivingSummarizationMiddleware,
 )
@@ -75,9 +74,6 @@ class AccountingOptions:
 class SubagentStackOptions:
     """SubagentMiddleware wiring; ``enabled=False`` leaves it out.
 
-    ``join`` adds SubagentJoinMiddleware (executor only), which rewrites a
-    turn-ending response into a wait_for_subagents call while background
-    subagents are uncollected.
     """
 
     enabled: bool = False
@@ -87,7 +83,6 @@ class SubagentStackOptions:
     excluded_tools: set[str] | None = None
     tool_space: str = "general"
     tool_runtime_config: ToolRuntimeConfig | None = None
-    join: bool = False
     #: Carry the parent's bound tools into each spawn (integration activation).
     inherit_parent_tools: bool = False
 
@@ -149,7 +144,7 @@ def create_middleware_stack(
             limit it reports against.
         subagent: SubagentMiddleware wiring (off by default): the spawned
             subagents' LLM, tools, registry, exclusions, tool space and runtime
-            config, plus the executor-only join enforcement.
+            config.
         context: Summarization and compaction: whether each is on, the
             summarization trigger/keep sizes and archive flag, the compaction
             threshold and per-output cap, and the tools each must leave alone.
@@ -263,14 +258,6 @@ def create_middleware_stack(
             hard_stop=loop_guard.hard_stop,
         )
 
-    # Subagent-join enforcement (executor only) — after everything else so it
-    # sees the response other after_model hooks may have adjusted. Rewrites a
-    # turn-ending response into a wait_for_subagents call while background
-    # subagents are uncollected; collection must never depend on the model
-    # remembering to call the join.
-    if subagent.join:
-        middleware.append(SubagentJoinMiddleware())
-        log.debug(f"{LogTag.AGENT} SubagentJoinMiddleware enabled", agent_name=agent_name)
 
     return middleware
 
@@ -318,7 +305,6 @@ def create_executor_middleware(
             excluded_tools=subagent_excluded_tools,
             tool_runtime_config=subagent_tool_runtime_config,
             inherit_parent_tools=subagent_inherit_parent_tools,
-            join=True,
         ),
         context=ContextOptions(
             compaction_excluded_tools=CODING_TOOL_NAMES

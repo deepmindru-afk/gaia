@@ -31,7 +31,6 @@ from app.agents.core.background.running_registry import RunningSubagents
 from app.agents.core.background.session import (
     claim_bg_integration,
     has_bg_integration,
-    increment_pending_subagents,
     release_bg_integration,
 )
 from app.agents.core.background.subagent_runner import BackgroundHandoff, run_subagent_background
@@ -852,8 +851,7 @@ async def _handoff_rejection(
     if await _has_parked_subagent(ctx):
         return (
             f"The {agent_name} subagent is paused waiting for the user's approval. "
-            "Call wait_for_subagents() to collect its outcome before sending it "
-            "new tasks."
+            "Its outcome will be delivered on resolution; send it nothing meanwhile."
         )
 
     # Same collision for a BLOCKING handoff while a live background task holds
@@ -862,7 +860,7 @@ async def _handoff_rejection(
     if not background and has_bg_integration(str(stream_id or ""), integration_id):
         return (
             f"A background {agent_name} subagent is already running on this "
-            "integration. Call wait_for_subagents() to collect it first."
+            "integration. Steer it with message_subagent or wait for its result to arrive."
         )
 
     return None
@@ -879,8 +877,9 @@ async def _dispatch_background_handoff(
 
     # execution_mode is inherited, NOT forced to "background": a detached
     # subagent in a live conversation now has a pause path — its gate parks the
-    # subagent's own checkpointed thread and wait_for_subagents collects the
-    # approval into one executor pause. A genuinely headless run (workflow/cron)
+    # subagent's own checkpointed thread and announces the pause to the executor
+    # inbox. Reviewing the parked approval belongs to the HIL rework; until
+    # then the record waits out its TTL. A genuinely headless run (workflow/cron)
     # is already "background" in the parent configurable, so its subagents
     # inherit that and the gate still fails closed (no live user to ask).
     #
@@ -890,10 +889,10 @@ async def _dispatch_background_handoff(
     if not claim_bg_integration(sid, integration_id):
         return (
             f"A background {agent_name} subagent is already running. Call "
-            "wait_for_subagents() to collect it before sending it new tasks."
+            "Its result arrives on its own; send it new tasks after it lands."
         )
     # Idempotent across node replays: when this handoff shares its node run
-    # with the wait_for_subagents interrupt, the node re-runs on resume and
+    # with a pause, the node re-runs on resume and
     # must not spawn the subagent a second time. tool_call_id is stable (it
     # lives in the checkpointed AI message); the claim is durable in Redis.
     conversation_id = str(ctx.configurable.get("conversation_id") or "")
@@ -905,13 +904,12 @@ async def _dispatch_background_handoff(
         release_bg_integration(sid, integration_id)
         return (
             f"Subagent {agent_name} started in background. "
-            "Call wait_for_subagents() when ready to collect results."
+            "Steer it with message_subagent/cancel_subagent; its result arrives automatically."
         )
     bg_sa_id = str(uuid4())
     bg_display, bg_icon, bg_cat = _resolve_display_metadata(
         dispatch.metadata, agent_name, integration_id
     )
-    increment_pending_subagents(sid)
     spawn_background_task(
         run_subagent_background(
             ctx=ctx,
@@ -934,7 +932,7 @@ async def _dispatch_background_handoff(
     )
     return (
         f"Subagent {agent_name} started in background. "
-        "Call wait_for_subagents() when ready to collect results."
+        "Steer it with message_subagent/cancel_subagent; its result arrives automatically."
     )
 
 
@@ -953,8 +951,9 @@ async def handoff(
     background: Annotated[
         bool,
         "If True, run the subagent in the background and return immediately. "
-        "Use for parallel subagent dispatch: call wait_for_subagents() after "
-        "all background handoffs to collect results. Default False (blocking)."
+        "Use for parallel subagent dispatch. Steer mid-run with "
+        "message_subagent/cancel_subagent; results arrive automatically. "
+        "Default False (blocking)."
     ] = False,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> str:
@@ -968,7 +967,7 @@ async def handoff(
     2. Return the result of the completed task
 
     For parallel execution, set background=True on multiple handoff calls, then
-    call wait_for_subagents() to collect all results once.
+    results arrive automatically; steer meanwhile.
 
     Args:
         subagent_id: ID of the subagent from retrieve_tools (e.g., 'subagent:gmail', 'gmail')
@@ -1011,7 +1010,7 @@ async def handoff(
         # Activation mode: the executor loads provider integrations in-context and
         # only reaches handoff for per-user MCP subagents. Run those in the
         # background by default so the executor stays alive to steer or cancel
-        # them mid-run (it collects via wait_for_subagents). An explicit
+        # them mid-run (results arrive via the executor inbox). An explicit
         # background caller is unaffected; without a stream_id results can't be
         # routed back, so that case stays blocking.
         if stream_id and not background and await is_integration_activation_enabled(user_id):
@@ -1031,7 +1030,7 @@ async def handoff(
         )
 
         # Background mode: spawn subagent as asyncio task and return immediately.
-        # Caller must use wait_for_subagents() to collect results.
+        # Background results arrive via the executor inbox; nothing to call.
         #
         # Requires stream_id to be propagated into the executor configurable so
         # the result can be routed back to this conversation's results bucket.

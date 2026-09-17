@@ -204,10 +204,9 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
     verdict is written back there for every later gate check to read.
 
     Or it is **exempt but pausing** (``HIL_PAUSING_TOOLS``) — ``handoff`` bubbles up its
-    subagent's gate interrupt, ``wait_for_subagents`` interrupts for the parked-approval
-    batch. Neither is ever gated, so skipping them as exempt would leave exactly the
-    double-run this guard exists to prevent. Checked first, and by name alone, so the
-    common case costs no preference or registry lookup.
+    subagent's gate interrupt. It is never gated, so skipping it as exempt would leave
+    exactly the double-run this guard exists to prevent. Checked first, and by name
+    alone, so the common case costs no preference or registry lookup.
     """
     # Execute-proxied siblings are unwrapped to their real (name, args) here for
     # the same reason unpack_tool_call unwraps the pending call: the guard must

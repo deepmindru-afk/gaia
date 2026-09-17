@@ -24,7 +24,6 @@ from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from langsmith import traceable
 
-from app.agents.core.background.bg_results import has_bg_subagent_results
 from app.agents.core.background.comms_narrator import record_executor_cancellation
 from app.agents.core.background.executor_capture import (
     build_returned_to_frontend_note,
@@ -36,7 +35,6 @@ from app.agents.core.background.executor_queue import (
     LockClaim,
     PreparedQueuedTask,
     build_run_item,
-    claim_collection_wake,
     extend_lock_if_owned,
     is_executor_busy,
     prepare_run_from_item,
@@ -59,7 +57,6 @@ from app.agents.core.subagents.subagent_runner import (
 from app.constants.agents import AgentTag, wrap_agent_payload
 from app.constants.executor import (
     EXECUTOR_APPROVAL_LOST_MESSAGE,
-    EXECUTOR_COLLECTION_TASK,
     EXECUTOR_PAUSED,
     EXECUTOR_STEP_LIMIT_MESSAGE,
     MESSAGE_ID_KEY,
@@ -71,10 +68,7 @@ from app.core.stream_manager import StreamManager
 from app.models.agent_models import AgentConfigurable
 from app.models.chat_models import ToolDataEntry
 from app.services.analytics_service import AnalyticsEvents, capture_event
-from app.services.hil.approvals_store import (
-    list_parked_subagents_for_conversation,
-    set_resume_item,
-)
+from app.services.hil.approvals_store import set_resume_item
 from app.services.hil.resume_slot import release_resume_dispatch
 from app.utils.agent_utils import format_sse_data
 from app.utils.background_tasks import spawn_background_task
@@ -194,9 +188,8 @@ async def _record_pause(
 ) -> bool:
     """Attach this run's re-dispatch context to every approval it paused on.
 
-    A batch pause (the wait_for_subagents join) carries several approvals; each
-    gets the same resume context so whichever decision lands first can re-dispatch
-    the run. Returns whether every write landed — it is the only thing that makes
+    Each paused approval gets the same resume context so whichever decision lands
+    first can re-dispatch the run. Returns whether every write landed — it is the only thing that makes
     the pause resumable, so a failure is not something the run can carry on
     through: the caller fails the run rather than parking it forever.
     """
@@ -224,7 +217,7 @@ async def _record_pause(
 class _ExecutorResult(NamedTuple):
     """One executor run's terminal shape; ``paused_on`` holds the approval id(s)
     when the run stopped on a HIL interrupt instead of finishing — one for a
-    gate pause, several for a wait_for_subagents batch pause.
+    gate pause (batch pauses arrive with the HIL rework).
 
     ``ctx`` is the prepared execution context, kept so finalize can read the
     thread this run actually wrote; ``None`` when preparation itself failed, in
@@ -380,50 +373,13 @@ async def _finalize_executor_run(
             error=str(e),
         )
 
-    # A terminal run that leaves landed-but-uncollected subagent work (a parked
-    # approval, or results the model never joined on) queues a collection turn
-    # NOW, so the very hand-off below claims and runs it. Without this, a card
-    # parked mid-turn has no live collector until some later landing wakes one —
-    # and decisions on it would be refused in the meantime.
-    await _queue_collection_if_uncollected(run, task)
-
     # Work handed over mid-run is normally absorbed by the run itself. The one
     # case it cannot be is a hand-off that lands after this run's LAST model
     # call — there is no further reasoning step to read it. Carry that into a
     # fresh run rather than leaving it to sit. Runs on EVERY terminal path,
     # cancelled included: a Stop targets the running task, not work the user
-    # added afterwards. If the collection wake above already claimed the
-    # conversation, this starts nothing — that run drains the same inbox.
+    # added afterwards.
     await _carry_pending_into_new_run(run, ctx)
-
-
-async def _queue_collection_if_uncollected(run: ExecutorRun, task: str) -> None:
-    """Best-effort wake at turn end; the marker dedups against landing-time wakes."""
-    del task
-    if run.workflow_id is not None:
-        return  # headless: the gate denied destructive work; nothing parked to collect
-    try:
-        uncollected = await has_bg_subagent_results(run.conversation_id) or bool(
-            await list_parked_subagents_for_conversation(run.conversation_id)
-        )
-        if uncollected and await claim_collection_wake(run.conversation_id):
-            await deliver_to_executor(
-                run.conversation_id,
-                {
-                    "user_id": run.user.get("user_id", ""),
-                    "email": run.user.get("email", ""),
-                    "user_name": run.user.get("name", ""),
-                    "user_timezone": run.user.get("timezone"),
-                },
-                EXECUTOR_COLLECTION_TASK,
-                workflow_execution_id=run.workflow_execution_id,
-            )
-    except Exception as e:  # a failed wake must not strand the queue handoff
-        log.error(
-            f"{LogTag.AGENT} Post-run collection check failed",
-            conversation_id=run.conversation_id,
-            error=str(e),
-        )
 
 
 async def _finalize_paused_run(run: ExecutorRun) -> None:

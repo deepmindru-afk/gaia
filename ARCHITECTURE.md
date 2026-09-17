@@ -75,7 +75,7 @@ The worker tier. Has access to **everything** that does work.
 
 ### Initial tool IDs (comms → executor handoff)
 
-`handoff`, `plan_tasks`, `update_tasks`, `read`, `bash`, `deep_research`, `wait_for_subagents`, `read_manual`, `create_tracked_todo`, `update_tracked_todo`, `update_tracked_todo_canvas`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos`.
+`handoff`, `plan_tasks`, `update_tasks`, `read`, `bash`, `deep_research`, `read_manual`, `create_tracked_todo`, `update_tracked_todo`, `update_tracked_todo_canvas`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos`.
 
 ### Handoff lifecycle (background, async)
 
@@ -373,7 +373,7 @@ Integration tools (Composio + per-user MCP — the thousands) are **never bound*
 
 ### 9.3 Subagent coordination
 
-- `apps/api/app/agents/tools/wait_for_subagents_tool.py` — `wait_for_subagents(timeout=120)`. Polls `get_pending_subagents(stream_id)`; returns concatenated results from all background-dispatched subagents. Used by the executor for parallel subagent dispatch.
+- Background results need no join tool: a finished background subagent appends its result to the executor inbox, which the pre-model drain hook injects before the next reasoning step. Steering is `list_running_subagents` / `message_subagent` / `cancel_subagent`; parked HIL approvals announce themselves the same way and wait out their TTL until the HIL rework gives them a resume driver.
 
 ### 9.4 Lifecycle / orchestration
 

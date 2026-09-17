@@ -29,7 +29,6 @@ from app.agents.core.graph_builder.build_graph import (
 )
 from app.agents.tools.todo_tools import TODO_TOOL_NAMES
 from app.config.settings import settings
-from app.constants.general import WAIT_FOR_SUBAGENTS_NAME
 from tests.helpers import BindableToolsFakeModel
 
 _ACTIVATION_MOD = "app.agents.core.subagents.integration_activation"
@@ -49,14 +48,10 @@ def _stub_tool(name: str):
 def _stub_registry(extra_tools: tuple[str, ...] = ()) -> MagicMock:
     """A registry whose tool_dict holds the executor's initial tools plus extras.
 
-    The graph injects handoff / wait_for_subagents / activate_integration / todo
-    tools itself, so those are left out and overwritten with the real ones.
+    The graph injects handoff / activate_integration / todo tools itself, so
+    those are left out and overwritten with the real ones.
     """
-    injected_by_graph = {
-        "handoff",
-        "activate_integration",
-        WAIT_FOR_SUBAGENTS_NAME,
-    } | TODO_TOOL_NAMES
+    injected_by_graph = {"handoff", "activate_integration"} | TODO_TOOL_NAMES
     names = [n for n in EXECUTOR_INITIAL_TOOL_IDS if n not in injected_by_graph]
     tool_dict = {n: _stub_tool(n) for n in [*names, *extra_tools]}
     registry = MagicMock()

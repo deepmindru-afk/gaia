@@ -37,7 +37,6 @@ from app.agents.middleware.loop_guard import LoopGuardMiddleware
 from app.agents.middleware.media import MediaDescriptionMiddleware
 from app.agents.middleware.style_guard import StyleGuardMiddleware
 from app.agents.middleware.subagent import SubagentMiddleware
-from app.agents.middleware.subagent_join import SubagentJoinMiddleware
 from app.agents.middleware.summarization import (
     WorkspaceArchivingSummarizationMiddleware,
 )
@@ -393,7 +392,6 @@ class TestSpawnWiring:
                 excluded_tools={"handoff"},
                 tool_space="gmail",
                 tool_runtime_config=runtime,
-                join=True,
             ),
         )
         spawner = next((mw for mw in stack if isinstance(mw, SubagentMiddleware)), None)
@@ -419,7 +417,7 @@ class TestSpawnWiring:
         the loop guard sits innermost where it sees raw tool results."""
         stack = create_middleware_stack(
             chat_llm=_fake_llm(),
-            subagent=SubagentStackOptions(enabled=True, join=True),
+            subagent=SubagentStackOptions(enabled=True),
         )
 
         assert _types(stack) == [
@@ -430,7 +428,6 @@ class TestSpawnWiring:
             WorkspaceCompactionMiddleware,
             MediaDescriptionMiddleware,
             LoopGuardMiddleware,
-            SubagentJoinMiddleware,
         ]
 
     def test_the_spawn_factory_builds_a_child_that_cannot_spawn_again(self) -> None:
@@ -527,7 +524,6 @@ class TestExecutorStackComposition:
             WorkspaceCompactionMiddleware,
             MediaDescriptionMiddleware,
             LoopGuardMiddleware,
-            SubagentJoinMiddleware,
         ]
 
     def test_the_executor_spawn_wiring_reaches_the_middleware(self) -> None:
@@ -574,7 +570,6 @@ class TestExecutorStackComposition:
                 registry=registry,
                 excluded_tools={"handoff"},
                 tool_runtime_config=runtime,
-                join=True,
             ),
             "context": ContextOptions(compaction_excluded_tools=COMPACTION_EXCLUSIONS),
         }

@@ -9,5 +9,9 @@ from shared.py.wide_events import log
 async def sweep_hil_approvals(ctx: dict[str, Any]) -> str:  # noqa: ARG001 -- contract
     """Every-minute sweep. See ``sweep_approvals`` for the two passes."""
     counts = await sweep_approvals()
-    log.set(expired_count=counts["expired"], redispatched_count=counts["redispatched"])
-    return f"expired={counts['expired']} redispatched={counts['redispatched']}"
+    log.set(
+        expired_count=counts["expired"],
+        redispatched_count=counts["redispatched"],
+        deferred_subagent_count=counts["deferred_subagent"],
+    )
+    return f"expired={counts['expired']} redispatched={counts['redispatched']} deferred_subagent={counts['deferred_subagent']}"

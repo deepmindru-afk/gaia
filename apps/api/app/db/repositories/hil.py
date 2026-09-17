@@ -83,7 +83,7 @@ class HilApprovalRepository(MongoRepository[HILApprovalRecord, HILApprovalUpdate
         self, conversation_id: str
     ) -> list[HILApprovalRecord]:
         """Records a detached background subagent parked on, oldest first,
-        that the ``wait_for_subagents`` join has not yet collected."""
+        that no resume driver has collected yet (HIL rework)."""
         return await self._find(
             {
                 "conversation_id": conversation_id,
