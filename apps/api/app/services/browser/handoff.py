@@ -70,8 +70,17 @@ async def _store(handoff_id: str, record: HandoffRecord) -> None:
 
 
 async def get_handoff(handoff_id: str) -> HandoffRecord | None:
-    """Load a pending handoff by id, or None when unknown/expired."""
-    return await redis_cache.get(_key(handoff_id), model=HandoffRecord)
+    """Load a handoff by id, or None when unknown/expired.
+
+    The settled marker is the decision of record: a resolver that claimed it but
+    died before rewriting the record still counts as settled, so a waiter never
+    polls a decided handoff until its timeout.
+    """
+    record = await redis_cache.get(_key(handoff_id), model=HandoffRecord)
+    if record is None or record.status != HandoffStatus.PENDING:
+        return record
+    settled = await redis_cache.get(_settled_key(handoff_id), model=str)
+    return record.model_copy(update={"status": HandoffStatus(settled)}) if settled else record
 
 
 async def get_conversation_pending_handoff(conversation_id: str) -> str | None:
@@ -107,11 +116,11 @@ async def resolve_handoff(
         _settled_key(handoff_id), new_status.value, ttl=HANDOFF_KEY_TTL_SECONDS
     ):
         # Another resolver settled it first: report that decision, never a second,
-        # conflicting one. No marker at all means the write itself failed.
-        settled = await redis_cache.get(_settled_key(handoff_id), model=str)
-        if settled is None:
+        # conflicting one. Still PENDING here means the marker write itself failed.
+        settled = await get_handoff(handoff_id)
+        if settled is None or settled.status == HandoffStatus.PENDING:
             raise _storage_unavailable(handoff_id)
-        return HandoffStatus(settled)
+        return settled.status
     await _store(handoff_id, record.model_copy(update={"status": new_status, "message": note}))
     if record.conversation_id:
         await redis_cache.delete(_conv_key(record.conversation_id))

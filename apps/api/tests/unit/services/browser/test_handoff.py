@@ -240,7 +240,11 @@ async def test_get_handoff_reads_exact_key_and_model(monkeypatch):
 
     await handoff_mod.get_handoff("h12")
 
-    assert fake.get_calls == [("browser:handoff:h12", HandoffRecord)]
+    # A pending record also consults the settled marker, the decision of record.
+    assert fake.get_calls == [
+        ("browser:handoff:h12", HandoffRecord),
+        ("browser:handoff:h12:settled", str),
+    ]
 
 
 async def test_get_handoff_unknown_returns_none(fake_redis):
@@ -352,6 +356,25 @@ async def test_resolve_handoff_settles_with_one_nx_write_for_the_handoffs_lifeti
     assert fake_cache.set_if_absent_calls == [
         (handoff_mod._settled_key("h20"), "cancelled", HANDOFF_KEY_TTL_SECONDS)
     ]
+    stored = fake_cache.store[handoff_mod._key("h20")]
+    assert stored.status == HandoffStatus.CANCELLED  # the record itself, not just the marker
+
+
+async def test_resolve_handoff_true_race_reports_the_decision_that_won_the_marker(fake_cache):
+    """Both resolvers read PENDING; the one whose NX write loses reports the winner's decision."""
+    await handoff_mod.create_pending_handoff("h22", "user-1", "conv-h22")
+    original = fake_cache.set_if_absent
+
+    async def lose_to_a_concurrent_cancel(key, value, ttl=None, model=None):
+        fake_cache.store[key] = HandoffStatus.CANCELLED.value  # the other resolver lands first
+        return await original(key, value, ttl, model)
+
+    fake_cache.set_if_absent = lose_to_a_concurrent_cancel
+
+    status = await handoff_mod.resolve_handoff("h22", HandoffDecision.CONTINUE, "user-1", "late")
+
+    assert status == HandoffStatus.CANCELLED
+    assert fake_cache.store[handoff_mod._key("h22")].status == HandoffStatus.PENDING
 
 
 async def test_resolve_handoff_lost_race_reports_the_decision_that_landed_first(
@@ -363,12 +386,24 @@ async def test_resolve_handoff_lost_race_reports_the_decision_that_landed_first(
 
     status = await handoff_mod.resolve_handoff("h19", HandoffDecision.CONTINUE, "user-1", "late")
 
-    record = await handoff_mod.get_handoff("h19")
+    stored = fake_redis[handoff_mod._key("h19")]
     assert status == HandoffStatus.CANCELLED
     assert (handoff_mod._settled_key("h19"), str) in fake_cache.get_calls
+    assert stored.status == HandoffStatus.PENDING  # the loser wrote nothing
+    assert stored.message is None
+
+
+async def test_a_claimed_marker_counts_as_settled_even_if_the_record_write_never_landed(fake_redis):
+    """A resolver that died between the marker and the record must not strand the waiting run."""
+    await handoff_mod.create_pending_handoff("h21", "user-1", "conv-h21")
+    fake_redis[handoff_mod._settled_key("h21")] = HandoffStatus.COMPLETED.value
+
+    record = await handoff_mod.get_handoff("h21")
+    outcome = await handoff_mod.await_handoff("h21", timeout_seconds=1)
+
     assert record is not None
-    assert record.status == HandoffStatus.PENDING  # the loser wrote nothing
-    assert record.message is None
+    assert record.status == HandoffStatus.COMPLETED
+    assert outcome.status == HandoffStatus.COMPLETED
 
 
 async def test_resolve_handoff_already_settled_keeps_original_status_and_note(fake_redis):
