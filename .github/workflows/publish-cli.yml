@@ -7,9 +7,11 @@ concurrency:
 # Publishes @heygaia/cli from an explicit release tag/version pair, and attaches
 # the tools/gaia-connect binaries to the same cli-v<version> GitHub Release —
 # one CLI release ships both halves. The two jobs are independent on purpose:
-# npm publish is guarded by release.mjs verify-cli and self-skips when the
-# version already exists, while the binary upload is `--clobber`-idempotent and
-# must still be able to attach missing assets to an already-published release.
+# npm publish self-skips when the version already exists, while the binary
+# upload is `--clobber`-idempotent and must still be able to attach missing
+# assets to an already-published release. Both run release.mjs verify-cli first,
+# so a mistyped tag or a version that disagrees with packages/cli/package.json
+# can neither publish the wrong package nor attach binaries to the wrong release.
 on:
   # Manual dispatch keeps CLI publish intentional and auditable.
   workflow_dispatch:
@@ -165,6 +167,16 @@ jobs:
       - name: Test the Go tool
         working-directory: tools/gaia-connect
         run: go test ./...
+
+      # The same tag/version/package.json guard the npm job runs: the upload
+      # targets whatever release the tag names, so a dispatch that fails the
+      # npm half must not still attach binaries there. Idempotent reruns pass
+      # (an already-published version is a skip signal, not an error).
+      - name: Verify CLI release tag/version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+        run: node scripts/ci/release.mjs verify-cli --tag "$RELEASE_TAG" --version "$RELEASE_VERSION"
 
       # One command line: the five-target cross-compile, the sha256sum manifest
       # and the upload all live in the release concept script.

@@ -297,10 +297,9 @@ cmd_connect_binaries() {
   : "${GH_TOKEN:?GH_TOKEN is required (contents:write on the release)}"
   : "${RELEASE_TAG:?RELEASE_TAG is required (e.g. cli-v0.5.0)}"
 
-  # The npm half of this release is guarded by release.mjs verify-cli; this job
-  # runs independently of it (a rerun must be able to attach missing binaries to
-  # a release whose npm version already exists), so it checks the tag shape
-  # itself rather than trusting the dispatch input.
+  # The workflow runs release.mjs verify-cli before this (tag, version and
+  # package.json must agree); this last check keeps a bare local invocation
+  # from uploading to a tag of the wrong shape.
   if [[ ! "$RELEASE_TAG" =~ ^cli-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
     ci_die "RELEASE_TAG '$RELEASE_TAG' must match cli-v<version> (e.g. cli-v0.5.0)"
   fi
