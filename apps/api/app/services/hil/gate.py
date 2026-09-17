@@ -34,6 +34,7 @@ Three invariants hold this together:
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import json
 from typing import Any
 
 from langchain.agents.middleware.types import ToolCallRequest
@@ -48,7 +49,9 @@ from app.constants.hil import (
     HILToolMessageStatus,
 )
 from app.constants.log_tags import LogTag
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
+from app.services.feature_flags import is_hil_ledger_enabled
 from app.services.hil.approvals_store import approval_id_for, get_approval
 from app.services.hil.bridge import (
     ApprovalOutcome,
@@ -59,6 +62,7 @@ from app.services.hil.bridge import (
     recall_declined_call,
     remember_declined_call,
 )
+from app.services.hil.fingerprint import approval_fingerprint
 from app.services.hil.intent import IntentDecision, JudgedCall, judge_intent
 from app.services.hil.policy import (
     GatingPolicy,
@@ -81,6 +85,7 @@ from app.services.hil.utils import (
     tool_description,
     unpack_tool_call,
 )
+from app.utils.general_utils import clip_text
 from shared.py.wide_events import log
 
 Handler = Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]]
@@ -174,6 +179,11 @@ async def _verdict(request: ToolCallRequest) -> ToolMessage | _Pending | None:
 
     if policy == "allow":
         return None
+    if await is_hil_ledger_enabled(context.user_id):
+        # Executor-free path: register PENDING and return. No interrupt, no
+        # pause — background runs gate exactly like live ones, which is the
+        # whole point (pausable is irrelevant when nobody needs to pause).
+        return await _decide_ledger(request, context, call)
     if not context.pausable:
         # The call is gated and HIL is on, but this run (background subagent, workflow,
         # scheduled task) has no live client to approve it. Fail closed: refuse rather
@@ -181,6 +191,84 @@ async def _verdict(request: ToolCallRequest) -> ToolMessage | _Pending | None:
         log.info(f"{LogTag.HIL} Denying gated : run cannot pause for approval", name=call.name)
         return _unpausable_denial_message(call)
     return await _decide(request, context, policy, call)
+
+
+async def _decide_ledger(
+    request: ToolCallRequest, context: GateContext, call: GatedCall
+) -> ToolMessage:
+    """Ledger verdict: register PENDING and return. Never interrupts.
+
+    The executor-free path: dedup against live rows, surface reject memory,
+    refuse same-run nag re-issues, otherwise register and hand the model a
+    pending id to work around. Any failure fails closed (deny), never open.
+    """
+    try:
+        fingerprint = approval_fingerprint(call.name, call.args)
+        live = await approval_ledger_repository.find_live(
+            fingerprint, context.conversation_id
+        )
+        if live is not None:
+            return _tool_message(
+                call,
+                f"PENDING {live.approval_id}: {live.summary} already requested and "
+                "awaiting decision. DO NOT retry or re-request. Continue independent "
+                "work or exit.",
+                "pending",
+            )
+        denied = await approval_ledger_repository.find_latest_denied(
+            fingerprint, context.conversation_id
+        )
+        if denied is not None:
+            if denied.proposing_run_id and denied.proposing_run_id == context.stream_id:
+                return _tool_message(
+                    call,
+                    f"REFUSED {call.name}: the user denied this exact call in this run. "
+                    "DO NOT re-request it. State what you skipped and continue without it.",
+                    "denied",
+                )
+            when = f" at {denied.decided_at.isoformat()}" if denied.decided_at else ""
+            why = f", saying {denied.feedback!r}" if denied.feedback else ""
+            deny_note = (
+                f" The user denied this exact call{when}{why}. Only re-ask if "
+                "something changed or the user asked for it."
+            )
+        else:
+            deny_note = ""
+
+        integration_name = await _integration_name_for(call.name)
+        summary = build_summary(call.name, call.args, integration_name)
+        owner = configurable_of(request).get("subagent_id") or "executor"
+        ap_id = await approval_ledger_repository.register(
+            conversation_id=context.conversation_id,
+            fingerprint=fingerprint,
+            tool_name=call.name,
+            args=call.args,
+            summary=summary,
+            preview=clip_text(json.dumps(call.args, default=str), 500),
+            owner_agent=str(owner),
+            proposing_run_id=context.stream_id,
+        )
+        log.info(
+            f"{LogTag.HIL} Ledger registered gated call",
+            approval_id=ap_id,
+            tool_name=call.name,
+        )
+        return _tool_message(
+            call,
+            f"PENDING {ap_id}: {summary} queued. DO NOT retry. Continue independent "
+            f'work or exit. Revoke with revoke_tool("{ap_id}") if unneeded.{deny_note}',
+            "pending",
+        )
+    except GraphBubbleUp:
+        raise
+    except Exception as e:  # an approval gate must fail closed
+        log.error(
+            f"{LogTag.HIL} Ledger gate failed; denying",
+            name=call.name,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return _gate_error_message(call)
 
 
 def read_gate_context(request: ToolCallRequest) -> GateContext | None:

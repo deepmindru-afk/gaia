@@ -10,6 +10,7 @@ exact-race duplicate insert is possible but harmless: each id stays consistent
 under CAS, and nothing auto-executes in Phase 1.
 """
 
+from typing import Any
 from uuid import uuid4
 
 from app.db.repositories.base import MongoRepository
@@ -33,7 +34,7 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         conversation_id: str,
         fingerprint: str,
         tool_name: str,
-        args: dict,
+        args: dict[str, Any],
         summary: str,
         rationale: str = "",
         preview: str = "",

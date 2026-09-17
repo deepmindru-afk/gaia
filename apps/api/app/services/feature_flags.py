@@ -38,8 +38,8 @@ class FeatureFlag(StrEnum):
     the value is the flag key in the PostHog dashboard."""
 
     COMMS_OPENUI = "COMMS_OPENUI"
-    INTEGRATION_ACTIVATION = "INTEGRATION_ACTIVATION"
     CODE_MODE = "CODE_MODE"
+    HIL_LEDGER = "HIL_LEDGER"
 
 
 # Human description per flag, kept next to the key so the dashboard setup and
@@ -49,13 +49,13 @@ FEATURE_FLAG_DESCRIPTIONS: dict[FeatureFlag, str] = {
         "Include the OpenUI component reference in the comms prompt on "
         "renderable channels; off serves the markdown fallback."
     ),
-    FeatureFlag.INTEGRATION_ACTIVATION: (
-        "Executor loads integration tools in-context via activate_integration; "
-        "off routes through per-integration subagent handoff."
-    ),
     FeatureFlag.CODE_MODE: (
         "Bash runs seed the `gaia.execute` client and mint a per-invocation "
         "token; off runs bash with no GAIA_EXECUTE_* env."
+    ),
+    FeatureFlag.HIL_LEDGER: (
+        "Gated calls register PENDING in the approval ledger and return "
+        "instead of parking the run; off keeps the interrupt barrier."
     ),
 }
 
@@ -66,10 +66,10 @@ def _default(flag: FeatureFlag) -> bool:
     match flag:
         case FeatureFlag.COMMS_OPENUI:
             return bool(settings.ENABLE_COMMS_OPENUI)
-        case FeatureFlag.INTEGRATION_ACTIVATION:
-            return bool(settings.ENABLE_INTEGRATION_ACTIVATION)
         case FeatureFlag.CODE_MODE:
             return bool(settings.ENABLE_CODE_MODE)
+        case FeatureFlag.HIL_LEDGER:
+            return bool(settings.ENABLE_HIL_LEDGER)
 
 
 def _coerce_result(result: Any, default: bool) -> bool:  # noqa: ANN401 -- posthog SDK returns untyped flag values; validated here
@@ -182,14 +182,13 @@ async def is_comms_openui_enabled(user_id: str | None) -> bool:
     return await is_enabled(FeatureFlag.COMMS_OPENUI, user_id)
 
 
-async def is_integration_activation_enabled(user_id: str | None) -> bool:
-    """Whether ``user_id`` gets the activation-mode executor (in-context
-    integration tools via ``activate_integration``) instead of per-integration
-    subagent handoff."""
-    return await is_enabled(FeatureFlag.INTEGRATION_ACTIVATION, user_id)
-
-
 async def is_code_mode_enabled(user_id: str | None) -> bool:
     """Whether ``user_id``'s bash runs get the ``gaia.execute`` client and a
     per-invocation token. Off runs bash with no GAIA_EXECUTE_* env."""
     return await is_enabled(FeatureFlag.CODE_MODE, user_id)
+
+
+async def is_hil_ledger_enabled(user_id: str | None) -> bool:
+    """Whether ``user_id``'s gated calls register PENDING in the approval
+    ledger and return instead of parking the run. Off keeps the barrier."""
+    return await is_enabled(FeatureFlag.HIL_LEDGER, user_id)

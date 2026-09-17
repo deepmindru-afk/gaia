@@ -124,11 +124,6 @@ class CommonSettings(BaseAppSettings):
     DUMMY_IP: str = "8.8.8.8"
     WORKER_TYPE: str = "unknown"
     ENABLE_LAZY_LOADING: bool = True
-    # Experiment: swap the executor's `handoff` for `activate_integration`, which
-    # loads an integration's tools and prompt into the executor's own context
-    # instead of routing work to a per-integration subagent graph. Delegation
-    # then goes through the generic `spawn_subagent`, which inherits those tools.
-    ENABLE_INTEGRATION_ACTIVATION: bool = False
     # Experiment: include the OpenUI component reference (~27k chars) in the
     # comms prompt on renderable channels (web/mobile/desktop). Off swaps it for
     # a short markdown-only output note so the persona/voice rules are not
@@ -138,6 +133,10 @@ class CommonSettings(BaseAppSettings):
     # sandbox scripts call GAIA tools back server-side. Off mints no token
     # (bash itself still runs; scripts just get no GAIA_EXECUTE_* env).
     ENABLE_CODE_MODE: bool = False
+    # Experiment: executor-free HIL ledger — gated calls register PENDING and
+    # return instead of parking the run on an interrupt. Off keeps the
+    # interrupt-and-resume barrier.
+    ENABLE_HIL_LEDGER: bool = False
 
     @field_validator("HOST", "FRONTEND_URL", mode="after")
     @classmethod

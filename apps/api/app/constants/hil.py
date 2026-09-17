@@ -88,7 +88,7 @@ HIL_CLASSIFIER_HISTORY_TURNS = 4  # recent {role, content} turns of context
 
 # Marks a synthetic ToolMessage the gate produced (rather than a real tool result).
 HIL_STATUS_KWARG = "hil_status"
-HILToolMessageStatus = Literal["denied", "timeout", "error", "already_ran"]
+HILToolMessageStatus = Literal["denied", "timeout", "error", "already_ran", "pending"]
 
 # How long an approval may sit unanswered before the sweep resolves it as a
 # timeout. Nothing waits in-process for this — the paused run is checkpointed.
