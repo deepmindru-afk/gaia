@@ -28,6 +28,7 @@ from app.agents.context.fetchers import (
     build_core_memory_block,
     build_gaia_knowledge_block,
     build_memory_recall_block,
+    build_open_pendings_block,
     build_provider_metadata_block,
     build_tracked_todos_block,
     build_workspace_session_banner,
@@ -37,7 +38,6 @@ from app.agents.context.slots import PromptSlot
 from app.agents.context.text import (
     CONNECTED_INTEGRATIONS_HEADER,
     EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER,
-    EXECUTOR_CONNECTED_INTEGRATIONS_HEADER,
 )
 from app.agents.context.tiers import ALL_TIERS, WORKER_TIERS, AgentTier
 from app.agents.skills.discovery import get_available_skills_text
@@ -46,7 +46,6 @@ from app.agents.workspace.system_docs import integration_skills_block
 from app.config.oauth_config import get_integration_by_id
 from app.constants.log_tags import LogTag
 from app.constants.skills import EXECUTOR_SUBAGENT_ID
-from app.services.feature_flags import is_integration_activation_enabled
 from app.services.integration_instructions_service import get_instructions
 from app.utils.user_preferences_utils import format_user_preferences_for_agent
 from shared.py.wide_events import log
@@ -99,10 +98,8 @@ async def _integrations_manifest(ctx: SectionContext) -> str:
         return ""
     if ctx.tier is not AgentTier.EXECUTOR:
         header = CONNECTED_INTEGRATIONS_HEADER
-    elif await is_integration_activation_enabled(ctx.user_id):
-        header = EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER
     else:
-        header = EXECUTOR_CONNECTED_INTEGRATIONS_HEADER
+        header = EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER
     return await build_connected_integrations_manifest(ctx.user_id, header=header)
 
 
@@ -204,6 +201,9 @@ SECTIONS: tuple[Section, ...] = (
     # listing mid-conversation, which invalidates the prefix ONCE — the same
     # trade integrations_manifest already makes for account connects.
     Section("skills", PromptSlot.DYNAMIC_STABLE, WORKER_TIERS, 70, _skills),
+    # Open approval pendings: ledger state that changes on user/agent decisions,
+    # not per turn — same stability trade as integrations_manifest above.
+    Section("open_pendings", PromptSlot.DYNAMIC_STABLE, WORKER_TIERS, 75, build_open_pendings_block),
     # The memory core's documents, not the whole core: the agenda and the
     # activity journal are split off into their own volatile section, because
     # they are rewritten every turn and would otherwise churn the cached prefix.

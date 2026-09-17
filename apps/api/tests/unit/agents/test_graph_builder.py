@@ -575,6 +575,7 @@ class TestBuildExecutorGraph:
                 "message_subagent",
                 "cancel_subagent",
                 "read_manual",
+                "revoke_tool",
                 "create_tracked_todo",
                 "update_tracked_todo",
                 "update_tracked_todo_canvas",

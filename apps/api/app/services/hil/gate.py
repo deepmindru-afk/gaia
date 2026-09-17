@@ -237,7 +237,10 @@ async def _decide_ledger(
 
         integration_name = await _integration_name_for(call.name)
         summary = build_summary(call.name, call.args, integration_name)
-        owner = configurable_of(request).get("subagent_id") or "executor"
+        # Owner is the worker thread, stable across runs: subagent threads read
+        # "<integration>_<conversation>", the executor "executor_<...>", so a
+        # later turn of the same worker can revoke what it proposed.
+        owner = configurable_of(request).get("thread_id") or "unknown"
         ap_id = await approval_ledger_repository.register(
             conversation_id=context.conversation_id,
             fingerprint=fingerprint,

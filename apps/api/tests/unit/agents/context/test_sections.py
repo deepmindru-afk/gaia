@@ -133,6 +133,7 @@ class TestTheTableIsWellFormed:
             "workspace_session",
             "integrations_manifest",
             "skills",
+            "open_pendings",
         ]
         assert [s.id for s in sections_for(AgentTier.EXECUTOR, PromptSlot.MEMORY_RECALL)] == [
             "core_memory",
@@ -540,3 +541,19 @@ class TestSkills:
 
         assert rendered == ""
         assert isinstance(rendered, str)
+
+
+@pytest.mark.unit
+class TestConversationIdReachesSections:
+    def test_from_configurable_carries_conversation_id(self) -> None:
+        """Ledger-backed sections (open pendings) read the conversation off the
+        closed context shape — proven against the actual data path, not just
+        the field existing."""
+        ctx = SectionContext.from_configurable(
+            AgentTier.EXECUTOR, {"conversation_id": "c1", "user_id": "u1"}
+        )
+        assert ctx.conversation_id == "c1"
+
+    def test_missing_conversation_id_is_none_not_crash(self) -> None:
+        ctx = SectionContext.from_configurable(AgentTier.EXECUTOR, {})
+        assert ctx.conversation_id is None

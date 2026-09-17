@@ -8,7 +8,7 @@ so no caller can forget it.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from tests._harness.context_sources import knowledge, memory
@@ -741,3 +741,69 @@ class TestNoVolatileSectionIsClipped:
             block = await build_tracked_todos_block(ctx(active_todo_id="todo-1"))
 
         assert block == "t" * 400
+
+
+@pytest.mark.unit
+class TestOpenPendingsBlock:
+    def _doc(self, approval_id: str = "ap_1", summary: str = "Send it") -> MagicMock:
+        from datetime import UTC, datetime
+
+        doc = MagicMock()
+        doc.approval_id = approval_id
+        doc.tool_name = "GMAIL_SEND_EMAIL"
+        doc.summary = summary
+        doc.created_at = datetime(2026, 9, 17, 10, 0, tzinfo=UTC)
+        return doc
+
+    def _ctx(self, conversation_id: str | None = "c1") -> SectionContext:
+        return SectionContext(
+            tier=AgentTier.EXECUTOR, user_id="u1", conversation_id=conversation_id
+        )
+
+    async def test_renders_each_pending_with_age_and_revoke_rule(self) -> None:
+        from app.agents.context.fetchers import build_open_pendings_block
+
+        with patch(
+            "app.agents.context.fetchers.approval_ledger_repository",
+        ) as ledger:
+            ledger.list_open = AsyncMock(return_value=[self._doc()])
+            text = await build_open_pendings_block(self._ctx())
+
+        ledger.list_open.assert_awaited_once_with("c1")
+        assert text.startswith("OPEN PENDINGS")
+        assert "ap_1 | GMAIL_SEND_EMAIL" in text
+        assert "Send it" in text
+        assert 'revoke_tool("ap_1")' in text or "revoke_tool" in text
+
+    async def test_caps_at_ten_with_overflow_count(self) -> None:
+        from app.agents.context.fetchers import build_open_pendings_block
+
+        docs = [self._doc(approval_id=f"ap_{i}", summary=f"s{i}") for i in range(12)]
+        with patch(
+            "app.agents.context.fetchers.approval_ledger_repository",
+        ) as ledger:
+            ledger.list_open = AsyncMock(return_value=docs)
+            text = await build_open_pendings_block(self._ctx())
+
+        assert "(+2 more open)" in text
+        assert "ap_11" not in text
+
+    async def test_empty_and_missing_conversation_render_empty(self) -> None:
+        from app.agents.context.fetchers import build_open_pendings_block
+
+        with patch(
+            "app.agents.context.fetchers.approval_ledger_repository",
+        ) as ledger:
+            ledger.list_open = AsyncMock(return_value=[])
+            assert await build_open_pendings_block(self._ctx()) == ""
+            assert await build_open_pendings_block(self._ctx(None)) == ""
+            ledger.list_open.assert_awaited_once()
+
+    async def test_ledger_failure_degrades_to_empty(self) -> None:
+        from app.agents.context.fetchers import build_open_pendings_block
+
+        with patch(
+            "app.agents.context.fetchers.approval_ledger_repository",
+        ) as ledger:
+            ledger.list_open = AsyncMock(side_effect=ConnectionError("mongo down"))
+            assert await build_open_pendings_block(self._ctx()) == ""

@@ -165,6 +165,7 @@ HIL_EXEMPT_TOOLS: frozenset[str] = frozenset(
         "cancel_executor",
         "handoff",
         "spawn_subagent",
+        "revoke_tool",
         FINISH_TASK_NAME,
         "plan_tasks",
         "update_tasks",

@@ -195,3 +195,4 @@ class ApprovalLedgerDocument(MongoDocument):
     decided_at: datetime | None = None
     proposing_run_id: str | None = None
     v: int = 0
+    created_at: datetime | None = None

@@ -12,6 +12,7 @@ directly in ``sections.SECTIONS``; only a section that genuinely branches keeps
 a body of its own next to the table.
 """
 
+from datetime import UTC, datetime
 import re
 
 from app.agents.context.section_context import SectionContext
@@ -27,6 +28,7 @@ from app.agents.workspace.paths import session_dir
 from app.config.oauth_config import get_integration_by_id
 from app.constants.cache import TRACKED_TODOS_SUMMARY_CACHE_KEY, TRACKED_TODOS_SUMMARY_CACHE_TTL
 from app.constants.log_tags import LogTag
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.todos import todo_repository
 from app.decorators.caching import Cacheable
 from app.memory.context import AGENDA_HEADING, RECENT_ACTIVITY_HEADING
@@ -346,3 +348,48 @@ async def build_provider_metadata_block(integration_id: str | None, user_id: str
         return ""
     lines = "\n".join(f"- {key}: {value}" for key, value in metadata.items())
     return f"USER CONTEXT FOR {integration.name.upper()}:\n{lines}"
+
+
+async def build_open_pendings_block(ctx: SectionContext) -> str:
+    """Open approval pendings for this conversation, oldest first.
+
+    Ledger state, not per-run state: without this a future turn never sees
+    what past turns left undecided, and "revoke anything stale" never fires.
+    Degrades to nothing (with a warning) rather than failing the turn over an
+    enrichment block. Cap keeps a hoarding conversation out of the cache prefix.
+    """
+    if not ctx.conversation_id:
+        return ""
+    try:
+        pendings = await approval_ledger_repository.list_open(ctx.conversation_id)
+    except Exception as e:
+        log.warning(
+            "open_pendings_fetch_failed",
+            error_type=type(e).__name__,
+        )
+        return ""
+    if not pendings:
+        return ""
+    shown = pendings[:10]
+    lines = [
+        f"- {doc.approval_id} | {doc.tool_name} | {_pending_age(doc.created_at)} | {doc.summary}"
+        for doc in shown
+    ]
+    if len(pendings) > len(shown):
+        lines.append(f"(+{len(pendings) - len(shown)} more open)")
+    lines.append('Revoke anything this plan no longer needs with revoke_tool("<id>").')
+    return "OPEN PENDINGS (awaiting the user's decision):\n" + "\n".join(lines)
+
+
+def _pending_age(created_at: object) -> str:
+    """Compact age for a pending row; unknown when the timestamp is absent."""
+    if not isinstance(created_at, datetime):
+        return "?"
+    delta = datetime.now(UTC) - created_at
+    if delta.days > 0:
+        return f"{delta.days}d"
+    hours = delta.seconds // 3600
+    if hours > 0:
+        return f"{hours}h"
+    minutes = delta.seconds // 60
+    return f"{minutes}m" if minutes > 0 else "now"
