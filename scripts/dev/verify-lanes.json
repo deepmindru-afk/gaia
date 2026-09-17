@@ -140,12 +140,29 @@
       "command": "python3 tools/lints/run.py apps/api/app apps/api/tests"
     },
     {
+      "name": "lint-imports",
+      "scope": "^apps/api/(app/.*\\.py|pyproject\\.toml)$",
+      "heavy": false,
+      "timeout_s": 300,
+      "require_cmd": ["uvx"],
+      "command": "cd apps/api && uvx --no-build --from import-linter==2.6 lint-imports --no-cache"
+    },
+    {
       "name": "plr-complexity",
       "scope": "\\.py$|^tools/lints/(check_plr_complexity\\.py|plr_complexity_baseline\\.txt)",
       "heavy": false,
       "timeout_s": 120,
       "require_cmd": [],
       "command": "python3 tools/lints/check_plr_complexity.py"
+    },
+    {
+      "name": "import-cost",
+      "$comment": "Imports the real modules in fresh subprocesses, so it needs the synced venv; --report matches the CI step, which measures without gating until the base layers stop importing upward.",
+      "scope": "^apps/api/app/(constants|config|utils|models)/|^apps/api/app/(main|worker)\\.py$|^apps/api/tests/conftest\\.py$|^tools/lints/check_import_cost\\.py$",
+      "heavy": true,
+      "timeout_s": 900,
+      "require_cmd": [],
+      "command": "python3 tools/lints/check_import_cost.py --report"
     },
     {
       "name": "ignore-whys",

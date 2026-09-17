@@ -18,7 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from app.config.rate_limits import RateLimitConfig
-from app.db.postgresql import LANGGRAPH_SETUP_LOCK_ID
+from app.constants.db import LANGGRAPH_SETUP_LOCK_ID
 from shared.py.wide_events import log, log_context
 
 

@@ -254,11 +254,11 @@ def test_init_gemini_llm_pins_context_window_profile(monkeypatch):
 def test_init_custom_llm_wires_every_kwarg_and_profile(monkeypatch):
     """The DEV_LLM_* endpoint must receive every construction kwarg intact, including its context-window profile and configurable model field."""
     from app.agents.llm import client
-    from app.agents.llm.types import LLMProviderName
     from app.constants.llm import (
         DEFAULT_LLM_TEMPERATURE,
         DEFAULT_MAX_TOKENS,
         DEV_LLM_MAX_OUTPUT_TOKENS,
+        LLMProviderName,
     )
 
     captured: dict[str, object] = {}

@@ -32,8 +32,6 @@ from app.constants.cache import (
     EXECUTOR_QUEUE_TTL,
 )
 from app.constants.executor import (
-    CONFIGURABLE_OWNED_KEYS,
-    CONFIGURABLE_RUN_SCOPED_KEYS,
     EXECUTOR_COLLECT_MARKER_PREFIX,
     EXECUTOR_COLLECT_MARKER_TTL,
     EXECUTOR_COLLECTION_TASK,
@@ -42,7 +40,11 @@ from app.constants.log_tags import LogTag
 from app.core.stream_manager import StreamManager
 from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
-from app.models.agent_models import AgentConfigurable
+from app.models.agent_models import (
+    CONFIGURABLE_OWNED_KEYS,
+    CONFIGURABLE_RUN_SCOPED_KEYS,
+    AgentConfigurable,
+)
 from app.utils.general_utils import is_json_safe
 from shared.py.wide_events import current_workflow_execution_id, log
 

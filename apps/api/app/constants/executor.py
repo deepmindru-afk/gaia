@@ -5,9 +5,6 @@ its handoff to the comms agent. Centralized so the executor runner, capture,
 and any future consumers reference a single source of truth.
 """
 
-from app.constants.hil import HIL_RESUME_CONFIG_KEY
-from app.models.agent_models import AgentConfigurable
-
 # SSE frame key carrying the executor's narrated answer for voice-mode TTS.
 # Must match VOICE_TTS_KEY in apps/voice-agent/src/constants.py — the voice
 # agent matches on this exact string to decide what to speak.
@@ -46,14 +43,3 @@ EXECUTOR_COLLECTION_TASK = (
 # is crash insurance so a lost run can't suppress wake-ups forever.
 EXECUTOR_COLLECT_MARKER_PREFIX = "executor:collect_queued:"
 EXECUTOR_COLLECT_MARKER_TTL = 600
-
-
-# What survives a queue hop / HIL resume. AgentConfigurable IS the allowlist: a
-# hand-maintained list this replaces had fallen behind it, dropping fields like
-# the OpenRouter provider pin. Still filtered: LangGraph's own runtime keys (checkpoint_ns, __pregel_*).
-CONFIGURABLE_OWNED_KEYS: frozenset[str] = frozenset(AgentConfigurable.__annotations__)
-
-# Owned keys that are nonetheless scoped to ONE dispatch and must not ride along
-# to the next: hil_resume_replay means "this exact call is a replay", so carrying
-# it would make a fresh run probe its subagent threads for interrupts it cannot have.
-CONFIGURABLE_RUN_SCOPED_KEYS: frozenset[str] = frozenset({HIL_RESUME_CONFIG_KEY})
