@@ -436,6 +436,11 @@ export abstract class BaseBotAdapter {
       target_platform_message_id: reaction.target_platform_message_id,
     });
     await this.deliverOutbound(destinationId, reaction.emoji, isChannel);
+    this.analytics.capture(
+      await this.resolveDistinctId(destinationId),
+      BOT_EVENTS.REACTION_DELIVERED,
+      { success: true, delivery: "fallback_text", reason: "platform_unsupported" },
+    );
   }
 
   // ---------------------------------------------------------------------------

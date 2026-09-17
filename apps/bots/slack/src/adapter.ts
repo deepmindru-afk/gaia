@@ -38,6 +38,7 @@ import {
   type SentMessage,
   STREAMING_DEFAULTS,
 } from "@gaia/shared/bots";
+import { BOT_EVENTS } from "@gaia/shared/analytics";
 import { App } from "@slack/bolt";
 
 /** Bolt's respond function for slash command responses. */
@@ -339,6 +340,11 @@ export class SlackAdapter extends BaseBotAdapter {
         emoji: reaction.emoji,
       });
       await this.deliverOutbound(destinationId, reaction.emoji, isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "unmapped_emoji" },
+      );
       return;
     }
     const channel = isChannel
@@ -350,6 +356,11 @@ export class SlackAdapter extends BaseBotAdapter {
         timestamp: reaction.target_platform_message_id,
         name,
       });
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "native" },
+      );
     } catch (err) {
       this.adapterLogger.warn("outbound_reaction_attach_failed", {
         channel_hash: hashLogIdentifier(channel),
@@ -358,6 +369,11 @@ export class SlackAdapter extends BaseBotAdapter {
           : { error: String(err) }),
       });
       await this.deliverOutbound(destinationId, reaction.emoji, isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "attach_failed" },
+      );
     }
   }
 

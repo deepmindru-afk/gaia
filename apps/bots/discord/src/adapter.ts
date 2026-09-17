@@ -40,6 +40,7 @@ import {
   wideLog,
   withWideEvent,
 } from "@gaia/shared/bots";
+import { BOT_EVENTS } from "@gaia/shared/analytics";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -255,6 +256,11 @@ export class DiscordAdapter extends BaseBotAdapter {
         reaction.target_platform_message_id,
       );
       await message.react(reaction.emoji);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "native" },
+      );
     } catch (err) {
       this.adapterLogger.warn("outbound_reaction_attach_failed", {
         ...(err instanceof Error
@@ -262,6 +268,11 @@ export class DiscordAdapter extends BaseBotAdapter {
           : { error: String(err) }),
       });
       await this.deliverOutbound(destinationId, reaction.emoji, isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "attach_failed" },
+      );
     }
   }
 

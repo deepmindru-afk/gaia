@@ -964,11 +964,21 @@ export class WhatsAppAdapter extends BaseBotAdapter {
           emoji: reaction.emoji,
         },
       });
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "native" },
+      );
     } catch (err) {
       this.adapterLogger.warn("outbound_reaction_attach_failed", {
         ...sanitizeErrorForLog(err),
       });
       await this.deliverOutbound(destinationId, reaction.emoji, _isChannel);
+      this.analytics.capture(
+        await this.resolveDistinctId(destinationId),
+        BOT_EVENTS.REACTION_DELIVERED,
+        { success: true, delivery: "fallback_text", reason: "attach_failed" },
+      );
     }
   }
 
