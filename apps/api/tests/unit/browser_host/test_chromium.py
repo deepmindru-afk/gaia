@@ -210,6 +210,34 @@ async def test_healthz_probes_the_root_connection_not_any_session_connection() -
     assert session.mux.calls == []
 
 
+@pytest.mark.unit
+async def test_healthz_does_not_probe_a_dead_engine_even_with_a_connection_object() -> None:
+    """A dead process cannot answer, so the probe is skipped rather than left to time out."""
+    host = make_host()
+    host._proc = MagicMock(returncode=0)  # chromium_up is False
+    root = FakeMux({"Target.getTargets": {"targetInfos": []}})
+    host._root_mux = root
+
+    result = await host.healthz()
+
+    assert result["cdp_responsive"] is False
+    assert root.calls == []
+
+
+@pytest.mark.unit
+async def test_healthz_reports_a_missing_root_connection_without_calling_it_an_error() -> None:
+    """No connection yet is a state, not a failure, so nothing is dialled and nothing is logged."""
+    host = make_host()
+    host._root_mux = None
+
+    with patch.object(chromium, "log") as mock_log:
+        result = await host.healthz()
+
+    assert result["cdp_responsive"] is False
+    assert result["chromium_up"] is True
+    mock_log.error.assert_not_called()
+
+
 # --- BUG 5: an idle sweep must not reap a session that is still inside its TTL ---
 
 
