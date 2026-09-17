@@ -1,27 +1,13 @@
 """Structured application errors with rich context for wide event logging.
 
-An AppError carries two different audiences. ``message``/``why``/``fix``/
-``code`` and the ``public`` mapping are the contract the client reads; ``meta``
-is diagnostic context for the wide event and never reaches the wire. Putting a
-provider body, a user id or a ``str(e)`` in ``meta`` is therefore safe, and
-putting one in ``public`` is a deliberate decision.
+An AppError carries two audiences. The message, why, fix and code fields and
+the public mapping are the contract the client reads; meta is diagnostic
+context for the wide event and never reaches the wire. A provider body, a user
+id or str(e) is therefore safe in meta, and putting one in public is a
+deliberate decision.
 
-Usage:
-    from app.utils.errors import AppError, create_error
-
-    raise create_error(
-        message="Payment failed",
-        why="The card issuer declined the charge",
-        fix="Try another card or contact your bank",
-        status_code=402,
-        code="card_declined",
-        public={"retry_allowed": True},
-        provider="stripe",
-        charge_id="ch_abc123",
-    )
-
-    # The AppError exception handler in app_factory.py sets the structured
-    # error onto the wide event so it appears in the final log.
+The AppError exception handler in app/core/exception_handlers.py sets the
+structured error onto the wide event so it appears in the final log.
 """
 
 from dataclasses import dataclass, field

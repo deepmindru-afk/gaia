@@ -133,7 +133,7 @@ def tracked_modules() -> list[str]:
 
 
 def interpreter() -> Path:
-    """The Python that can actually import the app, or die saying it is missing."""
+    """Return the Python that can import the app, or die saying it is missing."""
     for candidate in (
         API_ROOT / ".venv" / "bin" / "python",
         REPO_ROOT / ".venv" / "bin" / "python",
@@ -176,7 +176,7 @@ def parse_importtime(text: str) -> Node | None:
 
 
 def hot_chain(root: Node) -> str:
-    """The most expensive path out of a module: who it imports, and why that costs.
+    """Return the most expensive path out of a module: what it imports, and why.
 
     One path, not a tree: the reader needs the edge to cut, and the costliest
     child at every step is the edge that is actually paying for the module.

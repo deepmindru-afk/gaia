@@ -76,7 +76,7 @@ def test_the_scope_skips_what_cannot_change_the_document(scope: str) -> None:
 
 
 def test_the_prek_hook_carries_the_same_scope(scope: str, hook: dict[str, Any]) -> None:
-    """prek needs a literal, so the copy is checked instead of derived."""
+    """Compare the literal copy, since prek cannot derive the scope."""
     assert hook["files"] == scope, (
         f"the {HOOK} hook's files: drifted from the {LANE} lane's scope in "
         f"{LANES.name} — copy it across:\n  hook: {hook['files']}\n  lane: {scope}"

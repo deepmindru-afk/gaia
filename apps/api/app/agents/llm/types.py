@@ -19,10 +19,8 @@ class LLMProvider(TypedDict):
     instance: ProviderLLM
 
 
-# A fallback may be passed as a ready runnable or as a zero-arg factory, so
-# expensive preparation (e.g. re-binding the full tool list) only happens in
-# the rare case the primary actually fails. Parametrized to match what callers
-# actually build: bind_tools() returns Runnable[LanguageModelInput, AIMessage].
+# A fallback may be a ready runnable or a zero-arg factory, so expensive
+# preparation only happens if the primary actually fails.
 LLMFallback = (
     Runnable[LanguageModelInput, AIMessage]
     | Callable[[], Runnable[LanguageModelInput, AIMessage] | None]

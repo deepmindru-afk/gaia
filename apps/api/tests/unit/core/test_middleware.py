@@ -1,6 +1,6 @@
 """Middleware registration order — the invariant PostHog identity rests on.
 
-Starlette runs ``app.user_middleware`` outermost-first, so a middleware's index
+Starlette runs app.user_middleware outermost-first, so a middleware's index
 IS its execution order. Two orderings here are load-bearing and neither was
 asserted anywhere; the module had no unit test at all.
 """
@@ -32,39 +32,26 @@ def middleware_names() -> list[str]:
 
 
 def test_posthog_context_is_registered(middleware_names: list[str]) -> None:
-    """Without it no authenticated request is identified and every capture in
-    a route handler lands on an anonymous profile."""
+    """Without it no authenticated request is identified and every capture lands on an anonymous profile."""
     assert "PostHogRequestContextMiddleware" in middleware_names
 
 
 def test_posthog_context_runs_inside_workos_auth(middleware_names: list[str]) -> None:
-    """It reads ``request.state.user``, which WorkOSAuthMiddleware populates.
-
-    Registered the other way round it would run first, see no user, and
-    silently identify nobody — the events still send, just unattributed.
-    """
+    """Registered the other way round it would run first, see no user, and silently identify nobody."""
     assert middleware_names.index("WorkOSAuthMiddleware") < middleware_names.index(
         "PostHogRequestContextMiddleware"
     )
 
 
 def test_bot_auth_runs_inside_posthog_context(middleware_names: list[str]) -> None:
-    """The documented reason bot routes must attribute explicitly.
-
-    BotAuthMiddleware populates ``request.state.user`` for bot API-key traffic,
-    but it runs INSIDE the PostHog context, which has already decided there is
-    nobody to identify. Hence ``capture_event(user_id, ...)`` rather than
-    ``capture_context_event`` on every bot route (see apps/api/CLAUDE.md).
-    Should this order ever flip, that guidance becomes wrong.
-    """
+    """BotAuthMiddleware runs inside the PostHog context, which has already decided nobody to identify — hence capture_event(user_id, ...) on bot routes."""
     assert middleware_names.index("PostHogRequestContextMiddleware") < (
         middleware_names.index("BotAuthMiddleware")
     )
 
 
 def test_the_crash_catch_all_runs_inside_cors(middleware_names: list[str]) -> None:
-    """Outside CORS its 500 envelope carries no Access-Control-Allow-Origin and
-    no browser can read it — which is exactly what ServerErrorMiddleware does."""
+    """Outside CORS the 500 envelope has no CORS headers, so no browser can read it."""
     assert middleware_names.index("CORSMiddleware") < middleware_names.index(
         "UnhandledExceptionMiddleware"
     )
@@ -86,10 +73,10 @@ def test_the_crash_catch_all_covers_every_layer_inside_cors(
 class TestPostHogContextDoesNotSwallowExceptions:
     """The context must not become the thing that reports the error.
 
-    ``new_context`` autocaptures escaping exceptions by default, through the
+    new_context autocaptures escaping exceptions by default, through the
     MODULE-level posthog client — which this codebase never configures, since
-    it builds a ``Posthog()`` instance via the lazy provider. That autocapture
-    raises ``ValueError("API key is required")`` on the way out and REPLACES the
+    it builds a Posthog() instance via the lazy provider. That autocapture
+    raises ValueError("API key is required") on the way out and REPLACES the
     real exception, so every authenticated 500 reaches the error handler, the
     wide event and Sentry as the same bogus ValueError.
 
@@ -135,8 +122,7 @@ class TestRateLimitHandler:
         assert app.exception_handlers[RateLimitExceeded] is rate_limit_handler
 
     def test_the_handler_is_sync_so_slowapi_cannot_discard_it(self) -> None:
-        """``sync_check_limits`` drops a coroutine handler and emits slowapi's
-        own ``{"error": ...}`` body, taking every default-limit 429 off the envelope."""
+        """sync_check_limits drops a coroutine handler and emits slowapi's own body."""
         assert not inspect.iscoroutinefunction(rate_limit_handler)
 
     @staticmethod
@@ -170,8 +156,7 @@ class TestRateLimitHandler:
         return app
 
     def test_the_429_body_is_the_envelope_with_a_real_retry_after_header(self) -> None:
-        """An already-closed window still owes the caller a positive hint, not a
-        zero or a negative one — this route never actually spent its budget."""
+        """A closed window still owes the caller a positive hint, never zero or negative."""
         resp = TestClient(self._app_that_is_rate_limited(record_window=True)).get("/limited")
         assert resp.status_code == 429
         assert resp.json() == {
@@ -181,8 +166,7 @@ class TestRateLimitHandler:
         assert resp.headers["retry-after"] == "1"
 
     def test_unreadable_storage_falls_back_to_the_whole_window(self) -> None:
-        """Redis can die between the hit that refused the request and this read;
-        the window length is the correct upper bound, and the 429 must still land."""
+        """Redis can die between the refusing hit and this read; the window is the bound."""
         app = self._app_that_is_rate_limited(record_window=True)
         with patch.object(
             app.state.limiter.limiter,
@@ -204,8 +188,7 @@ class TestRateLimitHandler:
         assert "retry-after" not in resp.headers
 
     def test_the_refusal_is_recorded_with_who_was_refused_and_where(self) -> None:
-        """Every field here is queried in Loki when someone reports being
-        throttled; a missing or renamed one makes the event unanswerable."""
+        """Every field here is queried in Loki when someone reports being throttled."""
         with patch("app.core.middleware.wide_log") as mock_log:
             TestClient(self._app_that_is_rate_limited(record_window=True)).get("/limited")
 
@@ -224,8 +207,7 @@ class TestRateLimitHandler:
     def test_a_proxied_caller_without_a_socket_peer_is_still_identified(
         self, headers: dict[str, str], expected_ip: str
     ) -> None:
-        """Behind a load balancer the ASGI scope carries no client tuple, and an
-        unattributable throttle is the one that cannot be investigated."""
+        """Behind a load balancer the scope has no client tuple; still attribute it."""
         request = Request(
             {
                 "type": "http",

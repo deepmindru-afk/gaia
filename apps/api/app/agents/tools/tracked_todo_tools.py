@@ -581,10 +581,8 @@ async def create_tracked_todo(
     user_id = metadata.get("user_id")
     if not user_id:
         return _ERR_NO_USER_ID
-    # The chat this tracked todo was created in, captured for a later push back
-    # into it. build_agent_config puts conversation_id in `configurable` (not
-    # `metadata`), so read it there — matching reminder_tool. None for a non-chat
-    # root (onboarding/REST).
+    # conversation_id lives in `configurable`, not `metadata` (matching
+    # reminder_tool). None for a non-chat root (onboarding/REST).
     source_conversation_id = agent_configurable(config).get("conversation_id")
 
     # Recurrence is always evaluated in the user's stored timezone. We only

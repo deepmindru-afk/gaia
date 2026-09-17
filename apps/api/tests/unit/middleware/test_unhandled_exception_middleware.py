@@ -68,8 +68,7 @@ async def test_a_crash_after_the_status_line_propagates_instead_of_double_sendin
 
 
 async def test_a_websocket_scope_is_handed_on_untouched() -> None:
-    """A socket needs its own receive and send; a wrapped or dropped one would
-    break every frame in both directions."""
+    """A socket needs its own receive and send; wrapping either breaks every frame."""
     seen: list[tuple[Any, Any, Any]] = []
     receive, send = MagicMock(), MagicMock()
 
@@ -82,8 +81,7 @@ async def test_a_websocket_scope_is_handed_on_untouched() -> None:
 
 
 async def test_the_request_body_still_reaches_the_app() -> None:
-    """The app reads it off ``receive``; without it every POST would hang or
-    arrive empty, and nothing about the 500 path would say so."""
+    """The app reads the body off receive; without it every POST hangs or arrives empty."""
     received: list[bytes] = []
 
     async def _echo_app(scope: Scope, receive: Receive, send: Send) -> None:
@@ -98,8 +96,7 @@ async def test_the_request_body_still_reaches_the_app() -> None:
 
 
 async def test_a_scope_without_a_path_still_records_the_crash() -> None:
-    """A raw ASGI scope need not carry ``path``; reading it must not raise
-    inside the handler that exists to stop things raising."""
+    """A raw ASGI scope need not carry path; reading it must not raise here."""
     sent: list[dict[str, Any]] = []
 
     async def _send(message: dict[str, Any]) -> None:
@@ -116,8 +113,7 @@ async def test_a_scope_without_a_path_still_records_the_crash() -> None:
 
 
 async def test_the_crash_is_recorded_on_the_wide_event() -> None:
-    """LoggingMiddleware's except path never sees a crash this converts, so the
-    failure would vanish from the canonical event without this line."""
+    """LoggingMiddleware never sees a crash this converts, so it is recorded here."""
     with patch("app.api.v1.middleware.unhandled_exception.log") as mock_log:
         async with _client(_boom_app) as client:
             await client.get("/boom-path")

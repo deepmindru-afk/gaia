@@ -137,8 +137,10 @@ def _websocket(cookies: dict[str, str] | None = None, protocol: str = "") -> Mag
 
 
 class TestGetCurrentUserWs:
-    """The dependency used to close the socket and return ``{}`` typed as an
-    AuthenticatedUser, so every caller held a value whose type was a lie."""
+    """Cover the dependency that used to return an empty dict typed as a user.
+
+    Every caller held a value whose type was a lie and had to re-check it.
+    """
 
     async def test_a_session_cookie_yields_the_authenticated_user(self) -> None:
         with patch(_WS_AUTH, new_callable=AsyncMock, return_value=({"user_id": "u1"}, None)):
@@ -175,8 +177,7 @@ class TestGetCurrentUserWs:
 
     @pytest.mark.parametrize("user_info", [{"user_id": 12345}, {"email": "a@b.c"}])
     async def test_a_user_without_a_string_id_never_yields_a_socket(self, user_info) -> None:
-        """Callers key connection bookkeeping on the id; handing one back
-        without it is what made the old empty-dict return look survivable."""
+        """Callers key connection bookkeeping on the id, so a user without one yields no socket."""
         with (
             patch(_WS_AUTH, new_callable=AsyncMock, return_value=(user_info, None)),
             patch(f"{_DEPS}.log") as mock_log,

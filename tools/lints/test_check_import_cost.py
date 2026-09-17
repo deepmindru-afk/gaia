@@ -56,7 +56,7 @@ def test_output_with_no_importtime_lines_is_not_a_zero_cost_pass() -> None:
 
 @pytest.fixture
 def package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A throwaway apps/api whose constants layer has one slow module in it."""
+    """Build a throwaway apps/api whose constants layer has one slow module."""
     api = tmp_path / "apps" / "api"
     constants = api / "app" / "constants"
     constants.mkdir(parents=True)

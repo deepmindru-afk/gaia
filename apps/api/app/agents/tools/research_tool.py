@@ -57,9 +57,8 @@ class ResearchResult(TypedDict):
 
 
 # The return stays dict[str, Any]: the five exit branches return genuinely
-# different key sets, and the cache-hit branch spreads a Redis-deserialized
-# payload — there is no single shape to name without guessing (Type Safety
-# item 14). ResearchResult above names the one branch that is fully built here.
+# different key sets (Type Safety item 14). ResearchResult above names the
+# one branch that is fully built here.
 @tool
 @with_rate_limiting("deep_research")
 @with_doc(DEEP_RESEARCH)

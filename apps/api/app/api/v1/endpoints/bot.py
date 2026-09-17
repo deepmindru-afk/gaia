@@ -222,10 +222,9 @@ async def _bot_upgrade_url(user_id: str) -> str:
     try:
         pro = await payment_service.create_pro_checkout(user_id)
     except Exception as e:
-        # A marketing link must never cost the user their reply — degrade to the
-        # pricing page, loudly.
-        # Bounded fields, not provider error text: the event stays queryable
-        # without leaking upstream payloads into telemetry.
+        # A marketing link must never cost the user their reply — degrade to
+        # the pricing page, loudly. Bounded fields, not provider error text,
+        # so the event stays queryable without leaking upstream payloads.
         log.warning(
             f"{LogTag.PAYMENT} Could not mint bot upgrade link, falling back to pricing page",
             user={"id": user_id},
@@ -310,10 +309,6 @@ def _bot_stream_control_frame(
 
     Returns ``(frame, data, stop)`` — see the tri-state contract below.
     """
-    # A comment/[DONE]/malformed-JSON chunk yields a ready-to-send `frame`
-    # (`data` is None); a content chunk yields the parsed payload as `data`
-    # for `_bot_stream_payload_frame` (`frame` is None); a web-only
-    # non-`data:` line yields both None. `stop` ends the stream after `frame`.
     if chunk.startswith(":"):
         return chunk, None, False
 
@@ -354,14 +349,9 @@ async def _bot_stream_payload_frame(
         # Forward keepalives so bot clients reset inactivity timers.
         return keepalive_frame(), False
 
-    # Surface rate-limit cards (web-only UI) to bots as a dedicated notice
-    # frame the client delivers out of band, before the web-only fields are
-    # dropped below.
-    #
-    # Its own frame, not a {"text"} one: text belongs to the assistant
-    # message in flight, so a notice sent that way was dropped whenever that
-    # message was discarded (a handoff preamble, a rewritten draft) — the
-    # user hit a limit and was told nothing.
+    # Surface rate-limit cards to bots as a dedicated notice frame (not
+    # {"text"}, which is tied to the in-flight message and would be dropped
+    # if that message gets discarded) before web-only fields are dropped below.
     if (rate_limit_notice := await _bot_rate_limit_notice(data, upgrade_url)) is not None:
         return notice_frame(rate_limit_notice), False
 
@@ -615,10 +605,9 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
     # of minting a fresh one per chunk.
     upgrade_url = _bot_upgrade_url_once(user_id)
 
-    # The translator above drops every web-only frame, so the socket can go
-    # quiet for minutes while the turn is busy. with_heartbeat guarantees a
-    # byte on the wire regardless, so no proxy in the path can mistake a
-    # working stream for a dead one.
+    # The translator drops every web-only frame, so the socket can go quiet
+    # for minutes; with_heartbeat guarantees a byte on the wire so no proxy
+    # mistakes a working stream for a dead one.
     return StreamingResponse(
         with_heartbeat(
             _bot_stream_from_redis(
@@ -646,13 +635,9 @@ async def reset_session(request: Request, body: ResetSessionRequest) -> ResetSes
     await require_bot_api_key(request)
     log.set(operation="reset_session", platform=body.platform)
 
-    # `user` is one of two genuinely different untyped dict shapes here —
-    # middleware's `build_user_context()` output (has "user_id", no "_id") or
-    # PlatformLinkService's legacy dict (has "_id", no "user_id") — normalized
-    # below and handed to BotService, which re-normalizes it the same way for
-    # every other bot endpoint. Unifying the two shapes is a cross-file change
-    # (platform_link_service.py, bot_auth_middleware.py, bot_service.py) out
-    # of scope here; see API CLAUDE.md Type Safety §14.
+    # `user` is one of two untyped dict shapes (build_user_context() output,
+    # or PlatformLinkService's legacy dict) normalized below; unifying them
+    # is a cross-file change out of scope here (see API CLAUDE.md Type Safety §14).
     user = getattr(request.state, "user", None)
     if not user or not getattr(request.state, "authenticated", False):
         user = await PlatformLinkService.get_user_by_platform_id(
@@ -821,10 +806,9 @@ async def unlink_account(request: Request) -> UnlinkAccountResponse:
     if not Platform.is_valid(platform):
         raise HTTPException(status_code=400, detail="Invalid platform")
 
-    # PlatformLinkService.get_user_by_platform_id returns a transitional
-    # legacy dict (see `user_to_legacy_dict`) shared by several bot endpoints;
-    # only "_id" is read here, so it stays a dict rather than introducing a
-    # one-off model for a single field (API CLAUDE.md Type Safety §14).
+    # get_user_by_platform_id returns a transitional legacy dict; only "_id"
+    # is read here, so it stays a dict rather than a one-off model for a
+    # single field (API CLAUDE.md Type Safety §14).
     user = await PlatformLinkService.get_user_by_platform_id(platform, platform_user_id)
     if not user:
         log.audit(
@@ -881,10 +865,9 @@ async def unlink_account(request: Request) -> UnlinkAccountResponse:
 async def transcribe_bot_audio(
     request: Request,
     file: Annotated[UploadFile, File(...)],
-    # `tiered_rate_limit` finds the caller by reading the `user` keyword argument
-    # FastAPI injects and pulling "user_id" off it, so this stays the full auth
-    # dict rather than a `get_user_id` string — narrowing it would silently skip
-    # rate limiting for this route.
+    # `tiered_rate_limit` reads "user_id" off the `user` kwarg FastAPI injects,
+    # so this stays the full auth dict — narrowing it to a `get_user_id`
+    # string would silently skip rate limiting for this route.
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     content_length: Annotated[int | None, Header(alias="content-length")] = None,
 ) -> TranscribeAudioResponse:
@@ -892,24 +875,9 @@ async def transcribe_bot_audio(
     await require_bot_api_key(request)
     log.set(operation="bot_transcribe_audio", user={"id": user.get("user_id")})
 
-    # Paid-only gate, imperative rather than `@require_subscription()`: the bot
-    # API key is checked in the body, so a decorator would 402 a caller whose
-    # key was never verified. An unlinked caller never reaches here —
-    # `get_current_user` 401s first — so unlinked behavior is unchanged.
-    # Ordering wart: `@tiered_rate_limit` already charged one transcription
-    # against the caller's quota by this point. Harmless for a blocked user
-    # (they cannot spend it) and not worth moving the key check to a
-    # dependency for, which would fork this route from `bot_chat_stream`.
-    #
-    # `require_active_subscription` already logs the block and fires
-    # PAYWALL_BLOCKED with this feature name; what it cannot do is stamp THIS
-    # route's wide event. Without the outcome, "are voice notes failing on the
-    # paywall or on the provider?" — the question an incident actually asks —
-    # has no answer, because a refused transcribe and a served one leave
-    # identical events. The value matches `_bot_stream_entitlement_gate` so one
-    # query covers both bot surfaces. No CHAT_MESSAGE_REFUSED here: a
-    # transcribe is not a chat turn, and counting it as one would inflate the
-    # bot's refused-turn rate with events that have no turn behind them.
+    # Imperative gate, not @require_subscription(): the bot API key is checked in the body, so a decorator would 402 an unverified caller (unlinked callers 401 earlier at get_current_user).
+    # tiered_rate_limit already charged one transcription by this point — harmless, since a blocked user can't spend it. Outcome value matches _bot_stream_entitlement_gate for one query across both bot surfaces.
+    # No CHAT_MESSAGE_REFUSED here since a transcribe isn't a chat turn.
     try:
         await require_active_subscription(str(user["user_id"]), feature="bot_transcribe")
     except SubscriptionRequiredException:

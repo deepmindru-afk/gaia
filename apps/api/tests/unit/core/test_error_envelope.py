@@ -1,7 +1,7 @@
-"""Every non-2xx body the app emits is one ``ErrorEnvelope``.
+"""Every non-2xx body the app emits is one ErrorEnvelope.
 
-Before this there were two shapes on the wire — ``AppError`` rendered flat
-``{message, why, fix, ...}`` while ``HTTPException`` rendered ``{detail}`` —
+Before this there were two shapes on the wire — AppError rendered flat
+{message, why, fix, ...} while HTTPException rendered {detail} —
 and 17 client files each guessed which one they were holding. These pin the
 single shape for every path that produces an error body: the two exception
 kinds, request validation, the crash handler, and the middlewares that answer
@@ -201,7 +201,7 @@ class TestOneEnvelope:
     async def test_structured_detail_without_message_keeps_its_status(
         self, client: AsyncClient
     ) -> None:
-        """A mapping detail with no ``message`` renders under the status phrase, never as a 500."""
+        """A mapping detail with no message renders under the status phrase, never as a 500."""
         resp = await client.get("/http-structured-no-message")
         body = resp.json()
         assert resp.status_code == 403
@@ -248,8 +248,7 @@ class TestOneEnvelope:
     async def test_an_unknown_status_with_no_message_has_a_generic_one(
         self, client: AsyncClient
     ) -> None:
-        """``HTTPStatus(499)`` has no phrase to fall back to, and raising here
-        would replace the forwarded status with a bare plaintext 500."""
+        """HTTPStatus(499) has no phrase; raising would turn the status into a bare 500."""
         resp = await client.get("/http-non-standard-status-no-message")
         assert resp.status_code == 499
         assert resp.json() == {"message": "Error", "code": "client_closed"}
@@ -257,8 +256,7 @@ class TestOneEnvelope:
     async def test_a_ragged_list_detail_still_renders_every_entry(
         self, client: AsyncClient
     ) -> None:
-        """An entry that is not a {loc, msg, type} mapping becomes its own message,
-        never the Python repr a plain str(detail) produced."""
+        """A non-mapping entry becomes its own message, never a Python repr."""
         resp = await client.get("/http-list-detail-ragged")
         assert resp.status_code == 400
         assert _envelope(resp.json()).errors == [
@@ -270,8 +268,7 @@ class TestOneEnvelope:
     async def test_a_mapping_detail_with_raw_errors_is_normalized_not_a_500(
         self, client: AsyncClient
     ) -> None:
-        """Raw entries would fail validation inside the handler; a string ``loc``
-        is one value, never iterated into its characters."""
+        """Raw entries are normalized first; a string loc stays one value."""
         resp = await client.get("/http-mapping-raw-errors")
         assert resp.status_code == 400
         assert _envelope(resp.json()).errors == [

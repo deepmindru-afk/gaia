@@ -101,10 +101,8 @@ async def create_reminder_tool(
             source_conversation_id=configurable.get("conversation_id"),
         )
 
-        # Convert to the service request model
         request_model = tool_request.to_create_reminder_request()
 
-        # Create the reminder
         await reminder_scheduler.create_reminder(request_model, user_id=user_id)
 
         return "Reminder created successfully"
@@ -224,10 +222,9 @@ async def update_reminder_tool(
         if not user_id:
             return {"error": "User ID is required to update reminder"}
 
-        # Assigned field-by-field rather than passed to the constructor: only the
-        # fields the caller actually touched land in ``model_fields_set``, which is
-        # what the repository's ``exclude_unset`` $set relies on to avoid nulling
-        # the fields this update never mentions.
+        # Assigned field-by-field rather than via the constructor: only touched
+        # fields land in model_fields_set, which exclude_unset relies on to
+        # avoid nulling fields this update never mentions.
         update = ReminderUpdate()
         if repeat is not None:
             update.repeat = repeat

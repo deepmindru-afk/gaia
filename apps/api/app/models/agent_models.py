@@ -39,17 +39,9 @@ __all__ = [
     "runtime_configurable",
 ]
 
-#: One entry of an agent's middleware stack.
-#:
-#: ``AgentMiddleware``'s ``StateT`` is erased here because a stack is genuinely
-#: heterogeneous — ``SubagentMiddleware`` is typed over ``SubagentState``, the
-#: rest over the base ``AgentState`` — and ``StateT`` is invariant, so no
-#: narrower common element type exists. This still checks that every entry IS an
-#: ``AgentMiddleware``, which the ``Any`` it replaces did not.
-#:
-#: It lives here, rather than beside the factory that builds stacks, because
-#: both that factory and the spawn-graph builder that consumes one need it, and
-#: those two must not import each other (see ``spawn_agent``'s module docstring).
+#: One entry of an agent's middleware stack. ``StateT`` is erased since a
+#: stack is genuinely heterogeneous, but this still checks every entry IS an
+#: ``AgentMiddleware``. Lives here since the stack factory and spawn-graph builder must not import each other.
 AnyAgentMiddleware = AgentMiddleware[Any, Any, Any]
 
 #: An agent's middleware stack, in execution order.

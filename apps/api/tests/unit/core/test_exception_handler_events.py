@@ -66,8 +66,7 @@ async def test_an_app_error_names_the_failure_and_where_it_happened() -> None:
 
 
 async def test_an_error_that_names_no_code_ships_none() -> None:
-    """Clients narrow on ``code``; inventing one for an error that declared
-    nothing would route the caller down a branch the raiser never chose."""
+    """Clients narrow on code; inventing one routes them down a branch never chosen."""
     with patch(HANDLERS_LOG):
         response = await app_error_handler(
             _request(), create_error(message="Nope", status_code=400)
@@ -141,8 +140,7 @@ async def test_a_5xx_http_exception_is_an_error_so_level_searches_find_it() -> N
 
 
 async def test_an_explicit_cause_is_named_on_the_event() -> None:
-    """``raise HTTPException(...) from e`` is the only way the real failure is
-    recorded; without this the event says 500 and nothing about what broke."""
+    """Only an explicit raise-from names the real failure on the event."""
     exc = StarletteHTTPException(status_code=502, detail="upstream")
     exc.__cause__ = ValueError("connection reset")
 
@@ -155,8 +153,7 @@ async def test_an_explicit_cause_is_named_on_the_event() -> None:
 
 
 async def test_an_incidental_context_is_not_reported_as_the_cause() -> None:
-    """``__context__`` is set by any raise inside an except block and is usually
-    unrelated; naming it would send investigators after the wrong exception."""
+    """__context__ is set by any raise inside an except block; naming it misleads."""
     exc = StarletteHTTPException(status_code=502, detail="upstream")
     exc.__context__ = ValueError("unrelated")
 
@@ -180,8 +177,7 @@ async def test_a_bodiless_status_keeps_its_headers_and_is_still_recorded() -> No
 
 
 async def test_the_registration_covers_every_kind_of_failure() -> None:
-    """A handler left unregistered silently reverts that path to Starlette's
-    own body, which is the shape this whole module exists to replace."""
+    """An unregistered handler silently reverts that path to Starlette's own body."""
     app = MagicMock()
     register_exception_handlers(app)
 

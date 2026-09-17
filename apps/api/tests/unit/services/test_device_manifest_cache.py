@@ -75,10 +75,10 @@ _MANIFEST_KEY = "device_manifest:u1:q:0:manifest:v1"
 
 @pytest.fixture
 def manifest_cache(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """Recording stand-ins for the generation-scoped Redis seams.
+    """Record every call to the generation-scoped Redis seams.
 
-    Every call is recorded (key, policy, ttl, model), so a test can pin them and a
-    mutation of any is caught — a fake that ignored its args would let a mutated
+    Each call is recorded (key, policy, ttl, model), so a test can pin them and a
+    mutation of any is caught; a fake that ignored its args would let a mutated
     key or policy pass.
     """
     values: dict[str, object] = {}
@@ -152,9 +152,7 @@ class TestGetDeviceManifest:
     async def test_the_cache_key_policy_and_ttl_are_exact(
         self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
     ) -> None:
-        """Pins every argument the cache seams receive. The fake honours whatever
-        it is handed, so without this a mutated key, policy, ttl or model still
-        passes — the mutation gate requires them observed."""
+        """Pin every argument the cache seams receive so a mutated key or policy fails."""
         list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
         list_servers = AsyncMock(return_value={"d1": [SimpleNamespace(display_name="Local Files")]})
         monkeypatch.setattr(device_service, "list_devices", list_devices)
@@ -174,8 +172,7 @@ class TestGetDeviceManifest:
     async def test_redis_down_skips_the_cache(
         self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
     ) -> None:
-        """``read_generation`` returning None means no cache at all — not a cache
-        keyed on a sentinel, which would serve one user's value to every other."""
+        """A None generation means no cache at all, not a cache keyed on a sentinel."""
         manifest_cache.generations["u1"] = None
         list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
         monkeypatch.setattr(device_service, "list_devices", list_devices)
@@ -218,8 +215,7 @@ class TestGetDeviceManifest:
     async def test_invalidation_clears_the_cache(
         self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
     ) -> None:
-        """The real invalidator must bump the generation the reader keyed on — a
-        drift would leave every writer orphaning nothing."""
+        """The real invalidator must bump the generation the reader keyed on."""
         list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
         monkeypatch.setattr(device_service, "list_devices", list_devices)
         monkeypatch.setattr(device_service, "list_device_servers", AsyncMock(return_value={}))
@@ -237,10 +233,7 @@ class TestGetDeviceManifest:
     async def test_a_read_that_stores_after_a_write_cannot_poison_the_cache(
         self, monkeypatch: pytest.MonkeyPatch, manifest_cache: SimpleNamespace
     ) -> None:
-        """The read-through race: a reader computes under generation N, a writer
-        bumps to N+1, then the reader stores. The store lands under the old
-        generation key, so the next read keys on N+1 and recomputes — the stale
-        entry can never be served (the ``device_service`` race Greptile flagged)."""
+        """A store under the old generation key is never served after a concurrent write."""
         list_devices = AsyncMock(return_value=[_device("d1", "MacBook")])
         monkeypatch.setattr(device_service, "list_devices", list_devices)
         monkeypatch.setattr(device_service, "list_device_servers", AsyncMock(return_value={}))
@@ -304,9 +297,7 @@ class TestWritersInvalidateTheManifest:
     async def test_invalidation_survives_a_post_commit_failure(
         self, monkeypatch: pytest.MonkeyPatch, invalidate: AsyncMock
     ) -> None:
-        """The write is already committed, so the invalidation must precede the
-        fallible cleanup that follows — otherwise a cleanup failure skips it and
-        the manifest serves the old device list for the TTL."""
+        """Invalidation runs before the fallible cleanup; the write is already committed."""
         session = _Session(SimpleNamespace(status=DeviceStatus.ACTIVE))
         monkeypatch.setattr(device_service, "get_db_session", _session_cm(session))
         monkeypatch.setattr(
@@ -407,9 +398,7 @@ class TestWritersInvalidateTheManifest:
     async def test_reconcile_prunes_through_the_invalidating_deregister(
         self, monkeypatch: pytest.MonkeyPatch, invalidate: AsyncMock
     ) -> None:
-        """Reconcile has no invalidation of its own — it delegates to
-        ``deregister_device_server``, so this pins that it still routes through
-        a writer (a reimplemented prune here would go stale)."""
+        """Reconcile prunes through deregister_device_server, which owns the invalidation."""
         keep = SimpleNamespace(server_key="keep")
         drop = SimpleNamespace(server_key="drop")
         deregister = AsyncMock()

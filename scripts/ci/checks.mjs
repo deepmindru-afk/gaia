@@ -525,29 +525,9 @@ function cmdTypesLocation(argv) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// duplication
-//
-// Copy-paste gate that matches what SonarCloud actually measures.
-//
-// jscpd's own threshold is a percentage over the WHOLE repo, so it is ~0.8% and
-// never trips for a single PR — a green run there tells you nothing about the
-// SonarCloud duplication gate. SonarCloud instead gates on duplicated lines
-// among the lines a PR CHANGES (the diff vs the base branch).
-//
-// This reproduces that denominator: it runs jscpd, then maps every detected
-// clone's line ranges onto the lines this branch adds vs the base, and fails
-// when that ratio exceeds the limit.
-//
-// It is an estimate (jscpd's tokenizer differs from SonarCloud's), but it is the
-// only local/CI signal correlated with the gate. SonarCloud stays authoritative.
-//
-// Base branch is GAIA_PR_BASE (resolved from the API by `changes.sh base`),
-// falling back to GITHUB_BASE_REF and then to master — the repo's only trunk.
-// The order matters: on a stacked PR the event payload names the stack's trunk
-// rather than the PR's parent, which would charge this PR with every duplicate
-// line the PRs below it added. See the note at the top of changes.sh.
-// ---------------------------------------------------------------------------
+// Reproduces SonarCloud's diff-scoped duplication gate as an estimate (jscpd's
+// own repo-wide threshold never trips per PR). Base order matters: a stacked
+// PR's event names the stack trunk, overcharging it with substack duplicates.
 
 const DUPLICATION_THRESHOLD = 3;
 
@@ -681,14 +661,9 @@ function cmdDuplication() {
 }
 
 
-// ---------------------------------------------------------------------------
-// api-schema
-//
-// The contract between the API and every TypeScript consumer is the committed
-// openapi.json plus the types generated from it. Both are build outputs, so
-// the only honest check is to rebuild them and diff: a route change that was
-// committed without `mise api:types` shows up here as a dirty tree.
-// ---------------------------------------------------------------------------
+// api-schema: openapi.json + the generated types are build outputs; the only
+// honest check is rebuilding and diffing — a route committed without
+// `mise api:types` shows up here as a dirty tree.
 
 const OPENAPI_JSON = "apps/api/openapi.json";
 const GENERATED_TYPES = "libs/shared/ts/src/api/generated/schema.d.ts";

@@ -49,7 +49,7 @@ class KnowledgeItem(BaseModel):
 
 @dataclass
 class KnowledgeResult:
-    """Result from a knowledge search"""
+    """Result from a knowledge search."""
 
     content: str
     relevance_score: float
@@ -71,7 +71,7 @@ class _Snapshot:
 
 
 def _normalized(vector: Sequence[float]) -> tuple[float, ...]:
-    """A unit-length copy of ``vector``; the zero vector is returned unchanged."""
+    """Return a unit-length copy of vector; the zero vector is returned unchanged."""
     norm = math.sqrt(sum(component * component for component in vector))
     if norm <= 0.0:
         return tuple(vector)
@@ -94,7 +94,7 @@ _load_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] 
 
 
 def _load_lock() -> asyncio.Lock:
-    """The reload lock for the running event loop."""
+    """Return the reload lock for the running event loop."""
     loop = asyncio.get_running_loop()
     lock = _load_locks.get(loop)
     if lock is None:
@@ -104,7 +104,7 @@ def _load_lock() -> asyncio.Lock:
 
 
 class GaiaKnowledgeService:
-    """Service for managing GAIA self-knowledge in ChromaDB"""
+    """Service for managing GAIA self-knowledge in ChromaDB."""
 
     def __init__(self) -> None:
         self.collection_name = "gaia_knowledge"
@@ -216,7 +216,7 @@ class GaiaKnowledgeService:
         )
 
     async def _snapshot_or_reload(self) -> _Snapshot | None:
-        """The current snapshot, reloading when missing or past its TTL.
+        """Return the current snapshot, reloading when missing or past its TTL.
 
         A reload that fails while a snapshot is held keeps serving the last good
         corpus and backs off until the next TTL — a corpus is enrichment, and a

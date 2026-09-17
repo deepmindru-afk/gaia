@@ -354,12 +354,9 @@ class TodoWorkflowStatusResponse(BaseModel):
     workflow: WorkflowWithIntegrations | None = None
 
 
-# Repository layer — persisted documents, typed updates, and aggregation results.
-# ``TodoDocument`` is the full stored shape (a superset of ``TodoResponse``): it
-# also carries the tracked-todo fields (canvas/log content, scheduling, retry
-# state) that the executor and maintenance sweep read and write. Dormant legacy
-# fields (goal/offer experiments) are dropped on read via ``extra="ignore"`` and
-# preserved on write because updates are ``$set``-only.
+# TodoDocument (superset of TodoResponse) adds tracked-todo fields (canvas/log,
+# scheduling, retry) the executor reads/writes; dormant legacy fields drop on
+# read via extra="ignore" but persist on write, since updates are $set-only.
 
 
 class TodoDocument(UserScopedDocument):

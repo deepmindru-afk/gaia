@@ -155,10 +155,9 @@ class SubagentStartPayload(BaseModel):
 
     subagent_id: str
     subagent_name: str
-    #: The subagent's stable id (``todos``, ``gmail``): what a playbook's
-    #: ``handoff:`` names. ``subagent_id`` is this dispatch's row, unique per
-    #: call, which is right for nesting and wrong for matching a call back to
-    #: the subagent that made it.
+    #: The subagent's stable id (todos, gmail): what a playbook's handoff: names.
+    #: subagent_id is this dispatch's row (unique per call) — right for nesting,
+    #: wrong for matching a call back to the subagent that made it.
     subagent: str | None = None
     agent_type: str
     started_at: str

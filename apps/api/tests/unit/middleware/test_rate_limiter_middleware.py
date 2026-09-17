@@ -100,16 +100,14 @@ async def test_a_disabled_limiter_never_refuses() -> None:
 
 
 async def test_the_handler_is_what_identifies_an_endpoint_keyed_limit() -> None:
-    """With ``key_style="endpoint"`` the limit is keyed by the handler's name;
-    hand slowapi no handler and it has nothing to key on, so nothing is counted."""
+    """Endpoint keying uses the handler's name; with no handler nothing is counted."""
     async with _client(_app(key_style="endpoint")) as client:
         assert (await client.get("/included/thing")).status_code == 200
         assert (await client.get("/included/thing")).status_code == 429
 
 
 async def test_rate_limit_headers_are_injected_on_a_successful_response() -> None:
-    """The counters ride on ``request.state``; losing them leaves a client with
-    no idea how much budget it has left."""
+    """The counters ride on request.state; losing them blinds the client to its budget."""
     async with _client(_app("5/minute", headers_enabled=True)) as client:
         response = await client.get("/included/thing")
 
@@ -119,8 +117,7 @@ async def test_rate_limit_headers_are_injected_on_a_successful_response() -> Non
 
 
 async def test_an_unrouted_path_is_exempt_rather_than_counted() -> None:
-    """With no handler there is no route to attribute a limit to; slowapi's own
-    contract is to skip, and a 404 must not be spent from the caller's budget."""
+    """With no handler there is no route to limit, and a 404 must not spend budget."""
     async with _client(_app()) as client:
         for _ in range(3):
             assert (await client.get("/nope")).status_code == 404

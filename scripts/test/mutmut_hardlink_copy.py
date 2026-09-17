@@ -43,7 +43,7 @@ def _link(src: str, dst: str, *, follow_symlinks: bool = True) -> None:
 
 
 def _copy_also_copy_files() -> None:
-    """mutmut 3.7.0's copy_also_copy_files with os.link doing the copying."""
+    """Mutmut 3.7.0's copy_also_copy_files with os.link doing the copying."""
     for entry in Config.get().also_copy:
         path = Path(entry)
         if not path.exists():

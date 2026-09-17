@@ -64,10 +64,10 @@ class MigrationResult:
 async def find_free_user_candidates() -> list[FreeUserWorkflows]:
     """Every user with at least one activated workflow and no active subscription.
 
-    Never touched: the ``system`` template owner, public template workflows, and
-    anyone whose subscription is ``active``. This mirrors Dodo exactly: a failed
+    Never touched: the system template owner, public template workflows, and
+    anyone whose subscription is active. This mirrors Dodo exactly: a failed
     renewal inside Dodo's grace period leaves the subscription active (we do not
-    process the interim update), and ``on_hold`` means Dodo has already revoked
+    process the interim update), and on_hold means Dodo has already revoked
     access, so those workflows are paused like any other lapsed subscriber's.
     """
     candidates: list[FreeUserWorkflows] = []

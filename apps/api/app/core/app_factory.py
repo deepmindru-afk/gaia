@@ -24,11 +24,9 @@ from app.core.openapi import api_operation_id
 from app.schemas.errors import ERROR_RESPONSES
 from app.services import latency_metrics as _latency_metrics  # noqa: F401 -- side effects
 
-# Eager-import the FsOps metrics module so its Prometheus collectors register
-# on the default registry at app startup. Without this the storage layer is
-# lazy-imported on first use, and /metrics omits the fs_op_* metadata lines
+# Eager-import so Prometheus collectors register at startup; otherwise the
+# storage layer lazy-imports on first use and /metrics omits fs_op_* metadata
 # until the first FS-shaped operation runs.
-# Imported for router-registration side effects.
 from app.services.storage import metrics as _fs_metrics  # noqa: F401 -- side effects
 from shared.py.wide_events import log as wide_log
 
@@ -61,14 +59,9 @@ def create_app() -> FastAPI:
 
     configure_middleware(app)
 
-    # Expose /metrics for Prometheus scraping.
-    # In production, guard with a bearer token so /metrics is not publicly readable.
-    # The LoggingMiddleware already skips /metrics so it won't pollute request logs.
-    # `latency_lowr_buckets` defaults to (0.1, 0.5, 1), and histogram_quantile
-    # cannot return a value above the highest finite bucket — so p95 was capped
-    # at 1.0s and the Grafana latency alerts (>1s warning, >3s critical) could
-    # never fire. These buckets straddle both thresholds so the alerts work and
-    # the latency panels stop flat-lining at 1s.
+    # Default buckets (0.1, 0.5, 1) capped p95 at 1.0s, so Grafana's >1s/>3s
+    # latency alerts never fired; these straddle both thresholds. LoggingMiddleware
+    # already skips /metrics, so exposing it here won't pollute request logs.
     instrumentator = Instrumentator().instrument(
         app, latency_lowr_buckets=(0.1, 0.25, 0.5, 1, 2.5, 5, 10)
     )

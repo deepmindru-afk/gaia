@@ -246,7 +246,6 @@ class PublicIntegrationDetailResponse(CamelModel, CloneCountMixin):
     # MCP config for public display (nested object for frontend compatibility)
     mcp_config: MCPConfigDetail | None = None
 
-    # Tools list
     tools: list[IntegrationTool] = []
 
     # Stats

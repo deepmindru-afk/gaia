@@ -15,7 +15,7 @@ INTERNAL_ERROR_CODE = "internal_server_error"
 
 
 def internal_error_response() -> UJSONResponse:
-    """The generic 500 body; it never leaks what actually failed."""
+    """Render the generic 500 body, which never leaks what actually failed."""
     return error_response(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
         ErrorEnvelope(message=INTERNAL_ERROR_MESSAGE, code=INTERNAL_ERROR_CODE),

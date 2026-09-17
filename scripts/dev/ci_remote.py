@@ -379,7 +379,7 @@ def artifact_index(artifact: str) -> tuple[str, int] | None:
 
 
 def matches_by_matrix_index(verdict: Verdict, check_name: str) -> bool:
-    """A shard's artifact carries no name a shard's check name slugs to.
+    """Handle a shard's artifact that carries no name its check name slugs to.
 
     `Mutation shard 3/6 (21 modules)` is matrix value 2, and its verdicts ride
     in `verdict-test-mutation-2` — so the per-module findings were stranded as
@@ -396,7 +396,7 @@ def matches_by_matrix_index(verdict: Verdict, check_name: str) -> bool:
 
 
 def verdict_matches(verdict: Verdict, check_name: str) -> bool:
-    """A verdict belongs to a check when its lane or artifact name slugs to it.
+    """Return True when a verdict belongs to a check because its lane or artifact name slugs to it.
 
     A check name carries decoration the artifact name cannot: matrix jobs render
     as `test-python (unit-a)` and sharded ones as `Mutation shard 3/6 (19
@@ -414,7 +414,7 @@ def verdict_matches(verdict: Verdict, check_name: str) -> bool:
 
 
 def explaining_verdicts(check: Check, verdicts: list[Verdict]) -> list[Verdict]:
-    """The verdicts on this check that say why it is red.
+    """Return the verdicts on this check that say why it is red.
 
     A `pass` verdict never explains a red check, and matching one is not
     hypothetical: the mutation shards write `mutation/shard-N` as `pass` before
@@ -600,7 +600,7 @@ def clean_log(raw: str) -> list[str]:
 
 
 def failure_tail(lines: list[str], limit: int = FALLBACK_TAIL_LINES) -> list[str]:
-    """The window ending at the last `ERROR:` line, not at the end of the log.
+    """Return the window ending at the last `ERROR:` line, not at the end of the log.
 
     A job log's literal tail is post-job cleanup: on a real mutation-shard
     failure the `##[error]` sat 51 lines from the end, so a plain tail showed
@@ -916,7 +916,7 @@ def header(report: dict) -> None:
 
 
 def render_verdict(verdict: Verdict, verbose: bool, pad: str = "  ") -> None:
-    """A verdict's body: its summary, then every finding at file:line."""
+    """Print a verdict's body: its summary, then every finding at file:line."""
     if verdict.get("summary"):
         print(f"{pad}{verdict['summary']}")
     for finding in verdict.get("findings", []):
@@ -1043,7 +1043,7 @@ def render_stack(rows: list[StackRow], current_pr: int) -> None:
 
 
 def lane_advice(report: dict) -> list[str]:
-    """What the lanes themselves said to do, plus the stack's own retargets."""
+    """Collect what the lanes said to do, plus the stack's own retargets."""
     failing = [v for v in report["verdicts"] if v.get("status") in VERDICT_BAD]
     advice = [line for v in drop_content_free_rollups(failing) for line in v.get("advice", [])]
     advice += [
@@ -1056,7 +1056,7 @@ def lane_advice(report: dict) -> list[str]:
 
 
 def state_advice(report: dict, branch: str) -> list[str]:
-    """What the PR's own state says to do — conflicts, threads, reruns, reviews."""
+    """Collect what the PR's state says to do: conflicts, threads, reruns, reviews."""
     advice: list[str] = []
     pr = report["pr"]
     counts = report["counts"]

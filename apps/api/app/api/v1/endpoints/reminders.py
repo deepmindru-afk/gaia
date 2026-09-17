@@ -90,7 +90,6 @@ async def create_reminder_endpoint(
         # — and the same default as workflows, regardless of current location.
         reminder_data.timezone = user_timezone
 
-        # Create the reminder
         reminder_id = await reminder_scheduler.create_reminder(
             reminder_data=reminder_data, user_id=user_id
         )
@@ -220,7 +219,6 @@ async def update_reminder_endpoint(
         # repository's `$set` only touches what the caller actually sent.
         update = ReminderUpdate(**request.model_dump(exclude_none=True))
 
-        # Update reminder
         success = await reminder_scheduler.update_reminder(
             reminder_id, user_id=user_id, update=update
         )
@@ -231,7 +229,6 @@ async def update_reminder_endpoint(
                 detail="Failed to update reminder",
             )
 
-        # Get updated reminder
         updated_reminder = await reminder_scheduler.get_reminder(reminder_id, user_id=user_id)
         if not updated_reminder:
             raise HTTPException(
@@ -415,7 +412,6 @@ async def pause_reminder_endpoint(
                 detail="Failed to pause reminder",
             )
 
-        # Get updated reminder
         updated_reminder = await reminder_scheduler.get_reminder(reminder_id, user_id=user_id)
         if not updated_reminder:
             raise HTTPException(
@@ -497,7 +493,6 @@ async def resume_reminder_endpoint(
                 detail="Failed to resume reminder",
             )
 
-        # Get updated reminder
         updated_reminder = await reminder_scheduler.get_reminder(reminder_id, user_id=user_id)
         if not updated_reminder:
             raise HTTPException(

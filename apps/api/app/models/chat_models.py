@@ -65,10 +65,9 @@ class ToolDataEntry(TypedDict):
     # Optional: emitters always stamp it, but legacy stored entries predate the
     # field, so a read must tolerate its absence rather than fail validation.
     timestamp: NotRequired[str | None]
-    # Which card renders the entry. Stamped by format_tool_call_entry, the HIL
-    # approval frame, the reasoning absorber, and the artifact/rate-limit
-    # emitters; absent on the plain per-tool-field entries normalize_custom_event
-    # builds, which the frontend keys off tool_name alone.
+    # Which card renders the entry, stamped by format_tool_call_entry, the HIL
+    # frame, the reasoning absorber and rate-limit/artifact emitters; absent on
+    # plain per-tool-field entries, which the frontend keys off tool_name alone.
     tool_category: NotRequired[str]
     # Tags an entry produced inside a delegated subagent, so
     # reconstruct_subagent_groups can fold it into that subagent's group.

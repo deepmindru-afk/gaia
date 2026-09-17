@@ -60,8 +60,8 @@ class NotALocalStackError(RuntimeError):
 def is_local_url(url: str) -> bool:
     """Whether every host in a Mongo/Redis URL is a loopback address.
 
-    Mongo URLs may list several ``host:port`` pairs separated by commas; all of
-    them must be local. ``mongodb+srv://`` is a DNS seed list and is never local.
+    Mongo URLs may list several host:port pairs separated by commas; all of
+    them must be local. mongodb+srv:// is a DNS seed list and is never local.
     """
     parts = urlsplit(url)
     if parts.scheme == "mongodb+srv":

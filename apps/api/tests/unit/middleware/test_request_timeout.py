@@ -67,8 +67,7 @@ async def test_a_request_inside_its_budget_is_untouched() -> None:
 
 
 async def test_a_long_lived_path_is_never_cut_off() -> None:
-    """SSE and websocket paths are long-lived by design; timing them out would
-    close every stream at the budget."""
+    """SSE and websocket paths are long-lived; a timeout would close every stream."""
     excluded = TIMEOUT_EXCLUDE_PREFIXES[0]
     async with _client(_slow_app, timeout=0.01, exclude_prefixes=(excluded,)) as client:
         with anyio.move_on_after(0.2) as scope:

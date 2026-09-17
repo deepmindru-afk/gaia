@@ -86,7 +86,7 @@ def _probe_router() -> APIRouter:
 
 
 def _build_app(*, limit: str = "120/minute", timeout: float = 300.0) -> FastAPI:
-    """The production app, with only the two knobs a test must turn.
+    """Build the production app, with only the two knobs a test must turn.
 
     The limiter and the timeout budget are replaced with tiny values; every
     middleware, exception handler and serializer is the real one.

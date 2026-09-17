@@ -9,10 +9,8 @@ and any future consumers reference a single source of truth.
 # Must match VOICE_TTS_KEY in apps/voice-agent/src/constants.py — the voice
 # agent matches on this exact string to decide what to speak.
 VOICE_TTS_KEY = "voice_tts"
-# SSE frame key carrying the saved bot message's id alongside the voice answer,
-# so the voice agent can forward a display frame keyed by it and the frontend
-# reconciles it with the WebSocket push. Must match MESSAGE_ID_KEY in
-# apps/voice-agent/src/constants.py.
+# SSE frame key carrying the saved bot message's id alongside the voice answer.
+# Must match MESSAGE_ID_KEY in apps/voice-agent/src/constants.py.
 MESSAGE_ID_KEY = "message_id"
 
 # User-facing error text when the executor exhausts its recursion budget
@@ -32,10 +30,9 @@ EXECUTOR_APPROVAL_LOST_MESSAGE = (
     "I couldn't set up the approval for that action, so I've stopped. Please try again."
 )
 
-# Task text for the wake-up turn queued when background-subagent work lands after
-# the executor rested (finished its turn without collecting). The queued run's
-# join gathers results and pauses for any approvals; SubagentJoinMiddleware
-# backstops it if the model tries to end without collecting.
+# Task text for the wake-up turn queued when background-subagent work lands
+# after the executor rested. SubagentJoinMiddleware backstops it if the model
+# tries to end without collecting.
 EXECUTOR_COLLECTION_TASK = (
     "Background subagent work has finished or is waiting for the user's approval. "
     "Call wait_for_subagents() to collect the outcomes, then report them to the user."

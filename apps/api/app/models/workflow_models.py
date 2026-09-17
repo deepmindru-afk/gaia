@@ -54,13 +54,9 @@ class DeactivationReason(str, Enum):
     USER_DORMANT = "user_dormant"
     INTEGRATION_EXPIRED = "integration_expired"
     SUBSCRIPTION_LAPSED = "subscription_lapsed"
-    #: A run reached the work and found an integration the user has never
-    #: connected. Distinct from ``INTEGRATION_EXPIRED``, which a Composio webhook
-    #: raises when a live connection dies: this one is only ever set by a run
-    #: that tried, and only after the claim was checked against the user's
-    #: connection status. Nothing predicts it from the workflow's declared steps
-    #: — those are the model's guess at authoring time, and pausing a workflow
-    #: that would have worked is worse than the run it would have saved.
+    #: Set only when a run actually tries and finds the integration missing —
+    #: unlike INTEGRATION_EXPIRED (a live connection dying, via Composio
+    #: webhook). Not predicted from declared steps at authoring time.
     INTEGRATION_NEVER_CONNECTED = "integration_never_connected"
 
 
@@ -170,7 +166,6 @@ class TriggerConfig(BaseModel):
     @field_validator("cron_expression")
     @classmethod
     def validate_cron_expression(cls, v: str | None) -> str | None:
-        """Validate cron expression if provided."""
         if v is not None:
             if not validate_cron_expression(v):
                 raise ValueError(f"Invalid cron expression: {v}")
@@ -367,10 +362,9 @@ class Workflow(BaseScheduledTask, ResponseModel):
                 ):
                     data["repeat"] = trigger_config.cron_expression
 
-        # A workflow only has a scheduled_at when it is a schedule-triggered (cron)
-        # workflow with a next_run (mapped above). Manual / integration / todo
-        # workflows have no scheduled run — leave scheduled_at as None rather than
-        # fabricating "now", which would make them look due to the recovery scan.
+        # Only cron-triggered workflows get a scheduled_at (from next_run); others
+        # stay None rather than a fabricated "now", which would look due to the
+        # recovery scan.
         super().__init__(**data)
 
     @model_validator(mode="before")
@@ -810,14 +804,12 @@ class WorkflowDocument(Workflow, MongoDocument):
     inherited ``BaseScheduledTask`` validators.
     """
 
-    # Resolve the ``Workflow.id`` (``str | None``, alias ``_id``) vs
-    # ``MongoDocument.id`` (``str``) diamond: a persisted workflow always has its
-    # ``wf_…`` id, so the stored document is non-optional. The repository keys on
-    # ``_id`` directly, so no alias is needed here.
+    # Resolves the Workflow.id (str | None, alias _id) vs MongoDocument.id (str)
+    # diamond: a persisted workflow always has its wf_ id, so this stays
+    # non-optional with no alias — the repository keys on _id directly.
     id: str = Field(default_factory=lambda: f"wf_{uuid.uuid4().hex[:12]}")
-    #: How many runs declined to write a playbook for the workflow as it stands,
-    #: and the workflow hash those declines were about. Past
-    #: ``PLAYBOOK_DECLINE_LIMIT`` on the same hash the check brief stops asking;
+    #: Runs declined to write a playbook at this workflow hash. Past
+    #: PLAYBOOK_DECLINE_LIMIT on the same hash the check brief stops asking;
     #: an edit to the workflow changes the hash and asks again.
     playbook_declines: int = 0
     playbook_declined_hash: str | None = None
@@ -825,11 +817,9 @@ class WorkflowDocument(Workflow, MongoDocument):
     #: decision however many times it is voiced, and a model voices it several
     #: times in one turn: the tally grows once per run, matched on this.
     playbook_declined_run: str | None = None
-    #: The integrations a blocked run named when it paused this workflow. The
-    #: resume side needs them because it cannot re-derive them: a workflow is
-    #: paused on what a run actually found missing, which is not always what
-    #: ``compute_required_integrations`` reads off the declared steps. Empty on
-    #: every workflow that was not paused this way.
+    #: What a blocked run named as missing when it paused this workflow —
+    #: not always what compute_required_integrations reads off the declared
+    #: steps, so the resume side can't re-derive it. Empty otherwise.
     blocked_on_integrations: list[str] = Field(default_factory=list)
     #: Why the worker last dropped this workflow's playbook, so a workflow that
     #: quietly went back to full agent cost can say what happened to it.

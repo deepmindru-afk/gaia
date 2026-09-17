@@ -168,14 +168,9 @@ class FetchThreadInput(BaseModel):
     )
 
 
-# =============================================================================
-# Gmail REST wire shapes
-# =============================================================================
-# Everything below models what the Gmail REST API itself returns through the
-# Composio proxy (users.messages / users.threads / users.labels / getProfile).
-# Every field is optional or defaulted because Gmail's response varies by
-# ``format`` (``metadata`` omits the MIME tree entirely) and ``extra="allow"``
-# keeps the fields we don't read rather than silently dropping them.
+# Gmail REST wire shapes: what the Gmail REST API returns via the Composio
+# proxy. Fields are optional/defaulted since response shape varies by `format`
+# (`metadata` omits the MIME tree); extra="allow" keeps unread fields.
 
 
 class GmailHeader(BaseModel):
@@ -288,12 +283,9 @@ class GmailProfile(BaseModel):
     threads_total: int | None = Field(default=None, alias="threadsTotal")
 
 
-# =============================================================================
-# Custom Tool Result Shapes
-# =============================================================================
-# In-process contracts between the Gmail custom tools and their helpers. They
-# are TypedDicts rather than models because nothing validates them at runtime —
-# the tools build them and hand them straight to the agent as JSON.
+# Custom Tool Result Shapes: in-process contracts between Gmail custom tools
+# and their helpers. TypedDicts, not models, because nothing validates them at
+# runtime — tools build them and hand them straight to the agent as JSON.
 
 
 class GmailReadRange(TypedDict):

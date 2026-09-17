@@ -138,9 +138,8 @@ class OnboardingNeed(StrEnum):
 
 
 #: The two role-specific pains each Q1 slug unlocks. Keys are the
-#: ``professionOptions`` values in apps/web onboarding constants; a typed
-#: profession ("other") unlocks none. Mirrored one-for-one by
-#: ``roleNeedOptions`` on the web.
+#: professionOptions values in apps/web onboarding constants ("other" unlocks
+#: none); mirrored one-for-one by roleNeedOptions on the web.
 ROLE_NEEDS: dict[str, tuple[OnboardingNeed, OnboardingNeed]] = {
     "founder": (OnboardingNeed.FOUNDER_TEAM_UPDATES, OnboardingNeed.FOUNDER_COMPETITORS),
     "executive": (OnboardingNeed.EXECUTIVE_REPORTS, OnboardingNeed.EXECUTIVE_DECISIONS),
@@ -165,10 +164,9 @@ def role_of_need(need: OnboardingNeed) -> str | None:
 
 class OnboardingPreferences(BaseModel):
     profession: str | None = Field(
-        # `default=` by keyword: mypy's dataclass-transform support does not read
-        # a positional default, so `Field(None, ...)` typed as REQUIRED while the
-        # runtime defaulted it — a caller omitting it was red for mypy and green
-        # for pydantic. The keyword form is the one both agree on.
+        # default= by keyword: mypy's dataclass-transform support ignores a
+        # positional default, so Field(None, ...) typed as REQUIRED while runtime
+        # defaulted it — red for mypy, green for pydantic. Keyword form both agree on.
         default=None,
         description="User's profession or main area of focus",
     )
@@ -533,10 +531,9 @@ class OnboardingSubdocument(BaseModel):
                 pass
             else:
                 return value
-        # Anything that is not readable text drops out: a non-str never reaches
-        # clean_profession at all, because ``profession: str | None`` rejects it
-        # at the type level first and fails the same read this guard exists to
-        # keep alive.
+        # Anything not readable text drops out: a non-str never reaches
+        # clean_profession, since profession: str | None rejects it at the type
+        # level first, failing the same read this guard exists to keep alive.
         return {**value, "profession": None}
 
 
@@ -602,12 +599,9 @@ class UserDocument(MongoDocument):
     nurture: dict[str, Any] | None = None
     # Activation checklist collapse (first_steps_service).
     first_steps: FirstStepsState | None = None
-    # Signup's two outbound ESP deliveries, stamped when each one lands (see
-    # app/workers/tasks/signup_email_tasks.py). These attribute names must keep
-    # matching the values of ``constants.email.SignupDelivery``, which is what
-    # the repository and the recovery sweep address them by. A missing stamp
-    # means the delivery is still owed; a dev-minted user is owed neither and is
-    # stamped at creation so the sweep never mails a seeded account.
+    # Signup's two outbound ESP deliveries, stamped when each lands (see
+    # signup_email_tasks.py). Names must match constants.email.SignupDelivery,
+    # which the repository/sweep key on; dev-minted users are pre-stamped to skip the sweep.
     welcome_email_sent_at: datetime | None = None
     marketing_contact_added_at: datetime | None = None
 
@@ -623,10 +617,9 @@ class OnboardingStatusResponse(BaseModel):
 
     completed: bool
     completed_at: datetime | None
-    # `str`, not OnboardingPhase: this is whatever is persisted, and the only
-    # consumer (mobile) treats an error response as "onboarding complete" — so a
-    # validation failure on an unrecognised historical value would silently skip
-    # a user past onboarding. A loose string is the safer honest type here.
+    # str, not OnboardingPhase: mobile treats an error response as "onboarding
+    # complete", so a validation failure on an unrecognised historical value
+    # would silently skip a user past onboarding — a loose string is safer here.
     phase: str | None
     preferences: OnboardingPreferences
     # The pre-relocation holo-card conversation. Still served because users who

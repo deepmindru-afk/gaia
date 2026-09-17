@@ -213,10 +213,9 @@ class ProfileCardDesign(BaseModel):
 class StagePayload(BaseModel):
     """Base for the ``payload`` of an ``onboarding_stage`` WebSocket event."""
 
-    # Whether a None field is dropped from the wire payload or sent as an explicit
-    # null. Both are load-bearing: the frontend reads a missing `source_email` as
-    # "this todo came from no email", but a null `style_summary` as "style learning
-    # ran and came back empty".
+    # Whether a None field is dropped from the wire payload or sent as explicit
+    # null. Both are load-bearing: a missing source_email means "no email", but
+    # a null style_summary means "style learning ran and came back empty".
     omit_none_on_wire: ClassVar[bool] = False
 
     def to_wire(self) -> dict[str, Any]:
@@ -301,10 +300,9 @@ class PersonalizationTodo(BaseModel):
     id: str
     title: str
     description: str | None
-    # `TodoDocument.source_email` is a `str | None` that nothing in the backend
-    # writes, so this is always null — while the `todos_ready` WebSocket event
-    # carries a {sender, subject} object the frontend renders. Typed as it really
-    # is; reconciling the two is a product change, not a typing fix.
+    # TodoDocument.source_email is str | None but nothing in the backend writes
+    # it, so this is always null — the todos_ready WebSocket event carries a
+    # {sender, subject} object instead. Reconciling is a product change, not a fix.
     source_email: str | None
 
 
