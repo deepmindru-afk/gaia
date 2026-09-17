@@ -109,6 +109,21 @@ function smoothstep(a: number, b: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/**
+ * First family of a computed font-family list, unquoted.
+ *
+ * `document.fonts.load()` rejects when ANY face matching the string is in
+ * error, and next/font's metric-matched "<name> Fallback" face is a `local()`
+ * alias for a system font that exists on macOS and not on Linux. Passing the
+ * whole computed list therefore rejected on Linux and aborted the draw.
+ */
+function primaryFamily(list: string): string {
+  return list
+    .split(",")[0]
+    .trim()
+    .replace(/^["']|["']$/g, "");
+}
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -468,7 +483,12 @@ export function FooterWordmark() {
       const family = getComputedStyle(probe).fontFamily;
       const [logo] = await Promise.all([
         loadImage(LOGO_SRC),
-        document.fonts.load(`700 100px ${family}`),
+        // Metrics only: this await exists so the raster measures the real
+        // webfont rather than a fallback. A face that never arrives must
+        // degrade to fallback metrics, never blank the whole wordmark.
+        document.fonts
+          .load(`700 100px "${primaryFamily(family)}"`)
+          .catch(() => undefined),
       ]);
       if (cancelled) return;
 
