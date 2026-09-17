@@ -147,7 +147,6 @@ def test_list_arguments_are_emitted_as_json_strings(harness) -> None:
     assert entry["ranges"] == "[4,5]"
 
 
-
 def test_a_module_with_several_test_files_keeps_all_of_them(harness) -> None:
     _, outputs = harness(
         [_entry("app/a.py", ["tests/unit/test_a.py", "tests/unit/test_b.py"], [1])]
