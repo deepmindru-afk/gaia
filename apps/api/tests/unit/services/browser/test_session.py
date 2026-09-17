@@ -488,7 +488,7 @@ class TestAutoResolveHandoffOnNavigation:
 
         await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
 
-        assert resolve.await_args[0][3] == "Signed in — resuming automatically."
+        assert resolve.await_args[0][3] == "Signed in, resuming automatically."
 
     async def test_a_slow_sign_in_is_still_detected_after_idling_on_the_login_page(
         self, monkeypatch: pytest.MonkeyPatch

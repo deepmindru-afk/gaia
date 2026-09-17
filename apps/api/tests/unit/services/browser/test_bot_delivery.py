@@ -532,7 +532,43 @@ class TestBotProgressDeliveryResult:
         ) as mp:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
-            assert msg == "⚠️ The browser task didn't fully complete."
+            assert msg == "⚠️ Couldn't finish that: Failed"
+
+    async def test_failure_message_empty_summary_uses_bare_sentence(self, delivery):
+        snap = BrowserResultSnapshot(status="failed", success=False, summary="", steps=2)
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+            msg = mp.call_args[0][2][0]
+            assert msg == "⚠️ Couldn't finish that."
+
+    async def test_failure_message_strips_prefix_and_surfaces_reason(self, delivery):
+        snap = BrowserResultSnapshot(
+            status="failed",
+            success=False,
+            summary="Browser task failed: Failed to establish CDP connection",
+            steps=2,
+        )
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+            msg = mp.call_args[0][2][0]
+            assert msg == ("⚠️ Couldn't finish that: Failed to establish CDP connection")
+
+    async def test_failure_message_clips_long_multiline_summary(self, delivery):
+        summary = "Browser task failed: " + "\n".join(["line " + str(i) * 20 for i in range(20)])
+        snap = BrowserResultSnapshot(status="failed", success=False, summary=summary, steps=2)
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+            msg = mp.call_args[0][2][0]
+            reason = msg.removeprefix("⚠️ Couldn't finish that: ")
+            assert "\n" not in reason
+            assert len(reason) == 160
+            assert reason.endswith("…")
 
     async def test_with_replay_url_appended(self, delivery):
         snap = BrowserResultSnapshot(
@@ -548,7 +584,7 @@ class TestBotProgressDeliveryResult:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
             assert msg == (
-                "✅ Done.\n\n📽 Here's a recap you can watch: https://cdn.example.com/replay"
+                "✅ Done.\n\n📽 Here's a recap of the run: https://cdn.example.com/replay"
             )
 
     async def test_without_replay_url_no_extra(self, delivery):
@@ -574,6 +610,5 @@ class TestBotProgressDeliveryResult:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
             assert msg == (
-                "⚠️ The browser task didn't fully complete."
-                "\n\n📽 Here's a recap you can watch: https://cdn/replay"
+                "⚠️ Couldn't finish that: Fail\n\n📽 Here's a recap of the run: https://cdn/replay"
             )

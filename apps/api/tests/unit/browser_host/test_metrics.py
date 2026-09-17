@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import psutil
@@ -12,22 +11,9 @@ from app.browser_host import metrics as metrics_module
 from app.browser_host.chromium import ChromiumHost
 from app.browser_host.metrics import Aggregate, ProcessSampler, SessionMetrics
 from app.constants.log_tags import LogTag
+from tests.unit.browser_host.conftest import install_mux, make_host
 
 _MB = 1024 * 1024
-
-
-class _FakeCDP:
-    """Root CDP stand-in: every call returns the ids create_context needs."""
-
-    async def send_raw(
-        self, method: str, params: dict[str, Any] | None = None, session_id: str | None = None
-    ) -> dict[str, Any]:
-        return {
-            "browserContextId": "ctx-1",
-            "targetId": "tgt-1",
-            "cookies": [],
-            "targetInfos": [],
-        }
 
 
 def _fake_proc(rss_mb: float, cpu: float) -> MagicMock:
@@ -48,11 +34,10 @@ def _unused_pid() -> int:
     return next(pid for pid in range(30000, 60000) if pid not in live)
 
 
-def _make_host() -> ChromiumHost:
-    host = ChromiumHost()
-    host._cdp = _FakeCDP()
-    host._proc = MagicMock(returncode=None)
-    return host
+def _started_host(monkeypatch: pytest.MonkeyPatch) -> ChromiumHost:
+    """Build a host whose sessions ride a fake connection, since a session is a connection now."""
+    install_mux(monkeypatch)
+    return make_host()
 
 
 @pytest.mark.unit
@@ -189,8 +174,10 @@ class TestSamplerFailureIsolation:
             browser={"pid": 777},
         )
 
-    async def test_a_failing_sampler_does_not_break_create_or_dispose(self) -> None:
-        host = _make_host()
+    async def test_a_failing_sampler_does_not_break_create_or_dispose(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host = _started_host(monkeypatch)
         failing = MagicMock()
         failing.sample.return_value = None
         host._sampler = failing
@@ -206,8 +193,10 @@ class TestSamplerFailureIsolation:
 
 @pytest.mark.unit
 class TestHostSessionMetrics:
-    async def test_session_info_exposes_a_live_metrics_block(self) -> None:
-        host = _make_host()
+    async def test_session_info_exposes_a_live_metrics_block(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        host = _started_host(monkeypatch)
         host._sampler = MagicMock()
         host._sampler.sample.return_value = (512.0, 25.0)
 
@@ -225,7 +214,7 @@ class TestHostSessionMetrics:
         assert metrics["navigation_ms"]["count"] == 1
 
     async def test_unknown_session_ids_are_ignored_by_the_metric_hooks(self) -> None:
-        host = _make_host()
+        host = make_host()
         host._sampler = MagicMock()
         host.note_navigation_started("gone")
         host.note_navigation_finished("gone")

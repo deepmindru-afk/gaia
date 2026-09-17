@@ -1,0 +1,229 @@
+"""One engine websocket per session, shared by the host, the CDP proxy and the screencast.
+
+Obscura isolates every CDP connection: contexts, pages and cookie jars never
+cross one, and two connections both name their first context context-1. So a
+session is a connection, not a context id. This owns that connection, allocates
+every outbound id, routes each reply back to whoever asked, and fans events out.
+
+Subscriber sinks run inside the read loop, so a sink that awaits the socket it is
+being read from deadlocks the loop that would deliver its reply. Queue and return.
+
+A sink may claim one CDP session id. Claimed frames reach only their owner, and
+every other frame reaches every sink that claimed nothing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable
+import json
+from typing import Any, Protocol
+
+import websockets
+
+from app.constants.log_tags import LogTag
+from shared.py.wide_events import log
+
+# Outbound CDP ids come from one allocator, so a control call and a forwarded
+# client frame can never collide the way two independent counters would.
+_FIRST_MESSAGE_ID = 1
+
+CdpFrame = dict[str, Any]
+FrameSink = Callable[[CdpFrame], None]
+# A sink plus the CDP session id it claims, or None when it takes the open stream.
+_Subscription = tuple[FrameSink, str | None]
+
+
+class CdpTransport(Protocol):
+    """What a CDP round-trip needs of its transport, satisfied by cdp_use and by CdpMux."""
+
+    async def send_raw(
+        self,
+        method: str,
+        params: CdpFrame | None = None,
+        session_id: str | None = None,
+    ) -> CdpFrame: ...
+
+
+class CdpConnectionClosed(RuntimeError):
+    """Raised when the session's engine connection is gone, so callers fail instead of hanging."""
+
+
+class CdpMux:
+    """The one CDP connection behind a session, multiplexed across its consumers."""
+
+    def __init__(self, url: str) -> None:
+        self._url = url
+        self._ws: websockets.ClientConnection | None = None
+        self._reader: asyncio.Task[None] | None = None
+        self._next_id = _FIRST_MESSAGE_ID
+        # id -> future, for calls this mux made on a consumer's behalf.
+        self._pending: dict[int, asyncio.Future[CdpFrame]] = {}
+        # our id -> the client's own id, for frames forwarded verbatim.
+        self._forwarded: dict[int, int | None] = {}
+        self._sinks: list[_Subscription] = []
+        self._closed = asyncio.Event()
+
+    async def start(self) -> None:
+        """Open the connection and begin reading; every consumer shares what this returns."""
+        if self._ws is not None:
+            raise RuntimeError("browser session connection is already open")
+        self._ws = await websockets.connect(self._url, max_size=None, ping_interval=None)
+        self._reader = asyncio.create_task(self._read_loop())
+
+    async def close(self) -> None:
+        """Close the connection and fail anything still waiting on it."""
+        reader, self._reader = self._reader, None
+        if reader is not None:
+            reader.cancel()
+        ws, self._ws = self._ws, None
+        if ws is not None:
+            await ws.close()
+        self._mark_closed(CdpConnectionClosed("browser session connection closed"))
+
+    @property
+    def closed(self) -> bool:
+        return self._ws is None
+
+    async def wait_closed(self) -> None:
+        """Block until the connection ends, so a consumer can tear itself down with it.
+
+        An idle consumer has nothing to fail on otherwise, and would sit on a
+        socket whose engine is already gone.
+        """
+        await self._closed.wait()
+
+    def subscribe(self, sink: FrameSink, *, owns_session: str | None = None) -> Callable[[], None]:
+        """Register a non-blocking sink for events and forwarded replies; returns its remover.
+
+        owns_session claims one CDP session for this sink alone. The live view
+        attaches a page session of its own, and its frames are no business of
+        the agent's client, which would otherwise be handed a stream of
+        screenshots and load events it never asked for.
+        """
+        entry: _Subscription = (sink, owns_session)
+        self._sinks.append(entry)
+
+        def _remove() -> None:
+            if entry in self._sinks:
+                self._sinks.remove(entry)
+
+        return _remove
+
+    async def send_raw(
+        self,
+        method: str,
+        params: CdpFrame | None = None,
+        session_id: str | None = None,
+    ) -> CdpFrame:
+        """Issue one CDP command and return its result, matching cdp_use's contract.
+
+        Raises RuntimeError carrying the CDP error object, so callers that already
+        handle cdp_use failures keep working.
+        """
+        message: CdpFrame = {"method": method, "params": params or {}}
+        if session_id:
+            message["sessionId"] = session_id
+        reply = await self._send_tracked(message)
+        if "error" in reply:
+            raise RuntimeError(reply["error"])
+        result = reply.get("result", {})
+        if not isinstance(result, dict):
+            raise RuntimeError(f"malformed CDP result for {method}: {result!r}")
+        return result
+
+    async def forward(self, frame: CdpFrame) -> None:
+        """Send a client's own frame, remembering its id so the reply can wear it again."""
+        client_id = frame.get("id")
+        outbound = dict(frame)
+        mux_id = self._allocate()
+        outbound["id"] = mux_id
+        self._forwarded[mux_id] = client_id if isinstance(client_id, int) else None
+        await self._write(outbound)
+
+    async def _send_tracked(self, message: CdpFrame) -> CdpFrame:
+        mux_id = self._allocate()
+        message["id"] = mux_id
+        future: asyncio.Future[CdpFrame] = asyncio.get_running_loop().create_future()
+        self._pending[mux_id] = future
+        try:
+            await self._write(message)
+        except BaseException:
+            self._pending.pop(mux_id, None)
+            raise
+        return await future
+
+    def _allocate(self) -> int:
+        mux_id = self._next_id
+        self._next_id += 1
+        return mux_id
+
+    async def _write(self, message: CdpFrame) -> None:
+        ws = self._ws
+        if ws is None:
+            raise CdpConnectionClosed("browser session connection closed")
+        await ws.send(json.dumps(message))
+
+    async def _read_loop(self) -> None:
+        ws = self._ws
+        if ws is None:
+            return
+        try:
+            async for raw in ws:
+                self._dispatch(raw if isinstance(raw, str) else raw.decode())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._mark_closed(exc)
+        else:
+            self._mark_closed(CdpConnectionClosed("browser session connection closed"))
+
+    def _dispatch(self, raw: str) -> None:
+        try:
+            frame: CdpFrame = json.loads(raw)
+        except ValueError:
+            log.warning(
+                f"{LogTag.BROWSER} browser session dropped an unparsable CDP frame",
+                error_type="ValueError",
+            )
+            return
+        message_id = frame.get("id")
+        if isinstance(message_id, int):
+            pending = self._pending.pop(message_id, None)
+            if pending is not None:
+                if not pending.done():
+                    pending.set_result(frame)
+                return
+            if message_id in self._forwarded:
+                client_id = self._forwarded.pop(message_id)
+                # Hand the reply back wearing the id its sender chose, so the
+                # client's own routing still recognises it.
+                if client_id is None:
+                    frame.pop("id", None)
+                else:
+                    frame["id"] = client_id
+        self._fan_out(frame)
+
+    def _fan_out(self, frame: CdpFrame) -> None:
+        session_id = frame.get("sessionId")
+        claimed = session_id is not None and any(owned == session_id for _, owned in self._sinks)
+        for sink, owned in list(self._sinks):
+            wanted = owned == session_id if owned is not None else not claimed
+            if not wanted:
+                continue
+            try:
+                sink(frame)
+            except Exception as exc:
+                log.warning(
+                    f"{LogTag.BROWSER} browser session frame sink failed",
+                    error_type=type(exc).__name__,
+                )
+
+    def _mark_closed(self, exc: BaseException) -> None:
+        """Release every waiter: the connection is over and nothing more will arrive."""
+        self._closed.set()
+        pending, self._pending = self._pending, {}
+        self._forwarded.clear()
+        for future in pending.values():
+            if not future.done():
+                future.set_exception(exc)

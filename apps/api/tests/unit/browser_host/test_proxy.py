@@ -9,7 +9,6 @@ never a top-level navigation, so this has to be enforced in the proxy itself.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -17,7 +16,6 @@ import pytest
 
 from app.browser_host import proxy
 from app.browser_host.proxy import (
-    _is_load_event,
     _navigation_url,
     _refusal_reason,
     _refused_navigation_url,
@@ -93,21 +91,6 @@ def test_context_lifecycle_is_refused() -> None:
         reason = _refusal_reason(msg)
         assert reason is not None
         assert "context lifecycle" in reason
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    ("frame", "expected"),
-    [
-        (json.dumps({"method": "Page.loadEventFired", "params": {"timestamp": 1.0}}), True),
-        (json.dumps({"method": "Page.frameNavigated", "params": {}}), False),
-        # The substring guard alone would misread a page's own data as the event.
-        (json.dumps({"id": 3, "result": {"value": "Page.loadEventFired"}}), False),
-    ],
-)
-def test_load_event_detection(frame: str, expected: bool) -> None:
-    """Navigation timing closes on the load event — and only on the real one."""
-    assert _is_load_event(frame) is expected
 
 
 # ---------------------------------------------------------------------------

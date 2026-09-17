@@ -32,6 +32,7 @@ from cdp_use.client import CDPClient
 import httpx
 from playwright.sync_api import StorageState, StorageStateCookie, sync_playwright
 
+from app.browser_host.cdp_mux import CdpMux, CdpTransport
 from app.browser_host.memory import memory_usage_mb
 from app.browser_host.metrics import ProcessSampler, SessionMetrics
 from app.browser_host.obscura_launch import obscura_serve_argv
@@ -83,6 +84,9 @@ class HostSession:
     session_id: str
     context_id: str
     target_id: str
+    # Obscura isolates every CDP connection, so the session's context, its pages
+    # and everything driving them must ride this one socket.
+    mux: CdpMux
     created_at: float
     last_activity_at: float
     viewer_count: int = 0
@@ -103,7 +107,7 @@ class CDPTimeoutError(RuntimeError):
 
 
 async def cdp_call(
-    cdp: CDPClient,
+    cdp: CdpTransport,
     method: str,
     params: dict[str, Any] | None = None,
     *,
@@ -287,26 +291,30 @@ class ChromiumHost:
         slowly runs out of memory.
         """
         await self._reserve_slot()
-        context_id: str | None = None
+        mux: CdpMux | None = None
         try:
-            ctx = await self._cdp_call("Target.createBrowserContext", {"disposeOnDetach": False})
+            mux = CdpMux(self.root_ws_url)
+            await mux.start()
+            ctx = await cdp_call(mux, "Target.createBrowserContext", {"disposeOnDetach": False})
             context_id = str(ctx["browserContextId"])
             # Refuse downloads before the context can navigate: a drive-by download
             # is the cheapest way to get a file onto the host's disk. Scoped to this
             # context so it can never race another session's setting.
-            await self._cdp_call(
+            await cdp_call(
+                mux,
                 "Browser.setDownloadBehavior",
                 {"behavior": "deny", "browserContextId": context_id},
             )
-            target = await self._cdp_call(
+            target = await cdp_call(
+                mux,
                 "Target.createTarget",
                 {"url": "about:blank", "browserContextId": context_id},
             )
             target_id: str = target["targetId"]
 
             if storage_state:
-                await self._seed_cookies(context_id, storage_state)
-                await self._seed_local_storage(target_id, storage_state)
+                await self._seed_cookies(mux, context_id, storage_state)
+                await self._seed_local_storage(mux, target_id, storage_state)
 
             now = time.monotonic()
             session_id = uuid.uuid4().hex
@@ -314,6 +322,7 @@ class ChromiumHost:
                 session_id=session_id,
                 context_id=context_id,
                 target_id=target_id,
+                mux=mux,
                 created_at=now,
                 last_activity_at=now,
                 metrics=SessionMetrics(context_count=1, page_count=1),
@@ -328,10 +337,10 @@ class ChromiumHost:
         except BaseException:
             async with self._lock:
                 self._pending_slots -= 1
-            # A context that was created before the failure has no session to
-            # carry it, so the idle reaper would never find it — drop it here.
-            if context_id is not None:
-                await self._dispose_context_id(context_id)
+            # A connection opened before the failure has no session to carry it,
+            # so the idle reaper would never find it — drop it here.
+            if mux is not None:
+                await mux.close()
             raise
 
         log.set(browser={"session_id": session_id, "operation": "create"})
@@ -352,7 +361,7 @@ class ChromiumHost:
             # forever, burning a slot after the caller had already moved on.
             async with self._lock:
                 self._sessions.pop(session_id, None)
-            await self._dispose_context_id(session.context_id)
+            await self._close_session_connection(session)
             log.set(browser={"session_id": session_id, "operation": "dispose"})
             log.set_ns("browser", metrics=session.metrics.snapshot())
             if state is not None:
@@ -458,7 +467,7 @@ class ChromiumHost:
     async def focused_target_id(self, session_id: str) -> str:
         """Return the target id of the context's focused page (for the screencast attach)."""
         session = self._get(session_id)
-        targets = await self._cdp_call("Target.getTargets", {})
+        targets = await cdp_call(session.mux, "Target.getTargets", {})
         pages = [
             ti
             for ti in targets["targetInfos"]
@@ -536,23 +545,34 @@ class ChromiumHost:
                 raise AtCapacityError
             await asyncio.sleep(_ADMISSION_POLL_SECONDS)
 
-    async def _dispose_context_id(self, context_id: str) -> None:
-        """Best-effort Chromium-side teardown; never raises into a caller's finally."""
-        if not self.chromium_up:
-            return
-        try:
-            await self._cdp_call("Target.disposeBrowserContext", {"browserContextId": context_id})
-        except Exception as exc:  # teardown must not mask the caller's own failure
-            log.warning(
-                f"{LogTag.BROWSER} browser host context dispose failed",
-                error_type=type(exc).__name__,
-            )
+    async def _close_session_connection(self, session: HostSession) -> None:
+        """Best-effort teardown of a session's context and its connection; never raises.
 
-    async def _seed_cookies(self, context_id: str, storage_state: StorageState) -> None:
+        Closing the socket is what frees the session on a per-connection engine;
+        disposing the context first keeps a shared-world engine tidy too.
+        """
+        if self.chromium_up and not session.mux.closed:
+            try:
+                await cdp_call(
+                    session.mux,
+                    "Target.disposeBrowserContext",
+                    {"browserContextId": session.context_id},
+                )
+            except Exception as exc:  # teardown must not mask the caller's own failure
+                log.warning(
+                    f"{LogTag.BROWSER} browser host context dispose failed",
+                    error_type=type(exc).__name__,
+                )
+        await session.mux.close()
+
+    async def _seed_cookies(
+        self, mux: CdpMux, context_id: str, storage_state: StorageState
+    ) -> None:
         cookies: list[StorageStateCookie] = storage_state.get("cookies") or []
         if not cookies:
             return
-        await self._cdp_call(
+        await cdp_call(
+            mux,
             "Storage.setCookies",
             {
                 "browserContextId": context_id,
@@ -560,7 +580,9 @@ class ChromiumHost:
             },
         )
 
-    async def _seed_local_storage(self, target_id: str, storage_state: StorageState) -> None:
+    async def _seed_local_storage(
+        self, mux: CdpMux, target_id: str, storage_state: StorageState
+    ) -> None:
         """Restore saved per-origin localStorage, the symmetric partner of _dump_origins.
 
         One addScriptToEvaluateOnNewDocument per origin, guarded to that origin and
@@ -571,13 +593,14 @@ class ChromiumHost:
         origins = [o for o in (storage_state.get("origins") or []) if o.get("localStorage")]
         if not origins:
             return
-        attached = await self._cdp_call(
-            "Target.attachToTarget", {"targetId": target_id, "flatten": True}
+        attached = await cdp_call(
+            mux, "Target.attachToTarget", {"targetId": target_id, "flatten": True}
         )
         page_session = attached["sessionId"]
         try:
             for origin in origins:
-                await self._cdp_call(
+                await cdp_call(
+                    mux,
                     "Page.addScriptToEvaluateOnNewDocument",
                     {
                         "source": _build_local_storage_restore_js(
@@ -587,19 +610,21 @@ class ChromiumHost:
                     session_id=page_session,
                 )
         finally:
-            await self._cdp_call("Target.detachFromTarget", {"sessionId": page_session})
+            await cdp_call(mux, "Target.detachFromTarget", {"sessionId": page_session})
 
     async def _dump_storage_state(self, session: HostSession) -> StorageState:
         """Cookies (whole context) + localStorage (per open page) as storage_state."""
         if not self.chromium_up:
             return {"cookies": [], "origins": []}
-        raw = await self._cdp_call("Storage.getCookies", {"browserContextId": session.context_id})
+        raw = await cdp_call(
+            session.mux, "Storage.getCookies", {"browserContextId": session.context_id}
+        )
         cookies = [_cdp_cookie_to_storage_state(c) for c in raw["cookies"]]
         origins = await self._dump_origins(session)
         return {"cookies": cookies, "origins": origins}
 
     async def _dump_origins(self, session: HostSession) -> list[OriginState]:
-        targets = await self._cdp_call("Target.getTargets", {})
+        targets = await cdp_call(session.mux, "Target.getTargets", {})
         page_ids = [
             ti["targetId"]
             for ti in targets["targetInfos"]
@@ -607,12 +632,13 @@ class ChromiumHost:
         ]
         origins: list[OriginState] = []
         for target_id in page_ids:
-            attached = await self._cdp_call(
-                "Target.attachToTarget", {"targetId": target_id, "flatten": True}
+            attached = await cdp_call(
+                session.mux, "Target.attachToTarget", {"targetId": target_id, "flatten": True}
             )
             page_session = attached["sessionId"]
             try:
-                result = await self._cdp_call(
+                result = await cdp_call(
+                    session.mux,
                     "Runtime.evaluate",
                     {
                         "expression": _LOCAL_STORAGE_DUMP_JS,
@@ -621,7 +647,7 @@ class ChromiumHost:
                     session_id=page_session,
                 )
             finally:
-                await self._cdp_call("Target.detachFromTarget", {"sessionId": page_session})
+                await cdp_call(session.mux, "Target.detachFromTarget", {"sessionId": page_session})
             value = result.get("result", {}).get("value")
             if value and value.get("origin") and value.get("localStorage"):
                 origins.append({"origin": value["origin"], "localStorage": value["localStorage"]})
@@ -630,7 +656,7 @@ class ChromiumHost:
     async def _focused_page_meta(self, session: HostSession) -> tuple[str | None, str | None]:
         if not self.chromium_up:
             return None, None
-        targets = await self._cdp_call("Target.getTargets", {})
+        targets = await cdp_call(session.mux, "Target.getTargets", {})
         for ti in targets["targetInfos"]:
             if ti["type"] == "page" and ti.get("browserContextId") == session.context_id:
                 return ti.get("url"), ti.get("title")
@@ -804,7 +830,7 @@ class ChromiumHost:
                 continue
             async with self._lock:
                 self._sessions.pop(session_id, None)
-            await self._dispose_context_id(session.context_id)
+            await self._close_session_connection(session)
             log.set(browser={"session_id": session_id, "operation": "idle_reap"})
             log.info(f"{LogTag.BROWSER} browser context reaped (idle)")
 
@@ -817,6 +843,9 @@ class ChromiumHost:
             dead_count = len(self._sessions)
             for session in self._sessions.values():
                 session.dead = True
+                # The engine is gone, so these sockets are already broken; closing
+                # them fails their waiters instead of leaving readers on a dead pipe.
+                await session.mux.close()
             self._sessions.clear()
             log.error(
                 f"{LogTag.BROWSER} browser engine crashed; relaunching",

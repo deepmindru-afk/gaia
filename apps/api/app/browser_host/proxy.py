@@ -1,8 +1,7 @@
 """Per-session CDP filtering proxy: browser-use sees only its own context.
 
 browser-use attaches to WS /cdp/{session_id} believing it owns the whole
-browser; one Chromium actually holds every user's context. This proxy sits
-between browser-use and Chromium's single root websocket and enforces that:
+browser; one engine actually holds every user's context. This proxy enforces:
 
   * Target.getTargets responses are trimmed to this session's context,
   * cross-context attachedToTarget / targetCreated / targetInfoChanged
@@ -11,17 +10,17 @@ between browser-use and Chromium's single root websocket and enforces that:
   * navigations are allowlisted to http/https (no file:// or chrome://),
   * setDownloadBehavior is refused, so the per-context deny cannot be undone.
 
-Everything else passes through untouched, and any traffic bumps the session's
-activity clock so the idle reaper leaves an in-use session alone.
+Everything else passes through, and any traffic bumps the session's activity
+clock. The live view shares this engine connection but claims its own page
+session on the mux, so its frames never reach this client.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
-
-import websockets
 
 from app.browser_host.pumps import pump_until_first_close
 from app.config.settings import settings
@@ -55,6 +54,9 @@ _BLANK_URL = "about:blank"
 _LOAD_EVENT_METHOD = "Page.loadEventFired"
 # CDP's implementation-defined server-error code, used for a refused command.
 _CDP_REFUSED_CODE = -32000
+# The mux sink is sync and cannot block, so a full queue could only drop a frame,
+# and a dropped reply or event desynchronises the client's protocol state forever.
+_DOWNSTREAM_QUEUE_UNBOUNDED = 0
 
 # Downloads are denied per context at creation (chromium.py), and browser-use's
 # DownloadsWatchdog sends Browser.setDownloadBehavior allow on every run, which
@@ -150,8 +152,10 @@ def _event_context_id(params: dict[str, Any]) -> str | None:
     return None
 
 
-def _rewrite_upstream(message: dict[str, Any], context_id: str, gettargets_ids: set[int]) -> str:
-    """Client -> Chromium: pin createTarget to this context; track getTargets ids."""
+def _rewrite_upstream(
+    message: dict[str, Any], context_id: str, gettargets_ids: set[int]
+) -> dict[str, Any]:
+    """Client -> engine: pin createTarget to this context; track getTargets ids."""
     method = message.get("method")
     if method == "Target.getTargets":
         message_id = message.get("id")
@@ -164,26 +168,13 @@ def _rewrite_upstream(message: dict[str, Any], context_id: str, gettargets_ids: 
         # page inside another tenant's context).
         if isinstance(params, dict):
             params["browserContextId"] = context_id
-    return json.dumps(message)
+    return message
 
 
-def _is_load_event(text: str) -> bool:
-    """Whether this downstream frame is Page.loadEventFired.
-
-    The substring test is a guard, not the answer: it keeps the common frame off
-    the JSON parser (_filter_downstream already parses every frame, and this
-    would double that cost) while the parse below is what actually decides.
-    """
-    if _LOAD_EVENT_METHOD not in text:
-        return False
-    message = json.loads(text)
-    return bool(message.get("method") == _LOAD_EVENT_METHOD)
-
-
-def _filter_downstream(raw: str, context_id: str, gettargets_ids: set[int]) -> str | None:
-    """Chromium -> client: trim getTargets, drop cross-context events. None = drop."""
-    message = json.loads(raw)
-
+def _filter_downstream(
+    message: dict[str, Any], context_id: str, gettargets_ids: set[int]
+) -> dict[str, Any] | None:
+    """Engine -> client: trim getTargets, drop cross-context events. None = drop."""
     message_id = message.get("id")
     if isinstance(message_id, int) and message_id in gettargets_ids:
         gettargets_ids.discard(message_id)
@@ -192,61 +183,68 @@ def _filter_downstream(raw: str, context_id: str, gettargets_ids: set[int]) -> s
             result["targetInfos"] = [
                 ti for ti in result["targetInfos"] if ti.get("browserContextId") == context_id
             ]
-            return json.dumps(message)
-        return raw
+        return message
 
     method = message.get("method")
     if method in _CONTEXT_SCOPED_EVENTS:
         event_ctx = _event_context_id(message.get("params", {}))
         if event_ctx is not None and event_ctx != context_id:
             return None
-    return raw
+    return message
 
 
 async def run_cdp_proxy(host: ChromiumHost, session: HostSession, client_ws: WebSocket) -> None:
-    """Bridge a browser-use client socket to Chromium, filtered to one context."""
+    """Bridge a browser-use client socket to the session's engine connection, filtered to one context."""
     gettargets_ids: set[int] = set()
-    async with websockets.connect(
-        host.root_ws_url, max_size=None, ping_interval=None
-    ) as chromium_ws:
+    downstream: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_DOWNSTREAM_QUEUE_UNBOUNDED)
 
-        async def client_to_chromium() -> None:
-            """Forward one upstream-cleaned frame from the client to Chromium."""
-            while True:
-                raw = await client_ws.receive_text()
-                host.touch(session.session_id)
-                message = json.loads(raw)
-                reason = _refusal_reason(message) or await _refused_private_target(message)
-                if reason is not None:
-                    log.warning(
-                        f"{LogTag.BROWSER} browser cdp command refused",
-                        error_type="RefusedCdpCommand",
-                        browser={"session_id": session.session_id, "reason": reason},
-                    )
-                    refused_id = message.get("id")
-                    await client_ws.send_text(
-                        _refusal_reply(refused_id if isinstance(refused_id, int) else None, reason)
-                    )
-                    continue
-                if message.get("method") == "Page.navigate":
-                    host.note_navigation_started(session.session_id)
-                elif message.get("method") == "Target.createTarget":
-                    host.note_page_created(session.session_id)
-                await chromium_ws.send(
-                    _rewrite_upstream(message, session.context_id, gettargets_ids)
+    def enqueue(frame: dict[str, Any]) -> None:
+        """Hand a frame to the drain task; runs inside the mux read loop, so it never awaits."""
+        downstream.put_nowait(frame)
+
+    async def client_to_engine() -> None:
+        """Forward one upstream-cleaned frame from the client to the engine."""
+        while True:
+            raw = await client_ws.receive_text()
+            host.touch(session.session_id)
+            message = json.loads(raw)
+            reason = _refusal_reason(message) or await _refused_private_target(message)
+            if reason is not None:
+                log.warning(
+                    f"{LogTag.BROWSER} browser cdp command refused",
+                    error_type="RefusedCdpCommand",
+                    browser={"session_id": session.session_id, "reason": reason},
                 )
+                refused_id = message.get("id")
+                await client_ws.send_text(
+                    _refusal_reply(refused_id if isinstance(refused_id, int) else None, reason)
+                )
+                continue
+            if message.get("method") == "Page.navigate":
+                host.note_navigation_started(session.session_id)
+            elif message.get("method") == "Target.createTarget":
+                host.note_page_created(session.session_id)
+            await session.mux.forward(
+                _rewrite_upstream(message, session.context_id, gettargets_ids)
+            )
 
-        async def chromium_to_client() -> None:
-            """Forward one frame from Chromium back to the client."""
-            async for raw in chromium_ws:
-                host.touch(session.session_id)
-                text = raw if isinstance(raw, str) else raw.decode()
-                if _is_load_event(text):
-                    host.note_navigation_finished(session.session_id)
-                forward = _filter_downstream(text, session.context_id, gettargets_ids)
-                if forward is not None:
-                    await client_ws.send_text(forward)
+    async def engine_to_client() -> None:
+        """Forward one queued frame from the engine back to the client."""
+        while True:
+            frame = await downstream.get()
+            host.touch(session.session_id)
+            if frame.get("method") == _LOAD_EVENT_METHOD:
+                host.note_navigation_finished(session.session_id)
+            forward = _filter_downstream(frame, session.context_id, gettargets_ids)
+            if forward is not None:
+                await client_ws.send_text(json.dumps(forward))
 
-        await pump_until_first_close(client_to_chromium(), chromium_to_client())
+    unsubscribe = session.mux.subscribe(enqueue)
+    try:
+        await pump_until_first_close(
+            client_to_engine(), engine_to_client(), session.mux.wait_closed()
+        )
+    finally:
+        unsubscribe()
     log.set(browser={"session_id": session.session_id, "operation": "cdp_proxy_closed"})
     log.info(f"{LogTag.BROWSER} browser cdp proxy closed")

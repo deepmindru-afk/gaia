@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from app.browser_host import proxy as proxy_mod
 from app.browser_host.proxy import (
     _CDP_REFUSED_CODE,
     LogTag,
@@ -16,6 +20,7 @@ from app.browser_host.proxy import (
     _refused_navigation_url,
     _rewrite_upstream,
 )
+from tests.unit.browser_host.conftest import FakeMux, make_session
 
 # ---------------------------------------------------------------------------
 # _refused_navigation_url edge cases
@@ -288,9 +293,8 @@ def test_event_context_id_returns_none_when_not_str() -> None:
 def test_rewrite_upstream_tracks_gettargets_id() -> None:
     ids: set[int] = set()
     msg = {"id": 7, "method": "Target.getTargets", "params": {}}
-    raw = _rewrite_upstream(msg, "ctx1", ids)
+    assert _rewrite_upstream(msg, "ctx1", ids) == msg
     assert 7 in ids
-    assert json.loads(raw) == msg
 
 
 @pytest.mark.unit
@@ -308,9 +312,7 @@ def test_rewrite_upstream_gettargets_non_int_id_not_tracked() -> None:
 def test_rewrite_upstream_pins_create_target_no_params() -> None:
     ids: set[int] = set()
     msg: dict = {"id": 1, "method": "Target.createTarget"}
-    raw = _rewrite_upstream(msg, "my-ctx", ids)
-    obj = json.loads(raw)
-    assert obj["params"]["browserContextId"] == "my-ctx"
+    assert _rewrite_upstream(msg, "my-ctx", ids)["params"]["browserContextId"] == "my-ctx"
 
 
 @pytest.mark.unit
@@ -321,38 +323,33 @@ def test_rewrite_upstream_pins_create_target_overwrites_existing() -> None:
         "method": "Target.createTarget",
         "params": {"url": "https://example.com", "browserContextId": "other-ctx"},
     }
-    raw = _rewrite_upstream(msg, "my-ctx", ids)
-    obj = json.loads(raw)
-    assert obj["params"]["browserContextId"] == "my-ctx"
-    assert obj["params"]["url"] == "https://example.com"
+    out = _rewrite_upstream(msg, "my-ctx", ids)
+    assert out["params"]["browserContextId"] == "my-ctx"
+    assert out["params"]["url"] == "https://example.com"
 
 
 @pytest.mark.unit
 def test_rewrite_upstream_create_target_with_existing_params_preserved() -> None:
     ids: set[int] = set()
     msg: dict = {"id": 2, "method": "Target.createTarget", "params": {"url": "https://example.com"}}
-    raw = _rewrite_upstream(msg, "ctx-123", ids)
-    obj = json.loads(raw)
-    assert obj["params"]["browserContextId"] == "ctx-123"
-    assert obj["params"]["url"] == "https://example.com"
+    out = _rewrite_upstream(msg, "ctx-123", ids)
+    assert out["params"]["browserContextId"] == "ctx-123"
+    assert out["params"]["url"] == "https://example.com"
 
 
 @pytest.mark.unit
 def test_rewrite_upstream_create_target_non_dict_params_not_pinned() -> None:
     ids: set[int] = set()
     msg: dict = {"id": 1, "method": "Target.createTarget", "params": "not-a-dict"}
-    raw = _rewrite_upstream(msg, "ctx-1", ids)
-    obj = json.loads(raw)
     # params not a dict => left as-is, not pinned
-    assert obj["params"] == "not-a-dict"
+    assert _rewrite_upstream(msg, "ctx-1", ids)["params"] == "not-a-dict"
 
 
 @pytest.mark.unit
 def test_rewrite_upstream_other_methods_pass_through() -> None:
     ids: set[int] = set()
     msg: dict = {"id": 5, "method": "Page.navigate", "params": {"url": "https://example.com"}}
-    raw = _rewrite_upstream(msg, "ctx1", ids)
-    assert json.loads(raw) == msg
+    assert _rewrite_upstream(msg, "ctx1", ids) == msg
     assert ids == set()
 
 
@@ -372,121 +369,93 @@ def test_rewrite_upstream_multiple_gettargets_ids() -> None:
 @pytest.mark.unit
 def test_filter_downstream_trims_gettargets_to_context() -> None:
     ids = {42}
-    raw = json.dumps(
-        {
-            "id": 42,
-            "result": {
-                "targetInfos": [
-                    {"targetId": "a", "browserContextId": "ctx1"},
-                    {"targetId": "b", "browserContextId": "other"},
-                    {"targetId": "c", "browserContextId": "ctx1"},
-                    {
-                        "targetId": "d"
-                    },  # no context id -> filtered out because None != ctx1? Actually kept only == ctx1
-                ]
-            },
-        }
-    )
-    out = _filter_downstream(raw, "ctx1", ids)
+    frame = {
+        "id": 42,
+        "result": {
+            "targetInfos": [
+                {"targetId": "a", "browserContextId": "ctx1"},
+                {"targetId": "b", "browserContextId": "other"},
+                {"targetId": "c", "browserContextId": "ctx1"},
+                {"targetId": "d"},  # no context id -> not this context, trimmed out
+            ]
+        },
+    }
+    out = _filter_downstream(frame, "ctx1", ids)
     assert out is not None
-    obj = json.loads(out)
-    assert len(obj["result"]["targetInfos"]) == 2
-    assert all(ti["browserContextId"] == "ctx1" for ti in obj["result"]["targetInfos"])
+    assert [ti["targetId"] for ti in out["result"]["targetInfos"]] == ["a", "c"]
     assert 42 not in ids  # discarded after handling
 
 
 @pytest.mark.unit
-def test_filter_downstream_gettargets_no_targetinfos_returns_raw() -> None:
+def test_filter_downstream_gettargets_no_targetinfos_returns_frame() -> None:
     ids = {10}
-    raw = json.dumps({"id": 10, "result": {"something": "else"}})
-    out = _filter_downstream(raw, "ctx1", ids)
-    assert out == raw
+    frame = {"id": 10, "result": {"something": "else"}}
+    assert _filter_downstream(frame, "ctx1", ids) == frame
     assert 10 not in ids
 
 
 @pytest.mark.unit
-def test_filter_downstream_gettargets_result_not_dict_returns_raw() -> None:
+def test_filter_downstream_gettargets_result_not_dict_returns_frame() -> None:
     ids = {11}
-    raw = json.dumps({"id": 11, "result": "not-a-dict"})
-    out = _filter_downstream(raw, "ctx1", ids)
-    assert out == raw
+    frame = {"id": 11, "result": "not-a-dict"}
+    assert _filter_downstream(frame, "ctx1", ids) == frame
     assert 11 not in ids
 
 
 @pytest.mark.unit
-def test_filter_downstream_gettargets_targetinfos_not_list_returns_raw() -> None:
+def test_filter_downstream_gettargets_targetinfos_not_list_returns_frame() -> None:
     ids = {12}
-    raw = json.dumps({"id": 12, "result": {"targetInfos": "not-a-list"}})
-    out = _filter_downstream(raw, "ctx1", ids)
-    assert out == raw
+    frame = {"id": 12, "result": {"targetInfos": "not-a-list"}}
+    assert _filter_downstream(frame, "ctx1", ids) == frame
 
 
 @pytest.mark.unit
 def test_filter_downstream_untracked_id_passes_through() -> None:
     ids: set[int] = set()
-    raw = json.dumps(
-        {"id": 99, "result": {"targetInfos": [{"targetId": "a", "browserContextId": "other"}]}}
-    )
-    out = _filter_downstream(raw, "ctx1", ids)
-    assert out == raw  # not tracked, so not filtered
+    frame = {"id": 99, "result": {"targetInfos": [{"targetId": "a", "browserContextId": "other"}]}}
+    assert _filter_downstream(frame, "ctx1", ids) == frame  # not tracked, so not filtered
 
 
 @pytest.mark.unit
 def test_filter_downstream_drops_cross_context_events() -> None:
     ids: set[int] = set()
     for method in ["Target.attachedToTarget", "Target.targetCreated", "Target.targetInfoChanged"]:
-        raw = json.dumps(
-            {"method": method, "params": {"targetInfo": {"browserContextId": "other-ctx"}}}
-        )
-        assert _filter_downstream(raw, "my-ctx", ids) is None, method
+        frame = {"method": method, "params": {"targetInfo": {"browserContextId": "other-ctx"}}}
+        assert _filter_downstream(frame, "my-ctx", ids) is None, method
 
 
 @pytest.mark.unit
 def test_filter_downstream_keeps_same_context_events() -> None:
     ids: set[int] = set()
     for method in ["Target.attachedToTarget", "Target.targetCreated", "Target.targetInfoChanged"]:
-        raw = json.dumps(
-            {"method": method, "params": {"targetInfo": {"browserContextId": "my-ctx"}}}
-        )
-        assert _filter_downstream(raw, "my-ctx", ids) == raw
+        frame = {"method": method, "params": {"targetInfo": {"browserContextId": "my-ctx"}}}
+        assert _filter_downstream(frame, "my-ctx", ids) == frame
 
 
 @pytest.mark.unit
 def test_filter_downstream_keeps_event_with_no_context_id() -> None:
     ids: set[int] = set()
     for method in ["Target.attachedToTarget", "Target.targetCreated", "Target.targetInfoChanged"]:
-        raw = json.dumps({"method": method, "params": {"targetInfo": {}}})
-        assert _filter_downstream(raw, "my-ctx", ids) == raw
-        raw2 = json.dumps({"method": method, "params": {}})
-        assert _filter_downstream(raw2, "my-ctx", ids) == raw2
+        frame = {"method": method, "params": {"targetInfo": {}}}
+        assert _filter_downstream(frame, "my-ctx", ids) == frame
+        frame2 = {"method": method, "params": {}}
+        assert _filter_downstream(frame2, "my-ctx", ids) == frame2
 
 
 @pytest.mark.unit
 def test_filter_downstream_non_scoped_event_always_passes() -> None:
     ids: set[int] = set()
-    raw = json.dumps(
-        {"method": "Page.frameNavigated", "params": {"targetInfo": {"browserContextId": "other"}}}
-    )
-    assert _filter_downstream(raw, "my-ctx", ids) == raw
-    raw2 = json.dumps({"method": "Runtime.consoleAPICalled", "params": {}})
-    assert _filter_downstream(raw2, "my-ctx", ids) == raw2
+    frame = {"method": "Page.frameNavigated", "params": {"targetInfo": {"browserContextId": "o"}}}
+    assert _filter_downstream(frame, "my-ctx", ids) == frame
+    frame2 = {"method": "Runtime.consoleAPICalled", "params": {}}
+    assert _filter_downstream(frame2, "my-ctx", ids) == frame2
 
 
 @pytest.mark.unit
 def test_filter_downstream_non_gettargets_response_passes() -> None:
     ids: set[int] = set()
-    raw = json.dumps({"id": 5, "result": {"frameId": "frame1"}})
-    assert _filter_downstream(raw, "ctx1", ids) == raw
-
-
-@pytest.mark.unit
-def test_filter_downstream_bytes_decoded_by_caller_not_here() -> None:
-    # _filter_downstream takes str, bytes handling is in run_cdp_proxy
-    ids: set[int] = set()
-    raw = json.dumps(
-        {"method": "Target.targetCreated", "params": {"targetInfo": {"browserContextId": "other"}}}
-    )
-    assert _filter_downstream(raw, "ctx1", ids) is None
+    frame = {"id": 5, "result": {"frameId": "frame1"}}
+    assert _filter_downstream(frame, "ctx1", ids) == frame
 
 
 @pytest.mark.unit
@@ -494,544 +463,290 @@ def test_filter_downstream_scoped_event_missing_params_key_passes_through() -> N
     """A scoped event with no params key at all (not merely an empty dict) must."""
     ids: set[int] = set()
     for method in ["Target.attachedToTarget", "Target.targetCreated", "Target.targetInfoChanged"]:
-        raw = json.dumps({"method": method})
-        assert _filter_downstream(raw, "my-ctx", ids) == raw, method
+        frame = {"method": method}
+        assert _filter_downstream(frame, "my-ctx", ids) == frame, method
 
 
 @pytest.mark.unit
 def test_filter_downstream_empty_targetinfos_kept_empty() -> None:
     ids = {1}
-    raw = json.dumps({"id": 1, "result": {"targetInfos": []}})
-    out = _filter_downstream(raw, "ctx1", ids)
+    out = _filter_downstream({"id": 1, "result": {"targetInfos": []}}, "ctx1", ids)
     assert out is not None
-    assert json.loads(out)["result"]["targetInfos"] == []
+    assert out["result"]["targetInfos"] == []
 
 
 # ---------------------------------------------------------------------------
-# run_cdp_proxy (covers lines 174-212 with mocked websockets)
+# run_cdp_proxy — driven against the shared FakeMux, never a websocket of its own
 # ---------------------------------------------------------------------------
-
-
-class _WSDisconnect(Exception):
-    pass
 
 
 _WSDisconnect = type("WebSocketDisconnect", (Exception,), {})
 
+# A script entry is either a frame the client sends or the engine speaking at
+# that point, so a test emits where it means to rather than at subscribe time.
+_ClientStep = str | Callable[[], None]
+
+
+def _client_ws(*script: _ClientStep) -> MagicMock:
+    """Build a client socket that plays the script, then disconnects the way a real peer does."""
+    remaining = list(script)
+
+    async def _receive() -> str:
+        while remaining:
+            step = remaining.pop(0)
+            if callable(step):
+                step()
+                continue
+            return step
+        raise _WSDisconnect()
+
+    client_ws = MagicMock()
+    client_ws.receive_text = AsyncMock(side_effect=_receive)
+    client_ws.send_text = AsyncMock()
+    return client_ws
+
+
+def _sent(client_ws: MagicMock) -> list[dict[str, Any]]:
+    return [json.loads(call[0][0]) for call in client_ws.send_text.call_args_list]
+
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_refuses_and_forwards() -> None:
-    """Exercises client_to_chromium refusal and chromium_to_client filtering."""
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
+    """The upstream refusal and the downstream context filter, over one mux."""
     host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="sess-1", context_id="ctx-1", target_id="t1", created_at=0, last_activity_at=0
-    )
-
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(
-        side_effect=[
-            json.dumps(
-                {"id": 1, "method": "Browser.setDownloadBehavior", "params": {"behavior": "allow"}}
-            ),
-            json.dumps(
-                {"id": 2, "method": "Page.navigate", "params": {"url": "https://example.com"}}
-            ),
-            _WSDisconnect(),
-        ]
-    )
-    client_ws.send_text = AsyncMock()
-
-    chromium_messages = [
+    mux = FakeMux()
+    client_ws = _client_ws(
         json.dumps(
+            {"id": 1, "method": "Browser.setDownloadBehavior", "params": {"behavior": "allow"}}
+        ),
+        json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": "https://example.com"}}),
+        lambda: mux.emit(
             {
                 "method": "Target.targetCreated",
                 "params": {"targetInfo": {"browserContextId": "other", "targetId": "x"}},
-            }
-        ),
-        json.dumps(
+            },
             {
                 "method": "Target.targetCreated",
                 "params": {"targetInfo": {"browserContextId": "ctx-1", "targetId": "y"}},
-            }
+            },
         ),
-    ]
-
-    class FakeChromiumWS:
-        def __init__(self):
-            self.sent: list[str] = []
-            self._iter = iter(chromium_messages)
-
-        async def send(self, data: str) -> None:
-            self.sent.append(data)
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            try:
-                return next(self._iter)
-            except StopIteration:
-                await asyncio.sleep(0.2)
-                raise StopAsyncIteration from None
-
-    fake_chromium = FakeChromiumWS()
-    mock_ws_ctx = MagicMock()
-    mock_ws_ctx.__aenter__ = AsyncMock(return_value=fake_chromium)
-    mock_ws_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ws_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-
-    # refusal reply for Browser.setDownloadBehavior (id 1) should have been sent
-    assert client_ws.send_text.call_count >= 1
-    first_reply = json.loads(client_ws.send_text.call_args_list[0][0][0])
-    assert first_reply["id"] == 1
-    assert first_reply["error"]["code"] == -32000
-    # Only Page.navigate should have been forwarded to chromium (refused one not forwarded)
-    assert len(fake_chromium.sent) == 1
-    forwarded = json.loads(fake_chromium.sent[0])
-    assert forwarded["method"] == "Page.navigate"
-    # Chromium downstream: other-context event dropped, same-context forwarded
-    # so at least 2 sends to client: refusal + one chromium forward
-    assert client_ws.send_text.call_count >= 2
-    # find the chromium-forwarded message (method Target.targetCreated with ctx-1)
-    forwarded_down = [
-        json.loads(c[0][0])
-        for c in client_ws.send_text.call_args_list
-        if "method" in json.loads(c[0][0])
-    ]
-    assert any(
-        m.get("params", {}).get("targetInfo", {}).get("browserContextId") == "ctx-1"
-        for m in forwarded_down
     )
+
+    await proxy_mod.run_cdp_proxy(host, make_session(mux=mux, context_id="ctx-1"), client_ws)
+
+    sent = _sent(client_ws)
+    assert sent[0]["id"] == 1
+    assert sent[0]["error"]["code"] == _CDP_REFUSED_CODE
+    # Only Page.navigate reaches the engine; the refused command never does.
+    assert [frame["method"] for frame in mux.forwarded] == ["Page.navigate"]
+    # The foreign-context event is dropped, this session's own event is delivered.
+    delivered = [frame for frame in sent if frame.get("method") == "Target.targetCreated"]
+    assert [frame["params"]["targetInfo"]["targetId"] for frame in delivered] == ["y"]
 
 
 @pytest.mark.unit
-async def test_run_cdp_proxy_handles_bytes_downstream() -> None:
-    from unittest.mock import AsyncMock, MagicMock, patch
+async def test_run_cdp_proxy_forwards_the_clients_own_frame_through_the_mux() -> None:
+    """The mux owns id rewriting, so the proxy hands it the client's frame as-is."""
+    mux = FakeMux()
+    client_ws = _client_ws(json.dumps({"id": 77, "method": "Page.enable", "params": {}}))
 
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
+    await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
 
+    assert mux.forwarded == [{"id": 77, "method": "Page.enable", "params": {}}]
+
+
+@pytest.mark.unit
+async def test_run_cdp_proxy_delivers_a_reply_from_the_sink_to_the_client() -> None:
+    mux = FakeMux()
+    client_ws = _client_ws(lambda: mux.emit({"id": 77, "result": {"frameId": "f1"}}))
+
+    await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
+
+    assert _sent(client_ws) == [{"id": 77, "result": {"frameId": "f1"}}]
+
+
+@pytest.mark.unit
+async def test_run_cdp_proxy_claims_no_cdp_session_on_the_mux() -> None:
+    """The agent's client takes the open stream, so it must claim nothing when it subscribes."""
+    mux = FakeMux()
+    claimed: list[list[str | None]] = []
+    client_ws = _client_ws(lambda: claimed.append(mux.owned_sessions))
+
+    await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
+
+    assert claimed == [[None]]
+
+
+@pytest.mark.unit
+async def test_run_cdp_proxy_never_sees_a_frame_another_subscriber_claimed() -> None:
+    """Its screencast frames are screenshots nobody asked for, its load event is not this navigation."""
     host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="s1", context_id="ctx-1", target_id="t1", created_at=0, last_activity_at=0
-    )
+    mux = FakeMux()
+    live_view: list[dict[str, Any]] = []
+
+    def live_view_attaches_and_the_engine_speaks() -> None:
+        mux.subscribe(live_view.append, owns_session="live-sess")
+        mux.emit(
+            {
+                "method": "Page.screencastFrame",
+                "sessionId": "live-sess",
+                "params": {"data": "base64-jpeg"},
+            },
+            {"method": "Page.loadEventFired", "sessionId": "live-sess", "params": {}},
+            {"method": "Page.loadEventFired", "params": {}},
+        )
+
+    client_ws = _client_ws(live_view_attaches_and_the_engine_speaks)
+
+    await proxy_mod.run_cdp_proxy(host, make_session(mux=mux, session_id="sess-live"), client_ws)
+
+    assert [frame["method"] for frame in live_view] == [
+        "Page.screencastFrame",
+        "Page.loadEventFired",
+    ]
+    assert _sent(client_ws) == [{"method": "Page.loadEventFired", "params": {}}]
+    # Only the agent's own load event closes a navigation; the live view's does not.
+    assert host.note_navigation_finished.call_args_list == [call("sess-live")]
+
+
+@pytest.mark.unit
+async def test_run_cdp_proxy_opens_no_websocket_of_its_own() -> None:
+    """One engine connection per session: the proxy uses session.mux and dials nothing."""
+    mux = FakeMux()
+    client_ws = _client_ws(json.dumps({"id": 1, "method": "Page.enable", "params": {}}))
+
+    with patch("websockets.connect") as connect:
+        await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
+
+    connect.assert_not_called()
+    assert not hasattr(proxy_mod, "websockets")
+    assert len(mux.forwarded) == 1
+
+
+@pytest.mark.unit
+async def test_run_cdp_proxy_unsubscribes_its_sink_on_exit() -> None:
+    mux = FakeMux()
+
+    await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), _client_ws())
+
+    assert mux.sinks == []
+
+
+@pytest.mark.unit
+async def test_run_cdp_proxy_unsubscribes_its_sink_when_a_pump_raises() -> None:
+    """A real error must still leave no sink behind on the session's shared mux."""
+    mux = FakeMux()
     client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(side_effect=[_WSDisconnect()])
+    client_ws.receive_text = AsyncMock(side_effect=ValueError("boom"))
     client_ws.send_text = AsyncMock()
 
-    raw_bytes = json.dumps({"method": "Page.frameNavigated", "params": {}}).encode()
-    text = raw_bytes.decode() if isinstance(raw_bytes, bytes) else raw_bytes
-    assert isinstance(text, str)
-    from app.browser_host.proxy import _filter_downstream
+    with pytest.raises(ValueError, match="boom"):
+        await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
 
-    out = _filter_downstream(text, "ctx-1", set())
-    assert out == text
-
-    class FakeChromiumBytes:
-        async def send(self, data):
-            pass
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            raise StopAsyncIteration
-
-    fake = FakeChromiumBytes()
-    mock_ws_ctx = MagicMock()
-    mock_ws_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ws_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ws_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-    host.touch.assert_not_called()
+    assert mux.sinks == []
 
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_navigation_refusal_sends_error() -> None:
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
-    host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="s1", context_id="ctx-1", target_id="t1", created_at=0, last_activity_at=0
+    mux = FakeMux()
+    client_ws = _client_ws(
+        json.dumps({"id": 5, "method": "Page.navigate", "params": {"url": "file:///etc/passwd"}})
     )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(
-        side_effect=[
-            json.dumps(
-                {"id": 5, "method": "Page.navigate", "params": {"url": "file:///etc/passwd"}}
-            ),
-            _WSDisconnect(),
-        ]
-    )
-    client_ws.send_text = AsyncMock()
 
-    class FakeWS:
-        def __init__(self):
-            self.sent: list[str] = []
+    await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
 
-        async def send(self, data):
-            self.sent.append(data)
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            await asyncio.sleep(0.2)
-            raise StopAsyncIteration
-
-    fake = FakeWS()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-    assert client_ws.send_text.call_count >= 1
-    reply = json.loads(client_ws.send_text.call_args_list[0][0][0])
+    reply = _sent(client_ws)[0]
     assert reply["id"] == 5
     assert "only http and https" in reply["error"]["message"]
-    assert len(fake.sent) == 0
+    assert mux.forwarded == []
 
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_rewrites_create_target_and_filters_gettargets() -> None:
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
     host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="s1", context_id="ctx-1", target_id="t1", created_at=0, last_activity_at=0
+    mux = FakeMux()
+    client_ws = _client_ws(
+        json.dumps({"id": 10, "method": "Target.getTargets", "params": {}}),
+        # The reply can only be trimmed once the request has registered its id.
+        lambda: mux.emit(
+            {
+                "id": 10,
+                "result": {
+                    "targetInfos": [
+                        {"targetId": "t-ctx", "browserContextId": "ctx-1"},
+                        {"targetId": "t-other", "browserContextId": "other"},
+                    ]
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "id": 11,
+                "method": "Target.createTarget",
+                "params": {"url": "https://example.com", "browserContextId": "other"},
+            }
+        ),
     )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(
-        side_effect=[
-            json.dumps({"id": 10, "method": "Target.getTargets", "params": {}}),
-            json.dumps(
-                {
-                    "id": 11,
-                    "method": "Target.createTarget",
-                    "params": {"url": "https://example.com", "browserContextId": "other"},
-                }
-            ),
-            _WSDisconnect(),
-        ]
-    )
-    client_ws.send_text = AsyncMock()
 
-    class FakeChromium:
-        def __init__(self):
-            self.sent: list[str] = []
+    await proxy_mod.run_cdp_proxy(host, make_session(mux=mux, context_id="ctx-1"), client_ws)
 
-        async def send(self, data: str) -> None:
-            self.sent.append(data)
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            # After client sends getTargets, chromium replies with mixed targetInfos
-            # Pump will have recorded getTargets id 10, so this response should be trimmed
-            if not hasattr(self, "_sent_reply"):
-                self._sent_reply = True
-                return json.dumps(
-                    {
-                        "id": 10,
-                        "result": {
-                            "targetInfos": [
-                                {"targetId": "t-ctx", "browserContextId": "ctx-1"},
-                                {"targetId": "t-other", "browserContextId": "other"},
-                            ]
-                        },
-                    }
-                )
-            await asyncio.sleep(0.2)
-            raise StopAsyncIteration
-
-    fake = FakeChromium()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-    # Check that createTarget was pinned to ctx-1
-    create_sent = [
-        json.loads(s) for s in fake.sent if json.loads(s).get("method") == "Target.createTarget"
-    ]
-    assert len(create_sent) == 1
-    assert create_sent[0]["params"]["browserContextId"] == "ctx-1"
-    # Check that getTargets response was trimmed to only ctx-1
-    trimmed = [
-        json.loads(c[0][0])
-        for c in client_ws.send_text.call_args_list
-        if json.loads(c[0][0]).get("id") == 10
-    ]
+    created = [f for f in mux.forwarded if f["method"] == "Target.createTarget"]
+    assert [f["params"]["browserContextId"] for f in created] == ["ctx-1"]
+    trimmed = [f for f in _sent(client_ws) if f.get("id") == 10]
     assert len(trimmed) == 1
-    assert len(trimmed[0]["result"]["targetInfos"]) == 1
-    assert trimmed[0]["result"]["targetInfos"][0]["browserContextId"] == "ctx-1"
-
-
-@pytest.mark.unit
-async def test_run_cdp_proxy_connects_with_root_url_and_unbounded_kwargs() -> None:
-    """The proxy must dial Chromium's own root socket with no size/ping limits."""
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
-    host = MagicMock()
-    host.root_ws_url = "ws://chromium-root/devtools/browser/abc-123"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="s1", context_id="ctx-1", target_id="t1", created_at=0, last_activity_at=0
-    )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(side_effect=[_WSDisconnect()])
-    client_ws.send_text = AsyncMock()
-
-    class FakeWS:
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            raise StopAsyncIteration
-
-    fake = FakeWS()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx) as mock_connect:
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-
-    mock_connect.assert_called_once_with(
-        "ws://chromium-root/devtools/browser/abc-123", max_size=None, ping_interval=None
-    )
+    assert [ti["targetId"] for ti in trimmed[0]["result"]["targetInfos"]] == ["t-ctx"]
 
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_touches_session_id_on_both_directions() -> None:
     """host.touch must key off the session id — not the context id or anything."""
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, call, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
     host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="sess-XYZ",
-        context_id="ctx-ABC",
-        target_id="t1",
-        created_at=0,
-        last_activity_at=0,
+    mux = FakeMux()
+    client_ws = _client_ws(
+        json.dumps({"id": 1, "method": "Page.enable", "params": {}}),
+        lambda: mux.emit({"method": "Page.frameNavigated", "params": {}}),
     )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(
-        side_effect=[
-            json.dumps({"id": 1, "method": "Page.enable", "params": {}}),
-            _WSDisconnect(),
-        ]
+
+    await proxy_mod.run_cdp_proxy(
+        host, make_session(mux=mux, session_id="sess-XYZ", context_id="ctx-ABC"), client_ws
     )
-    client_ws.send_text = AsyncMock()
 
-    class FakeChromium:
-        def __init__(self) -> None:
-            self._sent = False
-
-        async def send(self, data: str) -> None:
-            pass
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            if not self._sent:
-                self._sent = True
-                return json.dumps({"method": "Page.frameNavigated", "params": {}})
-            await asyncio.sleep(0.2)
-            raise StopAsyncIteration
-
-    fake = FakeChromium()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-
-    # One touch for the client->chromium frame, one for the chromium->client frame,
+    # One touch for the client->engine frame, one for the engine->client frame,
     # both keyed by the session id (never the context id).
     assert host.touch.call_args_list == [call("sess-XYZ"), call("sess-XYZ")]
 
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_rewrites_upstream_using_context_id_not_session_id() -> None:
-    """_rewrite_upstream must be called with session.context_id — pinning a."""
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
-    host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="sess-XYZ",
-        context_id="ctx-ABC",
-        target_id="t1",
-        created_at=0,
-        last_activity_at=0,
+    """Upstream rewriting pins the target to session.context_id, never the session id."""
+    mux = FakeMux()
+    client_ws = _client_ws(
+        json.dumps({"id": 1, "method": "Target.createTarget", "params": {"url": "https://x.com"}})
     )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(
-        side_effect=[
-            json.dumps(
-                {"id": 1, "method": "Target.createTarget", "params": {"url": "https://x.com"}}
-            ),
-            _WSDisconnect(),
-        ]
+
+    await proxy_mod.run_cdp_proxy(
+        MagicMock(),
+        make_session(mux=mux, session_id="sess-XYZ", context_id="ctx-ABC"),
+        client_ws,
     )
-    client_ws.send_text = AsyncMock()
 
-    class FakeChromium:
-        def __init__(self) -> None:
-            self.sent: list[str] = []
-
-        async def send(self, data: str) -> None:
-            self.sent.append(data)
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            await asyncio.sleep(0.2)
-            raise StopAsyncIteration
-
-    fake = FakeChromium()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-
-    assert len(fake.sent) == 1
-    sent = json.loads(fake.sent[0])
-    assert sent["params"]["browserContextId"] == "ctx-ABC"
-
-
-@pytest.mark.unit
-async def test_run_cdp_proxy_decodes_real_bytes_frame_from_chromium() -> None:
-    """Chromium's websocket may yield bytes frames; the proxy must decode."""
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
-    host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="s1", context_id="ctx-1", target_id="t1", created_at=0, last_activity_at=0
-    )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(side_effect=[_WSDisconnect()])
-    client_ws.send_text = AsyncMock()
-
-    payload = {"method": "Page.frameNavigated", "params": {"frameId": "abc"}}
-
-    class FakeChromiumBytes:
-        def __init__(self) -> None:
-            self._sent = False
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            if not self._sent:
-                self._sent = True
-                return json.dumps(payload).encode()
-            raise StopAsyncIteration
-
-    fake = FakeChromiumBytes()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-
-    client_ws.send_text.assert_called_once()
-    forwarded = json.loads(client_ws.send_text.call_args_list[0][0][0])
-    assert forwarded == payload
+    assert [f["params"]["browserContextId"] for f in mux.forwarded] == ["ctx-ABC"]
 
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_logs_refusal_with_reason_and_session_id() -> None:
-    """The refusal warning must carry the actual session id and the actual."""
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
-    host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="sess-warn",
-        context_id="ctx-1",
-        target_id="t1",
-        created_at=0,
-        last_activity_at=0,
+    """The refusal warning carries this session's id and the actual reason."""
+    mux = FakeMux()
+    client_ws = _client_ws(
+        json.dumps(
+            {"id": 1, "method": "Browser.setDownloadBehavior", "params": {"behavior": "allow"}}
+        )
     )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(
-        side_effect=[
-            json.dumps(
-                {"id": 1, "method": "Browser.setDownloadBehavior", "params": {"behavior": "allow"}}
-            ),
-            _WSDisconnect(),
-        ]
-    )
-    client_ws.send_text = AsyncMock()
 
-    class FakeWS:
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            raise StopAsyncIteration
-
-    fake = FakeWS()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with (
-        patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx),
-        patch.object(proxy_mod.log, "warning") as mock_warning,
-    ):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
+    with patch.object(proxy_mod.log, "warning") as mock_warning:
+        await proxy_mod.run_cdp_proxy(
+            MagicMock(), make_session(mux=mux, session_id="sess-warn"), client_ws
+        )
 
     mock_warning.assert_called_once_with(
         f"{LogTag.BROWSER} browser cdp command refused",
@@ -1045,43 +760,16 @@ async def test_run_cdp_proxy_logs_refusal_with_reason_and_session_id() -> None:
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_logs_closure_with_session_id_and_operation() -> None:
-    """The closing log line must name this session and the cdp_proxy_closed."""
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
-    host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="sess-closed",
-        context_id="ctx-1",
-        target_id="t1",
-        created_at=0,
-        last_activity_at=0,
-    )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(side_effect=[_WSDisconnect()])
-    client_ws.send_text = AsyncMock()
-
-    class FakeWS:
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            raise StopAsyncIteration
-
-    fake = FakeWS()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+    """The closing log line names this session and the cdp_proxy_closed operation."""
     with (
-        patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx),
         patch.object(proxy_mod.log, "set") as mock_set,
         patch.object(proxy_mod.log, "info") as mock_info,
     ):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
+        await proxy_mod.run_cdp_proxy(
+            MagicMock(),
+            make_session(mux=FakeMux(), session_id="sess-closed"),
+            _client_ws(),
+        )
 
     mock_set.assert_called_once_with(
         browser={"session_id": "sess-closed", "operation": "cdp_proxy_closed"}
@@ -1092,160 +780,56 @@ async def test_run_cdp_proxy_logs_closure_with_session_id_and_operation() -> Non
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_never_forwards_dropped_downstream_frame() -> None:
-    """When every downstream frame is filtered out (_filter_downstream returns."""
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
-    host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="s1", context_id="ctx-1", target_id="t1", created_at=0, last_activity_at=0
+    """A frame _filter_downstream drops must never reach the client."""
+    mux = FakeMux()
+    client_ws = _client_ws(
+        lambda: mux.emit(
+            {
+                "method": "Target.attachedToTarget",
+                "params": {"targetInfo": {"browserContextId": "other-ctx"}},
+            }
+        )
     )
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(side_effect=[_WSDisconnect()])
-    client_ws.send_text = AsyncMock()
 
-    class FakeChromium:
-        def __init__(self) -> None:
-            self._sent = False
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            if not self._sent:
-                self._sent = True
-                return json.dumps(
-                    {
-                        "method": "Target.attachedToTarget",
-                        "params": {"targetInfo": {"browserContextId": "other-ctx"}},
-                    }
-                )
-            await asyncio.sleep(0.2)
-            raise StopAsyncIteration
-
-    fake = FakeChromium()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
+    await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux, context_id="ctx-1"), client_ws)
 
     client_ws.send_text.assert_not_called()
 
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_handles_non_int_refusal_id() -> None:
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
-    host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    host.touch = MagicMock()
-    session = HostSession(
-        session_id="s1", context_id="ctx-1", target_id="t1", created_at=0, last_activity_at=0
+    mux = FakeMux()
+    client_ws = _client_ws(
+        json.dumps({"method": "Browser.setDownloadBehavior", "params": {"behavior": "allow"}})
     )
-    client_ws = MagicMock()
-    # no id field, refused method without int id should reply with null id
-    client_ws.receive_text = AsyncMock(
-        side_effect=[
-            json.dumps({"method": "Browser.setDownloadBehavior", "params": {"behavior": "allow"}}),
-            _WSDisconnect(),
-        ]
-    )
-    client_ws.send_text = AsyncMock()
 
-    class FakeWS:
-        async def send(self, data):
-            pass
+    await proxy_mod.run_cdp_proxy(MagicMock(), make_session(mux=mux), client_ws)
 
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            await asyncio.sleep(0.2)
-            raise StopAsyncIteration
-
-    fake = FakeWS()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
-    assert client_ws.send_text.call_count == 1
-    reply = json.loads(client_ws.send_text.call_args_list[0][0][0])
+    reply = _sent(client_ws)[0]
     assert reply["id"] is None
-    assert reply["error"]["code"] == -32000
+    assert reply["error"]["code"] == _CDP_REFUSED_CODE
 
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_records_navigation_and_page_metrics_for_this_session() -> None:
-    """The per-session metrics the host reports (navigation count, page count."""
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, call, patch
-
-    from app.browser_host import proxy as proxy_mod
-    from app.browser_host.chromium import HostSession
-
+    """Navigation start, page creation and finish are each recorded once, for this session."""
     host = MagicMock()
-    host.root_ws_url = "ws://fake"
-    session = HostSession(
-        session_id="sess-metrics",
-        context_id="ctx-1",
-        target_id="t1",
-        created_at=0,
-        last_activity_at=0,
+    mux = FakeMux()
+    client_ws = _client_ws(
+        # Two inert commands: neither may be counted as a navigation or a page.
+        json.dumps({"id": 1, "method": "Page.enable", "params": {}}),
+        json.dumps({"id": 4, "method": "Runtime.evaluate", "params": {}}),
+        json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": "https://a.test"}}),
+        json.dumps({"id": 3, "method": "Target.createTarget", "params": {"url": "https://b.test"}}),
+        lambda: mux.emit(
+            {"method": "Page.frameNavigated", "params": {}},
+            # A page's own data naming the event must not close a navigation.
+            {"id": 9, "result": {"value": "Page.loadEventFired"}},
+            {"method": "Page.loadEventFired", "params": {"timestamp": 1.0}},
+        ),
     )
 
-    client_ws = MagicMock()
-    client_ws.receive_text = AsyncMock(
-        side_effect=[
-            # Two inert commands: neither may be counted as a navigation or a page.
-            json.dumps({"id": 1, "method": "Page.enable", "params": {}}),
-            json.dumps({"id": 4, "method": "Runtime.evaluate", "params": {}}),
-            json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": "https://a.test"}}),
-            json.dumps(
-                {"id": 3, "method": "Target.createTarget", "params": {"url": "https://b.test"}}
-            ),
-            _WSDisconnect(),
-        ]
-    )
-    client_ws.send_text = AsyncMock()
-
-    downstream = [
-        json.dumps({"method": "Page.frameNavigated", "params": {}}),
-        json.dumps({"method": "Page.loadEventFired", "params": {"timestamp": 1.0}}),
-    ]
-
-    class FakeChromium:
-        def __init__(self) -> None:
-            self._iter = iter(downstream)
-
-        async def send(self, data: str) -> None:
-            pass
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            try:
-                return next(self._iter)
-            except StopIteration:
-                await asyncio.sleep(0.2)
-                raise StopAsyncIteration from None
-
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=FakeChromium())
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch.object(proxy_mod.websockets, "connect", return_value=mock_ctx):
-        await proxy_mod.run_cdp_proxy(host, session, client_ws)
+    await proxy_mod.run_cdp_proxy(host, make_session(mux=mux, session_id="sess-metrics"), client_ws)
 
     assert host.note_navigation_started.call_args_list == [call("sess-metrics")]
     assert host.note_page_created.call_args_list == [call("sess-metrics")]

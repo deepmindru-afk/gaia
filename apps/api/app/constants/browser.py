@@ -72,7 +72,7 @@ class SensitiveCategory(str, Enum):
 # user+site) and reused next task, exactly what storage_persistence.py does, and the Browser
 # settings list/remove saved sites.
 BROWSER_CREDENTIALS_SAVED_NOTE = (
-    "Once you're signed in, I'll save this site's session — encrypted — so I can "
+    "Once you're signed in I'll save this site's session, encrypted, so I can "
     "skip the login next time. You can remove saved sites anytime in "
     "your Browser settings."
 )

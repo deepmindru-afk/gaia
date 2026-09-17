@@ -14,42 +14,15 @@ never re-injected (session reuse was cookie-only). These cover the restore:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
-from app.browser_host.chromium import (
-    ChromiumHost,
-    _build_local_storage_restore_js,
-)
+from app.browser_host.chromium import _build_local_storage_restore_js
 from app.config.settings import settings
+from tests.unit.browser_host.conftest import FakeMux, install_mux, make_host
 
 _ORIGIN = "https://example.com"
 _ENTRIES = [{"name": "token", "value": "abc123"}, {"name": "theme", "value": "dark"}]
-
-
-class _RecordingCDP:
-    """Records every send_raw call and answers from a per-method response map."""
-
-    def __init__(self, responses: dict[str, dict[str, Any]] | None = None) -> None:
-        self.responses = responses or {}
-        self.calls: list[tuple[str, dict[str, Any] | None, str | None]] = []
-
-    async def send_raw(
-        self, method: str, params: dict[str, Any] | None = None, session_id: str | None = None
-    ) -> dict[str, Any]:
-        self.calls.append((method, params, session_id))
-        return self.responses.get(method, {})
-
-    def sources_for(self, method: str) -> list[str]:
-        return [p["source"] for m, p, _ in self.calls if m == method and p is not None]
-
-
-def _make_host(cdp: _RecordingCDP) -> ChromiumHost:
-    host = ChromiumHost()
-    host._cdp = cdp
-    host._proc = MagicMock(returncode=None)  # chromium_up == True
-    return host
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +76,8 @@ def test_restore_js_escapes_hostile_values() -> None:
 
 @pytest.mark.unit
 async def test_seed_local_storage_registers_one_script_per_origin() -> None:
-    cdp = _RecordingCDP({"Target.attachToTarget": {"sessionId": "page-sess"}})
-    host = _make_host(cdp)
+    mux = FakeMux({"Target.attachToTarget": {"sessionId": "page-sess"}})
+    host = make_host()
     state = {
         "cookies": [],
         "origins": [
@@ -113,68 +86,68 @@ async def test_seed_local_storage_registers_one_script_per_origin() -> None:
         ],
     }
 
-    await host._seed_local_storage("target-1", state)
+    await host._seed_local_storage(mux, "target-1", state)
 
-    sources = cdp.sources_for("Page.addScriptToEvaluateOnNewDocument")
+    sources = mux.sources_for("Page.addScriptToEvaluateOnNewDocument")
     assert len(sources) == 2
     assert any(_ORIGIN in s for s in sources)
     assert any("https://other.test" in s for s in sources)
     # Scripts are added over the flat page session, then detached.
-    assert ("Target.attachToTarget", {"targetId": "target-1", "flatten": True}, None) in cdp.calls
+    assert ("Target.attachToTarget", {"targetId": "target-1", "flatten": True}, None) in mux.calls
     assert all(
         sid == "page-sess"
-        for m, _, sid in cdp.calls
+        for m, _, sid in mux.calls
         if m == "Page.addScriptToEvaluateOnNewDocument"
     )
-    assert any(m == "Target.detachFromTarget" for m, _, _ in cdp.calls)
+    assert any(m == "Target.detachFromTarget" for m, _, _ in mux.calls)
 
 
 @pytest.mark.unit
 async def test_seed_local_storage_skips_origins_without_local_storage() -> None:
     """An origin carrying only cookies (empty localStorage) registers nothing."""
-    cdp = _RecordingCDP({"Target.attachToTarget": {"sessionId": "page-sess"}})
-    host = _make_host(cdp)
+    mux = FakeMux({"Target.attachToTarget": {"sessionId": "page-sess"}})
+    host = make_host()
     state = {"cookies": [], "origins": [{"origin": _ORIGIN, "localStorage": []}]}
 
-    await host._seed_local_storage("target-1", state)
+    await host._seed_local_storage(mux, "target-1", state)
 
-    assert cdp.calls == []  # no attach, no script, no detach
+    assert mux.calls == []  # no attach, no script, no detach
 
 
 @pytest.mark.unit
 async def test_seed_local_storage_no_origins_is_a_noop() -> None:
-    cdp = _RecordingCDP({"Target.attachToTarget": {"sessionId": "page-sess"}})
-    host = _make_host(cdp)
+    mux = FakeMux({"Target.attachToTarget": {"sessionId": "page-sess"}})
+    host = make_host()
 
-    await host._seed_local_storage("target-1", {"cookies": [], "origins": []})
+    await host._seed_local_storage(mux, "target-1", {"cookies": [], "origins": []})
 
-    assert cdp.calls == []
+    assert mux.calls == []
 
 
 @pytest.mark.unit
 async def test_seed_local_storage_detaches_even_when_a_script_add_fails() -> None:
     """The flat page session must be released even if a script registration raises."""
 
-    class _FailingCDP(_RecordingCDP):
+    class _FailingMux(FakeMux):
         async def send_raw(
             self, method: str, params: dict[str, Any] | None = None, session_id: str | None = None
         ) -> dict[str, Any]:
-            await super().send_raw(method, params, session_id)
+            result = await super().send_raw(method, params, session_id)
             if method == "Page.addScriptToEvaluateOnNewDocument":
                 raise RuntimeError("boom")
-            return self.responses.get(method, {})
+            return result
 
-    cdp = _FailingCDP({"Target.attachToTarget": {"sessionId": "page-sess"}})
-    host = _make_host(cdp)
+    mux = _FailingMux({"Target.attachToTarget": {"sessionId": "page-sess"}})
+    host = make_host()
     state = {
         "cookies": [],
         "origins": [{"origin": _ORIGIN, "localStorage": [{"name": "k", "value": "v"}]}],
     }
 
     with pytest.raises(RuntimeError, match="boom"):
-        await host._seed_local_storage("target-1", state)
+        await host._seed_local_storage(mux, "target-1", state)
 
-    assert any(m == "Target.detachFromTarget" for m, _, _ in cdp.calls)
+    assert any(m == "Target.detachFromTarget" for m, _, _ in mux.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -187,14 +160,17 @@ async def test_create_context_registers_restore_when_origins_carry_local_storage
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
-    cdp = _RecordingCDP(
-        {
-            "Target.createBrowserContext": {"browserContextId": "ctx-1"},
-            "Target.createTarget": {"targetId": "target-1"},
-            "Target.attachToTarget": {"sessionId": "page-sess"},
-        }
+    mux = install_mux(
+        monkeypatch,
+        FakeMux(
+            {
+                "Target.createBrowserContext": {"browserContextId": "ctx-1"},
+                "Target.createTarget": {"targetId": "target-1"},
+                "Target.attachToTarget": {"sessionId": "page-sess"},
+            }
+        ),
     )
-    host = _make_host(cdp)
+    host = make_host()
     state = {
         "cookies": [],
         "origins": [{"origin": _ORIGIN, "localStorage": [{"name": "token", "value": "abc123"}]}],
@@ -202,11 +178,11 @@ async def test_create_context_registers_restore_when_origins_carry_local_storage
 
     await host.create_context(state)
 
-    sources = cdp.sources_for("Page.addScriptToEvaluateOnNewDocument")
+    sources = mux.sources_for("Page.addScriptToEvaluateOnNewDocument")
     assert len(sources) == 1
     assert _ORIGIN in sources[0]
     # Registered on the page target the context actually created.
-    assert ("Target.attachToTarget", {"targetId": "target-1", "flatten": True}, None) in cdp.calls
+    assert ("Target.attachToTarget", {"targetId": "target-1", "flatten": True}, None) in mux.calls
 
 
 @pytest.mark.unit
@@ -214,18 +190,21 @@ async def test_create_context_skips_restore_when_no_local_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "BROWSER_HOST_MAX_SESSIONS", 5)
-    cdp = _RecordingCDP(
-        {
-            "Target.createBrowserContext": {"browserContextId": "ctx-1"},
-            "Target.createTarget": {"targetId": "target-1"},
-        }
+    mux = install_mux(
+        monkeypatch,
+        FakeMux(
+            {
+                "Target.createBrowserContext": {"browserContextId": "ctx-1"},
+                "Target.createTarget": {"targetId": "target-1"},
+            }
+        ),
     )
-    host = _make_host(cdp)
+    host = make_host()
 
     await host.create_context({"cookies": [], "origins": []})
 
-    assert cdp.sources_for("Page.addScriptToEvaluateOnNewDocument") == []
-    assert all(m != "Target.attachToTarget" for m, _, _ in cdp.calls)
+    assert mux.sources_for("Page.addScriptToEvaluateOnNewDocument") == []
+    assert all(m != "Target.attachToTarget" for m, _, _ in mux.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -250,14 +229,14 @@ def test_restore_js_is_the_exact_script_the_page_will_run() -> None:
 @pytest.mark.unit
 async def test_seed_local_storage_registers_the_exact_script_and_detaches_that_session() -> None:
     """The saved entries reach the page verbatim, and the flat session is released."""
-    cdp = _RecordingCDP({"Target.attachToTarget": {"sessionId": "page-sess"}})
-    host = _make_host(cdp)
+    mux = FakeMux({"Target.attachToTarget": {"sessionId": "page-sess"}})
+    host = make_host()
     state = {
         "cookies": [],
         "origins": [{"origin": _ORIGIN, "localStorage": [{"name": "token", "value": "abc123"}]}],
     }
 
-    await host._seed_local_storage("target-1", state)
+    await host._seed_local_storage(mux, "target-1", state)
 
-    assert cdp.sources_for("Page.addScriptToEvaluateOnNewDocument") == [_EXPECTED_RESTORE_JS]
-    assert ("Target.detachFromTarget", {"sessionId": "page-sess"}, None) in cdp.calls
+    assert mux.sources_for("Page.addScriptToEvaluateOnNewDocument") == [_EXPECTED_RESTORE_JS]
+    assert ("Target.detachFromTarget", {"sessionId": "page-sess"}, None) in mux.calls

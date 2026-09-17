@@ -27,6 +27,11 @@ from app.services.outbound_delivery import publish_outbound_message, publish_out
 # A photo caption should be a glanceable phrase, not a paragraph of the agent's goal.
 _CAPTION_MAX_CHARS = 90
 
+# The runner's failure summary is written for logs, not chat — clip it so a raw
+# error dump never floods the conversation.
+_FAILURE_REASON_MAX_CHARS = 160
+_FAILURE_SUMMARY_PREFIX = "Browser task failed: "
+
 
 class BotProgressDelivery:
     """Delivers browser card snapshots to a bot conversation."""
@@ -45,20 +50,19 @@ class BotProgressDelivery:
         self._stream_screenshots = stream_screenshots
 
     async def session(self, snapshot: BrowserSessionSnapshot) -> None:
-        # Surface the live-view link up front so the user can watch the run as it
-        # happens — and is already oriented if a handoff comes later. The link only
-        # exists once the session is allocated, which is exactly now.
         """Emit a session lifecycle event to the conversation."""
+        # Surface the live-view link up front so the user can watch the run as it
+        # happens, and is already oriented if a handoff comes later. The link
+        # only exists once the session is allocated, which is exactly now.
         if not snapshot.session_id:
             return
         link = await create_live_view_link(snapshot.session_id, self._user_id)
-        await self._text(f"On it — watch along live here:\n{link}")
+        await self._text(f"Opening the browser now. You can watch here:\n{link}")
 
     async def step(self, snapshot: BrowserStepSnapshot) -> None:
-        # Skip the pre-navigation blank tab: its screenshot is an empty white page
-        # and "Empty Tab" tells the user nothing. The real first step is the loaded
-        # page.
         """Emit a per-step progress event to the conversation."""
+        # Skip the pre-navigation blank tab: its screenshot is an empty white
+        # page and "Empty Tab" tells the user nothing.
         if _is_blank_tab(snapshot.url):
             return
         # Caption with what the agent is DOING this step (its goal), not the page
@@ -83,9 +87,9 @@ class BotProgressDelivery:
         await self._text(caption)
 
     async def handoff(self, snapshot: BrowserHandoffSnapshot) -> None:
+        """Emit a live-view handoff event to the conversation."""
         # Only the PENDING snapshot needs a message: resolution is already acked
         # in-chat and the final result line closes the task.
-        """Emit a live-view handoff event to the conversation."""
         if snapshot.status != HandoffStatus.PENDING:
             return
 
@@ -101,17 +105,28 @@ class BotProgressDelivery:
         await self._text(msg)
 
     async def result(self, snapshot: BrowserResultSnapshot) -> None:
-        # Don't echo Browser-Use's raw final text — the assistant sends the
-        # natural, user-facing summary right after. Just close out the progress,
-        # plus a recap slideshow of every step (offered whether it succeeded or not).
         """Emit the final task result to the conversation."""
-        msg = "✅ Done." if snapshot.success else "⚠️ The browser task didn't fully complete."
+        # Don't echo Browser-Use's raw final text: the assistant sends the
+        # user-facing summary right after. This just closes out the progress.
+        if snapshot.success:
+            msg = "✅ Done."
+        else:
+            reason = _failure_reason(snapshot.summary)
+            msg = f"⚠️ Couldn't finish that: {reason}" if reason else "⚠️ Couldn't finish that."
         if snapshot.replay_url:
-            msg += f"\n\n📽 Here's a recap you can watch: {snapshot.replay_url}"
+            msg += f"\n\n📽 Here's a recap of the run: {snapshot.replay_url}"
         await self._text(msg)
 
     async def _text(self, message: str) -> None:
         await publish_outbound_message(self._platform, self._user_id, [message])
+
+
+def _failure_reason(summary: str) -> str:
+    """Turn a runner failure summary into a short, user-safe reason, or "" if none."""
+    reason = " ".join(summary.removeprefix(_FAILURE_SUMMARY_PREFIX).split())
+    if len(reason) > _FAILURE_REASON_MAX_CHARS:
+        reason = reason[: _FAILURE_REASON_MAX_CHARS - 1].rstrip() + "…"
+    return reason
 
 
 def _is_blank_tab(url: str | None) -> bool:
