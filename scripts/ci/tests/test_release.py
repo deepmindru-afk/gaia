@@ -157,7 +157,11 @@ def test_the_cross_check_builds_every_published_target_and_publishes_nothing(
     )
 
     assert result.returncode == 0, result.stderr
-    built = [line.removeprefix("building ") for line in result.stdout.splitlines() if line.startswith("building ")]
+    built = [
+        line.removeprefix("building ")
+        for line in result.stdout.splitlines()
+        if line.startswith("building ")
+    ]
     assert built == EXPECTED_ASSETS
     assert not (workspace / "gh-calls.txt").exists()  # no upload, no release lookup
     assert not (workspace / "tools" / "gaia-connect" / "dist").exists()
