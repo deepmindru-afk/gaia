@@ -152,3 +152,46 @@ class HILToolRiskUpdate(BaseModel):
     is_destructive: bool | None = None
     rationale: str | None = None
     classified_at: datetime | None = None
+
+
+class LedgerState(StrEnum):
+    """Where one ledger approval stands. Separate enum from ``HILApprovalStatus``:
+    the ledger has no expiry/timeout states and adds execution tracking — reusing
+    the old enum would let timeout machinery read ledger rows and vice versa."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    REVOKED = "revoked"
+    EXECUTING = "executing"
+    EXECUTED = "executed"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+
+LIVE_LEDGER_STATES = frozenset({LedgerState.PENDING, LedgerState.APPROVED})
+
+
+class ApprovalLedgerDocument(MongoDocument):
+    """One entry in the executor-free approval ledger (``approval_ledger``).
+
+    Uncached and never expiring: rows are decision state read at low volume, and
+    a pending row leaves only by user decision or agent revoke — never by timer.
+    """
+
+    approval_id: str
+    conversation_id: str
+    fingerprint: str
+    tool_name: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    summary: str = ""
+    rationale: str = ""
+    preview: str = ""
+    owner_agent: str = ""
+    blocked_by: list[str] = Field(default_factory=list)
+    state: LedgerState = LedgerState.PENDING
+    feedback: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    proposing_run_id: str | None = None
+    v: int = 0
