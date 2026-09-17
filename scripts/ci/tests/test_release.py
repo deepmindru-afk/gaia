@@ -136,6 +136,33 @@ def test_the_manifest_is_standard_sha256sum_format(workspace: Path) -> None:
     assert len(set(digests)) == len(digests)
 
 
+def test_the_cross_check_builds_every_published_target_and_publishes_nothing(
+    workspace: Path,
+) -> None:
+    """The pre-merge lane must compile exactly the release's targets, and never touch a release."""
+    env = dict(os.environ)
+    env["PATH"] = f"{workspace / 'bin'}{os.pathsep}{env['PATH']}"
+    env["GH_CALLS"] = str(workspace / "gh-calls.txt")
+    env.pop("GITHUB_STEP_SUMMARY", None)
+    env.pop("GH_TOKEN", None)
+    env.pop("RELEASE_TAG", None)
+
+    result = subprocess.run(
+        ["bash", str(RELEASE_SH), "connect-cross-check"],
+        cwd=workspace,
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    built = [line.removeprefix("building ") for line in result.stdout.splitlines() if line.startswith("building ")]
+    assert built == EXPECTED_ASSETS
+    assert not (workspace / "gh-calls.txt").exists()  # no upload, no release lookup
+    assert not (workspace / "tools" / "gaia-connect" / "dist").exists()
+
+
 def test_a_tag_that_is_not_a_cli_release_is_refused(workspace: Path) -> None:
     # Uploading to the wrong release is worse than not uploading: the assets
     # land somewhere nobody looks and the real release stays empty.

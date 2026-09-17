@@ -826,7 +826,7 @@ jobs:
   # Path-scoped via `changes.has_go`: the module is outside the nx graph, so
   # nx-affected cannot see it and an unrelated PR skips this lane entirely.
   go-connect:
-    name: Go tool gaia-connect (vet + test + build)
+    name: Go tool gaia-connect (vet + test + cross-compile)
     needs: [select-runner, changes]
     if: ${{ !cancelled() && (needs.changes.outputs.has_go == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
@@ -870,14 +870,14 @@ jobs:
       # be readable without un-collapsing anything.
       - name: Test the Go tool
         run: go test ./...
-      - name: Build the Go tool
+      # Every published GOOS/GOARCH, not just the runner's: a darwin- or
+      # windows-only source file that fails to compile must fail here, not at
+      # release time when it blocks the CLI's companion binaries.
+      - name: Cross-compile the Go tool for every published target
+        working-directory: .
         run: |
-          trap 'echo "::error::repro: cd tools/gaia-connect && go build ./..."' ERR
-          echo "::group::go build"
-          go build ./...
-          echo "::endgroup::"
-          echo "### gaia-connect (go build) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
-          echo "go build: OK (the module compiles)"
+          trap 'echo "::error::repro: bash scripts/ci/release.sh connect-cross-check"' ERR
+          bash scripts/ci/release.sh connect-cross-check
       - name: Upload the verdict
         if: always()
         uses: ./.github/actions/upload-verdict
