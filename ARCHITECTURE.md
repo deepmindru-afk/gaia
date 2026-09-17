@@ -15,7 +15,7 @@ GAIA's agent runtime is a **three-tier system**:
 │  Comms Agent  (user-facing, conversational)                  │
 │  - Talks to the user                                          │
 │  - Delegates ALL work via call_executor                       │
-│  - Small tool surface: call_executor, cancel_executor, memory │
+│  - Small tool surface: executor, memory, discovery            │
 └─────────────────────┬────────────────────────────────────────┘
                       │  call_executor(task)  → background asyncio task
                       ▼
@@ -24,7 +24,7 @@ GAIA's agent runtime is a **three-tier system**:
 │  - Full tool registry: bash, read, retrieve_tools, todos,     │
 │    tracked_todos, memory, deep_research, ...                  │
 │  - Handoff to integration subagents (blocking OR background)  │
-│  - Tracked-todo canvas, plan_tasks, update_tasks              │
+│  - Tracked-todo files (canvas.md/activity.md), plan_tasks     │
 └─────────────────────┬────────────────────────────────────────┘
                       │  handoff(subagent_id, task, background=...)
                       ▼
@@ -58,6 +58,7 @@ The **only** agent the user talks to. Owns the conversation thread, narrates pro
 - `call_executor` — the **only** way to do work. Non-blocking; returns `Task accepted (task_id: ...)` immediately.
 - `cancel_executor` — cancel the most recent background run.
 - Memory tools — `add_memory`, `search_memory`, `forget_memory`, `read_memory_document` (see §8).
+- Discovery tools (`apps/api/app/agents/tools/discovery_tools.py`) — `find_integration` and `search_public_workflows` are read-only catalogue lookups. The connect card is not one of them: comms hands connecting to the executor, whose `connect_integration` tool and integration checker are the one card source.
 
 That's it. No `bash`. No `read`. No per-integration tools. The comms agent is a router + narrator, not a worker.
 
@@ -75,7 +76,7 @@ The worker tier. Has access to **everything** that does work.
 
 ### Initial tool IDs (comms → executor handoff)
 
-`handoff`, `plan_tasks`, `update_tasks`, `read`, `bash`, `deep_research`, `wait_for_subagents`, `read_manual`, `create_tracked_todo`, `update_tracked_todo`, `update_tracked_todo_canvas`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos`.
+`handoff`, `plan_tasks`, `update_tasks`, `read`, `write`, `edit`, `bash`, `deep_research`, `wait_for_subagents`, `read_manual`, `create_tracked_todo`, `update_tracked_todo`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos`, `save_learned_skill`, `write_playbook`, `decline_playbook`, `read_playbook`, `disable_playbook`.
 
 ### Handoff lifecycle (background, async)
 
@@ -427,10 +428,13 @@ A **PG-backed** memory engine projected to VFS as Markdown (`/workspace/memory/.
 - `apps/api/app/agents/tools/todo_tools.py` — `plan_tasks`, `update_tasks`. Uses `InjectedState` and `Command(update=...)` to write directly to the `todos` channel. Emits `todo_progress` events via `get_stream_writer()`.
 - `create_todo_pre_model_hook` injects task context into the latest non-memory SystemMessage before each LLM call.
 
-### B) Tracked todos (durable, canvas-backed, cross-conversation)
+### B) Tracked todos (durable, file-backed notes, cross-conversation)
 
-- `apps/api/app/agents/tools/tracked_todo_tools.py` — `create_tracked_todo`, `update_tracked_todo`, `update_tracked_todo_canvas`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos`. Backed by `apps/api/app/services/tracked_todo_service.py`. Supports cron recurrence + timezone-aware fire times.
-- `apps/api/app/services/todo_canvas_storage.py` — VFS-backed canvas for tracked todos.
+- `apps/api/app/agents/tools/tracked_todo_tools.py` — `create_tracked_todo`, `update_tracked_todo`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos` (lifecycle + metadata only). Backed by `apps/api/app/services/tracked_todo_service.py`. Supports cron recurrence + timezone-aware fire times.
+- Working notes are two files per todo, `/workspace/gaia-tasks/<slug>-<shortid>/canvas.md` (recall doc) and `activity.md` (dated log), which the executor reads and edits with the generic `read`/`edit`/`write` tools.
+- `apps/api/app/services/gaia_task_files.py` — routes those paths inside the file tools to the todo document (`canvas_content` / `activity_content`), so the notes work in native dev with no JuiceFS and the disk tree stays a read-only projection.
+- `apps/api/app/services/todo_canvas_storage.py` — Mongo-backed read/write/append for canvas, activity and log bodies; every write re-embeds the todo in ChromaDB.
+- `apps/api/app/services/canvas_markdown.py` — section helpers + the one-shot legacy split (Activity Log / Timeline → activity.md) the maintenance sweep applies.
 - `apps/api/app/db/mongodb/collections.py` — `todos_collection`.
 - `apps/api/app/services/user_todos_fs.py` — VFS projection of todos.
 - `apps/api/app/services/gaia_tasks_fs.py` — VFS projection of GAIA tasks.
@@ -482,6 +486,7 @@ A **PG-backed** memory engine projected to VFS as Markdown (`/workspace/memory/.
 
 - **Tracing** — LangSmith (`@traceable` decorators in `executor_runner.py`) + Langfuse (`trace_id_for_message` in `app/config/langfuse.py`).
 - **Rate limiting** — `apps/api/app/api/v1/middleware/tiered_rate_limiter.py`, `apps/api/app/decorators/rate_limiting.py`. Used by `notification_tool`, `workflow_tool`, `bash`, `read`, etc.
+- **Entitlements (paid-only gate)** — `apps/api/app/api/v1/middleware/entitlement.py` + `entitlement_allowlist.py`. Deny-by-default: **every new authenticated route 402s unless its prefix is added to `FREE_PATH_PREFIXES`**. Distinct from rate limiting — that caps how much a plan may use, this blocks a plan with none at all. Workers and the bot router are outside the middleware and gate themselves with `app/decorators/entitlements.py`. See `apps/api/CLAUDE.md` § Entitlements.
 - **WebSocket** — `apps/api/app/core/websocket_manager.py` (real-time bot/event push).
 - **Caching** — `apps/api/app/decorators/caching.py` (`Cacheable`, `CacheInvalidator`).
 - **API client (TS)** — `libs/shared/ts/src/api/apiClient.ts`, `queryBuilder.ts`, `responseNormalizer.ts`.
@@ -497,6 +502,7 @@ A **PG-backed** memory engine projected to VFS as Markdown (`/workspace/memory/.
 | If you want to… | Go to |
 |---|---|
 | Change the user-facing chat prompt / behavior | `apps/api/app/agents/core/graph_builder/build_graph.py` (comms) + `apps/api/app/agents/core/nodes/*` |
+| Make a new endpoint reachable without a subscription | `apps/api/app/api/v1/middleware/entitlement_allowlist.py` (add the prefix **with its reason**) |
 | Change the executor's tool set or handoff behavior | `apps/api/app/agents/core/graph_builder/build_graph.py` (executor) + `apps/api/app/agents/tools/executor_tool.py` |
 | Add a new integration subagent | `apps/api/app/config/oauth_config.py` (register `SubAgentConfig`) + `apps/api/app/agents/tools/integrations/<provider>_tool.py` + `apps/api/app/agents/core/subagents/provider_subagents.py` |
 | Add a new tool the executor can use | `apps/api/app/agents/tools/<your_tool>.py` + register in `apps/api/app/agents/tools/core/registry.py` |
@@ -505,6 +511,6 @@ A **PG-backed** memory engine projected to VFS as Markdown (`/workspace/memory/.
 | Change voice STT/TTS/VAD | `apps/voice-agent/src/worker.py` + `apps/voice-agent/src/config.py` |
 | Change memory projection | `apps/api/app/memory/projection.py` + `apps/api/app/services/memory_fs.py` |
 | Change workflow triggers | `apps/api/app/services/workflow/trigger_service.py` + `apps/api/app/models/trigger_config.py` |
-| Change tracked-todo canvas | `apps/api/app/services/todo_canvas_storage.py` + `apps/api/app/agents/tools/tracked_todo_tools.py` |
+| Change tracked-todo notes (canvas.md / activity.md) | `apps/api/app/services/gaia_task_files.py` + `apps/api/app/services/todo_canvas_storage.py` |
 | Change sandbox behavior | `apps/api/app/services/sandbox/{pool,lifecycle,shard_router,artifact_watcher}.py` |
 | Change notification routing | `apps/api/app/utils/notification/orchestrator.py` + `apps/api/app/services/outbound_delivery.py` |

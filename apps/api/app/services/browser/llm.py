@@ -1,10 +1,10 @@
 """LLM factory for the Browser-Use agent.
 
 Deliberately decoupled from the chat harness model: browser automation always
-gets a strong, vision-capable model chosen by ``BROWSER_USE_LLM_*`` settings,
+gets a strong, vision-capable model chosen by BROWSER_USE_LLM_* settings,
 regardless of which model the surrounding conversation runs on. Browser-Use
 ships its own chat wrappers (it is not a LangChain model), so this builds one of
-those. Imports are local so the heavy ``browser_use`` package loads only when a
+those. Imports are local so the heavy browser_use package loads only when a
 browser task actually runs.
 """
 
@@ -24,11 +24,9 @@ if TYPE_CHECKING:
 # OpenRouter is OpenAI-wire-compatible; Browser-Use talks to it via ChatOpenAI.
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Providers whose chat model cannot take image input, however it's delivered —
-# used to force ``use_vision`` off rather than send screenshots a text-only
-# model will ignore or reject. Browser-Use's DeepSeek wrapper (chat.completions
-# against api.deepseek.com) is text-only; an OpenRouter-routed DeepSeek model
-# is judged by the live catalog instead (see resolve_use_vision).
+# Providers whose chat model cannot take image input; forces use_vision off.
+# Browser-Use's DeepSeek wrapper (api.deepseek.com) is text-only; an
+# OpenRouter-routed DeepSeek model is judged by the live catalog instead.
 _TEXT_ONLY_PROVIDERS = frozenset({"deepseek"})
 
 
@@ -42,13 +40,10 @@ def _custom_lane_configured() -> bool:
 
 
 def _resolve_browser_lane() -> tuple[str, str, str | None, str | None]:
-    """(provider, model, api_key, base_url) for the browser LLM.
+    """Return (provider, model, api_key, base_url) for the browser LLM.
 
-    When no browser-specific key is set, inherit the SAME custom endpoint comms
-    runs on (DEV_LLM_*) — one credential to manage, one failure domain. A stale
-    key can no longer kill the browser silently while chat keeps working (which
-    is exactly how a dead shared key surfaced as a fake "site blocked us"). An
-    explicit BROWSER_USE_LLM_API_KEY still wins, for a deliberately different lane.
+    Without a browser-specific key this inherits the comms lane (DEV_LLM_*);
+    an explicit BROWSER_USE_LLM_API_KEY selects a separate lane.
     """
     # An explicit browser-specific key opts into a deliberately separate lane.
     if settings.BROWSER_USE_LLM_API_KEY:
@@ -70,7 +65,7 @@ def _resolve_browser_lane() -> tuple[str, str, str | None, str | None]:
 def build_browser_llm() -> BaseChatModel:
     """Build the Browser-Use chat model for the configured provider.
 
-    Raises :class:`BrowserUnavailableError` when the provider is unknown or its
+    Raises :class:BrowserUnavailableError when the provider is unknown or its
     API key is missing, so the tool reports a clean reason instead of the agent
     failing deep inside a run.
     """
@@ -132,13 +127,9 @@ def build_browser_llm() -> BaseChatModel:
 async def resolve_use_vision() -> bool:
     """Whether the browser agent should be sent step screenshots.
 
-    ``BROWSER_USE_VISION`` is the operator's cost/reliability switch; this
-    additionally forces it off when the *configured* provider/model plainly
-    can't see images, so a text-only model isn't fed screenshots it will
-    ignore or error on. OpenRouter models are checked against the live model
-    catalog (the same source ``app/agents/llm/vision/capability.py`` uses for
-    the chat lane) rather than curated here, since vision support varies
-    per-model within that provider.
+    BROWSER_USE_VISION is the operator switch; it is additionally forced off
+    when the configured provider/model cannot take images. OpenRouter models
+    are checked against the live model catalog rather than curated here.
     """
     if not settings.BROWSER_USE_VISION:
         return False
@@ -149,12 +140,9 @@ async def resolve_use_vision() -> bool:
     if provider in _TEXT_ONLY_PROVIDERS:
         return False
 
-    # Judge the ACTUAL model's image support, however it is routed. An
-    # openrouter-style id ("vendor/model") is looked up in the live catalog — so
-    # a text-only model inherited from comms (e.g. deepseek-v4-flash) turns vision
-    # off by itself instead of erroring on every screenshot, while a vision model
-    # (e.g. a GLM flash) keeps it on. A bare id (an OpenAI model like gpt-4o) is
-    # assumed vision-capable, as those lanes are.
+    # An openrouter-style id ("vendor/model") is judged by the live catalog, so a
+    # text-only model inherited from comms turns vision off by itself. A bare id
+    # (an OpenAI model like gpt-4o) is assumed vision-capable.
     if provider == "openrouter" or "/" in model:
         catalog = await get_openrouter_catalog()
         return await catalog.accepts_images(model)

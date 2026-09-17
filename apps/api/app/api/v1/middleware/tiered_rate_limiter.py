@@ -1,10 +1,10 @@
 """
 Tiered rate limiting engine.
 
-Provides the ``TieredRateLimiter`` (Redis-backed per-user, per-feature daily and
-monthly counters), the ``tiered_limiter`` singleton, and the 429 exception types.
-The ``@tiered_rate_limit`` endpoint decorator that wraps this engine lives in
-``app.decorators.rate_limiting`` (the canonical home for rate-limit decorators).
+Provides the TieredRateLimiter (Redis-backed per-user, per-feature daily and
+monthly counters), the tiered_limiter singleton, and the 429 exception types.
+The @tiered_rate_limit endpoint decorator that wraps this engine lives in
+app.decorators.rate_limiting (the canonical home for rate-limit decorators).
 """
 
 import asyncio
@@ -41,9 +41,8 @@ from app.services.usage_service import UsageService
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log, spawn_logged_task
 
-# UsageInfo is imported (not defined here) but re-exported for
-# `app.api.v1.middleware.__init__` — explicit re-export required under
-# no_implicit_reexport.
+# UsageInfo is imported (not defined here) but re-exported for callers that
+# read a limiter result — explicit re-export required under no_implicit_reexport.
 __all__ = ["UsageInfo"]
 
 P = ParamSpec("P")
@@ -62,7 +61,7 @@ class RateLimitExceededException(HTTPException):
         current_plan: str | None = None,
     ) -> None:
         detail = {
-            "error": "rate_limit_exceeded",
+            "code": "rate_limit_exceeded",
             "feature": feature,
             "message": f"Rate limit exceeded for {feature}",
         }
@@ -135,13 +134,10 @@ class TieredRateLimiter:
     ) -> dict[str, UsageInfo]:
         """Enforce all limits for a feature, then atomically count this use.
 
-        Raises ``RateLimitExceededException`` when any window is exhausted or
-        the user's plan has no access to the feature at all. Every exceed for
-        a FREE user also fires the upsell side effects (analytics event +
-        weekly-deduped email) — one seam covering all decorated endpoints and
-        agent tools. ``origin`` selects the email: interactive surfaces get the
-        upsell, background runs (worker-executed workflows) get the
-        workflows-paused note.
+        Raises RateLimitExceededException when exhausted or the plan lacks
+        access. Every exceed for a FREE user also fires upsell side effects
+        (analytics + weekly-deduped email); origin picks interactive upsell
+        vs background workflows-paused note.
         """
         origin = origin or current_limit_origin()
         # Checked here rather than inside `_check_and_increment` so the bypass
@@ -157,7 +153,7 @@ class TieredRateLimiter:
 
     @staticmethod
     def _plan_required(feature_key: str, user_plan: PlanType) -> str | None:
-        """``"pro"`` when a FREE user needs the paid tier to reach this feature."""
+        """Return "pro" when a FREE user needs the paid tier to reach this feature."""
         paid_limits = get_feature_limits(feature_key).pro
         paid_has_access = paid_limits.day > 0 or paid_limits.month > 0
         return "pro" if (user_plan == PlanType.FREE and paid_has_access) else None
@@ -185,10 +181,8 @@ class TieredRateLimiter:
 
             if used >= limit:
                 # No plan_required: an exhausted window is a spent budget, not a
-                # paywall. Both are only reachable when the CALLER's own limit for
-                # this period is non-zero, and a paywalled period is one whose
-                # limit is zero — so the two can never coincide. The whole-feature
-                # gate in _check_and_increment is where an upsell comes from.
+                # paywall — both are only reachable when the caller's own limit for
+                # this period is non-zero, so the two never coincide.
                 raise RateLimitExceededException(
                     feature_key, reset_time=reset_time, current_plan=user_plan.value
                 )
@@ -203,10 +197,9 @@ class TieredRateLimiter:
         current_limits = get_limits_for_plan(feature_key, user_plan)
         usage_info = {}
 
-        # Plan gate: a plan with NO limits at all (day and month both 0) has no
-        # access to the feature — the per-period loop in _snapshot_usage skips 0
-        # limits, so without this check a fully-zeroed plan would be unlimited
-        # instead of blocked. plan_required is set when a paid plan has access.
+        # Plan gate: a plan with day and month both 0 has no access at all —
+        # the per-period loop in _snapshot_usage skips 0 limits, so without this
+        # a fully-zeroed plan would be unlimited instead of blocked.
         if current_limits.day <= 0 and current_limits.month <= 0:
             raise RateLimitExceededException(
                 feature_key,
@@ -375,7 +368,6 @@ class TieredRateLimiter:
 tiered_limiter = TieredRateLimiter()
 
 
-# The `tiered_rate_limit` decorator lives in app/decorators/rate_limiting.py.
-# A second copy used to live here and drifted: it resolved the caller by looking
-# for a kwarg named `user`, so endpoints importing this copy silently skipped
-# rate limiting. One canonical implementation, imported from `app.decorators`.
+# `tiered_rate_limit` lives in app/decorators/rate_limiting.py. A second copy
+# used to live here and drifted, resolving the caller by a kwarg named `user`
+# — endpoints importing it silently skipped rate limiting.

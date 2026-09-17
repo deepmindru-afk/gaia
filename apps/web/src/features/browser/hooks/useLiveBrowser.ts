@@ -11,10 +11,9 @@ const CDP_MOUSE_BUTTONS = ["left", "middle", "right"] as const;
 const RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 1500;
 
-// Streams JPEG frames from the live-view WebSocket onto a canvas and, when
-// interactive, forwards pointer/keyboard input as the CDP-shaped messages the
-// browser host applies. Kept parallel with the standalone viewer the API serves
-// (services/browser/live_view.py) — same event translation, two runtimes.
+// Streams live-view JPEG frames onto a canvas and, when interactive, forwards
+// pointer/keyboard input as CDP-shaped messages. Kept parallel with the
+// standalone viewer the API serves (services/browser/live_view.py).
 export function useLiveBrowser(socketUrl: string | null, interactive: boolean) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -35,11 +34,21 @@ export function useLiveBrowser(socketUrl: string | null, interactive: boolean) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }, []);
 
+  // A dropped socket (API restart, network blip) is retried a few times before
+  // the view is declared over; a session that is really gone rejects every
+  // reconnect and settles on "closed". Each retry re-runs the effect below.
+  const [reconnect, setReconnect] = useState<{ url: string | null; n: number }>(
+    { url: null, n: 0 },
+  );
+  const attemptsLeftRef = useRef(RECONNECT_ATTEMPTS);
+
   useEffect(() => {
     if (!socketUrl) return undefined;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return undefined;
+    if (reconnect.url !== socketUrl)
+      attemptsLeftRef.current = RECONNECT_ATTEMPTS;
 
     const img = new window.Image();
     img.onload = () => {
@@ -53,77 +62,65 @@ export function useLiveBrowser(socketUrl: string | null, interactive: boolean) {
       ctx.drawImage(img, 0, 0, w, h);
     };
 
-    // A dropped socket (API restart, network blip) is retried a few times
-    // before the view is declared over — a momentary drop must not strand the
-    // user on "Session ended" while the browser is still alive. A session that
-    // is actually gone rejects every reconnect, and we settle on "closed".
-    let disposed = false;
-    let attemptsLeft = RECONNECT_ATTEMPTS;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    setStatus("connecting");
+    const ws = new WebSocket(socketUrl);
+    wsRef.current = ws;
 
-    const connect = () => {
-      setStatus("connecting");
-      const ws = new WebSocket(socketUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        attemptsLeft = RECONNECT_ATTEMPTS;
-        setStatus("live");
-      };
-      ws.onclose = () => {
-        if (disposed) return;
-        if (attemptsLeft > 0) {
-          attemptsLeft -= 1;
-          retryTimer = setTimeout(connect, RECONNECT_DELAY_MS);
-        } else {
-          setStatus("closed");
-        }
-      };
-      ws.onmessage = (ev: MessageEvent<string>) => {
-        let msg: BrowserFrameMessage;
-        try {
-          msg = JSON.parse(ev.data) as BrowserFrameMessage;
-        } catch {
-          return;
-        }
-        if (msg.type !== "frame") return;
-        if (msg.cssWidth && msg.cssHeight) {
-          cssSizeRef.current = { w: msg.cssWidth, h: msg.cssHeight };
-        }
-        setPage((prev) =>
-          prev.url === (msg.url ?? null) &&
-          prev.title === (msg.title ?? null) &&
-          prev.favicon === (msg.favicon ?? null)
-            ? prev
-            : {
-                url: msg.url ?? null,
-                title: msg.title ?? null,
-                favicon: msg.favicon ?? null,
-              },
-        );
-        img.src = `data:image/jpeg;base64,${msg.data}`;
-      };
+    ws.onopen = () => {
+      attemptsLeftRef.current = RECONNECT_ATTEMPTS;
+      setStatus("live");
     };
-    connect();
+    ws.onclose = () => {
+      if (attemptsLeftRef.current > 0) {
+        attemptsLeftRef.current -= 1;
+        retryTimer = setTimeout(
+          () => setReconnect((r) => ({ url: socketUrl, n: r.n + 1 })),
+          RECONNECT_DELAY_MS,
+        );
+      } else {
+        setStatus("closed");
+      }
+    };
+    ws.onmessage = (ev: MessageEvent<string>) => {
+      let msg: BrowserFrameMessage;
+      try {
+        msg = JSON.parse(ev.data) as BrowserFrameMessage;
+      } catch {
+        return;
+      }
+      if (msg.type !== "frame") return;
+      if (msg.cssWidth && msg.cssHeight) {
+        cssSizeRef.current = { w: msg.cssWidth, h: msg.cssHeight };
+      }
+      setPage((prev) =>
+        prev.url === (msg.url ?? null) &&
+        prev.title === (msg.title ?? null) &&
+        prev.favicon === (msg.favicon ?? null)
+          ? prev
+          : {
+              url: msg.url ?? null,
+              title: msg.title ?? null,
+              favicon: msg.favicon ?? null,
+            },
+      );
+      img.src = `data:image/jpeg;base64,${msg.data}`;
+    };
 
     return () => {
-      disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
       // A frame decode in flight would otherwise draw onto a detached canvas
       // after unmount; drop the handler and abort the load.
       img.onload = null;
       img.src = "";
-      const ws = wsRef.current;
-      if (ws) {
-        ws.onopen = null;
-        ws.onerror = null;
-        ws.onclose = null;
-        ws.onmessage = null;
-        ws.close();
-      }
-      wsRef.current = null;
+      ws.onopen = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.onmessage = null;
+      ws.close();
+      if (wsRef.current === ws) wsRef.current = null;
     };
-  }, [socketUrl]);
+  }, [socketUrl, reconnect]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -216,12 +213,9 @@ export function useLiveBrowser(socketUrl: string | null, interactive: boolean) {
     };
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
-      // CDP only fires a key's default action (submit a form, insert a newline)
-      // when `text` is set. A single character sends itself; Enter must send the
-      // carriage return "\r" or nothing happens — verified against a real page.
-      // Other non-printable keys (Tab, Backspace, arrows) act on their virtual
-      // key code alone and take no text. A char typed with Ctrl/Meta held is a
-      // shortcut, not text — sending text would insert the letter too.
+      // CDP fires a key's default action only when `text` is set: a printable
+      // char sends itself, Enter must send "\r" (verified on a real page), other
+      // keys act on their virtual key code, and a Ctrl/Meta chord is not text.
       const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
       const text = printable ? e.key : e.key === "Enter" ? "\r" : undefined;
       send({

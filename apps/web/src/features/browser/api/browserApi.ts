@@ -1,23 +1,9 @@
-import { apiService } from "@/lib/api/service";
 import type {
-  BrowserHandoffDecision,
-  BrowserHandoffStatus,
-} from "@/types/features/browserTaskTypes";
-import type {
-  BrowserTask,
-  ImportTokenResponse,
-  SavedBrowserLogin,
-} from "../types";
-
-interface HandoffDecisionResponse {
-  handoff_id: string;
-  status: BrowserHandoffStatus;
-}
-
-interface LiveViewTokenResponse {
-  token: string;
-  expires_in: number;
-}
+  HandoffDecisionResponse,
+  LiveViewTokenResponse,
+} from "@shared/api/generated";
+import { api } from "@/lib/api/typed";
+import type { BrowserHandoffDecision } from "@/types/features/browserTaskTypes";
 
 /**
  * The live-view route serves both a GET page and a WebSocket at the same path;
@@ -45,25 +31,26 @@ export function liveViewPageUrl(
 
 export const browserApi = {
   listTasks: () =>
-    apiService.get<BrowserTask[]>("/browser/tasks?limit=50", { silent: true }),
+    api.get("/api/v1/browser/tasks", { query: { limit: 50 }, silent: true }),
 
   deleteTask: (id: string) =>
-    apiService.delete(`/browser/tasks/${id}`, {
+    api.delete("/api/v1/browser/tasks/{task_id}", {
+      path: { task_id: id },
       successMessage: "Task removed",
       errorMessage: "Could not remove this task",
     }),
 
-  listLogins: () =>
-    apiService.get<SavedBrowserLogin[]>("/browser/logins", { silent: true }),
+  listLogins: () => api.get("/api/v1/browser/logins", { silent: true }),
 
   forgetLogin: (domain: string) =>
-    apiService.delete(`/browser/logins/${encodeURIComponent(domain)}`, {
+    api.delete("/api/v1/browser/logins/{domain}", {
+      path: { domain },
       successMessage: "Login forgotten",
       errorMessage: "Could not forget this login",
     }),
 
   clearLogins: () =>
-    apiService.delete("/browser/logins", {
+    api.delete("/api/v1/browser/logins", {
       successMessage: "All saved logins cleared",
       errorMessage: "Could not clear saved logins",
     }),
@@ -74,39 +61,33 @@ export const browserApi = {
    * which has no cookie, authenticates with the code instead.
    */
   mintImportToken: () =>
-    apiService.post<ImportTokenResponse>("/browser/import/token", undefined, {
-      silent: true,
-    }),
+    api.post("/api/v1/browser/import/token", { silent: true }),
 
   /**
    * Continue (the user finished the sensitive step in the live browser) or
    * cancel a browser handoff, unblocking the agent that is waiting on it.
    */
-  postHandoffDecision: async (
+  postHandoffDecision: (
     handoffId: string,
     decision: BrowserHandoffDecision,
     message?: string,
-  ): Promise<HandoffDecisionResponse | null> => {
-    return apiService.post<HandoffDecisionResponse>(
-      `/browser/handoffs/${handoffId}/decision`,
-      { decision, message },
-      { silent: true },
-    );
-  },
+  ): Promise<HandoffDecisionResponse> =>
+    api.post("/api/v1/browser/handoffs/{handoff_id}/decision", {
+      path: { handoff_id: handoffId },
+      body: { decision, message },
+      silent: true,
+    }),
 
   /**
    * Current status of a handoff. The card polls this while pending so a reload,
    * or a resolution made via chat / another device, is reflected reliably —
    * the server (Redis) is the source of truth, not the streamed snapshot.
    */
-  getHandoffStatus: async (
-    handoffId: string,
-  ): Promise<HandoffDecisionResponse | null> => {
-    return apiService.get<HandoffDecisionResponse>(
-      `/browser/handoffs/${handoffId}`,
-      { silent: true },
-    );
-  },
+  getHandoffStatus: (handoffId: string): Promise<HandoffDecisionResponse> =>
+    api.get("/api/v1/browser/handoffs/{handoff_id}", {
+      path: { handoff_id: handoffId },
+      silent: true,
+    }),
 
   /**
    * Mint a short-lived takeover token for opening this session's live view. The
@@ -114,12 +95,9 @@ export const browserApi = {
    * the card fetches a token (cookie auth works same-origin to the API) and rides
    * it on the cross-origin socket + page link.
    */
-  getLiveViewToken: async (
-    sessionId: string,
-  ): Promise<LiveViewTokenResponse | null> => {
-    return apiService.get<LiveViewTokenResponse>(
-      `/browser/sessions/${sessionId}/live-view-token`,
-      { silent: true },
-    );
-  },
+  getLiveViewToken: (sessionId: string): Promise<LiveViewTokenResponse> =>
+    api.get("/api/v1/browser/sessions/{session_id}/live-view-token", {
+      path: { session_id: sessionId },
+      silent: true,
+    }),
 };

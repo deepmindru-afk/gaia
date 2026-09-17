@@ -30,6 +30,7 @@ from app.agents.tools.core.store import get_tools_store
 from app.agents.tools.core.tool_runtime_config import (
     build_executor_child_tool_runtime_config,
 )
+from app.agents.tools.discovery_tools import find_integration, search_public_workflows
 from app.agents.tools.executor_tool import call_executor, cancel_executor
 from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_tools
 from app.agents.tools.wait_for_subagents_tool import wait_for_subagents as wait_for_subagents_tool
@@ -105,13 +106,14 @@ async def build_executor_graph(
                 "plan_tasks",
                 "update_tasks",
                 "read",
+                "write",
+                "edit",
                 "bash",
                 "deep_research",
                 "wait_for_subagents",
                 "read_manual",
                 "create_tracked_todo",
                 "update_tracked_todo",
-                "update_tracked_todo_canvas",
                 "complete_tracked_todo",
                 "search_todo_context",
                 "list_tracked_todos",
@@ -120,14 +122,19 @@ async def build_executor_graph(
                 "unsubscribe_todo_from_trigger",
                 "save_learned_skill",
                 # Bound statically, not left to retrieve_tools: the <playbook_check>
-                # and heal briefs name these directly, so a run whose semantic
-                # retrieval happens to miss them would read the instruction, be
-                # unable to act on it, and silently never decide. A tool a prompt
-                # names by hand has to be reachable by hand.
+                # and heal briefs name these directly, so semantic retrieval
+                # missing them would leave the instruction unactionable.
                 "write_playbook",
                 "decline_playbook",
                 "read_playbook",
                 "disable_playbook",
+                # Same rule as playbook tools: not in the retrieval index, so
+                # retrieve_tools once improvised a nonexistent `gaia bridge approve`.
+                # approve_device_pairing stays gated regardless of binding.
+                "add_device",
+                "approve_device_pairing",
+                "list_devices",
+                "run_on_device",
             ],
         ),
         hooks_config=HookConfig(
@@ -189,9 +196,14 @@ async def build_comms_graph(
     if chat_llm is None:
         chat_llm = init_llm()
 
+    # The discovery pair are read-only catalogue lookups, so they do not breach
+    # "delegate every real ask". Connecting an integration is a real ask and
+    # goes to the executor.
     tool_registry = {
         "call_executor": call_executor,
         "cancel_executor": cancel_executor,
+        "find_integration": find_integration,
+        "search_public_workflows": search_public_workflows,
         web_search_tool.name: web_search_tool,
         fetch_webpages.name: fetch_webpages,
         **{memory_tool.name: memory_tool for memory_tool in memory_tools.tools},
@@ -210,6 +222,8 @@ async def build_comms_graph(
             initial_tool_ids=[
                 "call_executor",
                 "cancel_executor",
+                "find_integration",
+                "search_public_workflows",
                 web_search_tool.name,
                 fetch_webpages.name,
                 *[memory_tool.name for memory_tool in memory_tools.tools],

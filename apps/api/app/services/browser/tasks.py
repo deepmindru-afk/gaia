@@ -2,8 +2,8 @@
 
 A row records the step screenshots the run actually uploaded, rather than deriving
 them from the session id on read. Deriving looks tidier — the R2 key is
-deterministic — but ``services/browser/screenshots.py`` is best-effort by design
-and returns ``None`` when an upload fails, so a derived URL is a guess that
+deterministic — but services/browser/screenshots.py is best-effort by design
+and returns None when an upload fails, so a derived URL is a guess that
 renders as a permanently broken thumbnail whenever that happens. Store what
 happened; do not recompute what might not exist.
 """
@@ -18,10 +18,9 @@ from app.schemas.browser import BrowserResultSnapshot, BrowserTaskFrame, Browser
 
 @dataclass(frozen=True)
 class BrowserTaskRecord:
-    """Identity and provenance of a finished browser run — which run this was and
-    who owns it, as opposed to how it went (``result``) or what it showed per step
-    (``step_goals``/``step_screenshots``). Grouped into one object because these
-    fields always travel together and the seam already sits at the argument ceiling.
+    """Identity and provenance of a finished browser run — which run this was and who owns it, as opposed to how it went (result) or what it showed per step (step_goals/step_screenshots).
+
+    Grouped into one object because these fields always travel together and the seam already sits at the argument ceiling.
     """
 
     user_id: str
@@ -93,7 +92,7 @@ def _frames(doc: BrowserTaskDocument) -> list[BrowserTaskFrame]:
 
 
 async def list_browser_tasks(user_id: str, *, limit: int = 20) -> list[BrowserTaskResponse]:
-    """A user's browser-task history, newest first, each with its recap frames."""
+    """Return a user's browser-task history, newest first, each with its recap frames."""
     docs = await browser_task_repository.list_recent_for_user(user_id, limit=limit)
     return [
         BrowserTaskResponse(

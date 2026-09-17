@@ -1,16 +1,16 @@
 """Browser-Use agent execution — the *agent* layer.
 
-Drives a Browser-Use ``Agent`` against an already-created browser-host session and
+Drives a Browser-Use Agent against an already-created browser-host session and
 turns its lifecycle into injected, swappable seams:
 
-  * ``emit`` — stream a card snapshot (session/step/handoff/result) to UI + bots
-  * ``request_handoff`` — pause for the human at a sensitive step (live-view)
-  * ``is_cancelled`` — cooperative cancellation (wired to the chat stream)
+  * emit — stream a card snapshot (session/step/handoff/result) to UI + bots
+  * request_handoff — pause for the human at a sensitive step (live-view)
+  * is_cancelled — cooperative cancellation (wired to the chat stream)
 
 The runner does NOT judge whether a step is sensitive. The agent decides for
 itself when it cannot proceed — a CAPTCHA it can't solve, a login/2FA/payment it
 must not do — and calls its takeover action, which pauses for the human in
-live-view (``_handle_takeover``). The runner knows nothing about SSE, Redis, or bots.
+live-view (_handle_takeover). The runner knows nothing about SSE, Redis, or bots.
 """
 
 from __future__ import annotations
@@ -67,8 +67,11 @@ ActionResultsFn = Callable[[int, list[BrowserActionOutput]], None]
 
 @dataclass(frozen=True)
 class BrowserRunnerCallbacks:
-    """The runner's injected seams — how it streams progress, pauses for the
-    human, checks cancellation, and mirrors per-action results into the thread."""
+    """The runner's injected seams.
+
+    How it streams progress, pauses for the human, checks cancellation, and
+    mirrors per-action results into the thread.
+    """
 
     emit: EmitFn
     request_handoff: RequestHandoffFn
@@ -78,7 +81,7 @@ class BrowserRunnerCallbacks:
 
 @dataclass(frozen=True)
 class BrowserRunConfig:
-    """One browser run's tuning knobs — every field is a ``BROWSER_USE_*`` setting."""
+    """One browser run's tuning knobs — every field is a BROWSER_USE_* setting."""
 
     max_steps: int
     max_actions_per_step: int
@@ -110,17 +113,10 @@ _LABEL_ATTRIBUTES = ("aria-label", "value", "title", "placeholder", "alt", "name
 
 
 def _element_label(state: BrowserStateSummary, index: object) -> str | None:
-    """The on-page name of the element an action targets, by its DOM index.
+    """Return the on-page name of the element an action targets, by its DOM index.
 
-    Browser-Use addresses elements by index, which is meaningless to a reader.
-    The same step state the agent saw carries the DOM, so the index resolves to
-    something recognisable — that is what makes a caption say what was clicked.
-
-    Tries the accessibility name first: it is what a screen reader announces and
-    what a person would call the control, and it is populated for icon-only
-    buttons that carry no text at all. Falls back to the visible text, then to
-    the labelling attributes, then to the tag name — so a control is never
-    described as a bare verb when anything at all identifies it.
+    Tries the accessibility name first (populated for icon-only buttons), then
+    the visible text, then the labelling attributes, then the tag name.
     """
     if not isinstance(index, int):
         return None
@@ -153,7 +149,7 @@ def _element_label(state: BrowserStateSummary, index: object) -> str | None:
 def _element_viewport_fraction(
     state: BrowserStateSummary, index: object
 ) -> tuple[float, float] | None:
-    """The element's centre as (x, y) fractions of the viewport, for the UI pulse.
+    """Return the element's centre as (x, y) viewport fractions, for the UI pulse.
 
     Page coordinates minus the scroll offset give the viewport position; dividing
     by the viewport size makes it resolution-independent, so the same fraction
@@ -182,8 +178,10 @@ def _element_viewport_fraction(
 def _extract_actions(
     agent_output: AgentOutput, state: BrowserStateSummary | None = None
 ) -> list[BrowserAction]:
-    """The step's actions as the agent's own tool calls — name, arguments, and
-    the on-page text of whatever each one targets."""
+    """Return the step's actions as the agent's own tool calls.
+
+    Each carries the name, arguments, and the on-page text of whatever it targets.
+    """
     actions: list[BrowserAction] = []
     for action in getattr(agent_output, "action", None) or []:
         dumped = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else {}
@@ -205,8 +203,11 @@ _OUTPUT_MAX_CHARS = 200
 
 
 def _summarize_action_result(result: object) -> str | None:
-    """One action's outcome as short display text, or None when there is nothing
-    worth showing (a click that succeeded silently needs no output row)."""
+    """Return one action's outcome as short display text.
+
+    None when there is nothing worth showing (a click that succeeded silently
+    needs no output row).
+    """
     error = getattr(result, "error", None)
     if error:
         text = str(error)
@@ -249,9 +250,8 @@ class BrowserTaskRunner:
         self._max_actions_per_step = config.max_actions_per_step
         self._task_timeout = config.task_timeout_seconds
         # A step that hands off waits on the human for up to the handoff timeout, so
-        # its budget is active-work time PLUS a full handoff; the overall wall-clock
-        # likewise allows every permitted handoff to run its full duration on top of
-        # the active-work budget, so live-view takeovers are never starved by a timeout.
+        # the step budget is active work PLUS one handoff and the wall clock allows
+        # every permitted handoff on top of the task timeout.
         self._step_timeout = config.step_timeout_seconds + config.handoff_timeout_seconds
         self._wall_clock_timeout = (
             config.task_timeout_seconds + MAX_HANDOFFS_PER_TASK * config.handoff_timeout_seconds
@@ -355,11 +355,9 @@ class BrowserTaskRunner:
                 "Check that the browser host is reachable from the API at BROWSER_HOST_URL."
             ) from exc
         except Exception as exc:
-            # Any other unexpected agent/runtime failure (an LLM-provider error, a
-            # browser_use internal crash, a malformed tool output, a failed handoff
-            # persistence write) must not leave the card stuck in RUNNING — emit a
-            # terminal FAILED result so the UI resolves and the user gets an honest
-            # reason. CancelledError is BaseException, so it is never caught here.
+            # Any other unexpected failure must not leave the card stuck in RUNNING:
+            # emit a terminal FAILED result so the UI resolves. CancelledError is
+            # BaseException, so it is never caught here.
             log.error(
                 f"{LogTag.BROWSER} Browser agent failed unexpectedly",
                 error_type=type(exc).__name__,
@@ -388,8 +386,10 @@ class BrowserTaskRunner:
         return self._stopped or await self._is_cancelled()
 
     async def _handle_takeover(self, reason: str, category: str) -> str:
-        """The ``request_human_takeover`` action: pause for the human, then let the
-        agent resume natively with the returned result. Raises to stop on cancel."""
+        """Run the request_human_takeover action: pause for the human, then resume.
+
+        Returns the result the agent resumes natively with. Raises to stop on cancel.
+        """
         self._handoffs += 1
         if self._handoffs > MAX_HANDOFFS_PER_TASK:
             self._stopped = True
@@ -427,7 +427,7 @@ class BrowserTaskRunner:
     async def _on_step(
         self, browser_state_summary: BrowserStateSummary, agent_output: AgentOutput, n_steps: int
     ) -> None:
-        """Fires after the model picks actions, before they execute."""
+        """Run after the model picks actions, before they execute."""
         self._last_step = n_steps
         step_actions = _extract_actions(agent_output, browser_state_summary)
         goal = (
@@ -440,20 +440,16 @@ class BrowserTaskRunner:
         )
         raw_screenshot = getattr(browser_state_summary, "screenshot", None)
 
-        # Per-step profiling: `since_prev_ms` is the wall-clock the agent spent on the
-        # previous step's LLM think + action execution (the dominant per-step cost);
-        # `screenshot_ms` is how long the screenshot upload blocks this callback (and
-        # therefore Browser-Use's loop). Both are the levers when the run "feels slow".
+        # Per-step profiling: since_prev_ms is the previous step's LLM think + action
+        # time; screenshot_ms is how long the upload blocks this callback (and
+        # therefore Browser-Use's loop).
         now = perf_counter()
         since_prev_ms = round((now - self._last_step_at) * 1000) if self._last_step_at else 0
         self._last_step_at = now
 
-        # Emit OFF Browser-Use's critical path: the screenshot upload is a ~1s CDN
-        # round-trip and this callback is awaited *before the step's actions run*, so
-        # uploading inline taxed every step. Spawn it — the per-runner lock keeps the
-        # step emits ordered, and _finish() flushes them before the result so the SSE
-        # writer is still open. The runner does not judge sensitivity; the agent hands
-        # off for itself (see _handle_takeover). This callback only streams progress.
+        # Emit off Browser-Use's critical path: the screenshot upload is a ~1s CDN
+        # round-trip and this callback is awaited before the step's actions run. The
+        # per-runner lock keeps emits ordered; _finish() flushes them before the result.
         task = spawn_background_task(
             self._emit_step(
                 _StepFrame(
@@ -474,12 +470,9 @@ class BrowserTaskRunner:
     async def _on_step_end(self, agent: object) -> None:
         """After a step's actions execute, mirror each one's result into the thread.
 
-        Runs where the results actually exist: ``register_new_step_callback``
-        fires before the actions execute (Browser-Use calls it inside
-        _get_next_action), so ``_on_step`` has no outputs to show. ``on_step_end``
-        fires after execution with ``state.last_result`` populated, one entry per
-        action in order. Keyed by ``self._last_step`` — the step ``_on_step`` just
-        emitted rows for — so an output lands on the row it belongs to.
+        register_new_step_callback fires before the actions execute, so only
+        on_step_end sees state.last_result (one entry per action, in order).
+        Keyed by self._last_step so each output lands on the row it belongs to.
         """
         if self._action_results is None:
             return
@@ -521,8 +514,10 @@ class BrowserTaskRunner:
             )
 
     async def _render_screenshot(self, raw_b64: str | None, index: int) -> str | None:
-        """A step frame as a signed CDN URL (persisted), or an inline data URL as
-        a dev fallback when the CDN is unconfigured. ``None`` when off/absent."""
+        """Return a step frame as a signed CDN URL, or an inline data URL as a dev fallback.
+
+        The data URL is used when the CDN is unconfigured. None when off/absent.
+        """
         if not raw_b64 or not self._stream_screenshots:
             return None
         try:
@@ -555,14 +550,9 @@ class BrowserTaskRunner:
     async def _finish_from_history(
         self, history: AgentHistoryList[BaseModel]
     ) -> BrowserResultSnapshot:
-        # The three fallbacks the try leaves in place if reading history fails.
-        # pragma-exempt below: every consumer collapses falsy values to one answer
-        # (`final or ...`, `bool(is_done and ...)`, `is_successful is not False`),
-        # so swapping any of them for another falsy value cannot change the
-        # snapshot — verified against both the total-failure and partial-read
-        # paths. Restructuring to an early return WAS tried and rejected: it
-        # discards a final_result() that was read before the failure, which
-        # test_a_history_that_breaks_midway_still_reports_what_it_read catches.
+        # Fallbacks kept when reading history fails. pragma-exempt: every consumer
+        # collapses falsy values to one answer, so another falsy value cannot change
+        # the snapshot; an early return would discard a final_result() read before it.
         final = None  # pragma: no mutate
         is_done = False  # pragma: no mutate
         is_successful: bool | None = None  # pragma: no mutate
@@ -587,15 +577,9 @@ class BrowserTaskRunner:
     async def _record_usage(self, history: AgentHistoryList[BaseModel]) -> None:
         """Price and record the run's LLM spend into GAIA's usage pipeline.
 
-        Browser-Use tracks its own per-model token totals on
-        ``history.usage.by_model`` (populated whenever ``Agent.run`` returns
-        normally — not on the timeout/cancellation/CDP-failure paths above,
-        which return before a history exists). One :func:`record_llm_call`
-        per model matches how ``LLMAccountingMiddleware`` records the chat
-        graph's own multi-model runs; token counts are re-priced through
-        GAIA's own catalog rather than trusting Browser-Use's bundled pricing
-        data. This is agent-graph work the user asked for (the ``browser_task``
-        tool), so it charges the budget like any other tool-driven model call.
+        Reads history.usage.by_model (absent on the timeout/cancel/CDP-failure
+        paths) and calls record_llm_call once per model, re-pricing tokens
+        through GAIA's own catalog rather than Browser-Use's bundled pricing.
         """
         usage = history.usage
         if usage is None:

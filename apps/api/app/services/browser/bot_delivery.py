@@ -2,7 +2,7 @@
 
 Bots consume backend-pushed messages over RabbitMQ, not the SSE stream. Step
 screenshots are already uploaded to the CDN as signed URLs (see
-``screenshots.py``), so a bot step is delivered as a real photo — the same
+screenshots.py), so a bot step is delivered as a real photo — the same
 artifact the web card renders, sent through the platform's native image
 message instead of a pasted link.
 """
@@ -83,10 +83,8 @@ class BotProgressDelivery:
         await self._text(caption)
 
     async def handoff(self, snapshot: BrowserHandoffSnapshot) -> None:
-        # Only the PENDING snapshot needs a message (the takeover request itself).
-        # Resolution is already acked in-chat ("Got it, continuing." / "Okay, I've
-        # stopped."), and the final result line closes the task — a separate
-        # "Browser task handoff completed." here is just noise.
+        # Only the PENDING snapshot needs a message: resolution is already acked
+        # in-chat and the final result line closes the task.
         """Emit a live-view handoff event to the conversation."""
         if snapshot.status != HandoffStatus.PENDING:
             return
@@ -117,14 +115,16 @@ class BotProgressDelivery:
 
 
 def _is_blank_tab(url: str | None) -> bool:
-    """The pre-navigation empty tab — nothing worth showing the user yet."""
+    """Return whether url is the pre-navigation empty tab (nothing worth showing yet)."""
     return not url or url.startswith("about:") or url == "chrome://newtab/"
 
 
 def _step_caption(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
-    """A short, human caption for a step photo — what the agent is doing, in plain
-    language (its goal), falling back to a clean action label; never a raw URL or
-    an action's parameter dump."""
+    """Build a short, human caption for a step photo.
+
+    Uses the agent's goal in plain language, falling back to a clean action
+    label; never a raw URL or an action's parameter dump.
+    """
     label = (goal or "").strip().rstrip(".") or caption_from_action_list(actions)
     if len(label) > _CAPTION_MAX_CHARS:
         label = label[: _CAPTION_MAX_CHARS - 1].rstrip() + "…"

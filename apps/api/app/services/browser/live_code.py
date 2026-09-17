@@ -1,7 +1,7 @@
 """Short capability codes for the bot's live-view link.
 
 A code maps to a live-view session and its owner in Redis, so the delivered link
-is ``browser.heygaia.io/{code}`` — no 32-char session id and no long ``?t=`` token
+is browser.heygaia.io/{code} — no 32-char session id and no long ?t= token
 in the URL. The code itself is the secret: anyone holding it can watch and drive the
 session until the TTL lapses, exactly like the takeover token it replaces.
 """
@@ -24,7 +24,7 @@ def _key(code: str) -> str:
 
 
 async def mint_live_code(session_id: str, user_id: str) -> str:
-    """Create a short code that resolves to ``(session_id, user_id)`` for the TTL window."""
+    """Create a short code that resolves to (session_id, user_id) for the TTL window."""
     code = secrets.token_urlsafe(BROWSER_LIVE_CODE_ENTROPY_BYTES)
     await redis_cache.set(
         _key(code),
@@ -36,5 +36,5 @@ async def mint_live_code(session_id: str, user_id: str) -> str:
 
 
 async def resolve_live_code(code: str) -> LiveCodeRecord | None:
-    """The session + owner a code opens, or ``None`` if unknown/expired."""
+    """Return the session + owner a code opens, or None if unknown/expired."""
     return await redis_cache.get(_key(code), model=LiveCodeRecord)

@@ -9,17 +9,17 @@ Handles:
 - Safety-net cron for orphaned todos
 """
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 import json
 import random
-from typing import Any, cast
 from uuid import uuid4
 
 from arq.connections import ArqRedis
 
 from app.agents.core.agent import AgentRunOptions, call_agent_silent
 from app.agents.prompts.todo_prompts import TRIGGERED_RELEVANCE_GUIDANCE
-from app.constants.todos import FAILED_LABEL
+from app.constants.todos import ACTIVITY_PROMPT_TAIL_CHARS, FAILED_LABEL
 from app.db.repositories.todos import todo_repository
 from app.decorators import enforce_daily_cost_budget
 from app.models.message_models import MessageRequestWithHistory
@@ -33,12 +33,13 @@ from app.models.todo_models import TodoDocument, TodoUpdate
 from app.models.trigger_subscription_models import TriggerOrigin
 from app.models.user_models import AuthenticatedUser
 from app.models.workflow_models import TriggerType
+from app.services.canvas_markdown import section_body
 from app.services.hil.utils import untrusted_fence
 from app.services.notification_service import notification_service
-from app.services.todo_canvas_storage import read_canvas
+from app.services.todo_canvas_storage import read_activity, read_canvas
 from app.services.tracked_todo_service import tracked_todo_service
 from app.services.triggers.subscription_service import teardown_subscriptions
-from app.services.user_service import get_user_by_id
+from app.utils.auth_utils import load_user_context
 from app.utils.cron_utils import CronError, get_next_run_time
 from app.utils.redis_utils import RedisPoolManager
 from app.utils.timezone import Timezone
@@ -65,35 +66,28 @@ async def _load_user_with_tz(user_id: str) -> tuple[AuthenticatedUser, Timezone]
     falls back to UTC if the user record or timezone is missing.
     """
     try:
-        user_data = await get_user_by_id(user_id)
-        if user_data:
-            user_data["user_id"] = user_id
-            # The legacy bridge dict is a spread of a validated UserDocument plus
-            # the user_id stamped above, which is exactly AuthenticatedUser's
-            # shape — cast, not isinstance (Type Safety item 12). Narrowing it to
-            # the fields the agent reads would drop `onboarding`, which
-            # construct_langchain_messages needs for custom instructions.
-            return cast(AuthenticatedUser, user_data), Timezone.parse(user_data.get("timezone"))
-        return {"user_id": user_id}, Timezone.utc()
+        # The full context: narrowing to the fields read here would drop
+        # onboarding, which construct_langchain_messages needs.
+        user_data = await load_user_context(user_id)
+        if user_data is not None:
+            return user_data, Timezone.parse(user_data.timezone)
+        return AuthenticatedUser(user_id=user_id), Timezone.utc()
     except Exception as e:
         log.warning("tracked_todo.load_user_failed", user_id=user_id, error=str(e))
-        return {"user_id": user_id}, Timezone.utc()
+        return AuthenticatedUser(user_id=user_id), Timezone.utc()
 
 
 async def execute_tracked_todo(
-    ctx: dict[str, Any],  # noqa: ARG001 -- ARQ injects ctx positionally into every registered task
+    ctx: Mapping[str, object],  # noqa: ARG001 -- ARQ injects ctx positionally into every registered task
     todo_id: str,
     origin: TriggerOrigin | None = None,
 ) -> str:
-    """
-    ARQ task: execute a single tracked todo, on its schedule or on a trigger.
+    """Execute a single tracked todo, on its schedule or on a trigger.
 
-    Acquires a Redis lock to prevent concurrent execution, then delegates to the
-    retry/execution helper. The lock is always released in the finally block.
-
-    ``origin`` is present only when a trigger subscription woke this todo. It has
-    to be a task parameter: ARQ's ``ctx`` is built by the worker, not the
-    enqueuer, so there is no channel through it for producer-supplied data.
+    Acquires a Redis lock to prevent concurrent execution, then delegates to
+    the retry helper; the lock is always released in the finally block.
+    origin is a parameter rather than part of ARQ's ctx because ctx is built
+    by the worker, not the enqueuer, leaving no channel for producer data.
     """
     log.set(todo_id=todo_id, trigger_origin=origin.trigger_name if origin else None)
     log.info("tracked_todo.execute_started", todo_id=todo_id)
@@ -112,12 +106,12 @@ async def execute_tracked_todo(
 
 
 async def _handle_held_lock(todo_id: str, pool: ArqRedis, origin: TriggerOrigin | None) -> str:
-    """A scheduled run skips when the lock is held; a triggered one waits.
+    """Skip a scheduled run when the lock is held; defer a triggered one.
 
-    The next scan picks a scheduled run back up, so dropping it costs nothing. A
-    trigger fire has no next scan — dropping it loses the event entirely, which is
-    exactly the window self-wiring creates: GAIA sends the email, the run is still
-    finishing, the reply lands mid-execution.
+    The next scan picks a scheduled run back up, so dropping it costs nothing.
+    A trigger fire has no next scan — dropping it loses the event entirely,
+    exactly the window self-wiring creates: GAIA sends the email, the run is
+    still finishing, the reply lands mid-execution.
     """
     if origin is None:
         log.info("tracked_todo.execute_lock_held", todo_id=todo_id)
@@ -155,10 +149,7 @@ async def _handle_held_lock(todo_id: str, pool: ArqRedis, origin: TriggerOrigin 
 async def _execute_todo_with_retry(
     todo_id: str, pool: ArqRedis, origin: TriggerOrigin | None = None
 ) -> str:
-    """
-    Fetch the todo document, run the appropriate execution path, and
-    handle retry / recurrence logic on the result.
-    """
+    """Fetch the todo, execute it, and handle retry/recurrence logic on the result."""
     doc = await todo_repository.get_by_id(todo_id)
     if not doc:
         log.warning("tracked_todo.execute_not_found", todo_id=todo_id)
@@ -189,10 +180,9 @@ async def _execute_todo_with_retry(
         log.error("tracked_todo.execute_missing_user_id", todo_id=todo_id)
         return f"error:{todo_id} (missing user_id)"
 
-    # Single user fetch per run — pattern matches workflow_tasks.py:416–427.
-    # Reused for both agent execution (timezone/model config) and the next-run
-    # computation below, so a tz change takes effect on the next fire without
-    # an extra DB round-trip.
+    # Single user fetch per run (matches workflow_tasks.py:416-427): reused for
+    # execution and the next-run computation, so a tz change applies immediately
+    # without an extra DB round-trip.
     user_data, user_tz = await _load_user_with_tz(user_id)
 
     # Cost wall before any LLM work, mirroring the workflow path. A trigger fire
@@ -204,11 +194,9 @@ async def _execute_todo_with_retry(
     try:
         await _run_execution(doc, user_id, user_data=user_data, origin=origin)
 
-        # scheduled_at must always name the NEXT planned execution — it is the
-        # field find_due_tracked_all_users selects on, so a value left pointing
-        # at the run that just happened makes the safety net re-enqueue this
-        # todo on every scan. Recurrence is evaluated in the user's stored
-        # timezone (looked up once at the top of this run).
+        # scheduled_at must name the NEXT execution (find_due_tracked_all_users
+        # selects on it), or the safety net re-enqueues this todo every scan.
+        # Recurrence uses the timezone looked up at the top of this run.
         next_run = (
             _compute_next_run(doc.recurrence, user_tz.value, anchor=doc.scheduled_at)
             if doc.recurrence
@@ -277,11 +265,11 @@ async def _execute_todo_with_retry(
         return f"retry:{todo_id} (attempt {new_retry_count})"
 
 
-def _execution_context(todo_id: str | None, origin: TriggerOrigin | None) -> dict[str, Any]:
-    """The trigger stamp both execution paths put on a run.
+def _execution_context(todo_id: str | None, origin: TriggerOrigin | None) -> dict[str, object]:
+    """Build the trigger stamp both execution paths put on a run.
 
-    One builder because the workflow path and the agent path were stamping the
-    same literal separately, and only one of them would have been updated.
+    One builder because the workflow path and the agent path were stamping
+    the same literal separately, so only one would have been updated.
     """
     if origin is None:
         return {"trigger_type": TriggerType.SCHEDULED_TODO.value, "todo_id": todo_id}
@@ -301,11 +289,6 @@ async def _run_execution(
     user_data: AuthenticatedUser,
     origin: TriggerOrigin | None = None,
 ) -> None:
-    """
-    Dispatch execution to the correct path:
-    - If the todo has a workflow_id, queue the workflow.
-    - Otherwise, run the agent directly.
-    """
     if doc.workflow_id:
         # Deferred import to avoid circular dependency
         # Deferred import: breaks circular dependency with the workflow queue/service stack
@@ -325,18 +308,15 @@ async def _run_execution(
 
 
 def _extract_learnings(ref_canvas: str) -> str | None:
-    """Return the ``## Learnings`` section of a canvas, or None if absent."""
-    if not ref_canvas or "## Learnings" not in ref_canvas:
+    """Return the ## Learnings section of a canvas (heading included), or None if absent."""
+    body = section_body(ref_canvas, "Learnings")
+    if body is None:
         return None
-    learnings_start = ref_canvas.index("## Learnings")
-    next_section = ref_canvas.find("\n## ", learnings_start + 1)
-    if next_section != -1:
-        return ref_canvas[learnings_start:next_section]
-    return ref_canvas[learnings_start:]
+    return f"## Learnings\n{body}"
 
 
 async def _collect_reference_context(ref_ids: list[str], user_id: str) -> str:
-    """Gather ``## Learnings`` from up to 5 referenced todos for prompt context."""
+    """Gather ## Learnings from up to 5 referenced todos for prompt context."""
     if not ref_ids:
         return ""
     ref_parts: list[str] = []
@@ -362,20 +342,15 @@ def _build_execution_prompt(
     description: str,
     canvas_content: str | None,
     reference_context: str,
+    activity_content: str | None = None,
     origin: TriggerOrigin | None = None,
 ) -> str:
     """Assemble the run prompt from the todo's fields and context.
 
-    The triggering payload goes in the prompt, not only in ``trigger_context``:
-    that dict reaches the model only through ``format_workflow_execution_message``,
-    which needs a selected workflow. On the agent path there is none, so a payload
-    left there would never be seen — the todo would wake up knowing it was woken
-    but not by what.
-
-    ``origin.payload`` is external, attacker-influenceable content (the body of the
-    event that fired the trigger). It is fenced with a per-call random nonce and
-    labelled untrusted data so injected instructions inside it read as data, not as
-    commands the agent should follow — the same defence the HIL intent judge uses.
+    trigger_context only reaches the model via format_workflow_execution_message,
+    which the agent path never calls, so the payload goes in the prompt itself.
+    It is attacker-influenceable, so it is fenced with a random nonce and
+    labelled untrusted, as the HIL intent judge does.
     """
     if origin is None:
         prompt_parts = [f"Execute the following scheduled task: {title}"]
@@ -394,7 +369,14 @@ def _build_execution_prompt(
     if description:
         prompt_parts.append(f"Details: {description}")
     if canvas_content:
-        prompt_parts.append(f"Canvas context:\n{canvas_content}")
+        prompt_parts.append(f"Canvas (canvas.md):\n{canvas_content}")
+    if activity_content:
+        tail = activity_content[-ACTIVITY_PROMPT_TAIL_CHARS:]
+        truncated = " (older entries omitted; read activity.md for the full log)"
+        label = "Recent activity (activity.md)"
+        if len(activity_content) > len(tail):
+            label += truncated
+        prompt_parts.append(f"{label}:\n{tail}")
     if reference_context:
         prompt_parts.append(reference_context)
     return "\n\n".join(prompt_parts)
@@ -407,17 +389,17 @@ async def _execute_via_agent(
     user_data: AuthenticatedUser,
     origin: TriggerOrigin | None = None,
 ) -> str:
-    """
-    Execute the todo using call_agent_silent directly (no workflow needed).
+    """Execute the todo using call_agent_silent directly (no workflow needed).
 
     Returns the first 200 chars of the agent response.
     """
     todo_id = doc.id
 
-    # Read canvas content from the todo's Mongo-backed canvas field
     canvas_content: str | None = None
+    activity_content: str | None = None  # pragma: no mutate — falsy; reassigned before truth test
     try:
         canvas_content = await read_canvas(todo_id, user_id)
+        activity_content = await read_activity(todo_id, user_id)
     except Exception as exc:
         log.warning(
             "tracked_todo.canvas_read_failed",
@@ -434,6 +416,7 @@ async def _execute_via_agent(
         title=title,
         description=doc.description or "",
         canvas_content=canvas_content,
+        activity_content=activity_content,
         reference_context=reference_context,
         origin=origin,
     )
@@ -444,13 +427,9 @@ async def _execute_via_agent(
 
     request = MessageRequestWithHistory(
         message=prompt,
-        # The prompt has to be here, not only in `message`.
-        # `construct_langchain_messages` reads the run's content from
-        # `messages[-1]`; `message` reaches it as `query=`, which only feeds
-        # memory retrieval. With neither this nor a selected workflow/tool, the
-        # content is empty and the run raises before the model is called.
-        # `workflow_tasks` passes `messages=[]` and gets away with it only
-        # because it supplies `selectedWorkflow`, which builds content instead.
+        # message has to be here too: construct_langchain_messages reads content
+        # from messages[-1], not message (query= only feeds memory retrieval).
+        # workflow_tasks gets away with messages=[] only via selectedWorkflow.
         messages=[{"role": "user", "content": prompt}],
         fileIds=[],
         fileData=[],
@@ -464,14 +443,14 @@ async def _execute_via_agent(
         "execution_mode": "background",
     }
 
-    # Structural paper trail — write a start marker to the canvas Timeline
-    # BEFORE the agent runs, so the run leaves evidence even if the LLM forgets.
+    # Structural paper trail: a start marker in activity.md BEFORE the agent
+    # runs, so the run leaves evidence even if the LLM forgets.
     short_conv = conversation_id[:8]
     start_iso = datetime.now(UTC).isoformat()
-    await tracked_todo_service.append_canvas_timeline(
+    await tracked_todo_service.append_activity_entry(
         todo_id=todo_id,
         user_id=user_id,
-        entry=f"▶ {start_iso} — scheduled run started (conversation_id={short_conv})",
+        entry=f"{start_iso} ▶ scheduled run started (conversation_id={short_conv})",
     )
 
     complete_message: str = ""
@@ -485,10 +464,10 @@ async def _execute_via_agent(
     except Exception as exc:
         # End marker: failure
         fail_iso = datetime.now(UTC).isoformat()
-        await tracked_todo_service.append_canvas_timeline(
+        await tracked_todo_service.append_activity_entry(
             todo_id=todo_id,
             user_id=user_id,
-            entry=f"✗ {fail_iso} — scheduled run failed ({type(exc).__name__})",
+            entry=f"{fail_iso} ✗ scheduled run failed ({type(exc).__name__})",
         )
         raise
 
@@ -502,11 +481,11 @@ async def _execute_via_agent(
             todo_id=todo_id,
             queued_task_id=run.queued_task_id,
         )
-        await tracked_todo_service.append_canvas_timeline(
+        await tracked_todo_service.append_activity_entry(
             todo_id=todo_id,
             user_id=user_id,
             entry=(
-                f"⏸ {queued_iso} — scheduled run queued behind an in-flight run "
+                f"{queued_iso} ⏸ scheduled run queued behind an in-flight run "
                 f"(task {run.queued_task_id}); not run"
             ),
         )
@@ -516,10 +495,10 @@ async def _execute_via_agent(
     # End marker: success
     end_iso = datetime.now(UTC).isoformat()
     summary = (complete_message or "").strip().replace("\n", " ")[:120]
-    await tracked_todo_service.append_canvas_timeline(
+    await tracked_todo_service.append_activity_entry(
         todo_id=todo_id,
         user_id=user_id,
-        entry=f"✓ {end_iso} — scheduled run finished (summary={summary!r})",
+        entry=f"{end_iso} ✓ scheduled run finished (summary={summary!r})",
     )
 
     log.info("tracked_todo.agent_completed", todo_id=todo_id)
@@ -527,10 +506,7 @@ async def _execute_via_agent(
 
 
 async def _mark_todo_failed(todo_id: str, user_id: str, doc: TodoDocument) -> None:
-    """
-    Mark the todo as permanently failed by adding a 'failed' label,
-    then send an in-app notification to the user.
-    """
+    """Mark the todo as permanently failed and notify the user in-app."""
     await todo_repository.add_labels(todo_id, user_id=user_id, labels=[FAILED_LABEL])
     # The execution path skips failed todos until a manual reset, so leaving the
     # subscriptions armed would burn events on a todo that can never run.
@@ -570,26 +546,12 @@ def _compute_next_run(
     recurrence_tz: str | None = None,
     anchor: datetime | None = None,
 ) -> datetime | None:
-    """
-    Compute the next scheduled run time from a recurrence string.
+    """Compute the next scheduled run time from a recurrence string.
 
-    Evaluated in the user's timezone (recurrence_tz, IANA name). Returned as
-    a UTC-aware datetime suitable for ARQ's _defer_until.
-
-    Supports named shortcuts:
-    - "daily"    → next occurrence at the anchor's local wall-clock time
-    - "weekly"   → next occurrence at the anchor's local weekday + time
-    - "every_4h" → +4 hours (interval)
-    - "every_1h" → +1 hour (interval)
-
-    "daily"/"weekly" are anchored to ``anchor`` (the original scheduled_at) so
-    a late run does NOT drift the wall-clock time forward. The next fire keeps
-    the anchor's local time-of-day and advances by whole days/weeks until it is
-    strictly in the future. Without an anchor we fall back to a plain delta.
-
-    Falls back to croniter for cron expressions (e.g. "0 9 * * *"), which are
-    evaluated in recurrence_tz so "9am" means user-local 9am.
-    Returns None if the recurrence string is unrecognised.
+    Evaluated in recurrence_tz (IANA name); returns a UTC-aware datetime for
+    ARQ's _defer_until. "daily"/"weekly" anchor to the original scheduled_at
+    so a late run doesn't drift the wall-clock time forward; falls back to
+    croniter for cron expressions. Returns None if unrecognised.
     """
     # Canonical, offset-safe zone resolution (a stored ±HH:MM won't crash here).
     home_tz = Timezone.parse(recurrence_tz)
@@ -634,19 +596,11 @@ def _compute_next_run(
         return None
 
 
-async def safety_net_check_orphaned_todos(_ctx: dict[str, Any]) -> str:
-    """
-    Cron safety net: find scheduled tracked todos that should have run but
-    were never picked up (e.g. worker was down, job was lost).
+async def safety_net_check_orphaned_todos(_ctx: Mapping[str, object]) -> str:
+    """Find scheduled tracked todos that should have run but were never picked up.
 
-    Queries todos where:
-    - scheduled_at <= now
-    - completed = False
-    - labels includes "gaia-tracked"
-    - gaia_retry_count < MAX_RETRY_ATTEMPTS
-
-    For each, checks whether the execution lock already exists; if not,
-    re-enqueues with a random 0–60 second jitter to spread load.
+    Re-enqueues each one not already locked, with a random 0-60s jitter to
+    spread load.
     """
     now = datetime.now(UTC)
 
@@ -668,7 +622,6 @@ async def safety_net_check_orphaned_todos(_ctx: dict[str, Any]) -> str:
             skipped += 1
             continue
 
-        # Random jitter: 0–60 seconds
         jitter_seconds = random.randint(0, 60)  # nosec B311  # NOSONAR python:S2245 — non-crypto scheduling jitter
         run_at = now + timedelta(seconds=jitter_seconds)
         await enqueue_worker_job(pool, "execute_tracked_todo", todo_id, _defer_until=run_at)

@@ -1,42 +1,25 @@
 """GAIA's operating manual: the single source of truth for self-knowledge.
 
-This module consolidates what used to be smeared across the static prompts,
-the per-directory ``GUIDE.md`` files, and the ``gaia-*`` built-in skills into
-ONE canonical place, structured as:
+Consolidates what used to be spread across static prompts, per-directory
+GUIDE.md files, and the gaia-* built-in skills: GAIA_CORE is the always-on
+operating core in the static prompt prefix (rides the provider's prompt
+cache); MANUAL_DOCS is one self-contained doc per concern, surfaced via
+read_manual or signal-gated injection.
 
-- ``GAIA_CORE``: the always-on operating core (the "solid start"). It is
-  user-independent, so it lives in the *static* prompt prefix and rides the
-  provider's prompt cache. It orients the agent and routes to the topic docs.
-- ``MANUAL_DOCS``: one self-contained doc per concern (integrations, tracked
-  todos, user todos, sessions/artifacts, notifications). Each doc is the single
-  unit that gets surfaced, today on demand via the ``read_manual`` tool or
-  signal-gated injection, later auto-injected on semantic similarity. One file
-  per concern == one clean embedding unit.
+These are app-owned constants held in process memory — reading them must
+never spin up the E2B sandbox. system_docs.py re-exports the per-directory
+guide bodies from here.
 
-Crucially these are *app-owned constants loaded in the API process*. Reading
-them must NOT spin up the E2B sandbox: the sandbox is for the user's real
-files and code execution, not for the agent reading its own manual. So the
-agent gets this content by injection or via ``read_manual`` (process memory),
-never by ``cat``-ing a file inside the sandbox.
-
-``system_docs.py`` re-exports the per-directory guide bodies from here so the
-on-disk projections stay a thin, non-duplicated view of this source.
-
-Scale note: these docs are app-authored constants held in process memory (one
-copy per replica). At the current scale (a handful of docs, a few KB) that is
-negligible and the fastest possible read, faster than a Mongo/Redis round-trip.
-If this corpus ever grows to thousands of docs, move to a Redis(TTL) ->
-Mongo/JuiceFS read-through cache instead of holding everything in RAM.
+Scale note: fine in RAM at the current scale (a handful of docs, a few KB);
+move to a Redis/Mongo read-through cache if this ever grows to thousands.
 """
 
 from __future__ import annotations
 
 from typing import Final, Literal, NamedTuple, get_args
 
-# ---------------------------------------------------------------------------
-# Topic docs: one self-contained file per concern.
-# Bodies are faithful merges of the prior GUIDE.md + gaia-* skill content.
-# ---------------------------------------------------------------------------
+# Topic docs: one self-contained file per concern, faithfully merged from
+# the prior GUIDE.md + gaia-* skill content.
 
 INTEGRATIONS_DOC: Final[str] = """# Integrations: connecting and configuring services
 
@@ -112,8 +95,8 @@ Typical flow:
 TRACKED_TODOS_DOC: Final[str] = """# Tracked todos: GAIA-managed todos with memory
 
 Tracked todos are **GAIA-managed todos**: they show on the user's todos page, but
-GAIA owns them and keeps a canvas of working notes (key IDs, state, activity log,
-learnings) so it can act on them over time. They are distinct from the user's own
+GAIA owns them and keeps working notes as files (a recall doc plus a dated activity
+log) so it can act on them over time. They are distinct from the user's own
 hand-created action items. Create one only when GAIA performs or schedules a real
 action on an external system it needs to remember, follow up on, or repeat; never
 for read-only work (fetching, listing, summarizing), no matter how often it runs.
@@ -129,25 +112,25 @@ These live at `/workspace/gaia-tasks/`:
     gaia-tasks/
         index.md                      one-line summary per task, freshest first
         <slug>-<shortid>/
-            canvas.md                 your brain dump (Key Details / State / …)
-            log.md                    system-written audit trail
-            meta.json                 labels, due, priority, schedule, refs
+            canvas.md                 recall doc: Key Details / Current State / Context / Learnings
+            activity.md               dated log, oldest first: what happened, by whom, outcome
+            log.md                    system-written audit trail (read-only)
+            meta.json                 labels, due, priority, schedule, refs (read-only)
 
 ## Tools (always available: no retrieve_tools)
 
-- `create_tracked_todo`: create a todo with a canvas.
+- `create_tracked_todo`: create a todo; the result names its folder.
 - `update_tracked_todo`: labels, due_date, priority, scheduled_at,
   recurrence, expires_at, references.
-- `update_tracked_todo_canvas`: write canvas.md; modes append / section /
-  replace.
 - `complete_tracked_todo`: mark done (requires a completion summary).
-- `search_todo_context`: semantic search over all canvases (includes done).
+- `search_todo_context`: semantic search over all notes (includes done).
 - `list_tracked_todos`: active tracked todos (≤50) with metadata.
 
-The files are read-only projections of MongoDB. `Write`/`Edit`/`sed -i` fail
-with Permission denied; that's intentional. Mutate through the tools above.
-To read a known one fast: `cat gaia-tasks/<slug>-<shortid>/canvas.md` or
-`grep -r "rahul" gaia-tasks/` beats a semantic search.
+The notes are ordinary files for you: `read`, `edit` and `write` work on
+`canvas.md` and `activity.md` (they are stored on the todo, so this works even
+when the folder is not on disk). `log.md`, `meta.json` and `index.md` are
+generated; edits to them are refused. In `bash`, the folder is a read-only
+projection: `cat` and `grep -r "rahul" gaia-tasks/` are fine, `sed -i` is not.
 
 ## Search first, create last
 
@@ -172,23 +155,23 @@ Overusing tracked todos degrades search quality and clutters GAIA's memory.
 - **Immediate** (finishes this conversation): create → delegate → document →
   complete.
 - **Long-running** (spans conversations / needs follow-up): create with
-  `scheduled_at` → act → update canvas → leave open → resume later via active
+  `scheduled_at` → act → update the files → leave open → resume later via active
   todos or search → eventually complete with learnings.
 
-## Canvas
+## The two files
 
-`update_tracked_todo_canvas` modes: pick the right one, never default to
-`replace`:
-- `append` (default): add activity-log entries / timeline / notes. No read
-  needed.
-- `section`: replace one named section body (e.g. "Current State"). No read
-  needed.
-- `replace`: full rewrite. Only for restructuring.
+`canvas.md` is what you want to recall later. Sections: `Key Details` (ids,
+addresses, URLs needed to act), `Current State` (true right now; rewrite it
+after every action), `Context` (decisions, open questions, signals), `Learnings`
+(written ONLY at completion: what worked, timing insights, reusable patterns).
+Keep it short and current: `edit` the section that changed, never append to the
+end of the file.
 
-Default template sections: `Key Details` (ids, addresses, URLs needed to act),
-`Current State` (true right now), `Activity Log` (which agent did what, tools,
-outcome), `Timeline` (dated actions), `Context`, `Learnings` (written ONLY at
-completion: what worked, timing insights, reusable patterns).
+`activity.md` is the chronological record: one dated entry per thing that
+happened (`- 2026-09-02T10:15:00+00:00 Gmail agent: sent ... thread 18f3a2b`),
+oldest first, newest at the end. Scheduled runs stamp their own start/finish
+markers here. After delegation, add what each agent did (tools used, ids,
+outcome). Never write learnings here, and never write activity into canvas.md.
 
 ## Scheduling & recurrence
 
@@ -209,8 +192,9 @@ completion: what worked, timing insights, reusable patterns).
 
 - Not creating one when GAIA touched an external system (even "just" an email).
 - Multiple todos for one initiative.
-- Vague canvas ("made progress") instead of ids + tool names.
-- Not collecting subagent activity reports before writing the canvas.
+- Vague notes ("made progress") instead of ids + tool names.
+- Not collecting subagent activity reports before writing activity.md.
+- Appending activity to the end of canvas.md (it belongs in activity.md).
 - Not searching before creating.
 - Not writing learnings before completing.
 """
@@ -828,8 +812,8 @@ context. It is cheap and keeps you from guessing how your own machinery works.
 class ManualDoc(NamedTuple):
     """One self-contained operating-manual topic.
 
-    ``name`` is the stable handle passed to ``read_manual`` and used as the
-    embedding key for future similarity routing. ``description`` is the
+    name is the stable handle passed to read_manual and used as the
+    embedding key for future similarity routing. description is the
     one-line trigger shown in indexes.
     """
 
@@ -872,6 +856,58 @@ platform; `disconnect` removes an existing link (and confirms first).
 Per-topic details live beside the data: `account/GUIDE.md` and
 `account/guides/<topic>.md`. Files can lag the database by up to a minute;
 say so rather than presenting a read as live truth.
+"""
+
+DEVICE_SETUP_DOC: Final[str] = """# Device Setup - connecting the user's own machine
+
+The user can connect their own computer to GAIA with the `gaia bridge` CLI, so
+GAIA can use MCP servers running on that machine and read or write files there.
+It runs over one outbound tunnel - no inbound ports.
+
+## Steps to walk the user through
+1. Install the CLI (needs Node 20+):
+     npm install -g @heygaia/cli   (or: pnpm add -g @heygaia/cli / bun add -g @heygaia/cli)
+   Works on macOS, Linux, and Windows (WSL2 recommended). Full guide: /cli/device-bridge
+2. Pair the machine:  gaia bridge login
+   It prints a short code. The user pastes that code in this chat (GAIA shows an
+   approve button that opens the trusted approval page) or approves it at
+   Settings -> Devices. Approving links the device to their account. GAIA never
+   approves a code on its own - the user confirms on the authenticated page.
+3. Expose something:  gaia bridge add  (a guided wizard)
+     - a command-run MCP server (stdio), e.g. npx -y @modelcontextprotocol/server-everything
+     - an MCP server already running at a local URL
+     - local files and folders (no MCP needed): specific folders or the entire
+       filesystem, read-only or read/write
+   Shortcut for folders:  gaia bridge fs ~/dir [--write]
+4. Keep it online:  gaia bridge up   (the device is online only while this runs)
+
+## Using a connected device
+A connected device gives you two DIFFERENT capabilities, reached two different ways:
+
+1. Its MCP servers' tools. When a device MCP server is added it is connected and
+   its tools are indexed into tool-retrieval exactly like any other integration -
+   so they surface through `retrieve_tools` (semantic search over all connected
+   tools) and you use them by handing off to that server's subagent, the SAME as
+   a cloud MCP. You do NOT shell out to an MCP server. `list_devices` shows each
+   server, its integration_id (the handoff target), and whether its tools are
+   synced yet (a server GAIA never reached has none). Indexing runs in the
+   background once the device is online, so a just-added server can take a moment
+   to appear in `retrieve_tools`.
+2. Shell + file access on the machine. Use `run_on_device(device_id, command)` to
+   run a shell command on the user's real machine - read/edit files, run a build,
+   list a directory. This is the ONLY way to touch the user's real files; the
+   cloud sandbox is a separate container that cannot see their machine, so never
+   answer a question about the user's own files by running commands in the sandbox.
+
+Both need the device online (`gaia bridge up`); `list_devices` shows live status.
+The routing is not magic: a device server's tools are addressed internally as
+`device://<device_id>/<server_key>` and every call runs on that machine over the
+one outbound tunnel.
+
+## Managing
+gaia bridge ls (status), gaia bridge rm <key> (remove a server),
+gaia bridge logout (forget local credentials). Revoke a device any time from
+Settings -> Devices.
 """
 
 MANUAL_DOCS: Final[dict[str, ManualDoc]] = {
@@ -992,6 +1028,16 @@ MANUAL_DOCS: Final[dict[str, ManualDoc]] = {
             ),
             body=BILLING_DOC,
         ),
+        ManualDoc(
+            name="device-setup",
+            title="Device Setup: connecting the user's own machine",
+            description=(
+                "Connect the user's computer with the gaia bridge CLI: install, "
+                "pair (paste the code in chat or approve in Settings), expose MCP "
+                "servers or local files, and keep it online; how to use a device."
+            ),
+            body=DEVICE_SETUP_DOC,
+        ),
     )
 }
 
@@ -1013,6 +1059,7 @@ ManualTopic = Literal[
     "skills",
     "documents",
     "billing",
+    "device-setup",
 ]
 
 if set(get_args(ManualTopic)) != set(MANUAL_DOCS):

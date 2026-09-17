@@ -491,9 +491,7 @@ def test_filter_downstream_bytes_decoded_by_caller_not_here() -> None:
 
 @pytest.mark.unit
 def test_filter_downstream_scoped_event_missing_params_key_passes_through() -> None:
-    """A scoped event with no ``params`` key at all (not merely an empty dict) must
-    still resolve to ``raw`` without raising: ``_event_context_id`` is handed the
-    default for a missing key, which must stay a dict, not ``None``."""
+    """A scoped event with no params key at all (not merely an empty dict) must."""
     ids: set[int] = set()
     for method in ["Target.attachedToTarget", "Target.targetCreated", "Target.targetInfoChanged"]:
         raw = json.dumps({"method": method})
@@ -796,12 +794,7 @@ async def test_run_cdp_proxy_rewrites_create_target_and_filters_gettargets() -> 
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_connects_with_root_url_and_unbounded_kwargs() -> None:
-    """The proxy must dial Chromium's own root socket with no size/ping limits.
-
-    ``max_size=None`` and ``ping_interval=None`` are load-bearing: a CDP frame
-    (e.g. a full-page screenshot) can exceed websockets' 1MB default, and a
-    ping interval would race the browser-use client's own idle handling.
-    """
+    """The proxy must dial Chromium's own root socket with no size/ping limits."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from app.browser_host import proxy as proxy_mod
@@ -838,9 +831,7 @@ async def test_run_cdp_proxy_connects_with_root_url_and_unbounded_kwargs() -> No
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_touches_session_id_on_both_directions() -> None:
-    """``host.touch`` must key off the session id — not the context id or anything
-    else — on every frame in either direction, so the idle reaper leaves an
-    in-use session alone."""
+    """host.touch must key off the session id — not the context id or anything."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -897,9 +888,7 @@ async def test_run_cdp_proxy_touches_session_id_on_both_directions() -> None:
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_rewrites_upstream_using_context_id_not_session_id() -> None:
-    """``_rewrite_upstream`` must be called with ``session.context_id`` — pinning a
-    new target to the session id (or anything else) would create the tab in the
-    wrong browser context."""
+    """_rewrite_upstream must be called with session.context_id — pinning a."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -955,8 +944,7 @@ async def test_run_cdp_proxy_rewrites_upstream_using_context_id_not_session_id()
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_decodes_real_bytes_frame_from_chromium() -> None:
-    """Chromium's websocket may yield ``bytes`` frames; the proxy must decode
-    them before filtering/forwarding, not pass raw bytes through."""
+    """Chromium's websocket may yield bytes frames; the proxy must decode."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from app.browser_host import proxy as proxy_mod
@@ -1001,8 +989,7 @@ async def test_run_cdp_proxy_decodes_real_bytes_frame_from_chromium() -> None:
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_logs_refusal_with_reason_and_session_id() -> None:
-    """The refusal warning must carry the actual session id and the actual
-    refusal reason, not a generic message."""
+    """The refusal warning must carry the actual session id and the actual."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from app.browser_host import proxy as proxy_mod
@@ -1058,8 +1045,7 @@ async def test_run_cdp_proxy_logs_refusal_with_reason_and_session_id() -> None:
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_logs_closure_with_session_id_and_operation() -> None:
-    """The closing log line must name this session and the ``cdp_proxy_closed``
-    operation, so a reader can tell which session's proxy exited from logs alone."""
+    """The closing log line must name this session and the cdp_proxy_closed."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from app.browser_host import proxy as proxy_mod
@@ -1106,8 +1092,7 @@ async def test_run_cdp_proxy_logs_closure_with_session_id_and_operation() -> Non
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_never_forwards_dropped_downstream_frame() -> None:
-    """When every downstream frame is filtered out (``_filter_downstream`` returns
-    ``None`` for all of them), the client socket must receive nothing at all."""
+    """When every downstream frame is filtered out (_filter_downstream returns."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1202,12 +1187,7 @@ async def test_run_cdp_proxy_handles_non_int_refusal_id() -> None:
 
 @pytest.mark.unit
 async def test_run_cdp_proxy_records_navigation_and_page_metrics_for_this_session() -> None:
-    """The per-session metrics the host reports (navigation count, page count,
-    navigation duration) are fed exclusively from this proxy: a ``Page.navigate``
-    opens a navigation, a ``Target.createTarget`` counts a page, and the
-    downstream ``Page.loadEventFired`` closes the navigation's timing. Each must
-    be attributed to THIS session id, and nothing else may trigger them.
-    """
+    """The per-session metrics the host reports (navigation count, page count."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, call, patch
 

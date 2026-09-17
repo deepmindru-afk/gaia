@@ -4,7 +4,7 @@ Browser-Use is faked so the tests exercise the runner's orchestration without a
 real browser: a scripted FakeAgent invokes the runner's step callback exactly as
 Browser-Use does (after the model picks actions, before they execute). The runner
 no longer judges sensitivity itself — the agent hands off for itself by calling
-``_handle_takeover`` (the ``request_human_takeover`` / ``solve_captcha_with_help``
+_handle_takeover (the request_human_takeover / solve_captcha_with_help
 actions), which is what the takeover tests below exercise directly.
 """
 
@@ -310,11 +310,7 @@ async def test_timeout_marks_failed(patch_browser, monkeypatch):
 
 
 async def test_unexpected_agent_error_finishes_failed(patch_browser, monkeypatch):
-    """An unexpected runtime failure must not leave the card stuck in RUNNING.
-
-    A terminal FAILED result is emitted so the UI resolves and the user gets an
-    honest summary instead of a forever-spinning progress card.
-    """
+    """An unexpected runtime failure must not leave the card stuck in RUNNING."""
 
     async def _boom(self, max_steps: int, on_step_end=None):
         raise RuntimeError("LLM provider exploded")
@@ -348,7 +344,7 @@ class _RecordingAction:
 
 
 class _Opaque:
-    """An action object Browser-Use never gave a ``model_dump``."""
+    """An action object Browser-Use never gave a model_dump."""
 
 
 def test_extract_actions_keeps_every_action_with_its_params() -> None:
@@ -377,7 +373,7 @@ def test_extract_actions_ignores_actions_it_cannot_dump() -> None:
 
 
 def _targeted_state(index: int) -> SimpleNamespace:
-    """Step state where element ``index`` is a named button with a known box."""
+    """Step state where element index is a named button with a known box."""
     node = _LabelNode(
         text="",
         ax_node=SimpleNamespace(name="Sign in"),
@@ -391,8 +387,7 @@ def _targeted_state(index: int) -> SimpleNamespace:
 
 
 def test_extract_actions_names_and_locates_the_element_the_action_targets() -> None:
-    """An index is meaningless to a reader: the step state the agent saw resolves
-    it to the control's own name and to where it sits on screen."""
+    """An index is meaningless to a reader: the step state the agent saw resolves."""
     output = _Output("goal", [_Action("click", {"index": 4})])
     [action] = runner_mod._extract_actions(output, _targeted_state(4))
     assert action.target == "Sign in"
@@ -458,8 +453,7 @@ def test_summarize_action_result_falls_back_to_the_long_term_memory() -> None:
 
 
 def test_summarize_action_result_is_none_for_a_result_with_no_outcome_fields() -> None:
-    """Browser-Use result shapes differ per action; one missing every text field is a
-    silent success, which needs no output row rather than a crashed step."""
+    """Browser-Use result shapes differ per action; one missing every text field is a."""
     assert runner_mod._summarize_action_result(_SparseResult()) is None
     assert runner_mod._summarize_action_result(_SparseResult(error=None)) is None
 
@@ -479,8 +473,7 @@ def test_summarize_action_result_keeps_text_at_the_limit_whole() -> None:
 
 
 def test_summarize_action_result_truncates_longer_text_to_the_limit() -> None:
-    """Over the limit the row is cut one character short and given an ellipsis, so
-    the whole thing is still exactly the limit and reads as continuing."""
+    """Over the limit the row is cut one character short and given an ellipsis, so."""
     limit = runner_mod._OUTPUT_MAX_CHARS
     long_text = "c" * (limit + 50)
     summary = runner_mod._summarize_action_result(_SparseResult(extracted_content=long_text))
@@ -548,12 +541,7 @@ def test_init_derives_timeouts_and_starts_from_a_clean_slate() -> None:
 
 
 def test_element_viewport_fraction_maps_centre_minus_scroll_to_a_0_1_fraction() -> None:
-    """The pulse point is the element centre in viewport space, normalised.
-
-    A control at page-y 900 with the page scrolled 800 sits at viewport-y 100;
-    over an 800px viewport that is 0.125 down. Normalising means the UI needs no
-    pixel size to place the pulse.
-    """
+    """The pulse point is the element centre in viewport space, normalised."""
     node = SimpleNamespace(
         absolute_position=SimpleNamespace(x=200.0, y=900.0, width=100.0, height=40.0)
     )
@@ -587,7 +575,7 @@ def _box(x: float, y: float, width: float, height: float) -> SimpleNamespace:
 
 
 def _fraction_state(box: object | None, **page: object) -> SimpleNamespace:
-    """A state whose element 1 has the given box, seen through the given viewport."""
+    """Build a state whose element 1 has the given box, seen through the given viewport."""
     return SimpleNamespace(
         dom_state=SimpleNamespace(selector_map={1: SimpleNamespace(absolute_position=box)}),
         page_info=SimpleNamespace(**page),
@@ -595,8 +583,7 @@ def _fraction_state(box: object | None, **page: object) -> SimpleNamespace:
 
 
 def test_element_viewport_fraction_subtracts_the_scroll_offset_on_both_axes() -> None:
-    """Page coordinates are not viewport coordinates: a scrolled page moves the
-    element towards the top-left, so the offset is subtracted, never added."""
+    """Page coordinates are not viewport coordinates: a scrolled page moves the."""
     state = _fraction_state(
         _box(300.0, 1000.0, 100.0, 100.0),
         viewport_width=1000,
@@ -621,8 +608,7 @@ def test_element_viewport_fraction_is_none_when_only_the_page_is_missing() -> No
 
 
 def test_element_viewport_fraction_is_none_when_the_page_reports_no_viewport_size() -> None:
-    """A page whose size is unknown or zero on *either* axis cannot be normalised
-    against — dividing by it would either explode or invent a position."""
+    """A page whose size is unknown or zero on *either* axis cannot be normalised."""
     # A 1x1 box so a substituted unit viewport would produce a plausible-looking
     # in-range fraction rather than an obviously off-screen one.
     missing_width = _fraction_state(
@@ -655,8 +641,7 @@ def test_element_viewport_fraction_is_none_when_the_page_reports_no_viewport_siz
 
 
 def test_element_viewport_fraction_keeps_a_centre_on_either_viewport_edge() -> None:
-    """The edges are on-screen: an element centred in the very corner is still
-    something the UI can point at, so the range is inclusive at 0.0 and 1.0."""
+    """The edges are on-screen: an element centred in the very corner is still."""
     top_left = _fraction_state(
         _box(-10.0, -10.0, 20.0, 20.0),
         viewport_width=100,
@@ -698,8 +683,7 @@ def test_element_viewport_fraction_is_none_just_past_either_edge() -> None:
 
 
 def test_element_viewport_fraction_treats_an_unscrolled_page_as_offset_zero() -> None:
-    """A page that never scrolled may not report an offset at all — that is zero
-    displacement, so the element sits where its page coordinates say."""
+    """A page that never scrolled may not report an offset at all — that is zero."""
     state = _fraction_state(_box(40.0, 40.0, 20.0, 20.0), viewport_width=100, viewport_height=100)
     assert runner_mod._element_viewport_fraction(state, 1) == (0.5, 0.5)
 
@@ -737,8 +721,7 @@ def _label_state(node: object, index: int = 3) -> SimpleNamespace:
 
 
 def test_element_label_prefers_the_accessibility_name() -> None:
-    """The a11y name is what a person calls the control, and it is the only label
-    an icon-only button has — it must win over every other source."""
+    """The a11y name is what a person calls the control, and it is the only label."""
     node = _LabelNode(
         text="",
         ax_node=SimpleNamespace(name="Submit application"),
@@ -786,8 +769,7 @@ class _NamelessNode:
 
 
 def test_element_label_is_none_and_silent_for_a_node_with_no_tag_name(monkeypatch) -> None:
-    """A node with nothing to name it yields no label — and that is an ordinary
-    outcome, not a DOM shape worth warning about."""
+    """A node with nothing to name it yields no label — and that is an ordinary."""
     warning = Mock()
     monkeypatch.setattr(runner_mod.log, "warning", warning)
     assert runner_mod._element_label(_label_state(_NamelessNode()), 3) is None
@@ -812,8 +794,7 @@ class _ExplodingNode:
 def test_element_label_warns_with_the_error_type_when_a_node_shape_is_unrecognised(
     monkeypatch,
 ) -> None:
-    """Losing one caption's name must not kill the step, but a systematic DOM
-    shape change has to be visible in the wide event."""
+    """Losing one caption's name must not kill the step, but a systematic DOM."""
     warning = Mock()
     monkeypatch.setattr(runner_mod.log, "warning", warning)
 
@@ -826,12 +807,7 @@ def test_element_label_warns_with_the_error_type_when_a_node_shape_is_unrecognis
 
 
 async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> None:
-    """Browser-Use runs on_step_end AFTER the actions, so results exist there.
-
-    The output must key to the step _on_step already emitted rows for
-    (self._last_step), and only actions with content or an error produce an
-    output — a silent success adds no row.
-    """
+    """Browser-Use runs on_step_end AFTER the actions, so results exist there."""
     calls: list[tuple[int, list]] = []
     runner = _make_runner(
         emit=AsyncMock(),
@@ -858,8 +834,7 @@ async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> 
 
 
 async def test_on_step_end_reports_nothing_for_an_agent_with_no_results_yet() -> None:
-    """Browser-Use does not promise ``state``/``last_result`` on every call — a step
-    that produced nothing reports nothing instead of failing the run."""
+    """Browser-Use does not promise state/last_result on every call — a step."""
     calls: list[tuple[int, list]] = []
     runner = _make_runner(
         emit=AsyncMock(),
@@ -881,14 +856,7 @@ async def test_on_step_end_is_a_noop_without_an_action_results_sink() -> None:
 
 
 def test_the_task_preamble_forbids_inventing_field_values() -> None:
-    """A missing value must become a handoff, never a plausible-looking guess.
-
-    Measured on a real investor-application form: given only a name and an email,
-    the agent typed a phone number and a country it made up, then reported the
-    form as correctly filled. On a form that submits, that is fabricated data
-    sent under the user's name — so the rule and its escape hatch are part of the
-    prompt contract, not advice.
-    """
+    """A missing value must become a handoff, never a plausible-looking guess."""
     from app.constants.browser import BROWSER_TAKEOVER_PREAMBLE
 
     assert "NEVER invent a value" in BROWSER_TAKEOVER_PREAMBLE
@@ -904,8 +872,7 @@ def test_the_task_preamble_routes_dropdowns_through_the_native_actions() -> None
 
 
 def test_the_tool_docs_say_each_call_is_a_fresh_browser() -> None:
-    """The executor re-ran a whole form fill believing the previous session's
-    values were still on the page. The docs must not let it believe that."""
+    """The executor re-ran a whole form fill believing the previous session's."""
     from app.templates.docstrings.browser_tool_docs import BROWSER_TASK
 
     assert "Each call is a fresh browser" in BROWSER_TASK
@@ -939,8 +906,7 @@ async def test_run_configures_the_agent_from_the_runner_settings(patch_browser) 
 
 
 async def test_run_mirrors_each_steps_action_results_into_the_thread(patch_browser) -> None:
-    """The per-action outcomes only exist after the actions execute, so the runner
-    has to be wired into Browser-Use's post-step hook for any of them to arrive."""
+    """The per-action outcomes only exist after the actions execute, so the runner."""
     calls: list[tuple[int, list]] = []
     _, emit = _collector()
     runner = _make_runner(
@@ -1453,7 +1419,8 @@ class _BrokenHistory(_History):
 
 
 class _HalfReadableHistory(_History):
-    """Reads the result and the done flag, then breaks — so the success flag keeps
+    """Reads the result and the done flag, then breaks — so the success flag keeps.
+
     whatever the runner initialised it to."""
 
     def is_successful(self):
@@ -1461,9 +1428,7 @@ class _HalfReadableHistory(_History):
 
 
 async def test_unreadable_history_reports_an_honest_failure() -> None:
-    """A history that cannot be read falls back to a complete, honest FAILED
-    snapshot — every field of it, so the fallbacks the ``try`` leaves in place
-    stay pinned."""
+    """A history that cannot be read falls back to a complete, honest FAILED."""
     events, emit = _collector()
     result = await _make_runner(emit=emit)._finish_from_history(_BrokenHistory())
 
@@ -1479,8 +1444,7 @@ async def test_unreadable_history_reports_an_honest_failure() -> None:
 
 
 async def test_a_history_that_breaks_midway_still_reports_what_it_read() -> None:
-    """``is_done`` succeeded and ``is_successful`` raised: the run is judged done
-    and the final result it did read becomes the summary."""
+    """is_done succeeded and is_successful raised: the run is judged done."""
     events, emit = _collector()
     result = await _make_runner(emit=emit)._finish_from_history(
         _HalfReadableHistory(result="Booked seat 14C.")
@@ -1530,8 +1494,7 @@ async def test_an_unfinished_history_fails_even_when_not_marked_unsuccessful() -
 
 
 async def test_an_unknown_success_flag_still_counts_as_done() -> None:
-    """Browser-Use reports ``None`` when it cannot judge — only an explicit
-    ``False`` is a failure."""
+    """Browser-Use reports None when it cannot judge — only an explicit False is a failure."""
     _, emit = _collector()
     result = await _make_runner(emit=emit)._finish_from_history(
         _History(done=True, successful=None, result="Booked.")
@@ -1696,7 +1659,7 @@ async def test_a_takeover_without_any_note_uses_the_default_preface_verbatim() -
 
 
 class _GoalOutput:
-    """A step output whose goal fields are set independently, unlike ``_Output``."""
+    """A step output whose goal fields are set independently, unlike _Output."""
 
     def __init__(self, *, next_goal: str, thinking: str, actions: list[_Action]):
         self.next_goal = next_goal
@@ -1739,7 +1702,7 @@ async def test_a_step_with_no_thinking_attribute_captions_from_its_actions(patch
 
 
 class _GoallessOutput:
-    """A step output Browser-Use gave no ``next_goal`` attribute at all."""
+    """A step output Browser-Use gave no next_goal attribute at all."""
 
     def __init__(self, actions: list[_Action]):
         self.thinking = "Deciding what to click"
@@ -1760,8 +1723,7 @@ async def test_a_step_output_with_no_goal_attribute_captions_from_its_thinking(
 
 
 async def test_a_step_names_and_locates_the_element_its_actions_target(patch_browser) -> None:
-    """The step card resolves the agent's element index against the state the agent
-    saw, so the row reads as the control's own name and the UI can pulse over it."""
+    """The step card resolves the agent's element index against the state the agent."""
     events, emit = _collector()
     runner = _make_runner(emit=emit)
     state = _targeted_state(4)
@@ -1884,8 +1846,7 @@ async def test_the_step_frame_is_uploaded_under_that_steps_index(
 
 
 async def test_a_step_card_carries_the_time_the_previous_step_took(patch_browser) -> None:
-    """The card shows how long the step took; the very first step has no
-    predecessor to measure, and reports no duration rather than a bogus zero."""
+    """The card shows how long the step took; the very first step has no."""
     events, emit = _collector()
     runner = _make_runner(emit=emit)
 

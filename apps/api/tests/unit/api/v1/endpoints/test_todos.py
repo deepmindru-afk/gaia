@@ -1,5 +1,4 @@
-"""
-Exhaustive unit tests for app.api.v1.endpoints.todos
+"""Exhaustive unit tests for app.api.v1.endpoints.todos.
 
 Covers all 22 route handlers, success paths, validation, service
 errors and edge cases. Uses AsyncClient with mocked DB/services so
@@ -164,7 +163,7 @@ class TestGetTodoCounts:
             resp = await client.get("/api/v1/todos/counts")
 
         assert resp.status_code == 500
-        assert "Failed to retrieve counts" in resp.json()["detail"]
+        assert "Failed to retrieve counts" in resp.json()["message"]
 
 
 # ============================================================================
@@ -252,14 +251,14 @@ class TestListTodos:
         assert params.due_date_start is not None
         assert params.due_date_end is not None
 
-    async def test_filters_q_project_completed_priority_labels(self, client: AsyncClient) -> None:
+    async def test_filters_q_project_completed_priority(self, client: AsyncClient) -> None:
         with patch(
             f"{TODOS_MOD}.TodoService.list_todos",
             new_callable=AsyncMock,
             return_value=_empty_list_response(),
         ) as mock_list:
             resp = await client.get(
-                "/api/v1/todos?q=hello&project_id=proj-1&completed=false&priority=high&labels=work&labels=home"
+                "/api/v1/todos?q=hello&project_id=proj-1&completed=false&priority=high"
             )
 
         assert resp.status_code == 200
@@ -268,7 +267,6 @@ class TestListTodos:
         assert params.project_id == "proj-1"
         assert params.completed is False
         assert params.priority.value == "high"
-        assert params.labels == ["work", "home"]
 
     async def test_value_error_returns_400(self, client: AsyncClient) -> None:
         with patch(
@@ -279,7 +277,7 @@ class TestListTodos:
             resp = await client.get("/api/v1/todos")
 
         assert resp.status_code == 400
-        assert "bad filter" in resp.json()["detail"]
+        assert "bad filter" in resp.json()["message"]
 
     async def test_generic_exception_returns_500(self, client: AsyncClient) -> None:
         with patch(
@@ -290,7 +288,7 @@ class TestListTodos:
             resp = await client.get("/api/v1/todos")
 
         assert resp.status_code == 500
-        assert "Failed to retrieve todos" in resp.json()["detail"]
+        assert "Failed to retrieve todos" in resp.json()["message"]
 
     async def test_search_mode_default_hybrid(self, client: AsyncClient) -> None:
         with patch(
@@ -362,7 +360,7 @@ class TestCreateTodo:
             resp = await client.post("/api/v1/todos", json={"title": "New todo"})
 
         assert resp.status_code == 400
-        assert "Project not found" in resp.json()["detail"]
+        assert "Project not found" in resp.json()["message"]
 
     async def test_generic_exception_returns_500(self, client: AsyncClient) -> None:
         with patch(
@@ -373,7 +371,7 @@ class TestCreateTodo:
             resp = await client.post("/api/v1/todos", json={"title": "New todo"})
 
         assert resp.status_code == 500
-        assert "Failed to create todo" in resp.json()["detail"]
+        assert "Failed to create todo" in resp.json()["message"]
 
     async def test_validation_missing_title_returns_422(self, client: AsyncClient) -> None:
         resp = await client.post("/api/v1/todos", json={})
@@ -436,7 +434,7 @@ class TestBulkUpdateTodos:
             )
 
         assert resp.status_code == 500
-        assert "Bulk update failed" in resp.json()["detail"]
+        assert "Bulk update failed" in resp.json()["message"]
 
 
 # ============================================================================
@@ -472,7 +470,7 @@ class TestBulkMoveTodos:
             )
 
         assert resp.status_code == 400
-        assert "Project not found" in resp.json()["detail"]
+        assert "Project not found" in resp.json()["message"]
 
     async def test_generic_exception_returns_500(self, client: AsyncClient) -> None:
         with patch(
@@ -576,7 +574,7 @@ class TestBulkCompleteTodos:
             resp = await client.post("/api/v1/todos/bulk/complete", json=["id1"])
 
         assert resp.status_code == 500
-        assert "Bulk complete failed" in resp.json()["detail"]
+        assert "Bulk complete failed" in resp.json()["message"]
 
     async def test_empty_list_validation(self, client: AsyncClient) -> None:
         resp = await client.post("/api/v1/todos/bulk/complete", json=[])
@@ -608,7 +606,7 @@ class TestGetTodo:
             resp = await client.get("/api/v1/todos/missing")
 
         assert resp.status_code == 404
-        assert "Todo not found" in resp.json()["detail"]
+        assert "Todo not found" in resp.json()["message"]
 
     async def test_generic_exception_returns_500(self, client: AsyncClient) -> None:
         with patch(
@@ -628,27 +626,27 @@ class TestGetTodo:
 
 class TestGetTodoCanvas:
     async def test_success_returns_content(self, client: AsyncClient) -> None:
-        with patch(
-            f"{TODOS_MOD}.read_canvas", new_callable=AsyncMock, return_value="# Canvas\nhello"
-        ):
+        doc = MagicMock(canvas_content="# Canvas\nhello", activity_content="- did a thing")
+        with patch(f"{TODOS_MOD}.todo_repository.get", new_callable=AsyncMock, return_value=doc):
             resp = await client.get("/api/v1/todos/todo-1/canvas")
 
         assert resp.status_code == 200
-        assert resp.json()["content"] == "# Canvas\nhello"
+        assert resp.json() == {"content": "# Canvas\nhello", "activity": "- did a thing"}
 
-    async def test_empty_canvas_returns_empty_string(self, client: AsyncClient) -> None:
-        with patch(f"{TODOS_MOD}.read_canvas", new_callable=AsyncMock, return_value=""):
+    async def test_empty_canvas_returns_empty_strings(self, client: AsyncClient) -> None:
+        doc = MagicMock(canvas_content=None, activity_content=None)
+        with patch(f"{TODOS_MOD}.todo_repository.get", new_callable=AsyncMock, return_value=doc):
             resp = await client.get("/api/v1/todos/todo-1/canvas")
 
         assert resp.status_code == 200
-        assert resp.json()["content"] == ""
+        assert resp.json() == {"content": "", "activity": ""}
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:
-        with patch(f"{TODOS_MOD}.read_canvas", new_callable=AsyncMock, return_value=None):
+        with patch(f"{TODOS_MOD}.todo_repository.get", new_callable=AsyncMock, return_value=None):
             resp = await client.get("/api/v1/todos/missing/canvas")
 
         assert resp.status_code == 404
-        assert "Todo not found" in resp.json()["detail"]
+        assert "Todo not found" in resp.json()["message"]
 
 
 # ============================================================================
@@ -941,7 +939,7 @@ class TestGenerateWorkflow:
             resp = await client.post("/api/v1/todos/todo-1/workflow")
 
         assert resp.status_code == 500
-        assert "Failed to queue workflow generation" in resp.json()["detail"]
+        assert "Failed to queue workflow generation" in resp.json()["message"]
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:
         with patch(
@@ -1265,7 +1263,7 @@ class TestUpdateProject:
             resp = await client.put("/api/v1/projects/proj-1", json={"name": "x"})
 
         assert resp.status_code == 400
-        assert "Cannot update" in resp.json()["detail"]
+        assert "Cannot update" in resp.json()["message"]
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:
         with patch(
@@ -1306,7 +1304,7 @@ class TestDeleteProject:
             resp = await client.delete("/api/v1/projects/proj-1")
 
         assert resp.status_code == 400
-        assert "Cannot delete" in resp.json()["detail"]
+        assert "Cannot delete" in resp.json()["message"]
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:
         with patch(
@@ -1355,7 +1353,7 @@ class TestCreateSubtask:
             resp = await client.post("/api/v1/todos/todo-1/subtasks", json={"title": "x"})
 
         assert resp.status_code == 404
-        assert "not found" in resp.json()["detail"].lower()
+        assert "not found" in resp.json()["message"].lower()
 
     async def test_generic_exception_returns_500(self, client: AsyncClient) -> None:
         with patch(
@@ -1420,7 +1418,7 @@ class TestUpdateSubtask:
             resp = await client.put("/api/v1/todos/todo-1/subtasks/sub-1", json={"title": "x"})
 
         assert resp.status_code == 404
-        assert "Subtask not found" in resp.json()["detail"]
+        assert "Subtask not found" in resp.json()["message"]
 
     async def test_generic_exception_returns_500(self, client: AsyncClient) -> None:
         with patch(
@@ -1462,7 +1460,7 @@ class TestDeleteSubtask:
             resp = await client.delete("/api/v1/todos/todo-1/subtasks/sub-1")
 
         assert resp.status_code == 404
-        assert "Subtask not found" in resp.json()["detail"]
+        assert "Subtask not found" in resp.json()["message"]
 
     async def test_generic_exception_returns_500(self, client: AsyncClient) -> None:
         with patch(
@@ -1529,7 +1527,7 @@ class TestToggleSubtaskCompletion:
             resp = await client.post("/api/v1/todos/todo-1/subtasks/sub-1/toggle")
 
         assert resp.status_code == 404
-        assert "Subtask not found" in resp.json()["detail"]
+        assert "Subtask not found" in resp.json()["message"]
 
     async def test_set_subtask_fields_returns_none_returns_404(self, client: AsyncClient) -> None:
         doc_before = _todo_doc(subtasks=[SubTask(id="sub-1", title="x", completed=False)])

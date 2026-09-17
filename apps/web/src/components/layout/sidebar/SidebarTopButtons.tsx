@@ -16,13 +16,12 @@ import { ChevronLeft } from "@/components/shared/icons";
 import { ShortcutKeysDisplay } from "@/config/keyboardShortcuts";
 import { getNavigationShortcut } from "@/config/keyboardShortcutsData";
 import { useNotifications } from "@/features/notification/hooks/useNotifications";
-import {
-  usePricing,
-  useUserSubscriptionStatus,
-} from "@/features/pricing/hooks/usePricing";
+import { paywallCopyFor } from "@/features/pricing/constants";
+import { useIsPaid } from "@/features/pricing/hooks/useIsPaid";
+import { usePricing } from "@/features/pricing/hooks/usePricing";
 import { usePathname } from "@/i18n/navigation";
 import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
-import { usePricingModalStore } from "@/stores/pricingModalStore";
+import { useUpgradeModalStore } from "@/stores/upgradeModalStore";
 import { NotificationStatus } from "@/types/features/notificationTypes";
 import { SidebarPromo } from "./SidebarPromo";
 
@@ -32,12 +31,6 @@ const buttonData = [
     icon: <Home11Icon />,
     label: "Home",
   },
-  // Temporarily disabled — Calendar feature is not yet ready.
-  // {
-  //   route: "/calendar",
-  //   icon: <Calendar03Icon />,
-  //   label: "Calendar",
-  // },
   {
     route: "/todos",
     icon: <CheckListIcon />,
@@ -48,11 +41,6 @@ const buttonData = [
     icon: <ConnectIcon />,
     label: "Integrations",
   },
-  // {
-  //   route: "/mail",
-  //   icon: <Mail01Icon />,
-  //   label: "Mail",
-  // },
   {
     route: "/workflows",
     icon: <ZapIcon />,
@@ -63,19 +51,13 @@ const buttonData = [
     icon: <MessageMultiple02Icon />,
     label: "Chats",
   },
-
-  // {
-  //   route: "/browser",
-  //   icon: <AiBrowserIcon height={23} width={23} />,
-  //   label: "Use Browser",
-  // },
 ];
 
 export default function SidebarTopButtons() {
   const pathname = usePathname();
-  const { data: subscriptionStatus } = useUserSubscriptionStatus();
+  const { isPaid, isUnknown, hasEverSubscribed } = useIsPaid();
   const { plans } = usePricing();
-  const openPricingModal = usePricingModalStore((s) => s.openModal);
+  const openUpgradeModal = useUpgradeModalStore((s) => s.openModal);
   const { notifications } = useNotifications({
     status: NotificationStatus.DELIVERED,
     limit: 50,
@@ -115,9 +97,20 @@ export default function SidebarTopButtons() {
 
   return (
     <div className="flex flex-col">
-      {/* Only show Upgrade to Pro button when user doesn't have an active subscription */}
-      {!subscriptionStatus?.is_subscribed && (
-        <SidebarPromo price={price} onUpgrade={openPricingModal} />
+      {/* Only show Upgrade to Pro button when the plan is known and the user
+          doesn't have an active subscription — never while unknown, or a
+          paying user on a cold cache briefly sees the free-tier promo. */}
+      {!isUnknown && !isPaid && (
+        <SidebarPromo
+          price={price}
+          copy={paywallCopyFor(hasEverSubscribed)}
+          onUpgrade={() =>
+            openUpgradeModal(undefined, {
+              dismissible: true,
+              source: "sidebar",
+            })
+          }
+        />
       )}
 
       <div className="flex w-full flex-col gap-0.5">

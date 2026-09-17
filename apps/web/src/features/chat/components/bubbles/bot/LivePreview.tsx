@@ -13,10 +13,9 @@ import type { AgentCursorTarget } from "./AgentCursor";
 import { LiveBrowserCanvas } from "./LiveBrowserCanvas";
 import { ShimmerText } from "./ShimmerText";
 
-// The live browser, in its own surface. On desktop the expanded view is the
-// right-side browser panel (chat shrinks next to it); the full-screen modal is
-// the mobile fallback. While the side panel is showing this session the card
-// hands the stream over instead of decoding the same frames twice.
+// The live browser in its own surface: the desktop expanded view is the
+// right-side panel, the full-screen modal is the mobile fallback. While the
+// panel shows this session the card hands the stream over (no double decode).
 export function LivePreview({
   socketUrl,
   pageUrl,

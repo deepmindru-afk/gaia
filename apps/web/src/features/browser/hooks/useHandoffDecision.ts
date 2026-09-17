@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { browserApi } from "@/features/browser/api/browserApi";
 import type { BrowserHandoffStatus } from "@/types/features/browserTaskTypes";
 
@@ -23,24 +23,30 @@ export function useHandoffDecision(
   const settled =
     serverStatus && serverStatus !== "pending" ? serverStatus : null;
 
+  // Read through a ref so a parent passing a new closure never restarts polling.
+  const onSettledRef = useRef(onSettled);
+  useEffect(() => {
+    onSettledRef.current = onSettled;
+  }, [onSettled]);
+  const settle = useCallback((status: BrowserHandoffStatus) => {
+    if (status === "pending") return;
+    setServerStatus(status);
+    onSettledRef.current?.(status);
+  }, []);
+
   useEffect(() => {
     if (settled) return undefined;
     let active = true;
     const poll = async () => {
       const res = await browserApi.getHandoffStatus(handoffId);
-      if (active && res && res.status !== "pending")
-        setServerStatus(res.status);
+      if (active && res) settle(res.status);
     };
     const id = setInterval(poll, 3000);
     return () => {
       active = false;
       clearInterval(id);
     };
-  }, [settled, handoffId]);
-
-  useEffect(() => {
-    if (settled) onSettled?.(settled);
-  }, [settled, onSettled]);
+  }, [settled, handoffId, settle]);
 
   const decide = async (decision: "continue" | "cancel", message?: string) => {
     setPending(true);
@@ -51,7 +57,7 @@ export function useHandoffDecision(
         decision,
         message,
       );
-      if (res && res.status !== "pending") setServerStatus(res.status);
+      if (res) settle(res.status);
     } catch {
       setDecided(null);
     } finally {

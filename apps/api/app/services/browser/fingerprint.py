@@ -28,7 +28,7 @@ _current_seed: contextvars.ContextVar[int] = contextvars.ContextVar(
 
 
 def seed_for_user(user_id: str | None) -> int:
-    """A stable 32-bit seed for ``user_id`` (not secret, just deterministic)."""
+    """Return a stable 32-bit seed for user_id (not secret, just deterministic)."""
     if not user_id:
         return _DEFAULT_SEED
     digest = hashlib.sha256(user_id.encode()).digest()
@@ -36,7 +36,7 @@ def seed_for_user(user_id: str | None) -> int:
 
 
 def set_fingerprint_seed(user_id: str | None) -> contextvars.Token[int]:
-    """Pin this run's fingerprint to ``user_id``. Reset with the returned token."""
+    """Pin this run's fingerprint to user_id. Reset with the returned token."""
     return _current_seed.set(seed_for_user(user_id))
 
 

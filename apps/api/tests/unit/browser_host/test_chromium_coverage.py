@@ -43,12 +43,11 @@ from app.constants.log_tags import LogTag
 
 @pytest.fixture(autouse=True)
 def _pin_chromium_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    """This file covers the Chromium launch/readiness branch.
+    """Pin the engine to Chromium for this file's launch/readiness tests.
 
-    The host default is now Obscura, so the launch/`_await_cdp_ready` tests here
-    must select Chromium explicitly (the Obscura tests do the same in reverse).
-    Engine-agnostic tests in this file mock ``_cdp`` and never launch, so pinning
-    the engine is a no-op for them.
+    The host default is Obscura, so launch/_await_cdp_ready tests must select
+    Chromium explicitly; engine-agnostic tests mock _cdp and never launch, so
+    the pin is a no-op for them.
     """
     monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.CHROMIUM)
 
@@ -1096,8 +1095,7 @@ async def test_focused_target_id_filters_by_context_and_type() -> None:
 
 @pytest.mark.unit
 async def test_focused_target_id_excludes_a_page_from_another_context() -> None:
-    """type=="page" AND matching context — an ``or`` would leak cross-context
-    pages into the candidate list even though our session can't see them."""
+    """type=="page" AND matching context — an or would leak cross-context."""
     host = ChromiumHost()
     s = HostSession(
         session_id="s1", context_id="ctx1", target_id="t-primary", created_at=0, last_activity_at=0
@@ -1386,8 +1384,7 @@ async def test_dispose_context_raises_when_unknown() -> None:
 
 @pytest.mark.unit
 async def test_dispose_context_pop_tolerates_concurrent_removal() -> None:
-    """The finally block's pop must not KeyError if another coroutine (e.g.
-    the idle reaper) already removed this session while the dump was in flight."""
+    """The finally block's pop must not KeyError if another coroutine (e.g."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
     s = HostSession(
@@ -2042,8 +2039,7 @@ async def test_reap_idle_handles_gone_session_between_stale_and_lock() -> None:
 
 @pytest.mark.unit
 async def test_reap_idle_continues_past_a_gone_session_to_reap_the_next_one() -> None:
-    """A session vanishing mid-sweep must skip only that one entry, not abort
-    the whole sweep — a ``break`` here would strand every stale session after it."""
+    """A session vanishing mid-sweep must skip only that one entry, not abort."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
     first = HostSession(
@@ -2079,8 +2075,7 @@ async def test_reap_idle_continues_past_a_gone_session_to_reap_the_next_one() ->
 
 @pytest.mark.unit
 async def test_reap_idle_pop_tolerates_concurrent_removal() -> None:
-    """The pop of a stale session must not KeyError if another coroutine
-    (e.g. ``dispose_context``) removed it between the lookup and the lock."""
+    """The pop of a stale session must not KeyError if another coroutine (e.g."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
     stale = HostSession(
@@ -2140,11 +2135,7 @@ async def test_reaper_loop_propagates_cancelled_from_recover() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Additional coverage: real-stack tests with minimal mocking (external deps only)
-# ---------------------------------------------------------------------------
-# These tests drive the REAL internal methods via a low-level CDP fake at
-# send_raw, so the intermediate layers (cdp_call, _cdp_call, _seed_cookies,
-# _dump_storage_state, etc.) are exercised instead of being replaced.
+# Real-stack tests: CDP faked at send_raw only, so cdp_call/_seed_cookies/... run for real
 # ---------------------------------------------------------------------------
 
 
@@ -2786,12 +2777,7 @@ async def test_touch_and_viewer_real() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Exact CDP payloads, exact log records, exact boundaries
-# ---------------------------------------------------------------------------
-# The tests above prove the shapes that come *back*. These pin what the host
-# actually sends to Chromium (method names, params, the session a call is
-# routed to), what it writes into the wide event, and where each boundary
-# flips — the parts a fake keyed only on method name never checks.
+# Exact CDP payloads sent (method, params, routed session), log records, boundaries
 # ---------------------------------------------------------------------------
 
 
@@ -2823,7 +2809,7 @@ def _session(session_id: str = "s1", context_id: str = "ctx1") -> HostSession:
 
 
 class _Wedged(RuntimeError):
-    """A distinctive exception type so ``error_type=`` is provably the real one."""
+    """A distinctive exception type so error_type= is provably the real one."""
 
 
 # --- cdp_call ---
@@ -3659,17 +3645,12 @@ def test_cdp_cookie_to_storage_state_carries_every_field_across() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Supervision, admission boundaries, and the resource sampler
-# ---------------------------------------------------------------------------
-# The section above pins the CDP conversation. These pin the parts that have no
-# CDP traffic at all: where the memory-pressure and admission-budget boundaries
-# flip, what the crash watcher writes into the wide event, and whether a
-# resource sample actually lands on the session it belongs to.
+# Supervision, admission boundaries, and the resource sampler (no CDP traffic)
 # ---------------------------------------------------------------------------
 
 
 class _FixedSampler:
-    """A ``ProcessSampler`` stand-in that always yields the same reading."""
+    """A ProcessSampler stand-in that always yields the same reading."""
 
     def __init__(self, reading: tuple[float, float] = (10.0, 5.0)) -> None:
         self._reading = reading
@@ -3713,7 +3694,7 @@ def _idle_session(idle_for: float) -> HostSession:
 async def test_reap_idle_pressure_switch_needs_a_real_limit_and_a_strict_excess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each side of ``limit > 0 and used > limit * soft`` decides a session's life."""
+    """Each side of limit > 0 and used > limit * soft decides a session's life."""
     monkeypatch.setattr(settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 300)
     monkeypatch.setattr(settings, "BROWSER_HOST_MEMORY_SOFT_WATERMARK", 0.75)
 
@@ -3796,7 +3777,7 @@ async def test_reserve_slot_refuses_immediately_when_the_wait_budget_is_already_
 def test_a_new_host_has_no_memory_baseline_to_subtract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Before ``start()`` the baseline is zero, so the estimate is the raw usage."""
+    """Before start() the baseline is zero, so the estimate is the raw usage."""
     monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 1)
     monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (100.0, 1000.0))
     host = ChromiumHost()
@@ -3870,7 +3851,7 @@ async def _parked() -> None:
 
 @pytest.mark.unit
 async def test_stop_releases_the_watcher_and_can_be_called_twice() -> None:
-    """``stop()`` cancels the supervisor, swallows its CancelledError, and clears it."""
+    """stop() cancels the supervisor, swallows its CancelledError, and clears it."""
     host = ChromiumHost()
     host._watcher_task = asyncio.create_task(_parked())
 
@@ -3924,10 +3905,10 @@ async def test_read_devtools_port_names_the_missing_user_data_dir() -> None:
 
 
 class _CaseSensitiveDir:
-    """A ``Path`` stand-in whose ``exists()`` is case-sensitive on any filesystem.
+    """A Path stand-in whose exists() is case-sensitive on any filesystem.
 
     macOS's default APFS is case-insensitive, so a real-file test cannot tell
-    ``DevToolsActivePort`` from ``devtoolsactiveport`` — the exact name Chromium
+    DevToolsActivePort from devtoolsactiveport — the exact name Chromium
     writes would go unchecked on a developer machine and only break in the Linux
     container. This makes the lookup behave the way production's filesystem does.
     """
@@ -3950,7 +3931,7 @@ class _CaseSensitiveDir:
 async def test_read_devtools_port_reads_the_exact_file_chromium_writes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Chromium writes ``DevToolsActivePort``; any other spelling never appears."""
+    """Chromium writes DevToolsActivePort; any other spelling never appears."""
     monkeypatch.setattr(chromium, "_CDP_READY_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(chromium, "_CDP_READY_POLL_SECONDS", 0.01)
     monkeypatch.setattr(chromium, "Path", _CaseSensitiveDir)
@@ -4059,11 +4040,7 @@ async def test_note_navigation_finished_samples_only_a_navigation_the_client_ask
 async def test_launch_binds_the_sampler_to_the_engine_pid_not_the_host_process(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``psutil.Process(None)`` is *this* process, so the pid handed over must be real.
-
-    A sampler seeded with ``None`` still samples happily — it just reports the API
-    process's memory as the browser's, which is worse than no metric at all.
-    """
+    """psutil.Process(None) is *this* process, so the pid handed over must be real."""
     host = ChromiumHost()
     host._chromium_path = str(tmp_path / "headless_shell")
     monkeypatch.setattr(settings, "BROWSER_HOST_HEADED", True)

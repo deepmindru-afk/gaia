@@ -1,8 +1,8 @@
 """Contract + finder tests for TodosRepository against real Mongo + Redis.
 
 Todos is the migration's stress test, so this file also exercises the base
-primitives it forced into existence: ``_apply_ops`` (array/positional/$unset),
-``_bulk_set``/``_bulk_delete``, and their user-scope enforcement.
+primitives it forced into existence: _apply_ops (array/positional/$unset),
+_bulk_set/_bulk_delete, and their user-scope enforcement.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from app.models.todo_models import (
 from app.models.trigger_subscription_models import (
     SubscriptionAction,
     SubscriptionResolution,
-    SubscriptionStatus,
     TriggerSubscription,
+    TriggerSubscriptionStatus,
 )
 from tests.contracts.base_contract import UserScopedRepositoryContract
 
@@ -134,8 +134,7 @@ class TestTodosRepository(UserScopedRepositoryContract):
         assert all(t.priority is Priority.HIGH for t in page.items)
 
     async def test_list_page_slices_pages_without_overlap(self, repo, make_doc):
-        """page/per_page walk disjoint windows, and every page reports the
-        unpaginated total for the same filter."""
+        """page/per_page walk disjoint windows, and every page reports the unpaginated total for the same filter."""
         now = datetime.now(UTC)
         for i in range(5):
             await repo.create(
@@ -261,6 +260,28 @@ class TestTodosRepository(UserScopedRepositoryContract):
         active = await repo.list_active_tracked("u", limit=10)
         assert [t.title for t in active] == ["open"]
 
+    async def test_list_active_tracked_is_generation_cached(self, repo, make_doc, raw_collection):
+        """The active-tracked list is served from Redis until a write bumps the generation."""
+        user = "tracked-cache-user"
+        await repo.create(make_doc(user_id=user, labels=[GAIA_TRACKED_LABEL], title="a"))
+        assert [t.title for t in await repo.list_active_tracked(user, limit=10)] == ["a"]
+
+        # Direct insert with no generation bump — the cached list must not see it.
+        await raw_collection.insert_one(
+            make_doc(user_id=user, labels=[GAIA_TRACKED_LABEL], title="b").model_dump(
+                exclude={"id"}
+            )
+        )
+        assert [t.title for t in await repo.list_active_tracked(user, limit=10)] == ["a"]
+
+        # A repo write bumps the generation → the finder re-queries and sees both.
+        await repo.create(make_doc(user_id=user, labels=[GAIA_TRACKED_LABEL], title="c"))
+        assert sorted(t.title for t in await repo.list_active_tracked(user, limit=10)) == [
+            "a",
+            "b",
+            "c",
+        ]
+
     async def test_vfs_partitions_by_tracked_label(self, repo, make_doc):
         cutoff = datetime.now(UTC) - timedelta(days=7)
         await repo.create(make_doc(user_id="u", title="tracked", labels=[GAIA_TRACKED_LABEL]))
@@ -322,7 +343,7 @@ class TestTodosRepository(UserScopedRepositoryContract):
         paused = _subscription(
             resolution=SubscriptionResolution.TRIGGER_ID,
             composio_trigger_ids=["ti_1"],
-            status=SubscriptionStatus.PAUSED,
+            status=TriggerSubscriptionStatus.PAUSED,
         )
         await repo.create(make_doc(user_id="u", title="live", trigger_subscriptions=[live]))
         await repo.create(
@@ -360,14 +381,7 @@ class TestTodosRepository(UserScopedRepositoryContract):
         assert [t.title for t in found] == ["gmail"]
 
     async def test_a_subscription_written_by_update_is_findable(self, repo, make_doc):
-        """Registration writes through ``update``, not ``create``.
-
-        ``_apply_update`` dumps with ``exclude_unset=True``, which recurses into
-        the nested subscription: every field left at its default was dropped
-        before reaching Mongo, so the stored record had no ``status`` — and the
-        dispatch finders match on ``status``. The write succeeded, the document
-        looked plausible, and the watch simply never fired.
-        """
+        """Regression: _apply_update's exclude_unset=True dropped default-valued nested subscription fields (including status), so dispatch finders never matched."""
         doc = await repo.create(make_doc(user_id="u"))
         subscription = _subscription()
 
@@ -381,7 +395,7 @@ class TestTodosRepository(UserScopedRepositoryContract):
         stored = await repo.get(doc.id, user_id="u")
         written = stored.trigger_subscriptions[0]
         assert written.id == subscription.id
-        assert written.status is SubscriptionStatus.ACTIVE
+        assert written.status is TriggerSubscriptionStatus.ACTIVE
         assert written.created_at is not None
 
     async def test_a_trigger_id_subscription_written_by_update_is_findable(self, repo, make_doc):
@@ -412,7 +426,7 @@ class TestTodosRepository(UserScopedRepositoryContract):
         paused = _subscription(
             resolution=SubscriptionResolution.TRIGGER_ID,
             composio_trigger_ids=["ti_1"],
-            status=SubscriptionStatus.PAUSED,
+            status=TriggerSubscriptionStatus.PAUSED,
         )
         await repo.create(make_doc(user_id="u", trigger_subscriptions=[paused]))
 
@@ -487,6 +501,97 @@ class TestTodosRepository(UserScopedRepositoryContract):
         assert untouched is not None and untouched.labels == ["keep"]
 
 
+class TestAppendTextField:
+    """append_text_field is one atomic concatenation - concurrent appends can't clobber each other."""
+
+    @pytest.mark.regression
+    async def test_append_onto_missing_field(self, repo, make_doc):
+        created = await repo.create(make_doc(user_id="u1"))
+
+        updated = await repo.append_text_field(
+            created.id, "u1", field="activity_content", suffix="\n- first"
+        )
+
+        assert updated is not None
+        assert updated.activity_content == "- first"
+
+    @pytest.mark.regression
+    async def test_append_uses_newline_separator(self, repo, make_doc):
+        created = await repo.create(make_doc(user_id="u1", activity_content="- a"))
+
+        updated = await repo.append_text_field(
+            created.id, "u1", field="activity_content", suffix="\n- b"
+        )
+
+        assert updated is not None
+        assert updated.activity_content == "- a\n- b"
+
+    async def test_append_missing_todo_returns_none(self, repo):
+        assert (
+            await repo.append_text_field("0" * 24, "u1", field="log_content", suffix="\n- x")
+            is None
+        )
+
+    async def test_append_is_user_scoped(self, repo, make_doc):
+        created = await repo.create(make_doc(user_id="owner", activity_content="- a"))
+
+        assert (
+            await repo.append_text_field(
+                created.id, "attacker", field="activity_content", suffix="\n- b"
+            )
+            is None
+        )
+        untouched = await repo.get_by_id(created.id)
+        assert untouched is not None and untouched.activity_content == "- a"
+
+
+class TestReplaceNoteFields:
+    """replace_note_fields is compare-and-set: a revision write only lands if nothing else won the race."""
+
+    @pytest.mark.regression
+    async def test_replace_with_matching_revision(self, repo, make_doc):
+        created = await repo.create(make_doc(user_id="u1", canvas_content="v1"))
+        stored = await repo.get(created.id, user_id="u1")
+        assert stored is not None and stored.updated_at is not None
+
+        updated = await repo.replace_note_fields(
+            created.id,
+            "u1",
+            update=TodoUpdate(canvas_content="v2"),
+            expected_updated_at=stored.updated_at,
+        )
+
+        assert updated is not None and updated.canvas_content == "v2"
+
+    @pytest.mark.regression
+    async def test_replace_with_stale_revision_returns_none(self, repo, make_doc):
+        created = await repo.create(make_doc(user_id="u1", canvas_content="v1"))
+
+        assert (
+            await repo.replace_note_fields(
+                created.id,
+                "u1",
+                update=TodoUpdate(canvas_content="v2"),
+                expected_updated_at=datetime(2020, 1, 1, tzinfo=UTC),
+            )
+            is None
+        )
+        untouched = await repo.get_by_id(created.id)
+        assert untouched is not None and untouched.canvas_content == "v1"
+
+    async def test_replace_without_revision_always_writes(self, repo, make_doc):
+        created = await repo.create(make_doc(user_id="u1", canvas_content="v1"))
+
+        updated = await repo.replace_note_fields(
+            created.id,
+            "u1",
+            update=TodoUpdate(canvas_content="v2"),
+            expected_updated_at=None,
+        )
+
+        assert updated is not None and updated.canvas_content == "v2"
+
+
 class TestCrossDomainDeletes:
     """Finders/deletes used by the onboarding + dev-reset cross-domain callers."""
 
@@ -505,3 +610,54 @@ class TestCrossDomainDeletes:
         assert {t.title for t in listed} == {"ob1", "ob2"}
         assert await repo.delete_onboarding_todos("u1") == 2
         assert await repo.list_onboarding_todos("u1", limit=10) == []
+
+
+class TestTrackedShortIdFinder:
+    """find_tracked_by_short_id backs slug-shortid folder resolution."""
+
+    async def test_matches_object_id_suffix_for_tracked_todos_only(self, repo, make_doc):
+        tracked = await repo.create(make_doc(user_id="u1", labels=[GAIA_TRACKED_LABEL]))
+        plain = await repo.create(make_doc(user_id="u1", labels=[]))
+
+        assert [
+            t.id for t in await repo.find_tracked_by_short_id("u1", short_id=tracked.id[-8:])
+        ] == [tracked.id]
+        assert await repo.find_tracked_by_short_id("u1", short_id=plain.id[-8:]) == []
+
+    async def test_is_user_scoped(self, repo, make_doc):
+        mine = await repo.create(make_doc(user_id="u1", labels=[GAIA_TRACKED_LABEL]))
+
+        assert await repo.find_tracked_by_short_id("u2", short_id=mine.id[-8:]) == []
+
+    async def test_regex_metacharacters_in_short_id_are_literal(self, repo, make_doc):
+        await repo.create(make_doc(user_id="u1", labels=[GAIA_TRACKED_LABEL]))
+
+        assert await repo.find_tracked_by_short_id("u1", short_id=".{8}") == []
+
+    @pytest.mark.regression
+    async def test_malformed_short_ids_match_nothing(self, repo, make_doc):
+        tracked = await repo.create(make_doc(user_id="u1", labels=[GAIA_TRACKED_LABEL]))
+        full = tracked.id[-8:]
+        assert [t.id for t in await repo.find_tracked_by_short_id("u1", short_id=full)] == [
+            tracked.id
+        ]
+        for bad in ("", full[-4:], "zzzzzzzz", "ABCDEF12", f"{full}x"):
+            assert await repo.find_tracked_by_short_id("u1", short_id=bad) == []
+
+
+class TestLegacyMigrationScan:
+    """list_tracked_for_legacy_migration pages every todo in _id order, so the sweep can't skip records."""
+
+    @pytest.mark.regression
+    async def test_pages_active_and_completed_in_id_order(self, repo, make_doc):
+        first = await repo.create(make_doc(user_id="u1", labels=[GAIA_TRACKED_LABEL]))
+        await repo.create(make_doc(user_id="u1", labels=[]))
+        last = await repo.create(
+            make_doc(user_id="u1", labels=[GAIA_TRACKED_LABEL], completed=True)
+        )
+
+        page_one = await repo.list_tracked_for_legacy_migration(limit=2)
+        assert [t.id for t in page_one] == sorted([first.id, last.id])[:2]
+        page_two = await repo.list_tracked_for_legacy_migration(limit=2, after_id=page_one[-1].id)
+        assert [t.id for t in page_two] == sorted([first.id, last.id])[2:]
+        assert await repo.list_tracked_for_legacy_migration(limit=2, after_id=last.id) == []

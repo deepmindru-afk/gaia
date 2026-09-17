@@ -70,11 +70,11 @@ def workdir(tmp_path: Path) -> Path:
 
 
 class TestCastTypeArgument:
-    """``typing.cast(T, x)`` returns x unchanged, so mutating T cannot matter.
+    """typing.cast(T, x) returns x unchanged, so mutating T cannot matter.
 
     The single-line form was already handled. The wrapped form — which the
     formatter produces whenever the call is long — was not, because the
-    normalisation runs per line and the type sits on the line after ``cast(``.
+    normalisation runs per line and the type sits on the line after cast(.
     """
 
     def test_a_wrapped_cast_type_argument_is_equivalent(self, workdir: Path) -> None:
@@ -233,8 +233,7 @@ class TestLookupDefaultEquivalence:
 
 
 class TestPopThroughCastWithEarlyExit:
-    """The real stream_utils shape: pop's default flows through a cast, the
-    truthiness test is `if not x: return`, and REAL reads follow the guard."""
+    """The real stream_utils shape: pop's default flows through a cast, guarded by if not x: return."""
 
     _BODY = (
         '    x = cast(T, d.pop("k", {}))\n'
@@ -275,7 +274,8 @@ class TestPopThroughCastWithEarlyExit:
 
 
 class TestLookupThroughAConditionalExpression:
-    """The reasoning extractor's shape: the lookup is one arm of ``a if c else b``
+    """The reasoning extractor's shape: the lookup is one arm of a if c else b.
+
     and only the conditional's value is bound and truth-tested."""
 
     _BODY = (
@@ -311,8 +311,9 @@ class TestLookupThroughAConditionalExpression:
 
 
 class TestTwoLookupsGuardedByOneEarlyExit:
-    """The runner's viewport shape: two getattr defaults, one ``if not w or not h:
-    return`` guard, and real arithmetic on both past it."""
+    """The runner's viewport shape: two getattr defaults, one if not w or not h:.
+
+    return guard, and real arithmetic on both past it."""
 
     _BODY = (
         '    w = getattr(p, "w", 0)\n'
@@ -356,8 +357,8 @@ class TestTwoLookupsGuardedByOneEarlyExit:
 
 
 class TestToolDumpModeLiteral:
-    """A tools-tree ``model_dump(mode="json")`` is guarded by the tool-dump-boundary
-    lint, not by tests: rewriting the literal fails the lint lane of the same gate,
+    """A tools-tree model_dump(mode="json") is guarded by the tool-dump-boundary lint, not by tests: rewriting the literal fails the lint lane of the same gate,.
+
     so it is reported under its own verdict — never as an equivalence."""
 
     _TOOL_REL = "app/agents/tools/sample_tool.py"
@@ -423,10 +424,9 @@ class TestToolDumpModeLiteral:
 
 
 class TestArgumentThatIsTheCalleeDefault:
-    """An argument stating the callee's own default constructs an identical
-    object, so deleting it cannot be killed — while re-valuing it can, and must
-    stay reported. Both directions are pinned, on the real shapes from
-    ``_build_browser_config`` (crawl4ai) and ``seed_for_user`` (fingerprint).
+    """An argument stating the callee's own default constructs an identical object, so deleting it cannot be killed — while re-valuing it can, and must stay reported.
+
+    Both directions are pinned, on the real shapes from _build_browser_config (crawl4ai) and seed_for_user (fingerprint).
     """
 
     _WRAPPED = (
@@ -526,7 +526,8 @@ class TestArgumentThatIsTheCalleeDefault:
 
 
 class TestUrlparseHostDefault:
-    """``urlparse(x).hostname`` is None for every non-URL, so the lookup default
+    """urlparse(x).hostname is None for every non-URL, so the lookup default.
+
     feeding it cannot be observed — but the lookup's KEY still can be."""
 
     _BODY = (
@@ -606,10 +607,7 @@ class TestUrlparseHostDefault:
 
 
 class TestContainerFunctionWithNestedDefs:
-    """A mutated CONTAINER function (tool registrars) holds nested defs; the
-    block split must not truncate its body at the first one — the header alone
-    compares equal to every mutant, and 788 real survivors on one module were
-    once stamped provably equivalent that way."""
+    """A CONTAINER function with nested defs must not have its body truncated at the first def (788 real survivors once hid this way)."""
 
     _ORIG = '    x = d.get("k")\n    def inner():\n        return 1\n    return (x, inner())'
 
@@ -627,9 +625,9 @@ class TestContainerFunctionWithNestedDefs:
 
 
 class TestCacheSetModelArgument:
-    """``redis_cache.set`` dumps through ``TypeAdapter(model or Any)``, so a
-    ``model=C`` beside a value that already IS a ``C(...)`` writes identical
-    bytes either way — but only then. The shape is ``mint_import_token``'s."""
+    """redis_cache.set dumps through TypeAdapter(model or Any), so a model=C beside a value that already IS a C(...) writes identical.
+
+    bytes either way — but only then. The shape is mint_import_token's."""
 
     _WRAPPED = (
         "    redis_cache.set(\n"
@@ -701,3 +699,145 @@ class TestCacheSetModelArgument:
         )
 
         assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
+
+
+class TestResponseHeaderCase:
+    """Response headers are case-insensitive out; request headers to a client are not.
+
+    Starlette lowercases response headers, so re-casing one is equivalent —
+    entitlement's Retry-After survived twice as "real" this way; a client-bound
+    header dict preserves case on the wire. This is an AST rule, so it also
+    rewrites the REAL module, keeping line numbers in sync between the two.
+    """
+
+    @staticmethod
+    def _probe(workdir: Path, call: str, header: str) -> None:
+        """Body laid out so headers= is line 4 in BOTH files."""
+        (workdir / MODULE_REL).write_text(
+            f"def probe():\n    return {call}(\n        first=1,\n"
+            f'        headers={{"{header}": "30"}},\n    )\n'
+        )
+        _write_mutants(
+            workdir,
+            f'    return {call}(\n        first=1,\n        headers={{"{header}": "30"}},\n    )',
+            f'    return {call}(\n        first=1,\n        headers={{"MUTATED": "30"}},\n    )',
+        )
+
+    def test_a_recased_response_header_is_equivalent(self, workdir: Path) -> None:
+        self._probe(workdir, "JSONResponse", "Retry-After")
+        _write_mutants(
+            workdir,
+            "    return JSONResponse(\n        first=1,\n"
+            '        headers={"Retry-After": "30"},\n    )',
+            "    return JSONResponse(\n        first=1,\n"
+            '        headers={"retry-after": "30"},\n    )',
+        )
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() == "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 0
+
+    def test_a_renamed_response_header_is_a_real_survivor(self, workdir: Path) -> None:
+        """Case-only, not merely different — mutmut's XX-wrapped rewrite asks for a header nobody is listening on."""
+        self._probe(workdir, "JSONResponse", "Retry-After")
+        _write_mutants(
+            workdir,
+            "    return JSONResponse(\n        first=1,\n"
+            '        headers={"Retry-After": "30"},\n    )',
+            "    return JSONResponse(\n        first=1,\n"
+            '        headers={"XXRetry-AfterXX": "30"},\n    )',
+        )
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip().startswith("CHANGED"), result.stdout + result.stderr
+        assert result.returncode == 1
+
+    def test_a_recased_outgoing_request_header_is_a_real_survivor(self, workdir: Path) -> None:
+        """Not a Response: a dict handed to an HTTP client is sent as written, case included."""
+        self._probe(workdir, "client.post", "X-Api-Key")
+        _write_mutants(
+            workdir,
+            "    return client.post(\n        first=1,\n"
+            '        headers={"X-Api-Key": "30"},\n    )',
+            "    return client.post(\n        first=1,\n"
+            '        headers={"x-api-key": "30"},\n    )',
+        )
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip().startswith("CHANGED"), result.stdout + result.stderr
+
+
+class TestFalsyAssignmentEquivalence:
+    """A falsy literal read only by truthiness is unobservable.
+
+    Every falsy value takes the same branch; cancelled = False mutated to
+    cancelled = None in subagent_runner is the canonical case.
+    """
+
+    def _write_real_module(self, workdir: Path, body: str) -> None:
+        (workdir / MODULE_REL).write_text(f"def probe(flag):\n{body}\n")
+
+    def test_a_falsy_initial_read_only_by_truthiness_is_equivalent(self, workdir: Path) -> None:
+        body = (
+            "    cancelled = False\n"
+            "    if flag:\n"
+            "        cancelled = True\n"
+            "    if cancelled:\n"
+            "        return 1\n"
+            "    return 0"
+        )
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("cancelled = False", "cancelled = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() == "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 0
+
+    def test_a_truthy_original_surviving_is_still_reported(self, workdir: Path) -> None:
+        body = (
+            "    cancelled = True\n"
+            "    if flag:\n"
+            "        cancelled = False\n"
+            "    if cancelled:\n"
+            "        return 1\n"
+            "    return 0"
+        )
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("cancelled = True", "cancelled = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 1
+
+    def test_a_non_boolean_read_is_still_reported(self, workdir: Path) -> None:
+        body = (
+            "    x = False\n"
+            "    if flag:\n"
+            "        x = True\n"
+            "    if x:\n"
+            "        return 1\n"
+            "    return x == False"
+        )
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("x = False", "x = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 1
+
+    def test_an_augmented_assignment_target_is_still_reported(self, workdir: Path) -> None:
+        """Augmented assignment reads the previous value: False + 1 is 1, None + 1 raises."""
+        body = "    x = False\n    x += 1\n    if x:\n        return 1\n    return 0"
+        self._write_real_module(workdir, body)
+        _write_mutants(workdir, body, body.replace("x = False", "x = None"))
+
+        result = _classify(workdir)
+
+        assert result.stdout.strip() != "EQUIV", result.stdout + result.stderr
+        assert result.returncode == 1

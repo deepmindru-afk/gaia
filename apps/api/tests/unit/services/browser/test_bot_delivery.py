@@ -310,10 +310,9 @@ class TestBotProgressDeliveryStep:
             assert mm.call_args[0][2][0] == "Step 1 · Open"
 
     async def test_empty_goal_uses_snapshot_actions_for_caption(self, delivery):
-        # goal="" forces the caption to fall back to the *snapshot's own*
-        # actions — an arg-drop mutant that passes [] instead of
-        # snapshot.actions here would silently lose the action entirely and
-        # caption to "Step 1" instead of "Step 1 · Clicking".
+        # goal="" forces the caption to fall back to the snapshot's own actions;
+        # an arg-drop mutant passing [] instead of snapshot.actions would caption
+        # "Step 1" instead of "Step 1 · Clicking".
         snap = BrowserStepSnapshot(
             index=1,
             goal="",
@@ -406,9 +405,7 @@ class TestBotProgressDeliveryHandoff:
             )
 
     async def test_credentials_handoff_reassures_the_login_is_saved(self, delivery):
-        """A sign-in handoff tells the user the session will be saved encrypted —
-        it is true (storage_persistence.py) and it is what makes a login worth
-        doing once."""
+        """A sign-in handoff tells the user the session will be saved encrypted —."""
         from app.constants.browser import BROWSER_CREDENTIALS_SAVED_NOTE, SensitiveCategory
 
         snap = BrowserHandoffSnapshot(
@@ -431,10 +428,7 @@ class TestBotProgressDeliveryHandoff:
             assert BROWSER_CREDENTIALS_SAVED_NOTE in mp.call_args[0][2][0]
 
     async def test_credentials_note_is_appended_not_substituted(self, delivery):
-        """The saved-login note is an addition to the takeover request, never a
-        replacement — a sign-in handoff that dropped the reason and the
-        done/stop instructions would leave the user with reassurance and no
-        idea what to do."""
+        """The saved-login note is an addition to the takeover request, never a."""
         from app.constants.browser import BROWSER_CREDENTIALS_SAVED_NOTE, SensitiveCategory
 
         snap = BrowserHandoffSnapshot(
@@ -463,8 +457,7 @@ class TestBotProgressDeliveryHandoff:
             )
 
     async def test_non_credentials_handoff_omits_the_saved_note(self, delivery):
-        """A payment handoff must NOT promise to store anything — nothing is saved
-        for a payment, so the note would be a false reassurance."""
+        """A payment handoff must NOT promise to store anything — nothing is saved."""
         from app.constants.browser import BROWSER_CREDENTIALS_SAVED_NOTE, SensitiveCategory
 
         snap = BrowserHandoffSnapshot(

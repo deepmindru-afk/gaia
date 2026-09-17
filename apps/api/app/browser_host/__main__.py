@@ -1,4 +1,4 @@
-"""Entrypoint: ``python -m app.browser_host`` runs the browser-host service."""
+"""Entrypoint: python -m app.browser_host runs the browser-host service."""
 
 from __future__ import annotations
 

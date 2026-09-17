@@ -1,16 +1,16 @@
 """Application settings: load from env, validate, and expose typed access.
 
 Flow
-- `.env` loaded first, then external secrets via `inject_infisical_secrets()`.
-- Pick settings class by `ENV` (production/development).
-- Pydantic builds the object; `settings_validator` logs missing groups.
-- `get_settings()` memoizes the instance for fast imports.
+- .env loaded first, then external secrets via inject_infisical_secrets().
+- Pick settings class by ENV (production/development).
+- Pydantic builds the object; settings_validator logs missing groups.
+- get_settings() memoizes the instance for fast imports.
 
 Add env vars
-1) Add fields to `CommonSettings`/`ProductionSettings`/`DevelopmentSettings`.
+1) Add fields to CommonSettings/ProductionSettings/DevelopmentSettings.
 2) Use Optional[...] in dev if it’s not required there.
-3) If you want warnings, register a group in `config/settings_validator.py`.
-4) Read values via `from app.config.settings import settings`.
+3) If you want warnings, register a group in config/settings_validator.py.
+4) Read values via from app.config.settings import settings.
 """
 
 from functools import lru_cache
@@ -79,28 +79,20 @@ class BaseAppSettings(BaseSettings):
 class CommonSettings(BaseAppSettings):
     """Common settings required for all environments."""
 
-    # ----------------------------------------------
-    # Dev-only overrides — declared on the COMMON base so production code can
-    # safely read them (app/agents/llm/client.py evaluates GAIA_SIM_MODE in
-    # decorator args at import time; an AttributeError there crashes prod boot).
-    # get_settings() refuses to start in production when either is enabled.
-    # ----------------------------------------------
-    # Sim mode: every LLM factory resolves to the local scripted stub
-    # (tools/llm-stub) for deterministic, credential-free runs. `mise dev --sim`.
-    GAIA_SIM_MODE: bool = False
+    # Dev-only overrides, declared on the COMMON base so production code can
+    # safely read them (app/agents/llm/client.py evaluates GAIA_SIM_MODE at
+    # import time). get_settings() refuses to start in production if set.
+    GAIA_SIM_MODE: bool = False  # every LLM factory resolves to the local scripted stub
     # Where the scripted stub lives when sim mode is on; consumed only by
     # _sim_llm (defaults to SIM_STUB_BASE_URL when unset).
     OPENROUTER_BASE_URL: str | None = None
-    # Comma-separated OpenRouter provider slugs (tag form, e.g. "coreweave/fp8")
-    # to PREFER for the default-model lane — fallbacks stay enabled, so an
-    # outage degrades to the normal rotation. Empty (the default) leaves
-    # routing untouched. Set from the per-provider cache-hit table, not by
-    # guesswork; see _provider_order_kwargs in agents/llm/client.py.
+    # Comma-separated OpenRouter provider slugs to PREFER for the default-model
+    # lane — fallbacks stay enabled. Set from the per-provider cache-hit table;
+    # see _provider_order_kwargs in agents/llm/client.py.
     OPENROUTER_PROVIDER_ORDER: str | None = None
-    # Dev-only: lift every per-user rate limit (chat messages, uploads, ...).
-    # Eval harnesses drive thousands of legitimate requests per day against a
-    # free-plan dev user; without this they 429 at the free tier's 200/day.
-    # get_settings() refuses production boot when set (same guard as sim mode).
+    # Dev-only: lift every per-user rate limit. Eval harnesses drive thousands
+    # of requests/day against a free-plan dev user, which 429s at 200/day
+    # otherwise. get_settings() refuses production boot when set.
     DEV_UNLIMITED_RATE_LIMITS: bool = False
 
     # ----------------------------------------------
@@ -130,11 +122,12 @@ class CommonSettings(BaseAppSettings):
     def _strip_trailing_slash(cls, v: str) -> str:
         return v.rstrip("/") if isinstance(v, str) else v
 
-    # ----------------------------------------------
-    # Outbound Email
-    # ----------------------------------------------
     # Key into the provider registry in app/services/email/providers.
     EMAIL_PROVIDER: str = "resend"
+
+    # Optional coupon surfaced alongside the checkout link in every 402
+    # "subscription required" response. Unset means no code is advertised.
+    PAYWALL_DISCOUNT_CODE: str | None = None
 
     # ----------------------------------------------
     # Observability
@@ -158,29 +151,14 @@ class CommonSettings(BaseAppSettings):
     ENABLE_PROFILING: bool = False  # Must be explicitly enabled via .env
     PROFILING_SAMPLE_RATE: float = 1.0  # 100% of requests by default
 
-    # ----------------------------------------------
-    # ARQ worker
-    # ----------------------------------------------
-    # Concurrent jobs PER WORKER. The 10 is sized for a single worker (mean task
-    # 10.9s at 0.72 tasks/s needs ~8 concurrent by Little's Law); being a
-    # per-process cap, M workers give a fleet ceiling of 10 x M — which is not
-    # more throughput, just more simultaneous load on shared limits. Scaling the
-    # worker out therefore means scaling this DOWN (~ceil(8/M)), which is why it
-    # is configurable rather than a literal.
-    #
-    # Postgres is the wall: each worker opens SQLAlchemy's pool (pool_size=5 +
-    # max_overflow=10) PLUS the LangGraph checkpointer pool (max_size=20) = 35
-    # connections, against a default max_connections of 100. Raise
-    # max_connections before adding the third worker, or connections get refused.
+    # Concurrent jobs PER WORKER; sized via Little's Law (mean task 10.9s at
+    # 0.72 tasks/s needs ~8). Fleet ceiling is 10 x M workers — scale this DOWN
+    # (~ceil(8/M)) per worker added, since pools sum to 35 conns vs max 100.
     ARQ_MAX_JOBS: int = 10
 
-    # ----------------------------------------------
-    # Crawl4AI (headless-browser scraping)
-    # ----------------------------------------------
-    # Process-wide cap on concurrent Chromium instances (see constants/search.py
-    # for context). Falls back to the default on non-integer input; clamped to
-    # at least ``CRAWL4AI_MIN_MAX_BROWSERS`` so a misconfigured 0/negative value
-    # can't deadlock all crawler access.
+    # Process-wide cap on concurrent Chromium instances (see constants/search.py).
+    # Falls back to the default on non-integer input; clamped to at least
+    # CRAWL4AI_MIN_MAX_BROWSERS so a 0/negative value can't deadlock all crawler access.
     CRAWL4AI_MAX_BROWSERS: int = CRAWL4AI_DEFAULT_MAX_BROWSERS
 
     @field_validator("CRAWL4AI_MAX_BROWSERS", mode="before")
@@ -196,82 +174,39 @@ class CommonSettings(BaseAppSettings):
 
     # ----------------------------------------------
     # Browser-Use (autonomous browser automation)
-    # Master switch. Opt-in: new deployments are browser-disabled by default so
-    # the capability only turns on where BROWSER_HOST_URL is configured. When
-    # false the tool is registered but reports unavailable instead of spinning
-    # up a browser.
-    BROWSER_USE_ENABLED: bool = False
+    # ----------------------------------------------
+    BROWSER_USE_ENABLED: bool = False  # opt-in; off = tool registered but reports unavailable
 
-    # LLM that drives the browser agent — decoupled from the chat harness so
-    # browser work uses a deliberately-chosen, vision-capable model. Provider:
-    # openai | anthropic | google | openrouter | deepseek. The key is sourced
-    # from the matching GAIA setting (OPENAI_API_KEY / GOOGLE_API_KEY /
-    # OPENROUTER_API_KEY; anthropic and deepseek have no GAIA-wide key) unless
-    # BROWSER_USE_LLM_API_KEY is set. Defaults to a cheap, vision-capable model
-    # to keep per-task token cost low.
-    #
-    # The default below is manually kept equal to VISION_MODEL_PROVIDER /
-    # VISION_MODEL_NAME in app/constants/llm.py (currently gemini / the model
-    # DEFAULT_GEMINI_MODEL_NAME points at) rather than importing that constant:
-    # app.constants.llm imports app.models.models_models -> app.db.repositories.base
-    # -> app.db.redis -> app.config.settings, a real circular import back into this
-    # module (verified — `settings` is not yet bound in this file when that chain
-    # runs). Breaking it means extracting the vision-model constants into a module
-    # with no import path back to settings; that's a change to files outside this
-    # component's scope, so it's called out here rather than made silently.
+    # Browser-agent LLM, decoupled from the chat harness. Provider: openai | anthropic |
+    # google | openrouter | deepseek; key falls back to the matching GAIA *_API_KEY setting.
+    # Default is kept equal to VISION_MODEL_* in app/constants/llm.py by hand (import is circular).
     BROWSER_USE_LLM_PROVIDER: str = "google"
     BROWSER_USE_LLM_MODEL: str = "gemini-3.1-flash-lite"
     BROWSER_USE_LLM_API_KEY: str | None = None
-    # Browser-Use "flash mode" strips thinking / evaluation_previous_goal /
-    # next_goal / plan from every step's output schema, leaving memory + action.
-    # The agent still reasons and still carries state; it stops narrating.
-    #
-    # On by default, on measured evidence (2026-08-27, zai/glm-5.3-flash over
-    # Merge Gateway, 7-field form fill graded against the submitted page's own
-    # query string rather than the agent's claim): 2/2 runs correct in both
-    # modes, 5/5 fields both modes, and ~26% fewer prompt tokens with it on
-    # (27k vs 36k median). Per-step cost roughly halves (~$0.00011 vs
-    # ~$0.00022) because the stripped fields are echoed back as context on
-    # every later step.
-    #
-    # The old objection — that captions degrade to "Clicking" — no longer
-    # holds: when next_goal is absent the caption is built from the action plus
-    # the target element's own DOM text ("Clicking \"Add to cart\""), which is
-    # grounded in the page instead of in the model's stated intent. On a
-    # reasoning model the schema's `thinking` field is also near-redundant with
-    # the provider's own reasoning channel, so it is paid-for duplication.
-    #
-    # NOT measured: recovery-heavy tasks (stale element, failed click,
-    # unexpected modal), where evaluation_previous_goal is the agent's
-    # self-check. Turn this off if such tasks regress.
     # Dev-only: suffixes every ChromaDB collection name so parallel worktrees,
     # which share one local Chroma, stop deleting each other's indexed tools.
     # Empty in production (dedicated Chroma); set per worktree by `mise run wt:env`.
     CHROMA_COLLECTION_NAMESPACE: str = ""
+    # Flash mode strips thinking/evaluation_previous_goal/next_goal/plan from each step's
+    # output schema. Measured 2026-08-27 (glm-5.3-flash, 7-field form): same accuracy, ~26%
+    # fewer prompt tokens (27k vs 36k median). Not measured on recovery-heavy tasks.
     BROWSER_USE_FLASH_MODE: bool = True
-    # Cloudflare R2 (S3-compatible, free tier) — the fast edge store for browser step
-    # screenshots. Cloudinary stays the durable store for arbitrary user files. The S3
-    # endpoint is derived from the account id; the public base URL is the bucket's
-    # r2.dev managed domain (use a custom domain in prod — r2.dev is rate-limited).
-    # Optional: any unset → screenshots fall back to inline data URLs. Injected from
-    # Infisical by name in prod; set in apps/api/.env for dev.
+    # Cloudflare R2 (S3-compatible) edge store for browser step screenshots; Cloudinary stays
+    # the durable store for user files. Optional: any unset -> inline data URLs. Public base
+    # URL is the bucket's r2.dev domain (rate-limited; use a custom domain in prod).
     CLOUDFLARE_ACCOUNT_ID: str | None = None
     R2_ACCESS_KEY_ID: str | None = None
     R2_SECRET_ACCESS_KEY: str | None = None
     R2_BUCKET: str = "gaia-browser-shots"
     R2_PUBLIC_BASE_URL: str | None = None
     BROWSER_USE_LLM_BASE_URL: str | None = None
-    # Some OpenAI-wire endpoints route to vendors with no `json_schema` response
-    # format (Merge Gateway + zai/glm-* answers 400 "no vendor that supports the
-    # requested capabilities"). Browser-Use can instead put the schema in the
-    # system prompt and parse plain-text JSON back — set this for those lanes.
+    # Some OpenAI-wire endpoints have no json_schema response format (Merge Gateway +
+    # zai/glm-* answers 400 "no vendor that supports the requested capabilities"); set this
+    # to put the schema in the system prompt and parse plain-text JSON back instead.
     BROWSER_USE_LLM_SCHEMA_IN_PROMPT: bool = False
-    # Reasoning budget for a thinking model on the browser lane. Browser-Use only
-    # forwards `reasoning_effort` for models whose NAME matches its hardcoded
-    # OpenAI reasoning list, so a thinking model it doesn't recognise (zai/glm-*)
-    # silently thinks unthrottled — measured at ~1.2k thinking chars and 8.6s per
-    # step, versus 1.8s at "low". Set this to have the lane's own model treated as
-    # a reasoning model so the effort actually reaches the wire.
+    # Browser-Use only forwards reasoning_effort for model NAMES on its hardcoded OpenAI list,
+    # so an unrecognised thinking model (zai/glm-*) thinks unthrottled: ~1.2k thinking chars
+    # and 8.6s/step vs 1.8s at "low". Set this to force the lane's model onto that path.
     BROWSER_USE_LLM_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] | None = None
     # Vision (screenshots to the model) is the biggest cost driver — keep it on
     # for reliability, but a deployment optimizing cost can disable it.
@@ -281,11 +216,9 @@ class CommonSettings(BaseAppSettings):
     BROWSER_USE_MAX_STEPS: int = 25
     BROWSER_USE_MAX_ACTIONS_PER_STEP: int = 5
     BROWSER_USE_TASK_TIMEOUT_SECONDS: int = 600
-    # How long a paused run waits for the human to finish a handoff step. People
-    # get pulled away mid-login (find the 2FA phone, dig out a card), so this is
-    # deliberately generous — the paused session is kept alive the whole time by
-    # the keepalive in session.py, and it costs nothing while idle. It bounds
-    # only the wait; the user resolving sooner resumes immediately.
+    # Wait for the human to finish a handoff step (2FA phone, card). Deliberately generous:
+    # the paused session is kept alive by the keepalive in session.py and costs nothing
+    # idle. Bounds only the wait; resolving sooner resumes immediately.
     BROWSER_USE_HANDOFF_TIMEOUT_SECONDS: int = 1800
     # Active work budget for a single step. The effective per-step timeout adds the
     # handoff timeout on top, so a step that pauses for a human live-view takeover
@@ -298,10 +231,9 @@ class CommonSettings(BaseAppSettings):
     # hand a CAPTCHA to the user, who solves it in live-view before it continues.
     BROWSER_USE_SOLVE_CAPTCHA: bool = True
 
-    # Mid-run sensitive-action policy. Per category: "handoff" (pause → user
-    # completes it in live-view → continue), "proceed" (agent does it), "abort".
-    # Safe defaults hand off. BROWSER_USE_AUTONOMOUS_SENSITIVE=true lets a user
-    # who has set up an agent-usable payment method skip handoffs entirely.
+    # Per-category policy for mid-run sensitive actions: "handoff" (pause, user completes it
+    # in live-view, continue), "proceed" or "abort". BROWSER_USE_AUTONOMOUS_SENSITIVE=true
+    # skips handoffs entirely for a user with an agent-usable payment method set up.
     BROWSER_USE_AUTONOMOUS_SENSITIVE: bool = False
     BROWSER_USE_PAYMENT_STRATEGY: str = "handoff"
     BROWSER_USE_CREDENTIALS_STRATEGY: str = "handoff"
@@ -310,10 +242,9 @@ class CommonSettings(BaseAppSettings):
     # ----------------------------------------------
     # Browser host (gaia-browser-host — our own low-RAM Chromium host)
     # ----------------------------------------------
-    # One long-lived Chromium, one isolated browser context per session, a
-    # per-session CDP-filtering proxy, and an authenticated screencast live view.
-    # The API reaches the host by service name on the internal overlay network;
-    # the host port is never published. Locally override to http://localhost:8930.
+
+    # Reached by service name on the internal overlay network; the host port is never
+    # published. Locally override to http://localhost:8930.
     BROWSER_HOST_URL: str = "http://browser-host:8930"  # NOSONAR python:S5332 — internal docker service, plain HTTP on the private network by design (TLS terminates at the edge)
     # Port the host binds inside its container.
     BROWSER_HOST_PORT: int = 8930
@@ -321,23 +252,17 @@ class CommonSettings(BaseAppSettings):
     # container on the internal overlay network and this port is never published; a
     # value from settings also makes the bind configurable for local runs.
     BROWSER_HOST_BIND: str = "0.0.0.0"  # noqa: S104  # nosec B104 — internal overlay only, port never published
-    # Shared secret the API/worker must present to every host endpoint (REST header
-    # X-Host-Key, WS query param ?hk=). Required in production: the host renders
-    # attacker-controlled pages in the SAME container, so a page could otherwise
-    # fetch() the control plane on localhost (a cross-tenant DoS / control surface);
-    # the key must never be reachable by page JS. Generate with: openssl rand -hex 32
+    # Shared secret for every host endpoint (REST header X-Host-Key, WS query param ?hk=).
+    # Required in production: the host renders attacker-controlled pages in the SAME
+    # container, so page JS must never reach the control plane. Generate: openssl rand -hex 32
     BROWSER_HOST_KEY: str | None = None
     # Absolute anti-runaway backstop on concurrent contexts, NOT the real gate:
     # admission is memory-based (see the watermarks below), so this only guards
     # against a pathological leak spawning unbounded contexts. 0 disables it.
     BROWSER_HOST_MAX_SESSIONS: int = 200
-    # Memory-based admission. The single engine holds every session, so the real
-    # limit is the container's memory, not a session count. Admission reads the
-    # cgroup's used/limit (docker `mem_limit`) and admits while a new session's
-    # projected cost keeps usage under HIGH_WATERMARK; between SOFT and HIGH the
-    # reaper sheds idle sessions faster and creates back off before refusing.
-    # LIMIT_MB pins the budget when the cgroup is unreadable (dev/mac) or to cap
-    # below the container limit; None autodetects.
+    # Memory-based admission: reads the cgroup used/limit and admits while the new session's
+    # projected cost keeps usage under HIGH_WATERMARK; between SOFT and HIGH the reaper sheds
+    # idle sessions faster. LIMIT_MB pins the budget when the cgroup is unreadable (dev/mac).
     BROWSER_HOST_MEMORY_LIMIT_MB: int | None = None
     BROWSER_HOST_MEMORY_HIGH_WATERMARK: float = 0.85
     BROWSER_HOST_MEMORY_SOFT_WATERMARK: float = 0.75
@@ -357,10 +282,9 @@ class CommonSettings(BaseAppSettings):
     # Per-renderer V8 heap ceiling. One runaway page must not be able to eat the
     # whole host's budget and OOM every other user's session with it.
     BROWSER_HOST_JS_HEAP_MB: int = 512
-    # Which engine the host launches. Obscura (a low-RAM Rust CDP server) is the
-    # default; Chromium (headless-shell) stays as the flag-selectable break-glass
-    # engine over the same CDP plane. Obscura is baked into the gaia image with
-    # OBSCURA_BIN pointing at it; set BROWSER_ENGINE=chromium to fall back.
+    # Obscura (low-RAM Rust CDP server) is the default and is baked into the gaia image with
+    # OBSCURA_BIN pointing at it; set BROWSER_ENGINE=chromium to fall back to headless-shell
+    # over the same CDP plane.
     BROWSER_ENGINE: BrowserEngine = BrowserEngine.OBSCURA
     # Path to the Obscura binary; required when BROWSER_ENGINE=obscura (the gaia
     # image sets it via ENV). Missing it fails the host launch loud, no fallback.
@@ -368,11 +292,9 @@ class CommonSettings(BaseAppSettings):
     # Port Obscura's CDP server binds. Fixed (not ephemeral) because Obscura only
     # publishes its /json/version — and thus its ws endpoint — at a port we name.
     OBSCURA_PORT: int = 9222
-    # Base port for the dedicated Obscura the crawl4ai engine drives (deep
-    # research / page fetch). Distinct from OBSCURA_PORT so the crawl engine and
-    # interactive host never collide; the manager probes upward from here if the
-    # base is taken. In the high range on purpose — the common debug ports
-    # (9222/9223) collide with a developer's local Chrome.
+    # Base port for the crawl4ai engine's dedicated Obscura; distinct from OBSCURA_PORT and
+    # probed upward when taken. High range on purpose: 9222/9223 collide with a developer's
+    # local Chrome.
     OBSCURA_CRAWL_PORT: int = 39222
 
     # Fernet key (32 url-safe base64 bytes) encrypting each user's saved browser
@@ -385,19 +307,18 @@ class CommonSettings(BaseAppSettings):
     # When false, a session's login is never persisted or restored (per-deployment
     # opt-out of "log in once, reuse next time").
     BROWSER_PERSIST_LOGINS: bool = True
-    # Public base URL fronting the authenticated live-view route (served at
-    # ``/live/{session_id}``). Set to e.g. https://browser.heygaia.io in prod, where
-    # a vhost reverse-proxies to THIS api service (never the browser host). When
-    # unset, live-view links fall back to ``HOST`` so local dev works unchanged.
+    # Public base URL fronting the authenticated /live/{session_id} route, e.g.
+    # https://browser.heygaia.io, whose vhost reverse-proxies to THIS api service (never the
+    # browser host). Unset falls back to HOST.
     BROWSER_LIVE_VIEW_BASE_URL: str | None = None
 
     # ----------------------------------------------
     # Dev-only LLM overrides (honored only when ENV=development)
     # ----------------------------------------------
-    # Custom OpenRouter/OpenAI-compatible endpoint for cheap bulk dev/test usage
-    # (e.g. Nous Research's discounted DeepSeek lane). All three must be set; the
-    # "custom" provider is registered exclusively in development (see
-    # register_llm_providers), so these have no effect in production.
+
+    # Custom OpenRouter/OpenAI-compatible endpoint for cheap bulk dev/test usage. All three
+    # must be set; the "custom" provider is registered only in development
+    # (register_llm_providers), so these have no effect in production.
     DEV_LLM_BASE_URL: str | None = None
     DEV_LLM_API_KEY: str | None = None
     DEV_LLM_MODEL: str | None = None
@@ -406,23 +327,13 @@ class CommonSettings(BaseAppSettings):
     # the endpoint above). An explicit selector choice still wins.
     DEV_DEFAULT_MODEL: str | None = None
 
-    # ----------------------------------------------
-    # Workflows
-    # ----------------------------------------------
-    # Delete a workflow conversation's LangGraph checkpoint threads before every
-    # run, so run N stops replaying runs 1..N-1 out of Postgres (one production
-    # workflow held 1.39 MB of message state across three threads). The previous
-    # run reaches the next one as a recorded trace instead. Kill switch: set to
-    # false to fall back to the replaying behaviour without a deploy.
+    # Deletes a workflow conversation's LangGraph checkpoint threads before every
+    # run, so run N stops replaying runs 1..N-1 (one production workflow held
+    # 1.39 MB across three threads). Kill switch: set false to disable without a deploy.
     WORKFLOW_THREAD_RESET_ENABLED: bool = True
 
-    # ----------------------------------------------
-    # GitHub Integration (for Skill Discovery)
-    # ----------------------------------------------
-    # Optional: Get a token at https://github.com/settings/tokens
-    # - No scopes needed (just public repo read)
-    # - Gives 5,000 API requests/hour vs 60/hour without token
-    # - Used for discovering and installing skills from GitHub
+    # Optional GitHub token (no scopes needed): 5,000 API requests/hour vs
+    # 60/hour without, for discovering and installing skills from GitHub.
     GITHUB_TOKEN: str | None = None
 
     # check_fields=False: E2B_DOMAIN is declared per-environment in the subclasses.
@@ -540,10 +451,8 @@ class ProductionSettings(CommonSettings):
     COMPOSIO_KEY: str
     FIRECRAWL_API_KEY: str
 
-    # Search providers (multi-provider failover; all optional — the chain skips
-    # any provider whose key/URL is unset). Exa is the primary free workhorse
-    # (20k/mo free); SearXNG is the self-hosted unlimited floor that can never
-    # bill us; Tavily/Brave are budget-capped boosters.
+    # Multi-provider failover, all optional. Exa is the primary free workhorse
+    # (20k/mo free); SearXNG is the self-hosted unlimited floor; Brave is a budget-capped booster.
     EXA_API_KEY: str | None = None
     BRAVE_API_KEY: str | None = None
     SEARXNG_BASE_URL: str | None = None
@@ -558,10 +467,9 @@ class ProductionSettings(CommonSettings):
     ELEVENLABS_TTS_MODEL: str
     GAIA_BACKEND_URL: str
     ELEVENLABS_VOICE_ID: str
-    # URL the SHARED voice agent should use to reach THIS backend, embedded
-    # per-room in the LiveKit participant metadata. Unset (default) keeps the
-    # agent on its boot-time GAIA_BACKEND_URL — set it in multi-backend
-    # deployments like staging previews (one agent, many preview APIs).
+    # URL the SHARED voice agent uses to reach THIS backend. Unset keeps the
+    # agent on its boot-time GAIA_BACKEND_URL — set in multi-backend deployments
+    # (one agent, many preview APIs).
     VOICE_AGENT_BACKEND_URL: str | None = None
 
     # ----------------------------------------------
@@ -581,14 +489,9 @@ class ProductionSettings(CommonSettings):
     E2B_API_KEY: str
     E2B_TEMPLATE_ID: str  # gaia-coder template ID (run scripts/build_e2b_template.py)
     E2B_DOMAIN: str
-    # Idle window before a sandbox is paused. A paused sandbox must resume +
-    # re-mount JuiceFS on the next turn, and the cold JuiceFS mount is the single
-    # most expensive step in an acquire (the metadata engine is remote). At 60s,
-    # any think-gap between turns paused the sandbox and made the *next* `bash`
-    # pay a full remount. 300s keeps the sandbox warm across normal conversation
-    # gaps so back-to-back turns reuse a live mount. Trade-off: more concurrently
-    # live sandboxes vs the E2B quota — the scalable fix is the warm pool
-    # (E2B_WARM_POOL_TARGET_RATIO), still a follow-up.
+    # A paused sandbox pays a full JuiceFS remount on resume. 60s paused too
+    # eagerly between turns; trade-off vs live-sandbox count is the E2B quota
+    # (scalable fix: the warm pool, E2B_WARM_POOL_TARGET_RATIO).
     E2B_SANDBOX_IDLE_PAUSE_SECONDS: int = 300
     E2B_DEFAULT_BASH_TIMEOUT: int = 120
     E2B_SANDBOX_EVICT_DAYS: int = 14
@@ -606,17 +509,14 @@ class ProductionSettings(CommonSettings):
     R2_BUCKET: str  # e.g. "gaia-workspaces"
     R2_ACCESS_KEY: str
     R2_SECRET_KEY: str
-    # Templated metadata URL: contains {shard} substituted at mount time.
-    # Redis (prod): "rediss://:pass@jfs-meta.heygaia.io:6380/{shard}" — {shard} is
-    # the DB number. Postgres: "postgres://juicefs:pass@host:5432/gaia_juicefs_{shard}".
-    # The password is split out into META_PASSWORD before reaching the sandbox
-    # (see _split_meta_url in services/sandbox/lifecycle.py).
+    # Templated metadata URL, {shard} substituted at mount time, e.g.
+    # "rediss://:pass@jfs-meta.heygaia.io:6380/{shard}". Password is split out
+    # into META_PASSWORD before reaching the sandbox (_split_meta_url in services/sandbox/lifecycle.py).
     JUICEFS_META_URL_TEMPLATE: str
     JUICEFS_NUM_SHARDS: int = 1  # Phase 1: 1, Phase 2: 16
-    # JuiceFS RSA-4096 private key in PEM form. Whole multi-line PEM stored as a
-    # single env var / Infisical secret; the entrypoint writes it to disk on
-    # boot so `juicefs format / mount` can pick it up. Optional — leave empty
-    # to skip client-side encryption (R2 at-rest encryption still applies).
+    # JuiceFS RSA-4096 private key (PEM), written to disk by the entrypoint on
+    # boot. Optional — leave empty to skip client-side encryption (R2 at-rest
+    # encryption still applies).
     JFS_ENCRYPTION_KEY: str | None = None
     JUICEFS_HOST_MOUNT_PATH: str = "/mnt/jfs"  # API container's sidecar mount
     # JuiceFS bootstrap supervisor (tune per env without a code change):
@@ -733,9 +633,6 @@ class DevelopmentSettings(CommonSettings):
     GOOGLE_USERINFO_URL: str = "https://www.googleapis.com/oauth2/v2/userinfo"
     GOOGLE_TOKEN_URL: str = "https://oauth2.googleapis.com/token"
 
-    # ----------------------------------------------
-    # External API Integration Keys
-    # ----------------------------------------------
     # Search & Data Services
     TAVILY_API_KEY: str | None = None
     LLAMA_INDEX_KEY: str | None = None
@@ -797,14 +694,9 @@ class DevelopmentSettings(CommonSettings):
     E2B_API_KEY: str | None = None
     E2B_TEMPLATE_ID: str | None = None
     E2B_DOMAIN: str | None = None
-    # Idle window before a sandbox is paused. A paused sandbox must resume +
-    # re-mount JuiceFS on the next turn, and the cold JuiceFS mount is the single
-    # most expensive step in an acquire (the metadata engine is remote). At 60s,
-    # any think-gap between turns paused the sandbox and made the *next* `bash`
-    # pay a full remount. 300s keeps the sandbox warm across normal conversation
-    # gaps so back-to-back turns reuse a live mount. Trade-off: more concurrently
-    # live sandboxes vs the E2B quota — the scalable fix is the warm pool
-    # (E2B_WARM_POOL_TARGET_RATIO), still a follow-up.
+    # A paused sandbox pays a full JuiceFS remount on resume. 60s paused too
+    # eagerly between turns; trade-off vs live-sandbox count is the E2B quota
+    # (scalable fix: the warm pool, E2B_WARM_POOL_TARGET_RATIO).
     E2B_SANDBOX_IDLE_PAUSE_SECONDS: int = 300
     E2B_DEFAULT_BASH_TIMEOUT: int = 120
     E2B_SANDBOX_EVICT_DAYS: int = 14
@@ -868,10 +760,8 @@ class DevelopmentSettings(CommonSettings):
     # ----------------------------------------------
     DEBUG_EMAIL_PROCESSING: bool = False
 
-    # Development-only auth bypass: every request is authenticated as this
-    # user (must exist in Mongo) with no WorkOS session, so agents and tools
-    # can drive the app end to end. get_settings() refuses to start in
-    # production when this is set.
+    # Every request authenticates as this Mongo user with no WorkOS session;
+    # get_settings() refuses to start in production when this is set.
     DEV_AUTH_BYPASS_EMAIL: str | None = None
 
     # GAIA_SIM_MODE and OPENROUTER_BASE_URL are declared on CommonSettings (the
@@ -943,21 +833,11 @@ def _ensure_infisical_loaded() -> None:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Any:  # noqa: ANN401 -- framework contract
-    """
-    Get cached settings instance based on environment.
+    """Return the cached settings instance for the current environment.
 
-    This function uses LRU cache to ensure settings are instantiated only once,
-    avoiding expensive Pydantic validation on every import.
-
-    The return stays `Any`. Measured, don't re-litigate: annotating it
-    `-> CommonSettings` produced **129 new mypy errors** — the concrete keys live
-    on ProductionSettings/DevelopmentSettings or arrive via `extra="allow"`, so
-    every `settings.TAVILY_API_KEY` / `R2_*` / `JUICEFS_*` read across the
-    storage, search-provider and sandbox layers becomes `has no attribute`.
-    Narrowing means hoisting those declarations onto the common base, which is a
-    settings-model redesign, not a typing fix (Type Safety item 14). The same run
-    showed `from_env(**kwargs: object)` adds 4 more: `cls(**kwargs)` feeds
-    per-field types (`ENV: Literal[...]`, `SHOW_MISSING_KEY_WARNINGS: bool`).
+    The return stays Any: narrowing to CommonSettings produced 129 mypy errors
+    plus 4 more from from_env(**kwargs) — fixing that is a settings-model
+    redesign, not a typing fix.
     """
     log.info(f"{LogTag.STARTUP} Starting settings initialization...")
 
@@ -971,9 +851,7 @@ def get_settings() -> Any:  # noqa: ANN401 -- framework contract
         if env == "development":
             settings_obj = DevelopmentSettings.from_env()
         else:
-            # Hard block, not a warning: the dev auth bypass authenticates
-            # every request as a fixed user, so production must refuse to
-            # boot rather than run with it. Checked via os.getenv because
+            # Hard block, not a warning — checked via os.getenv because
             # from_env() downgrades pydantic validation errors to warnings.
             if os.getenv("DEV_AUTH_BYPASS_EMAIL"):
                 raise RuntimeError(
@@ -991,9 +869,8 @@ def get_settings() -> Any:  # noqa: ANN401 -- framework contract
                     "DEV_UNLIMITED_RATE_LIMITS is set but ENV=production — "
                     "lifting rate limits in production is never allowed."
                 )
-            # Same policy as the auth bypass: the OpenRouter base-URL override
-            # redirects the model to a local scripted stub, so production must
-            # refuse to boot rather than run against it.
+            # Same policy as the auth bypass: OPENROUTER_BASE_URL redirects the
+            # model to a local scripted stub, which must never run in production.
             if os.getenv("OPENROUTER_BASE_URL"):
                 raise RuntimeError(
                     "OPENROUTER_BASE_URL is set but ENV=production — "

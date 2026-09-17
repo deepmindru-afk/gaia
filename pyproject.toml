@@ -85,6 +85,9 @@ ignore_names = [
   "__getattr__",    # module-level dunder called by Python's import machinery
   "wrap_tools",     # AgenticProvider abstract-method override (called by Composio SDK)
   "on_llm_end",     # LangChain BaseCallbackHandler override (called by the framework)
+  "on_chat_model_start",  # LangChain BaseCallbackHandler override (called by the framework)
+  "on_llm_new_token",  # LangChain BaseCallbackHandler override (called by the framework)
+  "on_llm_error",  # LangChain BaseCallbackHandler override (called by the framework)
   "_llm_type",      # LangChain BaseChatModel abstract member: required to subclass,
   "_generate",      # dispatched by the framework, never called by our code
   "build_from_config",  # chroma EmbeddingFunction contract: called dynamically via
@@ -180,10 +183,31 @@ select = [
   "INT",   # gettext f-string misuse
   "ASYNC", # blocking calls inside async functions
   "T20",   # no print() — app code logs through wide events
+  # Docstring shape (pydocstyle). Deliberately not the whole "D" group: D1xx
+  # would demand docstrings everywhere, the opposite of the goal. Ruff checks
+  # structure only; the content rule (length caps, markup, tautology, comment
+  # walls) is enforced by review here and lands as a lint in the next PR in
+  # this stack (docstring_slop / comment_slop), which is not on this branch.
+  "D200",  # one-line docstring on one line
+  "D205",  # blank line after the summary
+  "D210",  # no whitespace inside the quotes
+  "D300",  # triple double quotes
+  "D401",  # summary in the imperative ("Return x", never "Returns x")
+  "D403",  # summary capitalized
+  "D404",  # summary must not start with "This"
+  "D415",  # summary ends with punctuation
+  # Sections that lie about the contract (pydoclint port; preview-only rules).
+  "DOC202", # Returns: on a function that returns nothing
+  "DOC502", # Raises: X that is never raised
   "PT",    # pytest style (see the ignores below for the noisy half)
   "PIE",   # unnecessary placeholders / dict kwargs / container lambdas
   "ANN401", # disallow explicit `Any` in type annotations
 ]
+# Only the DOC rules named above are preview. Without explicit-preview-rules,
+# preview = true would also switch on every preview rule inside PL/RUF/S/FURB
+# (~8k findings on this tree).
+preview = true
+explicit-preview-rules = true
 ignore = [
   "ASYNC109",  # objects to async functions having a timeout param — reworking 17 signatures for style
   "C414",  # list() inside sorted() — readability
@@ -347,13 +371,39 @@ unfixable = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# Docstrings in these trees are runtime data, not documentation: route handler
+# docstrings are the OpenAPI descriptions (apps/api/openapi.json is generated
+# from them and drift-gated), @tool bodies are the model-facing tool
+# descriptions, and pydantic model docstrings become schema descriptions. The
+# shape rules must not rewrite what a client or the model reads. The content
+# lint that lands with the next PR in this stack (docstring_slop) must skip the
+# same docstrings by decorator/base; it does not exist on this branch yet.
+"apps/api/app/api/v1/endpoints/**" = ["D", "DOC"]
+"apps/api/app/agents/tools/**" = ["D", "DOC"]  # @tool docstrings are the model-facing tool descriptions
+"apps/api/app/models/**" = ["D", "DOC"]  # pydantic model docstrings are OpenAPI schema descriptions
+"apps/api/app/schemas/**" = ["D", "DOC"]  # response schema docstrings are OpenAPI schema descriptions
+"apps/api/app/agents/skills/models.py" = ["D"]  # Skill/SkillTarget/SkillUpdate are exported to openapi.json exactly like app/models; they just live beside the skills code
+# The same rule, for docstrings read at runtime OUTSIDE those four trees.
+# A developer CLI passes its MODULE docstring to argparse as description=__doc__,
+# so the module docstring IS the --help text a human reads before running a
+# destructive migration: the shape rules must not rewrite it, and the usage/flag
+# block it carries is not slop. Verified by grepping description=__doc__ across
+# apps/api — every reader lives in one of these two trees.
+"apps/api/app/scripts/**" = ["D", "DOC"]  # module docstring is the argparse --help text (description=__doc__)
+"apps/api/scripts/**" = ["D", "DOC"]  # module docstring is the argparse --help text (description=__doc__)
+# Pydantic schemas handed to llm.with_structured_output() outside app/models
+# carry the same runtime-data property: the class docstring is serialized into
+# the JSON schema the model is shown. They get no ruff entry here, because their
+# docstrings already satisfy every shape rule and check_ignore_staleness.py
+# rejects an ignore that masks nothing. The content lint landing with the next PR
+# in this stack must skip them by base class and by with_structured_output target:
+# _ModerationResult (services/integrations/profanity.py) and _CandidateContext /
+# _ProfileCandidate (services/onboarding/social_profile_service.py).
 "apps/api/app/agents/tools/todo_tool.py" = ["PLR0913"]  # @tool args are the model-facing tool schema, not reducible complexity (same as tracked_todo_tools.py below)
 "apps/api/app/agents/tools/tracked_todo_tools.py" = ["PLR0913"]  # @tool args are the model-facing tool schema, not reducible complexity; PLR0911/0912 stay enforced (update_tracked_todo was refactored to satisfy them)
-"apps/api/app/config/rate_limits.py" = ["PLR0912"]  # derive_pro_benefits predates this change; the triggers feature only adds a rate-limit feature key to this file
+"apps/api/app/db/repositories/base.py" = ["PLR0913"]  # _apply_raw_update is the one raw-Mongo seam every repository routes through; its seven knobs (filter, update, scope, extra_filter, return_document, array_filters, upsert) are the operator surface, used at 76 call sites. The paid-only gate only adds a cache eviction on a write miss here.
 "apps/api/app/db/repositories/todos.py" = ["PLR0912"]  # _list_filter predates this change; the triggers feature only adds subscription finders to this file
-"apps/api/app/services/analytics_service.py" = ["PLR0913"]  # track_subscription_event predates this change; the triggers feature only adds event enum members to this file
 "apps/api/app/agents/tools/integrations/calendar_tool.py" = ["PLR0912", "PLR0915"]  # register_calendar_custom_tools is a registration factory whose PLR0915 statement count is just its ~10 nested @custom_tool bodies (inherent to the pattern). The individual tool bodies (CUSTOM_GET_DAY_SUMMARY / CUSTOM_CREATE_EVENT) are branch-heavy Google-payload builders; extracting their loops adds indirection the mutation gate can't test (debug-log calls, tz-sensitive ids). The loop-dispatch fix only touches _run_sync, so this predates it.
-"apps/api/app/services/oauth/oauth_service.py" = ["PLR0912", "PLR0915"]  # handle_oauth_connection and get_all_integrations_status predate this change; the triggers feature only adds a reconnect resync hook here
 "apps/api/app/services/outbound_delivery.py" = ["PLR0913"]  # publish_outbound_file predates this change; the reminder/proactive-delivery feature only adds channel-targeted delivery to publish_outbound_message here
 "apps/api/app/services/todos/todo_service.py" = ["PLR0912", "PLR0913"]  # update_todo and get_all_todos predate this change; the triggers feature only adds subscription teardown-on-delete here
 "apps/api/app/services/tracked_todo_service.py" = ["PLR0913"]  # the flagged function predates this change; the triggers feature adds subscription teardown to this file
@@ -363,10 +413,12 @@ unfixable = [
 "apps/api/app/services/triggers/handlers/notion.py" = ["PLR0912"]  # handler predates this change; the triggers feature only renames the owner-ref parameter (workflow_id -> owner_id) here
 "apps/api/app/services/triggers/handlers/slack.py" = ["PLR0912"]  # handler predates this change; the triggers feature only renames the owner-ref parameter (workflow_id -> owner_id) here
 "apps/api/app/services/triggers/subscription_service.py" = ["PLR0913"]  # register_subscription's parameters are the subscription fields a caller must supply; grouping them into an object would hide the required inputs
+"apps/api/app/services/hil/bridge.py" = ["PLR0913"]  # publish_approval_request/publish_auto_approval/_approval_entry each take the distinct fields an approval carries (run identity, the gated call, its summary/integration). Bundling them into one object was tried and reverted: the card renderer consumes only a subset, so the object's other fields become unused assignments in the decision-redraw path that the mutation gate flags as unkillable. The flat arg list is the honest interface.
 "apps/api/app/services/workflow/service.py" = ["PLR0912", "PLR0915"]  # the flagged function predates this change; the triggers feature only renames the owner-ref parameter here
 "apps/api/tests/e2e/test_todo_trigger_dispatch_e2e.py" = ["PLR0913"]  # _seed_watch is a test helper whose keyword arguments mirror the subscription fields under test
 "apps/api/tests/unit/services/test_todo_service.py" = ["PLR0913"]  # test parameterization, not production complexity
 "apps/api/tests/unit/services/test_trigger_service.py" = ["PLR0913"]  # test parameterization, not production complexity
+"apps/api/tests/integration/real/test_device_bridge_e2e.py" = ["PLR0915"]  # the golden-path e2e test is one linear 8-step journey; splitting its statements into helpers hides the flow it exists to prove
 # A002: chromadb's EmbeddingFunction protocol calls
 # `self._embedding_function(input=input)` by keyword (see
 # chromadb/api/models/CollectionCommon.py), so the one implementation must
@@ -519,6 +571,13 @@ unfixable = [
 "**/migrations/**/*.py" = ["INP001", "N999", "ANN"]  # migration runners are not namespace packages and skip annotations
 "**/__init__.py" = ["F401"]  # re-export modules intentionally re-export imported names
 "**/patches.py" = ["F401", "PLC", "ANN", "ARG"]  # monkeypatch modules import heavily for side effects
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+# A property reads as a noun ("The current user."); D401 must not force
+# "Return the current user." onto it.
+property-decorators = ["functools.cached_property", "pydantic.computed_field"]
+ignore-decorators = ["typing.overload"]
+
 [tool.ruff.lint.isort]
 combine-as-imports = true
 force-sort-within-sections = true

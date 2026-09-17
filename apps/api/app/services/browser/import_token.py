@@ -1,7 +1,7 @@
 """Short single-use codes for the local session-import CLI.
 
-Mirrors ``live_code`` — a Redis-backed code with a TTL — but authorises a write,
-not a view, so it is consumed on redemption: the first ``resolve`` deletes it, so
+Mirrors live_code — a Redis-backed code with a TTL — but authorises a write,
+not a view, so it is consumed on redemption: the first resolve deletes it, so
 a leaked code cannot be replayed to overwrite a user's logins twice.
 """
 
@@ -23,7 +23,7 @@ def _key(token: str) -> str:
 
 
 async def mint_import_token(user_id: str) -> str:
-    """A single-use code that authorises ``user_id`` to upload a browser profile."""
+    """Mint a single-use code that authorises user_id to upload a browser profile."""
     # The entropy constant is 32, which is exactly secrets' own default, so every
     # mutant of this argument (None, or dropping it) mints the same 32-byte token.
     token = secrets.token_urlsafe(BROWSER_IMPORT_TOKEN_ENTROPY_BYTES)  # pragma: no mutate
@@ -37,7 +37,7 @@ async def mint_import_token(user_id: str) -> str:
 
 
 async def consume_import_token(token: str) -> str | None:
-    """The user a code authorises, or ``None`` if unknown/expired/already used.
+    """Return the user a code authorises, or None if unknown/expired/already used.
 
     Single-use: the code is deleted before the user id is returned, so two
     concurrent redemptions cannot both succeed.

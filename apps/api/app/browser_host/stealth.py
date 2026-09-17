@@ -1,16 +1,16 @@
 """Stealth init script for the CDP-driven headless Chromium.
 
 The launch flags already neutralise the automation-controlled signal (browser-use's
-``CHROME_DEFAULT_ARGS`` ships ``--disable-blink-features=AutomationControlled`` and
-no ``--enable-automation``). What flags cannot fix is the JS-visible fingerprint of
-a bare headless browser — a missing ``window.chrome``, empty ``navigator.plugins``,
-a truthy ``navigator.webdriver``, headless WebGL vendor strings. This script patches
-those, applied to every page via ``Page.addScriptToEvaluateOnNewDocument`` so it runs
+CHROME_DEFAULT_ARGS ships --disable-blink-features=AutomationControlled and
+no --enable-automation). What flags cannot fix is the JS-visible fingerprint of
+a bare headless browser — a missing window.chrome, empty navigator.plugins,
+a truthy navigator.webdriver, headless WebGL vendor strings. This script patches
+those, applied to every page via Page.addScriptToEvaluateOnNewDocument so it runs
 before the page's own scripts on every navigation.
 
 Note: it is applied per page target at context creation. A page that browser-use
-opens later in the same context via ``window.open`` would not be covered without a
-``Target.setAutoAttach`` hook; single-page tasks (the norm) are covered.
+opens later in the same context via window.open would not be covered without a
+Target.setAutoAttach hook; single-page tasks (the norm) are covered.
 """
 
 _STEALTH_TEMPLATE = r"""(() => {
@@ -220,5 +220,5 @@ _STEALTH_TEMPLATE = r"""(() => {
 
 
 def build_stealth_script(seed: int) -> str:
-    """The init script with this user's fingerprint seed baked in."""
+    """Return the init script with this user's fingerprint seed baked in."""
     return _STEALTH_TEMPLATE.replace("__FINGERPRINT_SEED__", str(int(seed)))

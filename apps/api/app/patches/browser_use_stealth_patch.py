@@ -1,22 +1,16 @@
 """Auto-inject GAIA's stealth init script on every page Browser-Use drives.
 
-`Page.addScriptToEvaluateOnNewDocument` is scoped to the CDP session that
-registers it, so a one-shot call after `browser.start()` only covers the first
-tab — a `window.open`/target-created second tab drives fingerprint-naked. The
-runner used to poke `browser._cdp_add_init_script(...)` for exactly that first
-page; this hooks Browser-Use's own per-target session accessor instead, so the
-script rides every target (initial page and any new tab) automatically, through
-the library's own mechanism rather than a private call from the runner.
+Page.addScriptToEvaluateOnNewDocument is scoped to the CDP session that
+registers it, so a one-shot call after browser.start() covers only the first
+tab and a window.open second tab drives fingerprint-naked. Hooking Browser-Use's
+own per-target accessor, get_or_create_cdp_session, injects once per target
+(tracked, so a repeat call never stacks duplicates) and covers the whole session.
 
-`get_or_create_cdp_session` is the single funnel Browser-Use routes every page
-interaction through, so injecting there — once per target, tracked so a repeat
-call doesn't stack duplicate scripts — covers the whole session. Browser-Use's
-agent driving path uses one-shot `Runtime.evaluate` (never persistent
-`Runtime.enable`), so the classic rebrowser `Runtime.enable` leak isn't present
-in 0.11.13's main path — nothing to patch there.
+Browser-Use 0.11.13 drives pages with one-shot Runtime.evaluate, never a
+persistent Runtime.enable, so there is no rebrowser-style leak to patch.
 
 Pinned to browser-use==0.11.13; the import fails loudly if the private accessor
-or `CDPSession` shape moves.
+or CDPSession shape moves.
 """
 
 from browser_use.browser.session import BrowserSession, CDPSession

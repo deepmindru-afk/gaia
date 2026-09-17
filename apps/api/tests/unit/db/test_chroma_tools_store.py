@@ -17,6 +17,7 @@ from app.constants.chroma import (
     TOOLS_SEED_LOCK_RENEW_SECONDS,
 )
 from app.constants.log_tags import LogTag
+from app.db.chroma import chroma_tools_store
 from app.db.chroma.chroma_store import ChromaBatchWriteError
 from app.db.chroma.chroma_tools_store import (
     _build_put_operations,
@@ -39,12 +40,10 @@ from tests.helpers import captured_wide_event
 
 @pytest.fixture(autouse=True)
 def seed_lock_keys():
-    """The cross-replica seed lock is infrastructure; these unit tests exercise
-    the diff/upsert logic it guards, not Redis. Run the guarded work directly so
-    the tests stay hermetic (the lock itself is proven in the real-Redis tier).
+    """Run the seed lock's guarded work directly, so these tests stay hermetic.
 
-    Yields the list of lock keys the seeding ran under, so a test can prove the
-    work was serialized under the right namespace key.
+    Yields the list of lock keys the seeding ran under, so a test can prove
+    the work was serialized under the right namespace key.
     """
     seen: list[str] = []
 
@@ -292,6 +291,85 @@ class TestComputeToolDiff:
         assert len(delete) == 1
         assert delete[0] == ("ns::gone", "ns")
 
+    @pytest.mark.regression
+    def test_custom_mcp_subagent_is_never_deleted_on_reseed(self):
+        """Regression: seed deleted device MCP subagents, wiping the executor's handoff target on restart."""
+        current: dict[str, dict] = {
+            "subagents::subagent:todos": {"hash": "h"},  # a builtin the seed manages
+        }
+        existing = {
+            "subagents::subagent:todos": {"hash": "h", "namespace": "subagents"},
+            # a device MCP subagent keyed by integration_id (UUID), not "subagent:"
+            "subagents::9531fa23-5120-458c-9d7c-8af9127be70e": {
+                "hash": "hx",
+                "namespace": "subagents",
+            },
+        }
+        _upsert, delete = _compute_tool_diff(current, existing)
+        deleted_keys = {key for key, _ns in delete}
+        assert "subagents::9531fa23-5120-458c-9d7c-8af9127be70e" not in deleted_keys
+
+    def test_builtin_subagent_absent_from_current_is_still_deleted(self):
+        current: dict[str, dict] = {}
+        existing = {
+            "subagents::subagent:retired": {"hash": "h", "namespace": "subagents"},
+        }
+        _upsert, delete = _compute_tool_diff(current, existing)
+        assert ("subagents::subagent:retired", "subagents") in delete
+
+    def test_reseed_prunes_stale_builtin_while_keeping_the_device_subagent(self):
+        # The device subagent is FIRST and the stale builtin SECOND on purpose:
+        # skipping the device one must `continue` (keep scanning), not `break`
+        # (which would leave the later stale builtin un-pruned).
+        current: dict[str, dict] = {}
+        existing = {
+            "subagents::aedc0ba0-b3b6-4783-8035-d25e94c291db": {
+                "hash": "hx",
+                "namespace": "subagents",
+            },
+            "subagents::subagent:retired": {"hash": "h", "namespace": "subagents"},
+        }
+        _upsert, delete = _compute_tool_diff(current, existing)
+        deleted_keys = {key for key, _ns in delete}
+        assert deleted_keys == {"subagents::subagent:retired"}
+
+
+class TestIsDynamicSubagent:
+    """A dynamic MCP subagent lives in the subagents namespace keyed by integration_id, not subagent:<id>."""
+
+    def test_device_subagent_keyed_by_integration_id_is_dynamic(self):
+        assert (
+            chroma_tools_store._is_dynamic_subagent(
+                "subagents::aedc0ba0-b3b6-4783-8035-d25e94c291db", "subagents"
+            )
+            is True
+        )
+
+    def test_builtin_subagent_is_not_dynamic(self):
+        assert (
+            chroma_tools_store._is_dynamic_subagent("subagents::subagent:todos", "subagents")
+            is False
+        )
+
+    def test_only_the_key_after_the_first_separator_is_examined(self):
+        # split(maxsplit=1): a "subagent:" builtin whose own id contains "::" is
+        # still a builtin. A higher maxsplit would look at the tail ("tail") and
+        # wrongly call it dynamic.
+        assert (
+            chroma_tools_store._is_dynamic_subagent("subagents::subagent:weird::tail", "subagents")
+            is False
+        )
+
+    def test_non_subagents_namespace_is_never_dynamic(self):
+        assert chroma_tools_store._is_dynamic_subagent("gmail::search_threads", "gmail") is False
+
+    def test_builtin_prefix_must_match_from_the_start(self):
+        # A key that merely contains "subagent:" later is still dynamic.
+        assert (
+            chroma_tools_store._is_dynamic_subagent("subagents::mcp-subagent:foo", "subagents")
+            is True
+        )
+
 
 # ---------------------------------------------------------------------------
 # _build_put_operations
@@ -347,11 +425,7 @@ class TestIndexToolsToStore:
         await index_tools_to_store([(tool, "bad::ns")])
 
     async def test_cache_hit_with_an_empty_store_reindexes_anyway(self):
-        """The bug this guard exists for: Redis says indexed, Chroma holds none.
-
-        Trusting the hash alone left the namespace empty forever and tool
-        discovery silently returned nothing.
-        """
+        """Redis says indexed, Chroma holds none; trusting the hash alone left the namespace empty and discovery silently returned nothing."""
         tool = SimpleNamespace(name="t", description="d")
         tools_signature = "t:d"
         expected_hash = hashlib.sha256(tools_signature.encode()).hexdigest()[:16]
@@ -381,13 +455,7 @@ class TestIndexToolsToStore:
         mock_execute.assert_awaited_once()
 
     async def test_failed_batch_write_does_not_cache_the_namespace_hash(self):
-        """A partial write must not be recorded as a success.
-
-        Regression: _apply_put_ops logged failures but returned normally, so
-        the hash was cached after N docs failed to embed. Every later boot then
-        hit the cache guard and skipped the namespace, leaving the tools that
-        never made it in (browser_task) permanently undiscoverable.
-        """
+        """A partial write must not be recorded as a success."""
         tool = SimpleNamespace(name="t", description="d")
 
         mock_store = AsyncMock()
@@ -556,17 +624,9 @@ class TestIndexToolsToStore:
             )
 
 
-# ---------------------------------------------------------------------------
-# index_tools_to_store — the verified cache guard
-#
-# The Redis hash only proves that SOME PAST PROCESS believed it indexed this
-# namespace. Trusting it alone made a wiped or recreated ChromaDB permanent:
-# the guard hit forever, the namespace was never re-indexed, and tool discovery
-# silently returned nothing — no error, no retry, no signal. The whole failure
-# mode is invisible, so the warning that announces it is behaviour, and these
-# assert on it via the wide event's structured `warnings[]` rather than on the
-# prose (the same seam tests/unit/middleware/test_accounting.py asserts on).
-# ---------------------------------------------------------------------------
+# index_tools_to_store — the verified cache guard. The Redis hash only proves
+# a past process believed it indexed this namespace; trusting it alone made a
+# wiped ChromaDB permanent, so these assert on the wide event's `warnings[]`.
 
 _NAMESPACE = "gmail"
 _TOOL = SimpleNamespace(name="t", description="d")
@@ -574,7 +634,7 @@ _TOOLS_HASH = hashlib.sha256(b"t:d").hexdigest()[:16]
 
 
 def _store_holding(*doc_hashes: str) -> AsyncMock:
-    """A Chroma store whose namespace holds one indexed doc per given tool hash."""
+    """Return a Chroma store whose namespace holds one indexed doc per given tool hash."""
     collection = AsyncMock()
     collection.get.return_value = {
         "ids": [f"{_NAMESPACE}::t{i}" for i in range(len(doc_hashes))],
@@ -587,7 +647,7 @@ def _store_holding(*doc_hashes: str) -> AsyncMock:
 
 @contextmanager
 def _indexing(store: AsyncMock, cached_hash: str | None) -> Iterator[SimpleNamespace]:
-    """Run index_tools_to_store against ``store`` with Redis reporting ``cached_hash``."""
+    """Run index_tools_to_store against store with Redis reporting cached_hash."""
     with (
         patch(
             "app.db.chroma.chroma_tools_store.get_cache",

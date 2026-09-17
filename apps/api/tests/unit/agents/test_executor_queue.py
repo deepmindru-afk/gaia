@@ -28,6 +28,7 @@ from app.agents.core.background.executor_queue import (
 from app.agents.core.background.session import RunIdentity, RunKind, get_session
 from app.constants.cache import EXECUTOR_BUSY_TTL, EXECUTOR_QUEUE_TTL
 from app.models.agent_models import AgentConfigurable
+from app.models.user_models import AuthenticatedUser
 
 
 def _queue_item(**overrides) -> str:
@@ -96,7 +97,9 @@ class TestPopNextQueuedRun:
         assert run.task_id == "task-7"
         assert run.user_message_id == "msg-1"
         assert run.conversation_id == "conv-1"
-        assert run.user == {"user_id": "u1", "email": "u1@x.com", "name": "Uno", "timezone": None}
+        assert run.user == AuthenticatedUser(
+            user_id="u1", email="u1@x.com", name="Uno", timezone=None
+        )
 
         # The popped item's stale stream_id is replaced by the fresh queued one.
         assert prepared.configurable["stream_id"] == run.stream_id
@@ -173,9 +176,7 @@ class TestLockOwnership:
             assert await get_lock_state("conv-1", "s1", "t1") is LockState.FOREIGN
 
     async def test_a_run_without_a_task_id_still_owns_its_own_lock(self) -> None:
-        """A chat run carries no task_id, so its lock value is ``stream:`` with the
-        task half EMPTY. Comparing against anything else makes every such run
-        read its own lock as foreign and refuse to release it."""
+        """A chat run carries no task_id, so its lock value is stream: with the task half EMPTY."""
         with patch.object(eq, "redis_cache") as redis:
             redis.client.get = AsyncMock(return_value="s1:")
             assert await get_lock_state("conv-1", "s1", None) is LockState.OURS
@@ -211,8 +212,7 @@ class TestReclaimStrandedTask:
             redis.client.set.assert_not_awaited()  # never touches the lock
 
     async def test_lost_nx_claim_backs_off(self) -> None:
-        """A concurrent call_executor acquired the lock first — its finalize
-        will drain the queue, so reclaim must yield rather than trample."""
+        """A concurrent call_executor's finalize will drain the queue, so reclaim must yield rather than trample."""
         with patch.object(eq, "redis_cache") as redis:
             redis.client.llen = AsyncMock(return_value=1)
             redis.client.set = AsyncMock(return_value=None)  # NX lost
@@ -282,9 +282,11 @@ class TestEnqueueTask:
 
 
 class TestBuildRunItem:
-    """``build_run_item`` is the single serialized shape written by both the
-    plain queue enqueue and the HIL pause store — fields must default so a
-    plain queue item never accidentally carries resume-only identity."""
+    """build_run_item is the single serialized shape written by both the plain queue enqueue and the HIL pause store.
+
+    Fields must default so a plain queue item never accidentally carries
+    resume-only identity.
+    """
 
     def test_omits_bot_message_id_by_default(self) -> None:
         item = build_run_item(
@@ -317,9 +319,11 @@ class TestBuildRunItem:
 
 
 class TestPrepareRunFromItemResumeIdentity:
-    """A HIL resume re-dispatches through the same ``prepare_run_from_item``
-    the queue pop uses — the resumed run must inherit the original bot
-    message id from the stored item so its result can reconcile onto it."""
+    """A HIL resume re-dispatches through the same prepare_run_from_item the queue pop uses.
+
+    The resumed run must inherit the original bot message id from the stored
+    item so its result can reconcile onto it.
+    """
 
     async def test_bot_message_id_threads_into_the_resumed_run(self) -> None:
         item = build_run_item(
@@ -455,10 +459,12 @@ class TestSafeConfigurable:
 
 @pytest.mark.regression
 class TestRunItemCarriesWorkflowExecution:
-    """The execution id exists only on the workflow task's wide event. A HIL
-    resume and a queue pop both rebuild the run in some OTHER context (the
-    approval request, the previous run's finalize), so the stored item has to
-    carry it or the resumed run's calls are unattributable to the run."""
+    """The execution id exists only on the workflow task's wide event.
+
+    A HIL resume and a queue pop both rebuild the run in some OTHER context
+    (the approval request, the previous run's finalize), so the stored item
+    has to carry it or the resumed run's calls are unattributable.
+    """
 
     async def test_the_item_records_the_execution_in_flight(self) -> None:
         from shared.py.wide_events import WorkflowContext, log, wide_task
@@ -524,3 +530,43 @@ class TestRunItemCarriesWorkflowExecution:
         assert prepared is not None
         assert prepared.run.workflow_id == "wf-9"
         assert prepared.run.workflow_execution_id == "exec-42"
+
+
+class TestRunItemDiscriminatorRoundTrip:
+    """t_dispatch_perf and queued survive build_run_item to prepare_run_from_item.
+
+    They are the executor metrics' discriminators: lose them and a dequeued run
+    is measured as a HIL resume, or the reverse.
+    """
+
+    async def test_dispatch_stamp_and_queue_origin_round_trip(self) -> None:
+        item = build_run_item(
+            task="do it",
+            configurable={"user_id": "u1"},
+            identity=RunIdentity(
+                stream_id="",
+                conversation_id="conv-1",
+                kind=RunKind.QUEUED,
+                task_id="task-1",
+                user_message_id="msg-1",
+                t_dispatch_perf=1234.5,
+                queued=True,
+            ),
+        )
+        # Exact keys: a renamed key drops the value silently on the read side.
+        assert item["t_dispatch_perf"] == 1234.5
+        assert item["queued"] is True
+
+        with (
+            patch.object(eq, "redis_cache") as redis,
+            patch.object(eq, "StreamManager") as sm,
+            patch.object(eq, "websocket_manager") as ws,
+        ):
+            redis.client.set = AsyncMock()
+            sm.start_stream = AsyncMock()
+            ws.broadcast_to_user = AsyncMock()
+            prepared = await prepare_run_from_item("conv-1", item)
+
+        assert prepared is not None
+        assert prepared.run.t_dispatch_perf == 1234.5
+        assert prepared.run.queued is True

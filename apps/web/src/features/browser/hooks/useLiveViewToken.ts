@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { browserApi } from "../api/browserApi";
 
-// The live view is served from a friendly vhost the host-only session cookie is
-// not sent to, so a token is required for every connection. Fetch it once per
-// session (cookie auth works same-origin to the API); the token's lifetime
-// bounds the socket, which comfortably covers a single browser task.
+// The live view's vhost never sees the session cookie, so every connection
+// carries a token: minted once per session (cookie auth is same-origin to the
+// API), and its lifetime bounds the socket.
 export function useLiveViewToken(
   sessionId: string | null | undefined,
 ): string | null {

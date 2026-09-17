@@ -1,9 +1,9 @@
 """Unit tests for the paused-browser-handoff chat-reply resolution path.
 
-``_resolve_pending_browser_handoff_turn`` is the text-channel equivalent of the
+_resolve_pending_browser_handoff_turn is the text-channel equivalent of the
 browser handoff card's Continue/Cancel buttons: a chat reply on a conversation
 with a pending handoff can continue or cancel the paused browser task instead
-of running as a normal turn. ``_run_chat_stream`` must short-circuit the whole
+of running as a normal turn. _run_chat_stream must short-circuit the whole
 turn when that resolution fires, and fall through to the normal agent run
 otherwise.
 """
@@ -19,6 +19,7 @@ from app.constants.browser import BROWSER_HANDOFF_ACK_CANCEL, BROWSER_HANDOFF_AC
 from app.constants.log_tags import LogTag
 from app.models.message_models import MessageRequestWithHistory
 from app.models.stream_events import MainResponseCompleteFrame
+from app.models.user_models import AuthenticatedUser
 from app.services.chat import stream as chat_stream
 from app.services.chat.stream import (
     _resolve_pending_browser_handoff_turn,
@@ -40,8 +41,8 @@ def _body(message: str = "yes please continue") -> MessageRequestWithHistory:
     )
 
 
-def _user(user_id: str | None = USER_ID) -> dict[str, str | None]:
-    return {"user_id": user_id}
+def _user(user_id: str = USER_ID) -> AuthenticatedUser:
+    return AuthenticatedUser(user_id=user_id)
 
 
 @pytest.fixture
@@ -70,19 +71,6 @@ def persist(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
 @pytest.mark.unit
 class TestNothingPendingOrMissingInputs:
-    async def test_no_user_id_returns_false_without_looking_up_handoff(
-        self, published: list[str], persist: AsyncMock
-    ) -> None:
-        with patch.object(chat_stream, "resolve_handoff_from_message") as resolve:
-            result = await _resolve_pending_browser_handoff_turn(
-                _body(), _user(user_id=None), CONVERSATION_ID, STREAM_ID, _StreamState()
-            )
-
-        resolve.assert_not_called()
-        assert result is False
-        assert not published
-        persist.assert_not_awaited()
-
     async def test_empty_message_returns_false_without_looking_up_handoff(
         self, published: list[str], persist: AsyncMock
     ) -> None:
@@ -178,7 +166,8 @@ class TestNothingPendingOrMissingInputs:
 
 @pytest.mark.unit
 class TestLookupFailureDegradesToNormalTurn:
-    """An optional-feature lookup failing must not take chat down — chat runs
+    """An optional-feature lookup failing must not take chat down — chat runs.
+
     as a normal turn instead (see the docstring on the guarded except)."""
 
     async def test_exception_returns_false(self, published: list[str], persist: AsyncMock) -> None:
@@ -330,12 +319,13 @@ class TestCancelResolution:
 
 @pytest.mark.unit
 class TestRunChatStreamShortCircuitsOnHandoffResolution:
-    """The orchestrator must return without running the agent when the
-    browser-handoff resolver fully handled the turn, and must fall through to
+    """The orchestrator must return without running the agent when the browser-handoff resolver fully handled the turn, and must fall through to.
+
     the normal turn otherwise."""
 
     def _patched(self, *, handoff_resolved: bool):
-        """Mock every collaborator of ``_run_chat_stream`` except the handoff
+        """Mock every collaborator of _run_chat_stream except the handoff.
+
         resolution branch under test."""
         return patch.multiple(
             chat_stream,
@@ -353,7 +343,11 @@ class TestRunChatStreamShortCircuitsOnHandoffResolution:
             _attach_executor_tool_data=AsyncMock(),
             _finalize_description=AsyncMock(),
             _finalize_stream=AsyncMock(),
-            stream_manager=MagicMock(publish_chunk=AsyncMock(), complete_stream=AsyncMock()),
+            stream_manager=MagicMock(
+                publish_chunk=AsyncMock(),
+                complete_stream=AsyncMock(),
+                is_cancelled=AsyncMock(return_value=False),
+            ),
             capture_event=MagicMock(),
         )
 

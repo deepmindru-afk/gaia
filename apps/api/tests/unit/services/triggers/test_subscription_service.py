@@ -19,8 +19,8 @@ from app.models.trigger_subscription_models import (
     SubscriptionAction,
     SubscriptionCondition,
     SubscriptionResolution,
-    SubscriptionStatus,
     TriggerSubscription,
+    TriggerSubscriptionStatus,
 )
 from app.services.analytics_service import AnalyticsEvents
 from app.services.triggers.subscription_service import (
@@ -487,7 +487,7 @@ class TestTeardown:
         assert h.update.await_args.kwargs["update"].trigger_subscriptions == []
 
     async def test_paused_subscriptions_are_torn_down_too(self) -> None:
-        todo = _todo(trigger_subscriptions=[_subscription(status=SubscriptionStatus.PAUSED)])
+        todo = _todo(trigger_subscriptions=[_subscription(status=TriggerSubscriptionStatus.PAUSED)])
         with _Harness(todo, []) as h:
             assert await teardown_subscriptions(TODO_ID, USER_ID, reason="deleted") == 1
             h.unregister.assert_awaited_once()
@@ -566,7 +566,7 @@ class TestCalendarReminders:
             action=SubscriptionAction.NOTIFY,
             composio_trigger_ids=["ti_old"],
             trigger_data={"minutes_before_start": 60},
-            status=SubscriptionStatus.PAUSED,
+            status=TriggerSubscriptionStatus.PAUSED,
         )
         todo = _todo(trigger_subscriptions=[paused])
         register = AsyncMock(return_value=["ti_new"])
@@ -665,7 +665,7 @@ class _ResyncHarness:
 
 
 def _paused_sub(**overrides: object) -> TriggerSubscription:
-    return _subscription(status=SubscriptionStatus.PAUSED, **overrides)
+    return _subscription(status=TriggerSubscriptionStatus.PAUSED, **overrides)
 
 
 class TestResyncSubscriptions:
@@ -700,7 +700,7 @@ class TestResyncSubscriptions:
         assert first.labels == ["keepme"]
         # The refreshed subscription is active again and points at the new instance.
         refreshed = first.trigger_subscriptions[0]
-        assert refreshed.status is SubscriptionStatus.ACTIVE
+        assert refreshed.status is TriggerSubscriptionStatus.ACTIVE
         assert refreshed.composio_trigger_ids == ["ti_new"]
 
         # Re-registration is for THIS todo's identity, and must raise on failure so a
@@ -731,10 +731,8 @@ class TestResyncSubscriptions:
         h.update.assert_not_awaited()
 
     async def test_an_unknown_trigger_skips_but_the_sweep_continues(self) -> None:
-        # A handlerless trigger must be skipped with `continue`, not `break` — a
-        # `break` would abandon every trigger the user reconnected after it. Ordering
-        # is pinned by call order (first lookup handlerless, second real) so the set's
-        # iteration order can never mask a `break`.
+        # A handlerless trigger must be skipped with continue, not break, which would abandon every
+        # trigger reconnected after it. Call order (first lookup handlerless, second real) pins this.
         todo = _todo(id="todo-ok", labels=[BLOCKING_LABEL], trigger_subscriptions=[_paused_sub()])
         with (
             _ResyncHarness([todo], ["ti_new"]) as h,
@@ -821,11 +819,11 @@ class TestResyncSubscriptions:
         # The unrelated trigger is untouched — same id, ids, still paused.
         assert written[0].id == other.id
         assert written[0].composio_trigger_ids == []
-        assert written[0].status is SubscriptionStatus.PAUSED
+        assert written[0].status is TriggerSubscriptionStatus.PAUSED
         # The reconnected trigger is refreshed and active.
         assert written[1].id == target.id
         assert written[1].composio_trigger_ids == ["ti_new"]
-        assert written[1].status is SubscriptionStatus.ACTIVE
+        assert written[1].status is TriggerSubscriptionStatus.ACTIVE
         # Only the reconnected trigger was re-registered.
         h.register.assert_awaited_once()
         assert h.register.await_args.args[2] == INSTANCE_TRIGGER

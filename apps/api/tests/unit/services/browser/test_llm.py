@@ -14,7 +14,7 @@ from app.services.browser.exceptions import BrowserUnavailableError
 
 @dataclass(frozen=True)
 class _ProviderOpts:
-    """The optional ``BROWSER_USE_LLM_*`` knobs a provider test may vary."""
+    """The optional BROWSER_USE_LLM_* knobs a provider test may vary."""
 
     model: str = "test-model"
     api_key: str | None = "test-key"
@@ -25,9 +25,9 @@ class _ProviderOpts:
 
 @pytest.fixture(autouse=True)
 def _custom_lane_off_by_default(monkeypatch):
-    """Default the browser LLM to the EXPLICIT lane so provider/model tests are
-    deterministic — the dev .env's DEV_LLM_* would otherwise leak in and make the
-    browser inherit the custom lane. Tests that want the custom lane set it back on.
+    """Default the browser LLM to the EXPLICIT lane so provider/model tests are deterministic — the dev .env's DEV_LLM_* would otherwise leak in and make the browser inherit the custom lane.
+
+    Tests that want the custom lane set it back on.
     """
     monkeypatch.setattr("app.services.browser.llm.settings.DEV_LLM_BASE_URL", None)
     monkeypatch.setattr("app.services.browser.llm.settings.DEV_LLM_API_KEY", None)
@@ -167,9 +167,7 @@ class TestBuildBrowserLlm:
         )
 
     def test_schema_in_prompt_switches_off_response_format(self, monkeypatch):
-        """Endpoints whose vendors report supports_structured_outputs=false (e.g.
-        Merge Gateway's zai/glm-*) 400 on a json_schema response_format. The flag
-        moves the schema into the system prompt instead."""
+        """Endpoints whose vendors report supports_structured_outputs=false (e.g."""
         mocks = _fake_browser_use_modules(monkeypatch)
         self._set_provider(
             monkeypatch,
@@ -188,9 +186,7 @@ class TestBuildBrowserLlm:
         )
 
     def test_reasoning_effort_names_the_model_so_it_reaches_the_wire(self, monkeypatch):
-        """Browser-Use forwards `reasoning_effort` only for models whose NAME is in
-        `reasoning_models` — a substring match, not a capability lookup. Without
-        naming our own model there, a thinking model thinks unthrottled."""
+        """Browser-Use forwards reasoning_effort only for models whose NAME is in."""
         mocks = _fake_browser_use_modules(monkeypatch)
         self._set_provider(
             monkeypatch,
@@ -366,12 +362,7 @@ class TestBrowserInheritsCustomLane:
             monkeypatch.setattr(f"app.services.browser.llm.settings.{k}", v)
 
     def test_inherits_dev_llm_when_no_browser_key(self, monkeypatch):
-        """No browser-specific key + custom lane set → browser rides comms' lane.
-
-        This is the fix for the silent outage: browser and comms shared one
-        (dead) key, but the browser kept a redundant copy. Now there is one
-        source of truth, so a stale key can't kill the browser while chat works.
-        """
+        """No browser-specific key + custom lane set → browser rides comms' lane."""
         from app.services.browser.llm import _resolve_browser_lane
 
         self._set(
@@ -413,8 +404,7 @@ class TestBrowserPropagatesCommsLaneEverywhere:
             monkeypatch.setattr(f"app.services.browser.llm.settings.{k}", v)
 
     def test_prod_inherits_openrouter_and_default_model(self, monkeypatch):
-        """No custom lane, no browser key → browser rides comms' prod lane:
-        OpenRouter + the default chat model + OPENROUTER_API_KEY."""
+        """No custom lane, no browser key → browser rides comms' prod lane."""
         from app.constants.llm import DEFAULT_MODEL_NAME
         from app.services.browser.llm import _resolve_browser_lane
 
@@ -438,8 +428,7 @@ class TestBrowserPropagatesCommsLaneEverywhere:
 @pytest.mark.unit
 class TestVisionFollowsResolvedModel:
     async def test_text_only_inherited_model_disables_vision(self, monkeypatch):
-        """A text-only model inherited from comms (deepseek via the custom lane,
-        routed as provider 'openai') must turn vision OFF by itself, not error."""
+        """A text-only model inherited from comms (deepseek via the custom lane."""
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_VISION", True)
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_API_KEY", None)
         monkeypatch.setattr("app.services.browser.llm.settings.DEV_LLM_BASE_URL", "https://gw/v1")
@@ -514,8 +503,7 @@ class TestCustomLaneNeedsAllThreeSettings:
 @pytest.mark.unit
 class TestOpenRouterVisionIsAlwaysCatalogJudged:
     async def test_bare_model_id_on_openrouter_is_still_judged_by_the_catalog(self, monkeypatch):
-        """Vision support varies per model on OpenRouter, so the provider alone
-        decides the lookup — a bare (slash-less) id must not be assumed sighted."""
+        """Vision support varies per model on OpenRouter, so the provider alone."""
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_VISION", True)
         monkeypatch.setattr(
             "app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "openrouter"

@@ -75,8 +75,7 @@ class TestToolCategory:
         assert len(category.tools) == 3
 
     def test_add_tools_classifies_destructive_by_membership(self):
-        """A curated set classifies every tool by name membership; no set at
-        all leaves the HIL risk unclassified (None) for the LLM classifier."""
+        """A curated set classifies every tool by name membership; no set at all leaves the HIL risk unclassified (None) for the LLM classifier."""
         category = ToolCategory(name="test_cat")
         dangerous = _make_mock_tool("dangerous")
         safe = _make_mock_tool("safe")
@@ -88,8 +87,7 @@ class TestToolCategory:
         assert by_name == {"dangerous": True, "safe": False, "mystery": None}
 
     def test_add_tools_stamps_always_gate_membership(self):
-        """Forced-ask is stamped per tool: members gate in EVERY mode, and
-        non-members are explicitly False — never an unclassified None."""
+        """Forced-ask is stamped per tool: members gate in every mode, and non-members are explicitly False — never an unclassified None."""
         category = ToolCategory(name="test_cat")
         gated = _make_mock_tool("gated")
         ungated = _make_mock_tool("ungated")
@@ -255,14 +253,7 @@ class TestToolRegistry:
         assert core_tools[0].name == "core_1"
 
     def test_core_tools_receive_the_hil_stamps_too(self):
-        """A category registers its HIL sets for BOTH tool lists.
-
-        `_add_category` calls `add_tools` twice — once for `core_tools`, once
-        for `tools` — and every existing test passes its risk sets through the
-        `tools=` call only. A forced-gate tool registered as a core tool would
-        silently lose its stamp and stop asking for approval, which is the
-        whole point of the flag.
-        """
+        """_add_category calls add_tools twice (core_tools and tools); without stamping both, a forced-gate core tool would silently lose its stamp and stop asking for approval."""
         registry = ToolRegistry()
         registry._add_category(
             "mixed",
@@ -282,8 +273,7 @@ class TestToolRegistry:
         assert stamps["reg_dangerous"].destructive is True
 
     def test_replacing_category_drops_stale_name_index(self):
-        """Re-registering a category must evict its previous tools from the
-        name index, or removed tools keep resolving to a dead category."""
+        """Re-registering a category must evict its previous tools from the name index, or removed tools keep resolving to a dead category."""
         registry = ToolRegistry()
         registry._add_category("cat", tools=[_make_mock_tool("old_tool")])
         registry._add_category("cat", tools=[_make_mock_tool("new_tool")])
@@ -402,13 +392,7 @@ class TestToolWrapper:
 
 
 # ---------------------------------------------------------------------------
-# _initialize_categories() — exercised for real (no stub)
-#
-# Every other test in this module patches _initialize_categories out (see
-# _patch_initialize_categories below) so the production wiring inside it is
-# never actually run. These tests call the real method so its category
-# metadata, integration flags, and HIL destructive-tool classification are
-# genuinely asserted.
+# _initialize_categories() for real — every other test patches it out (_patch_initialize_categories)
 # ---------------------------------------------------------------------------
 
 # name -> (space, require_integration, integration_name, is_delegated, internal)
@@ -450,7 +434,7 @@ _EXPECTED_DESTRUCTIVE_TOOL_NAMES = {
 
 @pytest.fixture(scope="module")
 def initialized_registry() -> ToolRegistry:
-    """A registry built by the real _initialize_categories() body, not the stub."""
+    """Build a registry with the real _initialize_categories() body, not the stub."""
     registry = ToolRegistry()
     registry._initialize_categories()
     return registry
@@ -458,8 +442,7 @@ def initialized_registry() -> ToolRegistry:
 
 @pytest.fixture(scope="module")
 def expected_category_tool_names() -> dict[str, set[str]]:
-    """Expected tool-name membership per category, read from the same tool
-    modules _initialize_categories() itself imports."""
+    """Read each category's expected tool names from the modules _initialize_categories() imports."""
     from app.agents.tools import (
         account_tools,
         browser_tool,
@@ -527,17 +510,9 @@ class TestInitializeCategoriesReal:
         initialized_registry: ToolRegistry,
         expected_category_tool_names: dict[str, set[str]],
     ):
-        # `initialized_registry` is module-scoped, so `_initialize_categories()`
-        # actually runs exactly once, during whichever test in this class pytest
-        # collects first. Mutation testing ties a mutant's covering tests to
-        # the tests that were RUNNING when the mutated line executed, so a
-        # mutant inside _initialize_categories() is only ever checked against
-        # this one test, not the whole class, no matter how many other tests
-        # below also read `initialized_registry`. Every invariant that must
-        # hold for the real _add_category(...) call arguments therefore has to
-        # be asserted here too — the more specific tests below stay for
-        # readable failure messages on a full-suite run, but this is the test
-        # that actually catches a wrong tools=/destructive_tools= argument.
+        # `initialized_registry` is module-scoped, so `_initialize_categories()` runs
+        # once, in whichever test pytest collects first; mutation testing only credits
+        # the tests RUNNING then, so every _add_category(...) invariant is asserted here.
         assert set(initialized_registry._categories.keys()) == set(
             _EXPECTED_CATEGORY_METADATA.keys()
         )
@@ -571,9 +546,7 @@ class TestInitializeCategoriesReal:
         assert category.internal is internal
 
     def test_no_tool_is_left_unclassified(self, initialized_registry: ToolRegistry):
-        """HIL invariant from the docstring: every internal category passes an
-        explicit destructive_tools set, so no tool from _initialize_categories
-        should ever be left with destructive=None (unreviewed)."""
+        """HIL invariant from the docstring: every internal category passes an."""
         all_tools = [
             tool
             for category in initialized_registry._categories.values()
@@ -630,9 +603,7 @@ _CORE_CATEGORY_NAMES = [
 
 class TestBillingCategory:
     def test_billing_category_registers_the_subscription_tools(self):
-        """The real initializer must wire the billing category to the two
-        subscription tools with nothing marked destructive — a checkout link is
-        inert until the user pays it, so the upgrade flow must never trip HIL."""
+        """A checkout link is inert until the user pays it, so nothing in the billing category may be marked destructive or the upgrade flow could trip HIL."""
         registry = ToolRegistry()
         registry._initialize_categories()
 
@@ -682,8 +653,7 @@ class TestCoreInitializationContract:
         ]
 
     def test_every_initialized_tool_has_an_explicit_hil_classification(self):
-        """No built-in tool may ship unclassified (destructive=None): the HIL
-        gate would fall to the LLM classifier for code-reviewed tools."""
+        """No built-in tool may ship unclassified (destructive=None): the HIL gate would fall to the LLM classifier for code-reviewed tools."""
         registry = ToolRegistry()
         registry._initialize_categories()
 
@@ -700,11 +670,7 @@ class TestCoreInitializationContract:
         assert registry.is_tool_destructive("search_uploaded_files") is False
 
     def test_account_category_pins_the_forced_ask_settings_tools(self):
-        """The account settings tools are stamped forced-ask (settings on the
-        user's own account ask in EVERY mode); manage_linked_account rides the
-        argument gate instead and nothing here is destructive. A renamed
-        category, a mangled member, or a lost stamp silently changes what the
-        HIL gate may wave through."""
+        """The account settings tools are stamped forced-ask (every mode); manage_linked_account rides the argument gate instead and nothing here is destructive."""
         registry = ToolRegistry()
         registry._initialize_categories()
 
@@ -727,12 +693,10 @@ class TestCoreInitializationContract:
 
 
 def _patch_initialize_categories():
-    """
-    Return a patcher that replaces _initialize_categories with a lightweight
-    stub, avoiding imports of all production tool modules.
+    """Return a patcher that replaces _initialize_categories with a lightweight stub, avoiding imports of all production tool modules.
 
-    The stub registers exactly the categories listed in _CORE_CATEGORY_NAMES so
-    tests can assert on category presence without pulling in tool dependencies.
+    The stub registers exactly the categories listed in _CORE_CATEGORY_NAMES so tests can assert
+    on category presence without pulling in tool dependencies.
     """
 
     def _stub_initialize(self: ToolRegistry):
@@ -823,14 +787,7 @@ class TestToolRegistryAsync:
         )
 
     async def test_register_provider_tools_pins_placement_and_curated_risk(self):
-        """A provider category is integration-gated, delegated to its subagent,
-        parked in the caller's space and named after its toolkit — retrieval,
-        the /tools listing and subagent binding all key on those four flags.
-
-        Its HIL risk comes from the curated set for that toolkit, so an
-        uncurated ``None`` would hand every reviewed provider tool back to the
-        LLM classifier at gate time.
-        """
+        """A provider category is integration-gated, delegated to its subagent, and parked in the caller's space, and its HIL risk comes from the curated set for that toolkit, not an uncurated None."""
         fake_tools = [
             _make_mock_tool("GMAIL_SEND_EMAIL"),
             _make_mock_tool("GMAIL_FETCH_EMAILS"),
@@ -885,17 +842,16 @@ class TestToolRegistryAsync:
         assert result is registry.get_category("GITHUB")
         mock_composio_service.get_tools.assert_not_awaited()
 
-    # Tests for load_user_mcp_tools were removed when the per-user MCP cache
-    # was deleted in the resilience rewrite. MCP tools now live exclusively
-    # inside MCPClient; per-subagent builds read them live. Coverage for that
-    # path lives in tests/integration/agents/test_subagent_handoff.py.
+    # load_user_mcp_tools tests were removed when the per-user MCP cache was deleted; MCP tools
+    # now live in MCPClient and per-subagent builds read them live — coverage moved to
+    # tests/integration/agents/test_subagent_handoff.py.
 
 
 @pytest.mark.unit
 class TestInitializeCategories:
     """The category map itself, which nothing asserted before.
 
-    ``_initialize_categories`` is the single place every in-repo tool is bound
+    _initialize_categories is the single place every in-repo tool is bound
     to a category, and the category is what retrieval, the HIL risk gate and the
     frontend icon all key on. A registration silently dropped or renamed here
     makes a tool unreachable rather than broken, so nothing fails loudly.
@@ -931,13 +887,7 @@ class TestInitializeCategories:
         assert names == {"write_playbook", "read_playbook", "decline_playbook", "disable_playbook"}
 
     def test_playbook_tools_are_curated_as_non_destructive(self, registry: ToolRegistry) -> None:
-        """An empty set and ``None`` mean different things at the HIL gate.
-
-        ``None`` sends a tool to the LLM risk classifier; an explicit empty set
-        says "curated, none of these are destructive". Writing a playbook has no
-        side effect on the user's data, so it must be the latter — passing None
-        would put an in-repo tool back in front of the classifier on every call.
-        """
+        """None sends a tool to the LLM risk classifier; an explicit empty set means curated non-destructive — writing a playbook has no side effect on user data, so it must be the latter."""
         for tool in registry._categories["playbooks"].tools:
             assert tool.destructive is False, (
                 f"{tool.name} must be curated non-destructive, not left to the classifier"
@@ -946,11 +896,11 @@ class TestInitializeCategories:
 
 @pytest.mark.unit
 class TestInitializedCategoryContract:
-    """Every literal ``_initialize_categories`` hands to a category, pinned.
+    """Every literal _initialize_categories hands to a category, pinned.
 
     The registry is built once at startup and nothing else re-derives these
-    values, so a nulled ``space``, a dropped ``is_delegated``, a case-mangled
-    ``integration_name`` or a lost tool list makes a tool land in the wrong
+    values, so a nulled space, a dropped is_delegated, a case-mangled
+    integration_name or a lost tool list makes a tool land in the wrong
     space or vanish rather than break — no caller fails loudly.
     """
 
@@ -1002,8 +952,7 @@ class TestInitializedCategoryContract:
     def test_single_purpose_categories_hold_exactly_their_tools(
         self, registry: ToolRegistry
     ) -> None:
-        """These four categories are registered on one line each, so a dropped
-        ``tools=`` argument leaves a silently empty category behind."""
+        """These four categories are registered on one line each, so a dropped tools= argument leaves a silently empty category behind."""
         names = {
             name: {tool.name for tool in registry._categories[name].tools}
             for name in ("manual", "memory", "weather", "context")
@@ -1027,11 +976,7 @@ class TestInitializedCategoryContract:
         }
 
     def test_the_two_destructive_built_ins_are_stamped_alone(self, registry: ToolRegistry) -> None:
-        """``execute_workflow`` starts an autonomous run and
-        ``connect_integration`` connects an external account; every sibling is
-        reversible or read-only. A mangled member name in either curated set
-        downgrades the one tool that must stop at the HIL gate to safe.
-        """
+        """execute_workflow and connect_integration are the only irreversible built-ins here; a mangled curated-set member would downgrade the one tool that must stop at HIL to safe."""
         workflows = {
             tool.name: tool.destructive for tool in registry._categories["workflows"].tools
         }
@@ -1054,12 +999,33 @@ class TestInitializedCategoryContract:
             "suggest_integrations": False,
             "connect_integration": True,
             "check_integrations_status": False,
+            # Force-gated (always_gate), not destructive — see the always_gate test.
+            "add_custom_mcp_server": False,
+            # Read-only device catalog lookup.
+            "list_devices": False,
+            # Emits the onboarding card; no mutation.
+            "add_device": False,
+            # Force-gated (always_gate), not destructive — surfaces the approve link.
+            "approve_device_pairing": False,
+            # Deliberately NEITHER destructive NOR always_gate: pairing the device IS
+            # the grant. RCE surface with no HIL stop — gate expected to be added back
+            # before this ships to production.
+            "run_on_device": False,
         }
+
+    def test_integrations_always_gate_set_is_exactly_the_two_forced_tools(
+        self, registry: ToolRegistry
+    ) -> None:
+        """Dropping either forced tool silently removes the human gate on a security-sensitive action."""
+        gated = {
+            tool.name for tool in registry._categories["integrations"].tools if tool.always_gate
+        }
+        assert gated == {"add_custom_mcp_server", "approve_device_pairing"}
 
 
 @pytest.mark.unit
 class TestAddCategoryWideEvent:
-    """``_add_category`` reports the category it just built on the wide event.
+    """_add_category reports the category it just built on the wide event.
 
     The registry is assembled once at startup, so this is the only record of
     which space a category landed in and whether it replaced an earlier
@@ -1112,9 +1078,7 @@ class TestAddCategoryWideEvent:
 
 @pytest.mark.unit
 class TestAddCategoryOptions:
-    """``_add_category`` forwards its keyword options to ``ToolCategory`` and
-    nothing else decides their defaults (mutation survivors 2026-08-28: the
-    default values and the option keys were not pinned)."""
+    """_add_category forwards its keyword options to ToolCategory and nothing else decides their defaults (mutation survivors 2026-08-28: the default values and the option keys were not pinned)."""
 
     def test_defaults_are_tool_category_defaults(self):
         registry = ToolRegistry()

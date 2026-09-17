@@ -1,6 +1,6 @@
-"""Observability + contract coverage for app/api/v1/endpoints/browser.py
+"""Observability + contract coverage for app/api/v1/endpoints/browser.py.
 
-``tests/unit/api/v1/endpoints/test_browser_endpoints.py`` already pins the
+tests/unit/api/v1/endpoints/test_browser_endpoints.py already pins the
 happy paths and the HTTP status codes of every route in this module. What it
 does not pin is everything *else* these thin handlers exist to do: the exact
 error text the card shows the user, the wide-event context an operator greps
@@ -9,8 +9,8 @@ handed to each service seam. Those lines run in the existing tests but nothing
 asserts on them, so they could all be wrong and the suite would stay green.
 
 This file closes that gap. Wide-event fields are read back through a real
-boundary (``captured_wide_event``) rather than by mocking ``log`` — outside a
-boundary every ``log.set`` is discarded by design, so a mocked logger would
+boundary (captured_wide_event) rather than by mocking log — outside a
+boundary every log.set is discarded by design, so a mocked logger would
 prove nothing about what actually reaches Loki.
 """
 
@@ -49,8 +49,8 @@ pytestmark = pytest.mark.unit
 class _SinkRecorder:
     """Stand-in for the loguru sink so real-time lines become assertable.
 
-    ``log.info``/``log.audit`` write a real-time line through the module-level
-    ``_loguru`` and (for audit) also append to the wide event. Patching that
+    log.info/log.audit write a real-time line through the module-level
+    _loguru and (for audit) also append to the wide event. Patching that
     one global is the only way to see the message text and bound fields of the
     info line, which is otherwise deliberately absent from the event.
     """
@@ -76,13 +76,13 @@ class _SinkRecorder:
         return lambda *_a, **_k: None
 
     def at(self, level: str) -> list[tuple[str, dict[str, Any]]]:
-        """(message, bound fields) for every line emitted at ``level``."""
+        """(message, bound fields) for every line emitted at level."""
         return [(msg, fields) for lvl, msg, fields in self.lines if lvl == level]
 
 
 @asynccontextmanager
 async def _recorded() -> AsyncIterator[tuple[dict[str, Any], _SinkRecorder]]:
-    """A real wide-event boundary plus a capture of the real-time log lines."""
+    """Open a real wide-event boundary plus a capture of the real-time log lines."""
     recorder = _SinkRecorder()
     with patch("shared.py.wide_events._loguru", recorder):
         async with captured_wide_event() as event:
@@ -90,7 +90,14 @@ async def _recorded() -> AsyncIterator[tuple[dict[str, Any], _SinkRecorder]]:
 
 
 def _make_login(domain: str) -> BrowserLoginResponse:
-    return BrowserLoginResponse(domain=domain, updated_at=datetime.now(UTC), expires_at=None)
+    return BrowserLoginResponse(
+        domain=domain,
+        updated_at=datetime.now(UTC),
+        expires_at=None,
+        source=None,
+        source_browser=None,
+        source_ip=None,
+    )
 
 
 def _make_task(task_id: str = "t1") -> BrowserTaskResponse:

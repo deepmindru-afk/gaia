@@ -265,7 +265,17 @@ async def import_browser_sessions(
         },
     )
     return BrowserImportResponse(
-        imported=[BrowserLoginResponse(domain=host, updated_at=None) for host, _ in imported],
+        imported=[
+            BrowserLoginResponse(
+                domain=host,
+                updated_at=None,
+                expires_at=None,
+                source=None,
+                source_browser=None,
+                source_ip=None,
+            )
+            for host, _ in imported
+        ],
         host_count=len(imported),
         cookie_count=len(payload.cookies),
     )

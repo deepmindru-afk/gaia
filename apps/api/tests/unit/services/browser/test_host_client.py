@@ -44,7 +44,7 @@ def _http_status_error(
 
 
 def _make_client_mock(response: MagicMock) -> MagicMock:
-    """An async-context-manager mock whose HTTP verb returns *response*."""
+    """Build an async-context-manager mock whose HTTP verb returns response."""
     client = AsyncMock()
     client.post = AsyncMock(return_value=response)
     client.get = AsyncMock(return_value=response)
@@ -53,17 +53,14 @@ def _make_client_mock(response: MagicMock) -> MagicMock:
     mock_cm = MagicMock()
     mock_cm.__aenter__ = AsyncMock(return_value=client)
     mock_cm.__aexit__ = AsyncMock(return_value=False)
-    # We return a factory: patch("...httpx.AsyncClient", return_value=mock_cm) ; but
-    # host_client does `async with httpx.AsyncClient(...) as client:` -> needs __aenter__
-    # So the patched class itself must be a mock that returns mock_cm when called.
-    # Instead we make the class mock produce mock_cm on instantiation; the simplest
-    # is to let the caller patch with the class mock directly (see tests).
-    # This helper returns the *inner* client + the *cm*; the test will wire the class.
+    # host_client does `async with httpx.AsyncClient(...) as client:`, so the patched
+    # class must return an object with __aenter__ when called. This returns the inner
+    # client + the cm; the test wires the class mock itself.
     return client, mock_cm
 
 
 def _patch_async_client(monkeypatch_or_patch, response: MagicMock, *, verb: str = "post"):
-    """Patch host_client.httpx.AsyncClient so `async with AsyncClient(...) as c: await c.<verb>(...)` returns *response*."""
+    """Patch host_client.httpx.AsyncClient so async with AsyncClient(...) as c: await c.<verb>(...) returns *response*."""
     inner = AsyncMock()
     getattr(inner, verb).return_value = response
     # For other verbs we still provide a default
@@ -74,10 +71,8 @@ def _patch_async_client(monkeypatch_or_patch, response: MagicMock, *, verb: str 
     cm.__aenter__ = AsyncMock(return_value=inner)
     cm.__aexit__ = AsyncMock(return_value=False)
     cls_mock = MagicMock(return_value=cm)
-    # cls_mock(...).__aenter__ etc is already wired via cm; but httpx.AsyncClient is used as
-    # `async with httpx.AsyncClient(...) as client:` -> AsyncClient(...) must return an object
-    # with __aenter__. So we set return_value=cm and also make cls_mock behave like a context
-    # manager factory. The simplest: patch with cls_mock.
+    # `async with httpx.AsyncClient(...) as client:` means AsyncClient(...) must return
+    # an object with __aenter__, hence cls_mock.return_value=cm; patch with cls_mock.
     return inner, cm, cls_mock
 
 

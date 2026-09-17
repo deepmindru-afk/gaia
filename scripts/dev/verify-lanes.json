@@ -43,6 +43,31 @@
       "command": "node scripts/ci/checks.mjs types-location --enforce"
     },
     {
+      "name": "api-schema",
+      "$comment": "THE source of truth for what can change the generated API contract: the prek `api-types` hook's `files:` must match it byte for byte, and code-quality.yml's `changes` job greps it out of this file. A FastAPI/Pydantic bump changes the generated output with no route edit, so the manifests count as inputs. Enforced by scripts/ci/tests/test_api_schema_scope.py.",
+      "scope": "^apps/api/app/.*\\.py$|^apps/api/scripts/export_openapi\\.py$|^apps/api/tests/offline_env\\.py$|^apps/api/pyproject\\.toml$|^apps/api/openapi\\.json$|^uv\\.lock$|^libs/shared/ts/src/api/generated/|^scripts/ci/checks\\.mjs$|^package\\.json$",
+      "heavy": false,
+      "timeout_s": 300,
+      "require_cmd": ["uv", "node"],
+      "command": "node scripts/ci/checks.mjs api-schema"
+    },
+    {
+      "name": "doc-comments",
+      "scope": "\\.(ts|tsx|js|jsx|mjs|cjs)$",
+      "heavy": false,
+      "timeout_s": 120,
+      "require_cmd": ["node"],
+      "command": "node scripts/ci/checks.mjs doc-comments"
+    },
+    {
+      "name": "api-schema-types",
+      "scope": "\\.(ts|tsx)$|^apps/api/openapi\\.json$|^config/api-schema-baseline\\.json$",
+      "heavy": false,
+      "timeout_s": 120,
+      "require_cmd": ["node"],
+      "command": "node scripts/ci/checks.mjs api-schema-types"
+    },
+    {
       "name": "components-per-file",
       "scope": "\\.tsx$",
       "heavy": false,
@@ -120,7 +145,15 @@
       "heavy": false,
       "timeout_s": 120,
       "require_cmd": [],
-      "command": "python3 tools/lints/run.py apps/api/app"
+      "command": "python3 tools/lints/run.py apps/api/app apps/api/tests"
+    },
+    {
+      "name": "lint-imports",
+      "scope": "^apps/api/(app/.*\\.py|pyproject\\.toml)$",
+      "heavy": false,
+      "timeout_s": 300,
+      "require_cmd": ["uvx"],
+      "command": "cd apps/api && uvx --no-build --from import-linter==2.6 lint-imports --no-cache"
     },
     {
       "name": "plr-complexity",
@@ -129,6 +162,15 @@
       "timeout_s": 120,
       "require_cmd": [],
       "command": "python3 tools/lints/check_plr_complexity.py"
+    },
+    {
+      "name": "import-cost",
+      "$comment": "Imports the real modules in fresh subprocesses, so it needs the synced venv; --report matches the CI step, which measures without gating until the base layers stop importing upward.",
+      "scope": "^apps/api/app/(constants|config|utils|models)/|^apps/api/app/(main|worker)\\.py$|^apps/api/tests/conftest\\.py$|^tools/lints/check_import_cost\\.py$",
+      "heavy": true,
+      "timeout_s": 900,
+      "require_cmd": [],
+      "command": "python3 tools/lints/check_import_cost.py --report"
     },
     {
       "name": "ignore-whys",

@@ -1,4 +1,4 @@
-"""Coverage for app/api/v1/endpoints/browser_live_view.py
+"""Coverage for app/api/v1/endpoints/browser_live_view.py.
 
 Exercises every endpoint and helper with real function calls, mocking only
 external services (Redis registry, takeover tokens, WebSockets, auth deps).
@@ -16,6 +16,7 @@ import pytest
 import websockets
 
 from app.api.v1.endpoints import browser_live_view as blv
+from app.models.user_models import AuthenticatedUser
 from app.schemas.browser import LiveCodeRecord, ReplayRecord
 from app.services.browser.registry import SessionRegistryEntry
 
@@ -176,27 +177,13 @@ class TestAuthorizePage:
     async def test_with_cookie_success(self) -> None:
         req = _make_request()
         with patch.object(
-            blv, "get_current_user", new=AsyncMock(return_value={"user_id": "u1"})
+            blv, "get_current_user", new=AsyncMock(return_value=AuthenticatedUser(user_id="u1"))
         ) as mock_get_user:
             uid = await blv._authorize_page(req, "sess1", token=None)
             assert uid == "u1"
             # Regression: a mutant replacing `request` with None here would still
             # return "u1" from the mocked call, but would break auth in production.
             mock_get_user.assert_awaited_once_with(req)
-
-    async def test_with_cookie_missing_user_id_raises_400(self) -> None:
-        req = _make_request()
-        with patch.object(blv, "get_current_user", new=AsyncMock(return_value={"user_id": None})):
-            with pytest.raises(HTTPException) as exc:
-                await blv._authorize_page(req, "sess1", token=None)
-            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
-
-    async def test_with_cookie_empty_user_id_raises_400(self) -> None:
-        req = _make_request()
-        with patch.object(blv, "get_current_user", new=AsyncMock(return_value={})):
-            with pytest.raises(HTTPException) as exc:
-                await blv._authorize_page(req, "sess1", token=None)
-            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
 # ---------------------------------------------------------------------------
@@ -248,33 +235,12 @@ class TestAuthorizeWs:
     async def test_cookie_success(self) -> None:
         ws = _make_ws()
         with patch.object(
-            blv, "get_current_user_ws", new=AsyncMock(return_value={"user_id": "u1"})
+            blv, "get_current_user_ws", new=AsyncMock(return_value=AuthenticatedUser(user_id="u1"))
         ):
             result = await blv._authorize_ws(ws, "sess1", token=None)
             assert result is not None
             assert result[0] == "u1"
             assert result[1] is None
-
-    async def test_cookie_missing_user_id_returns_none(self) -> None:
-        ws = _make_ws()
-        with patch.object(
-            blv, "get_current_user_ws", new=AsyncMock(return_value={"user_id": None})
-        ):
-            result = await blv._authorize_ws(ws, "sess1", token=None)
-            assert result is None
-
-    async def test_cookie_empty_dict_returns_none(self) -> None:
-        ws = _make_ws()
-        with patch.object(blv, "get_current_user_ws", new=AsyncMock(return_value={})):
-            result = await blv._authorize_ws(ws, "sess1", token=None)
-            assert result is None
-
-    async def test_cookie_no_user_returns_none(self) -> None:
-        ws = _make_ws()
-        with patch.object(blv, "get_current_user_ws", new=AsyncMock(return_value={})):
-            result = await blv._authorize_ws(ws, "sess1", token=None)
-            assert result is None
-            ws.close.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +537,9 @@ class TestLiveViewPageExtra:
                 "verify_takeover_token",
                 return_value={"session_id": "sess1", "user_id": "u1", "exp": 9999999999.0},
             ),
-            patch.object(blv, "get_current_user", new=AsyncMock(return_value={"user_id": "u1"})),
+            patch.object(
+                blv, "get_current_user", new=AsyncMock(return_value=AuthenticatedUser(user_id="u1"))
+            ),
             patch.object(blv.registry, "session_owner", new=AsyncMock(return_value="u1")),
             patch.object(blv, "render_live_view_page", return_value="<html>"),
         ):
@@ -582,7 +550,9 @@ class TestLiveViewPageExtra:
     async def test_via_cookie_path(self) -> None:
         with (
             patch.object(blv, "resolve_live_code", new=AsyncMock(return_value=None)),
-            patch.object(blv, "get_current_user", new=AsyncMock(return_value={"user_id": "u1"})),
+            patch.object(
+                blv, "get_current_user", new=AsyncMock(return_value=AuthenticatedUser(user_id="u1"))
+            ),
             patch.object(blv.registry, "session_owner", new=AsyncMock(return_value="u1")),
             patch.object(blv, "render_live_view_page", return_value="<html>"),
         ):
@@ -631,8 +601,7 @@ class TestRouter:
 
 
 # ---------------------------------------------------------------------------
-# Exact log calls, exception details, and seam call arguments — closes the
-# remaining surviving mutants (string literals, dict keys, argument order).
+# Exact log calls, exception details, seam call arguments (surviving mutants)
 # ---------------------------------------------------------------------------
 
 
@@ -702,10 +671,9 @@ class TestLiveViewPageDetails:
             )
 
     async def test_owner_none_and_user_id_none_still_forbidden(self) -> None:
-        # `owner is None` must short-circuit the `or` before `owner != user_id` is even
-        # reached — pins the boundary against an `is None` -> `is not None` mutation,
-        # which only differs from the original when owner and user_id are BOTH None
-        # (otherwise `owner != user_id` alone still yields the same 403).
+        # `owner is None` must short-circuit the `or` before `owner != user_id`: pins an
+        # `is None` -> `is not None` mutation, which only differs from the original when
+        # owner and user_id are BOTH None (otherwise `owner != user_id` still yields 403).
         with (
             patch.object(blv, "_resolve_target_page", new=AsyncMock(return_value=("sess1", None))),
             patch.object(blv.registry, "session_owner", new=AsyncMock(return_value=None)),
@@ -757,34 +725,15 @@ class TestAuthorizePageDetails:
             await blv._authorize_page(_make_request(), "sess1", token="tok123")
             mock_verify.assert_called_once_with("tok123", "sess1")
 
-    async def test_missing_user_id_detail_message(self) -> None:
-        req = _make_request()
-        with patch.object(blv, "get_current_user", new=AsyncMock(return_value={"user_id": None})):
-            with pytest.raises(HTTPException) as exc:
-                await blv._authorize_page(req, "sess1", token=None)
-            assert exc.value.detail == "User id required"
-
-    async def test_empty_string_user_id_raises_400(self) -> None:
-        req = _make_request()
-        with patch.object(blv, "get_current_user", new=AsyncMock(return_value={"user_id": ""})):
-            with pytest.raises(HTTPException) as exc:
-                await blv._authorize_page(req, "sess1", token=None)
-            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
-
-    async def test_non_string_user_id_converted_to_str(self) -> None:
-        req = _make_request()
-        with patch.object(blv, "get_current_user", new=AsyncMock(return_value={"user_id": 42})):
-            uid = await blv._authorize_page(req, "sess1", token=None)
-            assert uid == "42"
-            assert isinstance(uid, str)
-
     async def test_empty_string_token_falls_through_to_cookie_path(self) -> None:
         # Pins `if token:` against an `if not token:` mutation: "" is falsy but not
         # None, so it must take the cookie path, not the token path.
         req = _make_request()
         with (
             patch.object(blv, "_verify_scoped_token") as mock_verify,
-            patch.object(blv, "get_current_user", new=AsyncMock(return_value={"user_id": "u1"})),
+            patch.object(
+                blv, "get_current_user", new=AsyncMock(return_value=AuthenticatedUser(user_id="u1"))
+            ),
         ):
             uid = await blv._authorize_page(req, "sess1", token="")
             assert uid == "u1"
@@ -868,7 +817,11 @@ class TestAuthorizeWsDetails:
         ws = _make_ws()
         with (
             patch.object(blv, "verify_takeover_token") as mock_verify,
-            patch.object(blv, "get_current_user_ws", new=AsyncMock(return_value={"user_id": "u1"})),
+            patch.object(
+                blv,
+                "get_current_user_ws",
+                new=AsyncMock(return_value=AuthenticatedUser(user_id="u1")),
+            ),
         ):
             result = await blv._authorize_ws(ws, "sess1", token="")
             assert result == ("u1", None)
@@ -897,7 +850,7 @@ class TestAuthorizeWsDetails:
     async def test_get_current_user_ws_called_with_exact_websocket(self) -> None:
         ws = _make_ws()
         with patch.object(
-            blv, "get_current_user_ws", new=AsyncMock(return_value={"user_id": "u1"})
+            blv, "get_current_user_ws", new=AsyncMock(return_value=AuthenticatedUser(user_id="u1"))
         ) as mock_get_user:
             await blv._authorize_ws(ws, "sess1", token=None)
             mock_get_user.assert_called_once_with(ws)
@@ -911,12 +864,6 @@ class TestAuthorizeWsDetails:
                 mock_log.warning.assert_called_once_with(
                     f"{blv.LogTag.BROWSER} browser live view token session mismatch"
                 )
-
-    async def test_cookie_non_string_user_id_converted_to_str(self) -> None:
-        ws = _make_ws()
-        with patch.object(blv, "get_current_user_ws", new=AsyncMock(return_value={"user_id": 7})):
-            result = await blv._authorize_ws(ws, "sess1", token=None)
-            assert result == ("7", None)
 
 
 class TestLiveViewWsDetails:

@@ -1,4 +1,5 @@
-"""Tests for the custom Browser-Use actions — registration, defaults, and the
+"""Tests for the custom Browser-Use actions — registration, defaults, and the.
+
 exact reason/category values handed to the takeover seam."""
 
 from collections.abc import Awaitable, Callable

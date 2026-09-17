@@ -1,6 +1,6 @@
 name: Code Quality
 
-# Tech-debt prevention gates that run on every PR to master.
+# Tech-debt prevention gates that run on every PR, whatever it targets.
 # Each lane is independent so failures are isolated and parallelised. The
 # `quality-gate` job at the bottom is the single required check.
 #
@@ -14,9 +14,17 @@ name: Code Quality
 # correctness (build, type-check, tests). This workflow enforces code
 # hygiene to prevent low-quality / LLM-generated code from accumulating.
 on:
+  # No `branches:` filter. That key matches the PR's BASE, so restricting it to
+  # master left every stacked PR ungated — #1175 sat for three days showing a
+  # green tick with neither the test lanes nor the mutation gate having ever
+  # run on it, which reads as "passing" in the PR list. A stacked PR is the one
+  # that most needs the gate: its diff is what lands, and its base is a branch
+  # that has not merged yet.
   pull_request:
-    branches:
-      - master
+    # `edited` is what a retarget fires, and the default types do not include
+    # it — so a PR restacked onto its real base kept master-scoped verdicts
+    # until someone pushed. select-runner below makes a title/body edit free.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches:
       - master
@@ -61,6 +69,14 @@ jobs:
   # nothing from cores.
   select-runner:
     name: Select runner
+    # Every job here is downstream of this one, so this condition is the
+    # workflow-level `if:` GitHub does not offer: an `edited` event that did
+    # not move the base changed no code, and `github.event.changes.base` is
+    # present only on a retarget (absent it is null, which casts to '' here),
+    # so the whole DAG skips for a title or body edit. A retarget takes the
+    # other branch and re-runs every lane against the new base — the case
+    # that used to leave a restacked PR with verdicts scoped to master.
+    if: ${{ github.event.action != 'edited' || github.event.changes.base != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -100,6 +116,58 @@ jobs:
           force-github: ${{ inputs.force_github && 'true' || 'false' }}
           github-token: ${{ secrets.HOMELAB_GH_PAT || github.token }}
 
+  # ── A second selection, for the mutation shards ──────────────────────────
+  # Every shard runs on the `gaia-home` pool, which main.yml's test lanes
+  # already share, for two reasons that each suffice on their own:
+  #
+  # * The lint pool cannot run the contract tier, and this is not a policy but
+  #   an arithmetic fact: those instances are 13-20 and test-services.sh serves
+  #   lanes 0-12 (MAX_LANE — Redis is provisioned for 13 stripes of 32 DBs), so
+  #   `prepare` rejects the lane and the job dies in setup. Run 34584038269
+  #   lost all six mutation shards to exactly that.
+  # * The lint pool exists for this workflow's many SHORT lanes. A shard is a
+  #   30-minute job; three stacked PRs pushed together put nine of them on the
+  #   nine lint instances (2026-09-11 11:27Z) while seven of the eleven
+  #   `gaia-home` instances sat idle, and the 14 lint lanes of every run
+  #   queued for the shards' whole lifetime.
+  #
+  # A separate job rather than a parameter on the one above: `runs-on` is
+  # resolved before any step runs, so the shard pool has to exist as a job
+  # output of its own. The shard's `matrix.pool` still matters: it decides
+  # whether the services are brought up, not where the job lands.
+  select-runner-services:
+    name: Select runner (services pool)
+    # Same guard as select-runner: a title edit must not start either probe.
+    if: ${{ github.event.action != 'edited' || github.event.changes.base != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+      runner_label: ${{ steps.pick.outputs.runner_label }}
+      is_self_hosted: ${{ steps.pick.outputs.is_self_hosted }}
+    steps:
+      # The default branch, NOT the PR head — same reason as select-runner
+      # above: this job hands HOMELAB_GH_PAT to a script from the checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+      # No `cancel-superseded` step here: select-runner already ran it for this
+      # run, and a second pass would race it for no gain.
+      - id: pick
+        uses: ./.github/actions/select-runner
+        with:
+          # Hardcoded, not `inputs.runner_label`: that dispatch input names a
+          # LINT pool to probe, and pointing the services selection at it would
+          # send contract shards straight back to the instances that cannot
+          # serve them.
+          runner-label: gaia-home
+          force-github: ${{ inputs.force_github && 'true' || 'false' }}
+          github-token: ${{ secrets.HOMELAB_GH_PAT || github.token }}
+
   # --- Change detection (no toolchain install) -----------------------------
   # Unified with main.yml detect: uses nx-set-shas + nx show projects --affected
   # with same base (origin/master via NX_BASE/NX_HEAD) so both workflows
@@ -109,7 +177,7 @@ jobs:
     name: Detect changed languages
     needs: [select-runner]
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
       pull-requests: read
@@ -119,14 +187,30 @@ jobs:
       has_typescript: ${{ steps.detect.outputs.has_typescript }}
       has_alert_rules: ${{ steps.detect.outputs.has_alert_rules }}
       has_go: ${{ steps.detect.outputs.has_go }}
+      has_js_sources: ${{ steps.detect.outputs.has_js_sources }}
+      has_api_schema: ${{ steps.detect.outputs.has_api_schema }}
       python_projects: ${{ steps.detect.outputs.python_projects }}
       typescript_projects: ${{ steps.detect.outputs.typescript_projects }}
+      # The branch every lane below diffs against. Resolved here, once, because
+      # it costs one API call and because a per-lane resolution is a per-lane
+      # chance to disagree.
+      base_ref: ${{ steps.base.outputs.base_ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           clean: ${{ runner.environment != 'self-hosted' }}
           fetch-depth: 0
           persist-credentials: false
+
+      # The PR's REAL base, from the API. The event payload names the stack's
+      # trunk for a PR in a native GitHub stack, and every lane below scopes to
+      # this value — see the note at the top of scripts/ci/changes.sh.
+      - name: Resolve the PR's base branch
+        id: base
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash scripts/ci/changes.sh base
 
       - uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
         with:
@@ -136,15 +220,24 @@ jobs:
 
       - name: Detect affected projects
         id: detect
+        env:
+          GAIA_PR_BASE: ${{ steps.base.outputs.base_ref }}
         run: |
           set -euo pipefail
           normalize() { tr -d '[]"' | tr -s ' \n' ',' | sed 's/^,//; s/,$//'; }
+
+          # The api-schema lane's inputs are path-scoped, and the source of truth
+          # for them is the lane table — the same regex the prek hook carries.
+          # nx-affected is not enough: a FastAPI/Pydantic bump changes the
+          # generated document with no route edit at all.
+          API_SCHEMA_SCOPE=$(node -p "JSON.parse(require('fs').readFileSync('scripts/dev/verify-lanes.json','utf8')).lanes.find((l) => l.name === 'api-schema').scope")
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             PY=$(pnpm exec nx show projects --projects 'tag:scope:python' | normalize)
             TS=$(pnpm exec nx show projects --projects 'tag:scope:typescript' | normalize)
             ALERTS=true
             GO=true
+            API_SCHEMA=true
           else
             PY=$(pnpm exec nx show projects --affected --projects 'tag:scope:python' | normalize)
             TS=$(pnpm exec nx show projects --affected --projects 'tag:scope:typescript' | normalize)
@@ -157,10 +250,18 @@ jobs:
             AFFECTED_FILES=$(git diff --name-only "$BASE...$HEAD" 2>/dev/null || git diff --name-only "origin/master...HEAD" 2>/dev/null || echo "__FULL__")
             if [[ "$AFFECTED_FILES" == "__FULL__" ]]; then
               ALERTS=true
-            elif echo "$AFFECTED_FILES" | grep -qE '^(infra/docker/observability/grafana/provisioning/alerting/|tools/alert-rules/|config/pint\.hcl$)'; then
-              ALERTS=true
+              API_SCHEMA=true
             else
-              ALERTS=false
+              if echo "$AFFECTED_FILES" | grep -qE '^(infra/docker/observability/grafana/provisioning/alerting/|tools/alert-rules/|config/pint\.hcl$)'; then
+                ALERTS=true
+              else
+                ALERTS=false
+              fi
+              if echo "$AFFECTED_FILES" | grep -qE "$API_SCHEMA_SCOPE"; then
+                API_SCHEMA=true
+              else
+                API_SCHEMA=false
+              fi
             fi
             # The Go tool is a standalone module outside the nx graph, so it is
             # path-scoped the same way the alert rules are.
@@ -176,10 +277,23 @@ jobs:
           echo "has_python=$([[ -n "$PY" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "has_typescript=$([[ -n "$TS" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "has_alert_rules=$ALERTS" >> "$GITHUB_OUTPUT"
+          # Extension-scoped, not tag-scoped: a .mjs under scripts/ or the Python
+          # API belongs to no scope:typescript project but still carries comments.
+          JS=$(bash scripts/ci/changes.sh files ts tsx js jsx mjs cjs)
+          echo "has_js_sources=$([[ -n "$JS" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "has_api_schema=$API_SCHEMA" >> "$GITHUB_OUTPUT"
           echo "has_go=$GO" >> "$GITHUB_OUTPUT"
-          echo "python: ${PY:-none} | typescript: ${TS:-none} | alert-rules: $ALERTS | go: $GO"
+          echo "python: ${PY:-none} | typescript: ${TS:-none} | alert-rules: $ALERTS | api-schema: $API_SCHEMA | go: $GO"
           echo "Affected Python: $PY"
           echo "Affected TypeScript: $TS"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: changes
   # --- Biome lint + format -------------------------------------------------
   # ── Scheduling on the home box ───────────────────────────────────────────
   # One push runs this workflow and Quality Checks on the same 16 threads.
@@ -198,6 +312,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -208,21 +327,21 @@ jobs:
       - uses: ./.github/actions/setup-node-pnpm
       - name: Lint and format check across all TS/JS/JSON/CSS files
         run: |
+          # shellcheck source=scripts/ci/lib/log.sh
+          source scripts/ci/lib/log.sh
           echo "::group::Biome check"
-          # Drop top-level paths that biome.json explicitly excludes via `!!`
-          # negation (apps/api, apps/voice-agent, apps/web/public, infra, docs,
-          # .github, etc.). Biome errors out with exit 1 when every input path
-          # is excluded by config, so the lane must not feed it those paths
-          # in the first place. Keep this list in sync with biome.json
-          # `files.includes` negations.
-          FILES=$(scripts/ci/changes.sh files ts tsx js jsx json jsonc css \
-            | grep -Ev '^(apps/api|apps/voice-agent|apps/web/public|infra|docs|\.github|\.claude|\.agents|\.husky|\.yarn|\.vscode|\.idea|\.mise|\.opencode|\.worktrees|\.jscpd-report)/' || true)
+          # biome.json's `files.includes` is the one source of what biome checks:
+          # changed paths it excludes are dropped by biome itself, and
+          # --no-errors-on-unmatched keeps an all-excluded diff (e.g. only the
+          # generated API types) from exiting 1.
+          FILES=$(scripts/ci/changes.sh files ts tsx js jsx json jsonc css)
           if [ "$FILES" = "__FULL__" ]; then
             FILES="."
           fi
           if [ -z "$FILES" ]; then
-            echo "No matching changed files — skipping."
             echo "::endgroup::"
+            ci_verdict --lane biome --status skip \
+              --summary "no changed TS/JS/JSON/CSS file biome.json includes"
             exit 0
           fi
           # One run, captured then inspected — never `biome | grep -q`: grep
@@ -231,7 +350,7 @@ jobs:
           # $FILES is unquoted on purpose: it is a newline-delimited path list
           # and must word-split into one argument per file.
           BIOME_STATUS=0
-          BIOME_OUT=$(pnpm exec biome check $FILES 2>&1) || BIOME_STATUS=$?
+          BIOME_OUT=$(pnpm exec biome check --no-errors-on-unmatched $FILES 2>&1) || BIOME_STATUS=$?
           echo "$BIOME_OUT"
           echo "::endgroup::"
           # Dead-suppression gate: biome emits `suppressions/unused` as a
@@ -239,13 +358,34 @@ jobs:
           # non-blocking — except this one category. A suppression comment that
           # no longer masks anything is exactly the rot the suppression-hygiene
           # lane exists to prevent; grep biome's own verdict for it.
+          # biome's own `path:line:col rule/name` lines are one of collect's
+          # patterns, so the verdict carries the file AND the rule for free.
+          printf '%s\n' "$BIOME_OUT" \
+            | python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/biome.jsonl"
+          FINDINGS=$(wc -l < "$RUNNER_TEMP/biome.jsonl" 2>/dev/null || echo 0)
           case "$BIOME_OUT" in
             *"suppressions/unused"*)
-              echo "::error::dead biome-ignore found — delete it or fix what it suppressed"
-              exit 1 ;;
+              ci_verdict_die --lane biome --status fail \
+                --summary "a dead biome-ignore no longer masks anything" \
+                --findings "$RUNNER_TEMP/biome.jsonl" \
+                --advice "Delete the suppression comment, or fix what it was suppressing." ;;
           esac
-          [ "$BIOME_STATUS" -eq 0 ] || exit "$BIOME_STATUS"
-          echo "Biome: OK (0 errors; dead-suppression gate passed)"
+          if [ "$BIOME_STATUS" -ne 0 ]; then
+            ci_verdict_die --lane biome --status fail \
+              --summary "biome reported $FINDINGS diagnostic(s) (exit $BIOME_STATUS)" \
+              --findings "$RUNNER_TEMP/biome.jsonl" \
+              --advice "Reproduce and auto-fix what is safe: pnpm exec biome check --write <paths>."
+          fi
+          ci_verdict --lane biome --status pass \
+            --summary "biome: 0 errors, and no dead biome-ignore"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: biome
 
   # --- Workspace dependency hygiene ---------------------------------------
   deps:
@@ -253,6 +393,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -261,30 +406,66 @@ jobs:
           fetch-depth: ${{ runner.environment == 'self-hosted' && '0' || '1' }}
           persist-credentials: false
       - uses: ./.github/actions/setup-node-pnpm
+      # The three tools are independent, so each is `continue-on-error` behind
+      # the aggregating verdict below — a red syncpack must not hide a red
+      # manypkg. None of them prints a line number (they name a PACKAGE), so
+      # each tees its output and `collect --fallback` pins it to the manifest
+      # the reader has to open anyway.
       - name: All workspace packages agree on dep versions (syncpack)
+        id: syncpack
+        continue-on-error: true
         run: |
-          trap 'echo "::error::repro: pnpm exec syncpack lint --config config/.syncpackrc.json"' ERR
           echo "::group::syncpack lint"
-          pnpm exec syncpack lint --config config/.syncpackrc.json
+          pnpm exec syncpack lint --config config/.syncpackrc.json 2>&1 | tee "$RUNNER_TEMP/syncpack.out"; _rc=${PIPESTATUS[0]}
           echo "::endgroup::"
+          test $_rc -eq 0 || python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" --fallback package.json < "$RUNNER_TEMP/syncpack.out"
+          test $_rc -eq 0
           echo "### Deps (syncpack) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "syncpack: OK (dep versions and semver ranges consistent)"
       - name: Workspace topology is valid (manypkg)
+        id: manypkg
+        continue-on-error: true
         run: |
-          trap 'echo "::error::repro: pnpm exec manypkg check"' ERR
           echo "::group::manypkg check"
-          pnpm exec manypkg check
+          pnpm exec manypkg check 2>&1 | tee "$RUNNER_TEMP/manypkg.out"; _rc=${PIPESTATUS[0]}
           echo "::endgroup::"
+          test $_rc -eq 0 || python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" --fallback pnpm-workspace.yaml < "$RUNNER_TEMP/manypkg.out"
+          test $_rc -eq 0
           echo "### Deps (manypkg) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "manypkg: OK (workspace structure valid)"
       - name: package.json shape conforms (npm-package-json-lint)
+        id: pkg-json
+        continue-on-error: true
         run: |
-          trap 'echo "::error::repro: pnpm run quality:pkg-json"' ERR
           echo "::group::package.json lint"
-          pnpm run quality:pkg-json
+          pnpm run quality:pkg-json 2>&1 | tee "$RUNNER_TEMP/pkg-json.out"; _rc=${PIPESTATUS[0]}
           echo "::endgroup::"
+          test $_rc -eq 0 || python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" --fallback package.json < "$RUNNER_TEMP/pkg-json.out"
+          test $_rc -eq 0
           echo "### Deps (pkg-json) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "pkg-json: OK (all package.json files conform to schema)"
+      - name: Verdict (every tool above ran; this fails if any of them did not pass)
+        if: always()
+        env:
+          # Step outcomes passed through env to match the quality gate's
+          # no-inline-expansion convention.
+          SYNCPACK: ${{ steps.syncpack.outcome }}
+          MANYPKG: ${{ steps.manypkg.outcome }}
+          PKG_JSON: ${{ steps.pkg-json.outcome }}
+        run: |
+          python3 scripts/ci/verdict.py step-outcomes --lane deps \
+            --findings "$RUNNER_TEMP/findings.jsonl" \
+            "syncpack=$SYNCPACK" \
+            "manypkg=$MANYPKG" \
+            "pkg-json=$PKG_JSON"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: deps
 
   # --- Circular dependency check ------------------------------------------
   circular:
@@ -292,6 +473,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -308,6 +494,14 @@ jobs:
           echo "::endgroup::"
           echo "### Circular deps — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "Circular deps: OK (no cycles found)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: circular
 
   # --- File size limit (per-extension + allowlist + hard cap) -------------
   file-size:
@@ -315,6 +509,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -338,6 +537,62 @@ jobs:
           echo "::endgroup::"
           echo "### File size — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "File size: OK (no hard-cap violations)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: file-size
+
+  # --- API schema + generated types -----------------------------------------
+  api-schema:
+    name: API schema and generated types match the routes
+    needs: [select-runner, changes]
+    # has_api_schema is the path-scoped half: a dependency bump changes the
+    # generated document without making nx call any project affected.
+    if: needs.changes.outputs.has_python == 'true' || needs.changes.outputs.has_typescript == 'true' || needs.changes.outputs.has_api_schema == 'true'
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: ${{ runner.environment != 'self-hosted' }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-uv
+      - name: Install api dev + backend dependencies (uv sync)
+        run: |
+          echo "::group::uv sync"
+          uv sync --project apps/api --group backend --group dev
+          echo "::endgroup::"
+          echo "deps: OK"
+      - uses: ./.github/actions/setup-node-pnpm
+      - name: Regenerate openapi.json + TypeScript types and fail on drift
+        run: |
+          trap 'echo "::error::repro: node scripts/ci/checks.mjs api-schema"' ERR
+          echo "::group::api-schema regenerate + diff"
+          node scripts/ci/checks.mjs api-schema
+          echo "::endgroup::"
+          echo "### API schema — ✅ in sync" >> "$GITHUB_STEP_SUMMARY"
+      - name: No hand-written twin of an API schema type
+        run: |
+          trap 'echo "::error::repro: node scripts/ci/checks.mjs api-schema-types"' ERR
+          echo "::group::api-schema-types"
+          node scripts/ci/checks.mjs api-schema-types
+          echo "::endgroup::"
+          echo "### API schema types — ✅ no hand-written twins" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: api-schema
 
   # --- Types must live in dedicated type files ----------------------------
   types-location:
@@ -345,6 +600,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -368,6 +628,57 @@ jobs:
           echo "::endgroup::"
           echo "### Types location — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "Type colocation: OK (no file exports > 3 types unless in *.types.ts)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: types-location
+
+  # --- Doc comments --------------------------------------------------------
+  doc-comments:
+    name: Doc comments state the contract (no narration, restating, banners)
+    needs: [select-runner, changes, python-static, python-mypy, dead-code]
+    if: ${{ !cancelled() && (needs.changes.outputs.has_js_sources == 'true') }}
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: ${{ runner.environment != 'self-hosted' }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-pnpm
+      - name: JSDoc + line-comment content gate (the TS half of tools/lints docstring-content / comment-content)
+        run: |
+          trap 'echo "::error::repro: node scripts/ci/checks.mjs doc-comments"' ERR
+          echo "::group::doc-comments check"
+          FILES=$(scripts/ci/changes.sh files ts tsx js jsx mjs cjs)
+          if [ "$FILES" = "__FULL__" ]; then
+            node scripts/ci/checks.mjs doc-comments
+          elif [ -z "$FILES" ]; then
+            echo "No matching changed files — skipping."
+          else
+            CHANGED_FILES="$FILES" node scripts/ci/checks.mjs doc-comments
+          fi
+          echo "::endgroup::"
+          echo "### Doc comments — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Doc comments: OK (no narrating, restating or in-body banner comments)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: doc-comments
 
   # --- Components-per-file ------------------------------------------------
   components-per-file:
@@ -375,6 +686,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -398,6 +714,14 @@ jobs:
           echo "::endgroup::"
           echo "### Components per file — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "Components: OK (no file declares > 2 React components)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: components-per-file
 
   # --- Copy-paste detection -----------------------------------------------
   duplicates:
@@ -405,6 +729,11 @@ jobs:
     needs: [select-runner, changes]
     if: needs.changes.outputs.has_typescript == 'true'
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -424,6 +753,14 @@ jobs:
           echo "::endgroup::"
           echo "### Duplicates (jscpd) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "Duplicates: OK (<= 3% on changed lines)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: duplicates
 
   # --- Published package hygiene ------------------------------------------
   package-hygiene:
@@ -431,6 +768,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -466,6 +808,14 @@ jobs:
       # config/pnpm-audit-allowlist.json (an expired entry fails the lane too).
       - name: pnpm audit (production dependencies, high and above)
         run: bash scripts/ci/audit.sh pnpm
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: package-hygiene
 
   # --- Go tool (tools/gaia-connect) ---------------------------------------
   # The one Go module in the repo. It ships as release binaries attached to the
@@ -532,6 +882,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -555,6 +910,14 @@ jobs:
           fi
           echo "::endgroup::"
           echo "TypeScript: OK (all affected workspaces pass strict tsc)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: type-check
 
   # --- Python static analysis (ruff + xenon + interrogate + security) ------
   # One job, not four: each of these tools is seconds of work behind ~40s of
@@ -567,10 +930,15 @@ jobs:
   # plus the aggregating verdict at the end: one red tool no longer hides the
   # other five, which is the only thing separate jobs bought us here.
   python-static:
-    name: Python static (ruff + custom lints + xenon + interrogate + bandit + pip-audit)
+    name: Python static (ruff + custom lints + import contracts + xenon + interrogate + bandit + pip-audit)
     needs: [select-runner, changes]
     if: needs.changes.outputs.has_python == 'true'
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     # The six tools now run serially in one job, so the cap is the sum of what
     # the four old lanes allowed themselves in parallel (10 + 5 + 5 + 10),
     # halved for headroom. A too-tight cap surfaces as a `cancelled` lane,
@@ -583,6 +951,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-uv
+      # The import-cost step below imports the real modules, so it needs the
+      # real dependencies — the composite is how this repo installs them, and
+      # it is the cached path on both runner kinds. No services, no Node, no
+      # 1.3 GB of embedding models: this lane only needs the venv.
+      - uses: ./.github/actions/setup-python-test-env
+        with:
+          services: "false"
+          node: "false"
+          restore-models: "false"
       - name: ruff check + format (PL, RUF, FAST, S, B, A, COM, C4, DTZ, ISC, RET, SIM, ARG, PTH, TRY, PERF, UP, FURB, LOG, G + more)
         id: ruff
         continue-on-error: true
@@ -611,14 +988,29 @@ jobs:
           fi
           echo "::endgroup::"
           echo "ruff: OK (strict rule set passes; every file is already formatted)"
-      - name: Custom Python AST lints (route contract, no service classes, wide events, repository boundaries)
+      - name: Custom Python AST lints (route contract, service classes, wide events, repository boundaries, docstring + comment content)
         id: custom-lints
         continue-on-error: true
+        # apps/api/tests is in scope because the docstring/comment rules opt
+        # into the test tree (INCLUDES_TESTS); the other rules still skip it.
         run: |
           echo "::group::custom lints"
-          python3 tools/lints/run.py apps/api/app
+          python3 tools/lints/run.py apps/api/app apps/api/tests
           echo "::endgroup::"
-          echo "Custom lints: OK (4 rules pass)"
+          echo "Custom lints: OK (8 rules pass)"
+      - name: Import contracts (app.constants / app.config / app.utils stay leaves)
+        id: lint-imports
+        continue-on-error: true
+        # Contracts live in apps/api/pyproject.toml [tool.importlinter]. --no-cache
+        # is load-bearing: grimp's on-disk cache drops function-scope imports, so a
+        # cached run analyses a subset of the graph and can miss a violation.
+        run: |
+          trap 'echo "::error::repro: cd apps/api && uvx --no-build --from import-linter==2.6 lint-imports --no-cache"' ERR
+          echo "::group::lint-imports"
+          cd apps/api && uvx --no-build --from import-linter==2.6 lint-imports --no-cache
+          echo "::endgroup::"
+          echo "### Import contracts — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "lint-imports: OK (the low modules reach no upper layer and no model stack)"
       - name: Ruff escape-hatch whys (ignore / per-file-ignores must be justified)
         id: ignore-whys
         continue-on-error: true
@@ -643,6 +1035,34 @@ jobs:
           python3 tools/lints/check_plr_complexity.py
           echo "::endgroup::"
           echo "plr-complexity-ratchet: OK"
+      - name: Typed-boundaries ratchet (touch a grandfathered file, fix it now)
+        id: typed-boundaries
+        continue-on-error: true
+        # No dict[str, Any] signature and no value["key"] read outside the
+        # boundary modules -- the debt is grandfathered per file until a PR
+        # touches that file. See tools/lints/README.md#typed-boundaries.
+        run: |
+          echo "::group::typed-boundaries ratchet"
+          python3 tools/lints/check_typed_boundaries.py
+          echo "::endgroup::"
+          echo "typed-boundaries: OK"
+      - name: Import cost of the base layers (trend; not gating yet)
+        id: import-cost
+        continue-on-error: true
+        # Measured 2026-09-17 on the home box: every module under app/utils and
+        # app/models costs 6-15 s to import ALONE, because those layers reach up
+        # into app.agents and app.services (app.utils.chat_utils imports
+        # app.agents.llm.chatbot). Gating at MODULE_BUDGET_MS today would red
+        # ~200 modules on a PR that did not cause any of them, so the step runs
+        # with --report: it measures everything and records the entry points'
+        # cost as a trend. Drop `--report` to gate — that is the whole change —
+        # once the layering is fixed. It is still in the verdict below, so a
+        # step that stops RUNNING is still a red lane.
+        run: |
+          echo "::group::import cost"
+          python3 tools/lints/check_import_cost.py --report
+          echo "::endgroup::"
+          echo "import-cost: measured (trend only until the base layers stop importing upward)"
       - name: Complexity scan (max-absolute F, max-modules E, max-average B)
         id: xenon
         continue-on-error: true
@@ -699,11 +1119,11 @@ jobs:
           echo "::group::bandit (low severity, low confidence — no exclusions)"
           FILES=$(scripts/ci/changes.sh py-source)
           if [ "$FILES" = "__FULL__" ]; then
-            uvx --no-build bandit@1.9.4 -c pyproject.toml -r apps/api/app apps/voice-agent/src libs/shared/py --severity-level low --confidence-level low 2>&1 | tee "$RUNNER_TEMP/bandit.out"; _rc=${PIPESTATUS[0]}; python3 scripts/ci/report.py annotations < "$RUNNER_TEMP/bandit.out" || true; test $_rc -eq 0
+            uvx --no-build bandit@1.9.4 -c pyproject.toml -r apps/api/app apps/voice-agent/src libs/shared/py --severity-level low --confidence-level low 2>&1 | tee "$RUNNER_TEMP/bandit.out"; _rc=${PIPESTATUS[0]}; python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" < "$RUNNER_TEMP/bandit.out"; test $_rc -eq 0
           elif [ -z "$FILES" ]; then
             echo "No matching changed files — skipping."
           else
-            uvx --no-build bandit@1.9.4 -c pyproject.toml $FILES --severity-level low --confidence-level low 2>&1 | tee "$RUNNER_TEMP/bandit.out"; _rc=${PIPESTATUS[0]}; python3 scripts/ci/report.py annotations < "$RUNNER_TEMP/bandit.out" || true; test $_rc -eq 0
+            uvx --no-build bandit@1.9.4 -c pyproject.toml $FILES --severity-level low --confidence-level low 2>&1 | tee "$RUNNER_TEMP/bandit.out"; _rc=${PIPESTATUS[0]}; python3 scripts/ci/verdict.py collect --into "$RUNNER_TEMP/findings.jsonl" < "$RUNNER_TEMP/bandit.out"; test $_rc -eq 0
           fi
           echo "::endgroup::"
           echo "### Bandit — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
@@ -729,22 +1149,37 @@ jobs:
           # no-inline-expansion convention.
           RUFF: ${{ steps.ruff.outcome }}
           CUSTOM_LINTS: ${{ steps.custom-lints.outcome }}
+          LINT_IMPORTS: ${{ steps.lint-imports.outcome }}
           IGNORE_WHYS: ${{ steps.ignore-whys.outcome }}
           PLR_COMPLEXITY: ${{ steps.plr-complexity.outcome }}
+          TYPED_BOUNDARIES: ${{ steps.typed-boundaries.outcome }}
+          IMPORT_COST: ${{ steps.import-cost.outcome }}
           XENON: ${{ steps.xenon.outcome }}
           INTERROGATE: ${{ steps.interrogate.outcome }}
           BANDIT: ${{ steps.bandit.outcome }}
           PIP_AUDIT: ${{ steps.pip-audit.outcome }}
         run: |
-          python3 scripts/ci/report.py step-outcomes \
+          python3 scripts/ci/verdict.py step-outcomes --lane python-static \
+            --findings "$RUNNER_TEMP/findings.jsonl" \
             "ruff=$RUFF" \
             "custom-lints=$CUSTOM_LINTS" \
+            "lint-imports=$LINT_IMPORTS" \
             "ignore-whys=$IGNORE_WHYS" \
             "plr-complexity=$PLR_COMPLEXITY" \
+            "typed-boundaries=$TYPED_BOUNDARIES" \
+            "import-cost=$IMPORT_COST" \
             "xenon=$XENON" \
             "interrogate=$INTERROGATE" \
             "bandit=$BANDIT" \
             "pip-audit=$PIP_AUDIT"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: python-static
 
   # --- Python mypy --------------------------------------------------------
   python-mypy:
@@ -752,6 +1187,11 @@ jobs:
     needs: [select-runner, changes]
     if: needs.changes.outputs.has_python == 'true'
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -832,6 +1272,14 @@ jobs:
           fi
           echo "::endgroup::"
           echo "mypy: OK (no type errors)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: python-mypy
 
   # --- Observability score (evlog map) ------------------------------------
   # Python port of evlog's `map` (tools/evlog_map): scores every FastAPI/ARQ
@@ -846,6 +1294,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_python == 'true' || needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -920,6 +1373,14 @@ jobs:
           node scripts/ci/checks.mjs evlog-map-bots --min-score 100
           echo "::endgroup::"
           echo "observability-bots: OK (surface held at 100)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: observability
 
   # --- Wide-event cross-runtime conformance --------------------------------
   # The Python services and the TypeScript bots must emit the SAME log shape,
@@ -933,6 +1394,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_python == 'true' || needs.changes.outputs.has_typescript == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -950,6 +1416,14 @@ jobs:
           echo "::endgroup::"
           echo "### Wide-event conformance — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "wide events: OK (Python and TypeScript emit one shape)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: wide-event-conformance
 
   # --- Dead code detection (knip + vulture) — enforced ---------------------
   # Runs in --strict mode: any knip (TS) or vulture (Python) finding fails the
@@ -961,6 +1435,11 @@ jobs:
     needs: [select-runner, changes]
     if: needs.changes.outputs.has_typescript == 'true' || needs.changes.outputs.has_python == 'true'
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -983,6 +1462,14 @@ jobs:
           echo "::endgroup::"
           echo "### Dead code — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "Dead code: OK (no unused TS or Python code)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: dead-code
 
   # --- Grafana alert rules (pint + promtool) ------------------------------
   # Grafana's alert rules are managed objects, not Prometheus rule files, so they
@@ -1007,6 +1494,11 @@ jobs:
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
     if: ${{ !cancelled() && (needs.changes.outputs.has_alert_rules == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1052,6 +1544,14 @@ jobs:
           echo "::endgroup::"
           echo "### Alert rules (promtool test) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "promtool: OK (all per-rule firing + quiet tests pass)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: alert-rules
 
   # --- Suppression hygiene -------------------------------------------------
   # Baseline-free governance: every inline suppression (# noqa / # type: ignore
@@ -1062,13 +1562,21 @@ jobs:
   suppression-hygiene:
     name: "Suppression hygiene (every # noqa / # type: ignore / biome-ignore has a why)"
     needs: [select-runner, changes, python-static, python-mypy, dead-code]
-    if: ${{ !cancelled() }}
+    # `!cancelled()` alone runs this on a skipped DAG, where `runs-on` is
+    # `fromJSON('')` and the lane dies on the runner lookup — the same shape
+    # main.yml's trivy-scan and test-harness-tools already guard against.
+    if: ${{ !cancelled() && needs.select-runner.result == 'success' }}
     # No job-level language gate on purpose: check_tool_pins reads the WORKFLOW
     # FILES themselves (code-quality.yml, main.yml), so a workflow-only PR is
     # exactly the change this lane validates — and nx-affected correctly marks
     # no language project affected for such PRs. The steps self-scope via
     # changes.sh files and skip when nothing relevant changed.
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1123,6 +1631,14 @@ jobs:
           echo "::endgroup::"
           echo "### Tool pins — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "Tool pins: OK (hooks and CI run identical versions)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: suppression-hygiene
 
   # --- Secret scanning (gitleaks, diff-scoped) -----------------------------
   # gitleaks-action is free for personal-account repos but requires a (free,
@@ -1143,6 +1659,11 @@ jobs:
     # them too, mirror GITLEAKS_LICENSE into Dependabot secrets and drop this.
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1159,6 +1680,14 @@ jobs:
           # cap — the upload then errors out and fails the step on size, not on
           # leaks. Full results remain in the uploaded sarif artifact.
           GITLEAKS_ENABLE_SUMMARY: false
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: gitleaks
 
 
   # --- Python semgrep (SSRF / path traversal / injection) ------------------
@@ -1183,6 +1712,11 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.has_python == 'true'
     runs-on: ubuntu-latest
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1201,6 +1735,14 @@ jobs:
         uses: docker://semgrep/semgrep@sha256:b68f9b68483955b85042dac7b4533757779625a02dcf91e470da4c2df1b430be # v1.145.0
         with:
           args: semgrep scan --config tools/semgrep/p-python.yaml apps/api/app --error --metrics=off
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: semgrep
 
   # --- Quality gate (single required status check) -------------------------
   # --- Mutation testing (changed modules, self-contained) -----------------
@@ -1229,6 +1771,11 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.has_python == 'true'
     runs-on: ubuntu-latest
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -1241,6 +1788,14 @@ jobs:
       - name: Compute the mutation matrix
         id: plan
         run: bash scripts/ci/mutation.sh plan
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: test-mutation-plan
 
   # One runner per changed module. mutmut re-runs a module's whole test
   # selection once per mutant, so a heavy module costs tens of minutes; in a
@@ -1254,14 +1809,21 @@ jobs:
     # 50+ checks would carry its full test-file JSON and the module — the only
     # part a reader needs — would be truncated away in the checks list.
     name: Mutation ${{ matrix.label }}
-    needs: [select-runner, changes, test-mutation-plan]
+    needs: [select-runner-services, changes, test-mutation-plan]
     if: needs.changes.outputs.has_python == 'true' && needs.test-mutation-plan.outputs.count != '0'
-    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
-    # Per SHARD, not per lane. A lone-module shard measures ~3 minutes end to
-    # end (setup included); a packed one carries up to a quarter of the diff,
-    # and 22 modules cost ~18 minutes of mutation work alone (2026-09-08, the
-    # 90-module browser-automation PR: ~40-50 s of fixed cost per module — the
-    # unmutated baseline run of every mapped test file — before any mutant).
+    # The shard pool, never the lint selection: see select-runner-services for
+    # why every shard lands there whatever `matrix.pool` says. The selection is
+    # in `needs` because `runs-on` is resolved before the job starts and cannot
+    # ask for an output it did not declare.
+    runs-on: ${{ fromJSON(needs.select-runner-services.outputs.runner) }}
+    # The base every scoped step in this job diffs against. Job-level because a
+    # workflow-level `env:` cannot read `needs`, and every step here that calls
+    # changes.sh, nx affected or jscpd must agree on one answer.
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
+    # Job cap, kept above the step timeout below so a slow shard is failed by
+    # the step (which keeps its log artifact) rather than cancelled by the job
+    # (which retains nothing).
     timeout-minutes: 35
     strategy:
       # Every module reports. Stopping at the first failure would hide the
@@ -1269,9 +1831,10 @@ jobs:
       fail-fast: false
       # Each shard runs its modules in parallel with children of its own; nine
       # concurrent shards (measured 2026-08-28) filled every runner slot so the
-      # main pipeline's detect job queued behind lint. Four shards keep the
-      # lint pool's other lanes moving. Excess modules pack into the four
-      # shards round-robin (scripts/ci/mutation.sh plan MAX_SHARDS must match).
+      # main pipeline's detect job queued behind them. Four at a time keeps the
+      # pool's test lanes moving. This is the wave size, NOT the shard count:
+      # scripts/ci/mutation.sh plan packs modules into MAX_SHARDS (6)
+      # round-robin, so a large diff runs as 4 + 2 rather than overfilling four.
       max-parallel: 4
       matrix:
         include: ${{ fromJson(needs.test-mutation-plan.outputs.matrix) }}
@@ -1281,14 +1844,26 @@ jobs:
           clean: ${{ runner.environment != 'self-hosted' }}
           fetch-depth: 0
           persist-credentials: false
+      # A services shard installs through the composite that also brings up
+      # Mongo and Redis for this runner instance and exports
+      # USE_REAL_SERVICES=1 — the contract tier in its test set needs them.
+      - uses: ./.github/actions/setup-python-test-env
+        if: matrix.pool == 'services'
+      # Any other shard installs the way the lint lanes do — setup-uv for the
+      # cached toolchain, then the project sync mutmut and pytest need. No
+      # services are started, so nothing claims a test-services lane.
       - uses: ./.github/actions/setup-uv
+        if: matrix.pool != 'services'
       - name: Sync Python dependencies
+        if: matrix.pool != 'services'
         run: uv sync --frozen --package gaia --group backend --group dev
       - name: Mutation check (zero survivors required)
         # STEP-level timeout so a stuck shard fails as a step (job continues,
         # the shard-log artifact uploads, logs survive) instead of the job
-        # being cancelled at its cap — a cancelled job retains nothing. Sized
-        # for a packed shard (see the job timeout above), under it.
+        # being cancelled at its cap — a cancelled job retains nothing.
+        # 30, raised from 20 alongside MAX_SHARDS 4 -> 6: the smaller shards are
+        # the fix for a large diff, and this is the headroom so the next one
+        # larger still fails on a survivor rather than on the clock.
         timeout-minutes: 30
         # Through env, not inline expansion: the value is generated, but an
         # inline ${{ }} in a run block is a shell-injection seam regardless.
@@ -1299,6 +1874,16 @@ jobs:
           GROUP: ${{ matrix.group }}
           SHARD_COUNT: ${{ matrix.shards }}
         run: bash scripts/ci/mutation.sh shard
+      # Only the services shards took a namespace, and only they hand it back.
+      # Releasing a lane a shard never claimed is a teardown error, and
+      # teardown failing is how a lane goes red having passed. `always()`
+      # still, so a failed shard releases what it claimed.
+      - name: Release the test services
+        if: always() && matrix.pool == 'services'
+        run: bash scripts/ci/test-services.sh down
+      - name: Stop the embedding sidecar
+        if: always() && matrix.pool == 'services'
+        run: bash scripts/ci/embedding-sidecar.sh stop
       - name: Upload shard log
         # Belt and braces for the diagnosis path: runs even when the step
         # above fails or the job is cancelled, so the evidence survives the
@@ -1307,20 +1892,60 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mutation-log-${{ strategy.job-index }}
-          path: shard.log
+          # shard.verdict.json rides with the log: it is the replay artifact
+          # every failing mutation verdict's advice points at, so it has to
+          # be fetchable from the same place as the log it was made from.
+          path: |
+            shard.log
+            shard.verdict.json
           retention-days: 3
           if-no-files-found: ignore
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          # job-index, not matrix.group: the group is a generated label and the
+          # shard-log artifact beside this one already keys on the index.
+          name: test-mutation-${{ strategy.job-index }}
+          # This job's lanes live in the `mutation/` family, not `test-mutation/`:
+          # mutation.sh writes one verdict per mutated MODULE
+          # (verify-logs/verdicts/mutation/<module>.json) plus its own
+          # mutation/shard-<n>. The id here matches that shard verdict exactly,
+          # so --only-if-missing stands down when mutation.sh already wrote one
+          # and fills in only when the shard died with nothing to say.
+          lane: mutation/shard-${{ strategy.job-index }}
+          # mutation.sh writes one verdict per mutated MODULE under `mutation/`,
+          # not under this shard's own lane, so the namespace this job owns is
+          # the family rather than the lane.
+          family: mutation
 
   quality-gate:
     name: Quality gate (required)
-    if: always()
+    # `always()`, with NO edit guard: a skipped required check counts as
+    # PASSING, so a gate that skipped alongside the DAG would let a title edit
+    # publish a green verdict for a head SHA whose last real run was red. The
+    # two steps below split the two cases instead — consolidate this run's
+    # lanes, or (for the edit that ran none) mirror what this same head SHA
+    # already concluded.
+    if: ${{ always() }}
     needs:
+      # Infra, and in the list for one reason: if the services selection fails,
+      # every contract-mapped shard is SKIPPED, and `consolidate` reads a
+      # skipped lane as "change detection proved there was nothing to check" —
+      # a green gate with the repository modules unmutated. `select-runner` is
+      # absent because `changes` already depends on it and carries its failure.
+      - select-runner-services
       - changes
       - biome
       - deps
       - circular
       - file-size
       - types-location
+      - api-schema
+      - doc-comments
       - components-per-file
       - duplicates
       - package-hygiene
@@ -1339,91 +1964,52 @@ jobs:
       - test-mutation
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read # read this head SHA's previous runs (mirror step below)
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Every gated job uploads `verdict-<job>` through the
+      # ./.github/actions/upload-verdict composite; merge-multiple lands them
+      # as the one verify-logs/verdicts tree `consolidate` reads. The mutation
+      # shards' per-module verdicts ride along in the same tree.
+      - if: ${{ github.event.action != 'edited' || github.event.changes.base != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: verdict-*
+          # runner.temp, not the checkout: that is where every lane wrote and
+          # uploaded from, and it is per-job and wiped, so nothing a previous
+          # job left on a persistent self-hosted workspace can reach the gate.
+          path: ${{ runner.temp }}/verdicts
+          merge-multiple: true
       - name: Verdict
+        if: ${{ github.event.action != 'edited' || github.event.changes.base != '' }}
         env:
-          # Lane results passed through env to avoid inline-expansion injection.
-          CHANGES: ${{ needs.changes.result }}
-          BIOME: ${{ needs.biome.result }}
-          DEPS: ${{ needs.deps.result }}
-          CIRCULAR: ${{ needs.circular.result }}
-          FILE_SIZE: ${{ needs.file-size.result }}
-          TYPES_LOCATION: ${{ needs.types-location.result }}
-          COMPONENTS_PER_FILE: ${{ needs.components-per-file.result }}
-          DUPLICATES: ${{ needs.duplicates.result }}
-          PACKAGE_HYGIENE: ${{ needs.package-hygiene.result }}
-          GO_CONNECT: ${{ needs.go-connect.result }}
-          TYPE_CHECK: ${{ needs.type-check.result }}
-          PYTHON_STATIC: ${{ needs.python-static.result }}
-          PYTHON_MYPY: ${{ needs.python-mypy.result }}
-          OBSERVABILITY: ${{ needs.observability.result }}
-          WIDE_EVENT_CONFORMANCE: ${{ needs.wide-event-conformance.result }}
-          DEAD_CODE: ${{ needs.dead-code.result }}
-          ALERT_RULES: ${{ needs.alert-rules.result }}
-          SUPPRESSION_HYGIENE: ${{ needs.suppression-hygiene.result }}
-          GITLEAKS: ${{ needs.gitleaks.result }}
-          SEMGREP: ${{ needs.semgrep.result }}
-          MUTATION_PLAN: ${{ needs.test-mutation-plan.result }}
-          MUTATION: ${{ needs.test-mutation.result }}
-        run: |
-          # Lane skips are only trustworthy if change detection succeeded.
-          if [[ "$CHANGES" != "success" ]]; then
-            echo "::error::change detection failed (result: $CHANGES) — cannot trust lane skips"
-            exit 1
-          fi
-
-          declare -A RESULT=(
-            [biome]="$BIOME"
-            [deps]="$DEPS"
-            [circular]="$CIRCULAR"
-            [file-size]="$FILE_SIZE"
-            [types-location]="$TYPES_LOCATION"
-            [components-per-file]="$COMPONENTS_PER_FILE"
-            [duplicates]="$DUPLICATES"
-            [package-hygiene]="$PACKAGE_HYGIENE"
-            [go-connect]="$GO_CONNECT"
-            [type-check]="$TYPE_CHECK"
-            [python-static]="$PYTHON_STATIC"
-            [python-mypy]="$PYTHON_MYPY"
-            [observability]="$OBSERVABILITY"
-            [wide-event-conformance]="$WIDE_EVENT_CONFORMANCE"
-            [dead-code]="$DEAD_CODE"
-            [alert-rules]="$ALERT_RULES"
-            [suppression-hygiene]="$SUPPRESSION_HYGIENE"
-            [gitleaks]="$GITLEAKS"
-            [semgrep]="$SEMGREP"
-            [test-mutation-plan]="$MUTATION_PLAN"
-            [test-mutation]="$MUTATION"
-          )
-          LANES=(biome deps circular file-size types-location components-per-file \
-                 duplicates package-hygiene go-connect type-check \
-                 python-static python-mypy \
-                 observability wide-event-conformance \
-                 dead-code alert-rules suppression-hygiene gitleaks semgrep test-mutation-plan test-mutation)
-
-          echo "::group::Per-lane results"
-          for lane in "${LANES[@]}"; do
-            printf '  %-22s %-12s\n' "$lane:" "${RESULT[$lane]}"
-          done
-          echo "::endgroup::"
-
-          # Every lane is enforced: a lane that is neither success nor skipped
-          # (the changes job proved its language was untouched) fails the gate.
-          # The old marker-file ratchet is gone — the rollout it enabled is
-          # complete, and the two sources of truth had drifted
-          # (observability + wide-event-conformance were enforced but missing
-          # from LANES).
-          failed=0
-          for lane in "${LANES[@]}"; do
-            r="${RESULT[$lane]}"
-            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
-              echo "::error::lane '$lane' did not pass (result: $r)"
-              failed=$((failed + 1))
-            fi
-          done
-
-          if [[ "$failed" -gt 0 ]]; then
-            echo "::error::Quality gate FAILED — $failed lane(s) did not pass"
-            exit 1
-          fi
-          echo "Quality gate: PASSED — ${#LANES[@]} lanes enforced"
+          # ONE list: every lane the gate needs, each carrying its job result.
+          # consolidate needs both halves. The result is what tells a
+          # legitimately SKIPPED lane (the `changes` job proved its language
+          # untouched) apart from a lane that ran and reported nothing — and
+          # only the second is a bug. It also keeps the old rule that lane
+          # skips are worthless if `changes` itself failed: `changes` is in the
+          # list, so its failure reds the gate on its own. `@mutation` is the
+          # lane FAMILY that job reports under, and `*<count>` is how many
+          # shards `mutation.sh plan` packed the diff into: a family is
+          # otherwise satisfied by ANY member, so a shard cancelled before its
+          # upload would be spoken for by the shard beside it and the modules it
+          # carried would go unmutated (see consolidate --help).
+          # Results go through env, not inline expansion.
+          EXPECT: >-
+            changes=${{ needs.changes.result }},biome=${{ needs.biome.result }},deps=${{ needs.deps.result }},circular=${{ needs.circular.result }},file-size=${{ needs.file-size.result }},types-location=${{ needs.types-location.result }},api-schema=${{ needs.api-schema.result }},doc-comments=${{ needs.doc-comments.result }},components-per-file=${{ needs.components-per-file.result }},duplicates=${{ needs.duplicates.result }},package-hygiene=${{ needs.package-hygiene.result }},go-connect=${{ needs.go-connect.result }},type-check=${{ needs.type-check.result }},python-static=${{ needs.python-static.result }},python-mypy=${{ needs.python-mypy.result }},observability=${{ needs.observability.result }},wide-event-conformance=${{ needs.wide-event-conformance.result }},dead-code=${{ needs.dead-code.result }},alert-rules=${{ needs.alert-rules.result }},suppression-hygiene=${{ needs.suppression-hygiene.result }},gitleaks=${{ needs.gitleaks.result }},semgrep=${{ needs.semgrep.result }},test-mutation-plan=${{ needs.test-mutation-plan.result }},test-mutation@mutation*${{ needs.test-mutation-plan.outputs.count }}=${{ needs.test-mutation.result }},select-runner-services@result-only=${{ needs.select-runner-services.result }}
+        run: python3 scripts/ci/verdict.py consolidate "$RUNNER_TEMP/verdicts" --expect "$EXPECT"
+      # The other half of the `always()` above: a title or body edit ran no
+      # lane, so there is nothing to consolidate — but this check must still
+      # conclude, and it must conclude what the head SHA already earned. The
+      # head sha, not github.sha: a pull_request run's github.sha is the merge
+      # commit, while the check runs branch protection reads hang off the head.
+      - name: Repeat this commit's last completed gate verdict
+        if: ${{ github.event.action == 'edited' && github.event.changes.base == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/verdict.py mirror-previous-gate --repo "$GITHUB_REPOSITORY" --sha "${{ github.event.pull_request.head.sha }}" --workflow code-quality.yml --job "Quality gate (required)" --run-id "$GITHUB_RUN_ID"

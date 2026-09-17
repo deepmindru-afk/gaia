@@ -3,17 +3,13 @@
 Powers link previews for email anchors in chat markdown. Sources, merged
 field-wise in priority order (the same surface Gmail itself draws from):
 
-1. Saved Google contacts (People API ``people:searchContacts`` via the
-   user's Composio Gmail connection) — saved names and contact photos.
-2. Other contacts (``otherContacts:search``) — anyone the user has ever
-   emailed, with their actual Google profile photo even when unsaved.
-3. Gravatar public profile — name, avatar, and bio for addresses with a
-   Gravatar account.
-4. Domain favicon — for company addresses with no personal photo, the
-   organization's logo beats an empty circle.
+1. Saved Google contacts (People API people:searchContacts) — saved names and photos.
+2. Other contacts (otherContacts:search) — anyone the user has ever emailed.
+3. Gravatar public profile — name, avatar, and bio for addresses with one.
+4. Domain favicon — for company addresses with no personal photo.
 
-Results are cached per (user, email) in Redis: contact lookups are
-user-specific, so they must never share the global URL-metadata cache.
+Cached per (user, email) in Redis, since contact lookups are user-specific
+and must never share the global URL-metadata cache.
 """
 
 import asyncio
@@ -43,7 +39,7 @@ from app.constants.email import (
 )
 from app.db.redis import get_cache, set_cache
 from app.models.search_models import URLResponse
-from app.services.composio.proxy_client import proxy_request
+from app.services.composio.proxy_client import ProxyRequest, proxy_request
 from app.utils.email_utils import normalize_email
 from shared.py.wide_events import log
 
@@ -68,14 +64,14 @@ class _ProfileFields(BaseModel):
 
 
 def _first_value(entries: list[dict[str, Any]], key: str) -> str | None:
-    """First non-empty ``key`` across a People API field's entries."""
+    """First non-empty key across a People API field's entries."""
     return next((str(entry[key]) for entry in entries if entry.get(key)), None)
 
 
 def _pick_photo(photos: list[dict[str, Any]]) -> str | None:
     """Best real photo: prefer the Google account (PROFILE) photo, skip monograms.
 
-    ``default=true`` marks Google's generated letter avatars — returning None
+    default=true marks Google's generated letter avatars — returning None
     instead lets the merge fall through to a source with an actual photo.
     """
     real = [photo for photo in photos if photo.get("url") and not photo.get("default")]
@@ -112,11 +108,13 @@ async def _people_search(
     """
     try:
         result: dict[str, Any] | None = await proxy_request(
-            user_id=user_id,
-            toolkit=_GMAIL_TOOLKIT,
-            method="GET",
-            endpoint=endpoint,
-            query={"query": query, "readMask": read_mask},
+            ProxyRequest(
+                user_id=user_id,
+                toolkit=_GMAIL_TOOLKIT,
+                method="GET",
+                endpoint=endpoint,
+                query={"query": query, "readMask": read_mask},
+            )
         )
         return result
     except Exception as exc:
@@ -157,22 +155,23 @@ async def _search_google_people(
 async def _fetch_profile_photo(user_id: str, person: dict[str, Any]) -> str | None:
     """Fetch a saved contact's full photo list and pick the real one.
 
-    searchContacts only returns the contact-card photo, which for contacts
-    without an explicit picture is a generated gradient/monogram that is NOT
-    flagged ``default``. people.get on the same resource also returns
-    PROFILE-source photos — the person's actual Google account picture —
-    which _pick_photo prefers.
+    searchContacts only returns the contact-card photo, which for contacts without
+    an explicit picture is a generated gradient/monogram not flagged as default.
+    people.get on the same resource also returns PROFILE-source photos — the
+    person's actual Google account picture — which _pick_photo prefers.
     """
     resource_name = person.get("resourceName") or ""
     if not resource_name.startswith("people/"):
         return None
     try:
         full = await proxy_request(
-            user_id=user_id,
-            toolkit=_GMAIL_TOOLKIT,
-            method="GET",
-            endpoint=PEOPLE_GET_ENDPOINT_TEMPLATE.format(resource_name=resource_name),
-            query={"personFields": "photos"},
+            ProxyRequest(
+                user_id=user_id,
+                toolkit=_GMAIL_TOOLKIT,
+                method="GET",
+                endpoint=PEOPLE_GET_ENDPOINT_TEMPLATE.format(resource_name=resource_name),
+                query={"personFields": "photos"},
+            )
         )
     except Exception as exc:
         log.debug(
@@ -239,10 +238,10 @@ def _merge_profiles(profiles: Sequence[_ProfileFields | None]) -> _ProfileFields
 
 
 async def fetch_email_profile(user_id: str, raw_value: str) -> URLResponse:
-    """Resolve an email (or ``mailto:`` URL) to preview metadata for the user.
+    """Resolve an email (or mailto: URL) to preview metadata for the user.
 
     Always returns a URLResponse; when no source knows the address, all
-    fields except ``url`` are None and the frontend shows its fallback.
+    fields except url are None and the frontend shows its fallback.
     """
     email = normalize_email(raw_value)
     if email is None:

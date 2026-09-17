@@ -4,13 +4,9 @@
  * array of snapshots into one live card.
  */
 
-export type BrowserSessionStatus =
-  | "starting"
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
+import type { BrowserSessionStatus } from "@shared/api/generated";
+
+export type { BrowserSessionStatus } from "@shared/api/generated";
 
 export type BrowserHandoffStatus =
   | "pending"

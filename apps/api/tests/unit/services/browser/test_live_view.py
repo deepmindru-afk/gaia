@@ -1,12 +1,11 @@
-"""``_live_view_base`` resolution, the ``create_live_view_link`` code-minting flow,
-the raw ``live_view_url`` builder, and the tokened ``render_live_view_page`` HTML.
+"""Cover _live_view_base, create_live_view_link, live_view_url and render_live_view_page.
 
-``test_live_code.py`` already covers the vhost-vs-plain-host branch of
-``create_live_view_link`` with an exact-match assertion on the returned URL; this
+test_live_code.py already covers the vhost-vs-plain-host branch of
+create_live_view_link with an exact-match assertion on the returned URL; this
 file targets what that leaves open: the base-URL fallback/precedence logic in
-``_live_view_base`` itself, that ``mint_live_code`` is called with the right
-arguments in the right order (an ``AsyncMock`` return value alone can't catch an
-argument swap), and ``live_view_url``/``render_live_view_page`` — neither of
+_live_view_base itself, that mint_live_code is called with the right
+arguments in the right order (an AsyncMock return value alone can't catch an
+argument swap), and live_view_url/render_live_view_page — neither of
 which any existing test in the suite calls at all.
 """
 
@@ -56,10 +55,9 @@ def test_live_view_base_strips_trailing_slash_from_configured_base_url(monkeypat
 
 @pytest.mark.unit
 def test_live_view_base_rstrip_only_strips_slash_not_other_trailing_chars(monkeypatch):
-    # Pins the exact character set passed to rstrip(): it must strip "/" only.
-    # A mutant padding that literal to "XX/XX" would strip "/" AND "X" — an
-    # unrelated character it should never touch — so a base URL ending in "X/"
-    # tells the two apart.
+    # Pins the exact character set passed to rstrip(): "/" only. A mutant padding
+    # it to "XX/XX" would also strip "X", so a base URL ending in "X/" tells the
+    # two apart.
     monkeypatch.setattr(
         live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.ioX/"
     )
@@ -178,10 +176,9 @@ def test_render_live_view_page_differs_by_session_id():
 
 @pytest.mark.unit
 def test_render_live_view_page_maps_pointer_input_via_per_frame_css_size():
-    # Regression: pointer math used to assume frame-bitmap pixels == CSS
-    # pixels, so takeover clicks landed short on a downscaled stream. The
-    # viewer must read the per-frame cssWidth/cssHeight and use a CDP
-    # modifiers bitmask for shift/ctrl/meta state.
+    # Regression: pointer math assumed frame-bitmap pixels == CSS pixels, so takeover
+    # clicks landed short on a downscaled stream. The viewer must read the per-frame
+    # cssWidth/cssHeight and use a CDP modifiers bitmask for shift/ctrl/meta state.
     page = live_view.render_live_view_page("x")
 
     assert "cssWidth" in page

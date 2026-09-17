@@ -13,10 +13,12 @@ import {
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useHandoffDecision } from "@/features/browser/hooks/useHandoffDecision";
-import { useLiveBrowser } from "@/features/browser/hooks/useLiveBrowser";
+import {
+  type LiveStatus,
+  useLiveBrowser,
+} from "@/features/browser/hooks/useLiveBrowser";
 import { useBrowserPanel } from "@/features/browser/stores/browserPanelStore";
 import { BROWSER_STATUS_META } from "@/features/browser/utils";
-import { useRightSidebar } from "@/stores/rightSidebarStore";
 import { AgentCursor } from "../bubbles/bot/AgentCursor";
 import { ShimmerText } from "../bubbles/bot/ShimmerText";
 
@@ -81,30 +83,19 @@ export function BrowserLivePanel() {
     agentCursor,
     close,
   } = useBrowserPanel();
-  const closeSidebar = useRightSidebar((state) => state.close);
-  const sidebarOpen = useRightSidebar((state) => state.isOpen);
 
-  // The sidebar chrome (Escape, other panels taking over) can close the panel
-  // without our close button — release the session either way so the card's
-  // inline preview resumes.
-  useEffect(() => {
-    if (!sidebarOpen) close();
-  }, [sidebarOpen, close]);
-
-  // A finished run has nothing left to watch: the live socket is gone and the
-  // card below carries the recap. Hand the width back to the conversation
-  // instead of leaving a dead browser pinned open. Delayed a beat so the final
-  // frame and status are visible rather than vanishing on completion.
+  // A finished run has nothing left to watch (the socket is gone, the card has
+  // the recap), so hand the width back to the conversation — after a beat, so
+  // the final frame and status are seen rather than vanishing on completion.
   const finished =
     status === "completed" || status === "failed" || status === "cancelled";
   useEffect(() => {
     if (!finished) return undefined;
     const timer = setTimeout(() => {
       close();
-      closeSidebar();
     }, PANEL_CLOSE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [finished, close, closeSidebar]);
+  }, [finished, close]);
 
   if (!sessionId) return null;
 
@@ -118,10 +109,7 @@ export function BrowserLivePanel() {
       agentCursor={agentCursor}
       pendingHandoffId={pendingHandoff?.handoff_id ?? null}
       handoffReason={pendingHandoff?.reason ?? null}
-      onClose={() => {
-        close();
-        closeSidebar();
-      }}
+      onClose={close}
     />
   );
 }
@@ -203,6 +191,123 @@ function TabStrip({
   );
 }
 
+type PanelStatus = ReturnType<typeof useBrowserPanel.getState>["status"];
+type PanelCursor = ReturnType<typeof useBrowserPanel.getState>["agentCursor"];
+
+/** The omnibox — one continuous surface with the tab. No back or reload glyphs:
+ * this browser is driven by the agent, and a control that cannot act is worse
+ * than no control. */
+function Omnibox({
+  url,
+  pageUrl,
+}: {
+  url: string | null;
+  pageUrl: string | null;
+}) {
+  return (
+    <div className="flex items-center gap-2 bg-zinc-800 px-4 py-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-zinc-900 px-3.5 py-1.5">
+        {url?.startsWith("https://") && (
+          <SquareLock02Icon className="size-3 shrink-0 text-zinc-500" />
+        )}
+        <span className="truncate text-xs text-zinc-400">
+          {displayUrl(url)}
+        </span>
+      </div>
+      {pageUrl && (
+        <Tooltip content="Open in a new tab" size="sm" delay={400}>
+          <Button
+            as="a"
+            href={pageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            isIconOnly
+            size="sm"
+            variant="light"
+            radius="full"
+            className="shrink-0 text-zinc-400"
+            aria-label="Open the live browser in a new tab"
+          >
+            <SquareArrowUpRight02Icon className="size-4" />
+          </Button>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+/** The screen at its natural height, so the action bar sits right below it. */
+function LiveScreen({
+  canvasRef,
+  liveStatus,
+  interactive,
+  agentCursor,
+}: {
+  canvasRef: ReturnType<typeof useLiveBrowser>["canvasRef"];
+  liveStatus: LiveStatus;
+  interactive: boolean;
+  agentCursor: PanelCursor;
+}) {
+  return (
+    <>
+      <div className="relative shrink-0">
+        <canvas
+          ref={canvasRef}
+          width={1280}
+          height={800}
+          tabIndex={interactive ? 0 : -1}
+          className={`block h-auto w-full outline-none ${
+            interactive ? "cursor-crosshair" : "pointer-events-none"
+          }`}
+        />
+        {!interactive && liveStatus === "live" && (
+          <AgentCursor target={agentCursor} />
+        )}
+      </div>
+      {liveStatus !== "live" && (
+        <div className="flex items-center gap-2 bg-zinc-800 px-4 py-3 text-xs text-zinc-400">
+          {liveStatus === "connecting" && <Spinner size="sm" color="current" />}
+          {liveStatus === "closed"
+            ? "This browser session has ended"
+            : "Connecting…"}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Directly under the screen: the takeover ask during a handoff, else the agent's current step. */
+function ActionBar({
+  pendingHandoffId,
+  handoffReason,
+  currentTask,
+  done,
+  onClose,
+}: {
+  pendingHandoffId: string | null;
+  handoffReason: string | null;
+  currentTask: string | null;
+  done: boolean;
+  onClose: () => void;
+}) {
+  if (pendingHandoffId && handoffReason) {
+    return (
+      <HandoffBar
+        key={pendingHandoffId}
+        handoffId={pendingHandoffId}
+        reason={handoffReason}
+        onClosePanel={onClose}
+      />
+    );
+  }
+  if (!currentTask || done) return null;
+  return (
+    <div className="bg-zinc-800 px-4 py-3 text-sm">
+      <ShimmerText text={currentTask} />
+    </div>
+  );
+}
+
 function BrowserChrome({
   socketUrl,
   pageUrl,
@@ -215,9 +320,9 @@ function BrowserChrome({
 }: {
   socketUrl: string | null;
   pageUrl: string | null;
-  status: ReturnType<typeof useBrowserPanel.getState>["status"];
+  status: PanelStatus;
   currentTask: string | null;
-  agentCursor: ReturnType<typeof useBrowserPanel.getState>["agentCursor"];
+  agentCursor: PanelCursor;
   pendingHandoffId: string | null;
   handoffReason: string | null;
   onClose: () => void;
@@ -232,101 +337,37 @@ function BrowserChrome({
   const done =
     status === "completed" || status === "failed" || status === "cancelled";
   const working = status === "running" && !pendingHandoffId;
-  const host = hostnameOf(page.url);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-zinc-900">
       <TabStrip
         title={page.title}
-        host={host}
+        host={hostnameOf(page.url)}
         favicon={page.favicon}
         statusMeta={statusMeta}
         working={working}
         onClose={onClose}
       />
-
-      {/* Toolbar — the omnibox, one continuous surface with the tab. No back or
-          reload glyphs: this browser is driven by the agent, and a control that
-          cannot act is worse than no control. */}
-      <div className="flex items-center gap-2 bg-zinc-800 px-4 py-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-zinc-900 px-3.5 py-1.5">
-          {page.url?.startsWith("https://") && (
-            <SquareLock02Icon className="size-3 shrink-0 text-zinc-500" />
-          )}
-          <span className="truncate text-xs text-zinc-400">
-            {displayUrl(page.url)}
-          </span>
-        </div>
-        {pageUrl && (
-          <Tooltip content="Open in a new tab" size="sm" delay={400}>
-            <Button
-              as="a"
-              href={pageUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              isIconOnly
-              size="sm"
-              variant="light"
-              radius="full"
-              className="shrink-0 text-zinc-400"
-              aria-label="Open the live browser in a new tab"
-            >
-              <SquareArrowUpRight02Icon className="size-4" />
-            </Button>
-          </Tooltip>
-        )}
-      </div>
-
-      {/* The screen — natural height, so the action bar sits right below it. */}
+      <Omnibox url={page.url} pageUrl={pageUrl} />
       {socketUrl && !done ? (
-        <>
-          <div className="relative shrink-0">
-            <canvas
-              ref={canvasRef}
-              width={1280}
-              height={800}
-              tabIndex={interactive ? 0 : -1}
-              className={`block h-auto w-full outline-none ${
-                interactive ? "cursor-crosshair" : "pointer-events-none"
-              }`}
-            />
-            {!interactive && liveStatus === "live" && (
-              <AgentCursor target={agentCursor} />
-            )}
-          </div>
-          {liveStatus !== "live" && (
-            <div className="flex items-center gap-2 bg-zinc-800 px-4 py-3 text-xs text-zinc-400">
-              {liveStatus === "connecting" && (
-                <Spinner size="sm" color="current" />
-              )}
-              {liveStatus === "closed"
-                ? "This browser session has ended"
-                : "Connecting…"}
-            </div>
-          )}
-        </>
+        <LiveScreen
+          canvasRef={canvasRef}
+          liveStatus={liveStatus}
+          interactive={interactive}
+          agentCursor={agentCursor}
+        />
       ) : (
         <div className="flex aspect-[8/5] items-center justify-center bg-zinc-800 text-sm text-zinc-500">
           {done ? "This browser session has ended." : "Connecting…"}
         </div>
       )}
-
-      {/* Action bar — directly under the screen. */}
-      {pendingHandoffId && handoffReason ? (
-        <HandoffBar
-          key={pendingHandoffId}
-          handoffId={pendingHandoffId}
-          reason={handoffReason}
-          onClosePanel={onClose}
-        />
-      ) : (
-        currentTask &&
-        !done && (
-          <div className="bg-zinc-800 px-4 py-3 text-sm">
-            <ShimmerText text={currentTask} />
-          </div>
-        )
-      )}
+      <ActionBar
+        pendingHandoffId={pendingHandoffId}
+        handoffReason={handoffReason}
+        currentTask={currentTask}
+        done={done}
+        onClose={onClose}
+      />
     </div>
   );
 }

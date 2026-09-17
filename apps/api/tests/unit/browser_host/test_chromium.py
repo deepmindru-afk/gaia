@@ -1,14 +1,14 @@
-"""Regressions in ``ChromiumHost``'s session lifecycle.
+"""Regressions in ChromiumHost's session lifecycle.
 
 Covers four related bugs, all rooted in the same root-CDP connection being a
 single shared, unbounded resource:
 
-  * a CDP call with no timeout could hang its caller forever (``cdp_call``),
-  * ``create_context`` used to hold the session lock across that CDP I/O, so
+  * a CDP call with no timeout could hang its caller forever (cdp_call),
+  * create_context used to hold the session lock across that CDP I/O, so
     one wedged create blocked every other user's create too,
   * a hung/failed storage dump on dispose left the session (and its capacity
     slot) in the registry forever,
-  * ``healthz`` reported healthy on process liveness alone, so a wedged-but-
+  * healthz reported healthy on process liveness alone, so a wedged-but-
     alive Chromium never triggered an orchestrator restart.
 """
 
@@ -35,13 +35,13 @@ from app.config.settings import settings
 
 
 class _FakeCDP:
-    """A programmable fake for the one method the host actually calls: ``send_raw``.
+    """A programmable fake for the one method the host actually calls: send_raw.
 
-    ``hang_on``/``hang_call_count`` pre-allocate an ``asyncio.Event`` per
+    hang_on/hang_call_count pre-allocate an asyncio.Event per
     expected call to a method that then hangs forever — the caller awaits the
     event to know the fake call has started, without any real sleep or a
-    racy poll loop. ``fail_on_first_call`` raises once per named method, then
-    falls through to ``responses`` on subsequent calls.
+    racy poll loop. fail_on_first_call raises once per named method, then
+    falls through to responses on subsequent calls.
     """
 
     def __init__(
@@ -73,7 +73,7 @@ class _FakeCDP:
 
 
 def _make_host(cdp: _FakeCDP) -> ChromiumHost:
-    """A ``ChromiumHost`` wired to a fake CDP client, no real Chromium involved."""
+    """Build a ChromiumHost wired to a fake CDP client, no real Chromium involved."""
     host = ChromiumHost()
     host._cdp = cdp
     host._proc = MagicMock(returncode=None)  # chromium_up == True
@@ -93,7 +93,7 @@ async def _cancel(*tasks: asyncio.Task[Any]) -> None:
 
 @pytest.mark.unit
 async def test_cdp_call_raises_cdptimeouterror_instead_of_hanging_forever() -> None:
-    """``cdp_use``'s ``send_raw`` awaits its future with no timeout of its own."""
+    """cdp_use's send_raw awaits its future with no timeout of its own."""
     fake_cdp = _FakeCDP(hang_on="Target.getTargets", hang_call_count=1)
 
     start = time.monotonic()
@@ -215,7 +215,7 @@ async def test_dispose_context_removes_session_when_storage_dump_raises() -> Non
 async def test_healthz_reports_unresponsive_when_cdp_probe_times_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Process liveness alone must not be enough to report ``ok``."""
+    """Process liveness alone must not be enough to report ok."""
     monkeypatch.setattr(chromium, "_CDP_HEALTH_TIMEOUT_SECONDS", 0.05)
     fake_cdp = _FakeCDP(hang_on="Target.getTargets", hang_call_count=1)
     host = _make_host(fake_cdp)
@@ -369,7 +369,7 @@ async def test_process_watcher_relaunches_engine_the_instant_it_dies() -> None:
 
 @pytest.mark.unit
 async def test_process_watcher_treats_deliberate_stop_as_shutdown_not_crash() -> None:
-    """A process that exits because ``stop()`` terminated it must not be relaunched."""
+    """A process that exits because stop() terminated it must not be relaunched."""
     host = _make_host(_FakeCDP())
     host._recover_crash = AsyncMock()
     proc = _FakeProc()

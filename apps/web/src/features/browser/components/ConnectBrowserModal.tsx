@@ -90,6 +90,68 @@ function CodeStatus({
   );
 }
 
+/** The code panel's one visible state: loading, failed, expired, or the command. */
+function CommandPanel({
+  command,
+  runner,
+  secondsLeft,
+  isMinting,
+  isExpired,
+  error,
+  onMint,
+}: {
+  command: string | null;
+  runner: ConnectRunner;
+  secondsLeft: number;
+  isMinting: boolean;
+  isExpired: boolean;
+  error: Error | null;
+  onMint: () => void;
+}) {
+  if (isMinting || (!command && !error && !isExpired)) {
+    return <Skeleton className="h-10 w-full rounded-xl" />;
+  }
+  if (error) {
+    return (
+      <CodeStatus
+        text="Couldn't get a code."
+        action="Try again"
+        onAction={onMint}
+      />
+    );
+  }
+  if (isExpired || !command) {
+    return (
+      <CodeStatus text="Code expired." action="New code" onAction={onMint} />
+    );
+  }
+  const warning = secondsLeft <= EXPIRY_WARNING_SECONDS;
+  return (
+    <>
+      <CommandBlock command={command} />
+      <p
+        className={`text-xs ${warning ? "text-amber-400/80" : "text-zinc-500"}`}
+      >
+        {runner === "source" ? "Run from the repo root. " : ""}
+        Expires in {formatCountdown(secondsLeft)}
+      </p>
+    </>
+  );
+}
+
+function FactsList() {
+  return (
+    <ul className="flex flex-col gap-2">
+      {FACTS.map((fact) => (
+        <li key={fact} className="flex items-center gap-2.5">
+          <span className="size-1.5 shrink-0 rounded-full bg-zinc-600" />
+          <span className="text-xs text-zinc-400">{fact}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /**
  * Rendered inside `<ModalContent>`, so it unmounts when the modal closes: a
  * fresh code is minted on every open and nothing needs resetting.
@@ -128,42 +190,19 @@ function ConnectBrowserBody({ onClose }: { onClose: () => void }) {
               <Tab key={r} title={RUNNER_TITLES[r]} />
             ))}
           </Tabs>
-          {isMinting || (!command && !error && !isExpired) ? (
-            <Skeleton className="h-10 w-full rounded-xl" />
-          ) : error ? (
-            <CodeStatus
-              text="Couldn't get a code."
-              action="Try again"
-              onAction={mint}
-            />
-          ) : isExpired || !command ? (
-            <CodeStatus
-              text="Code expired."
-              action="New code"
-              onAction={mint}
-            />
-          ) : (
-            <>
-              <CommandBlock command={command} />
-              <p
-                className={`text-xs ${secondsLeft <= EXPIRY_WARNING_SECONDS ? "text-amber-400/80" : "text-zinc-500"}`}
-              >
-                {runner === "source" ? "Run from the repo root. " : ""}
-                Expires in {formatCountdown(secondsLeft)}
-              </p>
-            </>
-          )}
+          <CommandPanel
+            command={command}
+            runner={runner}
+            secondsLeft={secondsLeft}
+            isMinting={isMinting}
+            isExpired={isExpired}
+            error={error}
+            onMint={mint}
+          />
         </Surface>
 
         <Surface glass>
-          <ul className="flex flex-col gap-2">
-            {FACTS.map((fact) => (
-              <li key={fact} className="flex items-center gap-2.5">
-                <span className="size-1.5 shrink-0 rounded-full bg-zinc-600" />
-                <span className="text-xs text-zinc-400">{fact}</span>
-              </li>
-            ))}
-          </ul>
+          <FactsList />
         </Surface>
       </ModalBody>
       <ModalFooter className="items-center justify-between">

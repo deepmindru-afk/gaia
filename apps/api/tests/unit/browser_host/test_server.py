@@ -108,9 +108,7 @@ def test_touch_session_returns_200_and_touches_the_host(client) -> None:
 
 
 def test_touch_session_stamps_the_wide_event_with_session_and_operation(client) -> None:
-    """A touch is how a pending handoff keeps its browser alive, so the wide event
-    must name both the session it kept and the operation that kept it -- that pair
-    is the only way to tell a reaped session from a touched one after the fact."""
+    """A touch is how a pending handoff keeps its browser alive, so the wide event."""
     _, host = client
     host.get.return_value = SESSION
     with patch.object(server_mod, "log") as mock_log:
@@ -159,8 +157,7 @@ def test_healthz_ok(client) -> None:
 
 
 def test_healthz_degraded_returns_503(client) -> None:
-    """A wedged Chromium that answers no CDP round-trip reads as unhealthy, so
-    the orchestrator restarts the host instead of leaving it half-alive."""
+    """A wedged Chromium that answers no CDP round-trip reads as unhealthy, so."""
     _, host = client
     host.healthz.return_value = {
         "ok": False,
@@ -174,8 +171,7 @@ def test_healthz_degraded_returns_503(client) -> None:
 
 
 def test_cdp_endpoint_closes_4404_for_unknown_session(client) -> None:
-    """A caller pointing at a session that does not exist gets the app-level
-    close code, not a half-open socket."""
+    """A caller pointing at a session that does not exist gets the app-level."""
     _, host = client
     with pytest.raises(WebSocketDisconnect) as exc:
         with client[0].websocket_connect("/cdp/nope"):
@@ -185,8 +181,7 @@ def test_cdp_endpoint_closes_4404_for_unknown_session(client) -> None:
 
 
 def test_control_plane_requires_host_key(client) -> None:
-    """A rendered page in the same container can fetch() localhost:8930, so the
-    host must never serve the control plane unauthenticated when production."""
+    """A rendered page in the same container can fetch() localhost:8930, so the."""
     test_cli, host = client
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(server_mod.settings, "ENV", "production")
@@ -252,9 +247,7 @@ def test_cdp_endpoint_closes_4404_for_dead_session(client) -> None:
 
 
 def test_live_endpoint_closes_4404_for_dead_session(client) -> None:
-    """The dead-session check must be reachable through the live-view route too,
-    not only the CDP route -- a stale live session would otherwise be accepted
-    and immediately fail to stream instead of closing cleanly."""
+    """The dead-session check must be reachable through the live-view route too."""
     _, host = client
     host.get.return_value = MagicMock(session_id="s1", dead=True)
     with pytest.raises(WebSocketDisconnect) as exc:
@@ -266,8 +259,7 @@ def test_live_endpoint_closes_4404_for_dead_session(client) -> None:
 def test_cdp_endpoint_accepts_and_bridges_live_session(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A live session is accepted and handed to the CDP proxy with the exact
-    host/session it was looked up for — not just accepted-and-forgotten."""
+    """A live session is accepted and handed to the CDP proxy with the exact."""
     _, host = client
     live_session = MagicMock(session_id="exact-id-123", dead=False)
     host.get.return_value = live_session
@@ -286,9 +278,7 @@ def test_cdp_endpoint_accepts_and_bridges_live_session(
 def test_live_endpoint_accepts_and_bridges_live_session(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mirrors the CDP happy path: the live-view route must actually accept and
-    hand off to ``run_live_view`` -- previously nothing exercised this branch
-    at all, so a broken handoff here would have shipped silently."""
+    """Mirrors the CDP happy path: the live-view route must actually accept and."""
     _, host = client
     live_session = MagicMock(session_id="exact-id-123", dead=False)
     host.get.return_value = live_session
@@ -307,8 +297,7 @@ def test_live_endpoint_accepts_and_bridges_live_session(
 def test_live_endpoint_does_not_touch_host_get_when_unauthorized(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Rejecting an unauthorized live-view socket must happen before any session
-    lookup -- catches a mutant that reorders the auth check after the lookup."""
+    """Rejecting an unauthorized live-view socket must happen before any session."""
     test_cli, host = client
     monkeypatch.setattr(server_mod.settings, "ENV", "production")
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "k" * 32)
@@ -322,8 +311,7 @@ def test_live_endpoint_does_not_touch_host_get_when_unauthorized(
 def test_live_endpoint_does_not_bridge_dead_session(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A dead session must close 4404 without ever reaching ``run_live_view`` --
-    catches a mutant that drops or inverts the ``session.dead`` check."""
+    """A dead session must close 4404 without ever reaching run_live_view --."""
     _, host = client
     host.get.return_value = MagicMock(session_id="s1", dead=True)
     live_view = AsyncMock()
@@ -335,8 +323,7 @@ def test_live_endpoint_does_not_bridge_dead_session(
 
 
 def test_healthz_body_reports_every_field(client) -> None:
-    """The health probe surfaces session count and each sub-check, not just ``ok``
-    -- the orchestrator/dashboard reads all four fields."""
+    """The health probe surfaces session count and each sub-check, not just ok."""
     _, host = client
     host.healthz.return_value = {
         "ok": True,
@@ -355,8 +342,7 @@ def test_healthz_body_reports_every_field(client) -> None:
 
 
 def test_create_session_passes_storage_state_to_host(client) -> None:
-    """The seed storage_state on the request must reach the host unchanged --
-    dropping it would silently log a user into a blank browser."""
+    """The seed storage_state on the request must reach the host unchanged --."""
     _, host = client
     host.create_context.return_value = SESSION
     seed = {
@@ -467,8 +453,7 @@ def test_ws_url_key_appends_hk_query_param(monkeypatch: pytest.MonkeyPatch) -> N
 def test_ws_url_key_uses_ampersand_when_path_already_has_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A path that already carries a query string must get ``&hk=``, not a second
-    ``?`` that would produce an invalid URL."""
+    """A path that already carries a query string must get &hk=, not a second ?"""
     monkeypatch.setattr(
         server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930", raising=False
     )
@@ -546,7 +531,7 @@ def test_require_host_key_passes_silently_with_valid_key(monkeypatch: pytest.Mon
 
 
 class _FakeWebSocket:
-    """Duck-types the bits of ``WebSocket`` that ``_ws_authorized`` reads."""
+    """Duck-types the bits of WebSocket that _ws_authorized reads."""
 
     def __init__(self, hk: str | None, origin: str | None = None) -> None:
         self.query_params: dict[str, str] = {"hk": hk} if hk is not None else {}
@@ -575,8 +560,7 @@ def test_ws_authorized_rejects_wrong_key(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_ws_authorized_accepts_valid_key_with_no_origin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Server-side clients (browser-use, the API's live-view proxy) send no
-    Origin header at all -- that must not be treated as a rejection."""
+    """Server-side clients (browser-use, the API's live-view proxy) send no."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", None)) is True
 
@@ -596,8 +580,7 @@ def test_ws_authorized_accepts_loopback_origin_with_port_and_path(
 
 
 def test_ws_authorized_rejects_cross_origin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A valid key does not save a request whose Origin is a rendered,
-    attacker-controlled page -- that is the defense-in-depth this exists for."""
+    """A valid key does not save a request whose Origin is a rendered."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "https://evil.example.com")) is False
 
@@ -605,8 +588,7 @@ def test_ws_authorized_rejects_cross_origin(monkeypatch: pytest.MonkeyPatch) -> 
 def test_ws_authorized_rejects_cross_origin_even_with_loopback_substring(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Guards against a naive substring/prefix check standing in for the exact
-    host comparison."""
+    """Guards against a naive substring/prefix check standing in for the exact host comparison."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert (
         server_mod._ws_authorized(_fake_ws("s3cret", "https://localhost.evil.example.com")) is False
@@ -614,8 +596,7 @@ def test_ws_authorized_rejects_cross_origin_even_with_loopback_substring(
 
 
 def test_ws_authorized_rejects_unparsable_origin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An Origin value that blows up while being parsed is a rejection, not a
-    500 -- the except clause must actually return False."""
+    """An Origin value that blows up while being parsed is a rejection, not a."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", _BadOrigin("http://bad"))) is False
 
@@ -623,15 +604,13 @@ def test_ws_authorized_rejects_unparsable_origin(monkeypatch: pytest.MonkeyPatch
 def test_ws_authorized_accepts_loopback_origin_with_path_but_no_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only the authority is compared: a port-less Origin carrying a multi-segment
-    path still resolves to ``localhost``, so the socket is allowed."""
+    """Only the authority is compared: a port-less Origin carrying a multi-segment."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost/some/path")) is True
 
 
 def test_ws_authorized_accepts_bare_ipv6_loopback_origin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``::1`` is in the allow-list, and its colons must not be mistaken for the
-    port separator -- only the last one is."""
+    """::1 is in the allow-list, and its colons must not be mistaken for the."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://::1:8930")) is True
 
@@ -639,9 +618,7 @@ def test_ws_authorized_accepts_bare_ipv6_loopback_origin(monkeypatch: pytest.Mon
 def test_ws_authorized_rejects_origin_with_a_second_scheme_in_the_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``http://localhost:8080://x`` has ``localhost:8080:`` as its authority, not
-    ``localhost`` -- only the FIRST ``://`` separates the scheme, so this stays a
-    rejection rather than being smuggled through as loopback."""
+    """http://localhost:8080://x has localhost:8080: as its authority, not."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost:8080://x")) is False
 
@@ -649,8 +626,7 @@ def test_ws_authorized_rejects_origin_with_a_second_scheme_in_the_authority(
 def test_ws_authorized_accepts_loopback_origin_with_a_scheme_inside_its_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A ``://`` later in the path does not move the host boundary -- the host is
-    read from the FIRST ``://``, so this is still loopback."""
+    """A :// later in the path does not move the host boundary -- the host is."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost/x://y")) is True
 
@@ -658,8 +634,7 @@ def test_ws_authorized_accepts_loopback_origin_with_a_scheme_inside_its_path(
 def test_ws_authorized_rejects_origin_with_two_port_separators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``localhost:1:2`` is not ``localhost``: only the last colon is a port
-    separator, so the leftover ``localhost:1`` fails the allow-list."""
+    """localhost:1:2 is not localhost: only the last colon is a port."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "https://localhost:1:2")) is False
 
@@ -667,8 +642,7 @@ def test_ws_authorized_rejects_origin_with_two_port_separators(
 def test_ws_authorized_logs_exact_context_and_message_for_unparsable_origin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The rejection must be observable: exact wide-event field, exact message,
-    and the real exception type -- that is all an operator has to go on."""
+    """The rejection must be observable: exact wide-event field, exact message."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     with patch.object(server_mod, "log") as mock_log:
         assert server_mod._ws_authorized(_fake_ws("s3cret", _BadOrigin("http://bad"))) is False
@@ -682,8 +656,7 @@ def test_ws_authorized_logs_exact_context_and_message_for_unparsable_origin(
 def test_ws_authorized_logs_exact_context_and_message_for_cross_origin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The cross-origin rejection carries its own message, distinct from the
-    unparsable-Origin one, under the same wide-event operation."""
+    """The cross-origin rejection carries its own message, distinct from the."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     with patch.object(server_mod, "log") as mock_log:
         assert server_mod._ws_authorized(_fake_ws("s3cret", "https://evil.example.com")) is False
@@ -696,8 +669,7 @@ def test_ws_authorized_logs_exact_context_and_message_for_cross_origin(
 def test_ws_authorized_logs_nothing_when_it_allows_the_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An accepted socket emits no rejection event -- otherwise the operation
-    field would be noise instead of a signal."""
+    """An accepted socket emits no rejection event -- otherwise the operation."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     with patch.object(server_mod, "log") as mock_log:
         assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost:3000")) is True
@@ -709,8 +681,7 @@ def test_ws_authorized_logs_nothing_when_it_allows_the_socket(
 
 
 def test_ws_url_rewrites_only_the_leading_http_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A later ``http://`` inside the URL is data, not a scheme -- rewriting it
-    too would corrupt the address."""
+    """A later http:// inside the URL is data, not a scheme -- rewriting it too would corrupt the address."""
     monkeypatch.setattr(
         server_mod.settings, "BROWSER_HOST_URL", "http://proxy/http://inner", raising=False
     )
@@ -729,8 +700,7 @@ def test_ws_url_rewrites_only_the_leading_https_scheme(monkeypatch: pytest.Monke
 def test_ws_url_strips_only_a_trailing_slash_not_path_characters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A base URL mounted under a path prefix keeps that prefix intact -- only a
-    trailing ``/`` is removed."""
+    """A base URL mounted under a path prefix keeps that prefix intact -- only a trailing / is removed."""
     monkeypatch.setattr(
         server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930/PREFIX", raising=False
     )
@@ -780,8 +750,7 @@ def test_get_session_sets_exact_log_context(client) -> None:
 
 
 def test_healthz_sets_exact_log_context(client) -> None:
-    """Health checks carry an empty ``session_id`` so the field is present on the
-    wide event rather than absent for this one route."""
+    """Health checks carry an empty session_id so the field is present on the."""
     _, host = client
     host.healthz.return_value = {
         "ok": True,

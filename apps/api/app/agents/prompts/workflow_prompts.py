@@ -1,6 +1,4 @@
-"""
-Workflow generation prompts for GAIA workflow system.
-"""
+"""Workflow generation prompts for GAIA workflow system."""
 
 # =============================================================================
 # WHAT A WORKFLOW'S EXECUTION PROMPT MAY CONTAIN
@@ -8,8 +6,7 @@ Workflow generation prompts for GAIA workflow system.
 
 # Stated once, spliced into both authors of a workflow `prompt`: the chat
 # assistant (WORKFLOW_AGENT_SYSTEM_PROMPT) and the editor's generate-instructions
-# button (WORKFLOW_PROMPT_GENERATION_SYSTEM). One copy is what stops the two from
-# drifting, which is how the assistant ended up with no rule at all.
+# button (WORKFLOW_PROMPT_GENERATION_SYSTEM), so the two can't drift apart.
 WORKFLOW_INSTRUCTIONS_CONTRACT = """The executor reads these instructions after the trigger has
 already fired and handed over its data, so they say only WHAT TO DO. Leave out when the run
 happens (cron, clock times, "every morning"), what started it ("when a new email arrives"), and
@@ -231,11 +228,11 @@ tracked todo listed above. Match by:
 - Subject or content that clearly relates to a todo's title or description
 - Same person, project, or topic as an active todo
 
-If a match is found, update that todo's canvas with the new signal information using
-update_tracked_todo_canvas (mode "append" or "section"; do not read the canvas and rewrite the
-whole thing). Be verbose, this is GAIA's working memory: include email addresses, thread IDs,
-event IDs, timestamps; quote the key sentences (not whole emails); update Current State; add a
-Timeline entry "- {{date}}: {{what happened}}".
+If a match is found, record the signal in that todo's files under /workspace/gaia-tasks/<folder>/
+with the file tools: add a dated entry at the end of activity.md ("- {{date}} {{what happened}}") and
+update the Current State section of canvas.md with `edit`. Be verbose, this is GAIA's working
+memory: include email addresses, thread IDs, event IDs, timestamps; quote the key sentences (not
+whole emails).
 
 This matching step only MATCHES and UPDATES existing tracked todos: do not create a new one
 just because a signal arrived. (Creating still follows the normal rule, only when the run

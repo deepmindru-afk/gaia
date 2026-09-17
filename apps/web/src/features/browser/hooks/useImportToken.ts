@@ -1,4 +1,3 @@
-import { useMutation } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { browserApi } from "../api/browserApi";
 
@@ -7,16 +6,27 @@ const COUNTDOWN_TICK_MS = 1000;
 /** Mints the single-use `gaia-connect` code and counts down its life; call
  * `mint` again once it expires. */
 export function useImportToken() {
+  const [token, setToken] = useState<string | null>(null);
   // The expiry instant is captured at mint time, not derived on render, so a
   // re-render never restarts the clock.
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [isMinting, setIsMinting] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
 
-  const mintMutation = useMutation({
-    mutationFn: () => browserApi.mintImportToken(),
-    onSuccess: (data) =>
-      setExpiresAt(Date.now() + data.expires_in_seconds * 1000),
-  });
+  const mint = useCallback(async () => {
+    setIsMinting(true);
+    setError(null);
+    try {
+      const data = await browserApi.mintImportToken();
+      setToken(data.token);
+      setExpiresAt(Date.now() + data.expires_in_seconds * 1000);
+    } catch (e) {
+      setError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setIsMinting(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (expiresAt === null) return undefined;
@@ -27,20 +37,19 @@ export function useImportToken() {
     return () => clearInterval(id);
   }, [expiresAt]);
 
-  const { mutate, reset: resetMutation } = mintMutation;
-  const mint = useCallback(() => mutate(), [mutate]);
   const reset = useCallback(() => {
-    resetMutation();
+    setToken(null);
+    setError(null);
     setExpiresAt(null);
     setSecondsLeft(0);
-  }, [resetMutation]);
+  }, []);
 
   return {
-    token: mintMutation.data?.token ?? null,
+    token,
     secondsLeft,
     isExpired: expiresAt !== null && secondsLeft <= 0,
-    isMinting: mintMutation.isPending,
-    error: mintMutation.error as Error | null,
+    isMinting,
+    error,
     mint,
     reset,
   };

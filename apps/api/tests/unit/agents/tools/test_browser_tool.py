@@ -126,12 +126,7 @@ async def test_capacity_limit_returns_message(monkeypatch: pytest.MonkeyPatch) -
 async def test_bot_delivery_outage_does_not_abort_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A messaging/platform outage must never kill the in-flight browser run.
-
-    The web card is already on the SSE stream before the bot mirror runs, so a
-    failing platform delivery is logged and skipped — the tool still returns the
-    result summary instead of surfacing a delivery exception.
-    """
+    """A messaging/platform outage must never kill the in-flight browser run."""
 
     class _FailingDelivery:
         def __init__(self, **kwargs: object) -> None:
@@ -237,8 +232,7 @@ def test_result_message_completed_success_is_exact() -> None:
 
 
 def test_result_message_completed_without_success_reports_failure() -> None:
-    """`status == COMPLETED and success` — a completed-but-unsuccessful run must
-    never be reported as an accomplishment."""
+    """Status == COMPLETED and success — a completed-but-unsuccessful run must."""
     out = tool_mod._agent_result_message(
         _result(BrowserSessionStatus.COMPLETED, False, "Login wall")
     )
@@ -357,7 +351,7 @@ def _install(
     handoff_outcome: HandoffOutcome | None = None,
     use_vision: bool = True,
 ) -> Harness:
-    """Wire every seam of ``browser_task`` to a recorder and return the recording."""
+    """Wire every seam of browser_task to a recorder and return the recording."""
     h = Harness()
     final = result if result is not None else _result(BrowserSessionStatus.COMPLETED, True, "Done")
 
@@ -550,8 +544,7 @@ async def test_blank_start_url_is_not_appended(monkeypatch: pytest.MonkeyPatch) 
 async def test_runner_is_configured_from_settings_and_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every knob the runner gets must come from its own setting — not a
-    neighbouring one, and not a hardcoded default."""
+    """Every knob the runner gets must come from its own setting — not a."""
     h = _install(monkeypatch, use_vision=False)
     monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_MAX_STEPS", 7)
     monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_MAX_ACTIONS_PER_STEP", 3)
@@ -602,8 +595,7 @@ async def test_runner_is_configured_from_settings_and_config(
 async def test_conversation_id_prefers_the_user_facing_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A handoff is resolved by a chat reply keyed on the comms conversation id,
-    so the executor's derived thread_id must never win."""
+    """A handoff is resolved by a chat reply keyed on the comms conversation id."""
     h = _install(monkeypatch)
     config: RunnableConfig = {
         "configurable": {
@@ -640,14 +632,7 @@ async def test_missing_identifiers_degrade_to_blank_and_none(
 async def test_a_config_with_no_configurable_key_still_degrades_cleanly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Same degradation as above, for a config missing ``configurable`` entirely.
-
-    Called through the raw coroutine rather than ``ainvoke``: LangChain's
-    ``ensure_config`` injects ``configurable`` into every config it normalises, so
-    the tool's own ``config.get("configurable", {})`` fallback is unreachable via
-    the public path — and a fallback nothing exercises is one nothing would notice
-    losing. Without the ``{}`` the next line would raise AttributeError on None.
-    """
+    """Same degradation as above, for a config missing configurable entirely."""
     h = _install(monkeypatch)
 
     await browser_task.coroutine(config={}, task="x")
@@ -676,8 +661,7 @@ async def test_is_cancelled_consults_the_stream_manager_for_this_stream(
 async def test_is_cancelled_is_false_without_a_stream_and_never_queries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No stream id means no cancel flag to read — the runner must not be told
-    it was cancelled just because the lookup would have said so."""
+    """No stream id means no cancel flag to read — the runner must not be told."""
 
     async def body(h: Harness) -> BrowserResultSnapshot:
         assert await h.is_cancelled() is False
@@ -743,13 +727,7 @@ async def test_step_card_is_written_as_json_under_the_browser_event_key(
 async def test_mirrored_action_row_names_the_element_it_touched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The tool-thread row must use the resolved target, like the step caption does.
-
-    The runner resolves each action's element against the DOM the model saw and
-    puts it on ``BrowserAction.target``. The step caption used it; the mirrored
-    row did not, so a form fill rendered as "Clicking" twice with nothing to tell
-    the two apart.
-    """
+    """The tool-thread row must use the resolved target, like the step caption does."""
 
     async def body(h: Harness) -> BrowserResultSnapshot:
         # The mirror opens its group on the session snapshot; without one there
@@ -780,12 +758,7 @@ async def test_mirrored_action_row_names_the_element_it_touched(
 async def test_action_output_lands_on_the_row_for_that_step_and_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A per-action output frame must key to the same tool_call_id as its row.
-
-    The row is emitted before the action runs (Browser-Use fires the step
-    callback pre-execution), so the output arrives later via on_step_end and has
-    to match the row by {group}:{step}:{position} or it renders detached.
-    """
+    """A per-action output frame must key to the same tool_call_id as its row."""
     from app.schemas.browser import BrowserActionOutput
 
     async def body(h: Harness) -> BrowserResultSnapshot:
@@ -821,13 +794,7 @@ async def test_action_output_lands_on_the_row_for_that_step_and_position(
 async def test_action_output_arriving_before_its_row_is_buffered_then_flushed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The live ordering: results arrive before the row.
-
-    The runner emits step rows through a background task that uploads the
-    screenshot first (~1s), while the action result arrives synchronously on the
-    next hook. So `results` can run before `_actions` for the same step. The
-    output must still attach — buffered, then flushed when the row lands.
-    """
+    """The live ordering: results arrive before the row."""
     from app.schemas.browser import BrowserActionOutput
 
     async def body(h: Harness) -> BrowserResultSnapshot:
@@ -863,8 +830,7 @@ async def test_action_output_arriving_before_its_row_is_buffered_then_flushed(
 async def test_action_output_for_an_unknown_row_is_dropped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An output whose row never arrives (an errored step emits no rows) stays
-    buffered and never produces an orphan frame the UI cannot attach."""
+    """An output whose row never arrives (an errored step emits no rows) stays."""
     from app.schemas.browser import BrowserActionOutput
 
     async def body(h: Harness) -> BrowserResultSnapshot:
@@ -934,10 +900,7 @@ async def test_handoff_registers_emits_pending_then_resolution_and_returns_outco
 async def test_handoff_keepalive_is_cancelled_after_the_handoff_resolves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A paused session gets no CDP/live-view traffic, so ``request_handoff``
-    spawns a keepalive to hold the host's idle clock open. Once the handoff
-    resolves, that keepalive must be cancelled -- otherwise it keeps touching a
-    session nobody is waiting on anymore."""
+    """A paused session gets no CDP/live-view traffic, so request_handoff."""
     tasks: list[asyncio.Task[None]] = []
 
     async def _fake_keep_alive(session_id: str) -> None:
@@ -967,8 +930,7 @@ async def test_handoff_keepalive_is_cancelled_after_the_handoff_resolves(
 async def test_handoff_keepalive_is_cancelled_when_await_handoff_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The keepalive must be cancelled on the failure path too -- a raised
-    ``await_handoff`` must not leak the keepalive task running forever."""
+    """The keepalive must be cancelled on the failure path too -- a raised."""
     tasks: list[asyncio.Task[None]] = []
 
     async def _fake_keep_alive(session_id: str) -> None:
@@ -1019,8 +981,7 @@ async def test_each_handoff_gets_its_own_id(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_history_records_step_captions_and_uploaded_screenshots_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Steps are 1-indexed, gaps stay blank, and a data-URL fallback is never
-    stored — it would render as a permanently broken thumbnail in the recap."""
+    """Steps are 1-indexed, gaps stay blank, and a data-URL fallback is never."""
 
     async def body(h: Harness) -> BrowserResultSnapshot:
         await h.emit(BrowserStepSnapshot(index=1, goal="open", screenshot="https://cdn/1.png"))
@@ -1206,8 +1167,7 @@ async def test_bot_run_without_a_conversation_is_not_mirrored(
 async def test_failed_mirror_is_logged_with_the_snapshot_that_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The card is already on the stream, so a platform outage is a logged
-    warning — but it must say which snapshot and which error."""
+    """The card is already on the stream, so a platform outage is a logged."""
 
     class _Failing:
         async def step(self, snapshot: object) -> None:
@@ -1276,9 +1236,7 @@ def _record_watchers(monkeypatch: pytest.MonkeyPatch) -> _Watchers:
 async def test_credentials_handoff_also_watches_for_the_navigation_that_ends_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A login handoff resolves itself when the page navigates off the sign-in
-    URL, so it gets the auto-resolve watcher on top of the keepalive -- and both
-    must be aimed at the session/handoff actually being waited on."""
+    """A login handoff resolves itself when the page navigates off the sign-in."""
     w = _record_watchers(monkeypatch)
 
     watchers = tool_mod._spawn_handoff_watchers(
@@ -1307,8 +1265,7 @@ async def test_credentials_handoff_also_watches_for_the_navigation_that_ends_it(
 async def test_non_credentials_handoff_gets_only_the_keepalive(
     monkeypatch: pytest.MonkeyPatch, category: SensitiveCategory
 ) -> None:
-    """Only a credentials handoff has a navigation that means "done" -- auto-
-    resolving a payment or confirmation would close one the user never answered."""
+    """Only a credentials handoff has a navigation that means "done" -- auto-."""
     w = _record_watchers(monkeypatch)
 
     watchers = tool_mod._spawn_handoff_watchers(
@@ -1323,9 +1280,7 @@ async def test_non_credentials_handoff_gets_only_the_keepalive(
 async def test_handoff_watchers_are_aimed_at_this_run_handoff_session_and_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The watchers are only useful if they name the run that paused: the wrong
-    (or a missing) session id keeps the wrong browser alive, and the wrong
-    handoff/user id resolves a handoff nobody is waiting on."""
+    """The watchers are only useful if they name the run that paused: the wrong."""
 
     async def body(h: Harness) -> BrowserResultSnapshot:
         await h.request_handoff(
@@ -1351,9 +1306,7 @@ async def test_handoff_watchers_are_aimed_at_this_run_handoff_session_and_user(
 async def test_finished_run_is_captured_against_the_user_who_ran_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A graph-background run has no request context, so the id has to be passed
-    explicitly -- otherwise the event lands on an anonymous profile and never
-    shows up in that user's funnel."""
+    """A graph-background run has no request context, so the id has to be passed."""
     captured: list[tuple[Any, ...]] = []
     monkeypatch.setattr(
         tool_mod,
@@ -1384,8 +1337,7 @@ def _capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
 
 
 async def test_anonymous_run_is_not_captured_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No user id means no profile to attribute to -- capturing anyway would
-    invent an anonymous person per background run and inflate the funnel."""
+    """No user id means no profile to attribute to -- capturing anyway would."""
     captured = _capture(monkeypatch)
     _install(monkeypatch)
 
@@ -1421,9 +1373,7 @@ async def test_capture_source_is_the_surface_the_run_came_from(
 async def test_capture_duration_measures_the_run_not_the_whole_tool_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``duration_ms`` is milliseconds between starting and finishing the agent
-    loop -- the clock is read after the session is open, so setup time is not
-    charged to the run."""
+    """duration_ms is milliseconds between starting and finishing the agent."""
     captured = _capture(monkeypatch)
     _install(monkeypatch)
     # Reads, in order: the thread mirror's start, run_t0, then the persist clock.
@@ -1443,14 +1393,7 @@ async def test_capture_duration_measures_the_run_not_the_whole_tool_call(
 async def test_run_presents_the_users_own_device_fingerprint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The canvas/audio seed is pinned to the user for the duration of the run,
-    so the same person always presents the same device instead of a new one per
-    task -- and it is released afterwards so the next run is not stuck with it.
-
-    Driven through the raw coroutine, not ``ainvoke``: the seed rides a
-    contextvar, and a task-based invocation runs in a copy of the context, so the
-    caller could never see either the pin or the leak.
-    """
+    """The canvas/audio seed is pinned to the user for the duration of the run."""
     seen: list[int] = []
 
     async def body(h: Harness) -> BrowserResultSnapshot:
@@ -1470,8 +1413,7 @@ async def test_run_presents_the_users_own_device_fingerprint(
 async def test_fingerprint_seed_is_released_even_when_the_session_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A leaked seed would make every later run in this context impersonate the
-    user whose run happened to blow up."""
+    """A leaked seed would make every later run in this context impersonate the."""
     _install(monkeypatch, session_error=BrowserUnavailableError("host is down"))
     before = current_fingerprint_seed()
 
@@ -1497,17 +1439,14 @@ def _session_snapshot(session_id: str | None = "sess-1") -> BrowserSessionSnapsh
 
 
 def test_a_fresh_mirror_belongs_to_no_group() -> None:
-    """``None``, not a falsy placeholder: the group id is the value emitted as
-    ``subagent_id`` on every row, so an empty string would ship as a real (and
-    unattachable) group the moment any guard let it through."""
+    """None, not a falsy placeholder: the group id is the value emitted as."""
     mirror, _ = _mirror()
 
     assert mirror._group_id is None
 
 
 def test_a_closed_mirror_belongs_to_no_group_again() -> None:
-    """Closing returns the mirror to its fresh state so the next session opens a
-    real group -- not one carrying a leftover placeholder."""
+    """Closing returns the mirror to its fresh state so the next session opens a."""
     mirror, _ = _mirror()
 
     mirror.mirror(_session_snapshot())
@@ -1519,8 +1458,7 @@ def test_a_closed_mirror_belongs_to_no_group_again() -> None:
 def test_mirror_opens_a_browser_group_keyed_on_the_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The group is what nests the browser agent's own actions under one
-    "Browser" row instead of leaving them loose in the thread."""
+    """The group is what nests the browser agent's own actions under one."""
     mirror, writes = _mirror()
 
     mirror.mirror(_session_snapshot())
@@ -1533,8 +1471,7 @@ def test_mirror_opens_a_browser_group_keyed_on_the_session(
 
 
 def test_mirror_without_a_session_id_opens_no_group_and_drops_its_rows() -> None:
-    """No session id means no stable group id, so opening one would strand every
-    action row under an id the result can never close."""
+    """No session id means no stable group id, so opening one would strand every."""
     mirror, writes = _mirror()
 
     mirror.mirror(_session_snapshot(session_id=None))
@@ -1547,8 +1484,7 @@ def test_mirror_without_a_session_id_opens_no_group_and_drops_its_rows() -> None
 
 
 def test_mirror_opens_the_group_once_for_a_re_reported_session() -> None:
-    """The runner re-emits the session card as its status changes; a second
-    subagent_start would render a duplicate Browser row."""
+    """The runner re-emits the session card as its status changes; a second."""
     mirror, writes = _mirror()
 
     mirror.mirror(_session_snapshot())
@@ -1559,8 +1495,7 @@ def test_mirror_opens_the_group_once_for_a_re_reported_session() -> None:
 
 
 def test_mirror_numbers_each_action_within_its_step() -> None:
-    """Rows are keyed {group}:{step}:{position}, which is what a later output
-    frame matches on -- two actions in one step must not collide."""
+    """Rows are keyed {group}:{step}:{position}, which is what a later output."""
     mirror, writes = _mirror()
 
     mirror.mirror(_session_snapshot())
@@ -1583,8 +1518,7 @@ def test_mirror_numbers_each_action_within_its_step() -> None:
 
 
 def test_mirror_tags_each_action_output_with_the_group_it_belongs_to() -> None:
-    """Without the subagent id the output frame renders outside the Browser
-    group, detached from the row it describes."""
+    """Without the subagent id the output frame renders outside the Browser."""
     from app.schemas.browser import BrowserActionOutput
 
     mirror, writes = _mirror()
@@ -1621,8 +1555,7 @@ def test_mirror_closes_the_group_on_the_result_with_the_run_duration(
 
 
 def test_mirror_closes_the_group_only_once() -> None:
-    """The result card can be re-emitted; a second subagent_end would close a
-    group that no longer exists and collapse the wrong row."""
+    """The result card can be re-emitted; a second subagent_end would close a."""
     mirror, writes = _mirror()
 
     mirror.mirror(_session_snapshot())

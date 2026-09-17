@@ -17,7 +17,7 @@ from app.services.browser.resolution import (
 
 
 class _FakeLog:
-    """Records `log.warning` calls so tests can pin the exact message and kwargs."""
+    """Records log.warning calls so tests can pin the exact message and kwargs."""
 
     def __init__(self) -> None:
         self.warning_calls: list[tuple[str, dict[str, Any]]] = []

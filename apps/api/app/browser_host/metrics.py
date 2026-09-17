@@ -1,6 +1,6 @@
 """Per-session browser metrics: resource samples, navigation timing, counts.
 
-Every session on the host gets one :class:`SessionMetrics`. It is pure
+Every session on the host gets one :class:SessionMetrics. It is pure
 bookkeeping — the host feeds it samples at the three moments that already
 happen (session create, navigation complete, session dispose) and the CDP proxy
 feeds it navigation/page events, so nothing here polls or busy-loops.
@@ -29,7 +29,7 @@ _BYTES_PER_MB = 1024 * 1024
 
 
 class AggregateSnapshot(TypedDict):
-    """Readable form of an :class:`Aggregate` — omitted entirely when empty."""
+    """Readable form of an :class:Aggregate — omitted entirely when empty."""
 
     count: int
     min: float
@@ -38,7 +38,7 @@ class AggregateSnapshot(TypedDict):
 
 
 class MetricsSnapshot(TypedDict):
-    """The ``metrics`` block a caller reads off ``GET /sessions/{id}``."""
+    """The metrics block a caller reads off GET /sessions/{id}."""
 
     session_lifetime_seconds: float
     navigation_count: int
@@ -73,7 +73,7 @@ class Aggregate:
         return self.total / self.count if self.count else 0.0
 
     def snapshot(self) -> AggregateSnapshot | None:
-        """``None`` while nothing has been sampled — an absent number, not a zero."""
+        """None while nothing has been sampled — an absent number, not a zero."""
         if self.count == 0:
             return None
         return {
@@ -102,16 +102,17 @@ class SessionMetrics:
         self.cpu_percent.add(cpu_percent)
 
     def start_navigation(self) -> None:
-        """A ``Page.navigate`` left the client. A second one supersedes the first:
-        the earlier load event is never observed, so keeping the old start would
+        """Record that a Page.navigate left the client.
+
+        A second one supersedes the first: the earlier load event is never observed, so keeping the old start would
         bill the abandoned navigation's wait to the new one."""
         self.navigation_started_at = time.monotonic()
 
     def finish_navigation(self) -> float | None:
-        """A load event arrived; returns the elapsed ms, or ``None`` if unsolicited.
+        """Record a load event; return the elapsed ms, or None if unsolicited.
 
         Load events also fire for navigations the client never asked for (a
-        redirect chain's final document, a page's own ``location`` assignment),
+        redirect chain's final document, a page's own location assignment),
         so an unmatched one is normal and is not counted.
         """
         if self.navigation_started_at is None:
@@ -137,7 +138,7 @@ class SessionMetrics:
 class ProcessSampler:
     """Samples the Chromium process tree's RSS and CPU%.
 
-    ``cpu_percent()`` is used in its non-blocking form: the first call on a
+    cpu_percent() is used in its non-blocking form: the first call on a
     process seeds the counter and reports 0.0, every later call reports the
     average since the previous one. That makes a sample a couple of syscalls
     with no sleep, which is what lets the host sample on events.
@@ -150,7 +151,7 @@ class ProcessSampler:
 
     @classmethod
     def for_pid(cls, pid: int) -> ProcessSampler | None:
-        """A sampler for ``pid``, or ``None`` — losing metrics must not fail a launch."""
+        """Return a sampler for pid, or None — losing metrics must not fail a launch."""
         try:
             return cls(pid)
         # TypeError covers a pid that is not a usable process id at all; psutil
@@ -164,7 +165,7 @@ class ProcessSampler:
             return None
 
     def sample(self) -> tuple[float, float] | None:
-        """``(rss_mb, cpu_percent)`` for the tree, or ``None`` if it cannot be read.
+        """(rss_mb, cpu_percent) for the tree, or None if it cannot be read.
 
         A process that died (or a permission the host does not have) must not
         take a session down with it — the metric is missing, the session is not.

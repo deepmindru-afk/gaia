@@ -1,6 +1,6 @@
 """Regression: history rebuilt recap URLs it never checked existed.
 
-`_frames` derived `{R2}/browser_steps/{session}/step_{i}.png` for every step, so
+_frames derived {R2}/browser_steps/{session}/step_{i}.png for every step, so
 a step whose screenshot upload failed still produced a row in Settings → Browser
 pointing at a 404 — a permanently broken thumbnail.
 """

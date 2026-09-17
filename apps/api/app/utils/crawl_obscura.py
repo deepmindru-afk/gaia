@@ -1,7 +1,7 @@
 """A dedicated, process-local Obscura that the crawl4ai engine drives over CDP.
 
 crawl4ai cannot launch Obscura itself — it only knows how to start Chromium via
-Playwright — so it connects to a running one via ``cdp_url``. This owns that
+Playwright — so it connects to a running one via cdp_url. This owns that
 Obscura: one process started on first crawl and reused for every crawl after,
 relaunched if it died, and torn down on app shutdown. It is deliberately separate
 from the interactive browser host's Obscura so a crawl can never take down an
@@ -31,7 +31,8 @@ _BIND_SETTLE_SECONDS = 0.5
 
 @dataclass(frozen=True)
 class _CrawlEngine:
-    """The running crawl Obscura and the CDP endpoint it publishes — one value, so
+    """The running crawl Obscura and the CDP endpoint it publishes — one value, so.
+
     the process and its URL can never disagree about whether an engine exists."""
 
     proc: asyncio.subprocess.Process
@@ -51,9 +52,9 @@ async def _terminate(proc: asyncio.subprocess.Process) -> None:
 
 
 async def ensure_crawl_obscura() -> str:
-    """The CDP http endpoint of the crawl Obscura, launching (or relaunching) it if needed.
+    """Return the CDP http endpoint of the crawl Obscura, launching (or relaunching) it if needed.
 
-    Probes upward from ``OBSCURA_CRAWL_PORT`` so a taken base port (e.g. a dev's
+    Probes upward from OBSCURA_CRAWL_PORT so a taken base port (e.g. a dev's
     local Chrome) doesn't wedge crawling — Obscura publishes its endpoint only at
     a port we name, so an occupied one is a fast exit we skip past.
     """

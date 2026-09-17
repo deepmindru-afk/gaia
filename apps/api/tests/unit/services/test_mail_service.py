@@ -9,14 +9,11 @@ from langchain_core.tools import StructuredTool
 import pytest
 
 from app.constants.log_tags import LogTag
-
-# ---------------------------------------------------------------------------
-# All public symbols imported directly from the module under test.
-# Deleting mail_service.py will break every test in this file.
-# ---------------------------------------------------------------------------
 from app.models.mail_models import (
     GmailDraftsResponse,
+    GmailMessageResource,
     GmailMessagesResponse,
+    GmailMessageSummary,
     GmailToolResult,
 )
 from app.services.mail.mail_service import (
@@ -80,10 +77,10 @@ def mock_invoke_gmail_tool():
 
 @pytest.fixture
 def mock_transform():
-    """Patch transform_gmail_message to return its input unchanged."""
+    """Patch transform_gmail_message to wrap its input unchanged."""
     with patch(
         "app.services.mail.mail_service.transform_gmail_message",
-        side_effect=lambda m: m,
+        side_effect=lambda m: GmailMessageSummary.model_validate({"id": "", **m}),
     ) as mock_fn:
         yield mock_fn
 
@@ -340,10 +337,8 @@ class TestSendEmail:
         upload.content_type = "application/pdf"
         upload.file = io.BytesIO(b"data")
 
-        # Mock the Composio upload one layer down so the REAL shaping runs: the
-        # bug this guards is the parameter Composio actually receives. Composio's
-        # Gmail tools take a singular ``attachment`` of ``{name, mimetype, s3key}``
-        # (a pre-uploaded file), NOT a plural ``attachments`` of raw bytes.
+        # Composio's Gmail tools take a singular attachment of {name, mimetype,
+        # s3key} (a pre-uploaded file), not a plural attachments of raw bytes.
         with patch(
             "app.services.mail.mail_service.upload_bytes_sync",
             return_value={"name": "doc.pdf", "mimetype": "application/pdf", "s3key": "k/1"},
@@ -395,12 +390,12 @@ class TestSendEmail:
 
 
 class TestAttachmentsSurviveArgumentValidation:
-    """``attachment`` is Gmail's own param, and only the tool's own schema has it.
+    """attachment is Gmail's own param, and only the tool's own schema has it.
 
     Shaping the parameter correctly is not enough: LangChain validates the call
     against the schema the tool was bound with and silently drops anything that
     schema does not declare. Under the agent-facing schema — where the modifier
-    has replaced ``attachment`` with the reference-based ``attachments`` — the
+    has replaced attachment with the reference-based attachments — the
     file is dropped between here and Composio and the mail sends without it.
     """
 
@@ -430,7 +425,7 @@ class TestAttachmentsSurviveArgumentValidation:
         )
 
     def _args_reaching_the_tool(self, schema: SimpleNamespace, call: dict) -> dict:
-        """What Composio's executor receives, through the real LangChain plumbing."""
+        """Return what Composio's executor receives, through the real LangChain plumbing."""
         received: dict = {}
 
         def _execute(**kwargs: object) -> str:
@@ -657,6 +652,22 @@ class TestTrashUntrash:
         tool_names = [c[0][1] for c in mock_invoke_gmail_tool.call_args_list]
         assert all(n == "GMAIL_TRASH_MESSAGE" for n in tool_names)
 
+    async def test_trash_returns_a_resource_per_trashed_message(self, mock_invoke_gmail_tool):
+        mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
+            {"successful": True, "data": {}}
+        )
+
+        result = await trash_messages(USER_ID, ["msg1", "msg2"])
+
+        assert result == [GmailMessageResource(id="msg1"), GmailMessageResource(id="msg2")]
+
+    async def test_untrash_returns_a_resource_per_restored_message(self, mock_invoke_gmail_tool):
+        mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate({"successful": True})
+
+        result = await untrash_messages(USER_ID, ["msg1"])
+
+        assert result == [GmailMessageResource(id="msg1")]
+
     async def test_trash_excludes_failed_messages_from_result(self, mock_invoke_gmail_tool):
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
             {"successful": False, "error": "403"}
@@ -740,6 +751,25 @@ class TestFetchThread:
         assert result.messages is not None
         assert result.messages[0]["internalDate"] == "1000"
         assert result.messages[1]["internalDate"] == "2000"
+        assert "threadId" in result.messages[0]
+
+    async def test_message_without_internal_date_sorts_as_the_oldest(
+        self, mock_invoke_gmail_tool, mock_transform
+    ):
+        mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
+            {
+                "successful": True,
+                "messages": [
+                    {"internalDate": "1", "subject": "dated"},
+                    {"subject": "undated"},
+                ],
+            }
+        )
+
+        result = await fetch_thread(USER_ID, "thread_abc")
+
+        assert result.messages is not None
+        assert [m["subject"] for m in result.messages] == ["undated", "dated"]
 
     async def test_returns_empty_messages_on_failure(self, mock_invoke_gmail_tool):
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
@@ -836,12 +866,7 @@ class TestSearchMessages:
         assert params["query"] == ""
 
     async def test_forwards_message_format_to_gmail(self, mock_invoke_gmail_tool):
-        """output_format="metadata" must land on the Gmail tool as format="metadata".
-
-        This is the documented lightweight-fetch path (skips body decode, bypasses
-        GMAIL_FULL_FETCH_HARD_LIMIT); a typoed key or a dropped condition would
-        silently fall back to the expensive full fetch.
-        """
+        """output_format="metadata" must reach the Gmail tool as format="metadata", or it silently full-fetches."""
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
             {
                 "successful": True,
@@ -1041,9 +1066,7 @@ class TestCreateDraft:
         assert params["bcc"] == ["bcc@example.com"]
 
     async def test_passes_body_through_without_html_flag(self, mock_invoke_gmail_tool):
-        """``is_html`` no longer exists on the service — bodies are converted
-        to HTML by the Composio before-hook, so the service just forwards
-        whatever body it was given and never sets an html param itself."""
+        """is_html no longer exists on the service; HTML conversion is now the Composio before-hook's job."""
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate({"successful": True})
 
         await create_draft(
@@ -1095,6 +1118,9 @@ class TestListDrafts:
         assert len(result.drafts) == 1
         assert result.next_page_token == "tok"
         mock_transform.assert_called_once()
+        assert result.drafts[0]["id"] == "d1"
+        assert result.drafts[0]["message"]["threadId"] == ""
+        assert "thread_id" not in result.drafts[0]["message"]
 
     async def test_includes_page_token_when_provided(self, mock_invoke_gmail_tool):
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
@@ -1148,6 +1174,8 @@ class TestGetDraft:
 
         mock_transform.assert_called_once()
         assert result.message is not None
+        assert result.message["threadId"] == ""
+        assert "thread_id" not in result.message
 
     async def test_returns_error_on_failure(self, mock_invoke_gmail_tool):
         mock_invoke_gmail_tool.return_value = GmailToolResult.model_validate(
@@ -1337,6 +1365,8 @@ class TestGetEmailById:
 
         assert result.success is True
         assert result.message is not None
+        assert result.message["threadId"] == ""
+        assert "thread_id" not in result.message
         mock_transform.assert_called_once()
         args, _ = mock_invoke_gmail_tool.call_args
         assert args[1] == "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID"
@@ -1363,17 +1393,6 @@ class TestGetEmailById:
 
         assert result.success is False
         assert result.message is None
-
-
-# ---------------------------------------------------------------------------
-# get_contact_list
-# ---------------------------------------------------------------------------
-
-
-# ===========================================================================
-# Exact-parameter pins: every literal, dict write, and branch in the compose
-# and fetch helpers is pinned so a single-operator mutation fails a test.
-# ===========================================================================
 
 
 class TestSendEmailParamPins:

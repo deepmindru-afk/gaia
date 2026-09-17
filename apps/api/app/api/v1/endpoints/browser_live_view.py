@@ -147,10 +147,7 @@ async def _authorize_page(request: Request, session_id: str, token: str | None) 
         claims = _verify_scoped_token(token, session_id)
         return claims["user_id"]
     user = await get_current_user(request)
-    user_id = user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id required")
-    return str(user_id)
+    return user.user_id
 
 
 async def _authorize_ws(
@@ -175,10 +172,7 @@ async def _authorize_ws(
         return claims["user_id"], max(takeover_token_ttl_seconds(claims), 0.0)
 
     user = await get_current_user_ws(websocket)  # closes the socket on auth failure
-    user_id = user.get("user_id")
-    if not user_id:
-        return None
-    return str(user_id), None
+    return user.user_id, None
 
 
 def _verify_scoped_token(token: str, session_id: str) -> TakeoverTokenClaims:

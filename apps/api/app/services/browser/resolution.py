@@ -3,7 +3,7 @@
 When a browser task is paused at a sensitive step and the user replies in chat
 ("yeah I paid, continue" / "no, stop") instead of clicking the card's buttons,
 one scoped LLM call classifies the reply. This is the text-channel equivalent of
-the Continue/Cancel buttons — same core (``resolve_handoff``), so it works
+the Continue/Cancel buttons — same core (resolve_handoff), so it works
 identically on web and bots. Mirrors the HIL conversational-resolution pattern.
 """
 
@@ -34,9 +34,9 @@ class HandoffReplyDecision(BaseModel):
 async def resolve_handoff_from_message(
     conversation_id: str, user_id: str, message: str
 ) -> HandoffReplyAction | None:
-    """Resolve the conversation's pending browser handoff from ``message``.
+    """Resolve the conversation's pending browser handoff from message.
 
-    Returns the classified action, or ``None`` when nothing is pending or the
+    Returns the classified action, or None when nothing is pending or the
     reply addressed none of it (so the normal turn runs).
     """
     handoff_id = await get_conversation_pending_handoff(conversation_id)
@@ -59,7 +59,9 @@ async def resolve_handoff_from_message(
 
 
 async def _interpret(message: str, reason: str) -> HandoffReplyDecision:
-    """Classify the reply. Fails toward ``unrelated`` (normal chat), never toward
+    """Classify the reply.
+
+    Fails toward unrelated (normal chat), never toward
     silently continuing a sensitive browser task."""
     try:
         return await ainvoke_structured(

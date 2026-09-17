@@ -1,20 +1,14 @@
 """Every piece of context an agent can be given, declared once.
 
-A section says three things: which slot it belongs in, which tiers get it, and
-how to fetch its text. Tier differences are therefore rows in :data:`SECTIONS`
-rather than branches in five separate builders — adding a section to a tier is
-one edit to one ``applies_to`` set.
+A section says three things: which slot it belongs in, which tiers get it,
+and how to fetch its text. Tier differences are rows in :data:SECTIONS
+rather than branches in five separate builders.
 
-A row points straight at its body in ``fetchers``; the private functions here are
-only the sections that genuinely branch before rendering, and exist because they
-branch, not to adapt one signature to another.
-
-The slot each section declares is the correctness-critical part. Anything whose
-text depends on the current query or turn is volatile and belongs in
-``MEMORY_RECALL``, at the tail of the system block. Anything that changes only
-when the user edits a preference or connects an integration is stable and
-belongs in ``DYNAMIC_STABLE``, inside the cacheable prefix. Getting that
-backwards is what silently destroys the prompt cache.
+The slot each section declares is correctness-critical: text depending on
+the current query/turn is volatile (MEMORY_RECALL, tail of system block);
+text that only changes on preference/integration edits is stable
+(DYNAMIC_STABLE, inside the cacheable prefix). Getting that backwards
+silently destroys the prompt cache.
 """
 
 from collections.abc import Awaitable, Callable
@@ -24,17 +18,21 @@ from app.agents.context.fetchers import (
     build_active_todo_banner,
     build_agenda_and_activity_block,
     build_background_banner,
+    build_connected_devices_manifest,
     build_connected_integrations_manifest,
     build_core_memory_block,
     build_gaia_knowledge_block,
     build_memory_recall_block,
+    build_new_user_guidance_block,
     build_tracked_todos_block,
     build_workspace_session_banner,
 )
 from app.agents.context.section_context import SectionContext
 from app.agents.context.slots import PromptSlot
 from app.agents.context.text import (
+    CONNECTED_DEVICES_HEADER,
     CONNECTED_INTEGRATIONS_HEADER,
+    EXECUTOR_CONNECTED_DEVICES_HEADER,
     EXECUTOR_CONNECTED_INTEGRATIONS_HEADER,
 )
 from app.agents.context.tiers import ALL_TIERS, WORKER_TIERS, AgentTier
@@ -73,20 +71,14 @@ class Section:
 
 
 async def _platform_banner(ctx: SectionContext) -> str:
-    """Which messaging app comms is replying in.
-
-    The model cannot read ``configurable``, so without this it knows only that it
-    is on "some" messaging platform, not which one — and replies drift toward the
-    web app's voice. Naming the app is what lets them read native to it.
+    """Which messaging app comms is replying in, so replies read native to it.
 
     Bot channels only: on web/mobile/desktop the rich UI is the point, so telling
-    those clients to write plain short text would be actively wrong.
+    those clients to write plain short text would be wrong.
     """
     source = ConversationSource.coerce(ctx.source)
-    # Desktop-only capability, stated only on desktop. Naming these tools in the
-    # STATIC prompt made every web/mobile/bot turn read them and reason about
-    # whether they applied — retrieval already gates them by source, so the
-    # sentence bought nothing off-desktop and cost tokens and confusion.
+    # Desktop-only capability, stated only on desktop: retrieval already gates these tools
+    # by source, so naming them in the STATIC prompt only cost other surfaces tokens.
     if source is ConversationSource.DESKTOP:
         return (
             "You are on the user's desktop app, so desktop tools are available "
@@ -137,6 +129,17 @@ async def _integrations_manifest(ctx: SectionContext) -> str:
     return await build_connected_integrations_manifest(ctx.user_id, header=header)
 
 
+async def _connected_devices(ctx: SectionContext) -> str:
+    if not ctx.user_id:
+        return ""
+    header = (
+        EXECUTOR_CONNECTED_DEVICES_HEADER
+        if ctx.tier is AgentTier.EXECUTOR
+        else CONNECTED_DEVICES_HEADER
+    )
+    return await build_connected_devices_manifest(ctx.user_id, header=header)
+
+
 async def _provider_metadata(ctx: SectionContext) -> str:
     """Who the user is on this provider — GitHub login, Gmail address, etc."""
     if not (ctx.integration_id and ctx.user_id):
@@ -162,8 +165,11 @@ async def _provider_metadata(ctx: SectionContext) -> str:
 
 
 async def _custom_instructions(ctx: SectionContext) -> str:
-    """Injected in full rather than as a read-on-demand pointer: the whole point
-    is that the subagent honours "focus on #eng" without an extra file read."""
+    """Injected in full rather than as a read-on-demand pointer.
+
+    The point is that the subagent honours "focus on #eng" without an extra
+    file read.
+    """
     target = ctx.integration_id or ctx.subagent_id
     if not (target and ctx.user_id):
         return ""
@@ -226,6 +232,16 @@ SECTIONS: tuple[Section, ...] = (
     ),
     Section("user_identity", PromptSlot.DYNAMIC_STABLE, ALL_TIERS, 10, _user_identity),
     Section("user_prefs", PromptSlot.DYNAMIC_STABLE, ALL_TIERS, 20, _user_prefs),
+    # Comms only: the executor never opens a conversation. Stable rather than
+    # volatile since it's a pure function of signup answers plus a slow
+    # counter, byte-identical until the user outgrows it.
+    Section(
+        "new_user_guidance",
+        PromptSlot.DYNAMIC_STABLE,
+        frozenset({AgentTier.COMMS}),
+        25,
+        build_new_user_guidance_block,
+    ),
     Section(
         "workspace_session",
         PromptSlot.DYNAMIC_STABLE,
@@ -241,6 +257,13 @@ SECTIONS: tuple[Section, ...] = (
         _integrations_manifest,
     ),
     Section(
+        "connected_devices",
+        PromptSlot.DYNAMIC_STABLE,
+        frozenset({AgentTier.COMMS, AgentTier.EXECUTOR}),
+        45,
+        _connected_devices,
+    ),
+    Section(
         "provider_metadata",
         PromptSlot.DYNAMIC_STABLE,
         frozenset({AgentTier.PROVIDER_SUBAGENT}),
@@ -254,13 +277,9 @@ SECTIONS: tuple[Section, ...] = (
         60,
         _custom_instructions,
     ),
-    # Capability info, not retrieval: the listing is a pure function of the
-    # user and the agent — no query, no clock — and is Redis-cached for 12h,
-    # so it is byte-stable for a conversation's whole life. In the volatile
-    # slot it was re-read on every worker call (~475-1,400 tokens each time).
-    # The trade, taken knowingly: install_skill_from_github can change the
-    # listing mid-conversation, which invalidates the prefix ONCE — the same
-    # trade integrations_manifest already makes for account connects.
+    # Capability info, not retrieval: pure function of user + agent, Redis-
+    # cached 12h (was re-read every worker call in the volatile slot). Same
+    # once-per-change prefix-invalidation trade integrations_manifest makes.
     Section("skills", PromptSlot.DYNAMIC_STABLE, WORKER_TIERS, 70, _skills),
     # The memory core's documents, not the whole core: the agenda and the
     # activity journal are split off into their own volatile section, because
@@ -280,7 +299,7 @@ SECTIONS: tuple[Section, ...] = (
 
 
 def sections_for(tier: AgentTier, slot: PromptSlot) -> list[Section]:
-    """The sections ``tier`` gets in ``slot``, in intra-slot order."""
+    """Return the sections tier gets in slot, in intra-slot order."""
     return sorted(
         (s for s in SECTIONS if s.slot is slot and s.applies(tier)), key=lambda s: s.order
     )

@@ -45,15 +45,12 @@ class BrowserAction(BaseModel):
 
     name: str
     inputs: dict[str, Any] = Field(default_factory=dict)
-    # The element's own text, resolved from the DOM the agent was looking at —
-    # "Add to cart" rather than the bare index the action carries. Grounded in
-    # the page, so a caption states what was really touched, not what the model
-    # claimed it would touch.
+    # The element's own DOM text ("Add to cart") rather than the bare index the action
+    # carries, so a caption states what was really touched, not what the model claimed.
     target: str | None = None
-    # Where on the step's screenshot this action acted, as (x, y) fractions of the
-    # viewport in [0, 1] — so the UI can draw a pulse at the click/type point
-    # without knowing the frame's pixel size. None for actions with no on-screen
-    # target (navigate, scroll, wait) or a target scrolled out of view.
+    # Where on the step's screenshot the action acted, as (x, y) viewport fractions in [0, 1],
+    # so the UI can draw a pulse without knowing the frame's pixel size. None for actions
+    # with no on-screen target (navigate, scroll, wait) or a target scrolled out of view.
     point: tuple[float, float] | None = None
 
 
@@ -209,7 +206,7 @@ class BrowserTaskResponse(BaseModel):
     conversation_id: str
     source: str
     frames: list[BrowserTaskFrame] = Field(
-        default_factory=list, description="Recap frames (screenshot + caption), in order."
+        description="Recap frames (screenshot + caption), in order."
     )
 
 
@@ -218,12 +215,12 @@ class BrowserLoginResponse(BaseModel):
 
     domain: str
     updated_at: datetime | None
-    expires_at: datetime | None = None
-    # Provenance — present only for logins the CLI imported. ``source`` is a
-    # ``BrowserLoginSource`` value ("import"); the time comes from ``updated_at``.
-    source: str | None = None
-    source_browser: str | None = None
-    source_ip: str | None = None
+    expires_at: datetime | None
+    # Provenance, present only for logins the CLI imported: source is a
+    # BrowserLoginSource value ("import"); the time comes from updated_at.
+    source: str | None
+    source_browser: str | None
+    source_ip: str | None
 
 
 class ImportTokenRecord(BaseModel):

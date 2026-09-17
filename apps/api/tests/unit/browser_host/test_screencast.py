@@ -1,7 +1,7 @@
 """Live-view screencast setup must never strand a viewer slot.
 
-Regression: ``add_viewer`` sat outside the try/finally, so a failure during
-live-view setup (e.g. the CDP client cannot connect) left ``viewer_count`` > 0
+Regression: add_viewer sat outside the try/finally, so a failure during
+live-view setup (e.g. the CDP client cannot connect) left viewer_count > 0
 forever. The idle reaper skips sessions with viewers, so that session was never
 reclaimed — a permanent capacity leak that only a host restart cleared.
 """
@@ -39,10 +39,8 @@ async def test_run_live_view_removes_viewer_when_setup_fails() -> None:
 
 
 # --- _register_frame_handler: per-frame CSS size --------------------------
-#
-# Regression: viewers mapped click coordinates in frame-bitmap space into a
-# larger CSS viewport, so takeover clicks landed short. Every queued frame must
-# now carry the page's CSS size straight from the screencast metadata.
+# Regression: clicks mapped in frame-bitmap space landed short in a larger CSS
+# viewport; every queued frame must carry the CSS size from screencast metadata.
 
 
 def _register_and_capture(

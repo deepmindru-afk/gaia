@@ -16,7 +16,7 @@ _NEEDS_BODY = "envelope requires text, text_parts, or attachment"
 
 
 def _rejection(build: Callable[[], BaseModel]) -> str:
-    """The message the single validation error carries, verbatim."""
+    """Return the message the single validation error carries, verbatim."""
     with pytest.raises(ValidationError) as raised:
         build()
     (error,) = raised.value.errors()

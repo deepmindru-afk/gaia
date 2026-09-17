@@ -1,9 +1,9 @@
 """Redis-backed handoff bridge for the mid-run browser gate.
 
 When the agent reaches a sensitive step and the policy says "hand off", the
-runner blocks on :func:`await_handoff`; the user completes the step in the
-live-view and the ``/browser/handoffs/{id}/decision`` endpoint calls
-:func:`resolve_handoff` (continue or cancel) from a possibly-different worker
+runner blocks on :func:await_handoff; the user completes the step in the
+live-view and the /browser/handoffs/{id}/decision endpoint calls
+:func:resolve_handoff (continue or cancel) from a possibly-different worker
 process. Redis is the cross-process channel — the same decoupling the
 cancel-stream flag uses. This is a browser-session continue/cancel signal, NOT
 tool-call approval (the shared HIL system owns that).
@@ -56,9 +56,8 @@ async def _store(handoff_id: str, record: HandoffRecord) -> None:
     )
     if not stored:
         # A handoff that was never persisted can never be resolved by the other
-        # process: the awaiting run would stall for the full timeout and a user
-        # decision could be silently dropped. Fail loudly instead of stranding
-        # both sides (the runner's unexpected-failure path resolves the card).
+        # process (the run would stall for the full timeout), so fail loudly; the
+        # runner's unexpected-failure path resolves the card.
         raise BrowserUnavailableError(
             f"Could not persist handoff {handoff_id} (storage unavailable)."
         )
@@ -70,7 +69,7 @@ async def get_handoff(handoff_id: str) -> HandoffRecord | None:
 
 
 async def get_conversation_pending_handoff(conversation_id: str) -> str | None:
-    """The conversation's in-flight handoff id, if a browser task is waiting."""
+    """Return the conversation's in-flight handoff id, if a browser task is waiting."""
     handoff_id = await redis_cache.get(_conv_key(conversation_id), model=str)
     return handoff_id or None
 
@@ -78,10 +77,11 @@ async def get_conversation_pending_handoff(conversation_id: str) -> str | None:
 async def resolve_handoff(
     handoff_id: str, decision: HandoffDecision, user_id: str, message: str | None = None
 ) -> HandoffStatus | None:
-    """Resolve a pending handoff, optionally attaching a free-text note the user
-    sends back with a continue. Returns the new status, None if it does not
-    exist/expired. Raises ``BrowserHandoffNotOwned`` if the caller does not own it.
-    One-time: a settled handoff keeps its original status.
+    """Resolve a pending handoff, optionally attaching the user's free-text note.
+
+    Returns the new status, or None if it does not exist or expired. Raises
+    BrowserHandoffNotOwned if the caller does not own it. One-time: a settled
+    handoff keeps its original status.
     """
     record = await get_handoff(handoff_id)
     if record is None:
@@ -113,8 +113,10 @@ async def resolve_handoff(
 
 
 async def await_handoff(handoff_id: str, timeout_seconds: int) -> HandoffOutcome:
-    """Block until the handoff is resolved or ``timeout_seconds`` elapses, returning
-    the terminal status plus any note the user attached."""
+    """Block until the handoff is resolved or timeout_seconds elapses.
+
+    Returns the terminal status plus any note the user attached.
+    """
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_seconds
     while loop.time() < deadline:

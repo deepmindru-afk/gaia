@@ -12,13 +12,9 @@ export interface AgentCursorTarget {
   key: number;
 }
 
-// A Figma-style presence cursor overlaid on the live canvas: the pointer glides
-// to each action's point, a ring ripples on a click, and a tag names what it's
-// doing. The headless browser renders no cursor of its own, so this is the only
-// thing that says "it's acting here" — it must read as alive, not decorative.
-// How long a target stays "live" after it arrives. Steps take seconds and the
-// agent spends much of that thinking, so without this the pointer sits frozen
-// on the last thing it touched and reads as stuck rather than idle.
+// A Figma-style presence cursor over the live canvas — the headless browser
+// renders none of its own. A target stays "live" this long after it arrives;
+// steps take seconds of thinking, and a frozen pointer reads as stuck.
 const CURSOR_IDLE_MS = 4000;
 
 export function AgentCursor({ target }: { target: AgentCursorTarget | null }) {
@@ -95,10 +91,9 @@ function Dot({ delay }: { delay: string }) {
 /** The agent's pointer — a Figma-style arrow in the browser accent. Shared by
  * the live overlay and the recap so both read as the same cursor, not a dot. */
 export function CursorArrow({ className = "" }: { className?: string }) {
-  // Source art: Figma Cursors.svg. Its path spans x 7.33..24.64, y 6.55..24.50;
-  // the viewBox pads that by the stroke half-width so no edge is clipped, and
-  // starts near the tip so the SVG's top-left is ~the pointer tip — callers put
-  // that at the action point.
+  // Source art: Figma Cursors.svg (path x 7.33..24.64, y 6.55..24.50). The
+  // viewBox pads by the stroke half-width and starts near the tip, so the
+  // SVG's top-left is ~the pointer tip that callers place on the action point.
   return (
     <svg
       width="15"
@@ -111,7 +106,7 @@ export function CursorArrow({ className = "" }: { className?: string }) {
     >
       <title>Agent cursor</title>
       <path
-        d="M11.8924 23.7113L7.33378 7.71982C7.0984 6.89409 7.95602 6.18106 8.73584 6.55413L23.8385 13.7792C24.6416 14.1634 24.5812 15.3159 23.7425 15.6131L17.5312 17.8139C17.3056 17.8938 17.1164 18.0511 16.9978 18.2574L13.7318 23.9361C13.2908 24.7029 12.1347 24.5616 11.8924 23.7113Z"
+        d="M11.89 23.71L7.33 7.72C7.1 6.89 7.96 6.18 8.74 6.55L23.84 13.78C24.64 14.16 24.58 15.32 23.74 15.61L17.53 17.81C17.31 17.89 17.12 18.05 17 18.26L13.73 23.94C13.29 24.7 12.13 24.56 11.89 23.71Z"
         fill="#00bbff"
         stroke="black"
         strokeWidth="1.2"

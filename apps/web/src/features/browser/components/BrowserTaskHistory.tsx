@@ -19,7 +19,7 @@ import { BOT_PLATFORM_LABELS, isBotPlatform } from "@/config/botPlatforms";
 import { useBrowserTasks } from "../hooks/useBrowserTasks";
 import type { BrowserTask, BrowserTaskStatus } from "../types";
 import { formatRelativeDate } from "../utils";
-import { PLATFORM_GLYPHS } from "./platformGlyphs";
+import { PLATFORM_GLYPHS } from "./platformGlyphMap";
 
 const STATUS_META: Record<
   BrowserTaskStatus,
@@ -28,6 +28,7 @@ const STATUS_META: Record<
   completed: { label: "Done", dot: "bg-emerald-500", text: "text-emerald-400" },
   cancelled: { label: "Stopped", dot: "bg-zinc-500", text: "text-zinc-400" },
   failed: { label: "Failed", dot: "bg-red-500", text: "text-red-400" },
+  starting: { label: "Starting", dot: "bg-[#00bbff]", text: "text-[#00bbff]" },
   running: { label: "Working", dot: "bg-[#00bbff]", text: "text-[#00bbff]" },
   paused: { label: "Working", dot: "bg-[#00bbff]", text: "text-[#00bbff]" },
 };

@@ -19,7 +19,7 @@ def _pin_engine(monkeypatch: pytest.MonkeyPatch, engine: BrowserEngine) -> None:
 
 
 def _record_wait_for_timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float | None]:
-    """Record every deadline the module hands ``asyncio.wait_for``.
+    """Record every deadline the module hands asyncio.wait_for.
 
     The per-crawl recovery deadline never reaches an error message or a return
     value, so the timeout argument itself is the only place the computed
@@ -41,13 +41,10 @@ def _expire_batch_deadline_once_only_a_straggler_remains(
 ) -> None:
     """Fire the batch deadline the moment every fetch that can finish has.
 
-    A real deadline races the event loop: on a loaded CI box a 50 ms budget
-    expired before the fast fetch had stored its result, and a budget long
-    enough to be safe is a real sleep. So the batch ``wait_for`` (recognised by
-    its budget; the per-URL and teardown waits keep the real one) is driven by
-    the loop's own state instead — it expires once exactly one fetch, the one
-    parked on an Event, is still pending — and the outcome depends only on the
-    code's ordering, never on machine speed.
+    A real 50 ms budget raced the loop on a loaded CI box. The batch wait_for
+    (recognised by its budget; per-URL and teardown waits stay real) instead
+    expires once exactly one fetch, the one parked on an Event, is pending,
+    so the outcome depends on code ordering, never on machine speed.
     """
     real_wait_for = asyncio.wait_for
 
@@ -77,10 +74,10 @@ def _make_result(markdown: str = "ok", *, success: bool = True, error: str = "")
 
 
 def _warning_call(mock_log: MagicMock, needle: str) -> Any:
-    """The single ``log.warning`` call whose message contains ``needle``.
+    """Return the single log.warning call whose message contains needle.
 
     warning/error both append their message AND kwargs to the wide event's
-    ``warnings[]``, so the whole call is the observable artefact — assert the
+    warnings[], so the whole call is the observable artefact — assert the
     message and every field, not just that something was logged.
     """
     matches = [call for call in mock_log.warning.call_args_list if needle in str(call.args[0])]
@@ -89,7 +86,7 @@ def _warning_call(mock_log: MagicMock, needle: str) -> Any:
 
 
 def _warning_kwargs(mock_log: MagicMock, needle: str) -> dict[str, Any]:
-    """The kwargs of the single ``log.warning`` whose message contains ``needle``."""
+    """Return the kwargs of the single log.warning whose message contains needle."""
     return dict(_warning_call(mock_log, needle).kwargs)
 
 
@@ -102,7 +99,7 @@ def _stub_crawler(mock_crawler_cls: MagicMock) -> AsyncMock:
 
 
 class TestBatchFetchWithCrawl4ai:
-    """The Chromium path: one crawler + ``arun_many`` with result matching."""
+    """The Chromium path: one crawler + arun_many with result matching."""
 
     @patch("app.utils.crawl4ai_utils.AsyncWebCrawler")
     async def test_matches_redirected_results_to_requested_urls(
@@ -192,7 +189,7 @@ class TestBatchFetchWithCrawl4ai:
 
 
 class TestBatchFetchObscura:
-    """The Obscura path: one crawler+context per URL (arun), never ``arun_many``."""
+    """The Obscura path: one crawler+context per URL (arun), never arun_many."""
 
     @patch(
         "app.utils.crawl4ai_utils.ensure_crawl_obscura",
@@ -755,7 +752,7 @@ class TestObscuraPerUrlFanout:
 
 
 class TestChromiumBatchWiring:
-    """What ``arun_many`` is handed, and how its failures reach the caller."""
+    """What arun_many is handed, and how its failures reach the caller."""
 
     @staticmethod
     def _params(**overrides: Any) -> Any:

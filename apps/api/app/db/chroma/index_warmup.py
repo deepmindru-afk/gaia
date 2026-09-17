@@ -4,7 +4,7 @@ Tool and trigger indexing both run at startup as best-effort enrichment. A write
 failure — typically the embedding provider being unavailable (no key, sidecar
 down, quota) — must be surfaced loudly but must never abort boot: an unindexed
 catalog degrades retrieval, a server that won't start degrades everything. The
-low-level ``abatch`` stays fail-loud (it raises ``ChromaBatchWriteError``); this
+low-level abatch stays fail-loud (it raises ChromaBatchWriteError); this
 is the single place that decides indexing warmup tolerates that raise.
 """
 

@@ -44,11 +44,7 @@ class CrawlBatchParams:
 def _build_markdown_generator(content_query: str | None = None) -> DefaultMarkdownGenerator:
     """Build a markdown generator tuned for clean, LLM-ready output.
 
-    Plain fetch keeps the full raw markdown — links, emails and inline text are
-    preserved (boilerplate is already removed via ``excluded_tags``). Deep
-    research passes a ``content_query`` so BM25 keeps only the passages most
-    relevant to the topic. (A pruning filter was dropping inline links, so it is
-    not used for plain fetch.)
+    Plain fetch keeps the full raw markdown (links/emails preserved, boilerplate stripped via excluded_tags); a content_query switches to BM25, keeping only passages relevant to the topic — a pruning filter was dropping inline links, so it isn't used for plain fetch.
     """
     content_filter = (
         BM25ContentFilter(user_query=content_query, bm25_threshold=_BM25_THRESHOLD)
@@ -71,11 +67,7 @@ def _build_markdown_generator(content_query: str | None = None) -> DefaultMarkdo
 def _build_run_config(params: CrawlBatchParams) -> CrawlerRunConfig:
     """Build a crawl run config.
 
-    ``thorough`` (single-page fetch) scrolls the whole page, lets late JS and
-    animations settle, and enables ``magic`` (overlay handling + light stealth)
-    so lazy-loaded / scroll-revealed content is captured. It is several times
-    slower, so batch crawls (deep research) leave it off. ``networkidle`` is
-    deliberately not used — it hangs on SPAs that hold persistent connections.
+    thorough scrolls the whole page, waits for late JS/animations, and enables magic (overlay handling + light stealth) to capture lazy-loaded content — several times slower, so batch crawls (deep research) leave it off. networkidle is deliberately not used: it hangs on SPAs with persistent connections.
     """
     kwargs: dict[str, Any] = {
         "page_timeout": params.page_timeout_ms,
@@ -98,10 +90,10 @@ def _is_obscura() -> bool:
 
 
 async def _build_browser_config() -> BrowserConfig:
-    """The crawl4ai browser config for the active engine.
+    """Build the crawl4ai browser config for the active engine.
 
     Obscura: connect over CDP to the dedicated crawl Obscura (one shared process,
-    started on demand). ``cdp_cleanup_on_close=False`` so a crawler's teardown
+    started on demand). cdp_cleanup_on_close=False so a crawler's teardown
     never closes the shared engine out from under a concurrent crawl. Chromium:
     launch a dedicated Playwright browser as before.
     """
@@ -116,10 +108,8 @@ async def _build_browser_config() -> BrowserConfig:
     return BrowserConfig(headless=True, browser_mode="dedicated", verbose=False)
 
 
-# Shared semaphore binding for the process-wide browser concurrency cap. The
-# limit itself is sourced from ``settings.CRAWL4AI_MAX_BROWSERS`` (env-driven,
-# already clamped to a safe minimum); see ``constants/search.py`` for context
-# on why the cap exists.
+# Process-wide browser concurrency cap; the limit is settings.CRAWL4AI_MAX_BROWSERS
+# (env-driven, clamped to a safe minimum) — see constants/search.py for why it exists.
 def get_browser_semaphore() -> asyncio.Semaphore:
     """Return the shared browser semaphore bound to the running loop."""
     return loop_bound_semaphore("crawl4ai_browser", settings.CRAWL4AI_MAX_BROWSERS)
@@ -143,15 +133,9 @@ def _spawn_shielded_close(crawler: AsyncWebCrawler, context_name: str) -> asynci
 
 @asynccontextmanager
 async def managed_crawler(*, context_name: str = "crawl4ai") -> AsyncIterator[AsyncWebCrawler]:
-    """Yield a started ``AsyncWebCrawler`` for the active engine, whose teardown survives cancellation.
+    """Yield a started AsyncWebCrawler for the active engine, whose teardown survives cancellation.
 
-    ``async with AsyncWebCrawler()`` runs ``close()`` inside ``__aexit__``, so a
-    ``CancelledError`` arriving mid-close (stream cancellation, tool timeout,
-    client disconnect) aborts the cleanup and orphans the Playwright driver
-    subprocess (~50-130 MB each; these accumulated for days in prod). Running
-    ``close()`` as a detached task means cancellation of the calling task can
-    no longer interrupt the browser teardown; ``app.utils.browser_reaper`` is
-    the backstop for anything that still slips through.
+    async with AsyncWebCrawler runs close() inside __aexit__, so a CancelledError mid-close (stream cancellation, tool timeout, disconnect) orphans the Playwright driver subprocess (~50-130 MB each; these accumulated for days in prod). Detaching close() as its own task means the calling task's cancellation can no longer interrupt it; browser_reaper is the backstop for anything that still slips through.
     """
     crawler = AsyncWebCrawler(config=await _build_browser_config())
     try:
@@ -339,12 +323,10 @@ async def _batch_fetch_per_url(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Fetch each URL with its own crawler+context, concurrently (the Obscura path).
 
-    One crawler per URL — each gets an isolated Obscura context, which Obscura
-    drives concurrently, unlike ``arun_many``'s shared-context multi-page mode.
-    Concurrency is bounded by ``semaphore_count`` and the process-wide browser
-    cap; each URL by a page-derived timeout; the whole batch by
-    ``total_timeout_seconds``, after which any URL not yet done is marked
-    timed-out (results already collected are kept — never all-or-nothing).
+    Concurrency is bounded by semaphore_count and the process-wide browser cap,
+    each URL by a page-derived timeout, the whole batch by total_timeout_seconds.
+    URLs still pending at the batch deadline are marked timed-out; results
+    already collected are kept (never all-or-nothing).
     """
     context_name = params.context_name
     total_timeout_seconds = params.total_timeout_seconds
@@ -446,7 +428,7 @@ def _assemble_batch_results(
     *,
     params: CrawlBatchParams,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Extract per-URL content/errors from matched ``arun_many`` results (Chromium path)."""
+    """Extract per-URL content/errors from matched arun_many results (Chromium path)."""
     context_name = params.context_name
     matched_results, unmatched_count = _map_results_to_urls(urls, results)
 
@@ -496,12 +478,10 @@ async def batch_fetch_with_crawl4ai(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Fetch multiple URLs with crawl4ai.
 
-    Chromium runs them through one crawler's ``arun_many``; Obscura fans out to
-    one crawler+context per URL (``arun_many``'s shared-context multi-page mode
-    breaks on Obscura — see ``_batch_fetch_per_url``). Pass ``content_query`` to
-    rank each page's content by relevance to a topic (BM25) instead of returning
-    the full raw markdown — used by deep research. Pass ``thorough`` to scroll +
-    settle + handle overlays for richer single-page captures.
+    Chromium runs them through one crawler's arun_many; Obscura fans out to one
+    crawler+context per URL (see _batch_fetch_per_url). content_query ranks each
+    page by BM25 relevance instead of returning raw markdown; thorough scrolls,
+    settles and handles overlays for richer single-page captures.
     """
     if not urls:
         return {}, {}
@@ -509,10 +489,9 @@ async def batch_fetch_with_crawl4ai(
     context_name = params.context_name
     run_config = _build_run_config(params)
 
-    # Obscura can't serve crawl4ai's ``arun_many`` (concurrent pages in one shared
-    # context break its per-page evaluation); it drives concurrent *contexts*
-    # cleanly, so fan out to one crawler per URL instead. Verified: arun_many
-    # fails 3/4 URLs on Obscura, per-URL crawlers succeed 4/4.
+    # Obscura can't serve arun_many (concurrent pages in one shared context break
+    # its per-page evaluation) but drives concurrent contexts cleanly. Measured:
+    # arun_many fails 3/4 URLs on Obscura, per-URL crawlers succeed 4/4.
     if _is_obscura():
         return await _batch_fetch_per_url(urls, run_config=run_config, params=params)
 

@@ -1,19 +1,15 @@
 """Per-session CDP filtering proxy: browser-use sees only its own context.
 
-browser-use attaches to ``WS /cdp/{session_id}`` believing it owns the whole
-browser. It does not — one Chromium holds every user's context. This proxy sits
-between browser-use and Chromium's single root websocket and enforces the
-illusion of a private browser:
+browser-use attaches to WS /cdp/{session_id} believing it owns the whole
+browser; one Chromium actually holds every user's context. This proxy sits
+between browser-use and Chromium's single root websocket and enforces that:
 
-  * ``Target.getTargets`` responses are trimmed to this session's context,
-  * cross-context ``attachedToTarget`` / ``targetCreated`` / ``targetInfoChanged``
-    events are dropped so browser-use can never attach to another user's page,
-  * ``Target.createTarget`` requests are pinned to this context so new tabs
-    stay inside it,
-  * navigations are allowlisted to http/https, so a prompt-injected page cannot
-    steer the browser at ``file://`` or ``chrome://``,
-  * ``setDownloadBehavior`` is refused, so the deny the host set at context
-    creation cannot be undone from this socket.
+  * Target.getTargets responses are trimmed to this session's context,
+  * cross-context attachedToTarget / targetCreated / targetInfoChanged
+    events are dropped,
+  * Target.createTarget requests are pinned to this context,
+  * navigations are allowlisted to http/https (no file:// or chrome://),
+  * setDownloadBehavior is refused, so the per-context deny cannot be undone.
 
 Everything else passes through untouched, and any traffic bumps the session's
 activity clock so the idle reaper leaves an in-use session alone.
@@ -46,11 +42,9 @@ _CONTEXT_SCOPED_EVENTS = frozenset(
 )
 
 
-# The agent follows attacker-influenced links, so navigation is allowlisted to the
-# schemes a web task legitimately needs. This has to happen here rather than in
-# Chromium: `Network.setBlockedURLs` filters subresources only and does not stop a
-# top-level navigation, so `file:///etc/passwd` and `chrome://` are refused before
-# Chromium ever sees the command.
+# Navigation is allowlisted to the schemes a web task needs. It must happen here:
+# Network.setBlockedURLs filters subresources only and does not stop a top-level
+# navigation, so file:///etc/passwd and chrome:// are refused before Chromium sees them.
 _ALLOWED_NAVIGATION_SCHEMES = frozenset({"http", "https"})
 _NAVIGATION_METHODS = frozenset({"Page.navigate", "Target.createTarget"})
 # Chromium's inert blank page — the one non-web URL the host itself opens.
@@ -60,21 +54,16 @@ _LOAD_EVENT_METHOD = "Page.loadEventFired"
 # CDP's implementation-defined server-error code, used for a refused command.
 _CDP_REFUSED_CODE = -32000
 
-# Downloads are denied per browser context at creation (see chromium.py), and that
-# deny is only as strong as this socket: browser-use's DownloadsWatchdog sends
-# ``Browser.setDownloadBehavior`` with ``behavior: "allow"`` on every run, and a
-# client that passed its own ``browserContextId`` would re-enable downloads for
-# its session. Refused outright — browser-use's call site already swallows the
-# failure with a warning, so nothing legitimate breaks.
+# Downloads are denied per context at creation (chromium.py), and browser-use's
+# DownloadsWatchdog sends Browser.setDownloadBehavior allow on every run, which
+# would undo it. Refused outright; browser-use's call site swallows the failure.
 _REFUSED_METHODS = frozenset(
     {
         "Browser.setDownloadBehavior",
         "Page.setDownloadBehavior",
-        # The host owns the context lifecycle: every session lives in exactly the one
-        # context it created, counted by the capacity/reaper/recovery accounting. A
-        # client minting or disposing its own contexts would escape that accounting —
-        # un-capped, un-reaped memory growth on the single shared Chromium, and (on
-        # the dispose side) the ability to kill a sibling session's isolation.
+        # The host owns the context lifecycle (capacity/reaper/recovery accounting).
+        # A client minting contexts would grow memory un-capped and un-reaped; one
+        # disposing them could kill a sibling session's isolation.
         "Target.createBrowserContext",
         "Target.disposeBrowserContext",
     }
@@ -90,7 +79,7 @@ _REFUSAL_REASONS: dict[str, str] = {
 
 
 def _refused_navigation_url(message: dict[str, Any]) -> str | None:
-    """The URL to refuse when this command navigates outside http(s), else ``None``."""
+    """Return the URL to refuse when this command navigates outside http(s), else None."""
     if message.get("method") not in _NAVIGATION_METHODS:
         return None
     params = message.get("params")
@@ -108,7 +97,7 @@ def _refused_navigation_url(message: dict[str, Any]) -> str | None:
 
 
 def _refusal_reason(message: dict[str, Any]) -> str | None:
-    """Why this client command must not reach Chromium, or ``None`` to forward it."""
+    """Why this client command must not reach Chromium, or None to forward it."""
     method = message.get("method")
     if method in _REFUSED_METHODS:
         return f"{method} refused: {_REFUSAL_REASONS[method]}"
@@ -119,7 +108,7 @@ def _refusal_reason(message: dict[str, Any]) -> str | None:
 
 
 def _refusal_reply(message_id: int | None, reason: str) -> str:
-    """A CDP error reply, so a refused command fails the caller instead of hanging it."""
+    """Build a CDP error reply, so a refused command fails the caller instead of hanging it."""
     return json.dumps({"id": message_id, "error": {"code": _CDP_REFUSED_CODE, "message": reason}})
 
 
@@ -132,7 +121,7 @@ def _event_context_id(params: dict[str, Any]) -> str | None:
 
 
 def _rewrite_upstream(message: dict[str, Any], context_id: str, gettargets_ids: set[int]) -> str:
-    """Client -> Chromium: pin ``createTarget`` to this context; track getTargets ids."""
+    """Client -> Chromium: pin createTarget to this context; track getTargets ids."""
     method = message.get("method")
     if method == "Target.getTargets":
         message_id = message.get("id")
@@ -149,10 +138,10 @@ def _rewrite_upstream(message: dict[str, Any], context_id: str, gettargets_ids: 
 
 
 def _is_load_event(text: str) -> bool:
-    """Whether this downstream frame is ``Page.loadEventFired``.
+    """Whether this downstream frame is Page.loadEventFired.
 
     The substring test is a guard, not the answer: it keeps the common frame off
-    the JSON parser (``_filter_downstream`` already parses every frame, and this
+    the JSON parser (_filter_downstream already parses every frame, and this
     would double that cost) while the parse below is what actually decides.
     """
     if _LOAD_EVENT_METHOD not in text:

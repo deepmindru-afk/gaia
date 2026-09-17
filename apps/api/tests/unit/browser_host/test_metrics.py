@@ -17,7 +17,7 @@ _MB = 1024 * 1024
 
 
 class _FakeCDP:
-    """Root CDP stand-in: every call returns the ids ``create_context`` needs."""
+    """Root CDP stand-in: every call returns the ids create_context needs."""
 
     async def send_raw(
         self, method: str, params: dict[str, Any] | None = None, session_id: str | None = None
@@ -38,7 +38,7 @@ def _fake_proc(rss_mb: float, cpu: float) -> MagicMock:
 
 
 def _sampler_over(root: MagicMock, pid: int = 4321) -> ProcessSampler:
-    """A real sampler for ``pid`` whose process tree resolves to ``root``."""
+    """Build a real sampler for pid whose process tree resolves to root."""
     with patch.object(metrics_module.psutil, "Process", return_value=root):
         return ProcessSampler(pid)
 

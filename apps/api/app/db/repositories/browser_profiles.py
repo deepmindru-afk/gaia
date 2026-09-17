@@ -1,4 +1,4 @@
-"""Repository for the ``browser_profiles`` collection — one saved login per (user, domain).
+"""Repository for the browser_profiles collection — one saved login per (user, domain).
 
 Uncached: a profile is read once per browser task, right before the session is
 created, and written once when a task ends with a fresh storage_state.
@@ -34,10 +34,10 @@ class BrowserProfilesRepository(UserScopedRepository[BrowserProfileDocument, Bro
         storage_state_blob: str,
         provenance: BrowserLoginProvenance | None = None,
     ) -> None:
-        """Set the user's encrypted storage_state for ``domain``, creating the record on first use.
+        """Set the user's encrypted storage_state for domain, creating the record on first use.
 
-        ``provenance`` is written only on the CLI import path; the generic
-        task-end save passes ``None`` and leaves any existing provenance intact.
+        provenance is written only on the CLI import path; the generic
+        task-end save passes None and leaves any existing provenance intact.
         """
         now = datetime.now(UTC)
         set_fields: dict[str, object] = {"storage_state_blob": storage_state_blob}
@@ -54,7 +54,7 @@ class BrowserProfilesRepository(UserScopedRepository[BrowserProfileDocument, Bro
         )
 
     async def delete_for_user(self, user_id: str, domain: str | None = None) -> int:
-        """Delete saved logins for ``user_id``, optionally scoped to one ``domain``.
+        """Delete saved logins for user_id, optionally scoped to one domain.
 
         Returns the number of records deleted.
         """
