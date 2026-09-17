@@ -48,7 +48,12 @@ for v in $_jfs_required; do
     fi
 done
 
-if [ "$_jfs_missing" = "1" ] && [ -n "${INFISICAL_MACHINE_IDENTITY_CLIENT_ID:-}" ] && [ -n "${INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET:-}" ] && [ -n "${INFISICAL_PROJECT_ID:-}" ]; then
+# `command -v juicefs` is the same gate section 2's mount carries, and this
+# block exists only to feed that mount: the bot images share this entrypoint
+# but ship no juicefs and no python, so without it every bot boot opened with
+# `python: not found`. Resolving secrets for a mount that cannot run is waste
+# even where python does exist.
+if [ "$_jfs_missing" = "1" ] && command -v juicefs >/dev/null 2>&1 && [ -n "${INFISICAL_MACHINE_IDENTITY_CLIENT_ID:-}" ] && [ -n "${INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET:-}" ] && [ -n "${INFISICAL_PROJECT_ID:-}" ]; then
     _jfs_env_file="$(mktemp)"
     if python - "$_jfs_env_file" <<'PY'
 import os
