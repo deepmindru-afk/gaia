@@ -1202,6 +1202,20 @@ class TestRecall:
         assert len(harness.rerank_inputs[0]) == RERANK_CANDIDATES
         assert result.memories
 
+    async def test_pool_never_smaller_than_the_requested_limit(self) -> None:
+        """A search asking for more than the cap must not be truncated by it."""
+        base = [make_row(f"base fact {i}") for i in range(RERANK_CANDIDATES + 5)]
+        harness = _RecallHarness()
+        harness.rerank_scores = {row.content: 5.0 for row in base}
+        result = await _run_recall(
+            harness,
+            harness.patches(ann=[(str(row.id), 0.4) for row in base], fts=[], rows=base),
+            limit=RERANK_CANDIDATES + 4,
+            include_graph_expansion=False,
+        )
+        assert len(harness.rerank_inputs[0]) == RERANK_CANDIDATES + 4
+        assert len(result.memories) == RERANK_CANDIDATES + 4
+
     async def test_superseded_row_never_reaches_the_reranker(self) -> None:
         stale = make_row("old value", is_latest=False)
         live = make_row("current value")

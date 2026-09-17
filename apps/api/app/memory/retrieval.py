@@ -142,9 +142,10 @@ async def recall(
         if include_graph_expansion and candidates
         else []
     )
-    # The rerank budget caps the BASE pool only; capping the combined pool would
-    # discard every sibling once base retrieval alone fills the budget.
-    candidates = candidates[:RERANK_CANDIDATES] + siblings
+    # The rerank budget caps the BASE pool only (capping the combined pool would
+    # drop siblings once base fills the budget) and never below the caller's
+    # limit, so a 20-result search is not truncated; chat asks for 8 and keeps it.
+    candidates = candidates[: max(RERANK_CANDIDATES, limit)] + siblings
     timings["siblings_ms"] = _elapsed_ms(stage)
 
     stage = time.perf_counter()

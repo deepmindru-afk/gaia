@@ -109,8 +109,8 @@ DUPLICATE_SIMILARITY_THRESHOLD = 0.92
 RECONCILE_SIMILARITY_THRESHOLD = 0.70
 
 # Hybrid recall pipeline: candidate counts per retriever and the RRF
-# fusion constant (k=60). Rerank pool capped at 16 (sidecar load dominates;
-# survivors come from the pool top, graph siblings append after the cap).
+# fusion constant (k=60). Rerank pool capped at 16 -- never below the
+# caller's limit -- with graph siblings appended after the cap.
 RRF_K = 60
 ANN_CANDIDATES = 30
 FTS_CANDIDATES = 30
