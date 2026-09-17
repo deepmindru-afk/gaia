@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict
+
 from app.constants.browser import (
     BROWSER_TAKEOVER_PREAMBLE,
     BROWSER_VIEWPORT_HEIGHT,
@@ -175,6 +177,14 @@ def _element_viewport_fraction(
     return (round(fx, 4), round(fy, 4))
 
 
+class _ActionInputs(BaseModel):
+    """The one argument every element-targeting action shares."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    index: int | None = None
+
+
 def _extract_actions(
     agent_output: AgentOutput, state: BrowserStateSummary | None = None
 ) -> list[BrowserAction]:
@@ -187,12 +197,9 @@ def _extract_actions(
         dumped = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else {}
         for action_name, params in dumped.items():
             inputs = params if isinstance(params, dict) else {}
-            target = _element_label(state, inputs.get("index")) if state is not None else None
-            point = (
-                _element_viewport_fraction(state, inputs.get("index"))
-                if state is not None
-                else None
-            )
+            index = _ActionInputs.model_validate(inputs).index
+            target = _element_label(state, index) if state is not None else None
+            point = _element_viewport_fraction(state, index) if state is not None else None
             actions.append(
                 BrowserAction(name=action_name, inputs=inputs, target=target, point=point)
             )

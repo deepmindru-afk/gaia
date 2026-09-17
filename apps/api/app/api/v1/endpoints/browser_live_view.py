@@ -144,7 +144,7 @@ async def _resolve_target_ws(
 async def _authorize_page(request: Request, session_id: str, token: str | None) -> str:
     """Resolve the user id for a GET live-view page: takeover token or web session."""
     if token:
-        claims = _verify_scoped_token(token, session_id)
+        claims: TakeoverTokenClaims = _verify_scoped_token(token, session_id)
         return claims["user_id"]
     user = await get_current_user(request)
     return user.user_id
@@ -160,7 +160,7 @@ async def _authorize_ws(
     """
     if token:
         try:
-            claims = verify_takeover_token(token)
+            claims: TakeoverTokenClaims = verify_takeover_token(token)
         except JWTError:
             log.warning(f"{LogTag.BROWSER} browser live view rejected invalid takeover token")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -178,7 +178,7 @@ async def _authorize_ws(
 def _verify_scoped_token(token: str, session_id: str) -> TakeoverTokenClaims:
     """Verify a takeover token and assert it is scoped to ``session_id`` (HTTP path)."""
     try:
-        claims = verify_takeover_token(token)
+        claims: TakeoverTokenClaims = verify_takeover_token(token)
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired link"

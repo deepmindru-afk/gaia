@@ -10,10 +10,11 @@ to a clean "not available" message rather than a raw stack trace.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import TypedDict
 
 import httpx
 from playwright.sync_api import StorageState
+from pydantic import BaseModel, ConfigDict
 
 from app.config.settings import settings
 from app.services.browser.exceptions import (
@@ -27,9 +28,16 @@ _DEFAULT_TIMEOUT_SECONDS = 15.0
 _AT_CAPACITY_STATUS = 429
 
 
-@dataclass(frozen=True, slots=True)
-class HostSession:
+class _DeletedSession(TypedDict):
+    """The host's DELETE /sessions/{id} body: the state to persist for reuse."""
+
+    storage_state: StorageState
+
+
+class HostSession(BaseModel):
     """A live session on the host: the ids and websocket URLs the runner needs."""
+
+    model_config = ConfigDict(frozen=True)
 
     session_id: str
     cdp_ws: str
@@ -37,15 +45,16 @@ class HostSession:
     context_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class HostSessionInfo:
+class HostSessionInfo(BaseModel):
     """The host's view of a session: liveness, last activity, current page."""
+
+    model_config = ConfigDict(frozen=True)
 
     session_id: str
     live: bool
     last_activity_at: float
-    url: str | None
-    title: str | None
+    url: str | None = None
+    title: str | None = None
 
 
 def _host_headers() -> dict[str, str]:
@@ -75,13 +84,7 @@ async def create_session(storage_state: StorageState | None) -> HostSession:
         raise BrowserConcurrencyLimit("The browser host is at capacity; try again shortly.")
     _raise_for_status(response)
 
-    data = response.json()
-    return HostSession(
-        session_id=data["session_id"],
-        cdp_ws=data["cdp_ws"],
-        live_ws=data["live_ws"],
-        context_id=data["context_id"],
-    )
+    return HostSession.model_validate(response.json())
 
 
 async def delete_session(session_id: str) -> StorageState:
@@ -99,8 +102,8 @@ async def delete_session(session_id: str) -> StorageState:
         ) from exc
 
     _raise_for_status(response)
-    storage_state: StorageState = response.json()["storage_state"]
-    return storage_state
+    body: _DeletedSession = response.json()
+    return body["storage_state"]
 
 
 async def touch_session(session_id: str) -> None:
@@ -135,14 +138,7 @@ async def get_session(session_id: str) -> HostSessionInfo:
         ) from exc
 
     _raise_for_status(response)
-    data = response.json()
-    return HostSessionInfo(
-        session_id=data["session_id"],
-        live=data["live"],
-        last_activity_at=data["last_activity_at"],
-        url=data.get("url"),
-        title=data.get("title"),
-    )
+    return HostSessionInfo.model_validate(response.json())
 
 
 def _raise_for_status(response: httpx.Response) -> None:

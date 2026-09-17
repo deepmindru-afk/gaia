@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 
 from jose import JWTError, jwt
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.config.settings import settings
 from app.constants.auth import JWT_ALGORITHM
@@ -47,6 +48,17 @@ def create_takeover_token(session_id: str, user_id: str) -> str:
     return token
 
 
+class _TakeoverPayload(BaseModel):
+    """The decoded token as jose hands it back, before the claims are checked."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    role: str | None = None
+    session_id: str | None = None
+    sub: str | None = None
+    exp: float | None = None
+
+
 def verify_takeover_token(token: str) -> TakeoverTokenClaims:
     """Decode and validate a takeover token, returning {session_id, user_id, exp}.
 
@@ -64,20 +76,16 @@ def verify_takeover_token(token: str) -> TakeoverTokenClaims:
     except JWTError as exc:
         raise JWTError(f"Takeover token verification failed: {exc!s}") from exc
 
-    if payload.get("role") != _TAKEOVER_ROLE:
+    try:
+        claims = _TakeoverPayload.model_validate(payload)
+    except ValidationError as exc:
+        raise JWTError("Takeover token missing session_id, subject, or expiry") from exc
+    if claims.role != _TAKEOVER_ROLE:
         raise JWTError("Invalid token role")
-
-    session_id = payload.get("session_id")
-    user_id = payload.get("sub")
-    exp = payload.get("exp")
-    if (
-        not isinstance(session_id, str)
-        or not isinstance(user_id, str)
-        or not isinstance(exp, (int, float))
-    ):
+    if claims.session_id is None or claims.sub is None or claims.exp is None:
         raise JWTError("Takeover token missing session_id, subject, or expiry")
 
-    return {"session_id": session_id, "user_id": user_id, "exp": float(exp)}
+    return {"session_id": claims.session_id, "user_id": claims.sub, "exp": claims.exp}
 
 
 def takeover_token_ttl_seconds(claims: TakeoverTokenClaims) -> float:

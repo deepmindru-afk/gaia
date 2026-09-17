@@ -12,18 +12,18 @@ invalid. storage_state contents (cookies, tokens, localStorage values) are
 never logged — only counts and the domain.
 """
 
-from collections.abc import Mapping
 import json
 from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet
-from playwright.sync_api import StorageState
+from playwright.sync_api import StorageState, StorageStateCookie
 
 from app.config.settings import settings
 from app.constants.browser import BrowserLoginSource
 from app.constants.log_tags import LogTag
 from app.db.repositories.browser_profiles import browser_profile_repository
 from app.models.browser_models import BrowserLoginProvenance
+from app.services.browser.storage_state_types import OriginState
 from shared.py.wide_events import log
 
 _cipher: Fernet | None = None
@@ -58,6 +58,14 @@ def _get_cipher() -> Fernet:
     return _cipher
 
 
+def _cookie_count(state: StorageState) -> int:
+    return len(state.get("cookies", []))
+
+
+def _origin_count(state: StorageState) -> int:
+    return len(state.get("origins", []))
+
+
 def _encrypt_state(state: StorageState) -> str:
     return _get_cipher().encrypt(json.dumps(state).encode()).decode()
 
@@ -79,12 +87,12 @@ async def load_storage_state(user_id: str, domain: str | None) -> StorageState |
     record = await browser_profile_repository.get_for_domain(user_id, domain)
     if record is None:
         return None
-    state = _decrypt_state(record.storage_state_blob)
+    state: StorageState = _decrypt_state(record.storage_state_blob)
     log.info(
         f"{LogTag.BROWSER} Loaded saved browser login",
         domain=domain,
-        cookie_count=len(state.get("cookies", [])),
-        origin_count=len(state.get("origins", [])),
+        cookie_count=_cookie_count(state),
+        origin_count=_origin_count(state),
     )
     return state
 
@@ -111,8 +119,8 @@ async def save_storage_state(
     log.info(
         f"{LogTag.BROWSER} Saved browser login",
         domain=domain,
-        cookie_count=len(state.get("cookies", [])),
-        origin_count=len(state.get("origins", [])),
+        cookie_count=_cookie_count(state),
+        origin_count=_origin_count(state),
     )
 
 
@@ -145,30 +153,21 @@ def _cookie_applies_to_host(cookie_domain: str, host: str) -> bool:
     return cookie_domain == host
 
 
-def _cookie_host(cookie: Mapping[str, object]) -> str | None:
-    """Return the registrable host a cookie is scoped to, or None if it has no usable domain.
-
-    Leading dot stripped, lowercased. A slice must never be created for a cookie
-    that lost its domain, hence the runtime check rather than a cast.
-    """
-    domain = cookie.get("domain")
-    if not isinstance(domain, str):
-        return None
-    host = domain.lower().removeprefix(".")
+def _cookie_host(cookie: StorageStateCookie) -> str | None:
+    """Return the registrable host a cookie is scoped to (leading dot stripped, lowercased), or None if it has none."""
+    host = cookie.get("domain", "").lower().removeprefix(".")
     if not host:
         return None
     return host
 
 
-def _origin_host(origin: Mapping[str, object]) -> str | None:
+def _origin_host(origin: OriginState) -> str | None:
     """Lowercased host of an origin entry, or None when it has no usable URL."""
-    url = origin.get("origin")
-    return domain_of(url) if isinstance(url, str) else None
+    return domain_of(origin.get("origin"))
 
 
-def _cookie_scopes_to(cookie: Mapping[str, object], host: str) -> bool:
-    domain = cookie.get("domain")
-    return isinstance(domain, str) and _cookie_applies_to_host(domain, host)
+def _cookie_scopes_to(cookie: StorageStateCookie, host: str) -> bool:
+    return _cookie_applies_to_host(cookie.get("domain", ""), host)
 
 
 def split_storage_state_by_host(state: StorageState) -> dict[str, StorageState]:
@@ -219,10 +218,10 @@ async def import_browser_profile(
     imported: list[tuple[str, int]] = []
     for host, host_state in slices.items():
         await save_storage_state(user_id, host, host_state, provenance)
-        imported.append((host, len(host_state.get("cookies", []))))
+        imported.append((host, _cookie_count(host_state)))
     log.info(
         f"{LogTag.BROWSER} Imported browser profile",
         host_count=len(imported),
-        cookie_count=len(state.get("cookies", [])),
+        cookie_count=_cookie_count(state),
     )
     return imported

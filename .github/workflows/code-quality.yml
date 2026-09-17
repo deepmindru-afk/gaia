@@ -830,6 +830,9 @@ jobs:
     needs: [select-runner, changes]
     if: ${{ !cancelled() && (needs.changes.outputs.has_go == 'true') }}
     runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    # The base every scoped step in this job diffs against (see alert-rules).
+    env:
+      GAIA_PR_BASE: ${{ needs.changes.outputs.base_ref }}
     timeout-minutes: 10
     defaults:
       run:
@@ -875,6 +878,15 @@ jobs:
           echo "::endgroup::"
           echo "### gaia-connect (go build) — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "go build: OK (the module compiles)"
+      - name: Upload the verdict
+        if: always()
+        uses: ./.github/actions/upload-verdict
+        with:
+          # job.status, not a status function inside the composite:
+          # those read the composite's own steps and always said success.
+          status: ${{ job.status }}
+          name: go-connect
+
 
   # --- TypeScript strict type-check ---------------------------------------
   type-check:

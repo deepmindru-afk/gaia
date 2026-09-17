@@ -12,6 +12,7 @@ import asyncio
 import time
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config.settings import settings
 
@@ -39,6 +40,14 @@ def obscura_serve_argv(port: int) -> list[str]:
     ]
 
 
+class _DevToolsVersion(BaseModel):
+    """The one field of Chrome's /json/version document the launcher waits for."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    web_socket_debugger_url: str = Field(alias="webSocketDebuggerUrl")
+
+
 async def poll_obscura_endpoint(port: int) -> str:
     """Poll /json/version until Obscura yields its root webSocketDebuggerUrl."""
     deadline = time.monotonic() + _CDP_READY_TIMEOUT_SECONDS
@@ -47,7 +56,7 @@ async def poll_obscura_endpoint(port: int) -> str:
             try:
                 resp = await client.get(f"http://127.0.0.1:{port}/json/version", timeout=2.0)
                 resp.raise_for_status()
-                return str(resp.json()["webSocketDebuggerUrl"])
-            except (httpx.HTTPError, KeyError):
+                return _DevToolsVersion.model_validate(resp.json()).web_socket_debugger_url
+            except (httpx.HTTPError, ValidationError):
                 await asyncio.sleep(_CDP_READY_POLL_SECONDS)
     raise RuntimeError(f"Obscura did not expose its CDP endpoint on port {port} in time")

@@ -10,17 +10,18 @@ registration, and always releasing the browser context.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
 from time import perf_counter
-from typing import Annotated, Any
+from typing import Annotated
 import uuid
 
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
 from langgraph.types import StreamWriter
+from pydantic import BaseModel, ConfigDict
 
 from app.config.settings import settings
 from app.constants.browser import (
@@ -220,19 +221,32 @@ class _RunParams:
     task_source: str
 
 
-def _run_params(configurable: Mapping[str, Any]) -> _RunParams:
-    source_category = configurable.get("source_category")
-    conv_source = ConversationSource.coerce(configurable.get("conversation_source"))
+class _RunConfigurable(BaseModel):
+    """The keys of the run's configurable this tool reads; the rest is the graph's."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    user_id: str | None = None
+    conversation_id: str | None = None
+    thread_id: str | None = None
+    stream_id: str | None = None
+    root_request_id: str | None = None
+    source_category: str | None = None
+    conversation_source: str | None = None
+
+
+def _run_params(config: RunnableConfig) -> _RunParams:
+    configurable = _RunConfigurable.model_validate(config.get("configurable", {}))
+    source_category = configurable.source_category
+    conv_source = ConversationSource.coerce(configurable.conversation_source)
     return _RunParams(
-        user_id=configurable.get("user_id") or "",
+        user_id=configurable.user_id or "",
         # The USER-facing conversation, never the executor's derived thread_id
         # (executor_<conv>): a handoff is resolved by a chat reply arriving on the
         # comms conversation id, so a prefixed key would never match.
-        conversation_id=(
-            configurable.get("conversation_id") or configurable.get("thread_id") or ""
-        ),
-        stream_id=configurable.get("stream_id"),
-        root_request_id=configurable.get("root_request_id"),
+        conversation_id=configurable.conversation_id or configurable.thread_id or "",
+        stream_id=configurable.stream_id,
+        root_request_id=configurable.root_request_id,
         source_category=source_category,
         is_bot=source_category == SourceCategory.BOT.value,
         conversation_source=conv_source,
@@ -327,7 +341,7 @@ def _handoff_snapshot(
 
 def _spawn_handoff_watchers(
     handoff_id: str, req: HandoffRequest, session_id: str, user_id: str
-) -> list[asyncio.Task[Any]]:
+) -> list[asyncio.Task[None]]:
     # The paused session produces no CDP/live-view traffic, so keep its idle
     # clock fresh until the user decides — otherwise the host reaps the browser
     # they were asked to come back to.
@@ -430,7 +444,7 @@ async def browser_task(
     and stream progress/result cards. Returns the outcome guidance message the
     executor surfaces to the user (never a fabricated success).
     """
-    params = _run_params(config.get("configurable", {}))
+    params = _run_params(config)
     log.set(browser={"operation": "task", "source_category": params.source_category})
 
     if not settings.BROWSER_USE_ENABLED:

@@ -124,15 +124,10 @@ def _record(status: HandoffStatus = HandoffStatus.PENDING, user_id: str = "u1") 
 
 
 class TestGetBrowserHandoffContract:
-    async def test_missing_user_id_explains_why(self) -> None:
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_browser_handoff("h1", {})
-        assert exc.value.detail == "User id required"
-
     async def test_unknown_handoff_says_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(browser_ep, "get_handoff", AsyncMock(return_value=None))
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_browser_handoff("h1", {"user_id": "u1"})
+            await browser_ep.get_browser_handoff("h1", "u1")
         assert exc.value.detail == "Handoff not found"
 
     async def test_another_users_handoff_is_indistinguishable_from_missing(
@@ -142,13 +137,13 @@ class TestGetBrowserHandoffContract:
             browser_ep, "get_handoff", AsyncMock(return_value=_record(user_id="owner"))
         )
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_browser_handoff("h1", {"user_id": "intruder"})
+            await browser_ep.get_browser_handoff("h1", "intruder")
         assert exc.value.detail == "Handoff not found"
 
     async def test_looks_up_the_requested_handoff_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         get_handoff = AsyncMock(return_value=_record())
         monkeypatch.setattr(browser_ep, "get_handoff", get_handoff)
-        await browser_ep.get_browser_handoff("handoff-42", {"user_id": "u1"})
+        await browser_ep.get_browser_handoff("handoff-42", "u1")
         assert get_handoff.await_args == call("handoff-42")
 
     @pytest.mark.parametrize(
@@ -161,7 +156,7 @@ class TestGetBrowserHandoffContract:
         monkeypatch.setattr(
             browser_ep, "get_handoff", AsyncMock(return_value=_record(status=handoff_status))
         )
-        resp = await browser_ep.get_browser_handoff("h1", {"user_id": "u1"})
+        resp = await browser_ep.get_browser_handoff("h1", "u1")
         assert (resp.handoff_id, resp.status) == ("h1", handoff_status)
 
     async def test_wide_event_carries_user_and_handoff(
@@ -169,18 +164,9 @@ class TestGetBrowserHandoffContract:
     ) -> None:
         monkeypatch.setattr(browser_ep, "get_handoff", AsyncMock(return_value=_record()))
         async with _recorded() as (event, _recorder):
-            await browser_ep.get_browser_handoff("h1", {"user_id": "u1"})
+            await browser_ep.get_browser_handoff("h1", "u1")
             assert event["user"] == {"id": "u1"}
             assert event["browser"] == {"handoff_id": "h1"}
-
-    async def test_rejected_request_never_reaches_the_store(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        get_handoff = AsyncMock(return_value=_record())
-        monkeypatch.setattr(browser_ep, "get_handoff", get_handoff)
-        with pytest.raises(HTTPException):
-            await browser_ep.get_browser_handoff("h1", {"user_id": None})
-        assert get_handoff.await_args is None
 
 
 # ---------------------------------------------------------------------------
@@ -189,12 +175,6 @@ class TestGetBrowserHandoffContract:
 
 
 class TestDecideBrowserHandoffContract:
-    async def test_missing_user_id_explains_why(self) -> None:
-        payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.decide_browser_handoff("h1", payload, {"user_id": ""})
-        assert exc.value.detail == "User id required"
-
     async def test_foreign_handoff_says_not_authorized(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -205,7 +185,7 @@ class TestDecideBrowserHandoffContract:
         )
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+            await browser_ep.decide_browser_handoff("h1", payload, "u1")
         assert exc.value.detail == "Not authorized to resolve this handoff"
 
     async def test_ownership_failure_keeps_the_cause_attached(
@@ -215,14 +195,14 @@ class TestDecideBrowserHandoffContract:
         monkeypatch.setattr(browser_ep, "resolve_handoff", AsyncMock(side_effect=cause))
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+            await browser_ep.decide_browser_handoff("h1", payload, "u1")
         assert exc.value.__cause__ is cause
 
     async def test_expired_handoff_explains_why(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(browser_ep, "resolve_handoff", AsyncMock(return_value=None))
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+            await browser_ep.decide_browser_handoff("h1", payload, "u1")
         assert exc.value.detail == "Handoff not found or expired"
 
     async def test_omitted_note_reaches_the_service_as_none(
@@ -231,7 +211,7 @@ class TestDecideBrowserHandoffContract:
         resolve = AsyncMock(return_value=HandoffStatus.COMPLETED)
         monkeypatch.setattr(browser_ep, "resolve_handoff", resolve)
         payload = HandoffDecisionRequest(decision=HandoffDecision.CANCEL)
-        await browser_ep.decide_browser_handoff("h-9", payload, {"user_id": "u7"})
+        await browser_ep.decide_browser_handoff("h-9", payload, "u7")
         assert resolve.await_args == call("h-9", HandoffDecision.CANCEL, "u7", None)
 
     async def test_service_outcome_wins_over_the_requested_decision(
@@ -241,7 +221,7 @@ class TestDecideBrowserHandoffContract:
             browser_ep, "resolve_handoff", AsyncMock(return_value=HandoffStatus.CANCELLED)
         )
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
-        resp = await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+        resp = await browser_ep.decide_browser_handoff("h1", payload, "u1")
         assert (resp.handoff_id, resp.status) == ("h1", HandoffStatus.CANCELLED)
 
     @pytest.mark.parametrize(
@@ -256,7 +236,7 @@ class TestDecideBrowserHandoffContract:
         )
         payload = HandoffDecisionRequest(decision=decision)
         async with _recorded() as (event, _recorder):
-            await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+            await browser_ep.decide_browser_handoff("h1", payload, "u1")
             assert event["user"] == {"id": "u1"}
             assert event["browser"] == {"handoff_id": "h1", "decision": expected}
 
@@ -268,7 +248,7 @@ class TestDecideBrowserHandoffContract:
         )
         payload = HandoffDecisionRequest(decision=HandoffDecision.CANCEL)
         async with _recorded() as (_event, recorder):
-            await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+            await browser_ep.decide_browser_handoff("h1", payload, "u1")
             assert recorder.at("INFO") == [
                 (
                     f"{LogTag.BROWSER} Browser handoff decided",
@@ -283,7 +263,7 @@ class TestDecideBrowserHandoffContract:
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
         async with _recorded() as (_event, recorder):
             with pytest.raises(HTTPException):
-                await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+                await browser_ep.decide_browser_handoff("h1", payload, "u1")
             assert recorder.at("INFO") == []
 
 
@@ -313,17 +293,12 @@ def _patch_token_seams(
 
 
 class TestGetLiveViewTokenContract:
-    async def test_missing_user_id_explains_why(self) -> None:
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_live_view_token("sess-1", {})
-        assert exc.value.detail == "User id required"
-
     async def test_foreign_session_says_not_authorized(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _patch_token_seams(monkeypatch, owner="someone-else")
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+            await browser_ep.get_live_view_token("sess-1", "u1")
         assert exc.value.detail == "Not authorized for this session"
 
     async def test_unregistered_session_says_not_authorized(
@@ -331,7 +306,7 @@ class TestGetLiveViewTokenContract:
     ) -> None:
         _patch_token_seams(monkeypatch, owner=None)
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+            await browser_ep.get_live_view_token("sess-1", "u1")
         assert exc.value.detail == "Not authorized for this session"
 
     async def test_no_token_is_minted_for_a_foreign_session(
@@ -339,14 +314,14 @@ class TestGetLiveViewTokenContract:
     ) -> None:
         create, _verify, _ttl = _patch_token_seams(monkeypatch, owner="someone-else")
         with pytest.raises(HTTPException):
-            await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+            await browser_ep.get_live_view_token("sess-1", "u1")
         assert create.call_args is None
 
     async def test_token_is_scoped_to_the_session_and_its_owner(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         create, _verify, _ttl = _patch_token_seams(monkeypatch, owner="user-9")
-        await browser_ep.get_live_view_token("sess-abc", {"user_id": "user-9"})
+        await browser_ep.get_live_view_token("sess-abc", "user-9")
         assert create.call_args == call("sess-abc", "user-9")
 
     async def test_expiry_is_read_back_from_the_token_that_was_minted(
@@ -356,7 +331,7 @@ class TestGetLiveViewTokenContract:
         _create, verify, ttl_fn = _patch_token_seams(
             monkeypatch, token="minted-tok", claims=claims, ttl=42.0
         )
-        resp = await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+        resp = await browser_ep.get_live_view_token("sess-1", "u1")
         assert verify.call_args == call("minted-tok")
         assert ttl_fn.call_args == call(claims)
         assert (resp.token, resp.expires_in) == ("minted-tok", 42)
@@ -369,21 +344,21 @@ class TestGetLiveViewTokenContract:
         monkeypatch.setattr(browser_ep, "create_takeover_token", MagicMock(return_value="tok"))
         monkeypatch.setattr(browser_ep, "verify_takeover_token", MagicMock(return_value={}))
         monkeypatch.setattr(browser_ep, "takeover_token_ttl_seconds", MagicMock(return_value=1.0))
-        await browser_ep.get_live_view_token("sess-xyz", {"user_id": "u1"})
+        await browser_ep.get_live_view_token("sess-xyz", "u1")
         assert owner_lookup.await_args == call("sess-xyz")
 
     async def test_fractional_ttl_is_truncated_to_whole_seconds(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _patch_token_seams(monkeypatch, ttl=899.9)
-        resp = await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+        resp = await browser_ep.get_live_view_token("sess-1", "u1")
         assert resp.expires_in == 899
 
     async def test_already_expired_token_reports_zero_not_a_negative(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _patch_token_seams(monkeypatch, ttl=-0.5)
-        resp = await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+        resp = await browser_ep.get_live_view_token("sess-1", "u1")
         assert resp.expires_in == 0
 
     async def test_wide_event_carries_session_and_operation(
@@ -391,7 +366,7 @@ class TestGetLiveViewTokenContract:
     ) -> None:
         _patch_token_seams(monkeypatch)
         async with _recorded() as (event, recorder):
-            await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+            await browser_ep.get_live_view_token("sess-1", "u1")
             assert event["user"] == {"id": "u1"}
             assert event["browser"] == {"session_id": "sess-1", "operation": "live_view_token"}
             assert recorder.at("INFO") == [(f"{LogTag.BROWSER} browser live view token issued", {})]
@@ -402,7 +377,7 @@ class TestGetLiveViewTokenContract:
         _patch_token_seams(monkeypatch, owner=None)
         async with _recorded() as (_event, recorder):
             with pytest.raises(HTTPException):
-                await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+                await browser_ep.get_live_view_token("sess-1", "u1")
             assert recorder.at("INFO") == []
 
 

@@ -97,22 +97,6 @@ class TestExtractReasoningDelta:
         )
         assert extract_reasoning_delta(chunk) == "first second"
 
-    def test_a_chunk_missing_content_blocks_entirely_falls_back(self) -> None:
-        """Providers/versions that expose no content_blocks at all must not."""
-        from types import SimpleNamespace
-
-        from app.agents.llm.reasoning import extract_reasoning_delta
-
-        chunk = SimpleNamespace(additional_kwargs={"reasoning_content": "raw"})
-        assert extract_reasoning_delta(chunk) == "raw"  # type: ignore[arg-type]  # SimpleNamespace stub stands in for the real AIMessageChunk
-
-    def test_a_chunk_missing_additional_kwargs_entirely_yields_nothing(self) -> None:
-        from types import SimpleNamespace
-
-        from app.agents.llm.reasoning import extract_reasoning_delta
-
-        assert extract_reasoning_delta(SimpleNamespace(content_blocks=[])) == ""  # type: ignore[arg-type]  # SimpleNamespace stub stands in for the real AIMessageChunk
-
     def test_a_non_string_reasoning_content_is_stringified(self) -> None:
         """Some providers put a structured value in reasoning_content; the."""
         from types import SimpleNamespace

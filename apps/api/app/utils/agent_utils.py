@@ -278,7 +278,7 @@ async def format_tool_call_entry(
 def format_browser_action_entry(
     *,
     name: str,
-    inputs: dict[str, Any],
+    inputs: dict[str, object],
     target: str | None,
     subagent_id: str,
     tool_call_id: str,

@@ -21,6 +21,8 @@ import hashlib
 import json
 from typing import Protocol, cast
 
+from pydantic import BaseModel, ConfigDict
+
 from app.agents.core.background.session import get_session
 from app.constants.cache import HIL_DECLINED_PREFIX
 from app.constants.hil import (
@@ -226,13 +228,21 @@ async def recall_declined_call(
     return ApprovalOutcome(status=HILApprovalStatus.DENIED, feedback=record.get("feedback"))
 
 
+class _BrowserTaskArgs(BaseModel):
+    """The one browser_task argument the approval card summarises."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    task: str = ""
+
+
 def build_summary(tool_name: str, args: Mapping[str, object], integration_name: str | None) -> str:
     """Deterministic one-line summary of a gated call (no LLM in the hot path)."""
     if tool_name == "browser_task":
         # A browser task's whole intent is its ``task`` — but a weak model can
         # write a long paragraph, so keep the card scannable: the first sentence,
         # or a clipped lead. Never dump ``start_url`` or truncate mid-word.
-        task = str(args.get("task", "")).strip()
+        task = _BrowserTaskArgs.model_validate(args).task.strip()
         if not task:
             return "Start a browser task"
         first = task.split(". ")[0].strip().rstrip(".")

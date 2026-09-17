@@ -8,8 +8,7 @@ socket is an expected end, not an error to propagate.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
-from typing import Any
+from collections.abc import Awaitable
 
 from websockets.exceptions import ConnectionClosed
 
@@ -35,7 +34,7 @@ def is_disconnect(exc: BaseException) -> bool:
     return type(exc) is RuntimeError and str(exc) in _STARLETTE_NOT_CONNECTED_MESSAGES
 
 
-async def pump_until_first_close(*coros: Coroutine[Any, Any, None]) -> None:
+async def pump_until_first_close(*coros: Awaitable[None]) -> None:
     """Run both pump directions; when either ends, cancel the other and finish.
 
     A real error (anything that is not a peer disconnect) from either direction

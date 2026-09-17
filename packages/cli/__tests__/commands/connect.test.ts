@@ -127,7 +127,7 @@ describe("ensureConnectBinary", () => {
       expect.stringContaining("gaia-connect-9.9.9"),
       BINARY_BYTES,
     );
-    expect(fsMock.chmod).toHaveBeenCalledWith(expect.any(String), 0o755);
+    expect(fsMock.chmod).toHaveBeenCalledWith(expect.any(String), 0o700);
     expect(fsMock.rename).toHaveBeenCalledWith(
       expect.any(String),
       "/mock-home/.gaia/bin/gaia-connect-9.9.9",

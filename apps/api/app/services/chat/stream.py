@@ -118,12 +118,13 @@ async def run_chat_stream_background(
         )
 
 
-class _ErrorChunk(BaseModel):
-    """A ``data:`` chunk, read only for the error an error frame carries."""
+class _ErrorOrReasoningChunk(BaseModel):
+    """A ``data:`` chunk, read only for the error or reasoning frame it carries."""
 
     model_config = ConfigDict(extra="ignore")
 
     error: object = None
+    reasoning: ReasoningEvent | None = None
 
 
 class _CompleteMessageMarker(BaseModel):
@@ -195,8 +196,6 @@ class _StreamState:
         "is_cancelled",
         "queued",
         "saved",
-        "subagent_ends",
-        "subagent_starts",
         "t0_perf",
         "todo_progress_accumulated",
         "tool_data",
@@ -214,13 +213,7 @@ class _StreamState:
         # The accumulators process_data_chunk fills, and the envelope around them
         # that recovery, grouping and persistence (chat.state) take as one dict.
         self.tool_entries: list[ToolDataEntry] = []
-        self.subagent_starts: dict[str, dict[str, object]] = {}
-        self.subagent_ends: dict[str, dict[str, object]] = {}
-        self.tool_data: dict[str, Any] = {
-            "tool_data": self.tool_entries,
-            "subagent_starts": self.subagent_starts,
-            "subagent_ends": self.subagent_ends,
-        }
+        self.tool_data: dict[str, Any] = {"tool_data": self.tool_entries}
         self.tool_outputs: dict[str, str] = {}
         self.todo_progress_accumulated: dict[str, dict[str, object]] = {}
         self.follow_up_actions: list[str] = []
@@ -734,15 +727,14 @@ async def _dispatch_stream_chunk(
         # Errors reach this loop as raised exceptions (state.error, caught
         # elsewhere) or as error frames yielded by call_agent's setup guard;
         # record the latter so the persisted message carries the failure.
-        frame_error = _ErrorChunk.model_validate(payload).error if payload is not None else None
-        if frame_error:
-            state.error = str(frame_error)
+        frames = _ErrorOrReasoningChunk.model_validate(payload) if payload is not None else None
+        if frames is not None and frames.error:
+            state.error = str(frames.error)
         # Comms' thinking arrives as a plain `reasoning` frame (the executor's rides
         # the tool-event collector). Same helper for both so a reloaded turn keeps
         # one identical thinking-block shape.
-        reasoning = payload.get("reasoning") if payload is not None else None
-        if isinstance(reasoning, dict):
-            absorb_reasoning(ReasoningEvent.model_validate(reasoning), state.tool_entries)
+        if frames is not None and frames.reasoning is not None:
+            absorb_reasoning(frames.reasoning, state.tool_entries)
 
     if state.ttft_perf is None and extract_response_text(chunk):
         # Init/description/keepalive/tool frames carry no "response"
@@ -754,8 +746,6 @@ async def _dispatch_stream_chunk(
             chunk,
             ChunkAccumulators(
                 tool_entries=state.tool_entries,
-                subagent_starts=state.subagent_starts,
-                subagent_ends=state.subagent_ends,
                 tool_outputs=state.tool_outputs,
                 todo_progress=state.todo_progress_accumulated,
                 follow_up_actions=state.follow_up_actions,

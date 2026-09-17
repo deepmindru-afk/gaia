@@ -36,15 +36,11 @@ def _read_int(path: Path) -> int | None:
 
 def _cgroup_used_and_limit_bytes() -> tuple[int, int | None] | None:
     """Return (used, limit) from the cgroup, limit None when unlimited; None off-cgroup."""
-    used = _read_int(_V2_CURRENT)
-    if used is not None:
-        raw = _V2_MAX.read_text().strip() if _V2_MAX.exists() else "max"
-        limit = None if raw == "max" or not raw.isdigit() else int(raw)
-        return used, (limit if limit is not None and limit < _UNLIMITED_BYTES else None)
-    used = _read_int(_V1_USAGE)
-    limit = _read_int(_V1_LIMIT)
-    if used is not None:
-        return used, (limit if limit is not None and limit < _UNLIMITED_BYTES else None)
+    for usage_path, limit_path in ((_V2_CURRENT, _V2_MAX), (_V1_USAGE, _V1_LIMIT)):
+        used = _read_int(usage_path)
+        if used is not None:
+            limit = _read_int(limit_path)
+            return used, (limit if limit is not None and limit < _UNLIMITED_BYTES else None)
     return None
 
 
