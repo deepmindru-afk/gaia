@@ -74,10 +74,6 @@ spawn_subagent (context isolation)
 #: passage, so ordinary edits elsewhere in the prompt do not break the swap.
 _PHRASE_REWRITES: tuple[tuple[str, str], ...] = (
     (
-        "dispatch independent handoffs together (background=True), steer them mid-run, and batch independent tool calls",
-        "spawn independent subagents together (one spawn_subagent per independent chunk)",
-    ),
-    (
         "TODO (handoff to subagent:todos)",
         'TODO (activate_integration("todos"), then act)',
     ),
