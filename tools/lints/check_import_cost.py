@@ -116,7 +116,7 @@ class Measurement:
 def tracked_modules() -> list[str]:
     """Every git-tracked module under the budgeted layers, as dotted names."""
     roots = [f"apps/api/{root}" for root in LAYER_ROOTS]
-    listed = subprocess.run(  # nosec B603 - fixed argv, no shell
+    listed = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, git off PATH
         ["git", "ls-files", "-z", *roots],
         cwd=REPO_ROOT,
         capture_output=True,
