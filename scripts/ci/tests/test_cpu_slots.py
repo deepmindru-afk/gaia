@@ -115,8 +115,11 @@ def test_pool_defaults_to_one_and_a_half_times_the_thread_count(tmp_path: Path) 
     At exactly nproc a shard could not fit beside another one and the lane
     serialised; at 2 x nproc four shards thrashed the box.
     """
-    env = _base_env(tmp_path / "pool", 8)
-    del env["GAIA_CPU_TOKENS"]
+    # Emptied, not deleted: `_run` layers this over os.environ, where conftest's
+    # autouse fixture has already put the suite's private pool — dropping the
+    # key here leaves that one inherited and the default never runs. Empty is
+    # not a uint, so cpu-slots takes exactly the branch under test.
+    env = {**_base_env(tmp_path / "pool", 8), "GAIA_CPU_TOKENS": ""}
     r = _run("_cpu_slots_total", env)
     assert r.returncode == 0
     assert r.stdout.strip() == str(_nproc() * 3 // 2)
@@ -164,7 +167,8 @@ def test_a_shard_defaults_to_half_the_threads_and_takes_exactly_that(tmp_path: P
     Taking more than it runs (the old nproc-2 floor) is what made two shards
     mutually exclusive in the pool; taking fewer would let it outrun its grant.
     """
-    workers, tokens = _shard_budget(tmp_path, _base_env(tmp_path / "pool", 24))
+    env = {**_base_env(tmp_path / "pool", 24), "MUTMUT_MAX_CHILDREN": ""}
+    workers, tokens = _shard_budget(tmp_path, env)
     assert workers == max(_nproc() // 2, 1)
     assert tokens == workers
 
