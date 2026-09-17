@@ -488,7 +488,7 @@ def test_fetch_script_disabled_downloads_nothing(tmp_path: Path) -> None:
 
 
 def _fake_run(run_id: int, created: str) -> dict:
-    """One workflow_run-shaped dict for `_trusted_runs` to accept."""
+    """One workflow_run-shaped dict for _trusted_runs to accept."""
     return {
         "id": run_id,
         "created_at": created,
@@ -501,14 +501,7 @@ def _fake_run(run_id: int, created: str) -> dict:
 def test_fetch_walks_trusted_runs_until_a_map_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A run whose map artifact is missing must not fail the fetch.
-
-    The newest trusted master run is tried first; when its artifact does not
-    exist (deleted, expired, or a recording that never uploaded), the next
-    newest run's map is used instead of widening the slice to ALL. This is the
-    regression that made unit-b run everything on 2026-09-16: the API served a
-    3-week-old run as its newest entry and that run's maps were long gone.
-    """
+    """A missing map on the newest run must fall through to the next-newest."""
     newest, older = 33135783419, 35056052489
     monkeypatch.setattr(
         ti,

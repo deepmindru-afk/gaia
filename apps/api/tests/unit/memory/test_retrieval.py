@@ -997,12 +997,7 @@ class TestBuildEntries:
             assert await _build_entries([]) == []
 
     async def test_entity_and_parent_fetches_overlap(self) -> None:
-        """The entity and parent lookups must run concurrently, not in sequence.
-
-        They are independent (parent ids derive from the scored rows alone),
-        so awaiting one before starting the other holds the turn for an extra
-        Postgres roundtrip on every recall that carries a superseded memory.
-        """
+        """The entity and parent lookups must start concurrently, not in sequence."""
         parent = make_row("parent content")
         child = make_row(
             "child content",
@@ -1166,17 +1161,11 @@ class TestRecall:
         assert result.memories[0].content == sibling.content
 
     def test_rerank_pool_cap_is_sixteen(self) -> None:
-        """Pin the ranking workload cap: prod timings show ranking cost is
-        dominated by sidecar load, so the pool stays small while survivors
-        still come from the pool top."""
+        """Pin the rerank pool cap: sidecar load dominates ranking cost."""
         assert RERANK_CANDIDATES == 16
 
     async def test_recall_reports_per_stage_timings(self) -> None:
-        """Every pipeline stage must report its own timing bucket.
-
-        The dashboard splits recall by stage key; a renamed or dropped key
-        silently merges two stages and hides the next bottleneck.
-        """
+        """Every pipeline stage must report its own timing bucket."""
         best = make_row("the answer")
         harness = _RecallHarness()
         harness.rerank_scores = {"the answer": 5.0}

@@ -109,11 +109,8 @@ DUPLICATE_SIMILARITY_THRESHOLD = 0.92
 RECONCILE_SIMILARITY_THRESHOLD = 0.70
 
 # Hybrid recall pipeline: candidate counts per retriever and the RRF
-# fusion constant (k=60 is the canonical value from the RRF paper).
-# The rerank pool is capped at 16: prod timings show cross-encoder latency is
-# dominated by sidecar load rather than pool size, so halving the payload
-# halves the ONNX work per call while survivors still come from the pool top
-# (graph siblings are appended after the cap, untouched).
+# fusion constant (k=60). Rerank pool capped at 16 (sidecar load dominates;
+# survivors come from the pool top, graph siblings append after the cap).
 RRF_K = 60
 ANN_CANDIDATES = 30
 FTS_CANDIDATES = 30

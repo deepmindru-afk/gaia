@@ -19,7 +19,6 @@ import hashlib
 import math
 import re
 import time
-from typing import cast
 
 import httpx
 
@@ -55,6 +54,7 @@ from app.decorators.caching import Cacheable
 from app.memory import chroma_store, pg_store
 from app.memory.embeddings import embed_query, rerank
 from app.memory.mappers import row_to_entry
+from app.memory.pg_store.episodes import entry_text
 from app.memory.user_time import local_today
 from app.models.memory_db_models import MemoryRecord
 from app.models.memory_models import MemoryEntry, MemorySearchResult
@@ -74,20 +74,22 @@ class EpisodeHit:
     score: float | None = None
 
 
-def _recall_cache_key(_func_name: str, *args: object, **kwargs: object) -> str:
+def _recall_cache_key(
+    _func_name: str,
+    user_id: str,
+    query: str,
+    *,
+    limit: int = DEFAULT_RECALL_LIMIT,
+    category_prefix: str | None = None,
+    kinds: list[MemoryKind] | None = None,
+    include_graph_expansion: bool = True,
+) -> str:
     """Build the cache key for recall: user:{id}:memories:{digest}.
 
     The prefix must match MEMORY_SEARCH_CACHE_PATTERN, invalidated on every
     ingestion. All non-user parameters are digested so calls differing in
-    any knob never collide. Args are read positionally or by keyword.
+    any knob never collide.
     """
-    user_id = args[0] if args else kwargs["user_id"]
-    query = args[1] if len(args) > 1 else kwargs["query"]
-    limit = kwargs.get("limit", DEFAULT_RECALL_LIMIT)
-    category_prefix = kwargs.get("category_prefix")
-    kinds = cast(list[MemoryKind] | None, kwargs.get("kinds"))
-    include_graph_expansion = kwargs.get("include_graph_expansion", True)
-
     kinds_part = ",".join(sorted(kind.value for kind in kinds)) if kinds else ""
     payload = f"{query}|{limit}|{category_prefix}|{kinds_part}|{include_graph_expansion}"
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
@@ -200,13 +202,15 @@ async def recall_episodes(
         _episode_summary_search(user_id, query, limit),
     )
 
-    hits = [
-        EpisodeHit(date=date, text=entry.get("text", ""), time=entry.get("time"))
-        for date, entry in entry_rows
-    ]
+    hits = [_episode_hit(date, entry) for date, entry in entry_rows]
     seen_dates = {hit.date for hit in hits}
     hits.extend(hit for hit in summary_hits if hit.date not in seen_dates)
     return hits[:limit]
+
+
+def _episode_hit(date: date_type, entry: pg_store.EpisodeEntry) -> EpisodeHit:
+    """Return one journal match carrying its date; old rows can lack a time."""
+    return EpisodeHit(date=date, text=entry_text(entry), time=entry.get("time"))
 
 
 async def _embed_query_interactive(query: str) -> list[float] | None:
