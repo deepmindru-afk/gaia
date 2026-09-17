@@ -64,6 +64,7 @@ def build_plan_catalogue(monthly_product_id: str, yearly_product_id: str) -> lis
         "Meeting briefs and reminders from your calendar",
         "Todos GAIA works on, not just tracks",
         "Workflows that run without you",
+        "Long jobs it keeps working on while you are away",
         "Remembers what you tell it, once",
         "Priority support",
     ]
