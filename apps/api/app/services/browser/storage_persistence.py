@@ -155,10 +155,10 @@ def _cookie_applies_to_host(cookie_domain: str, host: str) -> bool:
 
 def _cookie_host(cookie: StorageStateCookie) -> str | None:
     """Return the registrable host a cookie is scoped to (leading dot stripped, lowercased), or None if it has none."""
-    host = cookie.get("domain", "").lower().removeprefix(".")
-    if not host:
+    domain = cookie.get("domain")
+    if not domain:
         return None
-    return host
+    return domain.lower().removeprefix(".") or None
 
 
 def _origin_host(origin: OriginState) -> str | None:
@@ -167,7 +167,8 @@ def _origin_host(origin: OriginState) -> str | None:
 
 
 def _cookie_scopes_to(cookie: StorageStateCookie, host: str) -> bool:
-    return _cookie_applies_to_host(cookie.get("domain", ""), host)
+    domain = cookie.get("domain")
+    return bool(domain) and _cookie_applies_to_host(domain, host)
 
 
 def split_storage_state_by_host(state: StorageState) -> dict[str, StorageState]:
