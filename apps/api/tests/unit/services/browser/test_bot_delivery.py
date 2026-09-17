@@ -15,7 +15,12 @@ from app.schemas.browser import (
     BrowserSessionSnapshot,
     BrowserStepSnapshot,
 )
-from app.services.browser.bot_delivery import BotProgressDelivery, _is_blank_tab, _step_caption
+from app.services.browser.bot_delivery import (
+    _FAILURE_REASON_MAX_CHARS,
+    BotProgressDelivery,
+    _is_blank_tab,
+    _step_caption,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -566,6 +571,32 @@ class TestBotProgressDeliveryResult:
             await delivery.result(snap)
             msg = mp.call_args[0][2][0]
             assert msg == ("⚠️ Couldn't finish that: Failed to establish CDP connection")
+
+    async def test_a_reason_exactly_at_the_limit_is_sent_whole(self, delivery):
+        """The clip is for reasons longer than the limit, so one exactly at it keeps its last word."""
+        reason = "x" * _FAILURE_REASON_MAX_CHARS
+        snap = BrowserResultSnapshot(
+            status="failed", success=False, summary=f"Browser task failed: {reason}", steps=2
+        )
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+            assert mp.call_args[0][2][0] == f"⚠️ Couldn't finish that: {reason}"
+
+    async def test_a_clip_landing_after_a_space_leaves_no_gap_before_the_ellipsis(self, delivery):
+        head = "x" * (_FAILURE_REASON_MAX_CHARS - 2)
+        snap = BrowserResultSnapshot(
+            status="failed",
+            success=False,
+            summary=f"Browser task failed: {head} {'y' * 40}",
+            steps=2,
+        )
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+            assert mp.call_args[0][2][0] == f"⚠️ Couldn't finish that: {head}…"
 
     async def test_failure_message_clips_long_multiline_summary(self, delivery):
         summary = "Browser task failed: " + "\n".join(["line " + str(i) * 20 for i in range(20)])

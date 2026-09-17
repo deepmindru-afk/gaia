@@ -26,6 +26,7 @@ constraint-dependencies = [
   "click>=8.3.3",
   "pillow>=12.3.0",
   "json-repair>=0.60.1",
+  "soupsieve>=2.9.0",
 ]
 
 [tool.uv.workspace]
