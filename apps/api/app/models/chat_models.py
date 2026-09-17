@@ -127,6 +127,16 @@ class MessageModel(BaseModel):
     # Set by the pin-message endpoint on the embedded message; absent on most
     # messages, so it reads back as None unless the user pinned this one.
     pinned: bool | None = None
+    # GAIA id of the message an emoji-ack reacts to. Set only when
+    # ``kind`` is EMOJI_ACK (a comms ``REACT: <emoji>`` answer); the web client
+    # renders the emoji as a reaction badge on this message instead of a new
+    # bubble. Absent on everything else; old messages read back as None.
+    reacts_to_message_id: str | None = None
+    # Platform-native id of this message (WhatsApp wamid, Telegram message_id,
+    # Discord id, Slack ts). Set only on user messages that arrived through a
+    # bot, so a later background reaction can anchor to the exact platform
+    # message. Absent everywhere else; old messages read back as None.
+    platform_message_id: str | None = None
 
 
 class SystemPurpose(str, Enum):

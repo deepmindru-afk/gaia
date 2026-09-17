@@ -225,10 +225,12 @@ async def activate_integration(
     # Stamp the conversation while the activation is known good: later
     # retrieve_tools discovery searches this namespace too, so the tools
     # beyond the preloaded subset stay reachable from this run.
+    stamped = False
     if bind or preloaded or tool_count:
         conversation_id = configurable.get("conversation_id")
         if conversation_id:
             await mark_active(conversation_id, integration_id)
+            stamped = True
         else:
             log.warning(
                 f"{LogTag.AGENT} Activation stamp skipped: no conversation_id",
@@ -246,16 +248,41 @@ async def activate_integration(
             f"{', '.join(bind)}. Call those directly."
         )
     if preloaded and docs:
+        # The "searches X too" promise holds only when the stamp landed: without
+        # it query-mode discovery never enters this namespace (exact names still
+        # validate, so name them explicitly instead of searching).
+        search_guidance = (
+            f"retrieve_tools searches {integration_id} too, so use it if you need "
+            f"one of the other {max(tool_count - len(bind) - len(preloaded), 0)}."
+            if stamped
+            else "retrieve_tools query search does not cover this integration in "
+            "this run — pass exact tool names from the schemas above instead of "
+            "searching for them."
+        )
         header_parts.append(
             f"{len(preloaded)} integration tool(s) are preloaded in the schemas section "
             "at the end of this message — NOT bound, do NOT call them by name. Run them "
             'with execute(task_description="...", tool_name="<NAME>", data={...}) '
-            "built from those schemas. retrieve_tools searches "
-            f"{integration_id} too, so use it if you need "
-            f"one of the other {max(tool_count - len(bind) - len(preloaded), 0)}."
+            f"built from those schemas. {search_guidance}"
         )
     elif not bind:
-        header_parts.append("Use retrieve_tools to bind the ones this task needs.")
+        # Nothing registered under this integration (total == 0): pointing at
+        # retrieve_tools would send the model after tools that do not exist.
+        # Without a stamp the namespace is not query-searchable either, so say
+        # which retrieve path actually works instead of the blanket pointer.
+        if not tool_count and not preloaded:
+            header_parts.append(
+                "It registered no tools of its own — everything it offers is in "
+                "the context above. Use retrieve_tools only for unrelated needs."
+            )
+        elif stamped:
+            header_parts.append("Use retrieve_tools to bind the ones this task needs.")
+        else:
+            header_parts.append(
+                "Use retrieve_tools with exact tool names to bind the ones this "
+                "task needs — query search does not cover this integration in "
+                "this run."
+            )
     header_parts.append("Anything you spawn inherits the bound tools.")
     header = " ".join(header_parts) + "\n\n"
     body = header + (context or "(no additional context available)")

@@ -64,7 +64,9 @@ class AnalyticsEvents(StrEnum):
     CHAT_MESSAGE_CANCELLED = "chat:message_cancelled"
     # How comms resolved a background executor update: delivered it as a message,
     # a one-emoji react, or stayed silent. Property `outcome` in reply/react/silence
-    # (plus `emoji` on a react). Outcome + emoji only, never the text.
+    # (plus `emoji` on a react, plus `delivery` in reaction/badge/fallback_text/
+    # message saying how the ack reached the user). Outcome + emoji only, never
+    # the text.
     CHAT_BACKGROUND_UPDATE_RESOLVED = "chat:background_update_resolved"
     # A comms reply scored dirty against the AI-ism detectors and was
     # rewritten before delivery. Counts only — never the text.

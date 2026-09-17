@@ -140,6 +140,7 @@ async def save_conversation_async(
         toolCategory=body.toolCategory,
         selectedWorkflow=body.selectedWorkflow,
         replyToMessage=body.replyToMessage,
+        platform_message_id=body.platform_message_id,
     )
     user_message.message_id = user_message_id
 

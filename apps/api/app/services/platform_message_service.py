@@ -14,7 +14,11 @@ from dataclasses import dataclass
 
 from app.db.repositories.bot_sessions import bot_session_repository
 from app.models.chat_models import BOT_CONVERSATION_SOURCES, ConversationSource
-from app.services.outbound_delivery import OutboundResult, publish_outbound_message
+from app.services.outbound_delivery import (
+    OutboundResult,
+    publish_outbound_message,
+    publish_outbound_reaction,
+)
 
 
 def is_bot_platform(source: ConversationSource | str | None) -> bool:
@@ -72,6 +76,38 @@ async def deliver_message_to_platform(
         platform,
         user_id,
         [text],
+        destination_override=target.destination_id if target else None,
+        is_channel=target.is_channel if target else False,
+    )
+    return result is OutboundResult.PUBLISHED
+
+
+async def deliver_reaction_to_platform(
+    source: ConversationSource | str | None,
+    user_id: str,
+    target_platform_message_id: str,
+    emoji: str,
+    *,
+    conversation_id: str | None = None,
+) -> bool:
+    """Attach ``emoji`` as a native reaction to an existing platform message.
+
+    Same channel-or-DM addressing as :func:`deliver_message_to_platform`. Returns
+    True if the reaction was enqueued. Non-bot sources, unlinked accounts, and
+    publish failures all return False — the caller falls back to sending the
+    emoji as a text bubble, so the acknowledgment is never lost.
+    """
+    platform = ConversationSource.coerce(source)
+    if platform is None or platform not in BOT_CONVERSATION_SOURCES:
+        return False
+    if not target_platform_message_id or not emoji.strip():
+        return False
+    target = await _resolve_channel_target(conversation_id)
+    result = await publish_outbound_reaction(
+        platform,
+        user_id,
+        target_platform_message_id,
+        emoji,
         destination_override=target.destination_id if target else None,
         is_channel=target.is_channel if target else False,
     )

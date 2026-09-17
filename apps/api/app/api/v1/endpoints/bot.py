@@ -370,6 +370,7 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
         messages=history,
         fileIds=body.file_ids or [],
         fileData=body.file_data or [],
+        platform_message_id=body.platform_message_id,
     )
 
     # Generate session token upfront so it can be sent in the stream

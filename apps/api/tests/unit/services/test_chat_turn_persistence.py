@@ -81,6 +81,42 @@ class TestFollowUpActions:
         assert bot.follow_up_actions is None
 
 
+class TestPlatformMessageId:
+    """A bot turn's platform-native message id must survive the save, or a
+    later background reaction has nothing to anchor to."""
+
+    async def _persist_user(self, body: MessageRequestWithHistory) -> MessageModel:
+        state = _StreamState()
+        state.complete_message = "On it."
+        with (
+            patch.object(
+                chat_stream,
+                "recover_stream_state",
+                new=AsyncMock(side_effect=lambda _sid, msg, td: (msg, td)),
+            ),
+            patch(
+                "app.services.chat.persistence.update_messages", new_callable=AsyncMock
+            ) as update,
+        ):
+            await _persist_turn("s1", body, USER, CONV, state)
+        request = update.await_args.args[0]
+        return next(m for m in request.messages if m.type == "user")
+
+    async def test_bot_turn_stamps_the_platform_message_id(self) -> None:
+        body = MessageRequestWithHistory(
+            message="hi",
+            conversation_id=CONV,
+            messages=[{"role": "user", "content": "hi"}],
+            platform_message_id="wamid.123",
+        )
+        user = await self._persist_user(body)
+        assert user.platform_message_id == "wamid.123"
+
+    async def test_turn_without_one_saves_none(self) -> None:
+        user = await self._persist_user(_body())
+        assert user.platform_message_id is None
+
+
 class TestPersistedTurnMatchesTheLiveStream:
     """The persisted entry must reproduce what the browser assembled live.
 

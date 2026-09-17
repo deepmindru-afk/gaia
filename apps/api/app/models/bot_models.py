@@ -43,6 +43,14 @@ class BotChatRequest(BaseModel):
             "the agent can resolve URL/filename without an extra DB lookup."
         ),
     )
+    platform_message_id: str | None = Field(
+        None,
+        description=(
+            "Platform-native id of the user's message (WhatsApp wamid, Telegram "
+            "message_id, Discord id, Slack ts). Persisted on the saved user "
+            "message so a later background reaction can anchor to it."
+        ),
+    )
 
     @field_validator("platform")
     @classmethod

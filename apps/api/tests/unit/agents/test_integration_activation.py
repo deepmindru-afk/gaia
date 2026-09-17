@@ -462,9 +462,54 @@ class TestActivateIntegrationTool:
             patch(f"{_MOD}.mark_active", new=mark),
         ):
             call, run_cfg = self._invoke({"user_id": "u1"}, integration_id="gmail")
-            await activate_integration.ainvoke(call, run_cfg)
+            result = await activate_integration.ainvoke(call, run_cfg)
 
         mark.assert_not_awaited()
+        # The stamp is what makes "retrieve_tools searches gmail too" true —
+        # without it the reply must not make that promise.
+        assert "retrieve_tools searches gmail too" not in self._text(result)
+        assert "exact tool names" in self._text(result)
+
+    async def test_stamped_activation_promises_namespace_search(self) -> None:
+        from app.agents.core.subagents.integration_activation import activate_integration
+
+        with (
+            patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=_subagent())),
+            patch(f"{_MOD}.check_integration_connection", new=AsyncMock(return_value=None)),
+            patch(
+                f"{_MOD}._activate_tools",
+                new=AsyncMock(return_value=(40, [], ["GMAIL_X"], "DOCS")),
+            ),
+            patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="")),
+            patch(f"{_MOD}.mark_active", new=AsyncMock()),
+        ):
+            call, run_cfg = self._invoke(
+                {"user_id": "u1", "conversation_id": "c9"}, integration_id="gmail"
+            )
+            result = await activate_integration.ainvoke(call, run_cfg)
+
+        assert "retrieve_tools searches gmail too" in self._text(result)
+
+    async def test_zero_tool_activation_does_not_point_at_retrieve_tools(self) -> None:
+        """Nothing registered — "use retrieve_tools" would send the model after
+        tools that do not exist."""
+        from app.agents.core.subagents.integration_activation import activate_integration
+
+        with (
+            patch(f"{_MOD}._get_subagent_by_id", new=AsyncMock(return_value=_subagent())),
+            patch(f"{_MOD}.check_integration_connection", new=AsyncMock(return_value=None)),
+            patch(f"{_MOD}._activate_tools", new=AsyncMock(return_value=(0, [], [], ""))),
+            patch(f"{_MOD}._activation_context", new=AsyncMock(return_value="")),
+            patch(f"{_MOD}.mark_active", new=AsyncMock()),
+        ):
+            call, run_cfg = self._invoke(
+                {"user_id": "u1", "conversation_id": "c9"}, integration_id="todos"
+            )
+            result = await activate_integration.ainvoke(call, run_cfg)
+
+        text = self._text(result)
+        assert "0 tools" in text
+        assert "Use retrieve_tools to bind" not in text
 
 
 def test_tool_exports() -> None:

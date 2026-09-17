@@ -5,6 +5,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 from app.models.chat_models import ConversationSource
+from app.schemas.outbound import OutboundMessageEnvelope
 from app.services import outbound_delivery as od
 
 
@@ -426,3 +427,38 @@ class TestOutboundBubbleSplitting:
             )
         envelope = json.loads(publisher.publish_outbound.await_args.args[1])
         assert envelope["text"] == "here are your numbers"
+
+
+class TestPublishOutboundReaction:
+    async def test_reaction_envelope_carries_target_and_emoji(self) -> None:
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"telegram": {"platformUserId": "4242"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            ok = await od.publish_outbound_reaction(
+                ConversationSource.TELEGRAM, "user-1", "777", "👍"
+            )
+        assert ok is od.OutboundResult.PUBLISHED
+        _queue, body = publisher.publish_outbound.await_args.args
+        envelope = json.loads(body)
+        assert envelope["reaction"] == {"target_platform_message_id": "777", "emoji": "👍"}
+        assert envelope.get("text") is None
+        assert envelope["destination_id"] == "4242"
+
+    async def test_reaction_only_envelope_passes_validation(self) -> None:
+        """A reaction travels with no text body — the schema must accept it."""
+        env = OutboundMessageEnvelope(
+            platform="telegram",
+            destination_id="4242",
+            reaction={"target_platform_message_id": "777", "emoji": "👍"},
+        )
+        assert env.reaction is not None
+        assert env.reaction.emoji == "👍"
