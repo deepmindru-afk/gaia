@@ -23,7 +23,7 @@ export default function SendNotificationSection({
         Notification sent
       </div>
 
-      <div className="flex items-center gap-3 rounded-[22px] bg-zinc-800 p-3.5 shadow-2xl shadow-black/40">
+      <div className="flex items-center gap-3 rounded-[22px] bg-zinc-800 p-3.5">
         {isDelivered ? (
           <div className="flex shrink-0 -space-x-2">
             {delivered_channels.map((channel, index) => {

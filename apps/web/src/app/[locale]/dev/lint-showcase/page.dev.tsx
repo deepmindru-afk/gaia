@@ -4,7 +4,9 @@ import type { JSX, ReactNode } from "react";
 import CalendarEventSection from "@/features/chat/components/bubbles/bot/CalendarEventSection";
 import RateLimitCard from "@/features/chat/components/bubbles/bot/RateLimitCard";
 import TwitterSearchSection from "@/features/chat/components/bubbles/bot/TwitterSearchSection";
-import OldOuterShell from "./before/OldOuterShell";
+import CalendarEventSectionBefore from "./before/CalendarEventSectionBefore";
+import RateLimitCardBefore from "./before/RateLimitCardBefore";
+import TwitterSearchSectionBefore from "./before/TwitterSearchSectionBefore";
 import { MOCK_CALENDAR_OPTIONS, MOCK_RATE_LIMIT } from "./mocks";
 import {
   FULL_CARD_EXAMPLES,
@@ -319,13 +321,13 @@ function RadiusShowdownPair({
       <div className="flex flex-col gap-4 lg:flex-row">
         <div className="min-w-0 flex-1">
           <p className="mb-1 text-xs font-medium text-red-400">
-            2xl (old rule)
+            Before (old code)
           </p>
           <div className="rounded-2xl bg-zinc-950 p-3">{before}</div>
         </div>
         <div className="min-w-0 flex-1">
           <p className="mb-1 text-xs font-medium text-emerald-400">
-            3xl (new rule)
+            After (current)
           </p>
           <div className="rounded-2xl bg-zinc-950 p-3">{children}</div>
         </div>
@@ -341,24 +343,30 @@ function RadiusShowdownSection(): JSX.Element {
         Rounded 2xl vs 3xl
       </h2>
       <p className="mt-1 text-xs text-zinc-500">
-        Rule flipped: chat outers are now 3xl. Old 2xl shells left, new 3xl live
-        right.
+        Rule flipped: chat outers are now 3xl. Real old components left, new
+        live components right.
       </p>
       <div className="mt-3 flex flex-col gap-4">
         <RadiusShowdownPair
-          before={<OldOuterShell label="CalendarEventSection" />}
+          before={
+            <CalendarEventSectionBefore
+              calendar_options={MOCK_CALENDAR_OPTIONS}
+            />
+          }
           title="CalendarEventSection"
         >
           <CalendarEventSection calendar_options={MOCK_CALENDAR_OPTIONS} />
         </RadiusShowdownPair>
         <RadiusShowdownPair
-          before={<OldOuterShell label="RateLimitCard" />}
+          before={<RateLimitCardBefore data={MOCK_RATE_LIMIT} />}
           title="RateLimitCard"
         >
           <RateLimitCard data={MOCK_RATE_LIMIT} />
         </RadiusShowdownPair>
         <RadiusShowdownPair
-          before={<OldOuterShell label="TwitterSearchSection" />}
+          before={
+            <TwitterSearchSectionBefore twitter_search_data={MOCK_TWEETS} />
+          }
           title="TwitterSearchSection"
         >
           <TwitterSearchSection twitter_search_data={MOCK_TWEETS} />
