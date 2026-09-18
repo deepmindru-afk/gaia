@@ -1,16 +1,16 @@
-"""Click through the element itself, because Obscura drops synthetic mouse events.
+"""Click through the element itself: a dispatched press is slow and aims blind.
 
-Measured on the Obscura host: Input.dispatchMouseEvent is accepted and then
-discarded -- dispatched at an element's true centre it fires no listener in
-the page and costs ~1.8s a call, so Browser-Use reports "Clicked" on a page
-that never changed, twenty times in one run. Runtime and DOM work normally
-there, and the element's own rect is honest (its snapshot absolute_position is
-not, see jev/viewport.py).
+Re-measured on Obscura 2026-09-19, correcting an earlier reading taken against
+occluded elements. Input.dispatchMouseEvent does work: the event lands on the
+exact x/y given (slope 1.0000, intercept 0 over 28 points), isTrusted is true,
+and in 32 of 32 probes it hit the page's own elementFromPoint. It is still the
+wrong tool: a pressed button costs 450ms to 5.6s, against 0.4ms for a move, and
+aiming at a rect centre needs occlusion data Browser-Use takes from the DOM
+snapshot, whose geometry this engine fabricates (see jev/viewport.py).
 
-So this keeps Browser-Use's scroll-into-view and clicks in one
-Runtime.callFunctionOn on the element handle: read getBoundingClientRect, call
-element.click(), report that centre as the click point the step card draws.
-A node the page cannot measure goes back to Browser-Use's own path.
+So scroll-into-view and the click go in one Runtime.callFunctionOn on the
+element handle, reporting the measured centre as the click point. The cost is
+isTrusted, which a page gating on it will refuse.
 
 Pinned to browser-use==0.11.13; the import fails loudly if the method moves.
 """
