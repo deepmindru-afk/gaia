@@ -124,6 +124,26 @@ class TestTransition:
 
         assert await repo.transition("ap_1", LedgerState.PENDING, LedgerState.DENIED) is False
 
+    async def test_decision_stamp_rides_in_the_same_write(
+        self, repo: ApprovalLedgerRepository, collection: MagicMock
+    ) -> None:
+        assert (
+            await repo.transition(
+                "ap_1",
+                LedgerState.PENDING,
+                LedgerState.DENIED,
+                decided_by="u1",
+                feedback="nope",
+            )
+            is True
+        )
+
+        _, update = collection.update_one.await_args.args
+        assert update["$set"]["state"] == "denied"
+        assert update["$set"]["decided_by"] == "u1"
+        assert update["$set"]["feedback"] == "nope"
+        assert "decided_at" in update["$set"]
+
 
 @pytest.mark.unit
 class TestReads:

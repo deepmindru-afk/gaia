@@ -10,6 +10,7 @@ exact-race duplicate insert is possible but harmless: each id stays consistent
 under CAS, and nothing auto-executes in Phase 1.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -32,6 +33,7 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         self,
         *,
         conversation_id: str,
+        user_id: str = "",
         fingerprint: str,
         tool_name: str,
         args: dict[str, Any],
@@ -55,6 +57,7 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
             ApprovalLedgerDocument(
                 approval_id=approval_id,
                 conversation_id=conversation_id,
+                user_id=user_id,
                 fingerprint=fingerprint,
                 tool_name=tool_name,
                 args=args,
@@ -69,16 +72,31 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
         return approval_id
 
     async def transition(
-        self, approval_id: str, expected: LedgerState, nxt: LedgerState
+        self,
+        approval_id: str,
+        expected: LedgerState,
+        nxt: LedgerState,
+        *,
+        decided_by: str | None = None,
+        feedback: str | None = None,
     ) -> bool:
         """Move one row ``expected -> nxt``, exactly once.
 
         The CAS behind every ledger edge: concurrent contenders race on the
         filter and exactly one wins. Bumps the row version for stale clients.
+        A decision stamp (``decided_by`` and/or ``feedback``) rides in the
+        same write as ``decided_at``, so a committed row is never stamp-less.
         """
+        update: dict[str, object] = {"state": str(nxt)}
+        if decided_by is not None:
+            update["decided_by"] = decided_by
+        if feedback is not None:
+            update["feedback"] = feedback
+        if decided_by is not None or feedback is not None:
+            update["decided_at"] = datetime.now(UTC)
         result = await self._raw_collection().update_one(
             {"approval_id": approval_id, "state": str(expected)},
-            {"$set": {"state": str(nxt)}, "$inc": {"v": 1}},
+            {"$set": update, "$inc": {"v": 1}},
         )
         return bool(result.modified_count)
 

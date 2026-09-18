@@ -244,6 +244,7 @@ async def _decide_ledger(
         owner = configurable_of(request).get("thread_id") or "unknown"
         ap_id = await approval_ledger_repository.register(
             conversation_id=context.conversation_id,
+            user_id=context.user_id,
             fingerprint=fingerprint,
             tool_name=call.name,
             args=call.args,

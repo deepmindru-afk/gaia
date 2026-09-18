@@ -181,6 +181,7 @@ class ApprovalLedgerDocument(MongoDocument):
 
     approval_id: str
     conversation_id: str
+    user_id: str = ""
     fingerprint: str
     tool_name: str
     args: dict[str, Any] = Field(default_factory=dict)
