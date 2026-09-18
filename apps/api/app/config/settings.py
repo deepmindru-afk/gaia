@@ -289,6 +289,14 @@ class CommonSettings(BaseAppSettings):
     # by this endpoint instead.
     BROWSER_USE_JEV_DECISIONS_URL: str = "https://openrouter.ai/api/alpha/decisions"
     BROWSER_USE_JEV_MODEL: str = "~typesafe/jev-latest"
+    # Text helper for the ultrafast loop (services/browser/jev/ultrafast), called
+    # only when Jev picks TYPE_TEXT. Mercury is the reference implementation's
+    # model and the cheapest/fastest of the candidates measured on OpenRouter
+    # (median 903ms, $0.04/$0.15 per 1M tokens, against gemini-3.5-flash-lite's
+    # 1175ms and $0.30/$2.50). Served on OPENROUTER_API_KEY like the decisions
+    # endpoint, so the loop needs exactly one credential.
+    BROWSER_USE_JEV_TEXT_URL: str = "https://openrouter.ai/api/v1/chat/completions"
+    BROWSER_USE_JEV_TEXT_MODEL: str = "inception/mercury-2.5"
 
     # Vision (screenshots to the model) is the biggest cost driver — keep it on
     # for reliability, but a deployment optimizing cost can disable it.
