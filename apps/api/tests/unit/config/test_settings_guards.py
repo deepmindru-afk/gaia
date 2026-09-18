@@ -303,7 +303,10 @@ def test_init_custom_llm_wires_every_kwarg_and_profile(monkeypatch):
     )
 
     captured: dict[str, object] = {}
-    monkeypatch.setattr(client, "ChatOpenRouter", _fake_chat_openrouter(captured))
+    # The custom lane deliberately constructs ChatOpenAI (imported inside
+    # _build_custom_llm), not client.ChatOpenRouter — fake the class the
+    # production path actually instantiates.
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", _fake_chat_openrouter(captured))
     monkeypatch.setattr(client.settings, "ENV", "development")
     monkeypatch.setattr(client.settings, "GAIA_SIM_MODE", False)
     # PROVIDER_MODELS freezes at import from the ambient env; CI has no
@@ -319,7 +322,9 @@ def test_init_custom_llm_wires_every_kwarg_and_profile(monkeypatch):
     assert captured["temperature"] == DEFAULT_LLM_TEMPERATURE
     assert str(captured["base_url"]) == "http://localhost:9999/v1"
     assert str(captured["api_key"]) == "sk-dev"
-    assert captured["max_tokens"] == DEV_LLM_MAX_OUTPUT_TOKENS
+    # ChatOpenAI aliases max_tokens to max_completion_tokens at construction
+    # (still sent as max_tokens on the wire) — assert what is passed.
+    assert captured["max_completion_tokens"] == DEV_LLM_MAX_OUTPUT_TOKENS
     assert captured["streaming"] is True
     assert captured["stream_usage"] is True
     assert llm.profile == {"max_input_tokens": DEFAULT_MAX_TOKENS}
