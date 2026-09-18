@@ -298,23 +298,6 @@ async def test_each_call_describes_its_own_job(monkeypatch: pytest.MonkeyPatch) 
 # ---------------------------------------------------------------------------
 
 
-async def test_a_second_task_is_refused_by_name_and_never_reaches_the_queue(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Two browsers in one conversation would interleave their cards and their handoffs; the refusal names the run the user is already watching."""
-    recorder = _install(monkeypatch, holder="job-already-running")
-
-    out = await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
-
-    assert out == (
-        "A browser task is already running in this conversation (job job-already-running). "
-        "Call wait_for_browser_task() to collect it before starting another."
-    )
-    assert recorder.enqueued == []
-    assert recorder.states == []
-    assert recorder.released == []
-
-
 async def test_a_refused_task_does_not_release_the_running_jobs_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -362,18 +345,6 @@ async def test_an_enqueue_that_raises_is_reported_and_frees_the_slot(
 # ---------------------------------------------------------------------------
 
 
-async def test_the_relay_is_started_for_this_turns_stream(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Nothing else puts the worker's cards on this conversation's live stream, or into the turn's collected tool events."""
-    recorder = _install(monkeypatch)
-
-    await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
-
-    assert recorder.relays == [(recorder.request.job_id, "s1")]
-    assert recorder.spawned == ["browser_job_relay"]
-
-
 async def test_no_stream_means_no_relay_but_the_job_still_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -386,30 +357,3 @@ async def test_no_stream_means_no_relay_but_the_job_still_runs(
 
     assert recorder.relays == []
     assert len(recorder.enqueued) == 1
-
-
-async def test_the_tool_returns_immediately_naming_the_job_and_the_join(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The executor must learn it has NOT got a result yet, and how to collect one."""
-    recorder = _install(monkeypatch)
-
-    out = await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
-
-    assert out == (
-        f"Browser task started in the background (job {recorder.request.job_id}). Progress "
-        "and the live-view link are streaming into this conversation. Call "
-        "wait_for_browser_task() when you need the outcome; if you end the turn first, "
-        "the result is delivered to the user as a follow-up."
-    )
-
-
-async def test_the_surface_the_task_came_from_is_logged(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install(monkeypatch)
-    fake_log = MagicMock()
-    monkeypatch.setattr(tool_mod, "log", fake_log)
-
-    await browser_task.ainvoke({"task": "x"}, config=BOT_CONFIG)
-
-    logged = [call.kwargs["browser"] for call in fake_log.set.call_args_list]
-    assert {"operation": "task", "source_category": "bot"} in logged

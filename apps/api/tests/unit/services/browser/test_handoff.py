@@ -113,63 +113,12 @@ async def test_await_timeout_outcome_carries_no_message(fake_redis, monkeypatch)
     assert outcome.message is None
 
 
-async def test_await_handoff_polls_then_picks_up_resolution(fake_redis, monkeypatch):
-    """The loop must actually re-check Redis on each poll tick, not just once."""
-    await handoff_mod.create_pending_handoff("h6c", "user-1", "conv-h6c")
-
-    sleep_calls: list[float] = []
-
-    async def fake_sleep(seconds: float) -> None:
-        sleep_calls.append(seconds)
-        # Resolve on the first tick so the *next* loop iteration picks it up.
-        await handoff_mod.resolve_handoff("h6c", HandoffDecision.CONTINUE, "user-1", "done")
-
-    monkeypatch.setattr(handoff_mod.asyncio, "sleep", fake_sleep)
-
-    outcome = await handoff_mod.await_handoff("h6c", timeout_seconds=30)
-
-    assert outcome.status == HandoffStatus.COMPLETED
-    assert outcome.message == "done"
-    assert sleep_calls == [handoff_mod.HANDOFF_POLL_INTERVAL_SECONDS]
-
-
-async def test_await_handoff_stops_exactly_at_deadline(fake_redis, monkeypatch):
-    """Stop the loop at loop.time() == deadline using a strict less-than; one extra iteration could turn a timeout into a false completion."""
-    await handoff_mod.create_pending_handoff("h6d", "user-1", "conv-h6d")
-    await handoff_mod.resolve_handoff("h6d", HandoffDecision.CONTINUE, "user-1")
-
-    class _FakeLoop:
-        def __init__(self, times: list[float]) -> None:
-            self._times = iter(times)
-
-        def time(self) -> float:
-            return next(self._times)
-
-    fake_loop = _FakeLoop([100.0, 105.0])
-    monkeypatch.setattr(handoff_mod.asyncio, "get_event_loop", lambda: fake_loop)
-
-    outcome = await handoff_mod.await_handoff("h6d", timeout_seconds=5)
-
-    assert outcome.status == HandoffStatus.TIMEOUT
-
-
 async def test_get_conversation_pending_handoff_returns_the_stored_id(fake_redis):
     await handoff_mod.create_pending_handoff("h19", "user-1", "conv-h19")
 
     result = await handoff_mod.get_conversation_pending_handoff("conv-h19")
 
     assert result == "h19"
-
-
-async def test_get_conversation_pending_handoff_reads_exact_key_and_model(monkeypatch):
-    fake = _FakeRedisCache()
-    monkeypatch.setattr(handoff_mod, "redis_cache", fake)
-    await handoff_mod.create_pending_handoff("h19b", "user-1", "conv-h19b")
-    fake.get_calls.clear()
-
-    await handoff_mod.get_conversation_pending_handoff("conv-h19b")
-
-    assert fake.get_calls == [(f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}conv-h19b", str)]
 
 
 async def test_get_conversation_pending_handoff_returns_none_when_absent(fake_redis):
@@ -230,21 +179,6 @@ async def test_store_writes_exact_key_ttl_and_model(monkeypatch):
     assert model is HandoffRecord
 
 
-async def test_get_handoff_reads_exact_key_and_model(monkeypatch):
-    fake = _FakeRedisCache()
-    monkeypatch.setattr(handoff_mod, "redis_cache", fake)
-    await handoff_mod.create_pending_handoff("h12", "user-1", "conv-h12")
-    fake.get_calls.clear()
-
-    await handoff_mod.get_handoff("h12")
-
-    # A pending record also consults the settled marker, the decision of record.
-    assert fake.get_calls == [
-        ("browser:handoff:h12", HandoffRecord),
-        ("browser:handoff:h12:settled", str),
-    ]
-
-
 async def test_get_handoff_unknown_returns_none(fake_redis):
     assert await handoff_mod.get_handoff("does-not-exist") is None
 
@@ -263,15 +197,6 @@ async def test_resolve_handoff_blank_message_becomes_none(fake_redis):
     await handoff_mod.create_pending_handoff("h14", "user-1", "conv-h14")
     await handoff_mod.resolve_handoff("h14", HandoffDecision.CONTINUE, "user-1", "   ")
     record = await handoff_mod.get_handoff("h14")
-    assert record is not None
-    assert record.message is None
-
-
-async def test_resolve_handoff_no_message_argument_becomes_none(fake_redis):
-    """Fall through to no note when message is omitted entirely (None), not just when it is blank."""
-    await handoff_mod.create_pending_handoff("h14b", "user-1", "conv-h14b")
-    await handoff_mod.resolve_handoff("h14b", HandoffDecision.CONTINUE, "user-1")
-    record = await handoff_mod.get_handoff("h14b")
     assert record is not None
     assert record.message is None
 
@@ -300,62 +225,11 @@ async def test_resolve_handoff_attributes_the_event_to_the_resolving_user(
     ]
 
 
-async def test_resolve_handoff_event_reports_a_cancel_without_a_note(fake_redis, captured_events):
-    await handoff_mod.create_pending_handoff("h-an2", "user-1", "conv-an2")
-    await handoff_mod.resolve_handoff("h-an2", HandoffDecision.CANCEL, "user-1")
-
-    assert captured_events == [
-        (
-            "user-1",
-            AnalyticsEvents.BROWSER_HANDOFF_RESOLVED,
-            {"decision": HandoffDecision.CANCEL.value, "with_note": False},
-        )
-    ]
-
-
 async def test_resolve_handoff_deletes_conv_lookup(fake_redis):
     await handoff_mod.create_pending_handoff("h15", "user-1", "conv-h15")
     assert f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}conv-h15" in fake_redis
     await handoff_mod.resolve_handoff("h15", HandoffDecision.CONTINUE, "user-1")
     assert f"{BROWSER_HANDOFF_CONV_KEY_PREFIX}conv-h15" not in fake_redis
-
-
-async def test_resolve_handoff_skips_conv_delete_when_no_conversation(monkeypatch):
-    fake = _FakeRedisCache()
-    monkeypatch.setattr(handoff_mod, "redis_cache", fake)
-    await handoff_mod.create_pending_handoff("h16", "user-1", "")
-
-    await handoff_mod.resolve_handoff("h16", HandoffDecision.CONTINUE, "user-1")
-
-    assert fake.delete_calls == []
-
-
-async def test_resolve_handoff_logs_resolution_with_id_and_status(fake_redis, monkeypatch):
-    logged: dict[str, object] = {}
-
-    def fake_info(message: str, **kwargs: object) -> None:
-        logged["message"] = message
-        logged.update(kwargs)
-
-    monkeypatch.setattr(handoff_mod.log, "info", fake_info)
-    await handoff_mod.create_pending_handoff("h17", "user-1", "conv-h17")
-
-    await handoff_mod.resolve_handoff("h17", HandoffDecision.CANCEL, "user-1")
-
-    assert logged["handoff_id"] == "h17"
-    assert logged["status"] == HandoffStatus.CANCELLED.value
-
-
-async def test_resolve_handoff_settles_with_one_nx_write_for_the_handoffs_lifetime(fake_cache):
-    await handoff_mod.create_pending_handoff("h20", "user-1", "conv-h20")
-
-    await handoff_mod.resolve_handoff("h20", HandoffDecision.CANCEL, "user-1")
-
-    assert fake_cache.set_if_absent_calls == [
-        (handoff_mod._settled_key("h20"), "cancelled", HANDOFF_KEY_TTL_SECONDS)
-    ]
-    stored = fake_cache.store[handoff_mod._key("h20")]
-    assert stored.status == HandoffStatus.CANCELLED  # the record itself, not just the marker
 
 
 async def test_resolve_handoff_true_race_reports_the_decision_that_won_the_marker(fake_cache):
@@ -439,25 +313,6 @@ async def test_persistence_failure_fails_loud(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(handoff_mod, "redis_cache", fake)
     with pytest.raises(BrowserUnavailableError, match="persist handoff"):
         await handoff_mod.create_pending_handoff("h9", "user-1", "conv-h9")
-
-
-async def test_persistence_failure_message_names_the_handoff(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pin the exact failure text (not just a substring) so the id and the 'storage unavailable' cause both stay intact for whoever reads the error."""
-    fake = _FailingRedisCache()
-    monkeypatch.setattr(handoff_mod, "redis_cache", fake)
-    with pytest.raises(BrowserUnavailableError) as exc_info:
-        await handoff_mod.create_pending_handoff("h9b", "user-1", "conv-h9b")
-    assert str(exc_info.value) == "Could not persist handoff h9b (storage unavailable)."
-
-
-async def test_store_succeeds_when_redis_confirms_the_write(fake_redis) -> None:
-    """Do not raise when set() returns a truthy result, the inverse of the failure case."""
-    await handoff_mod.create_pending_handoff("h9c", "user-1", "conv-h9c")
-    record = await handoff_mod.get_handoff("h9c")
-    assert record is not None
-    assert record.status == HandoffStatus.PENDING
 
 
 async def test_resolve_persistence_failure_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:

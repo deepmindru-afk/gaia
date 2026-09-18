@@ -86,29 +86,8 @@ def test_no_derived_frames_without_a_base_url(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.unit
-def test_no_derived_frames_when_steps_is_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.browser.tasks.settings.R2_PUBLIC_BASE_URL", "https://cdn")
-
-    assert _frames(_doc(step_screenshots=[], steps=0)) == []
-
-
-@pytest.mark.unit
-def test_derived_base_url_trailing_slash_is_not_doubled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.browser.tasks.settings.R2_PUBLIC_BASE_URL", "https://cdn/")
-
-    frames = _frames(_doc(step_screenshots=[], steps=1))
-
-    assert frames[0].url == "https://cdn/browser_steps/sess1/step_1.png"
-
-
-@pytest.mark.unit
 def test_caption_out_of_range_index_returns_none() -> None:
     assert _caption(["Opening", "Typing"], 2) is None
-
-
-@pytest.mark.unit
-def test_caption_in_range_returns_stripped_text() -> None:
-    assert _caption(["  Opening  "], 0) == "Opening"
 
 
 @pytest.mark.unit

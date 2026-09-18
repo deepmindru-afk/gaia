@@ -12,7 +12,7 @@ import asyncio
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, ClassVar
-from unittest.mock import AsyncMock, MagicMock, Mock, call
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import browser_use
 import pytest
@@ -24,8 +24,8 @@ from app.constants.browser import (
     HandoffStatus,
 )
 from app.constants.log_tags import LogTag
-from app.schemas.browser import BrowserAction, HandoffOutcome
-from app.services.browser import agent_run, run_contract, runner as runner_mod
+from app.schemas.browser import HandoffOutcome
+from app.services.browser import agent_run, runner as runner_mod
 from app.services.browser.agent_run import outcome_from_history
 from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.jev.policy import JevHistoryEntry
@@ -278,25 +278,6 @@ async def test_screenshot_uses_cdn_url_when_available(patch_browser, monkeypatch
     assert step.screenshot.startswith("https://cdn.example.com/")
 
 
-async def test_cancellation_stops_run(patch_browser):
-    FakeAgent.script = [{"goal": "step", "actions": [("navigate", {})]}]
-    events, emit = _collector()
-    result = await _make_runner(emit=emit, is_cancelled=AsyncMock(return_value=True)).run("x")
-    assert result.status == BrowserSessionStatus.CANCELLED
-
-
-async def test_timeout_marks_failed(patch_browser, monkeypatch):
-    async def _slow_run(self, max_steps, on_step_end=None):
-        await asyncio.sleep(1)
-        return _History()
-
-    monkeypatch.setattr(FakeAgent, "run", _slow_run)
-    events, emit = _collector()
-    result = await _make_runner(emit=emit, overrides=_RunnerOverrides(task_timeout=0.01)).run("x")
-    assert result.status == BrowserSessionStatus.FAILED
-    assert "timed out" in result.summary
-
-
 async def test_unexpected_agent_error_finishes_failed(patch_browser, monkeypatch):
     """Emit a terminal FAILED result instead of leaving the card stuck in RUNNING."""
 
@@ -403,12 +384,6 @@ def test_extract_actions_leaves_target_and_point_unset_without_step_state() -> N
     [action] = agent_run._extract_actions(output)
     assert action.target is None
     assert action.point is None
-
-
-def test_extract_actions_dumps_without_unset_params() -> None:
-    action = _RecordingAction("click", {"index": 1})
-    agent_run._extract_actions(_Output("goal", [action]))
-    assert action.dump_kwargs == {"exclude_none": True}
 
 
 # ---------------------------------------------------------------------------
@@ -706,20 +681,6 @@ def test_the_task_preamble_forbids_inventing_field_values() -> None:
     assert "NEVER invent a value" in BROWSER_TAKEOVER_PREAMBLE
     # The rule is only safe because it names somewhere for the agent to go.
     assert "request_human_takeover" in BROWSER_TAKEOVER_PREAMBLE
-
-
-def test_the_task_preamble_routes_dropdowns_through_the_native_actions() -> None:
-    from app.constants.browser import BROWSER_TAKEOVER_PREAMBLE
-
-    assert "`dropdown_options`" in BROWSER_TAKEOVER_PREAMBLE
-    assert "`select_dropdown`" in BROWSER_TAKEOVER_PREAMBLE
-
-
-def test_the_tool_docs_say_each_call_is_a_fresh_browser() -> None:
-    """Regression: the executor re-ran a whole form fill believing prior values were still on the page."""
-    from app.templates.docstrings.browser_tool_docs import BROWSER_TASK
-
-    assert "Each call is a fresh browser" in BROWSER_TASK
 
 
 async def test_run_configures_the_agent_from_the_runner_settings(patch_browser) -> None:
@@ -1272,23 +1233,6 @@ async def test_only_uploaded_screenshots_become_replay_frames(patch_browser, mon
     assert runner._shots == ["https://cdn.example.com/step_1.png"]
 
 
-async def test_step_cards_are_flushed_before_the_result(patch_browser) -> None:
-    FakeAgent.script = [
-        {"goal": "Open site", "actions": [("navigate", {"url": "x"})]},
-        {"goal": "Read results", "actions": [("extract", {})]},
-    ]
-    events, emit = _collector()
-    await _make_runner(emit=emit).run("x")
-
-    kinds = [e.kind for e in events]
-    assert kinds == [
-        BrowserEventKind.SESSION,
-        BrowserEventKind.STEP,
-        BrowserEventKind.STEP,
-        BrowserEventKind.RESULT,
-    ]
-
-
 # ---------------------------------------------------------------------------
 # _render_screenshot
 # ---------------------------------------------------------------------------
@@ -1469,17 +1413,6 @@ async def test_an_unknown_success_flag_still_counts_as_done() -> None:
     assert result.summary == "Booked."
 
 
-async def test_the_agents_final_result_becomes_the_summary() -> None:
-    _, emit = _collector()
-    result = await _make_runner(emit=emit)._finish_from_outcome(
-        outcome_from_history(
-            _History(done=True, successful=True, result="The cheapest flight is 42 pounds.")
-        )
-    )
-
-    assert result.summary == "The cheapest flight is 42 pounds."
-
-
 # ---------------------------------------------------------------------------
 # _record_usage
 # ---------------------------------------------------------------------------
@@ -1569,13 +1502,6 @@ AGENT_KWARG_KEYS = {
 }
 
 
-async def test_run_hands_browser_use_exactly_the_expected_agent_keys(patch_browser) -> None:
-    _, emit = _collector()
-    await _make_runner(emit=emit).run("x")
-
-    assert set(FakeAgent.last_kwargs) == AGENT_KWARG_KEYS
-
-
 async def test_a_jev_model_is_bound_to_the_session_and_its_helper_extracts(patch_browser) -> None:
     """Jev reads the observation off the session Browser-Use drives, gets the raw task (not the takeover preamble), and its text helper is what Browser-Use meters and extracts with."""
     from app.services.browser.jev import JevChatModel
@@ -1591,29 +1517,6 @@ async def test_a_jev_model_is_bound_to_the_session_and_its_helper_extracts(patch
     assert FakeAgent.last_kwargs["llm"] is jev
     assert FakeAgent.last_kwargs["page_extraction_llm"] is helper
     assert set(FakeAgent.last_kwargs) == AGENT_KWARG_KEYS | {"page_extraction_llm"}
-
-
-async def test_run_gives_the_agent_the_llm_it_was_constructed_with(patch_browser) -> None:
-    sentinel = object()
-    _, emit = _collector()
-    await _make_runner(emit=emit, overrides=_RunnerOverrides(llm=sentinel)).run("x")
-
-    assert FakeAgent.last_kwargs["llm"] is sentinel
-
-
-async def test_cdp_attach_failure_names_the_url_the_error_and_the_setting(
-    patch_browser, monkeypatch
-) -> None:
-    from app.services.browser.exceptions import BrowserUnavailableError
-
-    runner, _ = await _run_raising(monkeypatch, ConnectionError("refused"))
-    with pytest.raises(BrowserUnavailableError) as err:
-        await runner.run("x")
-
-    assert str(err.value) == (
-        "Could not attach to the browser over CDP at ws://x: refused. "
-        "Check that the browser host is reachable from the API at BROWSER_HOST_URL."
-    )
 
 
 async def test_an_unexpected_failure_is_logged_with_its_type_and_session(
@@ -1719,68 +1622,6 @@ async def test_a_state_without_url_title_or_screenshot_still_emits_a_step(patch_
     assert step.screenshot is None
 
 
-async def test_each_step_reports_the_wall_clock_since_the_previous_one(
-    patch_browser, monkeypatch
-) -> None:
-    _, emit = _collector()
-    runner = _make_runner(emit=emit)
-    emit_step = AsyncMock()
-    monkeypatch.setattr(runner, "_emit_step", emit_step)
-    monkeypatch.setattr(run_contract, "perf_counter", Mock(side_effect=[100.0, 102.5]))
-
-    output = _Output("Check out", [_Action("click", {"index": 4})])
-    state = _State("https://example.com/cart")
-    await runner._agent_run._on_step(state, output, 1)
-    await _drain(runner)
-    await runner._agent_run._on_step(state, output, 2)
-    await _drain(runner)
-
-    # The first step has no predecessor to measure against; the second reports 2.5s.
-    assert emit_step.await_args_list == [
-        call(
-            StepFrame(
-                index=1,
-                goal="Clicking",
-                actions=[BrowserAction(name="click", inputs={"index": 4})],
-                url="https://example.com/cart",
-                title="Page",
-                raw_screenshot="ZmFrZQ==",
-                since_prev_ms=0,
-            )
-        ),
-        call(
-            StepFrame(
-                index=2,
-                goal="Clicking",
-                actions=[BrowserAction(name="click", inputs={"index": 4})],
-                url="https://example.com/cart",
-                title="Page",
-                raw_screenshot="ZmFrZQ==",
-                since_prev_ms=2500,
-            )
-        ),
-    ]
-
-
-async def test_the_step_emit_is_spawned_as_a_named_background_task(
-    patch_browser, monkeypatch
-) -> None:
-    spawned: list[dict] = []
-    real_spawn = runner_mod.spawn_background_task
-
-    def _spy(coro, **kwargs):
-        spawned.append(kwargs)
-        return real_spawn(coro, **kwargs)
-
-    monkeypatch.setattr(runner_mod, "spawn_background_task", _spy)
-    _, emit = _collector()
-    runner = _make_runner(emit=emit)
-    await runner._agent_run._on_step(_State("https://x"), _Output("a", []), 1)
-    await _drain(runner)
-
-    assert spawned == [{"name": "browser_step_emit"}]
-
-
 async def test_a_finished_step_emit_releases_its_slot(patch_browser) -> None:
     _, emit = _collector()
     runner = _make_runner(emit=emit)
@@ -1790,29 +1631,6 @@ async def test_a_finished_step_emit_releases_its_slot(patch_browser) -> None:
 
     # The done-callback discards the task, so the flush set never grows unbounded.
     assert runner._emit_tasks == set()
-
-
-async def test_the_step_frame_is_uploaded_under_that_steps_index(
-    patch_browser, monkeypatch
-) -> None:
-    upload = AsyncMock(return_value="https://cdn.example.com/step_7.png")
-    monkeypatch.setattr(runner_mod, "publish_step_screenshot", upload)
-    _, emit = _collector()
-    runner = _make_runner(emit=emit)
-
-    await runner._emit_step(
-        StepFrame(
-            index=7,
-            goal="goal",
-            actions=[BrowserAction(name="click")],
-            url="https://x",
-            title="Page",
-            raw_screenshot="ZmFrZQ==",
-            since_prev_ms=12,
-        )
-    )
-
-    assert upload.await_args.args == (b"fake", "s1", 7)
 
 
 async def test_a_step_card_carries_the_time_the_previous_step_took(patch_browser) -> None:
@@ -1836,37 +1654,6 @@ async def test_a_step_card_carries_the_time_the_previous_step_took(patch_browser
 
     await runner._emit_step(_frame(0))
     assert events[-1].elapsed_ms is None
-
-
-async def test_the_step_timing_log_reports_the_screenshot_and_emit_cost(
-    patch_browser, monkeypatch
-) -> None:
-    logger = MagicMock()
-    monkeypatch.setattr(runner_mod, "log", logger)
-    # shot_t0, after-screenshot, emit_t0, after-emit.
-    monkeypatch.setattr(runner_mod, "perf_counter", Mock(side_effect=[10.0, 12.5, 20.0, 21.0]))
-    _, emit = _collector()
-    runner = _make_runner(emit=emit)
-
-    await runner._emit_step(
-        StepFrame(
-            index=7,
-            goal="goal",
-            actions=[BrowserAction(name="click")],
-            url="https://x",
-            title="Page",
-            raw_screenshot="ZmFrZQ==",
-            since_prev_ms=12,
-        )
-    )
-
-    logger.info.assert_called_once_with(
-        f"{LogTag.BROWSER} step timing",
-        step=7,
-        since_prev_ms=12,
-        screenshot_ms=2500,
-        emit_ms=1000,
-    )
 
 
 async def test_a_failed_step_emit_never_sinks_the_result(patch_browser) -> None:

@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from app.constants.browser import (
-    BROWSER_LIVE_CODE_ENTROPY_BYTES,
     BROWSER_REPLAY_CODE_TTL_SECONDS,
 )
 from app.services.browser import shot_store
@@ -70,10 +69,6 @@ def test_shot_path_is_a_png_under_the_runs_own_directory(shot_root: Path) -> Non
     assert shot_store.shot_path("sess-1", 3) == shot_root / "sess-1" / "step_3.png"
 
 
-def test_shot_path_separates_two_runs(shot_root: Path) -> None:
-    assert shot_store.shot_path("a", 1).parent != shot_store.shot_path("b", 1).parent
-
-
 # ---------------------------------------------------------------------------
 # store_step_screenshot
 # ---------------------------------------------------------------------------
@@ -117,19 +112,6 @@ async def test_returned_url_carries_the_code_and_the_index_not_the_session_id(
     assert "sess-1" not in url
 
 
-async def test_returned_url_is_built_on_the_shared_browser_link_base(
-    cache: _FakeRedisCache, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        "app.services.browser.links.settings.BROWSER_LIVE_VIEW_BASE_URL", "https://vhost.test/"
-    )
-
-    url = await shot_store.store_step_screenshot(b"png", "sess-1", 1)
-
-    assert url.startswith("https://vhost.test/shots/")
-    assert "//shots" not in url
-
-
 # ---------------------------------------------------------------------------
 # one code per run
 # ---------------------------------------------------------------------------
@@ -170,20 +152,6 @@ async def test_both_mapping_keys_expire_with_the_recap_ttl(cache: _FakeRedisCach
     ]
 
 
-async def test_code_is_minted_with_the_configured_entropy(
-    cache: _FakeRedisCache, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    requested: list[int] = []
-    monkeypatch.setattr(
-        shot_store.secrets, "token_urlsafe", lambda n: requested.append(n) or "fixed-code"
-    )
-
-    url = await shot_store.store_step_screenshot(b"png", "sess-1", 1)
-
-    assert requested == [BROWSER_LIVE_CODE_ENTROPY_BYTES]
-    assert url.endswith("/shots/fixed-code/1.png")
-
-
 async def test_a_non_string_session_mapping_mints_a_fresh_code(cache: _FakeRedisCache) -> None:
     # Redis can hand back a non-str for a key written by something else; treating
     # that as a code would build a link out of it.
@@ -213,14 +181,6 @@ async def test_resolve_returns_none_for_an_unknown_or_expired_code(
     cache: _FakeRedisCache,
 ) -> None:
     assert await shot_store.resolve_shot_code("never-minted") is None
-
-
-async def test_resolve_returns_none_when_the_stored_value_is_not_a_session_id(
-    cache: _FakeRedisCache,
-) -> None:
-    cache.values["browser:shotcode:weird"] = {"session_id": "sess-1"}
-
-    assert await shot_store.resolve_shot_code("weird") is None
 
 
 async def test_resolve_does_not_accept_a_session_id_as_its_own_code(

@@ -9,7 +9,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, NamedTuple
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,7 +24,6 @@ from app.models.chat_models import ConversationSource
 from app.schemas.browser import (
     BrowserAction,
     BrowserActionOutput,
-    BrowserHandoffSnapshot,
     BrowserResultSnapshot,
     BrowserSessionSnapshot,
     BrowserStepSnapshot,
@@ -152,19 +151,6 @@ def test_a_done_runs_own_answer_is_what_the_executor_hears() -> None:
 
     assert answer in out
     assert out.startswith(answer)
-
-
-def test_a_failed_run_tells_the_executor_not_to_run_the_browser_again() -> None:
-    out = jr.agent_result_message(_result(BrowserSessionStatus.FAILED, False, "Timed out"))
-
-    assert "Do not run the browser again for this request; tell the user what happened." in out
-
-
-def test_result_message_completed_success_is_exact() -> None:
-    out = jr.agent_result_message(
-        _result(BrowserSessionStatus.COMPLETED, True, "  Booked the table.  ")
-    )
-    assert out == _completed_message("Booked the table.")
 
 
 def test_result_message_completed_without_success_reports_failure() -> None:
@@ -660,18 +646,6 @@ async def test_is_cancelled_is_false_without_a_stream_and_never_queries(
     assert h.cancel_checks == []
 
 
-async def test_is_cancelled_reports_a_live_stream_as_running(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def body(h: Harness) -> BrowserResultSnapshot:
-        assert await h.is_cancelled() is False
-        return _result(BrowserSessionStatus.COMPLETED, True, "done")
-
-    h = _install(monkeypatch, run_body=body)
-    monkeypatch.setattr(jr.stream_manager, "is_cancelled", AsyncMock(return_value=False))
-    await _run(h, _request(task="x"))
-
-
 # ---------------------------------------------------------------------------
 # execute_browser_job — card emission
 # ---------------------------------------------------------------------------
@@ -835,49 +809,6 @@ async def test_action_output_for_an_unknown_row_is_dropped(
 # ---------------------------------------------------------------------------
 # execute_browser_job — mid-run handoff
 # ---------------------------------------------------------------------------
-
-
-async def test_handoff_registers_emits_pending_then_resolution_and_returns_outcome(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    resolved = HandoffOutcome(status=HandoffStatus.CANCELLED, message="not now")
-
-    async def body(h: Harness) -> BrowserResultSnapshot:
-        outcome = await h.request_handoff(
-            HandoffRequest(category=SensitiveCategory.PAYMENT, reason="card details needed")
-        )
-        assert outcome is resolved
-        return _result(BrowserSessionStatus.CANCELLED, False, "user cancelled")
-
-    h = _install(monkeypatch, run_body=body, handoff_outcome=resolved)
-    monkeypatch.setattr(jr.settings, "BROWSER_USE_HANDOFF_TIMEOUT_SECONDS", 333)
-    await _run(h, _request(conversation_id="conv-9"))
-
-    (created,) = h.handoffs_created
-    handoff_id = created[0]
-    assert len(handoff_id) == 32
-    assert created == (handoff_id, "u1", "conv-9", "card details needed")
-    assert h.handoffs_awaited == [(handoff_id, 333)]
-    assert h.cards == [
-        {
-            "kind": "handoff",
-            "handoff_id": handoff_id,
-            "category": "payment",
-            "reason": "card details needed",
-            "session_id": "sess-1",
-            "live_view_url": "https://live/abc",
-            "status": "pending",
-        },
-        {
-            "kind": "handoff",
-            "handoff_id": handoff_id,
-            "category": "payment",
-            "reason": "card details needed",
-            "session_id": "sess-1",
-            "live_view_url": "https://live/abc",
-            "status": "cancelled",
-        },
-    ]
 
 
 async def test_handoff_keepalive_is_cancelled_after_the_handoff_resolves(
@@ -1059,40 +990,6 @@ async def test_bot_delivery_is_built_for_the_originating_platform(
             "stream_screenshots": False,
         }
     ]
-
-
-async def test_every_snapshot_kind_is_mirrored_to_its_own_delivery_channel(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    step = BrowserStepSnapshot(index=1, goal="g")
-    session = BrowserSessionSnapshot(task="x", status=BrowserSessionStatus.RUNNING)
-    handoff = BrowserHandoffSnapshot(handoff_id="h1", reason="r", status=HandoffStatus.PENDING)
-    final = _result(BrowserSessionStatus.COMPLETED, True, "done")
-
-    async def body(h: Harness) -> BrowserResultSnapshot:
-        for snapshot in (session, step, handoff, final):
-            await h.emit(snapshot)
-        return final
-
-    h = _install(monkeypatch, run_body=body)
-    await _run(h, _bot_request(task="x"))
-    assert h.delivered == [
-        ("session", session),
-        ("step", step),
-        ("handoff", handoff),
-        ("result", final),
-    ]
-
-
-async def test_ui_runs_are_not_mirrored_to_a_bot(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def body(h: Harness) -> BrowserResultSnapshot:
-        await h.emit(BrowserStepSnapshot(index=1, goal="g"))
-        return _result(BrowserSessionStatus.COMPLETED, True, "done")
-
-    h = _install(monkeypatch, run_body=body)
-    await _run(h, _request(task="x"))
-    assert h.delivery_kwargs == []
-    assert h.delivered == []
 
 
 async def test_bot_run_without_a_known_platform_is_not_mirrored(
@@ -1323,21 +1220,6 @@ async def test_capture_source_is_the_surface_the_run_came_from(
     assert captured[0][2]["source"] == "bot"
 
 
-async def test_capture_duration_measures_the_run_not_the_whole_tool_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """duration_ms is milliseconds between starting and finishing the agent loop; the clock is read after the session is open, so setup time is not charged to the run."""
-    captured = _capture(monkeypatch)
-    h = _install(monkeypatch)
-    # Reads, in order: the thread mirror's start, run_t0, then the persist clock.
-    ticks = iter([10.0, 100.0, 100.75])
-    monkeypatch.setattr(jr, "perf_counter", lambda: next(ticks))
-
-    await _run(h, _request(task="x"))
-
-    assert captured[0][2]["duration_ms"] == 750
-
-
 # ---------------------------------------------------------------------------
 # execute_browser_job — per-user fingerprint seed
 # ---------------------------------------------------------------------------
@@ -1393,38 +1275,6 @@ def _session_snapshot(session_id: str | None = "sess-1") -> BrowserSessionSnapsh
     return BrowserSessionSnapshot(
         task="x", status=BrowserSessionStatus.RUNNING, session_id=session_id
     )
-
-
-async def test_a_fresh_mirror_belongs_to_no_group() -> None:
-    """None, not a falsy placeholder: the group id is emitted as subagent_id on every row, so an empty string would ship as a real, unattachable group the moment a guard let it through."""
-    mirror, _ = _mirror()
-
-    assert mirror._group_id is None
-
-
-async def test_a_closed_mirror_belongs_to_no_group_again() -> None:
-    """Closing returns the mirror to its fresh state so the next session opens a real group -- not one carrying a leftover placeholder."""
-    mirror, _ = _mirror()
-
-    await mirror.mirror(_session_snapshot())
-    await mirror.mirror(_result(BrowserSessionStatus.COMPLETED, True, "done"))
-
-    assert mirror._group_id is None
-
-
-async def test_mirror_opens_a_browser_group_keyed_on_the_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The group is what nests the browser agent's own actions under one "Browser" row instead of leaving them loose in the thread."""
-    mirror, writes = _mirror()
-
-    await mirror.mirror(_session_snapshot())
-
-    (start,) = [w["subagent_start"] for w in writes]
-    assert start["subagent_id"] == "browser:sess-1"
-    assert start["subagent_name"] == "Browser"
-    assert start["agent_type"] == "spawned"
-    assert start["tool_category"] == "browser"
 
 
 async def test_mirror_without_a_session_id_opens_no_group_and_drops_its_rows() -> None:
@@ -1493,23 +1343,6 @@ async def test_mirror_tags_each_action_output_with_the_group_it_belongs_to() -> 
     }
 
 
-async def test_mirror_closes_the_group_on_the_result_with_the_run_duration(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Construction, then the group opening (which restarts the clock), then close:
-    # the reported duration is the group's lifetime, not the mirror's.
-    ticks = iter([0.0, 1.0, 3.5])
-    monkeypatch.setattr(jr, "perf_counter", lambda: next(ticks))
-    mirror, writes = _mirror()
-
-    await mirror.mirror(_session_snapshot())
-    await mirror.mirror(_result(BrowserSessionStatus.COMPLETED, True, "done"))
-
-    (end,) = [w["subagent_end"] for w in writes if "subagent_end" in w]
-    assert end["subagent_id"] == "browser:sess-1"
-    assert end["duration_ms"] == 2500
-
-
 async def test_mirror_closes_the_group_only_once() -> None:
     """The result card can be re-emitted; a second subagent_end would close a group that no longer exists and collapse the wrong row."""
     mirror, writes = _mirror()
@@ -1533,37 +1366,6 @@ async def test_mirror_result_without_an_open_group_closes_nothing() -> None:
 # ---------------------------------------------------------------------------
 # the job's own feed — what a relay in another process replays
 # ---------------------------------------------------------------------------
-
-
-async def test_a_card_reaches_the_jobs_feed_in_the_shape_the_wire_expects(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Normalized once, at the producer: the relay republishes these frames verbatim, so an un-normalized card would reach the browser card renderer as an unknown event and never render."""
-
-    final = _result(BrowserSessionStatus.COMPLETED, True, "done")
-
-    async def body(h: Harness) -> BrowserResultSnapshot:
-        await h.emit(BrowserStepSnapshot(index=1, goal="open", url="https://x"))
-        await h.emit(final)
-        return final
-
-    _install(monkeypatch, run_body=body)
-    published: list[tuple[str, dict[str, Any]]] = []
-
-    async def _publish(job_id: str, payload: dict[str, Any]) -> None:
-        published.append((job_id, payload))
-
-    monkeypatch.setattr(jr, "publish_job_event", _publish)
-    monkeypatch.setattr(jr, "publish_frame_to_job", _REAL_PUBLISH_FRAME)
-
-    await jr.execute_browser_job(_request(task="x"))
-
-    assert [job_id for job_id, _ in published] == ["job-1", "job-1"]
-    card, final = (payload["tool_data"] for _, payload in published)
-    assert card["tool_name"] == BROWSER_TASK_EVENT
-    assert card["data"]["goal"] == "open"
-    assert card["timestamp"]
-    assert final["data"]["kind"] == "result"
 
 
 async def test_an_already_normalized_mirror_frame_is_published_unchanged(

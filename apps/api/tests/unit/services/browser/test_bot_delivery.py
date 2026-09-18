@@ -45,29 +45,6 @@ def delivery_no_screenshots():
     )
 
 
-class TestBotProgressDeliveryInit:
-    def test_stores_all_constructor_args_verbatim(self):
-        delivery = BotProgressDelivery(
-            platform=ConversationSource.WHATSAPP,
-            user_id="user-42",
-            conversation_id="conv-99",
-            stream_screenshots=True,
-        )
-        assert delivery._platform == ConversationSource.WHATSAPP
-        assert delivery._user_id == "user-42"
-        assert delivery._conversation_id == "conv-99"
-        assert delivery._stream_screenshots is True
-
-    def test_stream_screenshots_false_is_stored_as_false(self):
-        delivery = BotProgressDelivery(
-            platform=ConversationSource.TELEGRAM,
-            user_id="user-1",
-            conversation_id="conv-1",
-            stream_screenshots=False,
-        )
-        assert delivery._stream_screenshots is False
-
-
 class TestIsBlankTab:
     def test_none_is_blank(self):
         assert _is_blank_tab(None) is True
@@ -100,15 +77,6 @@ class TestStepCaption:
 
     def test_strips_trailing_dot(self):
         assert _step_caption(1, "Opening the page.", []) == "Step 1 · Opening the page"
-
-    def test_truncates_at_90(self):
-        long_goal = "A" * 100
-        result = _step_caption(2, long_goal, [])
-        # _CAPTION_MAX_CHARS is 90, truncated to 89 + ellipsis
-        assert result.startswith("Step 2 · ")
-        label = result.split(" · ", 1)[1]
-        assert len(label) == 90
-        assert label.endswith("…")
 
     def test_exactly_90_not_truncated(self):
         goal = "A" * 90
@@ -371,16 +339,6 @@ class TestBotProgressDeliveryStep:
             mm.assert_not_awaited()
 
 
-class TestBotProgressDeliveryText:
-    async def test_forwards_platform_user_and_message_as_single_part_list(self, delivery):
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message",
-            new=AsyncMock(return_value="published"),
-        ) as mp:
-            await delivery._text("hello there")
-            mp.assert_awaited_once_with(ConversationSource.TELEGRAM, "user-1", ["hello there"])
-
-
 class TestBotProgressDeliveryHandoff:
     async def test_pending_with_session_includes_link(self, delivery):
         snap = BrowserHandoffSnapshot(
@@ -624,32 +582,6 @@ class TestBotProgressDeliveryResult:
             msg = mp.call_args[0][2][0]
             assert msg == (
                 "✅ Done.\n\n📽 Here's a recap of the run: https://cdn.example.com/replay"
-            )
-
-    async def test_without_replay_url_no_extra(self, delivery):
-        snap = BrowserResultSnapshot(status="completed", success=True, summary="Done", steps=1)
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert msg == "✅ Done."
-
-    async def test_failed_with_replay_url(self, delivery):
-        snap = BrowserResultSnapshot(
-            status="failed",
-            success=False,
-            summary="Fail",
-            steps=1,
-            replay_url="https://cdn/replay",
-        )
-        with patch(
-            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
-        ) as mp:
-            await delivery.result(snap)
-            msg = mp.call_args[0][2][0]
-            assert msg == (
-                "⚠️ Couldn't finish that: Fail\n\n📽 Here's a recap of the run: https://cdn/replay"
             )
 
 

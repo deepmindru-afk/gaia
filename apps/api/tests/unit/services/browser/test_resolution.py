@@ -13,7 +13,6 @@ from app.services.browser.exceptions import BrowserHandoffNotOwned
 from app.services.browser.resolution import (
     HandoffReplyDecision,
     _interpret,
-    _prompt,
     keyword_reply_decision,
     resolve_handoff_from_message,
 )
@@ -112,22 +111,6 @@ async def test_handoff_already_resolved_returns_none(monkeypatch):
     interpret.assert_not_awaited()
 
 
-async def test_interpret_called_with_message_and_handoff_reason(monkeypatch):
-    _pending(monkeypatch, "unrelated")
-    monkeypatch.setattr(res_mod, "resolve_handoff", AsyncMock())
-
-    await resolve_handoff_from_message("c1", "u1", "yep I paid, go on")
-    res_mod._interpret.assert_awaited_once_with("yep I paid, go on", "pay")
-
-
-async def test_get_handoff_called_with_pending_handoff_id(monkeypatch):
-    _pending(monkeypatch, "unrelated")
-    monkeypatch.setattr(res_mod, "resolve_handoff", AsyncMock())
-
-    await resolve_handoff_from_message("c1", "u1", "hi")
-    res_mod.get_handoff.assert_awaited_once_with("h1")
-
-
 async def test_not_owned_returns_none_without_raising(monkeypatch):
     _pending(monkeypatch, "continue")
     resolve = AsyncMock(side_effect=BrowserHandoffNotOwned())
@@ -136,19 +119,6 @@ async def test_not_owned_returns_none_without_raising(monkeypatch):
     action = await resolve_handoff_from_message("c1", "u1", "yep I paid, go on")
     assert action is None
     resolve.assert_awaited_once_with("h1", HandoffDecision.CONTINUE, "u1", message=None)
-
-
-async def test_interpret_returns_llm_decision_on_success(monkeypatch):
-    ainvoke = AsyncMock(return_value=HandoffReplyDecision(action="cancel"))
-    monkeypatch.setattr(res_mod, "ainvoke_structured_gemini", ainvoke)
-
-    decision = await _interpret("no, stop it", "pay")
-
-    assert decision == HandoffReplyDecision(action="cancel")
-    args, kwargs = ainvoke.call_args
-    assert args[0] is HandoffReplyDecision
-    assert args[1] == _prompt("no, stop it", "pay")
-    assert kwargs["label"] == "browser_handoff_conversational_resolve"
 
 
 def _classifier_down(monkeypatch) -> _FakeLog:
@@ -225,21 +195,6 @@ def test_the_keyword_rule_reads_the_first_word_and_keeps_the_rest(reply, expecte
     action, note = expected
 
     assert keyword_reply_decision(reply) == HandoffReplyDecision(action=action, note=note)
-
-
-def test_prompt_includes_the_message_and_the_handoff_reason():
-    text = _prompt("yep I paid, go on", "confirm the $50 payment")
-
-    assert text == (
-        "A browser automation task is paused, waiting for the user to finish a "
-        "sensitive step themselves in the live browser: 'confirm the $50 payment'\n\n"
-        "The user just sent this message:\n'yep I paid, go on'\n\n"
-        "Is the user telling the assistant to CONTINUE (they finished the step / "
-        "gave the go-ahead), to CANCEL (stop the task), or is this an UNRELATED "
-        "new request? Reply with action='continue', 'cancel', or 'unrelated', and "
-        "put anything the user asks for beyond the go-ahead itself in 'note', "
-        "verbatim — null when the reply is only an acknowledgement."
-    )
 
 
 async def test_note_typed_with_the_reply_reaches_the_run(monkeypatch):

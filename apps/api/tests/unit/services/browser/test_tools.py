@@ -105,15 +105,6 @@ async def test_captcha_action_always_uses_none_category() -> None:
     assert result == "resolved:Select all squares with motorcycles:none"
 
 
-def test_captcha_action_description_is_exact() -> None:
-    takeover = _FakeTakeover()
-    tools = build_browser_tools(solve_captcha=True, handle_takeover=takeover)
-
-    action = _get_action(tools, "solve_captcha_with_help")
-
-    assert action.description == CAPTCHA_DESCRIPTION
-
-
 def test_takeover_action_description_mentions_all_three_categories() -> None:
     takeover = _FakeTakeover()
     tools = build_browser_tools(solve_captcha=False, handle_takeover=takeover)

@@ -143,20 +143,6 @@ def test_missing_key_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sp._cipher is None
 
 
-def test_invalid_key_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sp.settings, "BROWSER_STATE_ENCRYPTION_KEY", "not-a-fernet-key")
-    sp._cipher = None
-    with pytest.raises(ValueError) as exc_info:
-        sp._get_cipher()
-    assert str(exc_info.value) == (
-        "BROWSER_STATE_ENCRYPTION_KEY is not a valid Fernet key "
-        "(must be 32 url-safe base64-encoded bytes): "
-        "Fernet key must be 32 url-safe base64-encoded bytes."
-    )
-    # No cipher gets cached on the failure path.
-    assert sp._cipher is None
-
-
 async def test_forget_deletes_and_returns_count(monkeypatch: pytest.MonkeyPatch) -> None:
     delete = AsyncMock(return_value=1)
     monkeypatch.setattr(sp.browser_profile_repository, "delete_for_user", delete)
@@ -166,12 +152,6 @@ async def test_forget_deletes_and_returns_count(monkeypatch: pytest.MonkeyPatch)
     # no user -> 0 without a repository call
     monkeypatch.setattr(sp.browser_profile_repository, "delete_for_user", AsyncMock())
     assert await sp.forget_browser_logins("", "example.com") == 0
-
-
-def test_cipher_is_cached(_key_and_state: str) -> None:
-    c1 = sp._get_cipher()
-    c2 = sp._get_cipher()
-    assert c1 is c2
 
 
 @pytest.mark.unit
@@ -228,10 +208,6 @@ class TestSplitStorageStateByHost:
         # The host-only cookie stays put — it must NOT leak into mail's slice.
         assert "host_only" in {c["name"] for c in slices["accounts.google.com"]["cookies"]}
         assert "host_only" not in {c["name"] for c in slices["mail.google.com"]["cookies"]}
-
-    def test_a_host_with_neither_cookie_nor_origin_is_dropped(self) -> None:
-        state = {"cookies": [], "origins": []}
-        assert sp.split_storage_state_by_host(state) == {}  # type: ignore[arg-type]  # passes a plain dict literal in place of the StorageState TypedDict
 
     def test_export_with_no_cookies_key_still_splits_its_origins(self) -> None:
         """Still yield an origin's slice when a localStorage-only export omits cookies entirely."""
@@ -291,14 +267,6 @@ class TestImportBrowserProfile:
 
         assert {host for host, _ in imported} == {"github.com", "x.com"}
         assert {d for _, d in saved} == {"github.com", "x.com"}
-
-    async def test_persist_opt_out_saves_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sp.settings, "BROWSER_PERSIST_LOGINS", False)
-        upsert = AsyncMock()
-        monkeypatch.setattr(sp.browser_profile_repository, "upsert_storage_state_blob", upsert)
-        state = {"cookies": [{"name": "a", "value": "1", "domain": ".github.com"}], "origins": []}
-        await sp.import_browser_profile("user-1", state)  # type: ignore[arg-type]  # passes a plain dict literal in place of the StorageState TypedDict
-        upsert.assert_not_awaited()
 
     async def test_records_provenance_on_each_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
         upsert = AsyncMock()

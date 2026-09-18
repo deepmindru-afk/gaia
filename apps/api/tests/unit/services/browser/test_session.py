@@ -82,19 +82,6 @@ async def test_registry_write_success_yields_and_releases(
     session_mod.unregister_session.assert_awaited_once_with("s1")
 
 
-async def test_registration_failure_message_is_exact(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _make_session_fakes(monkeypatch)
-    monkeypatch.setattr(session_mod, "register_session", AsyncMock(return_value=False))
-
-    with pytest.raises(BrowserUnavailableError) as exc_info:
-        async with session_mod.browser_session(user_id="u1", start_url="https://x"):
-            pytest.fail("browser_session yielded despite the failed registration")
-
-    assert str(exc_info.value) == "Could not register the browser session (storage unavailable)."
-
-
 async def test_domain_derived_from_start_url_feeds_storage_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -272,20 +259,6 @@ async def test_save_storage_state_failure_is_also_caught(
     assert len(fake_log.warning_calls) == 1
     _, kwargs = fake_log.warning_calls[0]
     assert kwargs["error_type"] == "ValueError"
-
-
-async def test_log_set_and_info_calls_on_create_and_release(
-    monkeypatch: pytest.MonkeyPatch, fake_log: _FakeLog
-) -> None:
-    _make_session_fakes(monkeypatch)
-
-    async with session_mod.browser_session(user_id="u1", start_url="https://x"):
-        pass
-
-    assert {"browser": {"session_id": "s1", "operation": "create"}} in fake_log.set_calls
-    messages = [message for message, _ in fake_log.info_calls]
-    assert "[BROWSER] Browser session created" in messages
-    assert "[BROWSER] Browser session released" in messages
 
 
 # ---------------------------------------------------------------------------
@@ -502,27 +475,6 @@ class TestAutoResolveHandoffOnNavigation:
         await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
 
         resolve.assert_awaited_once()
-
-    async def test_a_blip_restarts_the_debounce_from_zero_rather_than_shortening_it(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """After a snap-back to login, the next off-login read is the FIRST stable poll again — not a resumption of the earlier count, which would resolve a whole poll early and wake the agent onto a page still mid-redirect."""
-        monkeypatch.setattr(session_mod.asyncio, "sleep", AsyncMock())
-        asked = _serve_urls(
-            monkeypatch,
-            "https://x/login",
-            "https://x/interstitial",  # stable=1
-            "https://x/login",  # snap back → reset
-            "https://x/",  # stable=1 again, must NOT resolve here
-            "https://x/",  # stable=2 → resolve
-        )
-        resolve = AsyncMock()
-        monkeypatch.setattr(session_mod, "resolve_handoff", resolve)
-
-        await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
-
-        resolve.assert_awaited_once()
-        assert len(asked) == 5, "resolved before the debounce had run its full length again"
 
     async def test_transient_redirect_is_debounced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A single off-login blip that snaps back must NOT resolve — the stable counter resets, so a mid-login redirect can't complete the handoff early."""

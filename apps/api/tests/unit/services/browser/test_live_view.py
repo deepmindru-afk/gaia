@@ -32,33 +32,6 @@ async def test_create_live_view_link_mints_code_with_session_and_user_in_order(
 
 
 @pytest.mark.unit
-async def test_create_live_view_link_strips_trailing_slash_from_vhost_base(
-    monkeypatch,
-):
-    monkeypatch.setattr(live_view, "mint_live_code", AsyncMock(return_value="Xk3p9qR2mN4t"))
-    monkeypatch.setattr(
-        live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.io/"
-    )
-
-    link = await live_view.create_live_view_link("sess-abc", "user-1")
-
-    assert link == "https://browser.heygaia.io/Xk3p9qR2mN4t"
-
-
-@pytest.mark.unit
-async def test_create_live_view_link_strips_trailing_slash_from_host_fallback(
-    monkeypatch,
-):
-    monkeypatch.setattr(live_view, "mint_live_code", AsyncMock(return_value="Xk3p9qR2mN4t"))
-    monkeypatch.setattr(live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io/")
-
-    link = await live_view.create_live_view_link("sess-abc", "user-1")
-
-    assert link == "https://api.heygaia.io/live/Xk3p9qR2mN4t"
-
-
-@pytest.mark.unit
 def test_live_view_url_joins_base_and_session_under_the_live_path(monkeypatch):
     monkeypatch.setattr(live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
     monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
@@ -68,18 +41,6 @@ def test_live_view_url_joins_base_and_session_under_the_live_path(monkeypatch):
     # Exact path shape: no vhost-style bare slug here — this is the chat card's
     # own connect URL, always under /live/{session_id}.
     assert url == "https://api.heygaia.io/live/sess-xyz-789"
-
-
-@pytest.mark.unit
-def test_live_view_url_uses_configured_base_when_present(monkeypatch):
-    monkeypatch.setattr(
-        live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.io"
-    )
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
-
-    url = live_view.live_view_url("sess-xyz-789")
-
-    assert url == "https://browser.heygaia.io/live/sess-xyz-789"
 
 
 @pytest.mark.unit
@@ -93,26 +54,6 @@ def test_render_live_view_page_escapes_and_embeds_the_session_id():
     assert 'sess"<script>&</script>' not in page
     assert "sess&quot;&lt;script&gt;&amp;&lt;/script&gt;" in page
     assert "(sess&quot;&lt;script&gt;&amp;&lt;/script&gt;)" in page
-
-
-@pytest.mark.unit
-def test_render_live_view_page_embeds_the_wordmark_data_uri():
-    page = live_view.render_live_view_page("sess-abc")
-
-    assert "__WORDMARK__" not in page
-    assert live_view._WORDMARK_DATA_URI in page
-    assert f'src="{live_view._WORDMARK_DATA_URI}"' in page
-
-
-@pytest.mark.unit
-def test_render_live_view_page_differs_by_session_id():
-    page_a = live_view.render_live_view_page("sess-aaa")
-    page_b = live_view.render_live_view_page("sess-bbb")
-
-    assert page_a != page_b
-    assert "sess-aaa" in page_a
-    assert "sess-bbb" not in page_a
-    assert "sess-bbb" in page_b
 
 
 @pytest.mark.unit

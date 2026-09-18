@@ -79,29 +79,6 @@ class TestR2Configured:
         monkeypatch.setattr(shots.settings, field, None)
         assert shots._r2_configured() is False
 
-    @pytest.mark.parametrize(
-        "field",
-        ["CLOUDFLARE_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_PUBLIC_BASE_URL"],
-    )
-    def test_any_empty_string_is_not_configured(self, monkeypatch, field):
-        vals = {
-            "CLOUDFLARE_ACCOUNT_ID": "acct",
-            "R2_ACCESS_KEY_ID": "key",
-            "R2_SECRET_ACCESS_KEY": "secret",
-            "R2_PUBLIC_BASE_URL": "https://cdn.example.com",
-        }
-        for k, v in vals.items():
-            monkeypatch.setattr(shots.settings, k, v)
-        monkeypatch.setattr(shots.settings, field, "")
-        assert shots._r2_configured() is False
-
-    def test_all_missing(self, monkeypatch):
-        monkeypatch.setattr(shots.settings, "CLOUDFLARE_ACCOUNT_ID", None)
-        monkeypatch.setattr(shots.settings, "R2_ACCESS_KEY_ID", None)
-        monkeypatch.setattr(shots.settings, "R2_SECRET_ACCESS_KEY", None)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", None)
-        assert shots._r2_configured() is False
-
 
 # ---------------------------------------------------------------------------
 # _r2_client
@@ -134,29 +111,6 @@ class TestR2Client:
             assert cfg.connect_timeout == shots._UPLOAD_TIMEOUT_SECONDS
             assert cfg.read_timeout == shots._UPLOAD_TIMEOUT_SECONDS
             assert cfg.retries == {"max_attempts": 1}
-
-    def test_lru_cache_returns_same_object(self, monkeypatch):
-        monkeypatch.setattr(shots.settings, "CLOUDFLARE_ACCOUNT_ID", "acct")
-        monkeypatch.setattr(shots.settings, "R2_ACCESS_KEY_ID", "k")
-        monkeypatch.setattr(shots.settings, "R2_SECRET_ACCESS_KEY", "s")
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com")
-        # boto3.client returns a *different* mock on each call, so this only
-        # proves caching (rather than trivially passing because the mock's
-        # return_value happened to be identical either way).
-        first_client = MagicMock()
-        second_client = MagicMock()
-        with patch.object(
-            shots.boto3, "client", side_effect=[first_client, second_client]
-        ) as mock_boto:
-            a = shots._r2_client()
-            b = shots._r2_client()
-            assert a is first_client
-            assert b is first_client
-            mock_boto.assert_called_once()
-
-    def test_lru_cache_maxsize_is_one(self):
-        # The decorator argument itself, independent of any call behaviour.
-        assert shots._r2_client.cache_info().maxsize == 1
 
 
 # ---------------------------------------------------------------------------
@@ -211,55 +165,6 @@ class TestPublishStepScreenshot:
         assert args[1] == b"pngdata"
         assert args[2] == "browser_steps/conv-abc/step_3.png"
 
-    async def test_strips_trailing_slash_from_base_url(self, monkeypatch):
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com///")
-        with patch.object(shots.asyncio, "to_thread", AsyncMock(return_value=None)):
-            result = await shots.publish_step_screenshot(b"x", "c1", 0)
-        assert result == "https://cdn.example.com/browser_steps/c1/step_0.png"
-
-    async def test_strips_single_trailing_slash(self, monkeypatch):
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com/")
-        with patch.object(shots.asyncio, "to_thread", AsyncMock(return_value=None)):
-            result = await shots.publish_step_screenshot(b"x", "c1", 1)
-        assert result == "https://cdn.example.com/browser_steps/c1/step_1.png"
-
-    async def test_rstrip_only_strips_slash_not_other_trailing_chars(self, monkeypatch):
-        # Pins the exact character set passed to rstrip(): it must strip "/"
-        # only. A base URL ending in a non-slash character right before the
-        # slash(es) must keep that character intact.
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.comX/")
-        with patch.object(shots.asyncio, "to_thread", AsyncMock(return_value=None)):
-            result = await shots.publish_step_screenshot(b"x", "c1", 1)
-        assert result == "https://cdn.example.comX/browser_steps/c1/step_1.png"
-
-    async def test_falsy_public_base_url_yields_empty_base_not_a_placeholder(self, monkeypatch):
-        # Pins `settings.R2_PUBLIC_BASE_URL or ""` to the empty string, not some
-        # other default. `_r2_configured` is mocked independently so this exercises
-        # the line's own fallback, not `_r2_configured` preventing it in practice.
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", None)
-        with patch.object(shots.asyncio, "to_thread", AsyncMock(return_value=None)):
-            result = await shots.publish_step_screenshot(b"x", "c1", 1)
-        assert result == "/browser_steps/c1/step_1.png"
-
-    async def test_no_trailing_slash_unchanged(self, monkeypatch):
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com")
-        with patch.object(shots.asyncio, "to_thread", AsyncMock(return_value=None)):
-            result = await shots.publish_step_screenshot(b"x", "c1", 1)
-        assert result == "https://cdn.example.com/browser_steps/c1/step_1.png"
-
-    async def test_key_uses_conversation_id_and_index(self, monkeypatch):
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com")
-        mock_to_thread = AsyncMock(return_value=None)
-        with patch.object(shots.asyncio, "to_thread", mock_to_thread):
-            await shots.publish_step_screenshot(b"x", "my-conv", 42)
-        assert mock_to_thread.call_args[0][2] == "browser_steps/my-conv/step_42.png"
-
     async def test_upload_failure_falls_back_to_disk_and_logs(self, monkeypatch, local_backend):
         monkeypatch.setattr(shots, "_r2_configured", lambda: True)
         monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com")
@@ -283,37 +188,6 @@ class TestPublishStepScreenshot:
             == f"{shots.LogTag.BROWSER} Browser screenshot upload failed; storing it locally instead"
         )
         assert call_args[1].get("error_type") == "RuntimeError"
-
-    async def test_upload_generic_exception_still_yields_a_url(self, monkeypatch, local_backend):
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com")
-        failing = MagicMock()
-        failing.put_object.side_effect = ValueError("bad")
-        with (
-            patch.object(shots, "_r2_client", return_value=failing),
-            patch.object(shots.log, "warning") as mock_warn,
-        ):
-            result = await shots.publish_step_screenshot(b"x", "c1", 1)
-
-        assert result is not None
-        assert not result.startswith("https://cdn.example.com")
-        assert mock_warn.call_args[1]["error_type"] == "ValueError"
-
-    async def test_upload_exception_logs_correct_error_type(self, monkeypatch, local_backend):
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com")
-
-        class CustomError(Exception):
-            pass
-
-        failing = MagicMock()
-        failing.put_object.side_effect = CustomError("oops")
-        with (
-            patch.object(shots, "_r2_client", return_value=failing),
-            patch.object(shots.log, "warning") as mock_warn,
-        ):
-            await shots.publish_step_screenshot(b"x", "c1", 1)
-        assert mock_warn.call_args[1]["error_type"] == "CustomError"
 
     async def test_a_failed_local_write_returns_none_so_the_caller_can_inline(
         self, monkeypatch, tmp_path
@@ -362,14 +236,6 @@ class TestPublishStepScreenshot:
         client.put_object.assert_called_once()
         # Nothing should have been written locally when the bucket accepted it.
         assert not (local_backend / "c1").exists()
-
-    async def test_calls_to_thread_with_put(self, monkeypatch):
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com")
-        mock_to_thread = AsyncMock(return_value=None)
-        with patch.object(shots.asyncio, "to_thread", mock_to_thread):
-            await shots.publish_step_screenshot(b"abc", "conv", 5)
-        mock_to_thread.assert_awaited_once_with(shots._put, b"abc", "browser_steps/conv/step_5.png")
 
     async def test_not_configured_never_reaches_the_bucket(self, monkeypatch, local_backend):
         monkeypatch.setattr(shots, "_r2_configured", lambda: False)

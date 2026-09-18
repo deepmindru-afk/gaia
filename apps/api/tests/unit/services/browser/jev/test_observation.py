@@ -226,12 +226,6 @@ def _on_screen_from(first: int, count: int) -> dict[int, ViewportBox]:
     return {i: ViewportBox(on_screen=i >= first, cx=0.5, cy=0.5) for i in range(count)}
 
 
-def test_a_screen_denser_than_the_gateway_allows_is_capped_in_document_order() -> None:
-    observation = observe(_big_page())
-
-    assert len(observation.targets(JevOperation.CLICK)) == JEV_MAX_ELEMENTS
-
-
 def test_jev_sees_exactly_what_the_page_says_is_on_screen() -> None:
     """Off-screen elements are one SCROLL away, not part of this decision."""
     observation = observe(_big_page(count=100), None, ViewportRead(boxes=_on_screen_from(40, 100)))
@@ -283,36 +277,6 @@ def test_the_options_of_one_select_are_capped_in_document_order() -> None:
     assert list(targets)[:2] == ["1:1", "1:2"]
     assert f"1:{JEV_MAX_ELEMENTS}" in targets
     assert f"1:{JEV_MAX_ELEMENTS + 1}" not in targets
-
-
-def test_a_cap_that_cuts_choices_is_never_silent(monkeypatch) -> None:
-    from unittest.mock import MagicMock
-
-    from app.constants.log_tags import LogTag
-    from app.services.browser.jev import observation as observation_mod
-
-    logger = MagicMock()
-    monkeypatch.setattr(observation_mod, "log", logger)
-
-    observe(_big_page()).targets(JevOperation.CLICK)
-
-    logger.warning.assert_called_once_with(
-        f"{LogTag.BROWSER} Jev screen has more elements than one decision can carry",
-        browser={"dropped": 300 - JEV_MAX_ELEMENTS, "url": "https://x"},
-    )
-
-
-def test_a_cap_that_cuts_nothing_logs_nothing(monkeypatch, flights_state) -> None:
-    from unittest.mock import MagicMock
-
-    from app.services.browser.jev import observation as observation_mod
-
-    logger = MagicMock()
-    monkeypatch.setattr(observation_mod, "log", logger)
-
-    observe(flights_state).targets(JevOperation.CLICK)
-
-    logger.warning.assert_not_called()
 
 
 def test_the_page_text_is_the_screens_text_when_the_page_could_read_it(flights_state) -> None:

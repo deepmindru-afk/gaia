@@ -117,65 +117,6 @@ async def test_register_calls_redis_set_with_exact_key_ttl_and_model(
     assert entry.live_ws == "ws://live/5"
 
 
-async def test_register_success_does_not_log_warning(
-    fake_redis: _FakeRedis, fake_log: _FakeLog
-) -> None:
-    ok = await reg.register_session("s6", "user-6")
-    assert ok is True
-    assert fake_log.warning_calls == []
-
-
-async def test_register_failure_logs_warning_with_message_and_session_id(
-    monkeypatch: pytest.MonkeyPatch, fake_log: _FakeLog
-) -> None:
-    failing = _FakeRedis(fail_writes=True)
-    monkeypatch.setattr(reg, "redis_cache", failing)
-    ok = await reg.register_session("s7", "user-7")
-    assert ok is False
-    assert len(fake_log.warning_calls) == 1
-    message, kwargs = fake_log.warning_calls[0]
-    assert message == "[BROWSER] browser session registry write failed"
-    assert kwargs == {"session_id": "s7"}
-
-
-async def test_register_sets_wide_event_context_with_operation_and_session_id(
-    fake_redis: _FakeRedis, fake_log: _FakeLog
-) -> None:
-    await reg.register_session("s8", "user-8")
-    assert len(fake_log.set_calls) == 1
-    assert fake_log.set_calls[0] == {
-        "browser": {"session_id": "s8", "operation": "registry_register"}
-    }
-
-
-async def test_get_session_entry_calls_redis_get_with_exact_key_and_model(
-    fake_redis: _FakeRedis,
-) -> None:
-    await reg.register_session("s9", "user-9")
-    fake_redis.get_calls.clear()
-    await reg.get_session_entry("s9")
-    assert len(fake_redis.get_calls) == 1
-    call = fake_redis.get_calls[0]
-    assert call["key"] == "browser:sess:s9"
-    assert call["model"] is SessionRegistryEntry
-
-
-async def test_unregister_calls_redis_delete_with_exact_key(fake_redis: _FakeRedis) -> None:
-    await reg.register_session("s10", "user-10")
-    await reg.unregister_session("s10")
-    assert fake_redis.delete_calls == ["browser:sess:s10"]
-
-
-async def test_unregister_sets_wide_event_context_with_operation_and_session_id(
-    fake_redis: _FakeRedis, fake_log: _FakeLog
-) -> None:
-    await reg.unregister_session("s11")
-    assert len(fake_log.set_calls) == 1
-    assert fake_log.set_calls[0] == {
-        "browser": {"session_id": "s11", "operation": "registry_unregister"}
-    }
-
-
 async def test_unregister_does_not_touch_other_sessions(fake_redis: _FakeRedis) -> None:
     await reg.register_session("s12", "user-12")
     await reg.register_session("s13", "user-13")

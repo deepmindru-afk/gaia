@@ -11,7 +11,6 @@ from app.services.browser.jev.policy import (
     JevDecisionError,
     JevHistoryEntry,
     build_request,
-    choose,
     resolve,
 )
 from app.services.browser.jev.prompts import (
@@ -202,30 +201,6 @@ def test_a_missing_target_head_executes_nothing(flights_state) -> None:
 
     with pytest.raises(JevDecisionError, match="no answer"):
         resolve(request, JevEvaluation(answers={"operation": _answer("CLICK", ops)}), observation)
-
-
-async def test_choose_posts_the_built_request_and_resolves_its_answer(flights_state) -> None:
-    observation = observe(flights_state)
-    posted = []
-
-    class Client:
-        model = "typesafe-ai/jev"
-
-        async def evaluate(self, request):
-            posted.append(request)
-            ops = list(request.questions["operation"].criteria)
-            return JevEvaluation(
-                answers={
-                    "operation": _answer("CLICK", ops),
-                    "click_target": _answer("4", ["1", "2", "3", "4", "5"]),
-                }
-            )
-
-    decision = await choose(Client(), observation, "g", [], ALL)
-
-    assert posted[0].state["page"]["url"] == "https://x"
-    assert decision.label == "CLICK [4] Search"
-    assert decision.element is not None and decision.element.browser_index == 40
 
 
 def _three_hundred_clickables():

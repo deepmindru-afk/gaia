@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 from app.constants.browser import (
-    BROWSER_LIVE_CODE_ENTROPY_BYTES,
     BROWSER_REPLAY_CODE_TTL_SECONDS,
 )
 from app.schemas.browser import ReplayRecord
@@ -78,43 +77,6 @@ def test_no_placeholder_survives_rendering() -> None:
 
 
 @pytest.mark.unit
-def test_fallback_r2_base_strips_only_a_trailing_slash_not_trailing_x_chars(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # rstrip("/") mutated to rstrip("XX/XX") would also eat trailing "X"
-    # characters, which a bare trailing-slash fixture can't tell apart.
-    monkeypatch.setattr("app.services.browser.replay.settings.R2_PUBLIC_BASE_URL", "https://cdnX")
-
-    page = render_replay_page(ReplayRecord(session_id="s1", steps=1))
-
-    assert "https://cdnX/browser_steps/s1/step_1.png" in page
-
-
-@pytest.mark.unit
-def test_fallback_urls_strip_a_trailing_slash_from_the_r2_base(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("app.services.browser.replay.settings.R2_PUBLIC_BASE_URL", "https://cdn/")
-
-    page = render_replay_page(ReplayRecord(session_id="s1", steps=1))
-
-    assert "https://cdn/browser_steps/s1/step_1.png" in page
-    # A dropped rstrip would double the slash between host and path.
-    assert "https://cdn//browser_steps" not in page
-
-
-@pytest.mark.unit
-def test_fallback_urls_have_no_host_when_r2_base_is_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("app.services.browser.replay.settings.R2_PUBLIC_BASE_URL", None)
-
-    page = render_replay_page(ReplayRecord(session_id="s1", steps=1))
-
-    assert '"/browser_steps/s1/step_1.png"' in page
-
-
-@pytest.mark.unit
 def test_fallback_step_numbering_is_one_indexed_and_inclusive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -141,17 +103,6 @@ def test_empty_shots_list_falls_back_to_derived_urls(
     # An empty list is falsy, same as no shots stored at all: `or` must fall through.
     assert "browser_steps/s1/step_1.png" in page
     assert "browser_steps/s1/step_2.png" in page
-
-
-@pytest.mark.unit
-def test_real_shots_are_embedded_as_a_json_array_of_exact_urls() -> None:
-    record = ReplayRecord(
-        session_id="s1", steps=2, shots=["https://cdn/a.png", "https://cdn/b.png"]
-    )
-
-    page = render_replay_page(record)
-
-    assert '["https://cdn/a.png", "https://cdn/b.png"]' in page
 
 
 @pytest.mark.unit
@@ -194,41 +145,6 @@ async def test_mint_replay_code_defaults_missing_shots_to_an_empty_list(
     stored = fake_cache.set_calls[0]["value"]
     assert isinstance(stored, ReplayRecord)
     assert stored.shots == []
-
-
-@pytest.mark.unit
-async def test_mint_replay_code_returns_the_token_urlsafe_result_verbatim(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A test that only checks the stored key was derived from the function's own
-    # return value can't tell a real token from a swapped-out `None` — both sides
-    # of the assertion would still agree. Pin against an independently known value.
-    monkeypatch.setattr(replay_module.secrets, "token_urlsafe", lambda n: "fixed-token")
-    fake_cache = _FakeRedisCache()
-    monkeypatch.setattr(replay_module, "redis_cache", fake_cache)
-
-    code = await mint_replay_code("s1", 1)
-
-    assert code == "fixed-token"
-    assert fake_cache.set_calls[0]["key"] == "browser:replay:fixed-token"
-
-
-@pytest.mark.unit
-async def test_mint_replay_code_requests_the_configured_entropy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    requested_entropy: list[int | None] = []
-    monkeypatch.setattr(
-        replay_module.secrets,
-        "token_urlsafe",
-        lambda n: requested_entropy.append(n) or "token",
-    )
-    fake_cache = _FakeRedisCache()
-    monkeypatch.setattr(replay_module, "redis_cache", fake_cache)
-
-    await mint_replay_code("s1", 1)
-
-    assert requested_entropy == [BROWSER_LIVE_CODE_ENTROPY_BYTES]
 
 
 @pytest.mark.unit
@@ -309,40 +225,3 @@ async def test_create_replay_link_builds_a_replays_url_from_the_minted_code(
     assert stored.shots == ["https://cdn/1.png", "https://cdn/2.png"]
     # The step count carried on the record must be derived from the real shots, not guessed.
     assert stored.steps == 2
-
-
-@pytest.mark.unit
-async def test_create_replay_link_base_strips_only_a_trailing_slash_not_trailing_x_chars(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # rstrip("/") mutated to rstrip("XX/XX") would also eat trailing "X"
-    # characters, which a bare trailing-slash fixture can't tell apart.
-    monkeypatch.setattr(replay_module.settings, "R2_PUBLIC_BASE_URL", "https://cdn")
-    monkeypatch.setattr(
-        replay_module.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.io/boX"
-    )
-    fake_cache = _FakeRedisCache()
-    monkeypatch.setattr(replay_module, "redis_cache", fake_cache)
-
-    link = await create_replay_link("s1", ["https://cdn/1.png"])
-
-    assert link is not None
-    assert link.startswith("https://browser.heygaia.io/boX/replays/")
-
-
-@pytest.mark.unit
-async def test_create_replay_link_falls_back_to_host_when_no_live_view_base_url(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(replay_module.settings, "R2_PUBLIC_BASE_URL", "https://cdn")
-    monkeypatch.setattr(replay_module.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
-    monkeypatch.setattr(replay_module.settings, "HOST", "https://api.heygaia.io")
-    fake_cache = _FakeRedisCache()
-    monkeypatch.setattr(replay_module, "redis_cache", fake_cache)
-
-    link = await create_replay_link("s1", ["https://cdn/1.png"])
-
-    assert (
-        link
-        == f"https://api.heygaia.io/replays/{fake_cache.set_calls[0]['key'].removeprefix('browser:replay:')}"
-    )

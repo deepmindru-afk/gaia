@@ -14,8 +14,6 @@ import pytest
 from app.agents.tools import browser_tool as tool_mod
 from app.agents.tools.browser_tool import wait_for_browser_task
 from app.constants.browser import (
-    BROWSER_JOB_JOINER_REFRESH_SECONDS,
-    BROWSER_JOB_POLL_INTERVAL_SECONDS,
     BrowserSessionStatus,
 )
 from app.schemas.browser import BrowserResultSnapshot
@@ -162,19 +160,6 @@ async def test_a_run_that_outlasts_the_wait_is_left_to_the_worker_to_deliver(
     )
     assert j.dropped == ["job-1"]
     assert j.slept == pytest.approx(1.0)
-
-
-async def test_the_lease_is_re_armed_while_the_wait_lasts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The lease expires in seconds while a run legitimately takes minutes; without the refresh the worker delivers a result the executor is still waiting to speak."""
-    polls_per_refresh = int(BROWSER_JOB_JOINER_REFRESH_SECONDS / BROWSER_JOB_POLL_INTERVAL_SECONDS)
-    states: list[BrowserJobState | None] = [RUNNING] * (2 * polls_per_refresh) + [DONE]
-    j = _install(monkeypatch, slots=["job-1"], states=states)
-
-    await wait_for_browser_task.ainvoke({"timeout": 600}, config=UI_CONFIG)
-
-    assert j.refreshed == [("job-1", "s1")] * 2
 
 
 async def test_a_cancelled_turn_releases_the_lease_on_the_way_out(

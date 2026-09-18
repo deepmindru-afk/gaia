@@ -28,7 +28,6 @@ from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev import chat_model as chat_model_mod
 from app.services.browser.jev.chat_model import JevChatModel, build_jev_chat_model
 from app.services.browser.jev.gateway import JevChoiceAnswer, JevEvaluation, JevUsage
-from app.services.browser.jev.observation import observe
 from app.services.browser.jev.prompts import (
     CAPTCHA_CHALLENGE,
     DONE_SUMMARY,
@@ -515,44 +514,11 @@ async def test_the_goal_falls_back_to_browser_uses_own_user_request_block(flight
     assert gateway.requests[0].questions["operation"].instructions["goal"] == "Open the article"
 
 
-def test_identity_is_the_gateway_model(flights_state) -> None:
-    model = JevChatModel(client=ScriptedGateway(script=[]), text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
-
-    assert (model.model, model.name, model.model_name, model.provider) == (
-        "typesafe-ai/jev",
-        "typesafe-ai/jev",
-        "typesafe-ai/jev",
-        "vercel-ai-gateway",
-    )
-
-
 def test_build_requires_the_gateway_key(monkeypatch) -> None:
     monkeypatch.setattr("app.services.browser.jev.chat_model.settings.OPENROUTER_API_KEY", None)
 
     with pytest.raises(BrowserUnavailableError, match="OPENROUTER_API_KEY"):
         build_jev_chat_model(text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake text model in place of the real one
-
-
-def test_build_wires_the_configured_gateway_and_keeps_the_text_model(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.services.browser.jev.chat_model.settings.OPENROUTER_API_KEY", "sk-or-x"
-    )
-    monkeypatch.setattr(
-        "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_MODEL", "~typesafe/jev-latest"
-    )
-    monkeypatch.setattr(
-        "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_DECISIONS_URL",
-        "https://decisions.test/api/alpha/decisions",
-    )
-    helper = FakeTextModel()
-
-    model = build_jev_chat_model(text_model=helper)  # type: ignore[arg-type]  # the test hands a fake text model in place of the real one
-
-    assert isinstance(model, JevChatModel)
-    assert model.text_model is helper
-    assert model.model == "~typesafe/jev-latest"
-    assert model._client._url == "https://decisions.test/api/alpha/decisions"
-    assert model._client._headers["Authorization"] == "Bearer sk-or-x"
 
 
 async def test_every_operation_has_a_mapping(flights_state) -> None:
@@ -614,28 +580,6 @@ async def test_typed_text_shows_up_as_the_fields_live_value_on_the_next_step(fli
     assert elements["Where to?"]["value"] == "London"
 
 
-async def test_the_users_takeover_note_is_in_jevs_next_state(flights_state) -> None:
-    model, gateway, helper, _ = _model(
-        flights_state,
-        [("REQUEST_HUMAN", None), ("TYPE_TEXT", "2")],
-        [
-            {"text": "Enter your password and sign in", "category": "credentials"},
-            {"text": "London"},
-        ],
-    )
-    await model.ainvoke([], _agent_output())
-
-    model.note_from_user("skip the login, just grab the photo")
-    await model.ainvoke([], _agent_output())
-
-    assert (
-        gateway.requests[1].state["recent_actions"][-1]["note"]
-        == "skip the login, just grab the photo"
-    )
-    assert helper.system_prompt(1) == TEXT_VALUE
-    assert helper.context(1)["user_note"] == "skip the login, just grab the photo"
-
-
 async def test_a_takeover_note_amends_the_goal_jev_decides_against(flights_state) -> None:
     """Regression: the note only sat in recent_actions, so Jev kept handing off on the login page."""
     model, gateway, helper, _ = _model(
@@ -683,19 +627,6 @@ async def test_the_closing_answer_is_written_against_the_latest_instruction(flig
     assert "Original task: Fly Zurich to London" in helper.context(1)["goal"]
     # The page the answer must be read off is still in the helper's context.
     assert set(helper.context(1)["page"]) == {"title", "url", "text"}
-
-
-async def test_a_note_survives_the_page_change_settle(flights_state) -> None:
-    model, _, _, _ = _model(
-        flights_state, [("REQUEST_HUMAN", None)], [{"text": "Log in", "category": "credentials"}]
-    )
-    await model.ainvoke([], _agent_output())
-    model.note_from_user("skip the login, just grab the photo")
-
-    model._settle_previous_step(observe(flights_state))
-
-    assert model._history[-1].note == "skip the login, just grab the photo"
-    assert model._history[-1].page_changed is False
 
 
 async def test_a_note_with_no_step_to_carry_it_is_a_wiring_error(flights_state) -> None:

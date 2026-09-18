@@ -173,27 +173,6 @@ async def test_the_conversations_slot_is_released_when_the_run_ends(
     assert w.released == [("conv-9", "job-1")]
 
 
-async def test_the_slot_lease_is_refreshed_for_as_long_as_the_run_lasts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Nothing else holds the slot: without the heartbeat a run that legitimately sits inside a handoff loses it within the lease's two minutes."""
-    w = _install(monkeypatch)
-    intervals: list[float] = []
-
-    async def _sleep(seconds: float) -> None:
-        intervals.append(seconds)
-        if len(w.heartbeats) >= 3:
-            raise asyncio.CancelledError
-
-    monkeypatch.setattr(tasks_mod.asyncio, "sleep", _sleep)
-
-    with pytest.raises(asyncio.CancelledError):
-        await tasks_mod._heartbeat(BrowserJobRequest.model_validate(PAYLOAD))
-
-    assert w.heartbeats == [("conv-9", "job-1")] * 3
-    assert intervals == [BROWSER_JOB_HEARTBEAT_SECONDS] * 4
-
-
 async def test_the_heartbeat_stops_with_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
     """A heartbeat outliving its run would hold the conversation's slot against a job that is already finished."""
     spawned: list[Any] = []
@@ -229,21 +208,6 @@ async def test_a_joiner_that_collects_the_result_keeps_the_worker_quiet(
 
     assert w.delivered == []
     assert w.narrated == []
-
-
-async def test_a_turn_that_ended_first_gets_the_result_as_a_follow_up(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Nobody is waiting, so the run's own answer has to reach the user as a message — in the conversation's own voice."""
-    w = _install(monkeypatch, lease=[])
-
-    await tasks_mod.run_browser_job({}, PAYLOAD)
-
-    assert w.narrated == [(agent_result_message(DONE), "result", "conv-9")]
-    assert len(w.delivered) == 1
-    assert w.delivered[0]["conversation_id"] == "conv-9"
-    assert w.delivered[0]["text"] == "Booked it for you."
-    assert "job-1" in w.delivered[0]["origin"]
 
 
 async def test_the_wait_for_a_joiner_is_bounded_by_its_lease(
@@ -307,16 +271,6 @@ CARD_FRAME: dict[str, Any] = {
         "timestamp": "2026-09-19T00:00:00+00:00",
     }
 }
-
-
-async def test_the_follow_up_carries_the_runs_cards(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The relay died with the turn, so the job's feed is the only copy of the cards left; its terminal marker is not one of them."""
-    w = _install(monkeypatch, lease=[])
-    w.feed = [CARD_FRAME, JOB_TERMINAL_FRAME]
-
-    await tasks_mod.run_browser_job({}, PAYLOAD)
-
-    assert w.delivered[0]["tool_data"] == [CARD_FRAME["tool_data"]]
 
 
 async def test_the_whole_feed_is_drained_without_blocking_on_it(

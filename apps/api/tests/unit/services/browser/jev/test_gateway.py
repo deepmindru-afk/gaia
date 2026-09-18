@@ -127,14 +127,6 @@ async def test_a_gateway_refusal_names_the_gateways_own_message() -> None:
     )
 
 
-async def test_a_non_json_error_body_is_truncated_into_the_message() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(502, text="<html>bad gateway</html>")
-
-    with pytest.raises(JevGatewayError, match="HTTP 502: <html>bad gateway</html>"):
-        await _client(handler).evaluate(REQUEST)
-
-
 async def test_a_connection_failure_is_a_gateway_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")

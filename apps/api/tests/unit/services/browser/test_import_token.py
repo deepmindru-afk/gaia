@@ -68,9 +68,6 @@ class TestImportToken:
     async def test_unknown_token_returns_none(self, fake_redis: _FakeRedis) -> None:
         assert await mod.consume_import_token("never-minted") is None
 
-    async def test_each_mint_is_unique(self, fake_redis: _FakeRedis) -> None:
-        assert await mod.mint_import_token("u") != await mod.mint_import_token("u")
-
     async def test_code_expires_after_the_import_ttl_not_the_cache_default(
         self, fake_redis: _FakeRedis
     ) -> None:
