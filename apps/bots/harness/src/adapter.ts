@@ -23,6 +23,7 @@ import {
   createBotLogger,
   extractSubcommandArgs,
   handleStreamingChat,
+  type OutboundAttachment,
   type PlatformName,
   type RichMessage,
   type RichMessageTarget,
@@ -114,6 +115,31 @@ export class HarnessAdapter extends BaseBotAdapter {
       text,
     });
     return Promise.resolve();
+  }
+
+  /**
+   * Records a backend-originated file delivery, fetching the bytes through the
+   * real shared helper first. The base class would answer "I can't send files on
+   * telegram yet" — but the harness stands in for a platform that can, so a
+   * transcript has to show the caption and prove the download succeeded.
+   */
+  protected override async deliverOutboundFile(
+    destinationId: string,
+    attachment: OutboundAttachment,
+  ): Promise<void> {
+    const artifact = await this.fetchOutboundArtifact(
+      destinationId,
+      attachment,
+    );
+    if (!artifact) return; // too large — fetchOutboundArtifact already replied
+    this.transcript.record({
+      type: "outbound-attachment",
+      destinationId,
+      filename: attachment.filename,
+      text: attachment.caption ?? "",
+      bytes: artifact.data.length,
+      contentType: attachment.content_type ?? artifact.contentType,
+    });
   }
 
   // ---------------------------------------------------------------------------

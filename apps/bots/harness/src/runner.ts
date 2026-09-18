@@ -237,7 +237,10 @@ function evaluateAssertion(
   // `maxBubbleLength` fail on long inputs.
   const delivered = events.filter(
     (e) =>
-      e.type === "send" || e.type === "edit" || e.type === "outbound-delivery",
+      e.type === "send" ||
+      e.type === "edit" ||
+      e.type === "outbound-delivery" ||
+      e.type === "outbound-attachment",
   );
 
   if (

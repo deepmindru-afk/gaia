@@ -17,6 +17,7 @@ import type {
   SettingsResponse,
 } from "../types";
 import { getErrorReason, getHttpStatus } from "../utils/logger";
+import { isOwnApiUrl } from "../utils/own-api";
 import { wideLog } from "../utils/wide-events";
 import {
   type ApprovalUpdateHandler,
@@ -28,7 +29,6 @@ import {
   downloadApiBinaryRequest,
   downloadArtifactRequest,
   downloadUrlRequest,
-  isOwnApiUrl,
   transcribeAudioRequest,
   uploadFileRequest,
 } from "./media";

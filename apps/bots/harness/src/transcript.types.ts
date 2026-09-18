@@ -106,6 +106,22 @@ export interface OutboundDeliveryEvent extends TranscriptEventBase {
   text: string;
 }
 
+/**
+ * A backend-originated file/photo delivered through the real outbound consumer —
+ * recorded by the adapter's `deliverOutboundFile` after the bytes are fetched.
+ */
+export interface OutboundAttachmentEvent extends TranscriptEventBase {
+  type: "outbound-attachment";
+  /** Platform-native destination id the backend addressed. */
+  destinationId: string;
+  filename: string;
+  /** Caption the platform shows beside the file; empty when the envelope carried none. */
+  text: string;
+  /** Byte length actually fetched — a failed download can't look like a success. */
+  bytes: number;
+  contentType: string;
+}
+
 /** Discriminated union of every transcript event. */
 export type TranscriptEvent =
   | InboundEvent
@@ -115,7 +131,8 @@ export type TranscriptEvent =
   | EphemeralEvent
   | RichEvent
   | SplitEvent
-  | OutboundDeliveryEvent;
+  | OutboundDeliveryEvent
+  | OutboundAttachmentEvent;
 
 /** Event payload before the recorder stamps `platform`, `seq`, and `t`. */
 export type TranscriptEventInput =
@@ -126,4 +143,5 @@ export type TranscriptEventInput =
   | Omit<EphemeralEvent, keyof TranscriptEventBase>
   | Omit<RichEvent, keyof TranscriptEventBase>
   | Omit<SplitEvent, keyof TranscriptEventBase>
-  | Omit<OutboundDeliveryEvent, keyof TranscriptEventBase>;
+  | Omit<OutboundDeliveryEvent, keyof TranscriptEventBase>
+  | Omit<OutboundAttachmentEvent, keyof TranscriptEventBase>;

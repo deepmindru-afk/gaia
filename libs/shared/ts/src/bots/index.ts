@@ -39,8 +39,8 @@ export type {
   OutboundMessageEnvelope,
 } from "./consumer/envelope";
 export {
-  outboundAttachmentSchema,
-  outboundMessageEnvelopeSchema,
+  outboundAttachmentSchemaFor,
+  outboundMessageEnvelopeSchemaFor,
 } from "./consumer/envelope";
 export {
   buildLinkCodeFailureMessage,

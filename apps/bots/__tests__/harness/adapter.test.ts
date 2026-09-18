@@ -14,6 +14,7 @@
  * 5. plan gate → the rendered upgrade prompt with the pricing URL is delivered
  * 6. edit support → Telegram edits in place; WhatsApp only ever sends
  * 7. outbound delivery → deliverOutbound records an outbound-delivery event
+ * 7b. outbound photo → deliverOutboundFile fetches the bytes and records the caption
  * 8. command path → an ephemeral reply records an ephemeral event
  */
 
@@ -213,6 +214,48 @@ describe("HarnessAdapter — outbound delivery", () => {
         type: "outbound-delivery",
         destinationId: "dev-telegram-42",
         text: "Your reminder is due",
+      }),
+    ]);
+  });
+
+  it("records the caption and fetched size of an outbound photo", async () => {
+    // A browser step photo's caption ("Step 3 · …") is the only thing the user
+    // reads under the screenshot, so the transcript has to carry it — otherwise
+    // a run that delivers every step looks identical to one that delivers none.
+    const recorder = new TranscriptRecorder("telegram");
+    const adapter = new HarnessAdapter(resolveEmulation("telegram"), recorder);
+    (
+      adapter as unknown as {
+        gaia: { downloadAttachmentUrl: () => Promise<unknown> };
+      }
+    ).gaia = {
+      downloadAttachmentUrl: async () => ({
+        data: Buffer.from("png-bytes"),
+        contentType: "image/png",
+      }),
+    };
+
+    await (
+      adapter as unknown as {
+        deliverOutboundFile: (
+          id: string,
+          attachment: Record<string, unknown>,
+        ) => Promise<void>;
+      }
+    ).deliverOutboundFile("dev-telegram-42", {
+      url: "http://localhost:8121/shots/c0de/3.png",
+      filename: "browser-step-3.png",
+      caption: "Step 3 \u00b7 read the top story",
+    });
+
+    expect(recorder.getEvents()).toEqual([
+      expect.objectContaining({
+        type: "outbound-attachment",
+        destinationId: "dev-telegram-42",
+        filename: "browser-step-3.png",
+        text: "Step 3 \u00b7 read the top story",
+        bytes: 9,
+        contentType: "image/png",
       }),
     ]);
   });

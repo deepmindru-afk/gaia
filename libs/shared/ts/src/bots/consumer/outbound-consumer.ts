@@ -19,7 +19,7 @@ import { wideLog, withWideEvent } from "../utils/wide-events";
 import {
   type OutboundAttachment,
   type OutboundMessageEnvelope,
-  outboundMessageEnvelopeSchema,
+  outboundMessageEnvelopeSchemaFor,
 } from "./envelope";
 import {
   dlqName,
@@ -57,14 +57,24 @@ export class OutboundConsumer {
   private reconnectDelayMs = RECONNECT_BASE_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly logger: BotLogger;
+  private readonly envelopeSchema: ReturnType<
+    typeof outboundMessageEnvelopeSchemaFor
+  >;
 
+  /**
+   * `gaiaApiUrl` is what makes a plain-http attachment URL acceptable: a dev or
+   * self-hosted API serves step screenshots off its own host, and only that one
+   * origin is exempt from the https rule.
+   */
   constructor(
     private readonly platform: PlatformName,
     private readonly url: string,
     private readonly deliver: DeliverFn,
     private readonly deliverFile: DeliverFileFn,
+    gaiaApiUrl: string | undefined,
   ) {
     this.logger = createBotLogger(platform, "outbound-consumer");
+    this.envelopeSchema = outboundMessageEnvelopeSchemaFor(gaiaApiUrl);
   }
 
   async start(): Promise<void> {
@@ -247,7 +257,7 @@ export class OutboundConsumer {
       this.settle(channel, () => channel.nack(msg, false, false)); // unparseable → DLQ
       return null;
     }
-    const parsed = outboundMessageEnvelopeSchema.safeParse(raw);
+    const parsed = this.envelopeSchema.safeParse(raw);
     if (!parsed.success) {
       wideLog.warning("outbound_envelope_invalid", {
         issues: parsed.error.issues.length,

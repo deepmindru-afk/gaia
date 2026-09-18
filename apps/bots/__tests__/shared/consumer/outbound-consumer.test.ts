@@ -47,12 +47,14 @@ async function startAndCaptureHandler(
     id: string,
     attachment: OutboundAttachment,
   ) => Promise<void> = async () => undefined,
+  gaiaApiUrl = "https://api.gaia.test",
 ): Promise<Handler> {
   const consumer = new OutboundConsumer(
     platform,
     "amqp://test",
     deliver,
     deliverFile,
+    gaiaApiUrl,
   );
   await consumer.start();
   const calls = channel.consume.mock.calls;
@@ -251,6 +253,62 @@ describe("OutboundConsumer message handling", () => {
     );
     expect(deliver).not.toHaveBeenCalled(); // file path, never the text sender
     expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
+
+  it("delivers a plain-http photo served by the configured GAIA API", async () => {
+    // Dev and self-hosted setups serve step screenshots off the API's own host
+    // over http; dead-lettering those is how every browser step photo vanished.
+    const deliverFile = vi.fn().mockResolvedValue(undefined);
+    const handle = await startAndCaptureHandler(
+      "whatsapp",
+      vi.fn(),
+      deliverFile,
+      "http://localhost:8121",
+    );
+    const msg = msgFor({
+      id: "1",
+      platform: "whatsapp",
+      destination_id: "1555",
+      attachment: {
+        url: "http://localhost:8121/shots/c0de/1.png",
+        filename: "browser-step-1.png",
+        caption: "Step 1 \u00b7 open the site",
+      },
+      enqueued_at: "t",
+    });
+
+    await deliverMessage(handle, msg);
+
+    expect(deliverFile).toHaveBeenCalledWith(
+      "1555",
+      expect.objectContaining({
+        url: "http://localhost:8121/shots/c0de/1.png",
+        caption: "Step 1 \u00b7 open the site",
+      }),
+    );
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
+
+  it("dead-letters a plain-http photo from any other origin", async () => {
+    const deliverFile = vi.fn().mockResolvedValue(undefined);
+    const handle = await startAndCaptureHandler(
+      "whatsapp",
+      vi.fn(),
+      deliverFile,
+      "http://localhost:8121",
+    );
+    const msg = msgFor({
+      id: "1",
+      platform: "whatsapp",
+      destination_id: "1555",
+      attachment: { url: "http://evil.example/x.png", filename: "x.png" },
+      enqueued_at: "t",
+    });
+
+    await deliverMessage(handle, msg);
+
+    expect(deliverFile).not.toHaveBeenCalled();
+    expect(channel.nack).toHaveBeenCalledWith(msg, false, false);
   });
 
   it("dead-letters a failed file delivery WITHOUT requeue, even on first attempt", async () => {

@@ -7,11 +7,25 @@
  * rather than failing deep in the platform send path with an undefined field.
  *
  * The schema is the single source of truth; consumers derive the static type via
- * ``z.infer<typeof outboundMessageEnvelopeSchema>`` so runtime validation and the
- * static type cannot drift apart.
+ * ``z.infer`` so runtime validation and the static type cannot drift apart.
+ *
+ * It is built per consumer rather than as a constant because the attachment-URL
+ * rule depends on which API this bot is configured against — see
+ * {@link outboundAttachmentSchemaFor}.
  */
 
 import { z } from "zod";
+import { isOwnApiUrl } from "../utils/own-api";
+
+/**
+ * A third-party URL IS the authorization for the bytes, so it must never ride a
+ * cleartext hop. Our own API is not: the bot authenticates that fetch, so the
+ * URL carries no secret and plain http is fine for a dev or self-hosted setup
+ * that serves screenshots off the API itself. Mirrors ``_is_own_api`` in
+ * apps/api/app/schemas/outbound.py.
+ */
+const ATTACHMENT_URL_MESSAGE =
+  "url must be an https URL (cleartext would leak the signed asset)";
 
 /**
  * A file the bot should deliver. Bytes are NOT inlined — the bot fetches them
@@ -19,75 +33,87 @@ import { z } from "zod";
  * `conversation_id`/`path`, or directly from a CDN `url` (e.g. a signed
  * browser-automation step screenshot) — exactly one source is set.
  */
-export const outboundAttachmentSchema = z
-  .object({
-    conversation_id: z.string().min(1).nullish(),
-    /**
-     * Artifact path relative to the session's artifacts/ dir. Rejected at the
-     * queue boundary if absolute or containing a `..` segment, so a malformed
-     * envelope can't turn into arbitrary-file access in the artifact fetch.
-     */
-    path: z
-      .string()
-      .min(1)
-      .refine((p) => !p.startsWith("/") && !p.split("/").includes(".."), {
-        message: "path must be relative to artifacts/ (no leading '/' or '..')",
-      })
-      .nullish(),
-    /** CDN source; fetched directly, no GAIA auth involved. */
-    url: z
-      .string()
-      .refine((u) => u.startsWith("https://"), {
-        message:
-          "url must be an https URL (cleartext would leak the signed asset)",
-      })
-      .nullish(),
-    filename: z.string().min(1),
-    content_type: z.string().nullish(),
-    caption: z.string().nullish(),
-  })
-  .refine((a) => Boolean(a.url) !== Boolean(a.conversation_id && a.path), {
-    message:
-      "attachment requires exactly one of `url` or (`conversation_id` + `path`)",
-  });
+export function outboundAttachmentSchemaFor(ownApiOrigin: string | undefined) {
+  return z
+    .object({
+      conversation_id: z.string().min(1).nullish(),
+      /**
+       * Artifact path relative to the session's artifacts/ dir. Rejected at the
+       * queue boundary if absolute or containing a `..` segment, so a malformed
+       * envelope can't turn into arbitrary-file access in the artifact fetch.
+       */
+      path: z
+        .string()
+        .min(1)
+        .refine((p) => !p.startsWith("/") && !p.split("/").includes(".."), {
+          message:
+            "path must be relative to artifacts/ (no leading '/' or '..')",
+        })
+        .nullish(),
+      /** CDN source, or this API serving the bytes itself. */
+      url: z
+        .string()
+        .refine(
+          (u) => u.startsWith("https://") || isOwnApiUrl(ownApiOrigin, u),
+          { message: ATTACHMENT_URL_MESSAGE },
+        )
+        .nullish(),
+      filename: z.string().min(1),
+      content_type: z.string().nullish(),
+      caption: z.string().nullish(),
+    })
+    .refine((a) => Boolean(a.url) !== Boolean(a.conversation_id && a.path), {
+      message:
+        "attachment requires exactly one of `url` or (`conversation_id` + `path`)",
+    });
+}
 
-export const outboundMessageEnvelopeSchema = z
-  .object({
-    /** Unique id (idempotency + tracing). */
-    id: z.string().min(1),
-    /** Target platform — informational; each queue is already platform-specific. */
-    platform: z.string().min(1),
-    /**
-     * Platform-native destination id. A user DM target (wa_id, Discord/Telegram/
-     * Slack user id) by default; a channel/group id when `is_channel` is true.
-     */
-    destination_id: z.string().min(1),
-    /**
-     * When true, `destination_id` is a channel/group id and the bot must send to
-     * the channel rather than opening the user's DM. Defaults false (DM).
-     */
-    is_channel: z.boolean().default(false),
-    /** Raw CommonMark message body. Optional when an attachment is present. */
-    text: z.string().min(1).nullish(),
-    /**
-     * Ordered CommonMark bubbles delivered as ONE message. The consumer sends
-     * them sequentially so their order is preserved — used for multi-bubble
-     * notifications (e.g. a workflow completion: header, results, footer) that
-     * would otherwise race each other if published as separate envelopes.
-     */
-    text_parts: z.array(z.string()).nullish(),
-    /** A file to deliver (PDF/docx/etc.) — optional. */
-    attachment: outboundAttachmentSchema.nullish(),
-    /** ISO-8601 enqueue timestamp. */
-    enqueued_at: z.string(),
-  })
-  .refine(
-    (e) =>
-      Boolean(e.text) || Boolean(e.text_parts?.length) || Boolean(e.attachment),
-    { message: "envelope requires text, text_parts, or attachment" },
-  );
+/** Shape of a bot-facing message on the delivery bus, bound to this bot's API origin. */
+export function outboundMessageEnvelopeSchemaFor(
+  ownApiOrigin: string | undefined,
+) {
+  return z
+    .object({
+      /** Unique id (idempotency + tracing). */
+      id: z.string().min(1),
+      /** Target platform — informational; each queue is already platform-specific. */
+      platform: z.string().min(1),
+      /**
+       * Platform-native destination id. A user DM target (wa_id, Discord/Telegram/
+       * Slack user id) by default; a channel/group id when `is_channel` is true.
+       */
+      destination_id: z.string().min(1),
+      /**
+       * When true, `destination_id` is a channel/group id and the bot must send to
+       * the channel rather than opening the user's DM. Defaults false (DM).
+       */
+      is_channel: z.boolean().default(false),
+      /** Raw CommonMark message body. Optional when an attachment is present. */
+      text: z.string().min(1).nullish(),
+      /**
+       * Ordered CommonMark bubbles delivered as ONE message. The consumer sends
+       * them sequentially so their order is preserved — used for multi-bubble
+       * notifications (e.g. a workflow completion: header, results, footer) that
+       * would otherwise race each other if published as separate envelopes.
+       */
+      text_parts: z.array(z.string()).nullish(),
+      /** A file to deliver (PDF/docx/etc.) — optional. */
+      attachment: outboundAttachmentSchemaFor(ownApiOrigin).nullish(),
+      /** ISO-8601 enqueue timestamp. */
+      enqueued_at: z.string(),
+    })
+    .refine(
+      (e) =>
+        Boolean(e.text) ||
+        Boolean(e.text_parts?.length) ||
+        Boolean(e.attachment),
+      { message: "envelope requires text, text_parts, or attachment" },
+    );
+}
 
-export type OutboundAttachment = z.infer<typeof outboundAttachmentSchema>;
+export type OutboundAttachment = z.infer<
+  ReturnType<typeof outboundAttachmentSchemaFor>
+>;
 export type OutboundMessageEnvelope = z.infer<
-  typeof outboundMessageEnvelopeSchema
+  ReturnType<typeof outboundMessageEnvelopeSchemaFor>
 >;

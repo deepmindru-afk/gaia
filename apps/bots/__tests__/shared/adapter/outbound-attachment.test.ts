@@ -134,6 +134,20 @@ describe("fetchOutboundArtifact URL routing", () => {
     expect(axiosGet).toHaveBeenCalledTimes(1);
   });
 
+  it("fetches a plain-http screenshot on a dev/self-hosted API through the authenticated client", async () => {
+    // The guard is https-only, so a loopback API's own screenshot has to take
+    // the authenticated path or it cannot be downloaded at all.
+    const adapter = setup("http://localhost:8121/api/v1");
+
+    const artifact = await adapter.fetch(
+      attachment("http://localhost:8121/shots/c0de/1.png"),
+    );
+
+    expect(publicFetch).not.toHaveBeenCalled();
+    expect(axiosGet).toHaveBeenCalledTimes(1);
+    expect(artifact?.data.toString()).toBe(PNG.toString());
+  });
+
   it("keeps the SSRF-guarded public fetch for another origin", async () => {
     const adapter = setup();
     const url = "https://cdn.example.com/browser_steps/s/1.png";

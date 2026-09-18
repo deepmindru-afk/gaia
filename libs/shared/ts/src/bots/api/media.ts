@@ -23,7 +23,7 @@ const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
  * with the shared transport cap applied.
  *
  * `url` is a path on the API, or an absolute URL already proven to be on it by
- * {@link isOwnApiUrl} — axios skips `baseURL` for an absolute URL, so a base
+ * `isOwnApiUrl` — axios skips `baseURL` for an absolute URL, so a base
  * carrying a path prefix cannot corrupt the target.
  */
 export async function downloadApiBinaryRequest(
@@ -116,23 +116,6 @@ export async function downloadArtifactRequest(
     headers,
     `/api/v1/sessions/${encodeURIComponent(conversationId)}/artifacts/${encodedPath}`,
   );
-}
-
-/**
- * True when `url` is served by the GAIA API `baseUrl` points at.
- *
- * Origin equality, never a path or substring test: `https://evil.com/<our
- * host>/…` and `https://<our host>.evil.com/…` both carry our host and neither
- * is ours. `URL.origin` normalises case, a default port and a trailing slash.
- */
-export function isOwnApiUrl(baseUrl: string | undefined, url: string): boolean {
-  if (!baseUrl) return false;
-  try {
-    const origin = new URL(url).origin;
-    return origin !== "null" && origin === new URL(baseUrl).origin;
-  } catch {
-    return false;
-  }
 }
 
 /**

@@ -238,6 +238,7 @@ export abstract class BaseBotAdapter {
       url,
       (id, text, isChannel) => this.deliverOutbound(id, text, isChannel),
       (id, attachment) => this.deliverOutboundFile(id, attachment),
+      this.config.gaiaApiUrl,
     );
     void this._outboundConsumer.start();
   }
