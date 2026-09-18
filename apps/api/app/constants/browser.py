@@ -85,7 +85,7 @@ class SensitiveCategory(str, Enum):
 # reused so the next task skips the login. Kept truthful — this is exactly what
 # storage_persistence.py does, and the Browser settings list/remove saved sites.
 BROWSER_CREDENTIALS_SAVED_NOTE = (
-    "Once you're signed in, I'll save this site's session — encrypted — so I can "
+    "Once you're signed in, I'll save this site's session, encrypted, so I can "
     "skip the login next time. You can remove saved sites anytime in "
     "your Browser settings."
 )
@@ -194,7 +194,7 @@ BROWSER_TAKEOVER_PREAMBLE = (
     # nothing else, the agent typed a phone number it made up and a country it
     # made up, and reported the form as correctly filled. On a form that submits,
     # that is fabricated data sent under the user's name.
-    "NEVER invent a value for a field the task did not give you — no made-up phone "
+    "NEVER invent a value for a field the task did not give you. No made-up phone "
     "numbers, addresses, dates, amounts, countries or company details, and no "
     "plausible-looking placeholder. If a field you cannot leave empty has no value "
     "in the task, call `request_human_takeover` and say which field is missing. "
@@ -276,8 +276,6 @@ JEV_ULTRAFAST_VIEWPORT_HEIGHT = 780
 # How long a navigation may take to reach readyState "complete", and the poll gap.
 JEV_ULTRAFAST_NAVIGATION_TIMEOUT_SECONDS = 15.0
 JEV_ULTRAFAST_POLL_SECONDS = 0.02
-# An observation that lands mid-navigation is retried this many times.
-JEV_ULTRAFAST_OBSERVE_ATTEMPTS = 10
 # An explicit WAIT action sleeps this long; nothing else fast-forwards loading.
 JEV_ULTRAFAST_WAIT_SECONDS = 0.1
 # Every CDP round-trip is bounded so a wedged renderer fails one call, not the run.

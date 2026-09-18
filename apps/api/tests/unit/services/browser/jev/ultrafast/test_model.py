@@ -13,6 +13,7 @@ from app.services.browser.jev.gateway import JevChoiceAnswer
 from app.services.browser.jev.prompts import (
     CAPTCHA_CHALLENGE,
     HUMAN_RULES,
+    NAVIGATE_RULE,
     NEXT_ACTION,
     REQUEST_HUMAN_CRITERION,
     SOLVE_CAPTCHA_CRITERION,
@@ -118,7 +119,7 @@ def test_one_request_carries_the_operation_head_and_a_head_per_element_operation
     request, operations, targets, controls = build_request(page, "Find a book", history)
 
     assert set(request.questions) == {"operation", "click_target", "type_text_target"}
-    assert set(operations) == {"CLICK", "TYPE_TEXT", "WAIT", "DONE", "BLOCKED"}
+    assert set(operations) == {"CLICK", "TYPE_TEXT", "WAIT", "NAVIGATE", "DONE", "BLOCKED"}
     assert operations["WAIT"] == "Wait for the page to update"
     assert set(controls) == {"WAIT"}
     assert set(targets) == {"CLICK", "TYPE_TEXT"}
@@ -145,7 +146,7 @@ def test_a_target_head_states_the_operation_it_assumes_and_the_full_next_step_ru
 
     operation = request.questions["operation"]
     target = request.questions["click_target"]
-    assert operation.instructions == {"goal": "Find a book", "rules": NEXT_ACTION}
+    assert operation.instructions == {"goal": "Find a book", "rules": [NEXT_ACTION, NAVIGATE_RULE]}
     assert target.instructions == {
         "goal": "Find a book",
         "operation": "CLICK",
@@ -313,7 +314,7 @@ def test_no_handler_means_neither_human_operation_is_offered(page) -> None:
     assert "REQUEST_HUMAN" not in operations
     assert "SOLVE_CAPTCHA" not in operations
     assert set(request.questions["operation"].criteria) == set(operations)
-    assert request.questions["operation"].instructions["rules"] == NEXT_ACTION
+    assert request.questions["operation"].instructions["rules"] == [NEXT_ACTION, NAVIGATE_RULE]
 
 
 @pytest.mark.parametrize(
@@ -343,7 +344,11 @@ def test_the_human_operations_are_controls_with_no_target_head(page) -> None:
 def test_the_human_rules_ride_in_the_same_instruction_block(page) -> None:
     request, _, _, _ = build_request(page, "Sign in", [], _HANDOFFS)
 
-    assert request.questions["operation"].instructions["rules"] == [NEXT_ACTION, HUMAN_RULES]
+    assert request.questions["operation"].instructions["rules"] == [
+        NEXT_ACTION,
+        NAVIGATE_RULE,
+        HUMAN_RULES,
+    ]
 
 
 @pytest.mark.asyncio
@@ -482,3 +487,54 @@ async def test_the_captcha_challenge_uses_its_own_prompt_and_the_same_validation
 
     assert challenge == "Solve the CAPTCHA"
     assert calls.bodies[0]["messages"][0]["content"] == CAPTCHA_CHALLENGE
+
+
+def test_a_page_with_nothing_to_act_on_can_still_be_left(page) -> None:
+    """A run starts on a blank page, so without NAVIGATE its only honest answer is BLOCKED."""
+    blank = {**page, "url": "about:blank", "text": "", "actions": []}
+
+    _, operations, targets, _ = build_request(blank, "Open Wikipedia", [])
+
+    assert JevOperation.NAVIGATE.value in operations
+    assert not targets
+
+
+def test_navigate_is_a_control_so_it_never_asks_for_an_element(page) -> None:
+    request, operations, _, controls = build_request(page, "Open Wikipedia", [])
+
+    assert JevOperation.NAVIGATE.value in operations
+    assert JevOperation.NAVIGATE.value not in controls
+    assert "navigate_target" not in request.questions
+
+
+@pytest.mark.asyncio
+async def test_one_off_contract_answer_is_retried_rather_than_ending_the_run() -> None:
+    """The helper is a nondeterministic model: one malformed answer must not be the
+    reason a whole browser task stops."""
+    answers = iter([completion("sorry, I cannot"), completion('{"text":"dune"}')])
+    helper, calls = make_text_helper(lambda _body: next(answers))
+
+    value, _ = await helper.field_text({"goal": "Find a book"})
+
+    assert value == "dune"
+    assert len(calls.bodies) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_helper_that_never_answers_in_contract_still_fails_loud() -> None:
+    helper, calls = make_text_helper(lambda _body: completion("sorry, I cannot"))
+
+    with pytest.raises(JevTextHelperError, match="nothing typed"):
+        await helper.field_text({"goal": "Find a book"})
+
+    assert len(calls.bodies) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_refused_value_says_the_task_never_gave_one() -> None:
+    """The prompt asks for null when the goal names no value, and the user reads this
+    message — "no valid field value" would blame the model for the task's gap."""
+    helper, _ = make_text_helper(lambda _body: completion('{"text":null}'))
+
+    with pytest.raises(JevTextHelperError, match="does not say what this field needs"):
+        await helper.field_text({"goal": "Fill in the form"})

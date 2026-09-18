@@ -43,6 +43,7 @@ class BotProgressDelivery:
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._stream_screenshots = stream_screenshots
+        self._links: dict[str, str] = {}
 
     async def session(self, snapshot: BrowserSessionSnapshot) -> None:
         # Surface the live-view link up front so the user can watch the run as it
@@ -51,8 +52,14 @@ class BotProgressDelivery:
         """Emit a session lifecycle event to the conversation."""
         if not snapshot.session_id:
             return
-        link = await create_live_view_link(snapshot.session_id, self._user_id)
-        await self._text(f"On it — watch along live here:\n{link}")
+        await self._text(f"On it. Watch along live here:\n{await self._link(snapshot.session_id)}")
+
+    async def _link(self, session_id: str) -> str:
+        """One live-view link per session: every mint is a different code for the same
+        browser, and a second link reads as a second browser."""
+        if session_id not in self._links:
+            self._links[session_id] = await create_live_view_link(session_id, self._user_id)
+        return self._links[session_id]
 
     async def step(self, snapshot: BrowserStepSnapshot) -> None:
         # Skip the pre-navigation blank tab: its screenshot is an empty white page
@@ -98,8 +105,7 @@ class BotProgressDelivery:
         if snapshot.category == SensitiveCategory.CREDENTIALS:
             msg += f"\n\n{BROWSER_CREDENTIALS_SAVED_NOTE}"
         if snapshot.session_id:
-            link = await create_live_view_link(snapshot.session_id, self._user_id)
-            msg += f"\n\nOpen the live browser: {link}"
+            msg += f"\n\nOpen the live browser: {await self._link(snapshot.session_id)}"
         await self._text(msg)
 
     async def result(self, snapshot: BrowserResultSnapshot) -> None:

@@ -9,7 +9,12 @@ import pytest
 
 from app.constants.browser import SensitiveCategory
 from app.services.browser.exceptions import BrowserHandoffCancelled
-from app.services.browser.jev.prompts import CAPTCHA_CHALLENGE, TAKEOVER_REASON
+from app.services.browser.jev.prompts import (
+    CAPTCHA_CHALLENGE,
+    DONE_SUMMARY,
+    TAKEOVER_REASON,
+    URL_VALUE,
+)
 from app.services.browser.jev.ultrafast.agent import JevRunStopped, JevUltrafastAgent
 from app.services.browser.jev.ultrafast.browser import StalePage
 from app.services.browser.jev.ultrafast.model import JevTextHelperError, JevUltrafastDecision
@@ -502,3 +507,68 @@ async def test_an_unusable_takeover_reason_asks_nobody(page) -> None:
     assert takeover.calls == []
     assert agent.history == []
     assert browser.observations == 0
+
+
+@pytest.mark.asyncio
+async def test_navigating_asks_the_helper_where_and_records_the_step(page) -> None:
+    """Jev decides *that* the run leaves the page; the text model writes *where*."""
+    agent, browser, _, text_calls = make_agent(page, text='{"text":"https://en.wikipedia.org/"}')
+    agent.decision = decide(choice="NAVIGATE", operation="NAVIGATE")
+
+    await agent.act(page["fingerprint"])
+
+    assert browser.navigated == ["https://en.wikipedia.org/"]
+    assert text_calls.bodies[0]["messages"][0]["content"] == URL_VALUE
+    assert agent.history[-1]["kind"] == "navigate"
+    assert agent.history[-1]["text"] == "https://en.wikipedia.org/"
+    assert agent.status == "ready"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ['{"text":"wikipedia.org"}', '{"text":"javascript:alert(1)"}'])
+async def test_a_url_that_is_not_a_web_address_navigates_nowhere(page, content: str) -> None:
+    agent, browser, _, _ = make_agent(page, text=content)
+    agent.decision = decide(choice="NAVIGATE", operation="NAVIGATE")
+
+    with pytest.raises(JevTextHelperError):
+        await agent.act(page["fingerprint"])
+
+    assert browser.navigated == []
+    assert agent.history == []
+
+
+@pytest.mark.asyncio
+async def test_finishing_asks_the_helper_what_to_tell_the_user(page) -> None:
+    """A task is usually a question, so the run has to come back with the answer."""
+    agent, _, _, text_calls = make_agent(page, text='{"text":"The top story is Bend 2, posted by liam."}')
+    agent.decision = decide(choice="DONE", operation="DONE")
+
+    await agent.act(page["fingerprint"])
+
+    assert agent.status == "done"
+    assert agent.result().summary == "The top story is Bend 2, posted by liam."
+    assert text_calls.bodies[0]["messages"][0]["content"] == DONE_SUMMARY
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_run_asks_for_no_summary(page) -> None:
+    agent, _, _, text_calls = make_agent(page)
+    agent.decision = decide(choice="BLOCKED", operation="BLOCKED")
+
+    await agent.act(page["fingerprint"])
+
+    assert agent.status == "blocked"
+    assert agent.result().summary is None
+    assert not text_calls.bodies
+
+
+@pytest.mark.asyncio
+async def test_a_summary_the_helper_cannot_write_still_leaves_the_run_done(page) -> None:
+    """The work really happened; losing one sentence must not turn it into a failure."""
+    agent, _, _, _ = make_agent(page, text="not json at all")
+    agent.decision = decide(choice="DONE", operation="DONE")
+
+    await agent.act(page["fingerprint"])
+
+    assert agent.status == "done"
+    assert agent.result().summary is None

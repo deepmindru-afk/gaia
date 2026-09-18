@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
+from urllib.parse import urlparse
 
 from app.constants.browser import (
     JEV_ULTRAFAST_MAX_STEPS,
@@ -21,13 +22,15 @@ from app.constants.browser import (
     JevOperation,
     SensitiveCategory,
 )
+from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserAutomationError, BrowserHandoffCancelled
 from app.services.browser.jev.gateway import JevGatewayClient
-from app.services.browser.jev.prompts import CAPTCHA_CHALLENGE
+from app.services.browser.jev.prompts import CAPTCHA_CHALLENGE, DONE_SUMMARY, URL_VALUE
 from app.services.browser.jev.ultrafast.browser import StalePage, UltrafastBrowser
 from app.services.browser.jev.ultrafast.model import (
     Action,
     JevTextHelper,
+    JevTextHelperError,
     JevUltrafastDecision,
     PageState,
     TextHelperCall,
@@ -35,6 +38,7 @@ from app.services.browser.jev.ultrafast.model import (
     choose,
     field_context,
 )
+from shared.py.wide_events import log
 
 _TERMINAL = {"done", "blocked"}
 _FINAL_CHOICES = {"DONE", "BLOCKED"}
@@ -42,6 +46,14 @@ _FINAL_CHOICES = {"DONE", "BLOCKED"}
 # in recent_actions (and so does not ask for the same human twice), the no-progress
 # stop still counts it, and the action budget — which bounds mutations — does not.
 _HANDOFF_KIND = "handoff"
+
+# A navigation executes no element input, so it carries its own history kind: the
+# caption it produces names the site, not a target (see lanes/ultrafast.py).
+_NAVIGATE_KIND = "navigate"
+
+# What the text helper is allowed to hand Page.navigate. A javascript: or data:
+# URL would run in the page instead of loading one.
+_WEB_SCHEMES = frozenset({"http", "https"})
 
 # ``(reason, category)`` in, the completed handoff out. The handler owns the live
 # view, the message to the user, keeping the session alive and the wait; it raises
@@ -64,6 +76,8 @@ class JevRunResult:
     history: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
     text_calls: list[dict[str, Any]] = field(default_factory=list)
+    #: What to tell the user, written from the final page when the run finished.
+    summary: str | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -117,6 +131,7 @@ class JevUltrafastAgent:
         self.elapsed_ms = 0
         self.started_at: float | None = None
         self.pending_text: _PendingText | None = None
+        self.summary: str | None = None
 
     @classmethod
     async def start(
@@ -211,10 +226,13 @@ class JevUltrafastAgent:
         if selected in self.handoffs:
             await self._hand_off(JevOperation(selected), decision, page)
             return
-        action = next(a for a in page["actions"] if a["id"] == selected)
         if self._executed() >= JEV_ULTRAFAST_MAX_STEPS:
             self.status = "blocked"
             raise JevRunStopped(f"Stopped at the {JEV_ULTRAFAST_MAX_STEPS}-action budget")
+        if selected == JevOperation.NAVIGATE.value:
+            await self._navigate(decision, page)
+            return
+        action = next(a for a in page["actions"] if a["id"] == selected)
         text, helper = await self._text_for(action, page)
         # UltrafastBrowser.act rechecks freshness immediately before input,
         # including after text generation.
@@ -224,6 +242,29 @@ class JevUltrafastAgent:
         # Record execution before observing. A stale post-action observation
         # must not erase the action that already happened.
         self.history.append(self._entry(action, decision, text, helper, page))
+        await self._settle(page)
+
+    async def _navigate(self, decision: JevUltrafastDecision, page: PageState) -> None:
+        """Jev decided the run has to leave this page; the text helper writes where to."""
+        if not await self.browser.fresh(page):
+            raise StalePage("Page changed before the URL was written. Choose again.")
+        context = field_context(self.goal, None, page, self.history)
+        url, helper = await self.text_helper.field_text(context, instructions=URL_VALUE)
+        if urlparse(url).scheme not in _WEB_SCHEMES or not urlparse(url).hostname:
+            raise JevTextHelperError(f"{url!r} is not a web address; nothing typed.")
+        self.text_calls.append(
+            {
+                "model": helper.model,
+                "latency_ms": helper.latency_ms,
+                "usage": helper.usage,
+                "field": JevOperation.NAVIGATE.value,
+                "value": url,
+            }
+        )
+        await self.browser.navigate(url)
+        self._mark_elapsed()
+        action: Action = {"id": "navigate", "kind": _NAVIGATE_KIND, "label": f"Open {url}"}
+        self.history.append(self._entry(action, decision, url, helper, page))
         await self._settle(page)
 
     async def _hand_off(
@@ -302,6 +343,7 @@ class JevUltrafastAgent:
             history=self.history,
             decisions=self.decisions,
             text_calls=self.text_calls,
+            summary=self.summary,
         )
 
     async def close(self) -> None:
@@ -313,6 +355,33 @@ class JevUltrafastAgent:
             raise StalePage("Page changed since the decision. Choose again.")
         self.status = "done" if selected == "DONE" else "blocked"
         self._mark_elapsed()
+        if self.status == "done":
+            await self._write_summary(page)
+
+    async def _write_summary(self, page: PageState) -> None:
+        """What the run found, read off the page it finished on. A task is usually a
+        question, and Jev answers with an operation, not a sentence."""
+        context = field_context(self.goal, None, page, self.history)
+        try:
+            summary, helper = await self.text_helper.field_text(context, instructions=DONE_SUMMARY)
+        except JevTextHelperError as exc:
+            # The work really happened. Losing the closing sentence is worth a
+            # warning, never worth reporting a finished task as failed.
+            log.warning(
+                f"{LogTag.BROWSER} Jev run finished without a summary",
+                error_type=type(exc).__name__,
+            )
+            return
+        self.summary = summary
+        self.text_calls.append(
+            {
+                "model": helper.model,
+                "latency_ms": helper.latency_ms,
+                "usage": helper.usage,
+                "field": "DONE",
+                "value": summary,
+            }
+        )
 
     async def _text_for(
         self, action: Action, page: PageState

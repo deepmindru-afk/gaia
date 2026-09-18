@@ -174,7 +174,8 @@ async def test_every_executed_step_becomes_a_frame_naming_what_jev_did(wire) -> 
     outcome = await _lane(hooks).execute("Find a book")
 
     assert outcome.success is True
-    assert outcome.summary == "Completed the browser task."
+    # The canned helper answers every call with the same word, closing summary included.
+    assert outcome.summary == "dune"
     assert [(f.index, f.goal) for f in frames] == [
         (1, 'Typing "dune" into "Search"'),
         (2, 'Clicking "Go"'),
@@ -184,6 +185,22 @@ async def test_every_executed_step_becomes_a_frame_naming_what_jev_did(wire) -> 
     assert [(a.name, a.inputs, a.target) for f in frames for a in f.actions] == [
         ("input", {"text": "dune"}, "Search"),
         ("click", {}, "Go"),
+    ]
+
+
+async def test_a_navigation_frame_names_the_site_it_opened(wire) -> None:
+    """A task names its site in prose, so the first step is usually the navigation."""
+    _, browser, install = wire
+    install(decisions("NAVIGATE", "DONE"), text("https://en.wikipedia.org/"))
+    frames, hooks = _hooks()
+
+    outcome = await _lane(hooks).execute("Look up Ada Lovelace on Wikipedia")
+
+    assert outcome.success is True
+    assert browser.navigated == ["https://en.wikipedia.org/"]
+    assert [(f.index, f.goal) for f in frames] == [(1, "Opening en.wikipedia.org")]
+    assert [(a.name, a.inputs, a.target) for f in frames for a in f.actions] == [
+        ("navigate", {"url": "https://en.wikipedia.org/"}, None)
     ]
 
 
@@ -354,7 +371,7 @@ async def test_a_cancelled_run_reports_cancelled_not_failed(wire) -> None:
 
 async def test_both_models_are_billed_under_their_real_names(wire) -> None:
     """Jev is billed per decision — including the terminal one that executes
-    nothing — and the text helper per generated value."""
+    nothing — and the text helper per generated value, the closing summary included."""
     _, _, install = wire
     install(
         decisions("TYPE_TEXT", "DONE", usage={"inputTokens": 100, "outputTokens": 5}),
@@ -365,7 +382,9 @@ async def test_both_models_are_billed_under_their_real_names(wire) -> None:
     outcome = await _lane(hooks).execute("Find a book")
 
     billed = {u.model_name: (u.input_tokens, u.output_tokens) for u in outcome.usage}
-    assert billed == {JEV_MODEL: (200, 10), TEXT_MODEL: (40, 3)}
+    # Two Jev decisions, and two helper calls: the typed value and the answer
+    # written when Jev chose DONE.
+    assert billed == {JEV_MODEL: (200, 10), TEXT_MODEL: (80, 6)}
 
 
 async def test_the_runner_charges_every_model_the_lane_used(wire, monkeypatch) -> None:
@@ -410,3 +429,16 @@ async def test_the_lane_refuses_to_run_without_its_credential(monkeypatch) -> No
 
     with pytest.raises(BrowserUnavailableError, match="OPENROUTER_API_KEY"):
         await _lane(hooks).execute("Find a book")
+
+
+async def test_the_runs_answer_is_what_the_lane_reports_back(wire) -> None:
+    """The assistant only sees the outcome, so a fixed "Completed the browser task."
+    would throw away the answer the user actually asked for."""
+    _, _, install = wire
+    install(decisions("CLICK", "DONE"), text("The top story is Bend 2, posted by liam."))
+    _, hooks = _hooks()
+
+    outcome = await _lane(hooks).execute("What is the top story and who posted it?")
+
+    assert outcome.success is True
+    assert outcome.summary == "The top story is Bend 2, posted by liam."

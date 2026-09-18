@@ -15,12 +15,13 @@ OpenRouter's OpenAI-compatible chat completions with the same key.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Collection
+from collections.abc import Callable, Collection
+import contextlib
 from dataclasses import dataclass, field
 import json
 import math
 from time import perf_counter
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 
@@ -34,6 +35,7 @@ from app.constants.browser import (
     JevOperation,
     SensitiveCategory,
 )
+from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserAutomationError
 from app.services.browser.jev.gateway import (
     JevChoiceAnswer,
@@ -45,6 +47,7 @@ from app.services.browser.jev.gateway import (
 )
 from app.services.browser.jev.prompts import (
     HUMAN_RULES,
+    NAVIGATE_RULE,
     NEXT_ACTION,
     REQUEST_HUMAN_CRITERION,
     SOLVE_CAPTCHA_CRITERION,
@@ -52,6 +55,7 @@ from app.services.browser.jev.prompts import (
     TARGET,
     TEXT_VALUE,
 )
+from shared.py.wide_events import log
 
 # One row of snapshot.js's action table, or one page state it returns. The shape
 # is owned by the browser-side snapshot (see snapshot.js) and is deliberately
@@ -72,6 +76,12 @@ _OPERATION_LABELS = {
     "SELECT": "Select an observed dropdown value.",
 }
 
+# The reference is always handed a start_url, so its action space is whatever the
+# snapshot sees. A GAIA task names its site in prose instead, so the run has to be
+# able to leave about:blank: NAVIGATE is a control with no target head, and the
+# text helper writes the URL the same way it writes a typed value.
+_NAVIGATE_LABEL = "Open a different URL that the goal names or implies."
+
 # The two operations GAIA adds on top of the reference's action space: controls
 # with no target head, offered only when the caller supplied a handler for them.
 _HANDOFF_LABELS = {
@@ -85,6 +95,9 @@ _CRITERION_KEYS = ("role", "checked", "selected", "expanded")
 
 _RETRY_STATUSES = frozenset({429, 503, 529})
 _TEXT_MAX_ATTEMPTS = 3
+
+# What one parsed helper answer is: a typed value, or a value and its category.
+_T = TypeVar("_T")
 
 
 class JevUltrafastDecisionError(BrowserAutomationError):
@@ -197,10 +210,11 @@ def build_request(
     operations.update({key: value["label"] for key, value in controls.items()})
     operations.update({op.value: _HANDOFF_LABELS[op] for op in handoffs})
     operations.update(
+        NAVIGATE=_NAVIGATE_LABEL,
         DONE="Every requirement is visibly satisfied.",
         BLOCKED="No supported operation can progress.",
     )
-    rules: JsonInput = [NEXT_ACTION, HUMAN_RULES] if handoffs else NEXT_ACTION
+    rules: JsonInput = [NEXT_ACTION, NAVIGATE_RULE, *([HUMAN_RULES] if handoffs else [])]
     questions: dict[str, JevChoiceQuestion] = {
         "operation": JevChoiceQuestion(
             criteria=dict(operations), instructions={"goal": goal, "rules": rules}
@@ -317,16 +331,32 @@ class JevTextHelper:
         ``instructions`` swaps the prompt for the other single-``text`` answers
         this helper writes (a CAPTCHA challenge); the validation is the same.
         """
-        result, call = await self._complete(instructions, context)
-        return _parse_text_value(result), call
+        return await self._answer_in_contract(instructions, context, _parse_text_value)
 
     async def takeover_reason(
         self, context: dict[str, Any]
     ) -> tuple[str, SensitiveCategory, TextHelperCall]:
         """The directive shown to the user, and why the step needs them."""
-        result, call = await self._complete(TAKEOVER_REASON, context)
-        text, category = _parse_takeover_reason(result)
+        (text, category), call = await self._answer_in_contract(
+            TAKEOVER_REASON, context, _parse_takeover_reason
+        )
         return text, category, call
+
+    async def _answer_in_contract(
+        self,
+        instructions: str,
+        context: dict[str, Any],
+        parse: Callable[[dict[str, Any]], _T],
+    ) -> tuple[_T, TextHelperCall]:
+        """Ask until the answer parses. The helper is a nondeterministic model, so
+        one off-contract reply is a retry, not the reason a whole run stops; the
+        last attempt is the one allowed to raise."""
+        for _ in range(_TEXT_MAX_ATTEMPTS - 1):
+            result, call = await self._complete(instructions, context)
+            with contextlib.suppress(JevTextHelperError):
+                return parse(result), call
+        result, call = await self._complete(instructions, context)
+        return parse(result), call
 
     async def _complete(
         self, instructions: str, context: dict[str, Any]
@@ -404,11 +434,22 @@ def _answer(result: dict[str, Any], keys: set[str]) -> tuple[str, dict[str, Any]
         raise JevTextHelperError(
             "Text helper returned no valid field value; nothing typed."
         ) from None
+    if value is None:
+        # The prompts ask for null when the goal names no value, so this is the
+        # helper refusing rather than malfunctioning — say which it was.
+        raise JevTextHelperError("The task does not say what this field needs; nothing typed.")
     if (
         set(output) != keys
         or not isinstance(value, str)
         or not value.strip()
         or len(value) > JEV_TEXT_VALUE_MAX_CHARS
     ):
+        # The answer parsed but is unusable, and the shape of it is the only clue
+        # to why the run stopped — the message the user sees cannot carry it.
+        log.warning(
+            f"{LogTag.BROWSER} Jev text helper answer rejected",
+            error_type="JevTextHelperError",
+            browser={"answer_keys": sorted(map(str, output)), "answer_length": len(str(value))},
+        )
         raise JevTextHelperError("Text helper returned no valid field value; nothing typed.")
     return value, output

@@ -29,7 +29,6 @@ from cdp_use.client import CDPClient
 from app.constants.browser import (
     JEV_ULTRAFAST_CDP_TIMEOUT_SECONDS,
     JEV_ULTRAFAST_NAVIGATION_TIMEOUT_SECONDS,
-    JEV_ULTRAFAST_OBSERVE_ATTEMPTS,
     JEV_ULTRAFAST_POLL_SECONDS,
     JEV_ULTRAFAST_VIEWPORT_HEIGHT,
     JEV_ULTRAFAST_VIEWPORT_WIDTH,
@@ -196,14 +195,17 @@ class UltrafastBrowser:
                     awaitPromise=True,
                     returnByValue=True,
                 )
-        for attempt in range(JEV_ULTRAFAST_OBSERVE_ATTEMPTS):
+        # A click that starts a page load leaves the document unreadable until the
+        # load lands, so the wait here is the navigation's own budget, not a fixed
+        # handful of polls — a slow site was ending runs mid-navigation.
+        deadline = monotonic() + JEV_ULTRAFAST_NAVIGATION_TIMEOUT_SECONDS
+        while True:
             try:
                 return await self._snapshot(screenshot=screenshot)
             except StalePage:
-                if attempt == JEV_ULTRAFAST_OBSERVE_ATTEMPTS - 1:
+                if monotonic() >= deadline:
                     raise
                 await asyncio.sleep(JEV_ULTRAFAST_POLL_SECONDS)
-        raise StalePage("Page did not settle")
 
     async def fresh(self, page: PageState, action: Action | None = None) -> bool:
         """Scoped for a click/select — the document, the target and its context —

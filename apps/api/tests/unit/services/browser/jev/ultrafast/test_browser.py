@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+from app.constants.browser import JEV_ULTRAFAST_NAVIGATION_TIMEOUT_SECONDS
+from app.services.browser.jev.ultrafast import browser as browser_mod
 from app.services.browser.jev.ultrafast.browser import (
     JevExecutionError,
     JevUltrafastNodeError,
@@ -22,6 +24,16 @@ from app.services.browser.jev.ultrafast.browser import (
 from tests.unit.services.browser.jev.ultrafast.conftest import make_page
 
 pytestmark = pytest.mark.unit
+
+
+def _clock(step: float):
+    """A monotonic that jumps ``step`` seconds per read, so a deadline is reachable."""
+    ticks = iter(range(1000))
+
+    def now() -> float:
+        return next(ticks) * step
+
+    return now
 
 
 class FakeCDP:
@@ -94,14 +106,26 @@ async def test_no_screenshot_is_taken_unless_asked_for() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_navigating_document_is_retried_and_then_refused(monkeypatch) -> None:
+async def test_a_navigating_document_is_retried_until_the_navigation_budget(monkeypatch) -> None:
+    """A click that starts a page load leaves the document unreadable for as long as
+    the load takes, so a fixed handful of 20ms polls is not a budget, it is a coin flip."""
     monkeypatch.setattr(asyncio, "sleep", _no_sleep)
-    browser, cdp = make_browser(*[value(None)] * 10)
+    browser, cdp = make_browser(*[value(None)] * 40, value(deepcopy(make_page())))
+
+    observed = await browser.observe()
+
+    assert observed["url"] == make_page()["url"]
+    assert len(cdp.calls) == 41
+
+
+@pytest.mark.asyncio
+async def test_a_document_that_never_settles_is_refused_at_the_deadline(monkeypatch) -> None:
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(browser_mod, "monotonic", _clock(JEV_ULTRAFAST_NAVIGATION_TIMEOUT_SECONDS))
+    browser, _ = make_browser(*[value(None)] * 5)
 
     with pytest.raises(StalePage, match="navigating"):
         await browser.observe()
-
-    assert len(cdp.calls) == 10
 
 
 @pytest.mark.asyncio

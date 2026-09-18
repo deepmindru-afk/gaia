@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.constants.browser import HandoffStatus
+from app.constants.browser import HandoffStatus, SensitiveCategory
 from app.models.chat_models import ConversationSource
 from app.schemas.browser import (
     BrowserAction,
@@ -584,3 +584,36 @@ class TestBotProgressDeliveryResult:
                 "⚠️ The browser task didn't fully complete."
                 "\n\n📽 Here's a recap you can watch: https://cdn/replay"
             )
+
+
+class TestOneLinkPerRun:
+    async def test_the_handoff_reuses_the_link_the_run_already_sent(self, delivery):
+        """Two links to one browser leaves the user guessing which tab is the real one."""
+        codes = iter(["https://live.example.com/first", "https://live.example.com/second"])
+        with (
+            patch(
+                "app.services.browser.bot_delivery.create_live_view_link",
+                new=AsyncMock(side_effect=lambda *_: next(codes)),
+            ) as mock_link,
+            patch(
+                "app.services.browser.bot_delivery.publish_outbound_message",
+                new=AsyncMock(return_value="published"),
+            ) as mock_pub,
+        ):
+            await delivery.session(
+                BrowserSessionSnapshot(task="sign in", status="running", session_id="sess-1")
+            )
+            await delivery.handoff(
+                BrowserHandoffSnapshot(
+                    handoff_id="h1",
+                    status=HandoffStatus.PENDING,
+                    reason="Enter your password and sign in",
+                    category=SensitiveCategory.CREDENTIALS,
+                    session_id="sess-1",
+                )
+            )
+
+        assert mock_link.await_count == 1
+        sent = [call[0][2][0] for call in mock_pub.await_args_list]
+        assert all("https://live.example.com/first" in message for message in sent)
+        assert not any("second" in message for message in sent)

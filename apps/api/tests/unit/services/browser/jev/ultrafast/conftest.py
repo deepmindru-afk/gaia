@@ -88,6 +88,7 @@ class FakeBrowser:
     def __init__(self, page: PageState) -> None:
         self.page = page
         self.acted: list[tuple[str, str | None]] = []
+        self.navigated: list[str] = []
         self.observations = 0
         self.is_fresh = True
         self.fresh_error: Exception | None = None
@@ -108,6 +109,9 @@ class FakeBrowser:
             raise error
         self.acted.append((action["id"], text))
         return {"executed": action["id"]}
+
+    async def navigate(self, url: str) -> None:
+        self.navigated.append(url)
 
     async def observe(self, *, screenshot: bool = False) -> PageState:
         self.observations += 1

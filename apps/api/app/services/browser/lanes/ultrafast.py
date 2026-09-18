@@ -53,6 +53,10 @@ _ACTION_NAMES = {
     "scroll": "scroll",
     "wait": "wait",
 }
+# Jev's own navigation: the loop writes the url as the step's text (see the
+# ultrafast agent's _navigate), and captions.py reads it under "url".
+_NAVIGATE_KIND = "navigate"
+
 _HANDOFF_ACTION_NAMES = {
     JevOperation.REQUEST_HUMAN.value: "request_human_takeover",
     JevOperation.SOLVE_CAPTCHA.value: "solve_captcha_with_help",
@@ -127,7 +131,11 @@ class UltrafastLane:
         if self._stopped:
             return False, "Browser task stopped."
         success = agent.status == _DONE
-        return success, _SUCCESS_SUMMARY if success else _FAILURE_SUMMARY
+        if not success:
+            return False, _FAILURE_SUMMARY
+        # The task is usually a question; the loop's closing answer is what the
+        # assistant repeats back, and _SUCCESS_SUMMARY is only the fallback.
+        return True, agent.summary or _SUCCESS_SUMMARY
 
     def _emit_steps(self, agent: JevUltrafastAgent) -> None:
         """Every history entry the last tick appended, as a step frame each."""
@@ -154,6 +162,9 @@ def _action(entry: dict[str, object]) -> BrowserAction:
     kind = str(entry.get("kind", ""))
     text = entry.get("text")
     label = str(entry.get("action", "")) or None
+    if kind == _NAVIGATE_KIND:
+        # The caption names the host, so the url is the input the caption reads.
+        return BrowserAction(name=_NAVIGATE_KIND, inputs={"url": text}, target=None)
     if kind not in _ACTION_NAMES:
         # A handoff executes no browser input: its "target" is the person, and
         # the generated reason is what they were asked to do.
