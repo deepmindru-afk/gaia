@@ -269,7 +269,7 @@ class BrowserUseLane:
             "step_timeout": self._step_timeout,
             "tools": build_browser_tools(
                 solve_captcha=self._config.solve_captcha,
-                handle_takeover=self._hooks.takeover,
+                handle_takeover=self._takeover,
             ),
         }
         if isinstance(self._llm, JevChatModel):
@@ -290,6 +290,14 @@ class BrowserUseLane:
     def stop(self) -> None:
         if self._agent is not None:
             self._agent.stop()
+
+    async def _takeover(self, reason: str, category: str) -> str:
+        """Hand the browser to the user, then give the note they left to both readers:
+        Jev's own state, and the action result Browser-Use records for this step."""
+        note = await self._hooks.takeover(reason, category)
+        if isinstance(self._llm, JevChatModel):
+            self._llm.note_from_user(note)
+        return note or "The user finished that step in the live browser."
 
     async def _on_step(
         self, browser_state_summary: BrowserStateSummary, agent_output: AgentOutput, n_steps: int

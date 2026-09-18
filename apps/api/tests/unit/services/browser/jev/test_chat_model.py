@@ -28,6 +28,7 @@ from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev import chat_model as chat_model_mod
 from app.services.browser.jev.chat_model import JevChatModel, build_jev_chat_model
 from app.services.browser.jev.gateway import JevChoiceAnswer, JevEvaluation, JevUsage
+from app.services.browser.jev.observation import observe
 from app.services.browser.jev.prompts import (
     CAPTCHA_CHALLENGE,
     DONE_SUMMARY,
@@ -436,6 +437,7 @@ async def test_history_carries_page_changed_and_typed_text_into_the_next_request
             "kind": "type_text",
             "text": "London",
             "page_changed": True,
+            "note": None,
         }
     ]
     assert gateway.requests[2].state["recent_actions"][1] == {
@@ -443,6 +445,7 @@ async def test_history_carries_page_changed_and_typed_text_into_the_next_request
         "kind": "click",
         "text": None,
         "page_changed": False,
+        "note": None,
     }
 
 
@@ -607,3 +610,45 @@ async def test_typed_text_shows_up_as_the_fields_live_value_on_the_next_step(fli
 
     elements = {e["label"]: e for e in gateway.requests[0].state["elements"]}
     assert elements["Where to?"]["value"] == "London"
+
+
+async def test_the_users_takeover_note_is_in_jevs_next_state(flights_state) -> None:
+    model, gateway, helper, _ = _model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("TYPE_TEXT", "2")],
+        [
+            {"text": "Enter your password and sign in", "category": "credentials"},
+            {"text": "London"},
+        ],
+    )
+    await model.ainvoke([], _agent_output())
+
+    model.note_from_user("skip the login, just grab the photo")
+    await model.ainvoke([], _agent_output())
+
+    assert (
+        gateway.requests[1].state["recent_actions"][-1]["note"]
+        == "skip the login, just grab the photo"
+    )
+    assert helper.system_prompt(1) == TEXT_VALUE
+    assert helper.context(1)["user_note"] == "skip the login, just grab the photo"
+
+
+async def test_a_note_survives_the_page_change_settle(flights_state) -> None:
+    model, _, _, _ = _model(
+        flights_state, [("REQUEST_HUMAN", None)], [{"text": "Log in", "category": "credentials"}]
+    )
+    await model.ainvoke([], _agent_output())
+    model.note_from_user("skip the login, just grab the photo")
+
+    model._settle_previous_step(observe(flights_state))
+
+    assert model._history[-1].note == "skip the login, just grab the photo"
+    assert model._history[-1].page_changed is False
+
+
+async def test_a_note_with_no_step_to_carry_it_is_a_wiring_error(flights_state) -> None:
+    model, _, _, _ = _model(flights_state, [])
+
+    with pytest.raises(RuntimeError, match="No step to attach a note to"):
+        model.note_from_user("skip the login, just grab the photo")

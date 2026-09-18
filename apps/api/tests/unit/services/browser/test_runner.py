@@ -25,6 +25,8 @@ from app.constants.browser import (
 from app.constants.log_tags import LogTag
 from app.schemas.browser import BrowserAction, HandoffOutcome
 from app.services.browser import runner as runner_mod
+from app.services.browser.jev.chat_model import JevChatModel
+from app.services.browser.jev.policy import JevHistoryEntry
 from app.services.browser.lanes import (
     ActionResultsFn,
     BrowserRunConfig,
@@ -211,28 +213,13 @@ def _collector():
     return events, emit
 
 
-# The exact verify-before-you-continue instruction the runner appends to every
-# completed takeover. Asserted verbatim so a reworded prompt has to be deliberate.
-TAKEOVER_VERIFY_TAIL = (
-    "Do NOT assume the page is in the state you expect. Look at the "
-    "CURRENT page now and VERIFY before doing anything else. A solved CAPTCHA "
-    "shows a green checkmark and no 'please verify that you are not a robot' error "
-    "remains; a login lands on the signed-in page. If the step is NOT actually "
-    "complete, call the takeover / solve_captcha_with_help action again instead of "
-    "proceeding. Only continue toward the goal once you have confirmed the page state "
-    "yourself, and never report success you cannot see on the page."
-)
-TAKEOVER_DEFAULT_PREFACE = "The user says they finished that step in the live browser. "
-
-
 async def test_takeover_completed_lets_agent_continue():
     _, emit = _collector()
     runner = _make_runner(
         emit=emit,
         request_handoff=AsyncMock(return_value=HandoffOutcome(status=HandoffStatus.COMPLETED)),
     )
-    out = await runner._handle_takeover("Enter your card", "payment")
-    assert "verify" in out.lower() or "continue" in out.lower()
+    await runner._handle_takeover("Enter your card", "payment")
     assert runner._handed_off is True
     assert runner._stopped is False
 
@@ -989,8 +976,52 @@ async def test_run_builds_the_tools_with_the_runner_takeover_and_captcha_policy(
     await runner.run("x")
 
     assert captured["solve_captcha"] is False
-    assert captured["handle_takeover"] == runner._handle_takeover
+    assert captured["handle_takeover"] == runner._lane._takeover
     assert FakeAgent.last_kwargs["tools"] == "tools-sentinel"
+
+
+async def _registered_takeover(monkeypatch, message: str | None) -> tuple[str, JevChatModel]:
+    """Run the lane with a Jev model bound, then call the takeover the tools got."""
+    captured: dict = {}
+
+    def _build(**kwargs):
+        captured.update(kwargs)
+        return "tools-sentinel"
+
+    monkeypatch.setattr(bu_lane, "build_browser_tools", _build)
+    llm = JevChatModel(client=MagicMock(), text_model=MagicMock())
+    llm._history.append(
+        JevHistoryEntry(action="REQUEST_HUMAN", kind="request_human", text="Log in")
+    )
+    _, emit = _collector()
+    runner = _make_runner(
+        emit=emit,
+        request_handoff=AsyncMock(
+            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message=message)
+        ),
+        overrides=_RunnerOverrides(llm=llm),
+    )
+    await runner.run("x")
+
+    return await captured["handle_takeover"]("Log in", "credentials"), llm
+
+
+async def test_the_registered_takeover_puts_the_note_on_the_models_takeover_step(
+    patch_browser, monkeypatch
+) -> None:
+    result, llm = await _registered_takeover(monkeypatch, "just grab the photo")
+
+    assert result == "just grab the photo"
+    assert llm._history[-1].note == "just grab the photo"
+
+
+async def test_the_registered_takeover_without_a_note_tells_the_agent_the_step_is_done(
+    patch_browser, monkeypatch
+) -> None:
+    result, llm = await _registered_takeover(monkeypatch, None)
+
+    assert result == "The user finished that step in the live browser."
+    assert llm._history[-1].note is None
 
 
 async def test_run_attaches_the_browser_to_the_session_cdp_at_desktop_resolution(
@@ -1224,35 +1255,31 @@ async def test_unknown_takeover_category_falls_back_to_irreversible() -> None:
     assert handoff.await_args.args[0].category == SensitiveCategory.IRREVERSIBLE
 
 
-async def test_takeover_note_becomes_a_direct_instruction_for_the_agent() -> None:
+async def test_a_takeover_hands_the_note_back_verbatim() -> None:
     _, emit = _collector()
     runner = _make_runner(
         emit=emit,
         request_handoff=AsyncMock(
             return_value=HandoffOutcome(
-                status=HandoffStatus.COMPLETED, message="  just grab the photo  "
+                status=HandoffStatus.COMPLETED, message="  just grab the photo "
             )
         ),
     )
-    out = await runner._handle_takeover("Log in", "credentials")
 
-    assert out == (
-        'The user handed control back with this instruction: "just grab the photo". '
-        "Follow it.\n\n" + TAKEOVER_VERIFY_TAIL
-    )
+    assert await runner._handle_takeover("Log in", "credentials") == "just grab the photo"
 
 
-async def test_takeover_without_a_note_uses_the_default_preface() -> None:
+@pytest.mark.parametrize("message", [None, "   "])
+async def test_a_takeover_with_no_note_hands_back_none(message: str | None) -> None:
     _, emit = _collector()
     runner = _make_runner(
         emit=emit,
         request_handoff=AsyncMock(
-            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message="   ")
+            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message=message)
         ),
     )
-    out = await runner._handle_takeover("Log in", "credentials")
 
-    assert out == TAKEOVER_DEFAULT_PREFACE + TAKEOVER_VERIFY_TAIL
+    assert await runner._handle_takeover("Log in", "credentials") is None
 
 
 @pytest.mark.parametrize(
@@ -1748,19 +1775,6 @@ async def test_an_unexpected_failure_is_logged_with_its_type_and_session(
         error_type="RuntimeError",
         browser={"session_id": "s1"},
     )
-
-
-async def test_a_takeover_without_any_note_uses_the_default_preface_verbatim() -> None:
-    _, emit = _collector()
-    runner = _make_runner(
-        emit=emit,
-        request_handoff=AsyncMock(
-            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message=None)
-        ),
-    )
-    out = await runner._handle_takeover("Log in", "credentials")
-
-    assert out == TAKEOVER_DEFAULT_PREFACE + TAKEOVER_VERIFY_TAIL
 
 
 class _GoalOutput:

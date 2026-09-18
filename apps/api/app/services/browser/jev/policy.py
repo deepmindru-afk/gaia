@@ -69,6 +69,8 @@ class JevHistoryEntry:
     kind: str
     text: str | None = None
     page_changed: bool | None = None
+    #: What the user said when they handed the browser back after this step.
+    note: str | None = None
 
     def state_entry(self) -> dict[str, object]:
         return {
@@ -76,6 +78,7 @@ class JevHistoryEntry:
             "kind": self.kind,
             "text": self.text,
             "page_changed": self.page_changed,
+            "note": self.note,
         }
 
 

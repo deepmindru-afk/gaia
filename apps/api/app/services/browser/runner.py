@@ -217,9 +217,9 @@ class BrowserTaskRunner:
     async def _should_stop(self) -> bool:
         return self._stopped or await self._is_cancelled()
 
-    async def _handle_takeover(self, reason: str, category: str) -> str:
-        """The lane's takeover hook: pause for the human, then let the lane resume
-        with the returned result. Raises to stop the run on cancel."""
+    async def _handle_takeover(self, reason: str, category: str) -> str | None:
+        """The lane's takeover hook: pause for the human and return the note they left,
+        if any. Raises to stop the run on cancel."""
         self._handoffs += 1
         if self._handoffs > MAX_HANDOFFS_PER_TASK:
             self._stopped = True
@@ -233,23 +233,7 @@ class BrowserTaskRunner:
         if outcome.status == HandoffStatus.COMPLETED:
             self._handed_off = True
             log.info(f"{LogTag.BROWSER} Browser takeover completed by user; agent continuing.")
-            note = (outcome.message or "").strip()
-            # A note is a direct instruction from the user (e.g. "just grab the photo,
-            # skip the login") — it overrides the default verify-and-continue posture.
-            preface = (
-                f'The user handed control back with this instruction: "{note}". Follow it.\n\n'
-                if note
-                else "The user says they finished that step in the live browser. "
-            )
-            return (
-                f"{preface}Do NOT assume the page is in the state you expect. Look at the "
-                "CURRENT page now and VERIFY before doing anything else. A solved CAPTCHA "
-                "shows a green checkmark and no 'please verify that you are not a robot' error "
-                "remains; a login lands on the signed-in page. If the step is NOT actually "
-                "complete, call the takeover / solve_captcha_with_help action again instead of "
-                "proceeding. Only continue toward the goal once you have confirmed the page state "
-                "yourself, and never report success you cannot see on the page."
-            )
+            return (outcome.message or "").strip() or None
         self._stopped = True
         log.info(f"{LogTag.BROWSER} Browser takeover ended", status=outcome.status.value)
         raise BrowserHandoffCancelled(outcome.status.value)

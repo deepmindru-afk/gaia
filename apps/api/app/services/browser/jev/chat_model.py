@@ -12,6 +12,7 @@ output) are delegated to the text helper untouched.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import re
 from typing import TYPE_CHECKING, TypeVar, get_args, overload
@@ -298,6 +299,7 @@ class JevChatModel:
                 {"action": h.action, "text": h.text}
                 for h in self._history[-JEV_TEXT_HELPER_RECENT_ACTIONS:]
             ],
+            "user_note": self._latest_note(),
         }
         try:
             result = await self.text_model.ainvoke(
@@ -309,16 +311,27 @@ class JevChatModel:
             return None
         return result.completion
 
+    def note_from_user(self, note: str | None) -> None:
+        """Attach what the user said when handing the browser back to the step that asked.
+
+        The takeover step is the last history entry: ``_remember`` runs inside
+        ``_decide``, before Browser-Use executes the action that blocks on the human.
+        """
+        if not self._history:
+            raise RuntimeError("No step to attach a note to")
+        self._history[-1] = replace(self._history[-1], note=note)
+
     def _settle_previous_step(self, observation: JevObservation) -> None:
         if self._history and self._last_fingerprint is not None:
-            last = self._history[-1]
-            self._history[-1] = JevHistoryEntry(
-                action=last.action,
-                kind=last.kind,
-                text=last.text,
+            # replace(), not a rebuild: a note attached to this step must survive.
+            self._history[-1] = replace(
+                self._history[-1],
                 page_changed=observation.fingerprint != self._last_fingerprint,
             )
         self._last_fingerprint = observation.fingerprint
+
+    def _latest_note(self) -> str | None:
+        return next((h.note for h in reversed(self._history) if h.note), None)
 
     def _remember(self, action: str, kind: str, text: str | None) -> None:
         self._history.append(JevHistoryEntry(action=action, kind=kind, text=text))

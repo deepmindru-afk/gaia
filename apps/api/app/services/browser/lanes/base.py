@@ -84,7 +84,7 @@ class LaneHooks:
     """
 
     step: Callable[[StepFrame], None]
-    takeover: Callable[[str, str], Awaitable[str]]
+    takeover: Callable[[str, str], Awaitable[str | None]]
     should_stop: Callable[[], Awaitable[bool]]
     action_results: ActionResultsFn | None = None
 

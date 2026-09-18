@@ -52,7 +52,13 @@ def test_the_request_shares_one_state_across_an_operation_head_and_one_target_he
     assert request.state["page"] == {"url": "https://x", "title": "X", "text": observation.text}
     assert [e["index"] for e in request.state["elements"]] == ["1", "2", "3", "4", "5"]
     assert request.state["recent_actions"] == [
-        {"action": "CLICK [1] Zurich", "kind": "click", "text": None, "page_changed": True}
+        {
+            "action": "CLICK [1] Zurich",
+            "kind": "click",
+            "text": None,
+            "page_changed": True,
+            "note": None,
+        }
     ]
     operation = request.questions["operation"]
     assert operation.instructions == {
