@@ -700,6 +700,31 @@ class TestRunChatStreamBackground:
         assert mock_capture.call_args.args[2]["delegated"] is False
         assert mock_capture.call_args.args[2]["queued"] is False
 
+    async def test_an_empty_source_is_omitted_rather_than_sent_blank(
+        self, test_user, existing_conv_body
+    ):
+        """A bot platform is a plain str, so "" reaches here; analytics must not get a blank prop."""
+        sm = _make_stream_manager_mock()
+        with (
+            _patch_stream_manager(sm),
+            patch(
+                "app.services.chat.stream.call_agent",
+                new=AsyncMock(return_value=_done_only_stream()),
+            ),
+            patch("app.services.chat.stream.save_conversation_async", new=AsyncMock()),
+            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
+            patch("app.services.chat.stream.capture_event") as mock_capture,
+        ):
+            await run_chat_stream_background(
+                stream_id="stream_capture_blank_source",
+                body=existing_conv_body,
+                user=test_user,
+                conversation_id="conv_existing_123",
+                source="",
+            )
+
+        assert "source" not in mock_capture.call_args.args[2]
+
     async def test_captures_message_cancelled_when_stream_cancelled(
         self, test_user, existing_conv_body
     ):

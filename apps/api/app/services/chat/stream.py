@@ -395,7 +395,6 @@ async def _run_chat_stream(
                 ("ttft_ms", state.ttft_ms),
                 ("e2e_ack_ms", state.e2e_ack_ms),
                 ("e2e_full_ms", state.e2e_full_ms),
-                ("source", source),
             )
             event_props: dict[str, Any] = {
                 "conversation_id": conversation_id,
@@ -405,6 +404,10 @@ async def _run_chat_stream(
                 "queued": state.queued,
                 **{name: value for name, value in latencies if value is not None},
             }
+            # Source is falsy-checked, not None-checked: a bot platform is a bare
+            # str, and a blank one is no source rather than an empty-string one.
+            if source:
+                event_props["source"] = source
             capture_event(
                 user_id,
                 (
