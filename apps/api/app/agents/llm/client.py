@@ -1303,7 +1303,7 @@ async def ainvoke_structured_gemini(
     config: RunnableConfig | None = None,
     options: StructuredCallOptions = _DEFAULT_STRUCTURED_OPTIONS,
 ) -> _StructuredT:
-    """Run the structured one-shot call for the memory pipeline: aux lane primary, direct Gemini fallback.
+    """Run a structured one-shot on the lane that fails over: aux lane primary, direct Gemini fallback.
 
     Same contract as :func:ainvoke_structured. Preference is measured: Gemini
     flash-lite's cache never extends past tools+system (repeat prompts always

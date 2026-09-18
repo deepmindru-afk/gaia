@@ -7,11 +7,12 @@ the Continue/Cancel buttons, same core (resolve_handoff), so it works
 identically on web and bots. Mirrors the HIL conversational-resolution pattern.
 """
 
+import string
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.agents.llm.client import ainvoke_structured
+from app.agents.llm.client import ainvoke_structured_gemini
 from app.constants.browser import HandoffDecision, HandoffStatus
 from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserHandoffNotOwned
@@ -23,6 +24,11 @@ from app.services.browser.handoff import (
 from shared.py.wide_events import log
 
 HandoffReplyAction = Literal["continue", "cancel", "unrelated"]
+
+# First words that carry a decision on their own, for the rule that stands in
+# when the classifier is unavailable.
+_CONTINUE_WORDS = frozenset({"done", "continue", "yes", "ok", "okay", "finished"})
+_CANCEL_WORDS = frozenset({"stop", "cancel", "abort", "no"})
 
 
 class HandoffReplyDecision(BaseModel):
@@ -69,24 +75,39 @@ async def resolve_handoff_from_message(
     return decision.action
 
 
-async def _interpret(message: str, reason: str) -> HandoffReplyDecision:
-    """Classify the reply.
+def keyword_reply_decision(message: str) -> HandoffReplyDecision:
+    """Classify a reply by its first word alone, with the rest kept as the note.
 
-    Fails toward unrelated (normal chat), never toward silently continuing a
-    sensitive browser task.
+    The rule the classifier degrades to: a provider outage must not swallow a
+    plain "done" and start a new turn instead of resuming the paused task.
+    """
+    first, _, rest = message.strip().partition(" ")
+    word = first.strip(string.punctuation).lower()
+    if word in _CONTINUE_WORDS:
+        return HandoffReplyDecision(action="continue", note=rest.strip() or None)
+    if word in _CANCEL_WORDS:
+        return HandoffReplyDecision(action="cancel")
+    return HandoffReplyDecision(action="unrelated")
+
+
+async def _interpret(message: str, reason: str) -> HandoffReplyDecision:
+    """Classify the reply, on the lane that falls back when its provider fails.
+
+    Degrades to the keyword rule rather than to unrelated: a failed classifier
+    is not evidence that the user changed the subject.
     """
     try:
-        return await ainvoke_structured(
+        return await ainvoke_structured_gemini(
             HandoffReplyDecision,
             _prompt(message, reason),
             label="browser_handoff_conversational_resolve",
         )
     except Exception as e:  # an LLM hiccup must not act on its own
         log.warning(
-            f"{LogTag.BROWSER} Browser handoff resolve failed, treating as unrelated",
+            f"{LogTag.BROWSER} Browser handoff resolve failed, using the keyword rule",
             error_type=type(e).__name__,
         )
-        return HandoffReplyDecision(action="unrelated")
+        return keyword_reply_decision(message)
 
 
 def _prompt(message: str, reason: str) -> str:

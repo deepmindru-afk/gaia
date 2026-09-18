@@ -3,6 +3,8 @@
 from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.constants.browser import HandoffDecision, HandoffStatus
 from app.constants.log_tags import LogTag
 from app.schemas.browser import HandoffRecord
@@ -12,6 +14,7 @@ from app.services.browser.resolution import (
     HandoffReplyDecision,
     _interpret,
     _prompt,
+    keyword_reply_decision,
     resolve_handoff_from_message,
 )
 
@@ -137,7 +140,7 @@ async def test_not_owned_returns_none_without_raising(monkeypatch):
 
 async def test_interpret_returns_llm_decision_on_success(monkeypatch):
     ainvoke = AsyncMock(return_value=HandoffReplyDecision(action="cancel"))
-    monkeypatch.setattr(res_mod, "ainvoke_structured", ainvoke)
+    monkeypatch.setattr(res_mod, "ainvoke_structured_gemini", ainvoke)
 
     decision = await _interpret("no, stop it", "pay")
 
@@ -148,22 +151,80 @@ async def test_interpret_returns_llm_decision_on_success(monkeypatch):
     assert kwargs["label"] == "browser_handoff_conversational_resolve"
 
 
-async def test_interpret_falls_back_to_unrelated_on_llm_failure(monkeypatch):
+def _classifier_down(monkeypatch) -> _FakeLog:
     monkeypatch.setattr(
-        res_mod, "ainvoke_structured", AsyncMock(side_effect=RuntimeError("llm down"))
+        res_mod, "ainvoke_structured_gemini", AsyncMock(side_effect=RuntimeError("llm down"))
     )
     fake_log = _FakeLog()
     monkeypatch.setattr(res_mod, "log", fake_log)
+    return fake_log
+
+
+async def test_a_failed_classifier_degrades_to_the_keyword_rule_and_still_says_so(monkeypatch):
+    """Regression: any classifier failure became unrelated, so the user's 'done' started a new turn."""
+    fake_log = _classifier_down(monkeypatch)
 
     decision = await _interpret("no, stop it", "pay")
 
-    assert decision == HandoffReplyDecision(action="unrelated")
+    assert decision == HandoffReplyDecision(action="cancel")
     assert fake_log.warning_calls == [
         (
-            f"{LogTag.BROWSER} Browser handoff resolve failed, treating as unrelated",
+            f"{LogTag.BROWSER} Browser handoff resolve failed, using the keyword rule",
             {"error_type": "RuntimeError"},
         )
     ]
+
+
+async def test_a_go_ahead_still_resolves_when_the_classifier_is_down(monkeypatch):
+    """The real _interpret runs here: the degrade must survive the whole resolve path."""
+    monkeypatch.setattr(res_mod, "get_conversation_pending_handoff", AsyncMock(return_value="h1"))
+    monkeypatch.setattr(
+        res_mod,
+        "get_handoff",
+        AsyncMock(
+            return_value=HandoffRecord(
+                status=HandoffStatus.PENDING, user_id="u1", conversation_id="c1", reason="pay"
+            )
+        ),
+    )
+    _classifier_down(monkeypatch)
+    resolve = AsyncMock(return_value=HandoffStatus.COMPLETED)
+    monkeypatch.setattr(res_mod, "resolve_handoff", resolve)
+
+    action = await resolve_handoff_from_message(
+        "c1", "u1", "done, skip the login and just tell me the page title"
+    )
+
+    assert action == "continue"
+    resolve.assert_awaited_once_with(
+        "h1",
+        HandoffDecision.CONTINUE,
+        "u1",
+        message="skip the login and just tell me the page title",
+    )
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        (
+            "done, skip the login and just tell me the page title",
+            ("continue", "skip the login and just tell me the page title"),
+        ),
+        ("Done.", ("continue", None)),
+        ("okay", ("continue", None)),
+        ("yes go on", ("continue", "go on")),
+        ("stop", ("cancel", None)),
+        ("Cancel!", ("cancel", None)),
+        ("no", ("cancel", None)),
+        ("what's the weather", ("unrelated", None)),
+        ("", ("unrelated", None)),
+    ],
+)
+def test_the_keyword_rule_reads_the_first_word_and_keeps_the_rest(reply, expected):
+    action, note = expected
+
+    assert keyword_reply_decision(reply) == HandoffReplyDecision(action=action, note=note)
 
 
 def test_prompt_includes_the_message_and_the_handoff_reason():
