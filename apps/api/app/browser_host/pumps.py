@@ -13,11 +13,9 @@ from typing import Any
 
 from websockets.exceptions import ConnectionClosed
 
-# Starlette raises a bare RuntimeError (not a typed disconnect) when a websocket
-# is read after it closed or before it was accepted — which happens normally
-# during proxy teardown, when one direction closes the viewer socket while the
-# other is still looping on receive(). Matched by exact message, and only for a
-# plain RuntimeError, so an unrelated RuntimeError still propagates.
+# Starlette raises a bare RuntimeError (not a typed disconnect) when a socket is
+# read after it closed or before it was accepted, which happens normally during
+# proxy teardown. Matched by exact message, so an unrelated RuntimeError still propagates.
 _STARLETTE_NOT_CONNECTED_MESSAGES = frozenset(
     {
         'WebSocket is not connected. Need to call "accept" first.',
@@ -27,7 +25,7 @@ _STARLETTE_NOT_CONNECTED_MESSAGES = frozenset(
 
 
 def is_disconnect(exc: BaseException) -> bool:
-    """Whether ``exc`` is an ordinary peer close (client gone or Chromium closed)."""
+    """Return True when exc is an ordinary peer close (client gone or Chromium closed)."""
     if isinstance(exc, ConnectionClosed):
         return True
     # FastAPI's WebSocketDisconnect is checked by name so this module need not

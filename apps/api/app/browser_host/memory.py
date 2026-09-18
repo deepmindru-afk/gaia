@@ -1,10 +1,10 @@
 """Container-aware memory probe backing the host's memory-based admission control.
 
-Reports ``(used_mb, limit_mb)`` for the environment the browser host runs in. The
-limit that matters is the one the OOM killer enforces — the container's cgroup
-memory limit (docker ``mem_limit``), not the physical host RAM — so admission
-gates on that. Off a container (dev/mac) it falls back to system memory, and an
-explicit ``BROWSER_HOST_MEMORY_LIMIT_MB`` pins or caps the budget anywhere.
+Reports used_mb and limit_mb for the environment the browser host runs in. The
+limit that matters is the one the OOM killer enforces, the container's cgroup
+memory limit, not the physical host RAM, so admission gates on that. Off a
+container it falls back to system memory, and an explicit
+BROWSER_HOST_MEMORY_LIMIT_MB pins or caps the budget anywhere.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _read_int(path: Path) -> int | None:
 
 
 def _cgroup_used_and_limit_bytes() -> tuple[int, int | None] | None:
-    """Return (used, limit) from the cgroup, ``limit`` None when unlimited; None off-cgroup."""
+    """Return used and limit bytes from the cgroup, limit None when unlimited, or None off-cgroup."""
     used = _read_int(_V2_CURRENT)
     if used is not None:
         raw = _V2_MAX.read_text().strip() if _V2_MAX.exists() else "max"
@@ -49,11 +49,11 @@ def _cgroup_used_and_limit_bytes() -> tuple[int, int | None] | None:
 
 
 def memory_usage_mb() -> tuple[float, float]:
-    """Return current ``(used_mb, limit_mb)`` for the host's environment.
+    """Return current used_mb and limit_mb for the host's environment.
 
-    Prefers the cgroup (the container's real, OOM-enforced budget); falls back to
-    system memory when no cgroup limit is readable. ``BROWSER_HOST_MEMORY_LIMIT_MB``
-    caps the detected limit (or supplies it when none is detectable).
+    Prefers the cgroup, the container's real OOM-enforced budget, falling back to
+    system memory when no cgroup limit is readable. BROWSER_HOST_MEMORY_LIMIT_MB
+    caps the detected limit, or supplies it when none is detectable.
     """
     override = settings.BROWSER_HOST_MEMORY_LIMIT_MB
     cgroup = _cgroup_used_and_limit_bytes()

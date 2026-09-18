@@ -1,15 +1,15 @@
-"""The browser-host HTTP/WS service — one Chromium behind a small JSON API.
+"""The browser-host HTTP/WS service, one Chromium behind a small JSON API.
 
 Endpoints (all internal; the port is never published):
-  * ``POST   /sessions``            create an isolated context (429 at capacity)
-  * ``DELETE /sessions/{id}``       dispose it, returning its storage_state
-  * ``GET    /sessions/{id}``       liveness + current page url/title
-  * ``GET    /healthz``             CDP responsiveness (503 when wedged)
-  * ``WS     /cdp/{id}``            the per-session CDP filtering proxy
-  * ``WS     /live/{id}``           the screencast + input live view
+  * POST   /sessions            create an isolated context (429 at capacity)
+  * DELETE /sessions/{id}       dispose it, returning its storage_state
+  * GET    /sessions/{id}       liveness and current page url/title
+  * GET    /healthz             CDP responsiveness (503 when wedged)
+  * WS     /cdp/{id}            the per-session CDP filtering proxy
+  * WS     /live/{id}           the screencast and input live view
 
-The single :class:`ChromiumHost` is created at import (no side effects) and
-started/stopped by the app lifespan.
+The single ChromiumHost is created at import (no side effects) and started
+and stopped by the app lifespan.
 """
 
 from __future__ import annotations
@@ -110,12 +110,8 @@ _host = ChromiumHost()
 
 
 # --- host-key authentication ---------------------------------------------
-# The host renders attacker-controlled pages in the SAME container, so a page
-# can fetch() the control plane on localhost with no network boundary in the
-# way. Every host endpoint therefore requires a shared secret the API/worker
-# presents (REST: X-Host-Key header; WS: ?hk= query param on the URLs the API
-# returns). The key lives only in API/worker config + env — page JS never sees
-# it. In production the host refuses to serve at all without a configured key.
+# The host renders attacker-controlled pages in the same container, so every
+# endpoint requires a shared secret (X-Host-Key header, or ?hk= for WS).
 
 
 def _key_valid(candidate: str | None) -> bool:
@@ -139,11 +135,9 @@ _ALLOWED_WS_ORIGIN_HOSTS = {"localhost", "127.0.0.1", "::1"}
 def _ws_authorized(websocket: WebSocket) -> bool:
     if not _key_valid(websocket.query_params.get("hk")):
         return False
-    # Defense-in-depth: server-side WS clients (Browser-Use/Playwright, the API's
-    # live-view upstream proxy) send no Origin; a rendered page connecting a raw
-    # socket would. Reject any non-loopback Origin even with a valid key (the
-    # page could only have the key if the API leaked it — this makes that leak
-    # more survivable). Rejections are logged so they are observable.
+    # Defense-in-depth: server-side WS clients send no Origin; a rendered page
+    # connecting a raw socket would. Reject any non-loopback Origin even with a
+    # valid key, since a page could only have it via an API leak. Rejections are logged.
     origin = websocket.headers.get("origin")
     if not origin:
         return True
@@ -165,11 +159,10 @@ def _ws_authorized(websocket: WebSocket) -> bool:
 
 
 def _ws_url(path: str) -> str:
-    """Absolute ws(s) URL for a host path, derived from ``BROWSER_HOST_URL``."""
-    # One replace per line so each carries its own suppression: these literals are
-    # the search/replace pair that UPGRADES the configured scheme to its websocket
-    # form. Nothing here opens a cleartext connection — https becomes wss, and the
-    # http arm only applies when the operator configured a plaintext host URL.
+    """Absolute ws(s) URL for a host path, derived from BROWSER_HOST_URL."""
+    # One replace per line so each carries its own suppression: these are the
+    # search/replace pair that upgrades the configured scheme to its websocket form.
+    # Nothing here opens a cleartext connection; the http arm only fires when configured.
     base = settings.BROWSER_HOST_URL.replace("https://", "wss://", 1)  # NOSONAR python:S5332
     base = base.replace("http://", "ws://", 1)  # NOSONAR python:S5332
     url = f"{base.rstrip('/')}{path}"

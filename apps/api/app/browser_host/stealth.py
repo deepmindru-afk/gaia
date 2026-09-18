@@ -1,16 +1,16 @@
 """Stealth init script for the CDP-driven headless Chromium.
 
-The launch flags already neutralise the automation-controlled signal (browser-use's
-``CHROME_DEFAULT_ARGS`` ships ``--disable-blink-features=AutomationControlled`` and
-no ``--enable-automation``). What flags cannot fix is the JS-visible fingerprint of
-a bare headless browser — a missing ``window.chrome``, empty ``navigator.plugins``,
-a truthy ``navigator.webdriver``, headless WebGL vendor strings. This script patches
-those, applied to every page via ``Page.addScriptToEvaluateOnNewDocument`` so it runs
-before the page's own scripts on every navigation.
+The launch flags already neutralise the automation-controlled signal
+(browser-use's CHROME_DEFAULT_ARGS ships disable-blink-features
+AutomationControlled and no enable-automation). What flags cannot fix is the
+JS-visible fingerprint of a bare headless browser: a missing window.chrome,
+empty navigator.plugins, a truthy navigator.webdriver, headless WebGL vendor
+strings. This script patches those, applied to every page via
+addScriptToEvaluateOnNewDocument so it runs before the page's own scripts.
 
-Note: it is applied per page target at context creation. A page that browser-use
-opens later in the same context via ``window.open`` would not be covered without a
-``Target.setAutoAttach`` hook; single-page tasks (the norm) are covered.
+Note: it is applied per page target at context creation. A page opened later
+in the same context via window.open would not be covered without a
+setAutoAttach hook; single-page tasks, the norm, are covered.
 """
 
 _STEALTH_TEMPLATE = r"""(() => {

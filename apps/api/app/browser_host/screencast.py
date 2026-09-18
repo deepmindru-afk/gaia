@@ -1,15 +1,14 @@
-"""Authenticated screencast + input for a session's focused page.
+"""Authenticated screencast and input for a session's focused page.
 
-``WS /live/{session_id}`` is the backend of the live view the user watches (and,
-during a handoff, drives). It attaches to the context's focused page, streams
-JPEG frames out as ``{"type":"frame", data, url, title}``, and turns inbound
-``{"type":"mouse"|"key"|"resize"}`` messages into CDP input.
+WS /live/{session_id} is the backend of the live view the user watches, and
+during a handoff, drives. It attaches to the context's focused page, streams
+JPEG frames out as a frame message with data, url and title, and turns inbound
+mouse, key and resize messages into CDP input.
 
 CDP frame acks and input dispatch are scheduled as tasks rather than awaited
-inline: the frame arrives inside ``cdp_use``'s single read loop, so awaiting a
-CDP round-trip from within the frame handler would block the very loop that
-resolves it — a deadlock. The handler enqueues and returns; a sender task drains
-the queue to the client.
+inline: the frame arrives inside cdp_use's single read loop, so awaiting a CDP
+round-trip from within the frame handler would deadlock that same loop. The
+handler enqueues and returns; a sender task drains the queue to the client.
 """
 
 from __future__ import annotations
@@ -36,13 +35,9 @@ if TYPE_CHECKING:
 # which is what makes the stream lag. ``_SCREENCAST_QUALITY`` applies only to "jpeg".
 _SCREENCAST_FORMAT = "jpeg"
 _SCREENCAST_QUALITY = 72
-# The stream cap equals the agent viewport (constants/browser.py), so frames are
-# 1:1 with the page — pixel-crisp with no downscale blur, and takeover input maps
-# exactly. A repainting page (scroll, video, animation) emits 70+ fps and the
-# browser decodes every frame on its main thread; 1280-wide q72 frames (~7 KB,
-# ~0.5 MB/s) stay smooth. Every frame also carries the page's CSS size (from the
-# screencast metadata) so viewers translate pointer events into page coordinates
-# instead of assuming frame pixels == CSS pixels.
+# Stream cap equals the agent viewport (constants/browser.py): 1:1, so takeover
+# input maps exactly. 1280-wide q72 frames stay smooth at 70+ fps (~7 KB, ~0.5
+# MB/s); each frame also carries the page's CSS size for pointer translation.
 _DEFAULT_MAX_WIDTH = 1280
 _DEFAULT_MAX_HEIGHT = 800
 # Bounded so a slow viewer applies backpressure by dropping stale frames, not by
@@ -86,12 +81,9 @@ class _Frame:
 
 async def run_live_view(host: ChromiumHost, session: HostSession, client_ws: WebSocket) -> None:
     """Stream the session's focused page to a live-view client and apply its input."""
-    # add_viewer sits immediately before the try so entering the block guarantees
-    # the finally: the viewer protects the session from the idle reaper (which
-    # skips viewer_count > 0), so an un-removed viewer would strand the session
-    # forever — a permanent capacity leak that only a host restart clears. Every
-    # CDP call below is bounded for the same reason: an unbounded await never
-    # reaches the finally at all.
+    # add_viewer precedes the try so the finally always runs: the viewer protects
+    # the session from the idle reaper (skips viewer_count > 0), and an unremoved
+    # viewer strands it until restart. Every CDP call below is bounded for the same reason.
     background: set[asyncio.Task[Any]] = set()
     cdp = CDPClient(host.root_ws_url)
     host.add_viewer(session.session_id)
@@ -203,7 +195,7 @@ _FAVICON_JS = """(() => {
 
 
 async def _read_favicon(cdp: CDPClient, page_session: str) -> str | None:
-    """Return the page's own favicon URL, or ``None`` when it cannot be read.
+    """Return the page's own favicon URL, or None when it cannot be read.
 
     Best-effort: a favicon is decoration, so a page that blocks evaluation (or
     is mid-navigation) must not break the metadata the tab actually needs.

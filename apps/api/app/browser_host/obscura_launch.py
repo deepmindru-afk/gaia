@@ -1,8 +1,8 @@
 """Shared Obscura process-launch primitives.
 
-Obscura is a CDP *server* (``obscura serve``), not a chrome-with-a-debug-flag, so
+Obscura is a CDP server (obscura serve), not a chrome-with-a-debug-flag, so
 both the interactive browser host and the crawl4ai engine start it the same way:
-one argv, then poll ``/json/version`` for the websocket endpoint. Defined once
+one argv, then poll /json/version for the websocket endpoint. Defined once
 here so the spawn stays identical across both callers.
 """
 
@@ -21,9 +21,9 @@ _CDP_READY_POLL_SECONDS = 0.2
 
 
 def obscura_serve_argv(port: int) -> list[str]:
-    """Return the ``obscura serve`` argv for ``port``, stealthed and private-network-permitted.
+    """Return the obscura serve argv for port, stealthed and private-network-permitted.
 
-    Raises when ``OBSCURA_BIN`` is unset — fail loud, never silently fall back to
+    Raises when OBSCURA_BIN is unset; fail loud, never silently fall back to
     another engine.
     """
     obscura_bin = settings.OBSCURA_BIN
@@ -40,7 +40,7 @@ def obscura_serve_argv(port: int) -> list[str]:
 
 
 async def poll_obscura_endpoint(port: int) -> str:
-    """Poll ``/json/version`` until Obscura yields its root ``webSocketDebuggerUrl``."""
+    """Poll /json/version until Obscura yields its root webSocketDebuggerUrl."""
     deadline = time.monotonic() + _CDP_READY_TIMEOUT_SECONDS
     async with httpx.AsyncClient() as client:
         while time.monotonic() < deadline:

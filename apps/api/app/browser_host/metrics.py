@@ -1,16 +1,14 @@
 """Per-session browser metrics: resource samples, navigation timing, counts.
 
-Every session on the host gets one :class:`SessionMetrics`. It is pure
-bookkeeping — the host feeds it samples at the three moments that already
-happen (session create, navigation complete, session dispose) and the CDP proxy
-feeds it navigation/page events, so nothing here polls or busy-loops.
+Every session on the host gets one SessionMetrics. It is pure bookkeeping, fed
+by the host at session create, navigation complete and session dispose, plus
+navigation and page events from the CDP proxy, so nothing here polls or
+busy-loops.
 
-The resource numbers come from the Chromium *process tree* (browser + renderers
-+ GPU), which is shared by every session on this host: they answer "what did the
-browser cost while this session was open", not "what did this session alone
-cost". Attributing them per session is only meaningful when comparing runs that
-each own the host — which is exactly the engine/profile A-B comparison this
-exists for.
+The resource numbers come from the whole Chromium process tree (browser,
+renderers, GPU), shared by every session on this host, so they cost the
+browser while this session was open, not this session alone. Attributing them
+per session is only meaningful when comparing runs that each own the host.
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ _BYTES_PER_MB = 1024 * 1024
 
 
 class AggregateSnapshot(TypedDict):
-    """Readable form of an :class:`Aggregate` — omitted entirely when empty."""
+    """Readable form of an Aggregate, omitted entirely when empty."""
 
     count: int
     min: float
@@ -38,7 +36,7 @@ class AggregateSnapshot(TypedDict):
 
 
 class MetricsSnapshot(TypedDict):
-    """The ``metrics`` block a caller reads off ``GET /sessions/{id}``."""
+    """The metrics block a caller reads off GET /sessions/{id}."""
 
     session_lifetime_seconds: float
     navigation_count: int
@@ -73,7 +71,7 @@ class Aggregate:
         return self.total / self.count if self.count else 0.0
 
     def snapshot(self) -> AggregateSnapshot | None:
-        """``None`` while nothing has been sampled — an absent number, not a zero."""
+        """Return None while nothing has been sampled, an absent number rather than a zero."""
         if self.count == 0:
             return None
         return {
@@ -102,17 +100,19 @@ class SessionMetrics:
         self.cpu_percent.add(cpu_percent)
 
     def start_navigation(self) -> None:
-        """Return a ``Page.navigate`` left the client.
+        """Record that a navigate request left the client.
 
-        A second one supersedes the first: the earlier load event is never observed, so keeping the
-        old start would bill the abandoned navigation's wait to the new one."""
+        A second call supersedes the first: the earlier load event is never
+        observed, so keeping the old start would bill the abandoned
+        navigation's wait to the new one.
+        """
         self.navigation_started_at = time.monotonic()
 
     def finish_navigation(self) -> float | None:
-        """Close the navigation timing for a load event and return the elapsed ms, or ``None`` if unsolicited.
+        """Close the navigation timing for a load event; return elapsed ms, or None if unsolicited.
 
         Load events also fire for navigations the client never asked for (a
-        redirect chain's final document, a page's own ``location`` assignment),
+        redirect chain's final document, a page's own location assignment),
         so an unmatched one is normal and is not counted.
         """
         if self.navigation_started_at is None:
@@ -138,7 +138,7 @@ class SessionMetrics:
 class ProcessSampler:
     """Samples the Chromium process tree's RSS and CPU%.
 
-    ``cpu_percent()`` is used in its non-blocking form: the first call on a
+    cpu_percent() is used in its non-blocking form: the first call on a
     process seeds the counter and reports 0.0, every later call reports the
     average since the previous one. That makes a sample a couple of syscalls
     with no sleep, which is what lets the host sample on events.
@@ -151,7 +151,7 @@ class ProcessSampler:
 
     @classmethod
     def for_pid(cls, pid: int) -> ProcessSampler | None:
-        """Return a sampler for ``pid``, or ``None`` — losing metrics must not fail a launch."""
+        """Return a sampler for pid, or None; losing metrics must not fail a launch."""
         try:
             return cls(pid)
         # TypeError covers a pid that is not a usable process id at all; psutil
@@ -165,10 +165,10 @@ class ProcessSampler:
             return None
 
     def sample(self) -> tuple[float, float] | None:
-        """``(rss_mb, cpu_percent)`` for the tree, or ``None`` if it cannot be read.
+        """Return rss_mb and cpu_percent for the tree, or None if it cannot be read.
 
-        A process that died (or a permission the host does not have) must not
-        take a session down with it — the metric is missing, the session is not.
+        A process that died, or a permission the host does not have, must not
+        take a session down with it; the metric is missing, the session is not.
         """
         try:
             procs = [self._root, *self._root.children(recursive=True)]
