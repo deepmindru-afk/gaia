@@ -141,8 +141,8 @@ export default function FileIconsPrototypePage() {
         </h1>
         <p className="text-sm leading-relaxed text-zinc-400">
           macOS-style file icons for every upload-allowed format. The chips
-          below are the real composer component: stacked gradient documents
-          with a clean gaia-icon glyph, resolved from the backend allowlist.
+          below are the real composer component: stacked gradient documents with
+          a clean gaia-icon glyph, resolved from the backend allowlist.
         </p>
       </header>
 

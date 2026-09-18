@@ -14764,7 +14764,7 @@ export interface components {
              * @default 0
              */
             current_step_index: number;
-            /** @description Why the workflow is not activated. None means the user turned it off themselves; only system-paused workflows may be resumed automatically. */
+            /** @description Why the workflow is not activated. None means the user turned it off themselves. Only system-paused workflows may be resumed automatically. */
             deactivated_reason: components["schemas"]["DeactivationReason"] | null;
             /**
              * Description
@@ -27251,29 +27251,33 @@ export interface operations {
         parameters: {
             query?: {
                 completed?: boolean | null;
+                /** @description Due date after this date */
                 due_after?: string | null;
+                /** @description Due date before this date */
                 due_before?: string | null;
+                /** @description Only todos due this week */
                 due_this_week?: boolean;
+                /** @description Only todos due today */
                 due_today?: boolean;
                 has_due_date?: boolean | null;
+                /** @description Include statistics in response */
                 include_stats?: boolean;
+                labels?: string[] | null;
+                /** @description Search mode: text, semantic, or hybrid */
                 mode?: components["schemas"]["SearchMode"];
                 overdue?: boolean | null;
                 page?: number;
                 per_page?: number;
                 priority?: components["schemas"]["Priority"] | null;
                 project_id?: string | null;
+                /** @description Search query */
                 q?: string | null;
             };
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
-            content: {
-                "application/json": string[] | null;
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Client Error */
             "4XX": {

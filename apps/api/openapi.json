@@ -19301,7 +19301,7 @@
                 "type": "null"
               }
             ],
-            "description": "Why the workflow is not activated. None means the user turned it off themselves; only system-paused workflows may be resumed automatically."
+            "description": "Why the workflow is not activated. None means the user turned it off themselves. Only system-paused workflows may be resumed automatically."
           },
           "description": {
             "default": "",
@@ -35110,6 +35110,7 @@
         "operationId": "todos_list_todos",
         "parameters": [
           {
+            "description": "Search query",
             "in": "query",
             "name": "q",
             "required": false,
@@ -35122,16 +35123,19 @@
                   "type": "null"
                 }
               ],
+              "description": "Search query",
               "title": "Q"
             }
           },
           {
+            "description": "Search mode: text, semantic, or hybrid",
             "in": "query",
             "name": "mode",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/SearchMode",
-              "default": "hybrid"
+              "default": "hybrid",
+              "description": "Search mode: text, semantic, or hybrid"
             }
           },
           {
@@ -35216,6 +35220,26 @@
           },
           {
             "in": "query",
+            "name": "labels",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Labels"
+            }
+          },
+          {
+            "description": "Due date after this date",
+            "in": "query",
             "name": "due_after",
             "required": false,
             "schema": {
@@ -35228,10 +35252,12 @@
                   "type": "null"
                 }
               ],
+              "description": "Due date after this date",
               "title": "Due After"
             }
           },
           {
+            "description": "Due date before this date",
             "in": "query",
             "name": "due_before",
             "required": false,
@@ -35245,25 +35271,30 @@
                   "type": "null"
                 }
               ],
+              "description": "Due date before this date",
               "title": "Due Before"
             }
           },
           {
+            "description": "Only todos due today",
             "in": "query",
             "name": "due_today",
             "required": false,
             "schema": {
               "default": false,
+              "description": "Only todos due today",
               "title": "Due Today",
               "type": "boolean"
             }
           },
           {
+            "description": "Only todos due this week",
             "in": "query",
             "name": "due_this_week",
             "required": false,
             "schema": {
               "default": false,
+              "description": "Only todos due this week",
               "title": "Due This Week",
               "type": "boolean"
             }
@@ -35293,36 +35324,18 @@
             }
           },
           {
+            "description": "Include statistics in response",
             "in": "query",
             "name": "include_stats",
             "required": false,
             "schema": {
               "default": false,
+              "description": "Include statistics in response",
               "title": "Include Stats",
               "type": "boolean"
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Labels"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "content": {
