@@ -203,3 +203,21 @@ async def test_cancel_is_requested_per_job_and_unset_for_every_other_job(
     assert await jobs_mod.job_cancel_requested("job-1") is True
     assert await jobs_mod.job_cancel_requested("job-2") is False
     assert fake_cache.client.ttls[f"{BROWSER_JOB_CANCEL_PREFIX}job-1"] == BROWSER_JOB_TTL_SECONDS
+
+
+@pytest.mark.unit
+async def test_a_conversations_running_job_is_the_one_a_stop_cancels(
+    fake_cache: _FakeRedisCache,
+) -> None:
+    """A stop arrives naming a conversation, never a job id: the slot is the only way back to the run."""
+    await jobs_mod.claim_conversation_slot("conv-1", "job-1")
+
+    assert await jobs_mod.cancel_conversation_browser_job("conv-1") == "job-1"
+    assert await jobs_mod.job_cancel_requested("job-1") is True
+
+
+@pytest.mark.unit
+async def test_a_stop_with_no_browser_run_cancels_nothing(fake_cache: _FakeRedisCache) -> None:
+    """Every stop in every conversation reaches here; one without a browser run must be silent, not an error."""
+    assert await jobs_mod.cancel_conversation_browser_job("conv-1") is None
+    assert fake_cache.client.store == {}

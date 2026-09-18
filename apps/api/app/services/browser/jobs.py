@@ -106,3 +106,16 @@ async def request_job_cancel(job_id: str) -> None:
 async def job_cancel_requested(job_id: str) -> bool:
     """Whether a stop was requested against this job itself."""
     return bool(await redis_cache.client.exists(_cancel_key(job_id)))
+
+
+async def cancel_conversation_browser_job(conversation_id: str) -> str | None:
+    """Flag this conversation's in-flight browser job as cancelled; returns the job id.
+
+    A stop names a conversation, never a job, so the slot is the way back to the
+    run — and the only one left once the turn that started it has ended.
+    """
+    job_id = await get_conversation_slot(conversation_id)
+    if job_id is None:
+        return None
+    await request_job_cancel(job_id)
+    return job_id

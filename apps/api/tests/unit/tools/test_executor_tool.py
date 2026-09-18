@@ -37,6 +37,7 @@ from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
 from app.db.repositories.playbooks import playbook_repository
 from app.models.playbook_models import PlaybookDocument, PlaybookRunStatus, ToolStep
+from app.services.browser.jobs import claim_conversation_slot, job_cancel_requested
 from app.utils import background_tasks
 
 
@@ -520,6 +521,61 @@ class TestCallExecutorFailures:
 
         assert response == "Error starting task: redis write failed"
         assert await fake_redis.get(LOCK_KEY) == "stream-1:live-task"
+
+
+# ── cancel_executor reaches a detached browser job ───────────────────
+
+
+class TestCancelExecutorStopsTheBrowser:
+    """A browser run outlives the turn that started it, so /stop has to reach the job itself."""
+
+    async def test_a_stop_cancels_the_conversations_browser_job(
+        self,
+        fake_redis: fakeredis.aioredis.FakeRedis,
+        broadcast: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(StreamManager, "cancel_stream", AsyncMock())
+        await claim_conversation_slot(CONVERSATION_ID, "job-1")
+        await fake_redis.set(LOCK_KEY, "stream-1:running-task", ex=EXECUTOR_BUSY_TTL)
+
+        await run_cancel_executor(config=config_for(), task_ids=[])
+
+        assert await job_cancel_requested("job-1") is True
+
+    async def test_a_stop_reaches_a_browser_job_whose_turn_already_ended(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
+        # The executor is long gone, so there is no busy lock and no live stream
+        # to cancel — the job flag is the only thing that still stops the browser.
+        await claim_conversation_slot(CONVERSATION_ID, "job-1")
+
+        response = await run_cancel_executor(config=config_for(), task_ids=[])
+
+        assert await job_cancel_requested("job-1") is True
+        assert response == "Stopped the browser task."
+
+    async def test_a_targeted_cancel_leaves_the_browser_run_alone(
+        self,
+        fake_redis: fakeredis.aioredis.FakeRedis,
+        broadcast: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Cancelling one named executor task is not "stop everything"; the browser keeps going."""
+        monkeypatch.setattr(StreamManager, "cancel_stream", AsyncMock())
+        await claim_conversation_slot(CONVERSATION_ID, "job-1")
+        await fake_redis.rpush(QUEUE_KEY, json.dumps({"task_id": "q1"}))
+
+        await run_cancel_executor(config=config_for(), task_ids=["q1"])
+
+        assert await job_cancel_requested("job-1") is False
+
+    async def test_a_stop_with_nothing_running_anywhere_still_reports_nothing(
+        self, fake_redis: fakeredis.aioredis.FakeRedis
+    ) -> None:
+        response = await run_cancel_executor(config=config_for(), task_ids=[])
+
+        assert response == "No executor tasks are running or queued for this conversation."
 
 
 # ── cancel_executor ──────────────────────────────────────────────────

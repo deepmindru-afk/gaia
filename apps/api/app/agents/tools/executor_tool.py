@@ -45,6 +45,7 @@ from app.core.stream_manager import StreamManager
 from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
 from app.models.agent_models import AgentConfigurable, agent_configurable
+from app.services.browser.jobs import cancel_conversation_browser_job
 from app.services.hil.resolution import cancel_conversation_approvals
 from app.services.workflow.execution_service import get_last_run_brief
 from app.services.workflow.playbook.check import playbook_check_brief
@@ -372,7 +373,14 @@ async def cancel_executor(
     lock_value: str | None = decode_raw_item(raw_lock) if raw_lock is not None else None
     has_queue = await redis_cache.client.llen(queue_key) > 0
 
+    # A browser run outlives the turn that started it, so the stream's cancel
+    # flag reaches it only while that turn is alive; a stop-everything also flags
+    # the job. A targeted cancel names one executor task and leaves it running.
+    browser_job = await cancel_conversation_browser_job(conversation_id) if cancel_all else None
+
     if not lock_value and not has_queue:
+        if browser_job:
+            return "Stopped the browser task."
         return "No executor tasks are running or queued for this conversation."
 
     try:
