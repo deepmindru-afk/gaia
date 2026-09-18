@@ -42,7 +42,7 @@ class TestPostApprovalDecision:
             json={"decision": "approve", "feedback": "looks good", "scope": "always_tool"},
         )
         assert resp.status_code == 200
-        assert resp.json() == {"success": True}
+        assert resp.json() == {"success": True, "reason": None, "status": None}
         mock_resolve.assert_awaited_once_with(
             approval_id="a1",
             user_id=USER_ID,
@@ -55,7 +55,7 @@ class TestPostApprovalDecision:
     async def test_deny_decision_is_relayed(self, mock_resolve: AsyncMock, client: AsyncClient):
         resp = await client.post(f"{APPROVALS_BASE}/a1/decision", json={"decision": "deny"})
         assert resp.status_code == 200
-        assert resp.json() == {"success": True}
+        assert resp.json() == {"success": True, "reason": None, "status": None}
         mock_resolve.assert_awaited_once_with(
             approval_id="a1",
             user_id=USER_ID,
@@ -337,7 +337,7 @@ class TestLedgerDecisionRouting:
             f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 3}
         )
         assert resp.status_code == 200
-        assert resp.json() == {"success": True}
+        assert resp.json() == {"success": True, "reason": None, "status": "approved"}
         mock_decide.assert_awaited_once_with(
             "ap_1", user_id=USER_ID, kind="approve", feedback=None, v=3,
         )
