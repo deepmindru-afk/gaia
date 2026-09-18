@@ -531,19 +531,29 @@ export const chatApi = {
    * Relay a HIL approval decision to the awaiting agent gate. Silent — the
    * caller surfaces real failures; a 410 (already resolved elsewhere) resolves
    * over the stream regardless, so it's swallowed here rather than surfaced.
+   * Returns the relay outcome so callers can tell a commit from a stale tap:
+   * `success:false` means the row moved under the client — refresh, don't retry.
    */
   postApprovalDecision: async (
     approvalId: string,
     decision: ApprovalDecisionPayload,
-  ): Promise<void> => {
+  ): Promise<{
+    success: boolean;
+    reason?: string | null;
+    status?: string | null;
+  }> => {
     try {
-      await apiService.post(`/approvals/${approvalId}/decision`, decision, {
-        silent: true,
-      });
+      return await apiService.post(
+        `/approvals/${approvalId}/decision`,
+        decision,
+        {
+          silent: true,
+        },
+      );
     } catch (error) {
       const status = (error as { response?: { status?: number } })?.response
         ?.status;
-      if (status === HTTP_GONE) return;
+      if (status === HTTP_GONE) return { success: true };
       throw error;
     }
   },

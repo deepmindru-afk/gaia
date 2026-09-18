@@ -7,12 +7,30 @@ import type {
   ApprovalRequestData,
   ApprovalStatus,
 } from "@shared/chat";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { chatApi } from "@/features/chat/api/chatApi";
 import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDecided";
 import { toast } from "@/lib/toast";
 import ApprovalRequestSection from "./ApprovalRequestSection";
 import { useApprovalResolver } from "./ApprovalResolveContext";
+
+/** A withdrawn approval stays visible just long enough to prove the agent
+ * self-corrected — then collapses. Silent deletion reads as "did it send?". */
+const TOMBSTONE_MS = 10000;
+
+function RevokedTombstone({ item }: { item: ApprovalRequestData }) {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(false), TOMBSTONE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  if (!visible) return null;
+  return (
+    <div className="w-full rounded-2xl bg-zinc-800/60 p-3 text-xs text-zinc-500">
+      Agent withdrew: {item.summary} — no action needed.
+    </div>
+  );
+}
 
 interface ApprovalRequestGroupProps {
   items: ApprovalRequestData[];
@@ -41,6 +59,7 @@ export default function ApprovalRequestGroup({
   const markApprovalDecided = useMarkApprovalDecided();
 
   const pending = items.filter((item) => item.status === "pending");
+  const revoked = items.filter((item) => item.status === "revoked");
 
   const settle = (
     approvalId: string,
@@ -128,6 +147,9 @@ export default function ApprovalRequestGroup({
           ))}
         </div>
       )}
+      {revoked.map((item) => (
+        <RevokedTombstone key={item.approval_id} item={item} />
+      ))}
     </div>
   );
 }
