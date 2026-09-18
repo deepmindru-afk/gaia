@@ -263,3 +263,41 @@ JEV_TEXT_HELPER_RECENT_ACTIONS = 6
 JEV_TEXT_VALUE_MAX_CHARS = 2000
 # Probability mass across a choice question must sum to ~1; the gateway rounds.
 JEV_PROBABILITY_SUM_TOLERANCE = 0.02
+
+
+# ---------------------------------------------------------------------------
+# Background browser job
+# ---------------------------------------------------------------------------
+
+# One browser task per conversation; the value is the job id so a refused second
+# task can name the run the user is already watching. A heartbeat lease, not a
+# fixed TTL: a run may sit 30 minutes in a handoff, a dead worker must not.
+BROWSER_JOB_LOCK_PREFIX = "browser:job:lock:"
+BROWSER_JOB_LOCK_TTL_SECONDS = 120
+BROWSER_JOB_HEARTBEAT_SECONDS = 30
+
+# The job's durable state: what the joiner reads and what a restarted API needs
+# to answer "is it still running?". Outlives the turn.
+BROWSER_JOB_STATE_PREFIX = "browser:job:"
+BROWSER_JOB_TTL_SECONDS = 7200
+
+# Replayable card feed, one Redis stream per job. The relay XREADs it from 0-0,
+# so a relay started late (or restarted) still shows every card from step 1.
+BROWSER_JOB_EVENTS_PREFIX = "browser:job:events:"
+BROWSER_JOB_EVENTS_MAXLEN = 2000
+
+# A live executor holding this lease owns speaking the result; the worker skips
+# its own delivery while it is held. Refreshed by the joiner, so an API crash
+# releases it within one TTL and the worker delivers instead.
+BROWSER_JOB_JOINER_PREFIX = "browser:job:joiner:"
+BROWSER_JOB_JOINER_LEASE_SECONDS = 15
+BROWSER_JOB_JOINER_REFRESH_SECONDS = 5
+
+# Set by cancel_executor for a job whose turn has already ended, when the
+# stream's cancel signal is gone. OR-ed with stream_manager.is_cancelled.
+BROWSER_JOB_CANCEL_PREFIX = "browser:job:cancel:"
+
+BROWSER_JOB_POLL_INTERVAL_SECONDS = 0.5
+
+# The ARQ function name, shared by the enqueue site and the worker registration.
+BROWSER_JOB_TASK = "run_browser_job"
