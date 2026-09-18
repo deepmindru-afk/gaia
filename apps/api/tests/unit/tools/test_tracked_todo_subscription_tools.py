@@ -476,10 +476,14 @@ class TestToolsAreReachable:
 
     def test_they_are_bound_to_the_executor_up_front(self) -> None:
         source = Path(build_graph.__file__).read_text()
-        # Anchor on the executor builder and its initial_tool_ids list directly:
-        # agent_name now sits after the list in the config-object call shape.
+        # Anchor on the executor's initial set directly: the builder passes it
+        # as the `initial_tools` variable (["activate_integration",
+        # *EXECUTOR_INITIAL_TOOL_IDS]), so parse that variable plus the
+        # module-level list it spreads.
         executor_fn = source.split("def build_executor_graph", 1)[1]
-        executor_block = executor_fn.split("initial_tool_ids=[", 1)[1].split("]", 1)[0]
+        initial_tools = executor_fn.split("initial_tools = [", 1)[1].split("]", 1)[0]
+        module_ids = source.split("EXECUTOR_INITIAL_TOOL_IDS = [", 1)[1].split("]", 1)[0]
+        executor_block = initial_tools + module_ids
 
         for name in (
             "list_trigger_fields",
