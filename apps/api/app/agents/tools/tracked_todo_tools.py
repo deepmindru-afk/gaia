@@ -882,7 +882,7 @@ async def subscribe_todo_to_trigger(
         int, "Minimum gap between two fires of this subscription."
     ] = DEFAULT_COOLDOWN_SECONDS,
     scope: Annotated[
-        dict[str, str | int | float | list[str]] | None,
+        dict[str, str | bool | int | float | list[str]] | None,
         "Registration config telling the trigger which resource to watch, e.g. "
         "{'repos': ['owner/name']} for a github trigger, {'minutes_before_start': "
         "60} for calendar_event_starting_soon. This is NOT a payload condition: "

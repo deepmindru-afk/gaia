@@ -209,6 +209,24 @@ class TestSubscribe:
 
         assert register.await_args.kwargs["trigger_data"] == {"minutes_before_start": 60}
 
+    async def test_a_boolean_scope_value_is_preserved_as_a_bool(self) -> None:
+        # Calendar's include_all_day and Slack's exclude_* flags are booleans; the
+        # scope type must accept bool and not coerce True to 1 (regression: bool was
+        # missing from the scope union).
+        register, _ = self._register()
+        with patch(f"{_MOD}.register_subscription", register):
+            await subscribe_todo_to_trigger.coroutine(
+                config=_config(),
+                todo_id=TODO_ID,
+                trigger_name="calendar_event_starting_soon",
+                action="notify",
+                scope={"include_all_day": True},
+            )
+
+        passed = register.await_args.kwargs["trigger_data"]
+        assert passed == {"include_all_day": True}
+        assert passed["include_all_day"] is True
+
     async def test_a_github_repo_scope_is_passed_as_registration_config(self) -> None:
         # A github PR trigger registers a webhook per repo, so the repo must reach
         # registration as scope; without it the trigger matches nothing and the
