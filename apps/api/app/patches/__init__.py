@@ -7,6 +7,7 @@ from . import (
     browser_use_scroll_patch,
     browser_use_select_patch,
     browser_use_stealth_patch,
+    browser_use_window_open_patch,
     composio_custom_tool_patch,
     composio_custom_tool_schema_patch,
     composio_langchain_patch,
