@@ -10,7 +10,7 @@ import pytest
 
 from app.constants.log_tags import LogTag
 from app.services.browser.jev import viewport as viewport_mod
-from app.services.browser.jev.viewport import ViewportBox, read_viewport
+from app.services.browser.jev.viewport import ViewportBox, ViewportRead, read_viewport
 
 pytestmark = pytest.mark.unit
 
@@ -59,7 +59,7 @@ async def test_every_index_and_xpath_pair_reaches_the_page_and_comes_back_as_a_b
     )
     selector_map = {7: _node("html/body/a"), 9: _node("html/body/div/button")}
 
-    boxes = await read_viewport(browser, selector_map)  # type: ignore[arg-type]
+    boxes = (await read_viewport(browser, selector_map)).boxes  # type: ignore[arg-type]
 
     assert _pairs_sent(seen) == [[7, "html/body/a"], [9, "html/body/div/button"]]
     assert seen[0]["session_id"] == "sess"
@@ -73,7 +73,7 @@ async def test_every_index_and_xpath_pair_reaches_the_page_and_comes_back_as_a_b
 async def test_an_xpath_that_resolved_nothing_is_simply_absent() -> None:
     browser = _browser({"result": {"value": {"7": {"on_screen": True, "cx": 0.1, "cy": 0.2}}}})
 
-    boxes = await read_viewport(browser, {7: _node("html/body/a"), 9: _node("html/body/b")})  # type: ignore[arg-type]
+    boxes = (await read_viewport(browser, {7: _node("html/body/a"), 9: _node("html/body/b")})).boxes  # type: ignore[arg-type]
 
     assert set(boxes) == {7}
 
@@ -82,10 +82,10 @@ async def test_a_cdp_failure_degrades_to_an_empty_map_and_warns(monkeypatch) -> 
     logger = MagicMock()
     monkeypatch.setattr(viewport_mod, "log", logger)
 
-    boxes = await read_viewport(_browser(ConnectionError("gone")), {1: _node("html/body/a")})  # type: ignore[arg-type]
+    screen = await read_viewport(_browser(ConnectionError("gone")), {1: _node("html/body/a")})  # type: ignore[arg-type]
 
-    assert boxes == {}
-    logger.warning.assert_called_once_with(
+    assert screen == ViewportRead()
+    logger.warning.assert_any_call(
         f"{LogTag.BROWSER} Jev viewport read failed", error_type="ConnectionError"
     )
 
@@ -96,8 +96,10 @@ async def test_a_javascript_exception_degrades_to_an_empty_map_and_warns(monkeyp
 
     browser = _browser({"exceptionDetails": {"text": "boom"}, "result": {}})
 
-    assert await read_viewport(browser, {1: _node("html/body/a")}) == {}  # type: ignore[arg-type]
-    logger.warning.assert_called_once()
+    assert (await read_viewport(browser, {1: _node("html/body/a")})).boxes == {}  # type: ignore[arg-type]
+    logger.warning.assert_any_call(
+        f"{LogTag.BROWSER} Jev viewport read raised in the page", error_type="JSError"
+    )
 
 
 async def test_nodes_inside_an_iframe_are_never_asked_about_and_are_counted() -> None:
@@ -110,19 +112,22 @@ async def test_nodes_inside_an_iframe_are_never_asked_about_and_are_counted() ->
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(viewport_mod, "log", logger)
-        boxes = await read_viewport(browser, selector_map)  # type: ignore[arg-type]
+        boxes = (await read_viewport(browser, selector_map)).boxes  # type: ignore[arg-type]
 
     assert boxes == {}
     assert _pairs_sent(seen) == [[1, "html/body/a"]]
     logger.debug.assert_called_once()
 
 
-async def test_no_resolvable_node_skips_the_round_trip_entirely() -> None:
+async def test_no_resolvable_node_skips_the_element_measure_entirely() -> None:
+    """Nothing to measure still reads the screen's text, which needs no element."""
     seen: list[dict[str, object]] = []
-    browser = _browser({"result": {"value": {}}}, seen)
+    browser = _browser({"result": {"value": ""}}, seen)
 
-    assert await read_viewport(browser, {}) == {}  # type: ignore[arg-type]
-    assert seen == []
+    assert (await read_viewport(browser, {})).boxes == {}  # type: ignore[arg-type]
+    assert [call["params"]["expression"] for call in seen] == [
+        f"({viewport_mod._TEXT_JS})({viewport_mod.JEV_PAGE_TEXT_MAX_CHARS})"
+    ]
 
 
 class _FallbackClient:
@@ -173,7 +178,7 @@ async def test_an_engine_without_usable_xpaths_is_measured_node_by_node() -> Non
         4: SimpleNamespace(xpath="a", parent_node=None, backend_node_id=12),
     }
 
-    boxes = await read_viewport(browser, selector_map)  # type: ignore[arg-type]
+    boxes = (await read_viewport(browser, selector_map)).boxes  # type: ignore[arg-type]
 
     assert sorted(client.resolved) == [11, 12]
     assert client.batched == [["obj-11", "obj-12"]]
@@ -181,3 +186,62 @@ async def test_an_engine_without_usable_xpaths_is_measured_node_by_node() -> Non
         3: ViewportBox(on_screen=True, cx=0.5, cy=0.25),
         4: ViewportBox(on_screen=False, cx=0.5, cy=0.25),
     }
+
+
+class _ScreenClient:
+    """A CDP engine that answers the element measure and the viewport-text read."""
+
+    def __init__(self, text: object = "Visible line\nSecond line") -> None:
+        self.text = text
+        self.expressions: list[str] = []
+
+        class _Runtime:
+            @staticmethod
+            async def evaluate(params, session_id):
+                self.expressions.append(params["expression"])
+                if "createTreeWalker" in params["expression"]:
+                    if isinstance(self.text, Exception):
+                        raise self.text
+                    return {"result": {"value": self.text}}
+                return {"result": {"value": {"7": {"on_screen": True, "cx": 0.5, "cy": 0.5}}}}
+
+        self.send = SimpleNamespace(Runtime=_Runtime())
+
+
+def _screen_browser(client: _ScreenClient):
+    session = SimpleNamespace(session_id="sess", cdp_client=client)
+
+    async def get_or_create_cdp_session():
+        return session
+
+    return SimpleNamespace(get_or_create_cdp_session=get_or_create_cdp_session)
+
+
+async def test_the_screens_own_text_comes_back_with_the_boxes() -> None:
+    client = _ScreenClient()
+
+    screen = await read_viewport(_screen_browser(client), {7: _node("html/body/a")})  # type: ignore[arg-type]
+
+    assert screen.text == "Visible line\nSecond line"
+    assert screen.boxes == {7: ViewportBox(on_screen=True, cx=0.5, cy=0.5)}
+
+
+async def test_the_viewport_text_is_capped(monkeypatch) -> None:
+    monkeypatch.setattr(viewport_mod, "JEV_PAGE_TEXT_MAX_CHARS", 7)
+
+    screen = await read_viewport(_screen_browser(_ScreenClient()), {7: _node("html/body/a")})  # type: ignore[arg-type]
+
+    assert screen.text == "Visible"
+
+
+async def test_a_text_read_that_fails_leaves_the_text_unknown(monkeypatch) -> None:
+    logger = MagicMock()
+    monkeypatch.setattr(viewport_mod, "log", logger)
+    client = _ScreenClient(text=ConnectionError("gone"))
+
+    screen = await read_viewport(_screen_browser(client), {7: _node("html/body/a")})  # type: ignore[arg-type]
+
+    assert screen.text is None
+    # The element table survives a text failure; only the text is lost.
+    assert screen.boxes == {7: ViewportBox(on_screen=True, cx=0.5, cy=0.5)}
+    logger.warning.assert_called_once()

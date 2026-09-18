@@ -21,7 +21,7 @@ from app.constants.browser import (
 )
 from app.constants.log_tags import LogTag
 from app.services.browser.jev.live_values import LiveValues
-from app.services.browser.jev.viewport import ViewportBox
+from app.services.browser.jev.viewport import ViewportRead
 from shared.py.wide_events import log
 
 if TYPE_CHECKING:
@@ -151,16 +151,18 @@ class JevObservation:
 def observe(
     state: BrowserStateSummary,
     live: LiveValues | None = None,
-    viewport: dict[int, ViewportBox] | None = None,
+    screen: ViewportRead | None = None,
 ) -> JevObservation:
     """Build the element table from the selector map Browser-Use just serialised.
 
-    live overlays current field values (see live_values.py); viewport says which
-    rows the page itself shows, an index it omits counting as on screen.
+    live overlays current field values (see live_values.py); screen is what the
+    page itself shows (see viewport.py) -- which rows, an index it omits
+    counting as on screen, and the text on the screen rather than the document.
     """
     selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
     live = live or LiveValues()
-    boxes = viewport or {}
+    screen = screen or ViewportRead()
+    boxes = screen.boxes
     elements: list[JevElement] = []
     for browser_index in sorted(selector_map):
         node = selector_map[browser_index]
@@ -169,7 +171,7 @@ def observe(
         element = _element(len(elements) + 1, browser_index, node, live, on_screen)
         if element is not None:
             elements.append(element)
-    text = _page_text(state)
+    text = screen.text if screen.text is not None else _page_text(state)
     url = getattr(state, "url", "") or ""
     observation = JevObservation(
         url=url,

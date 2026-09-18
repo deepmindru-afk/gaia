@@ -160,8 +160,9 @@ class JevChatModel:
             raise BrowserUnavailableError("Jev policy has no browser session bound.")
         state = await self._browser.get_browser_state_summary(cached=True, include_screenshot=False)
         selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
-        self._viewport = await read_viewport(self._browser, selector_map)
-        observation = observe(state, await read_live_values(self._browser), self._viewport)
+        screen = await read_viewport(self._browser, selector_map)
+        self._viewport = screen.boxes
+        observation = observe(state, await read_live_values(self._browser), screen)
         self._settle_previous_step(observation)
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)

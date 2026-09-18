@@ -6,7 +6,7 @@ import pytest
 
 from app.constants.browser import JEV_MAX_ELEMENTS, JevOperation
 from app.services.browser.jev.observation import observe
-from app.services.browser.jev.viewport import ViewportBox
+from app.services.browser.jev.viewport import ViewportBox, ViewportRead
 
 from .conftest import FakeAXNode, FakeAXProperty, FakeNode, make_state
 
@@ -234,7 +234,7 @@ def test_a_screen_denser_than_the_gateway_allows_is_capped_in_document_order() -
 
 def test_jev_sees_exactly_what_the_page_says_is_on_screen() -> None:
     """Off-screen elements are one SCROLL away, not part of this decision."""
-    observation = observe(_big_page(count=100), None, _on_screen_from(40, 100))
+    observation = observe(_big_page(count=100), None, ViewportRead(boxes=_on_screen_from(40, 100)))
 
     assert sorted(e.index for e in observation.elements) == list(range(41, 101))
 
@@ -248,7 +248,9 @@ def test_an_index_missing_from_the_viewport_map_is_kept() -> None:
         }
     )
 
-    observation = observe(state, None, {2: ViewportBox(on_screen=False, cx=0.0, cy=0.0)})
+    observation = observe(
+        state, None, ViewportRead(boxes={2: ViewportBox(on_screen=False, cx=0.0, cy=0.0)})
+    )
 
     assert [e.label for e in observation.elements] == ["Go"]
 
@@ -311,3 +313,13 @@ def test_a_cap_that_cuts_nothing_logs_nothing(monkeypatch, flights_state) -> Non
     observe(flights_state).targets(JevOperation.CLICK)
 
     logger.warning.assert_not_called()
+
+
+def test_the_page_text_is_the_screens_text_when_the_page_could_read_it(flights_state) -> None:
+    screen = ViewportRead(boxes={}, text="History\nPython 2.0 was released in 2000")
+
+    assert observe(flights_state, None, screen).text == "History\nPython 2.0 was released in 2000"
+
+
+def test_the_page_text_falls_back_to_browser_uses_own_rendering(flights_state) -> None:
+    assert observe(flights_state, None, ViewportRead()).text.startswith("[17]<input>")

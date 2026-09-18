@@ -1,20 +1,22 @@
-"""What the page itself says is on screen, one CDP evaluate per step.
+"""What the page itself says is on screen: which elements, and which text.
 
 Browser-Use's snapshot carries absolute_position and is_visible, but on some
 engines that geometry is fabricated: boxes march down a phantom document far
 past the real page height while every node claims to be visible. Filtering on
-it empties the element table. The page is the only truth, so each observation
-resolves the nodes' xpaths in the live document and reads getBoundingClientRect
-and checkVisibility there.
+it empties the element table, and its page text is the whole document from the
+top, so scrolling never changes a word of what Jev reads. The page is the only
+truth, so each observation measures the nodes in the live document and walks
+the text nodes the viewport actually shows.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from typing import TYPE_CHECKING, Any
 
+from app.constants.browser import JEV_PAGE_TEXT_MAX_CHARS
 from app.constants.log_tags import LogTag
 from shared.py.wide_events import log
 
@@ -75,6 +77,32 @@ _MEASURE_HANDLES_JS = """function(...elements) {
 }"""
 
 
+# The text a person reads off the screen: every text node whose parent is shown
+# and whose own range rect overlaps the viewport, in document order.
+_TEXT_JS = r"""(limit) => {
+  const w = window.innerWidth, h = window.innerHeight;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const lines = [];
+  let total = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = (node.nodeValue || '').replace(/\s+/g, ' ').trim();
+    const parent = node.parentElement;
+    if (!text || !parent) continue;
+    if (typeof parent.checkVisibility === 'function'
+        && !parent.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const rect = range.getBoundingClientRect();
+    if (!rect.width || !rect.height) continue;
+    if (rect.bottom <= 0 || rect.top >= h || rect.right <= 0 || rect.left >= w) continue;
+    lines.push(text);
+    total += text.length + 1;
+    if (total >= limit) break;
+  }
+  return lines.join('\n');
+}"""
+
+
 @dataclass(frozen=True)
 class _Target:
     index: int
@@ -91,31 +119,73 @@ class ViewportBox:
     cy: float
 
 
+@dataclass(frozen=True)
+class ViewportRead:
+    """One step's screen: the elements it shows, and the text it shows.
+
+    An index absent from boxes is one the page could not resolve; text is None
+    when the page could not be read at all, and the caller falls back.
+    """
+
+    boxes: dict[int, ViewportBox] = field(default_factory=dict)
+    text: str | None = None
+
+
 async def read_viewport(
     browser: BrowserSession, selector_map: dict[int, EnhancedDOMTreeNode]
-) -> dict[int, ViewportBox]:
-    """Measure the page; an index is absent when the page could not resolve it.
-
-    One Runtime.evaluate over every xpath, falling back to per-node resolution
-    on engines whose snapshot carries no parent chain to build an xpath from.
-    """
+) -> ViewportRead:
+    """Read the screen: measure every element on it, and collect the text it shows."""
     targets, framed = _targets(selector_map)
     if framed:
         log.debug(
             f"{LogTag.BROWSER} Jev viewport cannot measure iframe content",
             browser={"nodes": framed},
         )
-    if not targets:
-        return {}
     try:
         session = await browser.get_or_create_cdp_session()
-        boxes = await _by_xpath(session, targets)
-        if not boxes:
-            boxes = await _by_backend_node(session, targets)
+        boxes, text = await asyncio.gather(_measure(session, targets), _text(session))
     except Exception as exc:  # a failed read degrades to "everything unknown", not a dead step
         log.warning(f"{LogTag.BROWSER} Jev viewport read failed", error_type=type(exc).__name__)
+        return ViewportRead()
+    return ViewportRead(boxes=boxes, text=text)
+
+
+async def _measure(session: CDPSession, targets: list[_Target]) -> dict[int, ViewportBox]:
+    """One Runtime.evaluate over every xpath, falling back to per-node resolution.
+
+    Some engines serialise no parent chain, so Browser-Use's xpath collapses to
+    a bare tag name that matches nothing and only backend node ids work.
+    """
+    if not targets:
         return {}
-    return boxes
+    boxes = await _by_xpath(session, targets)
+    return boxes or await _by_backend_node(session, targets)
+
+
+async def _text(session: CDPSession) -> str | None:
+    """Return the viewport's own text, or None when the page could not produce it."""
+    try:
+        response: dict[str, Any] = dict(
+            await session.cdp_client.send.Runtime.evaluate(
+                params={
+                    "expression": f"({_TEXT_JS})({JEV_PAGE_TEXT_MAX_CHARS})",
+                    "returnByValue": True,
+                },
+                session_id=session.session_id,
+            )
+        )
+    except Exception as exc:  # the element table still stands; only the text is lost
+        log.warning(
+            f"{LogTag.BROWSER} Jev viewport text read failed", error_type=type(exc).__name__
+        )
+        return None
+    if response.get("exceptionDetails"):
+        log.warning(
+            f"{LogTag.BROWSER} Jev viewport text read raised in the page", error_type="JSError"
+        )
+        return None
+    value = (response.get("result") or {}).get("value")
+    return str(value)[:JEV_PAGE_TEXT_MAX_CHARS] if isinstance(value, str) else None
 
 
 def _targets(selector_map: dict[int, EnhancedDOMTreeNode]) -> tuple[list[_Target], int]:
@@ -153,11 +223,7 @@ async def _by_xpath(session: CDPSession, targets: list[_Target]) -> dict[int, Vi
 
 
 async def _by_backend_node(session: CDPSession, targets: list[_Target]) -> dict[int, ViewportBox]:
-    """Measure each node through its backend id: N resolveNode calls, then batched measures.
-
-    The engine Jev runs against serialises no parent chain, so Browser-Use's
-    xpath collapses to a bare tag name that matches nothing.
-    """
+    """Measure each node through its backend id: N resolveNode calls, then batched measures."""
     semaphore = asyncio.Semaphore(_RESOLVE_CONCURRENCY)
 
     async def resolve(target: _Target) -> tuple[int, str] | None:
