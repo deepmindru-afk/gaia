@@ -110,18 +110,9 @@ async def resolve_handoff(
         HandoffStatus.COMPLETED if decision == HandoffDecision.CONTINUE else HandoffStatus.CANCELLED
     )
     note = (message or "").strip() or None
-    if not await redis_cache.set_if_absent(
-        _settled_key(handoff_id), new_status.value, ttl=HANDOFF_KEY_TTL_SECONDS
-    ):
-        # Another resolver settled it first: report that decision, never a second,
-        # conflicting one. Still PENDING here means the marker write itself failed.
-        settled = await get_handoff(handoff_id)
-        if settled is None or settled.status == HandoffStatus.PENDING:
-            raise _storage_unavailable(handoff_id)
-        return settled.status
-    await _store(handoff_id, record.model_copy(update={"status": new_status, "message": note}))
-    if record.conversation_id:
-        await redis_cache.delete(_conv_key(record.conversation_id))
+    settled_as = await _settle(handoff_id, record, new_status, note)
+    if settled_as is not new_status:
+        return settled_as
     log.info(
         f"{LogTag.BROWSER} Browser handoff resolved", handoff_id=handoff_id, status=new_status.value
     )
@@ -135,8 +126,32 @@ async def resolve_handoff(
     return new_status
 
 
+async def _settle(
+    handoff_id: str, record: HandoffRecord, status: HandoffStatus, note: str | None
+) -> HandoffStatus:
+    """Claim the one decision for a handoff; return the decision of record when another won."""
+    if not await redis_cache.set_if_absent(
+        _settled_key(handoff_id), status.value, ttl=HANDOFF_KEY_TTL_SECONDS
+    ):
+        # Another resolver settled it first: report that decision, never a second,
+        # conflicting one. Still PENDING here means the marker write itself failed.
+        settled = await get_handoff(handoff_id)
+        if settled is None or settled.status == HandoffStatus.PENDING:
+            raise _storage_unavailable(handoff_id)
+        return settled.status
+    await _store(handoff_id, record.model_copy(update={"status": status, "message": note}))
+    if record.conversation_id:
+        await redis_cache.delete(_conv_key(record.conversation_id))
+    return status
+
+
 async def await_handoff(handoff_id: str, timeout_seconds: int) -> HandoffOutcome:
-    """Block until the handoff is resolved or timeout_seconds elapses, returning the terminal status plus any note the user attached."""
+    """Block until the handoff is resolved or timeout_seconds elapses, returning the terminal status plus any note the user attached.
+
+    A timeout settles the handoff as TIMEOUT, so a decision that arrives after the
+    run gave up is reported as late instead of accepted, and the conversation no
+    longer looks like it is waiting on the user.
+    """
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_seconds
     while loop.time() < deadline:
@@ -144,4 +159,15 @@ async def await_handoff(handoff_id: str, timeout_seconds: int) -> HandoffOutcome
         if record is not None and record.status != HandoffStatus.PENDING:
             return HandoffOutcome(status=record.status, message=record.message)
         await asyncio.sleep(HANDOFF_POLL_INTERVAL_SECONDS)
-    return HandoffOutcome(status=HandoffStatus.TIMEOUT)
+    record = await get_handoff(handoff_id)
+    if record is None:
+        return HandoffOutcome(status=HandoffStatus.TIMEOUT)
+    if record.status != HandoffStatus.PENDING:
+        return HandoffOutcome(status=record.status, message=record.message)
+    if await _settle(handoff_id, record, HandoffStatus.TIMEOUT, None) is HandoffStatus.TIMEOUT:
+        return HandoffOutcome(status=HandoffStatus.TIMEOUT)
+    # A decision landed on the deadline; it, and its note, are the outcome.
+    decided = await get_handoff(handoff_id)
+    if decided is None:
+        return HandoffOutcome(status=HandoffStatus.TIMEOUT)
+    return HandoffOutcome(status=decided.status, message=decided.message)

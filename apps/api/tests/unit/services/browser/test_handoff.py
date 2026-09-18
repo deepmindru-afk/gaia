@@ -113,6 +113,42 @@ async def test_await_timeout_outcome_carries_no_message(fake_redis, monkeypatch)
     assert outcome.message is None
 
 
+async def test_a_decision_after_the_timeout_is_reported_as_late_not_accepted(
+    fake_redis, monkeypatch
+):
+    """The run has already given up; a continue now must not read as a success."""
+    monkeypatch.setattr(handoff_mod, "HANDOFF_POLL_INTERVAL_SECONDS", 0.001)
+    await handoff_mod.create_pending_handoff("h6c", "user-1", "conv-h6c")
+    await handoff_mod.await_handoff("h6c", timeout_seconds=0)
+
+    status = await handoff_mod.resolve_handoff("h6c", HandoffDecision.CONTINUE, "user-1", "go on")
+
+    assert status == HandoffStatus.TIMEOUT
+    assert await handoff_mod.get_conversation_pending_handoff("conv-h6c") is None
+
+
+async def test_a_decision_that_lands_on_the_deadline_wins_over_the_timeout(fake_redis, monkeypatch):
+    monkeypatch.setattr(handoff_mod, "HANDOFF_POLL_INTERVAL_SECONDS", 0.001)
+    await handoff_mod.create_pending_handoff("h6d", "user-1", "conv-h6d")
+    original_get = handoff_mod.get_handoff
+
+    async def resolve_on_the_last_read(handoff_id: str):
+        record = await original_get(handoff_id)
+        if record is not None and record.status == HandoffStatus.PENDING:
+            monkeypatch.setattr(handoff_mod, "get_handoff", original_get)
+            await handoff_mod.resolve_handoff(
+                handoff_id, HandoffDecision.CONTINUE, "user-1", "done"
+            )
+        return record
+
+    monkeypatch.setattr(handoff_mod, "get_handoff", resolve_on_the_last_read)
+
+    outcome = await handoff_mod.await_handoff("h6d", timeout_seconds=0)
+
+    assert outcome.status == HandoffStatus.COMPLETED
+    assert outcome.message == "done"
+
+
 async def test_get_conversation_pending_handoff_returns_the_stored_id(fake_redis):
     await handoff_mod.create_pending_handoff("h19", "user-1", "conv-h19")
 
