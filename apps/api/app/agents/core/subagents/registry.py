@@ -1,12 +1,14 @@
-"""Canonical subagent registry.
+"""Canonical integration manifest (historically the "subagent registry").
 
-Single source of truth for "what subagents exist". Combines:
+Single source of truth for "what integrations exist". Combines:
 - OAuth integrations whose `subagent_config.has_subagent` is True (adapted
   via `_from_oauth`).
 - `BUILTIN_SUBAGENTS` (registered directly, no OAuth).
 
-All subagent code (handoff, registration, ChromaDB indexing, evals, helpers)
-goes through `all_subagents()` and `get_subagent_by_id()` here. OAuth
+Integrations activate in-context via `activate_integration` (only per-user
+MCP integrations still run as subagent graphs); the manifest backs
+activation, tool-space mapping, connect cards, and skill targets. All of
+that goes through `all_subagents()` and `get_subagent_by_id()` here. OAuth
 integration code continues to iterate `OAUTH_INTEGRATIONS` directly and
 never sees builtins.
 """

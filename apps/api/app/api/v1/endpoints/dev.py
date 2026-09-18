@@ -94,7 +94,9 @@ async def attach_dev_conversation_file(
 
 @router.get("/subagents")
 async def list_subagents() -> list[DevSubagentInfo]:
-    """List every registered subagent runnable via POST /dev/subagents/{id}."""
+    """List every registered subagent. Only per-user MCP ones run via
+    POST /dev/subagents/{id}; provider ids answer with an activation
+    redirect, like production handoff does."""
     log.set(dev={"operation": "list_subagents"})
     subagents = list_dev_subagents()
     log.set(dev={"count": len(subagents)})

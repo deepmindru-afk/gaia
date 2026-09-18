@@ -36,6 +36,27 @@ class TestActivationContext:
         assert "Always CC me." in context
         assert "gmail-draft-send" in context
 
+    async def test_worker_notes_are_reframed_for_the_executor(self, monkeypatch) -> None:
+        """The static prompt was written for a delegated worker graph ("call
+        finish_task", "report to the parent"). Injected bare into activation
+        context it misidentifies the reader, so the section must countermand
+        the delegation framing while keeping the domain notes."""
+        from app.agents.core.subagents.integration_activation import _activation_context
+
+        monkeypatch.setattr(
+            f"{_MOD}.build_subagent_system_prompt",
+            AsyncMock(return_value="Complete the delegated task. Call finish_task."),
+        )
+        monkeypatch.setattr(f"{_MOD}.get_subagent_by_id", lambda _: _subagent())
+        monkeypatch.setattr(f"{_MOD}.get_instructions", AsyncMock(return_value=""))
+        monkeypatch.setattr(f"{_MOD}.get_available_skills_text", AsyncMock(return_value=""))
+        monkeypatch.setattr(f"{_MOD}.integration_skills_block", lambda _: "")
+
+        context = await _activation_context("gmail", "u1")
+        assert "Complete the delegated task. Call finish_task." in context
+        assert "you are the executor" in context
+        assert "never call it" in context
+
     async def test_empty_everywhere_yields_empty_context(self, monkeypatch) -> None:
         from app.agents.core.subagents.integration_activation import _activation_context
 

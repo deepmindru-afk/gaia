@@ -97,7 +97,22 @@ async def _activation_context(integration_id: str, user_id: str | None) -> str:
     try:
         static_prompt = await build_subagent_system_prompt(integration_id=integration_id)
         if static_prompt:
-            sections.append(f"## {integration_id}: how it works\n{static_prompt}")
+            # The notes below were written for this integration's worker graph
+            # (a delegated subagent): left bare they misidentify the reader —
+            # "complete the delegated task", "call finish_task", "report to the
+            # parent" — so reframe them for the actual reader, the executor
+            # acting with these tools in its own turn.
+            sections.append(
+                f"## {integration_id}: how it works\n"
+                "The notes below describe this integration's tools, conventions, "
+                "and standing rules — follow those. They were written for a "
+                "delegated worker, which you are not: you are the executor, "
+                "acting on this integration yourself in your own turn. IGNORE "
+                "any instruction about receiving a delegated task, reporting "
+                "to a parent, or calling finish_task (never call it — reply "
+                "normally when the work is done).\n"
+                f"{static_prompt}"
+            )
 
         if user_id:
             instructions = await get_instructions(user_id, integration_id)
