@@ -1,16 +1,28 @@
-"""Latitude span scope for real agent turns. Never raises; missing key is a silent no-op."""
+"""Latitude span scope for real agent turns. Never raises; missing key logs once and no-ops."""
 
 from dataclasses import dataclass
-
-from latitude_telemetry import capture
-from latitude_telemetry.sdk.context import CaptureScope
-from latitude_telemetry.sdk.types import ContextOptions
-from opentelemetry import trace
-from opentelemetry.trace import Span
+from typing import TYPE_CHECKING, Any
 
 from app.config.settings import settings
 from app.constants.agents import COMMS_AGENT_NAME
 from shared.py.wide_events import log
+
+try:
+    from latitude_telemetry import capture as _capture
+    from opentelemetry import trace as _trace
+
+    capture: Any = _capture
+    trace: Any = _trace
+    _LATITUDE_AVAILABLE = True
+except ImportError:
+    capture = None
+    trace = None
+    _LATITUDE_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from latitude_telemetry.sdk.context import CaptureScope
+    from latitude_telemetry.sdk.types import ContextOptions
+    from opentelemetry.trace import Span
 
 
 @dataclass(frozen=True)
@@ -24,12 +36,12 @@ class TurnCapture:
     Never nested: our flows strictly pair one begin with one end per turn.
     """
 
-    scope: CaptureScope
-    span: Span
+    scope: "CaptureScope"
+    span: "Span"
 
 
 def _configured() -> bool:
-    return bool((settings.LATITUDE_API_KEY or "").strip())
+    return _LATITUDE_AVAILABLE and bool((settings.LATITUDE_API_KEY or "").strip())
 
 
 _disabled_logged = False
@@ -48,7 +60,7 @@ def begin_turn(
     conversation_id: str,
     agent_name: str = COMMS_AGENT_NAME,
     properties: dict[str, str | bool | None] | None = None,
-) -> TurnCapture | None:
+) -> "TurnCapture | None":
     """Open a Latitude capture scope for this turn, or None when disabled/failing."""
     if not user_id:
         return None
@@ -65,7 +77,7 @@ def begin_turn(
         }
         scope = capture.start(agent_name, options)
         return TurnCapture(scope=scope, span=trace.get_current_span())
-    except Exception as exc:
+    except BaseException as exc:
         log.warning(
             "latitude_begin_failed",
             error=str(exc),
@@ -76,7 +88,10 @@ def begin_turn(
 
 
 def end_turn(
-    scope: TurnCapture | None, *, error: Exception | None = None, cancelled: bool = False
+    scope: "TurnCapture | None",
+    *,
+    error: Exception | None = None,
+    cancelled: bool = False,
 ) -> None:
     """Close a Latitude capture scope. No-op when scope is None. Never raises."""
     if scope is None:
@@ -86,18 +101,25 @@ def end_turn(
     # stored span (see TurnCapture), never the ambient current span. A tag
     # failure must not skip the close below: an un-ended scope leaks the turn
     # (and its context token) from every dashboard.
-    if cancelled and error is None and scope.span.is_recording():
-        try:
-            scope.span.set_attribute("cancelled", True)
-        except Exception as exc:
-            log.warning(
-                "latitude_tag_failed",
-                error=str(exc),
-                error_type=type(exc).__name__,
-            )
+    try:
+        if cancelled and error is None and scope.span.is_recording():
+            try:
+                scope.span.set_attribute("cancelled", True)
+            except BaseException as exc:
+                log.warning(
+                    "latitude_tag_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+    except BaseException as exc:
+        log.warning(
+            "latitude_tag_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
     try:
         capture.end(scope.scope, error)
-    except Exception as exc:
+    except BaseException as exc:
         log.warning(
             "latitude_end_failed",
             error=str(exc),

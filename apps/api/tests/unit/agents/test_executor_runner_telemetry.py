@@ -15,6 +15,7 @@ import pytest
 
 from app.agents.core.background.executor_runner import _ExecutorResult, run_executor_background
 from app.agents.core.background.session import ExecutorRun, RunKind
+from app.services.turn_telemetry import TurnError
 
 MODULE = "app.agents.core.background.executor_runner"
 
@@ -95,20 +96,23 @@ class TestExecutorTurn:
         assert mock_end.call_args.args[0] is mock_begin.return_value
         assert mock_end.call_args.kwargs["output"] == "it broke"
         error = mock_end.call_args.kwargs["error"]
-        assert isinstance(error, RuntimeError) and str(error) == "it broke"
+        assert isinstance(error, TurnError) and str(error) == "it broke"
 
-    async def test_runner_bug_records_failed_and_propagates(self) -> None:
+    async def test_runner_bug_records_failed_without_raising(self) -> None:
         with (
             _quiet_runner(execute_error=RuntimeError("runner bug")),
             patch(f"{MODULE}.begin_turn_all") as mock_begin,
             patch(f"{MODULE}.end_turn_all") as mock_end,
-            pytest.raises(RuntimeError, match="runner bug"),
+            patch(f"{MODULE}._finalize_executor_run", new=AsyncMock()) as mock_final,
         ):
             await run_executor_background(_run(), "do the thing", {}, None)
 
         assert mock_end.call_args.args[0] is mock_begin.return_value
         assert mock_end.call_args.kwargs["output"] == "runner bug"
         assert mock_end.call_args.kwargs["error"] is not None
+        # Fire-and-forget: the bug routes through comms as executor_error via
+        # finalize, never as an unretrieved exception.
+        assert mock_final.call_args.args[3] == "error"
 
     async def test_cancel_closes_as_cancelled_and_propagates(self) -> None:
         with (

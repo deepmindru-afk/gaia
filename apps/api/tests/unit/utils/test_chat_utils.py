@@ -71,8 +71,13 @@ class TestDescriptionAttribution:
     @patch("app.agents.llm.chatbot.get_helper_llm")
     @patch("app.agents.llm.chatbot.ainvoke_llm", new_callable=AsyncMock)
     @patch("app.utils.chat_utils.trace_id_for_message", return_value="trace-9")
+    @patch("app.agents.llm.client.build_langfuse_callback", return_value=MagicMock())
     async def test_threads_user_session_and_trace_into_config(
-        self, mock_trace: MagicMock, mock_ainvoke: AsyncMock, mock_get_default: MagicMock
+        self,
+        mock_build: MagicMock,
+        mock_trace: MagicMock,
+        mock_ainvoke: AsyncMock,
+        mock_get_default: MagicMock,
     ) -> None:
         mock_get_default.return_value = MagicMock()
         mock_ainvoke.return_value = AIMessage(content='"Weekly planning"')
@@ -90,8 +95,9 @@ class TestDescriptionAttribution:
         config = mock_ainvoke.call_args.kwargs["config"]
         assert config["configurable"]["user_id"] == "u-1"
         assert config["metadata"]["langfuse_session_id"] == "conv-1"
-        assert config["metadata"]["langfuse_trace_id"] == "trace-9"
+        assert "langfuse_trace_id" not in config["metadata"]
         mock_trace.assert_called_once_with("bot-7")
+        mock_build.assert_called_once_with(trace_id="trace-9")
         sent = mock_ainvoke.call_args.args[1]
         assert "plan my week" in sent[0].content
 

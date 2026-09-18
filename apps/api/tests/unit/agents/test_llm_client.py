@@ -2962,12 +2962,19 @@ class TestAttributedConfig:
     backend, and each half is easy to forget alone."""
 
     def test_binds_user_session_and_trace(self) -> None:
-        config = attributed_config("u-1", session_id="conv-1", langfuse_trace_id="trace-1")
+        with patch(
+            "app.agents.llm.client.build_langfuse_callback",
+            return_value=MagicMock(),
+        ) as mock_build:
+            config = attributed_config("u-1", session_id="conv-1", langfuse_trace_id="trace-1")
 
         assert config["configurable"]["user_id"] == "u-1"
         assert config["metadata"]["langfuse_user_id"] == "u-1"
         assert config["metadata"]["langfuse_session_id"] == "conv-1"
-        assert config["metadata"]["langfuse_trace_id"] == "trace-1"
+        # The SDK never reads metadata["langfuse_trace_id"] — binding goes
+        # through the callback's trace_context, so it must not be written.
+        assert "langfuse_trace_id" not in config["metadata"]
+        mock_build.assert_called_once_with(trace_id="trace-1")
 
     def test_absent_session_and_trace_leave_no_keys(self) -> None:
         config = attributed_config("u-1")
@@ -2988,10 +2995,15 @@ class TestAttributedConfig:
         assert "callbacks" not in config
 
     def test_silent_keeps_flags_and_adds_linkage(self) -> None:
-        config = silent_metered_config("u-1", session_id="conv-1", langfuse_trace_id="trace-1")
+        with patch(
+            "app.agents.llm.client.build_langfuse_callback",
+            return_value=MagicMock(),
+        ) as mock_build:
+            config = silent_metered_config("u-1", session_id="conv-1", langfuse_trace_id="trace-1")
 
         assert config["silent"] is True
         assert config["metadata"]["silent"] is True
         assert config["metadata"]["langfuse_session_id"] == "conv-1"
-        assert config["metadata"]["langfuse_trace_id"] == "trace-1"
+        assert "langfuse_trace_id" not in config["metadata"]
         assert config["configurable"]["user_id"] == "u-1"
+        mock_build.assert_called_once_with(trace_id="trace-1")

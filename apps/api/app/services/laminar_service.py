@@ -4,26 +4,37 @@
 without an already-active span) nests the whole turn under one attributed
 parent. The span object is kept alongside its exit handle so ``end_turn`` sets
 output/tags on OUR span directly instead of guessing the current span.
-Never raises; missing key is a silent no-op.
+Never raises; missing key logs once and no-ops.
 """
 
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-
-from lmnr import Laminar, LaminarSpan
+from typing import TYPE_CHECKING, Any
 
 from app.config.settings import settings
 from app.constants.agents import COMMS_AGENT_NAME
 from shared.py.wide_events import log
+
+try:
+    from lmnr import Laminar as _Laminar
+
+    Laminar: Any = _Laminar
+    _LAMINAR_AVAILABLE = True
+except ImportError:
+    Laminar = None
+    _LAMINAR_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from lmnr import LaminarSpan
 
 
 @dataclass(frozen=True)
 class TurnScope:
     """An entered Laminar parent span plus its exit handle."""
 
-    scope: AbstractContextManager[LaminarSpan]
-    span: LaminarSpan
+    scope: "AbstractContextManager[LaminarSpan]"
+    span: "LaminarSpan"
 
 
 LaminarMetadata = dict[
@@ -32,7 +43,7 @@ LaminarMetadata = dict[
 
 
 def _configured() -> bool:
-    return bool((settings.LMNR_PROJECT_API_KEY or "").strip())
+    return _LAMINAR_AVAILABLE and bool((settings.LMNR_PROJECT_API_KEY or "").strip())
 
 
 _disabled_logged = False
@@ -52,7 +63,7 @@ def begin_turn(
     agent_name: str = COMMS_AGENT_NAME,
     user_input: str | None = None,
     properties: dict[str, str | bool | None] | None = None,
-) -> TurnScope | None:
+) -> "TurnScope | None":
     """Open a Laminar turn scope, or None when disabled/failing."""
     if not user_id:
         return None
@@ -63,7 +74,7 @@ def begin_turn(
         # Filtered, not just annotated: the SDK's metadata type excludes None
         # while ours arrives nullable, so only real values are passed.
         metadata: LaminarMetadata = {k: v for k, v in (properties or {}).items() if v is not None}
-        scope: AbstractContextManager[LaminarSpan] = Laminar.start_as_current_span(
+        scope = Laminar.start_as_current_span(
             agent_name,
             user_id=user_id,
             session_id=conversation_id,
@@ -71,7 +82,7 @@ def begin_turn(
             input=user_input,
         )
         return TurnScope(scope=scope, span=scope.__enter__())
-    except Exception as exc:
+    except BaseException as exc:
         log.warning(
             "laminar_begin_failed",
             error=str(exc),
@@ -82,7 +93,7 @@ def begin_turn(
 
 
 def end_turn(
-    scope: TurnScope | None,
+    scope: "TurnScope | None",
     *,
     output: str | None = None,
     error: Exception | None = None,
@@ -98,7 +109,7 @@ def end_turn(
         # and signals split user-stops from real errors.
         if cancelled and error is None:
             scope.span.set_attribute("cancelled", True)
-    except Exception as exc:
+    except BaseException as exc:
         log.warning(
             "laminar_span_update_failed",
             error=str(exc),
@@ -109,7 +120,7 @@ def end_turn(
             scope.scope.__exit__(None, None, None)
         else:
             scope.scope.__exit__(type(error), error, error.__traceback__)
-    except Exception as exc:
+    except BaseException as exc:
         # A re-raise of the turn's own error means the scope surfaced it
         # instead of absorbing it — that error is already reported by the
         # caller, so only a *different* failure is worth logging here.

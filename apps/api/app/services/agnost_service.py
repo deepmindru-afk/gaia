@@ -1,15 +1,26 @@
-"""Agnost turn events. Never raises; missing org id is a silent no-op."""
+"""Agnost turn events. Never raises; missing org id logs once and no-ops."""
 
-import agnost
-from agnost import Interaction
+from typing import TYPE_CHECKING, Any
 
 from app.config.settings import settings
 from app.constants.agents import COMMS_AGENT_NAME
 from shared.py.wide_events import log
 
+try:
+    import agnost as _agnost_module
+
+    agnost: Any = _agnost_module
+    _AGNOST_AVAILABLE = True
+except ImportError:
+    agnost = None
+    _AGNOST_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from agnost import Interaction
+
 
 def _configured() -> bool:
-    return bool((settings.AGNOST_ORG_ID or "").strip())
+    return _AGNOST_AVAILABLE and bool((settings.AGNOST_ORG_ID or "").strip())
 
 
 _disabled_logged = False
@@ -29,7 +40,7 @@ def begin_turn(
     user_input: str,
     agent_name: str = COMMS_AGENT_NAME,
     properties: dict[str, str | bool | None] | None = None,
-) -> Interaction | None:
+) -> "Interaction | None":
     """Open an Agnost interaction for this turn, or None when disabled/failing."""
     if not user_id:
         return None
@@ -45,7 +56,7 @@ def begin_turn(
             conversation_id=conversation_id,
             properties=props,
         )
-    except Exception as exc:
+    except BaseException as exc:
         log.warning(
             "agnost_begin_failed",
             error=str(exc),
@@ -56,7 +67,7 @@ def begin_turn(
 
 
 def end_turn(
-    interaction: Interaction | None,
+    interaction: "Interaction | None",
     *,
     output: str,
     success: bool,
@@ -69,7 +80,7 @@ def end_turn(
         props = {k: v for k, v in (properties or {}).items() if v is not None}
         if props:
             interaction.set_properties(props)
-    except Exception as exc:
+    except BaseException as exc:
         # A properties failure must not skip the close below: an un-ended
         # interaction leaks the turn from every dashboard.
         log.warning(
@@ -79,7 +90,7 @@ def end_turn(
         )
     try:
         interaction.end(output=output, success=success)
-    except Exception as exc:
+    except BaseException as exc:
         log.warning(
             "agnost_end_failed",
             error=str(exc),

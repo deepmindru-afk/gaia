@@ -561,7 +561,11 @@ class TestSummarizeChunks:
         await processor._summarize_chunks(["chunk0"])
 
         _, kwargs = processor.llm.abatch.call_args
-        assert kwargs["config"] == {"max_concurrency": SUMMARY_LLM_MAX_CONCURRENCY}
+        config = kwargs["config"]
+        assert config["max_concurrency"] == SUMMARY_LLM_MAX_CONCURRENCY
+        # Bulk path must attribute spend to the uploader, not bill to nobody.
+        assert config["configurable"]["user_id"] == processor.user_id
+        assert config["metadata"]["langfuse_user_id"] == processor.user_id
 
 
 # ---------------------------------------------------------------------------

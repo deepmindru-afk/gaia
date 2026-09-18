@@ -1322,9 +1322,9 @@ class TestStampLangfuse:
             "langfuse_tags": ["tag-one"],
         }
         assert metadata == {
-            "langfuse_trace_id": "trace-abc",
             # The session is the CONVERSATION, not the thread: Langfuse groups a
-            # whole chat under it.
+            # whole chat under it. No langfuse_trace_id here — the SDK never
+            # reads it; trace binding goes through the callback's trace_context.
             "langfuse_session_id": CONV_ID,
             "langfuse_user_id": USER_ID,
             "langfuse_tags": ["tag-one"],
@@ -1361,7 +1361,6 @@ class TestStampLangfuse:
         _stamp_langfuse(configurable, metadata, "trace-abc", None, {}, CONV_ID)
 
         assert metadata == {
-            "langfuse_trace_id": "trace-abc",
             "langfuse_session_id": CONV_ID,
         }
 
@@ -1573,7 +1572,10 @@ class TestBuildAgentConfigLaneMetadata:
 
 class TestBuildAgentConfigLangfuseWiring:
     @patch("app.helpers.agent_helpers.providers")
-    async def test_the_stamp_names_this_conversation_and_this_user(self, mock_providers):
+    @patch("app.helpers.agent_helpers.build_langfuse_callback", return_value=None)
+    async def test_the_stamp_names_this_conversation_and_this_user(
+        self, mock_build, mock_providers
+    ):
         """Everything the trace is bound to comes from this one call: the trace,
         the session (the conversation), the user and the tags."""
         mock_providers.get.return_value = None
@@ -1589,13 +1591,15 @@ class TestBuildAgentConfigLangfuseWiring:
 
         assert config["configurable"]["langfuse_trace_id"] == "trace-abc"
         assert config["configurable"]["langfuse_tags"] == ["tag-one"]
-        assert config["metadata"]["langfuse_trace_id"] == "trace-abc"
+        assert "langfuse_trace_id" not in config["metadata"]
         assert config["metadata"]["langfuse_session_id"] == CONV_ID
         assert config["metadata"]["langfuse_user_id"] == USER_ID
         assert config["metadata"]["langfuse_tags"] == ["tag-one"]
+        mock_build.assert_called_once_with(trace_id="trace-abc")
 
     @patch("app.helpers.agent_helpers.providers")
-    async def test_a_child_lands_on_the_parents_trace_and_tags(self, mock_providers):
+    @patch("app.helpers.agent_helpers.build_langfuse_callback", return_value=None)
+    async def test_a_child_lands_on_the_parents_trace_and_tags(self, mock_build, mock_providers):
         """A child agent passes no tracing of its own, so the executor's spans
         have to join the comms trace rather than starting a second one."""
         mock_providers.get.return_value = None
@@ -1616,7 +1620,8 @@ class TestBuildAgentConfigLangfuseWiring:
 
         assert config["configurable"]["langfuse_trace_id"] == "parent-trace"
         assert config["configurable"]["langfuse_tags"] == ["parent-tag"]
-        assert config["metadata"]["langfuse_trace_id"] == "parent-trace"
+        assert "langfuse_trace_id" not in config["metadata"]
+        mock_build.assert_called_once_with(trace_id="parent-trace")
 
     @patch("app.helpers.agent_helpers.providers")
     async def test_explicit_tracing_beats_what_the_parent_carried(self, mock_providers):

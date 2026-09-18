@@ -259,7 +259,10 @@ class DocumentProcessor:
 
         # with_llm_retry adds the same transient-error retry every other LLM
         # call gets; max_concurrency keeps one big document from firing
-        # hundreds of calls at once.
+        # hundreds of calls at once. Attribution rides along: without it each
+        # page summary bills to nobody and orphans from every trace backend.
+        batch_config = attributed_config(self.user_id)
+        batch_config["max_concurrency"] = SUMMARY_LLM_MAX_CONCURRENCY
         summarized_chunks = await with_llm_retry(self.llm).abatch(
             inputs=[
                 [
@@ -277,7 +280,7 @@ class DocumentProcessor:
                 ]
                 for _, chunk in numbered
             ],
-            config={"max_concurrency": SUMMARY_LLM_MAX_CONCURRENCY},
+            config=batch_config,
         )
 
         summaries = [

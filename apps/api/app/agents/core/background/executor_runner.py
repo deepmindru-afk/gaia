@@ -78,7 +78,7 @@ from app.services.latency_metrics import (
     observe_executor_ttft,
     span,
 )
-from app.services.turn_telemetry import TurnSpec, begin_turn_all, end_turn_all
+from app.services.turn_telemetry import TurnError, TurnSpec, begin_turn_all, end_turn_all
 from app.utils.agent_utils import format_sse_data
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import WorkflowContext, get_trace_id, log, wide_task
@@ -172,13 +172,13 @@ async def run_executor_background(
                 source=configurable.get("conversation_source"),
                 mode="background",
                 tier=EXECUTOR_TIER_NAME,
-            properties={
-                "task_id": run.task_id,
-                "queued": run.queued,
-                "workflow_execution_id": run.workflow_execution_id,
-            },
+                properties={
+                    "task_id": run.task_id,
+                    "queued": run.queued,
+                    "workflow_execution_id": run.workflow_execution_id,
+                },
+            )
         )
-    )
         try:
             with span() as elapsed_active:
                 result = await _execute_executor(task, configurable, run.stream_id, resume)
@@ -223,15 +223,25 @@ async def run_executor_background(
             # mirroring the stream orchestrator's error-dominates rule. The
             # call shapes mirror it too (error XOR cancelled, never both).
             if result_type == "error":
-                end_turn_all(telemetry, output=result_text, error=RuntimeError(result_text))
+                end_turn_all(telemetry, output=result_text, error=TurnError(result_text))
             else:
                 end_turn_all(telemetry, output=result_text, cancelled=run_cancelled)
         except Exception as e:
             # _execute_executor is contracted never to raise, so anything here
-            # is a runner bug rather than a turn failure — still record it as
-            # failed (with what the turn produced, if anything) and propagate.
-            end_turn_all(telemetry, output=result_text or str(e), error=e)
-            raise
+            # is a runner bug rather than a turn failure. Record it as failed
+            # and route it through comms as an executor_error via finalize —
+            # never re-raise: this task is fire-and-forget, so a raise is an
+            # unretrieved exception and finalize would then deliver the stale
+            # success result alongside a FAILED turn.
+            result_text, result_type = result_text or str(e), "error"
+            end_turn_all(telemetry, output=result_text, error=e)
+            log.error(
+                f"{LogTag.AGENT} Executor runner bug",
+                task_id=run.task_id,
+                stream_id=run.stream_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
         except BaseException:
             # Cancellation (worker shutdown mid-run) is not an Exception:
             # close the scopes as cancelled so the run doesn't vanish, then

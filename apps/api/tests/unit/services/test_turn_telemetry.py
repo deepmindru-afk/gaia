@@ -144,12 +144,17 @@ class TestBeginFanOut:
                 conversation_id="c1",
                 user_input="hello",
                 source="web",
-                mode="m",
+                mode="interactive",
             )
         )
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
-        assert props == {"source": "web", "mode": "m", "tier": "comms_agent", "env": settings.ENV}
+        assert props == {
+            "source": "web",
+            "mode": "interactive",
+            "tier": "comms_agent",
+            "env": settings.ENV,
+        }
 
     def test_all_none_scopes_logs_once(
         self, services: MagicMock, _reset_disabled_flag: None
@@ -173,7 +178,12 @@ class TestBeginFanOut:
         services.laminar.begin_turn.return_value = None
         with patch("app.services.turn_telemetry.log") as mock_log:
             handles = begin_turn_all(
-                TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", mode="m")
+                TurnSpec(
+                    user_id="u1",
+                    conversation_id="c1",
+                    user_input="hello",
+                    mode="interactive",
+                )
             )
 
             assert handles["agnost"] is not None
@@ -279,3 +289,44 @@ class TestEndFanOut:
         services.agnost.end_turn.assert_not_called()
         services.latitude.end_turn.assert_not_called()
         services.laminar.end_turn.assert_not_called()
+
+
+@pytest.mark.unit
+class TestSpecValidation:
+    def test_invalid_mode_raises(self) -> None:
+        with pytest.raises(ValueError, match="invalid TurnSpec.mode"):
+            TurnSpec(user_id="u1", conversation_id="c1", user_input="hi", mode="m")  # type: ignore[arg-type]
+
+    def test_invalid_tier_raises(self) -> None:
+        with pytest.raises(ValueError, match="invalid TurnSpec.tier"):
+            TurnSpec(
+                user_id="u1",
+                conversation_id="c1",
+                user_input="hi",
+                mode="interactive",
+                tier="bogus",  # type: ignore[arg-type]
+            )
+
+    def test_whitespace_source_normalizes_to_unknown(self, services: MagicMock) -> None:
+        begin_turn_all(
+            TurnSpec(user_id="u1", conversation_id="c1", user_input="hi", source="   ", mode="interactive")
+        )
+
+        props = services.agnost.begin_turn.call_args.kwargs["properties"]
+        assert props["source"] == "unknown"
+
+    def test_raising_begin_is_isolated(self, services: MagicMock) -> None:
+        services.agnost.begin_turn.side_effect = RuntimeError("sdk exploded")
+
+        handles = begin_turn_all(
+            TurnSpec(user_id="u1", conversation_id="c1", user_input="hi", mode="interactive")
+        )
+
+        assert handles == {"agnost": None, "latitude": None, "laminar": None}
+
+    def test_partial_handles_dict_does_not_raise(self, services: MagicMock) -> None:
+        end_turn_all({"agnost": MagicMock()}, output="hi")  # type: ignore[typeddict-item]
+
+        services.agnost.end_turn.assert_called_once()
+        services.latitude.end_turn.assert_called_once()
+        services.laminar.end_turn.assert_called_once()

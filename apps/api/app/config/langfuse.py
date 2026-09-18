@@ -4,8 +4,9 @@ Activates only when LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and
 LANGFUSE_HOST are all set; missing any one is a silent no-op so dev runs
 without keys stay quiet.
 
-Trace association lives in `RunnableConfig.metadata["langfuse_trace_id"]`
-(the standard Langfuse LangChain pattern). `trace_id_for_message` seeds a
+Trace association uses the SDK's ``trace_context`` constructor arg (see
+``build_langfuse_callback``); ``metadata["langfuse_trace_id"]`` is NOT read
+by langfuse>=4 and must not be relied on. `trace_id_for_message` seeds a
 deterministic ID from the GAIA assistant `message_id` so `/feedback` can
 re-derive it without persisting anything.
 """
@@ -154,11 +155,19 @@ def _log_reachability(client: Langfuse) -> None:
         )
 
 
-def build_langfuse_callback() -> CallbackHandler | None:
-    """LangChain callback bound to the global client, or None if disabled."""
+def build_langfuse_callback(trace_id: str | None = None) -> CallbackHandler | None:
+    """LangChain callback bound to the global client, or None if disabled.
+
+    A trace id binds ROOT runs to that trace via the SDK's trace_context
+    (nested runs keep normal parenting); without one each root mints random.
+    Note: ``metadata["langfuse_trace_id"]`` is NOT read by the SDK — passing
+    the seed as metadata only leaves junk span metadata behind.
+    """
     if not _langfuse_configured():
         return None
-    return CallbackHandler()
+    if trace_id is None:
+        return CallbackHandler()
+    return CallbackHandler(trace_context={"trace_id": trace_id})
 
 
 def trace_id_for_message(message_id: str) -> str | None:

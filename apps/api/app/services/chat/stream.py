@@ -71,7 +71,13 @@ from app.services.latency_metrics import (
 )
 from app.services.platform_message_service import is_bot_platform
 from app.services.storage import flush_fs_metrics
-from app.services.turn_telemetry import TurnHandles, TurnSpec, begin_turn_all, end_turn_all
+from app.services.turn_telemetry import (
+    TurnError,
+    TurnHandles,
+    TurnSpec,
+    begin_turn_all,
+    end_turn_all,
+)
 from app.utils.agent_utils import format_sse_data, format_sse_response
 from app.utils.chat_utils import generate_and_update_description
 from app.utils.message_breaks import strip_partial_message_break
@@ -348,10 +354,17 @@ async def _run_chat_stream(
     except BaseException:
         # CancelledError (deploy/restart mid-turn) is not an Exception: close
         # the scopes as cancelled so the turn doesn't vanish, then propagate.
+        # Histograms must see it too, or infra-cancelled turns vanish from SLOs
+        # while user-cancelled turns emit them.
         end_turn_all(telemetry, output=state.complete_message, cancelled=True)
+        _close_turn_timings(
+            stream_id, state, source=source, voice_mode=body.voice_mode, status="cancelled"
+        )
         raise
     finally:
-        await _finalize_stream(stream_id, body, user, conversation_id, state, artifact_task)
+        await _finalize_stream(
+            stream_id, body, user, conversation_id, state, artifact_task, description_task
+        )
 
 
 def _open_turn_telemetry(
@@ -417,7 +430,7 @@ async def _close_turn_records(
         state,
         source=turn.source,
         voice_mode=body.voice_mode,
-        status="cancelled" if state.is_cancelled else "success",
+        status="error" if state.error else "cancelled" if state.is_cancelled else "success",
     )
     user_id = user.get("user_id")
     if user_id:
@@ -440,11 +453,13 @@ async def _close_turn_records(
             event_props["e2e_full_ms"] = state.e2e_full_ms
         if turn.source:
             event_props["source"] = turn.source
+        # Error dominates, mirroring TurnOutcome: a cancelled turn that also
+        # errored is a failure everywhere, not a clean stop.
         capture_event(
             user_id,
             (
                 AnalyticsEvents.CHAT_MESSAGE_CANCELLED
-                if state.is_cancelled
+                if state.is_cancelled and not state.error
                 else AnalyticsEvents.CHAT_MESSAGE_COMPLETED
             ),
             event_props,
@@ -453,8 +468,8 @@ async def _close_turn_records(
     end_turn_all(
         telemetry,
         output=state.complete_message,
-        cancelled=state.is_cancelled,
-        error=Exception(state.error) if state.error else None,
+        cancelled=state.is_cancelled and not state.error,
+        error=TurnError(state.error) if state.error else None,
     )
 
 
@@ -894,7 +909,7 @@ async def _finalize_description(
     if not description_task:
         return
     try:
-        description = await description_task
+        description = await asyncio.wait_for(description_task, timeout=30)
         await stream_manager.publish_chunk(
             stream_id,
             f"data: {json.dumps(ConversationDescriptionFrame(conversation_description=description).model_dump())}\n\n",
@@ -1033,6 +1048,7 @@ async def _finalize_stream(
     conversation_id: str,
     state: _StreamState,
     artifact_task: asyncio.Task[None] | None,
+    description_task: asyncio.Task[str] | None = None,
 ) -> None:
     """Always-run cleanup: cancel artifact forwarder, persist (if not already
     saved), tear down executor capture, cleanup Redis, emit final wide event."""
@@ -1040,6 +1056,13 @@ async def _finalize_stream(
         artifact_task.cancel()
         with contextlib.suppress(BaseException):
             await artifact_task
+    # The happy path awaits the description via _finalize_description; every
+    # other path must still cancel it or the LLM call dangles and a later
+    # failure surfaces as "Task exception was never retrieved".
+    if description_task is not None and not description_task.done():
+        description_task.cancel()
+        with contextlib.suppress(BaseException):
+            await description_task
 
     # Error / early-exit path: the turn wasn't saved in the try block. The
     # happy path already saved early (before the executor wait), so this is a

@@ -183,6 +183,7 @@ def _build_agent_callbacks(
     user: AgentUserContext,
     agent_name: str,
     usage_metadata_callback: UsageMetadataCallbackHandler | None,
+    langfuse_trace_id: str | None = None,
 ) -> list[BaseCallbackHandler]:
     """Assemble the LangChain callback list for an agent run (PostHog, usage)."""
     callbacks: list[BaseCallbackHandler] = []
@@ -201,7 +202,7 @@ def _build_agent_callbacks(
             ),
         )
 
-    langfuse_callback = build_langfuse_callback()
+    langfuse_callback = build_langfuse_callback(trace_id=langfuse_trace_id)
     if langfuse_callback is not None:
         callbacks.append(langfuse_callback)
 
@@ -436,8 +437,10 @@ def _stamp_langfuse(
         configurable["langfuse_trace_id"] = effective_trace_id
     if effective_tags:
         configurable["langfuse_tags"] = effective_tags
+    # NOTE: no metadata["langfuse_trace_id"] — the SDK never reads it (trace
+    # binding goes through the callback's trace_context instead); writing it
+    # would leave junk span metadata behind. Session/user keys below ARE read.
     if effective_trace_id:
-        metadata["langfuse_trace_id"] = effective_trace_id
         metadata["langfuse_session_id"] = conversation_id
         if user.get("user_id"):
             metadata["langfuse_user_id"] = user["user_id"]
@@ -506,7 +509,15 @@ async def build_agent_config(
     )
 
     callbacks = _build_agent_callbacks(
-        conversation_id, user, agent_name, tracing.usage_metadata_callback
+        conversation_id,
+        user,
+        agent_name,
+        tracing.usage_metadata_callback,
+        langfuse_trace_id=(
+            tracing.langfuse_trace_id
+            if tracing.langfuse_trace_id is not None
+            else (base_configurable or {}).get("langfuse_trace_id")
+        ),
     )
 
     # The one seam every execution path crosses. A run with a parent inherits its

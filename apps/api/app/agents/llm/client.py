@@ -1101,10 +1101,8 @@ def attributed_config(
     metadata: dict[str, str] = {"langfuse_user_id": user_id}
     if session_id is not None:
         metadata["langfuse_session_id"] = session_id
-    if langfuse_trace_id is not None:
-        metadata["langfuse_trace_id"] = langfuse_trace_id
     merged: dict[str, Any] = {**config, "metadata": metadata}
-    callback = build_langfuse_callback()
+    callback = build_langfuse_callback(trace_id=langfuse_trace_id)
     if callback is not None:
         merged["callbacks"] = [callback]
     return cast(RunnableConfig, merged)

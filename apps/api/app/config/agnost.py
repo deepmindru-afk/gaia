@@ -1,8 +1,17 @@
-import agnost
+from typing import Any
 
 from app.config.settings import settings
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
 from shared.py.wide_events import log
+
+try:
+    import agnost as _agnost_module
+
+    agnost: Any = _agnost_module
+    _AGNOST_AVAILABLE = True
+except ImportError:
+    agnost = None
+    _AGNOST_AVAILABLE = False
 
 _initialized = False
 
@@ -18,7 +27,10 @@ def init_agnost() -> bool:
     """Initialize the Agnost conversation SDK once per process.
 
     No-op when AGNOST_ORG_ID is unset so local dev without keys stays quiet.
+    Raises on failure so the loader retries instead of marking ready.
     """
+    if not _AGNOST_AVAILABLE:
+        raise RuntimeError("agnost package not installed")
     ok = agnost.init(
         settings.AGNOST_ORG_ID or "",
         endpoint=settings.AGNOST_ENDPOINT or "https://api.agnost.ai",
@@ -29,7 +41,8 @@ def init_agnost() -> bool:
         log.info("agnost_ready", endpoint=settings.AGNOST_ENDPOINT)
     else:
         log.warning("agnost_init_failed", hint="turn telemetry will be dropped")
-    return bool(ok)
+        raise RuntimeError("agnost.init returned False")
+    return True
 
 
 async def flush_agnost() -> None:

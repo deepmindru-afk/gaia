@@ -59,7 +59,7 @@ from app.services.hil.resolution import (
     abandon_conversation_approvals,
     resolve_approval,
 )
-from app.services.turn_telemetry import TurnSpec, begin_turn_all, end_turn_all
+from app.services.turn_telemetry import TurnError, TurnSpec, begin_turn_all, end_turn_all
 from app.utils.general_utils import clip_text
 from shared.py.wide_events import log
 
@@ -130,16 +130,31 @@ async def resolve_pending_from_message(
     )
     try:
         if len(pending) == 1:
-            action = await _resolve_single(
+            action, classifier_failed = await _resolve_single(
                 pending[0], conversation_id, user_id, message, history, langfuse_trace_id
             )
         else:
-            action = await _resolve_batch(
+            action, classifier_failed = await _resolve_batch(
                 pending, conversation_id, user_id, message, history, langfuse_trace_id
             )
     except Exception as e:
         end_turn_all(telemetry, output=str(e), error=e)
         raise
+    except BaseException:
+        # Deploy/restart mid-classify: same contract as every other turn
+        # closer — close as cancelled so the turn doesn't leak, then propagate.
+        end_turn_all(telemetry, output="", cancelled=True)
+        raise
+    if classifier_failed:
+        # The LLM errored so the approval stays pending (fail-safe), but the
+        # turn itself did fail — recording SUCCESS here would show 100% clean
+        # during a classifier outage.
+        end_turn_all(
+            telemetry,
+            output="classifier_error",
+            error=TurnError("HIL classifier LLM failed"),
+        )
+        return None
     end_turn_all(
         telemetry,
         output=(HIL_ACK_APPROVED if action == "approve" else HIL_ACK_DENIED)
@@ -156,7 +171,7 @@ async def _resolve_single(
     message: str,
     history: list[MessageDict] | None,
     langfuse_trace_id: str | None = None,
-) -> DecisionAction | None:
+) -> tuple[DecisionAction | None, bool]:
     action_detail = build_action_detail(record.summary, record.args)
     result = await interpret_decision_message(
         message,
@@ -170,16 +185,16 @@ async def _resolve_single(
         # The classifier errored. Leave the approval pending rather than abandon it —
         # a transient hiccup must not silently decline a legitimate pending action
         # (matches the batch path's fail-toward-pending behavior).
-        return None
+        return None, True
     if result.action == "unrelated":
         # The user moved on. Abandon the paused run so it resumes, sees a refusal,
         # wraps up, and frees the conversation's executor lock for the new turn.
         await abandon_conversation_approvals(conversation_id, user_id, UNRELATED_FEEDBACK)
-        return "unrelated"
+        return "unrelated", False
 
     action, feedback = _no_arg_edit(result.action, result.feedback)
     await _safe_resolve(record.approval_id, user_id, action, feedback)
-    return action
+    return action, False
 
 
 async def _resolve_batch(
@@ -189,7 +204,7 @@ async def _resolve_batch(
     message: str,
     history: list[MessageDict] | None,
     langfuse_trace_id: str | None = None,
-) -> DecisionAction | None:
+) -> tuple[DecisionAction | None, bool]:
     """Apply a per-item classification of ``message`` to the pending batch.
 
     Decisions dispatch through ``resolve_approval`` one by one; the per-conversation
@@ -205,9 +220,11 @@ async def _resolve_batch(
         session_id=conversation_id,
         langfuse_trace_id=langfuse_trace_id,
     )
+    if result is None:
+        return None, True
     if result.unrelated:
         await abandon_conversation_approvals(conversation_id, user_id, UNRELATED_FEEDBACK)
-        return "unrelated"
+        return "unrelated", False
 
     approved = denied = 0
     for decision in result.decisions:
@@ -222,10 +239,10 @@ async def _resolve_batch(
             denied += 1
 
     if approved:
-        return "approve"
+        return "approve", False
     if denied:
-        return "deny"
-    return None
+        return "deny", False
+    return None, False
 
 
 async def interpret_batch_decision_message(
@@ -236,11 +253,11 @@ async def interpret_batch_decision_message(
     user_id: str,
     session_id: str | None = None,
     langfuse_trace_id: str | None = None,
-) -> BatchDecisionResult:
+) -> BatchDecisionResult | None:
     """Classify a chat reply against several pending approvals, per item.
 
-    Fails toward leaving everything pending (empty decisions, not unrelated) —
-    never toward acting, and never toward abandoning on an LLM hiccup.
+    ``None`` on an LLM error, so the caller leaves everything pending — never
+    toward acting, and never toward abandoning on an LLM hiccup.
     """
     try:
         return await ainvoke_structured(
@@ -258,7 +275,7 @@ async def interpret_batch_decision_message(
             error=str(e),
             error_type=type(e).__name__,
         )
-        return BatchDecisionResult(unrelated=False)
+        return None
 
 
 async def interpret_decision_message(

@@ -1,4 +1,5 @@
 import os
+import signal
 
 from latitude_telemetry import Latitude
 from latitude_telemetry.env import env as latitude_env
@@ -40,18 +41,41 @@ def init_latitude() -> bool:
     Spans come from OpenInference's LangChain instrumentor (maintained against
     LangChain 1.x — the OTel-contrib one latitude-telemetry bundles no longer
     patches current internals, verified: zero LLM spans), registered against
-    Latitude's own provider so spans ship to Latitude and nowhere else.
-    No-op when LATITUDE_API_KEY is unset.
+    Latitude's provider. When no global provider exists Latitude owns it;
+    when one does (e.g. Sentry init in prod) the SDK piggybacks on it and
+    spans traverse that pipeline too — dev/prod differ here by construction.
+    No-op when LATITUDE_API_KEY is unset. Idempotent: a second call returns
+    True without attaching a duplicate processor.
     """
+    global _client
+    if _client is not None:
+        return True
     # Settings wins over process env, always: see resolve_exporter_endpoint.
     endpoint = resolve_exporter_endpoint()
 
-    latitude = Latitude(
-        api_key=settings.LATITUDE_API_KEY or "",
-        project=settings.LATITUDE_PROJECT,
-    )
+    try:
+        prev_sigterm = signal.getsignal(signal.SIGTERM)
+        prev_sigint = signal.getsignal(signal.SIGINT)
+        signals_saved = True
+    except ValueError:
+        # Non-main thread: no signal handlers to save/restore.
+        signals_saved = False
+    try:
+        latitude = Latitude(
+            api_key=settings.LATITUDE_API_KEY or "",
+            project=settings.LATITUDE_PROJECT,
+        )
+    finally:
+        # The SDK hijacks SIGTERM/SIGINT process-wide (sys.exit instead of
+        # uvicorn's drain path, so unified_shutdown never runs). Restore the
+        # host's handlers; the SDK's atexit flush still runs.
+        if signals_saved:
+            try:
+                signal.signal(signal.SIGTERM, prev_sigterm)
+                signal.signal(signal.SIGINT, prev_sigint)
+            except ValueError:
+                pass
     LangChainInstrumentor().instrument(tracer_provider=latitude.provider)
-    global _client
     _client = latitude
     log.info(
         "latitude_ready",

@@ -23,6 +23,7 @@ from app.services.chat.stream import (
     _StreamState,
     run_chat_stream_background,
 )
+from app.services.turn_telemetry import TurnError
 
 
 @pytest.fixture
@@ -411,7 +412,7 @@ class TestTurnTelemetry:
         assert mock_agnost_end.call_args.kwargs["success"] is False
         assert mock_agnost_end.call_args.kwargs["output"], "the failure must carry a message"
         lat_error = mock_lat_end.call_args.kwargs["error"]
-        assert isinstance(lat_error, Exception) and "graph exploded" in str(lat_error)
+        assert isinstance(lat_error, TurnError) and "graph exploded" in str(lat_error)
         assert mock_lam_end.call_args.kwargs["error"] is lat_error
 
     async def test_clean_turn_marks_posthog_completed_without_error(

@@ -15,7 +15,7 @@ verdict and ``resolve_approval`` is the production code under test.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -383,6 +383,20 @@ class TestClassifierFailure:
         resolver["resolve"].assert_not_awaited()
         resolver["abandon"].assert_not_awaited()
 
+    async def test_classifier_error_closes_turn_as_failed(self, resolver: dict) -> None:
+        # Fail-safe (pending preserved) but not silent: the turn must read
+        # FAILED, or a classifier outage shows 100% SUCCESS with empty output.
+        resolver["llm"].side_effect = ConnectionError("provider down")
+        with (
+            pending("Send email — to: bob@example.com"),
+            patch(f"{MODULE}.begin_turn_all", return_value={"agnost": None}),
+            patch(f"{MODULE}.end_turn_all") as mock_end,
+        ):
+            await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes")
+
+        assert mock_end.call_args.kwargs["error"] is not None
+        assert mock_end.call_args.kwargs["output"] == "classifier_error"
+
 
 class TestRacingDecisions:
     """The user can click a button and type "yes" at the same time, and the sweep can fire
@@ -485,7 +499,13 @@ class TestTraceLinkage:
         self, resolver: dict
     ) -> None:
         resolver["llm"].return_value = DecisionResult(action="approve")
-        with pending("Send email"):
+        with (
+            pending("Send email"),
+            patch(
+                "app.agents.llm.client.build_langfuse_callback",
+                return_value=MagicMock(),
+            ) as mock_build,
+        ):
             await resolve_pending_from_message(
                 CONVERSATION_ID, USER_ID, "yes", None, langfuse_trace_id="trace-1"
             )
@@ -493,8 +513,9 @@ class TestTraceLinkage:
         config = resolver["llm"].await_args.kwargs["config"]
         assert config["configurable"]["user_id"] == USER_ID
         assert config["metadata"]["langfuse_session_id"] == CONVERSATION_ID
-        assert config["metadata"]["langfuse_trace_id"] == "trace-1"
+        assert "langfuse_trace_id" not in config["metadata"]
         assert config["metadata"]["langfuse_user_id"] == USER_ID
+        mock_build.assert_called_once_with(trace_id="trace-1")
 
     async def test_absent_trace_leaves_no_trace_key(self, resolver: dict) -> None:
         resolver["llm"].return_value = DecisionResult(action="approve")
@@ -516,7 +537,13 @@ class TestBatchTraceLinkage:
         resolver["llm"].return_value = BatchDecisionResult(
             decisions=[], unrelated=False
         )
-        with pending("Send email", "Delete drafts"):
+        with (
+            pending("Send email", "Delete drafts"),
+            patch(
+                "app.agents.llm.client.build_langfuse_callback",
+                return_value=MagicMock(),
+            ) as mock_build,
+        ):
             await resolve_pending_from_message(
                 CONVERSATION_ID, USER_ID, "yes both", None, langfuse_trace_id="trace-1"
             )
@@ -524,7 +551,8 @@ class TestBatchTraceLinkage:
         config = resolver["llm"].await_args.kwargs["config"]
         assert config["configurable"]["user_id"] == USER_ID
         assert config["metadata"]["langfuse_session_id"] == CONVERSATION_ID
-        assert config["metadata"]["langfuse_trace_id"] == "trace-1"
+        assert "langfuse_trace_id" not in config["metadata"]
+        mock_build.assert_called_once_with(trace_id="trace-1")
 
     async def test_batch_prompt_carries_message_and_history(self, resolver: dict) -> None:
         resolver["llm"].return_value = BatchDecisionResult(
