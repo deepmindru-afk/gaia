@@ -21,13 +21,14 @@ BACKGROUND_EXECUTION_BANNER = (
     "   - Your output is consumed by the system, not a human. Be terse and action-only."
 )
 
-#: Comms: pure capability awareness — it hands off rather than acting.
+#: Comms: pure capability awareness — it delegates via call_executor rather
+#: than acting.
 CONNECTED_INTEGRATIONS_HEADER = (
-    "Connected integrations (hand off to the matching subagent to use them):"
+    "Connected integrations (the executor can act on these when you delegate via call_executor):"
 )
 
 class BuiltinOverlap(NamedTuple):
-    """A built-in subagent whose job a connected provider gets mistaken for."""
+    """A built-in capability whose job a connected provider gets mistaken for."""
 
     subagent_id: str
     description: str
