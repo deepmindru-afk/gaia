@@ -166,15 +166,6 @@ function buildMarkdownComponents(
     pre: ({ ...props }) => <pre className="font-serif! text-wrap" {...props} />,
     table: ({ ...props }) => (
       <div className="markdown-table my-4 overflow-x-auto rounded-3xl bg-zinc-900 p-3">
-        <style>{`
-                .markdown-table table { border-separate: separate; border-spacing: 0; }
-                .markdown-table tbody tr:first-child td:first-child { border-top-left-radius: 0.75rem; }
-                .markdown-table tbody tr:first-child td:last-child { border-top-right-radius: 0.75rem; }
-                .markdown-table tbody tr:last-child td:first-child { border-bottom-left-radius: 0.75rem; }
-                .markdown-table tbody tr:last-child td:last-child { border-bottom-right-radius: 0.75rem; }
-                .markdown-table tbody tr:last-child td { border-bottom: none; }
-                .markdown-table tbody tr:hover td { background-color: #27272A80; }
-              `}</style>
         <table
           className="min-w-full border-separate border-spacing-0 text-sm"
           {...props}

@@ -393,9 +393,9 @@ jobs:
       - uses: ./.github/actions/setup-node-pnpm
       - name: Design-system lint (oxlint + @shadcn/lint, max 99 warnings)
         run: |
-          trap 'echo "::error::repro: pnpm --filter ./apps/web exec oxlint --max-warnings=86"' ERR
+          trap 'echo "::error::repro: pnpm --filter ./apps/web exec oxlint --max-warnings=4"' ERR
           echo "::group::oxlint shadcn"
-          pnpm --filter ./apps/web exec oxlint --max-warnings=86
+          pnpm --filter ./apps/web exec oxlint --max-warnings=4
           echo "::endgroup::"
           echo "### Design-system lint — ✅ passed" >> "$GITHUB_STEP_SUMMARY"
           echo "Design-system lint: OK (0 errors, warnings within cap)"

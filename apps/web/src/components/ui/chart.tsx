@@ -89,6 +89,12 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
     return null;
   }
 
+  // Stays a <style> block by necessity (shadcn/no-inline-styles proof): keys
+  // and values are runtime chart data — caller-chosen config keys, per-series
+  // colors, per-instance ids, light/dark theme variants — so no static class,
+  // vars-only style prop (dynamic keys), or globals.css rule can express
+  // them. The block sets ONLY --color-* custom properties consumed via var(),
+  // i.e. it already is the CSS-var bridge, scoped per chart id.
   return (
     <style
       dangerouslySetInnerHTML={{
@@ -356,11 +362,13 @@ function ChartLegendContent({
             {itemConfig?.icon && !hideIcon ? (
               <itemConfig.icon />
             ) : (
+              // Series color comes from the recharts payload (chart data), so
+              // it rides on a var — same bridge as the tooltip indicator
+              // above. Unset when item.color is missing, matching the old
+              // `backgroundColor: undefined` (transparent).
               <div
-                className="h-2 w-2 shrink-0 rounded-[2px]"
-                style={{
-                  backgroundColor: item.color,
-                }}
+                className="h-2 w-2 shrink-0 rounded-[2px] bg-[color:var(--legend-color)]"
+                style={{ "--legend-color": item.color } as React.CSSProperties}
               />
             )}
             {itemConfig?.label}

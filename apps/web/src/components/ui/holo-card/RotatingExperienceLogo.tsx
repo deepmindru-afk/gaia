@@ -13,6 +13,9 @@ interface RotatingExperienceLogoProps {
 
 const DEFAULT_TEXT = "The Experience Company  •   ";
 
+// Shared spin keyframes live in globals.css (`holoRotatingLogoSpin`); the
+// <svg> below only sets its own duration, which stays inline under the
+// holo-card no-inline-styles override (animation is an allowed property).
 const SPIN_KEYFRAMES_NAME = "holoRotatingLogoSpin";
 
 export function RotatingExperienceLogo({
@@ -44,12 +47,6 @@ export function RotatingExperienceLogo({
         pointerEvents: "none",
       }}
     >
-      <style>{`
-        @keyframes ${SPIN_KEYFRAMES_NAME} {
-          from { transform: rotate(0deg); }
-          to   { transform: rotate(360deg); }
-        }
-      `}</style>
       <svg
         viewBox={`0 0 ${size} ${size}`}
         width={size}

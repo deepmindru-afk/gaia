@@ -109,10 +109,9 @@ export function FirstStepsWidget() {
           measured row to interpolate against. */}
       <div
         className={cn(
-          "grid transition duration-200 ease-out motion-reduce:transition-none",
+          "grid transition duration-200 ease-out motion-reduce:transition-none first-steps-collapse",
           collapsed ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
         )}
-        style={{ transitionProperty: "grid-template-rows" }}
       >
         {/* `inert` blocks focus and pointer, `aria-hidden` takes the rows out
             of the accessibility tree. Paired deliberately: alone, `aria-hidden`

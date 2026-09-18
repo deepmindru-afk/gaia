@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import type { CSSProperties } from "react";
 import { ReceiptPrinter } from "@/features/pricing/components/ReceiptPrinter";
 import type { ReceiptPrinterStage } from "@/features/pricing/components/receipt-printer.types";
 import { CENTS_PER_DOLLAR } from "@/features/pricing/constants";
@@ -137,11 +138,10 @@ export function PostPaymentReceipt({
                 lockup sits top-left in both themes. */}
             <Image
               alt="GAIA"
-              className="block"
+              className="block h-5 w-auto"
               height={30}
               priority
               src="/images/logos/text_w_logo_white.webp"
-              style={{ height: 20, width: "auto" }}
               width={100}
             />
           </ReceiptPrinter.Header>
@@ -237,9 +237,9 @@ export function PostPaymentReceipt({
               >
                 {bars.map((bar) => (
                   <span
-                    className="bg-zinc-950"
+                    className="bg-zinc-950 receipt-bar"
                     key={bar.barKey}
-                    style={{ width: bar.width }}
+                    style={{ "--bar-w": `${bar.width}px` } as CSSProperties}
                   />
                 ))}
               </div>

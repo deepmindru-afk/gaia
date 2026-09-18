@@ -74,11 +74,16 @@ export function BotBubbleFooter({
   isRetrying,
 }: FooterProps) {
   const hasFollowUps = !!follow_up_actions && follow_up_actions.length > 0;
+  // Initial hidden state lives in classes (not a style prop) so the
+  // imperative hover reveal in useActionsHover keeps working untouched: it
+  // writes el.style.opacity/visibility on hover/focus, which overrides these
+  // classes, and clears back on leave/blur. Pure group-hover cannot cover the
+  // focus/blur path, so the ref logic stays the reveal mechanism.
   const rowClass = disableActions
     ? "hidden"
     : loading
-      ? "opacity-0!"
-      : "opacity-100";
+      ? "invisible opacity-0!"
+      : "invisible opacity-0";
   return (
     <div className="ml-10.75 flex flex-col">
       {hasFollowUps && (
@@ -88,10 +93,6 @@ export function BotBubbleFooter({
       <div
         ref={actionsRef}
         className={`flex flex-col transition-all ${rowClass}`}
-        style={{
-          opacity: disableActions ? 1 : 0,
-          visibility: disableActions ? "visible" : "hidden",
-        }}
       >
         {date && !disableActions && (
           <span

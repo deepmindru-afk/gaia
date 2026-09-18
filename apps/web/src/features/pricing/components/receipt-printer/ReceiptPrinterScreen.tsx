@@ -1,13 +1,7 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import type { ReceiptPrinterScreenProps } from "@/features/pricing/components/receipt-printer.types";
 import { cn } from "@/lib/utils";
-
-const screenGlowStyle: CSSProperties = {
-  borderRadius: "inherit",
-  boxShadow: "inset 0 0 24px 4px color-mix(in oklab,#09090b 35%,transparent)",
-};
 
 export function ReceiptPrinterScreen({
   children,
@@ -18,16 +12,15 @@ export function ReceiptPrinterScreen({
   return (
     <div
       className={cn(
-        "relative z-10 isolate overflow-hidden bg-zinc-800 p-4 text-zinc-50 shadow-inner shadow-zinc-950/30",
+        "relative z-10 isolate overflow-hidden bg-zinc-800 p-4 text-zinc-50 shadow-inner shadow-zinc-950/30 printer-screen",
         className,
       )}
-      style={{ borderRadius: "var(--printer-inner-radius)", ...style }}
+      style={style}
       {...props}
     >
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-20"
-        style={screenGlowStyle}
+        className="pointer-events-none absolute inset-0 z-20 printer-screen-glow"
       />
       <div className="relative z-10">{children}</div>
     </div>

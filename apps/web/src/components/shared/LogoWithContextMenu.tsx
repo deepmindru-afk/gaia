@@ -9,7 +9,7 @@ import {
 } from "@icons";
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { type CSSProperties, useCallback, useState } from "react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -209,18 +209,20 @@ export function LogoWithContextMenu({
       {isOpen && (
         <ContextMenuContent>
           {menuItemsConfig.map((item, index) => {
+            // Stagger delay rides on --menu-index (see .menu-stagger-item in
+            // globals.css). It sits on the same node as the animate-in
+            // classes — animation-delay is not inherited, so keeping it on
+            // the outer ContextMenuItem would be a no-op.
             const itemAnimationClass =
-              "animate-in fade-in slide-in-from-left-2 duration-100";
-            const style = {
-              animationDelay: `${index * 50}ms`,
-              animationFillMode: "both",
-            } as const;
+              "animate-in fade-in slide-in-from-left-2 duration-100 menu-stagger-item";
+            const style = { "--menu-index": index } as CSSProperties;
 
             if (item.type === "link") {
               return (
-                <ContextMenuItem key={item.id} asChild style={style}>
+                <ContextMenuItem key={item.id} asChild>
                   <Link
                     href={item.href}
+                    style={style}
                     className={`flex w-full items-center gap-3 cursor-pointer ${itemAnimationClass}`}
                     target={item.target}
                   >
@@ -234,10 +236,10 @@ export function LogoWithContextMenu({
             return (
               <ContextMenuItem
                 key={item.id}
-                style={style}
                 onSelect={() => handleAction(item.action)}
               >
                 <div
+                  style={style}
                   className={`flex w-full items-center gap-3 cursor-pointer ${itemAnimationClass}`}
                 >
                   {item.icon}

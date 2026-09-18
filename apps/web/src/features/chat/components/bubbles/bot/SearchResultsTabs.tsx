@@ -166,14 +166,23 @@ function ImageItem({
     setIsLoading(false);
   }, []);
 
-  const rotation =
-    totalImages > 1 ? (index % 2 === 0 ? "8deg" : "-8deg") : "0deg";
+  const rotationClass =
+    totalImages > 1 ? (index % 2 === 0 ? "rotate-8" : "-rotate-8") : "rotate-0";
+  const stackClass =
+    index === 0
+      ? "z-0"
+      : index === 1
+        ? "z-1"
+        : index === 2
+          ? "z-2"
+          : index === 3
+            ? "z-3"
+            : "z-4";
 
   return (
     <m.div
       onClick={onImageClick}
-      className="relative h-32 w-32 shrink-0 cursor-pointer overflow-hidden rounded-2xl shadow-zinc-950 transition-transform duration-200 hover:scale-105 hover:z-10"
-      style={{ rotate: rotation, zIndex: index }}
+      className={`relative h-32 w-32 shrink-0 cursor-pointer overflow-hidden rounded-2xl shadow-zinc-950 transition-transform duration-200 hover:scale-105 hover:z-10 ${rotationClass} ${stackClass}`}
       initial={{ scale: 0.6, filter: "blur(10px)" }}
       animate={{ scale: 1, filter: "blur(0px)" }}
       transition={{
