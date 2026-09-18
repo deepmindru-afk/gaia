@@ -455,6 +455,96 @@ async def test_session_unavailable_emits_failed_card_and_explains(
 
 
 # ---------------------------------------------------------------------------
+# execute_browser_job — no ending without a terminal card
+# ---------------------------------------------------------------------------
+
+
+async def test_a_crash_inside_the_run_is_one_failed_card_on_the_feed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nobody holds a tool call to hear an exception: an unexpected crash still owes the feed exactly one terminal card, and the bot its closing line."""
+
+    async def _boom(h: Harness) -> BrowserResultSnapshot:
+        raise RuntimeError("the page exploded")
+
+    h = _install(monkeypatch, run_body=_boom)
+    fake_log = MagicMock()
+    monkeypatch.setattr(jr, "log", fake_log)
+
+    out = await _run(h, _request(task="x"))
+
+    summary = "the browser task stopped unexpectedly: the page exploded"
+    assert [c for c in h.cards if c["kind"] == "result"] == [_failed_card(summary)]
+    assert out == _failed_message(summary)
+    fake_log.error.assert_called_once_with(
+        f"{LogTag.BROWSER} Browser job crashed",
+        error_type="RuntimeError",
+        browser={"job_id": "job-1"},
+    )
+
+
+async def test_a_cancelled_run_emits_the_failed_card_and_still_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled task leaves the card RUNNING forever unless the ending is published before the cancellation continues on its way."""
+
+    async def _cancel(h: Harness) -> BrowserResultSnapshot:
+        raise asyncio.CancelledError
+
+    h = _install(monkeypatch, run_body=_cancel)
+
+    with pytest.raises(asyncio.CancelledError):
+        await jr.execute_browser_job(_request(task="x"))
+
+    assert [c for c in h.cards if c["kind"] == "result"] == [
+        _failed_card("the browser task was stopped before it finished")
+    ]
+
+
+async def test_a_crash_after_a_session_opened_carries_the_recap_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The steps that did happen are still worth showing, so a crashed run links the same recap a finished one does."""
+    links: list[tuple[str, list[str]]] = []
+
+    async def _create_replay_link(session_id: str, shots: list[str]) -> str:
+        links.append((session_id, shots))
+        return "https://gaia.test/replays/abc"
+
+    async def _one_step_then_boom(h: Harness) -> BrowserResultSnapshot:
+        await h.emit(BrowserStepSnapshot(index=1, goal="look", screenshot="https://cdn/step_1.png"))
+        raise RuntimeError("the page exploded")
+
+    h = _install(monkeypatch, run_body=_one_step_then_boom)
+    monkeypatch.setattr(jr, "create_replay_link", _create_replay_link)
+
+    await jr.execute_browser_job(_request(task="x"))
+
+    assert links == [("sess-1", ["https://cdn/step_1.png"])]
+    result_card = [c for c in h.cards if c["kind"] == "result"][0]
+    assert result_card["replay_url"] == "https://gaia.test/replays/abc"
+
+
+async def test_a_failure_before_any_session_has_no_recap_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """There is nothing to replay when the browser never opened; a link would 404."""
+    calls: list[Any] = []
+
+    async def _create_replay_link(session_id: str, shots: list[str]) -> str:
+        calls.append(session_id)
+        return "https://gaia.test/replays/abc"
+
+    h = _install(monkeypatch, session_error=BrowserUnavailableError("host is down"))
+    monkeypatch.setattr(jr, "create_replay_link", _create_replay_link)
+
+    await jr.execute_browser_job(_request(task="x"))
+
+    assert calls == []
+    assert h.cards == [_failed_card("host is down")]
+
+
+# ---------------------------------------------------------------------------
 # execute_browser_job — the task text and the session it opens
 # ---------------------------------------------------------------------------
 
@@ -823,7 +913,7 @@ async def test_handoff_keepalive_is_cancelled_after_the_handoff_resolves(
 async def test_handoff_keepalive_is_cancelled_when_await_handoff_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cancel the keepalive on the failure path too; a raised await_handoff must not leak the keepalive task running forever."""
+    """Cancel the keepalive on the failure path too; a raised await_handoff must not leak the keepalive task running forever, and the run still owes a terminal card."""
     tasks: list[asyncio.Task[None]] = []
 
     async def _fake_keep_alive(session_id: str) -> None:
@@ -847,10 +937,10 @@ async def test_handoff_keepalive_is_cancelled_when_await_handoff_raises(
     monkeypatch.setattr(jr, "spawn_background_task", _spawn)
     monkeypatch.setattr(jr, "await_handoff", _boom_await_handoff)
 
-    with pytest.raises(RuntimeError, match="redis down"):
-        await _run(h, _request())
+    out = await _run(h, _request())
     await asyncio.sleep(0)
 
+    assert out == _failed_message("the browser task stopped unexpectedly: redis down")
     assert len(tasks) == 1
     assert tasks[0].cancelled()
 

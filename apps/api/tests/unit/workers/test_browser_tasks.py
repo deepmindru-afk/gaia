@@ -59,7 +59,6 @@ def _install(
     monkeypatch: pytest.MonkeyPatch,
     *,
     result: BrowserResultSnapshot | None = None,
-    run_error: Exception | None = None,
     lease: list[bool] | None = None,
     narration: str = "Booked it for you.",
     missing_user: bool = False,
@@ -70,8 +69,6 @@ def _install(
 
     async def _execute(request: BrowserJobRequest) -> BrowserResultSnapshot:
         w.ran.append(request)
-        if run_error is not None:
-            raise run_error
         return result or DONE
 
     async def _put_state(state: BrowserJobState) -> None:
@@ -174,25 +171,6 @@ async def test_the_conversations_slot_is_released_when_the_run_ends(
     await tasks_mod.run_browser_job({}, PAYLOAD)
 
     assert w.released == [("conv-9", "job-1")]
-
-
-async def test_a_run_that_blows_up_still_frees_the_conversation_and_reports_itself(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A wedged slot would refuse every later browser task in this conversation, and silence would leave the user waiting on a run that is already dead."""
-    w = _install(monkeypatch, run_error=RuntimeError("the host vanished"))
-    fake_log = MagicMock()
-    monkeypatch.setattr(tasks_mod, "log", fake_log)
-
-    await tasks_mod.run_browser_job({}, PAYLOAD)
-
-    assert w.released == [("conv-9", "job-1")]
-    assert w.states[-1].status is BrowserJobStatus.DONE
-    assert w.states[-1].result is not None
-    assert w.states[-1].result.status is BrowserSessionStatus.FAILED
-    assert "the host vanished" in w.states[-1].result.summary
-    assert len(w.delivered) == 1
-    fake_log.error.assert_called_once()
 
 
 async def test_the_slot_lease_is_refreshed_for_as_long_as_the_run_lasts(

@@ -44,6 +44,7 @@ from app.services.browser.handoff import await_handoff, create_pending_handoff
 from app.services.browser.job_events import publish_job_event
 from app.services.browser.jobs import job_cancel_requested, put_job_state
 from app.services.browser.llm import build_browser_llm
+from app.services.browser.replay import create_replay_link
 from app.services.browser.runner import (
     BrowserRunConfig,
     BrowserRunnerCallbacks,
@@ -402,10 +403,20 @@ async def _is_cancelled(request: BrowserJobRequest) -> bool:
     return bool(request.stream_id) and await stream_manager.is_cancelled(request.stream_id)
 
 
-async def _terminal_failure(emitter: ProgressEmitter, summary: str) -> BrowserResultSnapshot:
-    """End the run on a failure card: the job's result is the only thing anyone reads back."""
+async def _terminal_failure(
+    emitter: ProgressEmitter, summary: str, session_id: str | None = None
+) -> BrowserResultSnapshot:
+    """End the run on a failure card: the job's result is the only thing anyone reads back.
+
+    Carries the same recap link a finished run gets when a session got far
+    enough to produce screenshots; None when the browser never opened.
+    """
+    shots = [emitter.step_shots[index] for index in sorted(emitter.step_shots)]
     result = BrowserResultSnapshot(
-        status=BrowserSessionStatus.FAILED, success=False, summary=summary
+        status=BrowserSessionStatus.FAILED,
+        success=False,
+        summary=summary,
+        replay_url=await create_replay_link(session_id, shots) if session_id else None,
     )
     await emitter.emit(result)
     return result
@@ -414,7 +425,8 @@ async def _terminal_failure(emitter: ProgressEmitter, summary: str) -> BrowserRe
 async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapshot:
     """Run one browser task end to end, publishing cards to the job's feed and to bots.
 
-    Raises nothing the caller must handle — every failure is a FAILED card.
+    Every ending publishes a terminal card first: no failure reaches the caller
+    as a bare exception, and a cancellation emits its card before propagating.
     """
     emit_frame = partial(publish_frame_to_job, request.job_id)
     thread_mirror = BrowserThreadMirror(emit_frame)
@@ -436,8 +448,11 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
         else f"{request.task}\n\nStart at: {request.start_url}"
     )
 
+    session_id: str | None = None
+
     try:
         async with browser_session(user_id=request.user_id, start_url=request.start_url) as session:
+            session_id = session.session_id
             log.set(browser={"session_id": session.session_id})
             await put_job_state(
                 BrowserJobState(
@@ -488,9 +503,26 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
             )
             return result
     except BrowserConcurrencyLimit as exc:
-        return await _terminal_failure(emitter, str(exc))
+        return await _terminal_failure(emitter, str(exc), session_id)
     except BrowserUnavailableError as exc:
         log.warning(f"{LogTag.BROWSER} Browser session unavailable", error_type=type(exc).__name__)
-        return await _terminal_failure(emitter, str(exc))
+        return await _terminal_failure(emitter, str(exc), session_id)
+    except asyncio.CancelledError:
+        # Nobody holds a tool call to hear this; without it the card stays RUNNING forever.
+        await asyncio.shield(
+            _terminal_failure(
+                emitter, "the browser task was stopped before it finished", session_id
+            )
+        )
+        raise
+    except Exception as exc:
+        log.error(
+            f"{LogTag.BROWSER} Browser job crashed",
+            error_type=type(exc).__name__,
+            browser={"job_id": request.job_id},
+        )
+        return await _terminal_failure(
+            emitter, f"the browser task stopped unexpectedly: {exc}", session_id
+        )
     finally:
         reset_fingerprint_seed(seed_token)

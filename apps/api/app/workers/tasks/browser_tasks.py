@@ -18,10 +18,8 @@ from app.constants.browser import (
     BROWSER_JOB_JOINER_LEASE_SECONDS,
     BROWSER_JOB_JOINER_REFRESH_SECONDS,
     BROWSER_JOB_POLL_INTERVAL_SECONDS,
-    BrowserSessionStatus,
 )
 from app.constants.log_tags import LogTag
-from app.schemas.browser import BrowserResultSnapshot
 from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
 from app.services.browser.job_events import (
     JOB_TERMINAL_FRAME,
@@ -53,7 +51,7 @@ async def run_browser_job(
     log.set(browser={"job_id": request.job_id, "conversation_id": request.conversation_id})
     heartbeat = spawn_background_task(_heartbeat(request), name="browser_job_heartbeat")
     try:
-        result = await _run(request)
+        result = await execute_browser_job(request)
         agent_message = agent_result_message(result)
         await put_job_state(
             BrowserJobState(
@@ -70,28 +68,6 @@ async def run_browser_job(
     finally:
         heartbeat.cancel()
         await release_conversation_slot(request.conversation_id, request.job_id)
-
-
-async def _run(request: BrowserJobRequest) -> BrowserResultSnapshot:
-    """Run the job, turning a crash into the failure the user is owed.
-
-    execute_browser_job promises a terminal card rather than an exception, so
-    anything landing here is a bug in it — loud in the log, and still reported
-    to the user instead of leaving them on a run that silently died.
-    """
-    try:
-        return await execute_browser_job(request)
-    except Exception as exc:
-        log.error(
-            f"{LogTag.BROWSER} Browser job crashed",
-            error_type=type(exc).__name__,
-            browser={"job_id": request.job_id},
-        )
-        return BrowserResultSnapshot(
-            status=BrowserSessionStatus.FAILED,
-            success=False,
-            summary=f"the browser task stopped unexpectedly: {exc}",
-        )
 
 
 async def _heartbeat(request: BrowserJobRequest) -> None:
