@@ -10,6 +10,7 @@ from app.constants.browser import (
     BROWSER_JOB_HEARTBEAT_SECONDS,
     BROWSER_JOB_JOINER_LEASE_SECONDS,
     BROWSER_JOB_JOINER_REFRESH_SECONDS,
+    BROWSER_TASK_EVENT,
     BrowserSessionStatus,
 )
 from app.schemas.browser import BrowserResultSnapshot
@@ -48,6 +49,9 @@ class Worker:
         self.narrated: list[tuple[str, str, str]] = []
         self.delivered: list[dict[str, Any]] = []
         self.ran: list[BrowserJobRequest] = []
+        self.reads: list[tuple[str, str, int]] = []
+        #: The job's card feed, as a test sets it up before the run.
+        self.feed: list[dict[str, Any]] = []
         self.slept: float = 0.0
 
 
@@ -95,6 +99,10 @@ def _install(
     async def _deliver(**kwargs: Any) -> None:
         w.delivered.append(kwargs)
 
+    async def _read_events(job_id: str, cursor: str, block_ms: int) -> list[tuple[str, Any]]:
+        w.reads.append((job_id, cursor, block_ms))
+        return [(f"1-{i}", frame) for i, frame in enumerate(w.feed)]
+
     async def _sleep(seconds: float) -> None:
         if seconds == BROWSER_JOB_HEARTBEAT_SECONDS:
             # The heartbeat parks here for the whole test and is cancelled with
@@ -111,6 +119,7 @@ def _install(
     monkeypatch.setattr(tasks_mod, "load_user_context", _load_user)
     monkeypatch.setattr(tasks_mod, "narrate_executor_result", _narrate)
     monkeypatch.setattr(tasks_mod, "deliver_message_to_conversation", _deliver)
+    monkeypatch.setattr(tasks_mod, "read_job_events", _read_events)
     monkeypatch.setattr(tasks_mod.asyncio, "sleep", _sleep)
     return w
 
@@ -307,3 +316,49 @@ async def test_a_job_whose_user_is_gone_is_not_delivered_anywhere(
 
     assert w.delivered == []
     fake_log.warning.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# the cards a follow-up carries
+# ---------------------------------------------------------------------------
+
+CARD_FRAME: dict[str, Any] = {
+    "tool_data": {
+        "tool_name": BROWSER_TASK_EVENT,
+        "data": {"kind": "result", "summary": "Booked the table."},
+        "timestamp": "2026-09-19T00:00:00+00:00",
+    }
+}
+
+
+async def test_the_follow_up_carries_the_runs_cards(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The relay died with the turn, so the job's feed is the only copy of the cards left; its terminal marker is not one of them."""
+    w = _install(monkeypatch, lease=[])
+    w.feed = [CARD_FRAME, JOB_TERMINAL_FRAME]
+
+    await tasks_mod.run_browser_job({}, PAYLOAD)
+
+    assert w.delivered[0]["tool_data"] == [CARD_FRAME["tool_data"]]
+
+
+async def test_the_whole_feed_is_drained_without_blocking_on_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """From 0-0 so the first card is included, and without a BLOCK: the run is over, so waiting for a frame that will never come would hang the job."""
+    w = _install(monkeypatch, lease=[])
+    w.feed = [CARD_FRAME]
+
+    await tasks_mod.run_browser_job({}, PAYLOAD)
+
+    assert w.reads == [("job-1", "0-0", 0)]
+
+
+async def test_a_run_with_no_cards_still_delivers_its_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    w = _install(monkeypatch, lease=[])
+
+    await tasks_mod.run_browser_job({}, PAYLOAD)
+
+    assert w.delivered[0]["tool_data"] == []
+    assert w.delivered[0]["text"] == "Booked it for you."

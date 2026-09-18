@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.agents.core.background.comms_narrator import narrate_executor_result
+from app.agents.core.background.executor_capture import tool_data_from_events
 from app.agents.core.background.result_delivery import deliver_message_to_conversation
 from app.constants.browser import (
     BROWSER_JOB_HEARTBEAT_SECONDS,
@@ -22,7 +23,11 @@ from app.constants.browser import (
 from app.constants.log_tags import LogTag
 from app.schemas.browser import BrowserResultSnapshot
 from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
-from app.services.browser.job_events import JOB_TERMINAL_FRAME, publish_job_event
+from app.services.browser.job_events import (
+    JOB_TERMINAL_FRAME,
+    publish_job_event,
+    read_job_events,
+)
 from app.services.browser.job_runner import agent_result_message, execute_browser_job
 from app.services.browser.jobs import (
     heartbeat_conversation_slot,
@@ -130,5 +135,10 @@ async def _deliver(request: BrowserJobRequest, agent_message: str) -> None:
         conversation_id=request.conversation_id,
         user=user,
         text=text,
+        # The relay died with the turn, so nothing in an API process collected
+        # these: the job's own feed is the only copy of the run's cards left.
+        tool_data=tool_data_from_events(
+            [payload for _, payload in await read_job_events(request.job_id, "0-0", 0)]
+        ),
         origin=f"browser task (job {request.job_id})",
     )
