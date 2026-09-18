@@ -9,7 +9,7 @@ identically on web and bots. Mirrors the HIL conversational-resolution pattern.
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agents.llm.client import ainvoke_structured
 from app.constants.browser import HandoffDecision, HandoffStatus
@@ -29,6 +29,16 @@ class HandoffReplyDecision(BaseModel):
     """Scoped classification of a reply to a pending browser handoff."""
 
     action: HandoffReplyAction
+    #: Everything the reply asks for beyond the go-ahead itself. The run forwards
+    #: it to the agent as a note, so a bare "done" must leave it unset rather than
+    #: feed the acknowledgement back as an instruction.
+    note: str | None = Field(
+        default=None,
+        description=(
+            "The rest of the reply, verbatim, once the continue/cancel wording is "
+            "removed. Null when the reply is only an acknowledgement."
+        ),
+    )
 
 
 async def resolve_handoff_from_message(
@@ -51,8 +61,9 @@ async def resolve_handoff_from_message(
         return "unrelated"
 
     kind = HandoffDecision.CONTINUE if decision.action == "continue" else HandoffDecision.CANCEL
+    note = (decision.note or "").strip() or None
     try:
-        await resolve_handoff(handoff_id, kind, user_id)
+        await resolve_handoff(handoff_id, kind, user_id, message=note)
     except BrowserHandoffNotOwned:
         return None
     return decision.action
@@ -84,5 +95,7 @@ def _prompt(message: str, reason: str) -> str:
         f"The user just sent this message:\n{message!r}\n\n"
         "Is the user telling the assistant to CONTINUE (they finished the step / "
         "gave the go-ahead), to CANCEL (stop the task), or is this an UNRELATED "
-        "new request? Reply with action='continue', 'cancel', or 'unrelated'."
+        "new request? Reply with action='continue', 'cancel', or 'unrelated', and "
+        "put anything the user asks for beyond the go-ahead itself in 'note', "
+        "verbatim — null when the reply is only an acknowledgement."
     )
