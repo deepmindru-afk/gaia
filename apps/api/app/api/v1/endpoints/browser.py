@@ -19,7 +19,7 @@ from typing import Annotated, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from playwright.sync_api import StorageState
 
-from app.api.v1.dependencies.oauth_dependencies import get_current_user, get_user_id
+from app.api.v1.dependencies.oauth_dependencies import get_user_id
 from app.config.settings import settings
 from app.constants.browser import BROWSER_IMPORT_TOKEN_TTL_SECONDS
 from app.constants.log_tags import LogTag
@@ -54,13 +54,10 @@ router = APIRouter(prefix="/browser", tags=["Browser"])
 @router.get("/handoffs/{handoff_id}")
 async def get_browser_handoff(
     handoff_id: str,
-    user: Annotated[dict, Depends(get_current_user)],
+    user_id: Annotated[str, Depends(get_user_id)],
 ) -> HandoffDecisionResponse:
     """Current status of a browser handoff — the card polls this so a reload or a
     resolution made elsewhere (chat, another device) is reflected reliably."""
-    user_id = user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id required")
     log.set(user={"id": user_id}, browser={"handoff_id": handoff_id})
     record = await get_handoff(handoff_id)
     if record is None or record.user_id != user_id:
@@ -72,12 +69,9 @@ async def get_browser_handoff(
 async def decide_browser_handoff(
     handoff_id: str,
     payload: HandoffDecisionRequest,
-    user: Annotated[dict, Depends(get_current_user)],
+    user_id: Annotated[str, Depends(get_user_id)],
 ) -> HandoffDecisionResponse:
     """Continue (user finished the step in live-view) or cancel a browser handoff."""
-    user_id = user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id required")
     log.set(
         user={"id": user_id}, browser={"handoff_id": handoff_id, "decision": payload.decision.value}
     )
@@ -101,13 +95,10 @@ async def decide_browser_handoff(
 @router.get("/sessions/{session_id}/live-view-token", response_model=LiveViewTokenResponse)
 async def get_live_view_token(
     session_id: str,
-    user: Annotated[dict, Depends(get_current_user)],
+    user_id: Annotated[str, Depends(get_user_id)],
 ) -> LiveViewTokenResponse:
     """Mint a short-lived takeover token so the web card can open the cross-origin
     live view (the host-only session cookie is not sent to the live-view vhost)."""
-    user_id = user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id required")
     log.set(
         user={"id": user_id}, browser={"session_id": session_id, "operation": "live_view_token"}
     )
@@ -118,7 +109,7 @@ async def get_live_view_token(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this session"
         )
 
-    token = create_takeover_token(session_id, str(user_id))
+    token = create_takeover_token(session_id, user_id)
     log.info(f"{LogTag.BROWSER} browser live view token issued")
     claims = verify_takeover_token(token)
     return LiveViewTokenResponse(
@@ -195,16 +186,13 @@ async def clear_browser_logins_endpoint(
 
 @router.post("/import/token", response_model=ImportTokenResponse)
 async def mint_browser_import_token(
-    user: Annotated[dict, Depends(get_current_user)],
+    user_id: Annotated[str, Depends(get_user_id)],
 ) -> ImportTokenResponse:
     """Mint the short-lived, single-use code the local ``gaia connect`` CLI
     presents to upload this user's browser profile. Authorised by the web
     session; the CLI, which has no cookie, authenticates with the returned code."""
-    log.set(user={"id": user.get("user_id")}, browser={"operation": "mint_import_token"})
-    user_id = user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id required")
-    token = await mint_import_token(str(user_id))
+    log.set(user={"id": user_id}, browser={"operation": "mint_import_token"})
+    token = await mint_import_token(user_id)
     log.info(f"{LogTag.BROWSER} Minted browser import token", user={"id": user_id})
     capture_context_event(AnalyticsEvents.BROWSER_IMPORT_TOKEN_MINTED, {})
     return ImportTokenResponse(token=token, expires_in_seconds=BROWSER_IMPORT_TOKEN_TTL_SECONDS)

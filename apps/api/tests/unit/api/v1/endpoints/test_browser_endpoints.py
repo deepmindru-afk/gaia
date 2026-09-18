@@ -54,33 +54,21 @@ class TestGetBrowserHandoff:
     async def test_success(self, monkeypatch):
         record = HandoffRecord(status=HandoffStatus.PENDING, user_id="u1", conversation_id="c1")
         monkeypatch.setattr(browser_ep, "get_handoff", AsyncMock(return_value=record))
-        resp = await browser_ep.get_browser_handoff("h1", {"user_id": "u1"})
+        resp = await browser_ep.get_browser_handoff("h1", "u1")
         assert resp.handoff_id == "h1"
         assert resp.status == HandoffStatus.PENDING
-
-    async def test_missing_user_id_400(self, monkeypatch):
-        monkeypatch.setattr(browser_ep, "get_handoff", AsyncMock())
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_browser_handoff("h1", {})
-        assert exc.value.status_code == 400
-
-    async def test_none_user_id_400(self, monkeypatch):
-        monkeypatch.setattr(browser_ep, "get_handoff", AsyncMock())
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_browser_handoff("h1", {"user_id": None})
-        assert exc.value.status_code == 400
 
     async def test_not_found_returns_404(self, monkeypatch):
         monkeypatch.setattr(browser_ep, "get_handoff", AsyncMock(return_value=None))
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_browser_handoff("h1", {"user_id": "u1"})
+            await browser_ep.get_browser_handoff("h1", "u1")
         assert exc.value.status_code == 404
 
     async def test_wrong_owner_returns_404(self, monkeypatch):
         record = HandoffRecord(status=HandoffStatus.PENDING, user_id="owner", conversation_id="c1")
         monkeypatch.setattr(browser_ep, "get_handoff", AsyncMock(return_value=record))
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_browser_handoff("h1", {"user_id": "intruder"})
+            await browser_ep.get_browser_handoff("h1", "intruder")
         assert exc.value.status_code == 404
 
 
@@ -95,7 +83,7 @@ class TestDecideBrowserHandoff:
             browser_ep, "resolve_handoff", AsyncMock(return_value=HandoffStatus.COMPLETED)
         )
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
-        resp = await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+        resp = await browser_ep.decide_browser_handoff("h1", payload, "u1")
         assert resp.status == HandoffStatus.COMPLETED
         assert resp.handoff_id == "h1"
 
@@ -104,21 +92,15 @@ class TestDecideBrowserHandoff:
             browser_ep, "resolve_handoff", AsyncMock(return_value=HandoffStatus.CANCELLED)
         )
         payload = HandoffDecisionRequest(decision=HandoffDecision.CANCEL)
-        resp = await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+        resp = await browser_ep.decide_browser_handoff("h1", payload, "u1")
         assert resp.status == HandoffStatus.CANCELLED
 
     async def test_with_message_passed_through(self, monkeypatch):
         mock_resolve = AsyncMock(return_value=HandoffStatus.COMPLETED)
         monkeypatch.setattr(browser_ep, "resolve_handoff", mock_resolve)
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE, message="grab photo")
-        await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+        await browser_ep.decide_browser_handoff("h1", payload, "u1")
         mock_resolve.assert_awaited_once_with("h1", HandoffDecision.CONTINUE, "u1", "grab photo")
-
-    async def test_missing_user_id_400(self, monkeypatch):
-        payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.decide_browser_handoff("h1", payload, {})
-        assert exc.value.status_code == 400
 
     async def test_not_owned_403(self, monkeypatch):
         from app.services.browser.exceptions import BrowserHandoffNotOwned
@@ -129,14 +111,14 @@ class TestDecideBrowserHandoff:
         monkeypatch.setattr(browser_ep, "resolve_handoff", _raise)
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+            await browser_ep.decide_browser_handoff("h1", payload, "u1")
         assert exc.value.status_code == 403
 
     async def test_expired_returns_410(self, monkeypatch):
         monkeypatch.setattr(browser_ep, "resolve_handoff", AsyncMock(return_value=None))
         payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE)
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.decide_browser_handoff("h1", payload, {"user_id": "u1"})
+            await browser_ep.decide_browser_handoff("h1", payload, "u1")
         assert exc.value.status_code == 410
 
 
@@ -151,7 +133,7 @@ class TestGetLiveViewToken:
         monkeypatch.setattr(browser_ep, "create_takeover_token", lambda sid, uid: "tok123")
         monkeypatch.setattr(browser_ep, "verify_takeover_token", lambda tok: {"exp": 9999999999.0})
         monkeypatch.setattr(browser_ep, "takeover_token_ttl_seconds", lambda claims: 900)
-        resp = await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+        resp = await browser_ep.get_live_view_token("sess-1", "u1")
         assert resp.token == "tok123"
         assert resp.expires_in == 900
 
@@ -160,30 +142,20 @@ class TestGetLiveViewToken:
         monkeypatch.setattr(browser_ep, "create_takeover_token", lambda sid, uid: "tok")
         monkeypatch.setattr(browser_ep, "verify_takeover_token", lambda tok: {"exp": 0})
         monkeypatch.setattr(browser_ep, "takeover_token_ttl_seconds", lambda claims: -10)
-        resp = await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+        resp = await browser_ep.get_live_view_token("sess-1", "u1")
         assert resp.expires_in == 0
 
     async def test_non_owner_403(self, monkeypatch):
         monkeypatch.setattr(browser_ep.registry, "session_owner", AsyncMock(return_value="other"))
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+            await browser_ep.get_live_view_token("sess-1", "u1")
         assert exc.value.status_code == 403
 
     async def test_unregistered_403(self, monkeypatch):
         monkeypatch.setattr(browser_ep.registry, "session_owner", AsyncMock(return_value=None))
         with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_live_view_token("sess-1", {"user_id": "u1"})
+            await browser_ep.get_live_view_token("sess-1", "u1")
         assert exc.value.status_code == 403
-
-    async def test_missing_user_id_400(self, monkeypatch):
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_live_view_token("sess-1", {})
-        assert exc.value.status_code == 400
-
-    async def test_empty_user_id_400(self, monkeypatch):
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.get_live_view_token("sess-1", {"user_id": ""})
-        assert exc.value.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -321,26 +293,19 @@ class TestMintBrowserImportToken:
     async def test_owner_gets_a_token(self, monkeypatch):
         mint = AsyncMock(return_value="tok-123")
         monkeypatch.setattr(browser_ep, "mint_import_token", mint)
-        resp = await browser_ep.mint_browser_import_token({"user_id": "u1"})
+        resp = await browser_ep.mint_browser_import_token("u1")
         assert resp.token == "tok-123"
         assert resp.expires_in_seconds > 0
         # The code authorises overwriting this user's logins — it must be minted
         # against the caller's real id, not a placeholder.
         assert mint.await_args.args[0] == "u1"
 
-    async def test_missing_user_id_400(self, monkeypatch):
-        monkeypatch.setattr(browser_ep, "mint_import_token", AsyncMock())
-        with pytest.raises(HTTPException) as exc:
-            await browser_ep.mint_browser_import_token({})
-        assert exc.value.status_code == 400
-        assert exc.value.detail == "User id required"
-
     async def test_wide_event_names_the_actor_and_operation(self, monkeypatch):
         """Support reads these fields to answer "who minted an import code, and when" — an unattributed event cannot answer it."""
         monkeypatch.setattr(browser_ep, "mint_import_token", AsyncMock(return_value="tok-123"))
 
         async with captured_wide_event() as event:
-            await browser_ep.mint_browser_import_token({"user_id": "u1"})
+            await browser_ep.mint_browser_import_token("u1")
 
         assert event["user"]["id"] == "u1"
         assert event["browser"]["operation"] == "mint_import_token"
@@ -350,7 +315,7 @@ class TestMintBrowserImportToken:
         captured = MagicMock()
         monkeypatch.setattr(browser_ep, "capture_context_event", captured)
 
-        await browser_ep.mint_browser_import_token({"user_id": "u1"})
+        await browser_ep.mint_browser_import_token("u1")
 
         # Session-authenticated route: identity comes from the request context,
         # so the event carries no distinct_id of its own.
@@ -358,14 +323,6 @@ class TestMintBrowserImportToken:
         assert event == AnalyticsEvents.BROWSER_IMPORT_TOKEN_MINTED
         # No PII on the event — minting carries no properties at all.
         assert props == {}
-
-    async def test_no_analytics_when_user_id_missing(self, monkeypatch):
-        monkeypatch.setattr(browser_ep, "mint_import_token", AsyncMock())
-        captured = MagicMock()
-        monkeypatch.setattr(browser_ep, "capture_context_event", captured)
-        with pytest.raises(HTTPException):
-            await browser_ep.mint_browser_import_token({})
-        captured.assert_not_called()
 
 
 class TestImportBrowserSessions:
