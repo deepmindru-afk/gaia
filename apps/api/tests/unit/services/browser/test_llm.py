@@ -39,7 +39,7 @@ def _custom_lane_off_by_default(monkeypatch):
     )
     # No gateway key → the chat model drives every step, whatever the dev .env
     # says; the Jev lane has its own tests below.
-    monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_JEV_GATEWAY_API_KEY", None)
+    monkeypatch.setattr("app.services.browser.llm.settings.OPENROUTER_API_KEY", None)
 
 
 pytestmark = pytest.mark.unit
@@ -541,11 +541,12 @@ class TestOpenRouterVisionIsAlwaysCatalogJudged:
 class TestJevLane:
     """BROWSER_USE_JEV_ENABLED + a gateway key wraps the chat model in the Jev policy."""
 
-    def _jev(self, monkeypatch, *, enabled: bool, key: str | None) -> None:
+    def _jev(self, monkeypatch, *, enabled: bool, openrouter_key: str | None) -> None:
+        """Jev rides the OpenRouter credential, the same one the text helper falls back to."""
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_JEV_ENABLED", enabled)
-        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_JEV_GATEWAY_API_KEY", key)
+        monkeypatch.setattr("app.services.browser.llm.settings.OPENROUTER_API_KEY", openrouter_key)
         monkeypatch.setattr(
-            "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_GATEWAY_API_KEY", key
+            "app.services.browser.jev.chat_model.settings.OPENROUTER_API_KEY", openrouter_key
         )
 
     def test_enabled_with_a_key_returns_the_jev_model_over_the_chat_model(self, monkeypatch):
@@ -554,7 +555,7 @@ class TestJevLane:
 
         _fake_browser_use_modules(monkeypatch)
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
-        self._jev(monkeypatch, enabled=True, key="vck_x")
+        self._jev(monkeypatch, enabled=True, openrouter_key="sk-or-x")
 
         result = build_browser_llm()
 
@@ -567,7 +568,7 @@ class TestJevLane:
 
         _fake_browser_use_modules(monkeypatch)
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
-        self._jev(monkeypatch, enabled=True, key=None)
+        self._jev(monkeypatch, enabled=True, openrouter_key=None)
         logger = MagicMock()
         monkeypatch.setattr(llm_mod, "log", logger)
 
@@ -582,20 +583,22 @@ class TestJevLane:
 
         _fake_browser_use_modules(monkeypatch)
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
-        self._jev(monkeypatch, enabled=False, key="vck_x")
+        self._jev(monkeypatch, enabled=False, openrouter_key="sk-or-x")
 
         assert build_browser_llm() == "google-llm"
 
-    def test_a_missing_chat_key_still_fails_loudly_under_jev(self, monkeypatch):
-        """The text helper is required: Jev alone cannot type."""
-        from app.services.browser.llm import build_browser_llm
+    def test_without_the_openrouter_key_jev_is_inactive_and_the_lane_fails_loudly(
+        self, monkeypatch
+    ):
+        """One credential powers both, so Jev can never be decided without a text helper."""
+        from app.services.browser.llm import build_browser_llm, jev_active
 
         _fake_browser_use_modules(monkeypatch)
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_API_KEY", None)
-        monkeypatch.setattr("app.services.browser.llm.settings.OPENROUTER_API_KEY", None)
-        self._jev(monkeypatch, enabled=True, key="vck_x")
+        self._jev(monkeypatch, enabled=True, openrouter_key=None)
 
+        assert jev_active() is False
         with pytest.raises(BrowserUnavailableError):
             build_browser_llm()
 
@@ -604,7 +607,7 @@ class TestJevLane:
 
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_VISION", True)
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
-        self._jev(monkeypatch, enabled=True, key="vck_x")
+        self._jev(monkeypatch, enabled=True, openrouter_key="sk-or-x")
 
         assert await resolve_use_vision() is False
 
@@ -613,6 +616,6 @@ class TestJevLane:
 
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_VISION", True)
         monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_LLM_PROVIDER", "google")
-        self._jev(monkeypatch, enabled=True, key=None)
+        self._jev(monkeypatch, enabled=True, openrouter_key=None)
 
         assert await resolve_use_vision() is True

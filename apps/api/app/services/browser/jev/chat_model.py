@@ -381,19 +381,17 @@ def _goal_from_messages(messages: list[BaseMessage]) -> str:
 
 
 def build_jev_chat_model(*, text_model: BaseChatModel) -> JevChatModel:
-    """The Jev policy over the configured gateway, with ``text_model`` as its text helper.
+    """The Jev policy over OpenRouter, with ``text_model`` as its text helper.
 
-    Raises :class:`BrowserUnavailableError` when the gateway key is missing.
+    Raises :class:`BrowserUnavailableError` when no OpenRouter key is configured.
     """
-    api_key = settings.BROWSER_USE_JEV_GATEWAY_API_KEY
+    api_key = settings.OPENROUTER_API_KEY
     if not api_key:
-        raise BrowserUnavailableError(
-            "Jev is enabled but BROWSER_USE_JEV_GATEWAY_API_KEY is not set."
-        )
+        raise BrowserUnavailableError("Jev is enabled but OPENROUTER_API_KEY is not set.")
     client = JevGatewayClient(
         api_key=api_key,
         model=settings.BROWSER_USE_JEV_MODEL,
-        base_url=settings.BROWSER_USE_JEV_GATEWAY_BASE_URL,
+        url=settings.BROWSER_USE_JEV_DECISIONS_URL,
     )
     return JevChatModel(client=client, text_model=text_model)
 

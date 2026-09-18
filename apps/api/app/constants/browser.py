@@ -238,10 +238,6 @@ class JevOperation(StrEnum):
 # target question in the same Jev request (see services/browser/jev/policy.py).
 JEV_TARGET_OPERATIONS = (JevOperation.CLICK, JevOperation.TYPE_TEXT, JevOperation.SELECT)
 
-# Gateway wire contract for the Vercel AI SDK's evaluation-model route — the
-# header values `@ai-sdk/gateway` sends, which the gateway rejects without.
-JEV_GATEWAY_PROTOCOL_VERSION = "0.0.1"
-JEV_GATEWAY_EVALUATION_SPEC_VERSION = "4"
 JEV_GATEWAY_TIMEOUT_SECONDS = 25.0
 JEV_GATEWAY_MAX_ATTEMPTS = 3
 

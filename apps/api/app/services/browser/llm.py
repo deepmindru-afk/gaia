@@ -97,7 +97,7 @@ def build_browser_llm() -> BaseChatModel:
 
 def jev_active() -> bool:
     """Whether Jev, not the chat model, will make the step decisions."""
-    return bool(settings.BROWSER_USE_JEV_ENABLED and settings.BROWSER_USE_JEV_GATEWAY_API_KEY)
+    return bool(settings.BROWSER_USE_JEV_ENABLED and settings.OPENROUTER_API_KEY)
 
 
 def _build_chat_model() -> BaseChatModel:

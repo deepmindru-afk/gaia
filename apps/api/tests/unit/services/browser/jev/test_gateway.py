@@ -1,4 +1,4 @@
-"""The wire contract with Vercel AI Gateway's evaluation-model route."""
+"""The wire contract with OpenRouter's decisions endpoint."""
 
 from __future__ import annotations
 
@@ -39,15 +39,15 @@ ANSWER = {
 
 def _client(handler, **kwargs) -> JevGatewayClient:
     return JevGatewayClient(
-        api_key="vck_test",
-        model="typesafe-ai/jev",
-        base_url="https://ai-gateway.vercel.sh/v4/ai/",
+        api_key="sk-or-test",
+        model="~typesafe/jev-latest",
+        url="https://openrouter.ai/api/alpha/decisions",
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         **kwargs,
     )
 
 
-async def test_the_request_carries_the_sdk_headers_and_body_the_gateway_requires() -> None:
+async def test_the_request_names_the_model_in_the_body_the_endpoint_expects() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -57,14 +57,12 @@ async def test_the_request_carries_the_sdk_headers_and_body_the_gateway_requires
     evaluation = await _client(handler).evaluate(REQUEST)
 
     (request,) = seen
-    assert str(request.url) == "https://ai-gateway.vercel.sh/v4/ai/evaluation-model"
-    assert request.headers["authorization"] == "Bearer vck_test"
-    assert request.headers["ai-gateway-protocol-version"] == "0.0.1"
-    assert request.headers["ai-gateway-auth-method"] == "api-key"
-    assert request.headers["ai-evaluation-model-specification-version"] == "4"
-    assert request.headers["ai-model-id"] == "typesafe-ai/jev"
+    assert str(request.url) == "https://openrouter.ai/api/alpha/decisions"
+    assert request.headers["authorization"] == "Bearer sk-or-test"
     body = json.loads(request.content)
-    assert set(body) == {"state", "questions"}
+    # The model rides in the body here, not in a header as the old gateway wanted.
+    assert set(body) == {"model", "state", "questions"}
+    assert body["model"] == "~typesafe/jev-latest"
     assert body["questions"]["operation"] == {
         "type": "choice",
         "instructions": {"goal": "g", "rules": ["r"]},
@@ -124,7 +122,7 @@ async def test_a_gateway_refusal_names_the_gateways_own_message() -> None:
         await _client(handler).evaluate(REQUEST)
 
     assert str(err.value) == (
-        "Jev gateway returned HTTP 403: AI Gateway requires a valid credit card on file; "
+        "Jev decisions returned HTTP 403: AI Gateway requires a valid credit card on file; "
         "no action executed."
     )
 
@@ -141,7 +139,7 @@ async def test_a_connection_failure_is_a_gateway_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 
-    with pytest.raises(JevGatewayError, match="connection failed: refused"):
+    with pytest.raises(JevGatewayError, match="request failed: refused"):
         await _client(handler).evaluate(REQUEST)
 
 

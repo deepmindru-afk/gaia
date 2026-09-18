@@ -284,11 +284,11 @@ class CommonSettings(BaseAppSettings):
     # On by default; without a gateway key the lane falls back to the chat model
     # (logged), so an unconfigured deployment keeps working.
     BROWSER_USE_JEV_ENABLED: bool = True
-    # Vercel AI Gateway API key (a `vck_...` key; the gateway also reads it from
-    # AI_GATEWAY_API_KEY in its own SDK). Required for Jev to actually run.
-    BROWSER_USE_JEV_GATEWAY_API_KEY: str | None = None
-    BROWSER_USE_JEV_GATEWAY_BASE_URL: str = "https://ai-gateway.vercel.sh/v4/ai"
-    BROWSER_USE_JEV_MODEL: str = "typesafe-ai/jev"
+    # Served through OpenRouter on OPENROUTER_API_KEY, so Jev needs no credential
+    # of its own. Decisions models are refused by chat/completions and answered
+    # by this endpoint instead.
+    BROWSER_USE_JEV_DECISIONS_URL: str = "https://openrouter.ai/api/alpha/decisions"
+    BROWSER_USE_JEV_MODEL: str = "~typesafe/jev-latest"
 
     # Vision (screenshots to the model) is the biggest cost driver — keep it on
     # for reliability, but a deployment optimizing cost can disable it.

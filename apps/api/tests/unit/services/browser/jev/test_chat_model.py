@@ -522,24 +522,22 @@ def test_identity_is_the_gateway_model(flights_state) -> None:
 
 
 def test_build_requires_the_gateway_key(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_GATEWAY_API_KEY", None
-    )
+    monkeypatch.setattr("app.services.browser.jev.chat_model.settings.OPENROUTER_API_KEY", None)
 
-    with pytest.raises(BrowserUnavailableError, match="BROWSER_USE_JEV_GATEWAY_API_KEY"):
+    with pytest.raises(BrowserUnavailableError, match="OPENROUTER_API_KEY"):
         build_jev_chat_model(text_model=FakeTextModel())  # type: ignore[arg-type]
 
 
 def test_build_wires_the_configured_gateway_and_keeps_the_text_model(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_GATEWAY_API_KEY", "vck_x"
+        "app.services.browser.jev.chat_model.settings.OPENROUTER_API_KEY", "sk-or-x"
     )
     monkeypatch.setattr(
-        "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_MODEL", "typesafe-ai/jev"
+        "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_MODEL", "~typesafe/jev-latest"
     )
     monkeypatch.setattr(
-        "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_GATEWAY_BASE_URL",
-        "https://gw/v4/ai",
+        "app.services.browser.jev.chat_model.settings.BROWSER_USE_JEV_DECISIONS_URL",
+        "https://decisions.test/api/alpha/decisions",
     )
     helper = FakeTextModel()
 
@@ -547,9 +545,9 @@ def test_build_wires_the_configured_gateway_and_keeps_the_text_model(monkeypatch
 
     assert isinstance(model, JevChatModel)
     assert model.text_model is helper
-    assert model.model == "typesafe-ai/jev"
-    assert model._client._url == "https://gw/v4/ai/evaluation-model"
-    assert model._client._headers["Authorization"] == "Bearer vck_x"
+    assert model.model == "~typesafe/jev-latest"
+    assert model._client._url == "https://decisions.test/api/alpha/decisions"
+    assert model._client._headers["Authorization"] == "Bearer sk-or-x"
 
 
 async def test_every_operation_has_a_mapping(flights_state) -> None:

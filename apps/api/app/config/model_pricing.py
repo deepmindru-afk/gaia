@@ -65,10 +65,11 @@ MODEL_PRICING: dict[str, ModelPricing] = {
         output_cost_per_1k=0.00012852,
         cached_input_cost_per_1k=0.000012852,
     ),
-    # BROWSER_USE_JEV_MODEL — TypeSafe's decision model via Vercel AI Gateway
-    # (https://vercel.com/ai-gateway/models/jev): $0.042 per 1M input tokens,
-    # input-only; an evaluation returns choices, not generated tokens.
-    "typesafe-ai/jev": ModelPricing(
+    # BROWSER_USE_JEV_MODEL — TypeSafe's decision model, served by OpenRouter.
+    # $0.042 per 1M input tokens and nothing for output: a decision returns
+    # choices, not generated tokens. Confirmed against a real call, which billed
+    # 1.722e-05 for 410 input and 38 output tokens.
+    "~typesafe/jev-latest": ModelPricing(
         input_cost_per_1k=0.000042,
         output_cost_per_1k=0.0,
         cached_input_cost_per_1k=0.0,

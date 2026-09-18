@@ -1,10 +1,9 @@
-"""Vercel AI Gateway transport for Jev — the AI SDK's evaluation-model route.
+"""OpenRouter transport for Jev, a decisions model rather than a chat model.
 
-The gateway serves ``POST {base}/evaluation-model`` for ``@ai-sdk/gateway`` only;
-there is no OpenAI-compatible surface for evaluation models. This speaks that
-route directly: the SDK's protocol headers, ``{state, questions}`` in, and
-``{answers, usage}`` back. jev-ultrafast posts the same body straight to
-TypeSafe's ``/v1/systemone``; only the envelope differs.
+Jev answers structured questions instead of producing text, so it is refused by
+chat/completions and served by OpenRouter's decisions endpoint: ``{model, state,
+questions}`` in, ``{answers, usage}`` back. The body is the same one TypeSafe
+takes directly; only the envelope and the credential differ.
 """
 
 from __future__ import annotations
@@ -17,9 +16,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.constants.browser import (
-    JEV_GATEWAY_EVALUATION_SPEC_VERSION,
     JEV_GATEWAY_MAX_ATTEMPTS,
-    JEV_GATEWAY_PROTOCOL_VERSION,
     JEV_GATEWAY_TIMEOUT_SECONDS,
 )
 from app.services.browser.exceptions import BrowserAutomationError
@@ -73,50 +70,44 @@ class JevEvaluation(BaseModel):
 
 
 class JevGatewayClient:
-    """Async client for one gateway credential and model; safe to share per run."""
+    """Async client for one credential and model; safe to share across a run."""
 
     def __init__(
         self,
         *,
         api_key: str,
         model: str,
-        base_url: str,
+        url: str,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.model = model
-        self._url = f"{base_url.rstrip('/')}/evaluation-model"
-        self._headers = {
-            "Authorization": f"Bearer {api_key}",
-            "ai-gateway-protocol-version": JEV_GATEWAY_PROTOCOL_VERSION,
-            "ai-gateway-auth-method": "api-key",
-            "ai-evaluation-model-specification-version": JEV_GATEWAY_EVALUATION_SPEC_VERSION,
-            "ai-model-id": model,
-        }
+        self._url = url
+        self._headers = {"Authorization": f"Bearer {api_key}"}
         self._client = client or httpx.AsyncClient(timeout=JEV_GATEWAY_TIMEOUT_SECONDS)
 
     async def evaluate(self, request: JevEvaluationRequest) -> JevEvaluation:
-        """POST the questions; retries transient 429/503/529 with backoff, like jev-ultrafast."""
-        body = request.model_dump(mode="json")
+        """POST the questions; retries transient 429/503/529 with backoff."""
+        body = {"model": self.model, **request.model_dump(mode="json")}
         started = perf_counter()
         for attempt in range(JEV_GATEWAY_MAX_ATTEMPTS):
             try:
                 response = await self._client.post(self._url, json=body, headers=self._headers)
             except httpx.HTTPError as exc:
                 raise JevGatewayError(
-                    f"Jev gateway connection failed: {exc}; no action executed."
+                    f"Jev decisions request failed: {exc}; no action executed."
                 ) from exc
             if response.status_code in _RETRY_STATUSES and attempt < JEV_GATEWAY_MAX_ATTEMPTS - 1:
                 await asyncio.sleep(0.5 * 2**attempt)
                 continue
             if response.is_error:
                 raise JevGatewayError(
-                    f"Jev gateway returned HTTP {response.status_code}: "
+                    f"Jev decisions returned HTTP {response.status_code}: "
                     f"{_error_message(response)}; no action executed."
                 )
             evaluation = JevEvaluation.model_validate(response.json())
             evaluation.latency_ms = round((perf_counter() - started) * 1000)
             return evaluation
-        raise JevGatewayError("Jev gateway unavailable; no action executed.")
+        raise JevGatewayError("Jev decisions unavailable; no action executed.")
 
     async def aclose(self) -> None:
         await self._client.aclose()
