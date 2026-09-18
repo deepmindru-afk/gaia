@@ -325,8 +325,8 @@ class TestLedgerDecisionRouting:
         self, mock_resolve: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
         client: AsyncClient,
     ):
-        from app.services.hil.ledger_decide import LedgerDecision
         from app.models.hil_models import LedgerState
+        from app.services.hil.ledger_decide import LedgerDecision
 
         mock_flag.return_value = True
         mock_decide.return_value = LedgerDecision(
@@ -363,8 +363,8 @@ class TestLedgerDecisionRouting:
         self, mock_batch: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
         client: AsyncClient,
     ):
-        from app.services.hil.ledger_decide import LedgerDecision
         from app.models.hil_models import LedgerState
+        from app.services.hil.ledger_decide import LedgerDecision
 
         mock_flag.return_value = True
         mock_decide.side_effect = [

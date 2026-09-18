@@ -15,13 +15,14 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from pymongo.errors import DuplicateKeyError
+
 from app.db.repositories.base import MongoRepository
 from app.models.hil_models import (
     LIVE_LEDGER_STATES,
     ApprovalLedgerDocument,
     LedgerState,
 )
-from pymongo.errors import DuplicateKeyError
 
 
 class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalLedgerDocument]):
