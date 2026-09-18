@@ -76,6 +76,7 @@ function makeTodo(id: string): Todo {
     project_id: "project-1",
     completed: false,
     completed_at: null,
+    notify_on_run: true,
     subtasks: [],
     workflow_id: null,
     vfs_path: `/todos/${id}/canvas.md`,

@@ -177,6 +177,7 @@ class TodoService:
             gaia_retry_count=todo.gaia_retry_count,
             expires_at=todo.expires_at,
             references=todo.references,
+            notify_on_run=todo.notify_on_run,
         )
         created = await todo_repository.create(document)
 

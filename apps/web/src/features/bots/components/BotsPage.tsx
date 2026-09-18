@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@heroui/button";
-import { Chip } from "@heroui/chip";
 import Image from "next/image";
 import Link from "next/link";
 import { BOT_PLATFORM_ICONS, BOT_PLATFORM_LABELS } from "@/config/botPlatforms";
@@ -44,7 +43,6 @@ function BotCard({
   icon,
   name,
   description,
-  badge,
   primaryAction,
   secondaryAction,
 }: BotConfig) {

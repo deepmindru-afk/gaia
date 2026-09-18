@@ -1737,10 +1737,13 @@ async def execute_workflow_as_chat(
             user=user_data,
             options=AgentRunOptions(
                 trigger_context={
+                    # Default; a caller firing this for something quieter (a
+                    # tracked todo with delivery off) lowers it via the context,
+                    # whose keys are GAIA's (a payload nests under trigger_data).
+                    "workflow_notify_on_completion": workflow.notify_on_completion,
                     **(context or {}),
                     "workflow_id": workflow.id,
                     "workflow_title": workflow.title,
-                    "workflow_notify_on_completion": workflow.notify_on_completion,
                     "execution_mode": "background",
                 }
             ),

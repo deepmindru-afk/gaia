@@ -370,6 +370,30 @@ class TestUpdateTrackedTodoValidation:
             )
         assert "cannot have recurrence without scheduled_at" in result
 
+    @pytest.mark.parametrize("value", [True, False])
+    async def test_toggling_delivery_writes_that_field(self, value):
+        """A mistyped key or a dropped value leaves the todo on its old setting, silently."""
+        existing = TodoDocument(id="t1", user_id="u1", title="t")
+        with (
+            patch(
+                "app.agents.tools.tracked_todo_tools.todo_repository.get",
+                new_callable=AsyncMock,
+                return_value=existing,
+            ),
+            patch(
+                "app.agents.tools.tracked_todo_tools.todo_repository.update",
+                new_callable=AsyncMock,
+                return_value=existing,
+            ) as update,
+        ):
+            result = await update_tracked_todo.coroutine(
+                config=_config(), todo_id="t1", notify_on_run=value
+            )
+
+        written = update.await_args.kwargs["update"]
+        assert written.model_dump(exclude_unset=True) == {"notify_on_run": value}
+        assert "notify_on_run" in result
+
     async def test_todo_not_found_returns_error(self):
         with patch(
             "app.agents.tools.tracked_todo_tools.todo_repository.get",
@@ -452,6 +476,39 @@ class TestCreateTrackedTodoValidation:
             await create_tracked_todo.ainvoke(
                 {"title": "t", "priority": "urgent"}, config=_config()
             )
+
+    async def test_a_new_tracked_todo_delivers_its_run_results_by_default(self):
+        """The agent usually omits this argument, so the default is what almost every todo gets."""
+        with patch(
+            "app.agents.tools.tracked_todo_tools.tracked_todo_service.create_tracked_todo",
+            new_callable=AsyncMock,
+        ) as create:
+            create.return_value = TodoResponse(
+                id="t1",
+                user_id="u1",
+                title="t",
+                created_at=_FUTURE,
+                updated_at=_FUTURE,
+            )
+            await create_tracked_todo.coroutine(config=_config(), title="t")
+
+        assert create.await_args.kwargs["notify_on_run"] is True
+
+    async def test_the_agent_can_create_a_silent_tracked_todo(self):
+        with patch(
+            "app.agents.tools.tracked_todo_tools.tracked_todo_service.create_tracked_todo",
+            new_callable=AsyncMock,
+        ) as create:
+            create.return_value = TodoResponse(
+                id="t1",
+                user_id="u1",
+                title="t",
+                created_at=_FUTURE,
+                updated_at=_FUTURE,
+            )
+            await create_tracked_todo.coroutine(config=_config(), title="t", notify_on_run=False)
+
+        assert create.await_args.kwargs["notify_on_run"] is False
 
     async def test_shortcut_recurrence_without_scheduled_at_returns_error(self):
         result = await create_tracked_todo.coroutine(
