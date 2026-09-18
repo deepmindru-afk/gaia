@@ -60,8 +60,8 @@ DAILY_BUDGET_STOP_FREE = (
     "Your limit resets tomorrow, or upgrade to Pro for much higher limits."
 )
 DAILY_BUDGET_STOP_PRO = (
-    "You've reached today's usage limit. It resets tomorrow. "
-    "Contact support if you keep hitting this."
+    "You've reached today's usage limit. It resets tomorrow, "
+    "contact support if you keep hitting this."
 )
 REQUEST_CEILING_STOP_FREE = (
     "I've hit the usage limit for this request, so I'm stopping here with what "

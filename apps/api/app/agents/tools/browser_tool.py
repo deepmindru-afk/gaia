@@ -51,7 +51,7 @@ from app.services.browser.bot_delivery import BotProgressDelivery
 from app.services.browser.exceptions import BrowserConcurrencyLimit, BrowserUnavailableError
 from app.services.browser.fingerprint import reset_fingerprint_seed, set_fingerprint_seed
 from app.services.browser.handoff import await_handoff, create_pending_handoff
-from app.services.browser.llm import build_browser_llm, resolve_use_vision
+from app.services.browser.llm import build_browser_llm
 from app.services.browser.runner import (
     BrowserRunConfig,
     BrowserRunnerCallbacks,
@@ -123,9 +123,9 @@ class _BrowserThreadMirror:
         # tool_call_ids of the action rows emitted, so an output only ever
         # lands on a row that exists (an errored step emits no rows).
         self._emitted_ids: set[str] = set()
-        # Outputs can arrive before their row: step rows are emitted by a background
-        # task that first uploads the screenshot (~1s), while action results arrive
-        # synchronously on the next hook. Buffer early outputs until the row lands.
+        # Outputs can arrive before their row: step rows go through a background
+        # task that uploads the screenshot first (~1s), while action results
+        # arrive synchronously. Buffer early outputs and flush on row arrival.
         self._pending_outputs: dict[str, str] = {}
 
     def mirror(self, snapshot: BrowserCardSnapshot) -> None:
@@ -476,7 +476,6 @@ async def browser_task(
     seed_token = set_fingerprint_seed(params.user_id)
 
     full_task = task if not start_url else f"{task}\n\nStart at: {start_url}"
-    use_vision = await resolve_use_vision()
 
     try:
         async with browser_session(user_id=params.user_id, start_url=start_url) as session:
@@ -504,7 +503,6 @@ async def browser_task(
                     step_timeout_seconds=settings.BROWSER_USE_STEP_TIMEOUT_SECONDS,
                     handoff_timeout_seconds=settings.BROWSER_USE_HANDOFF_TIMEOUT_SECONDS,
                     stream_screenshots=settings.BROWSER_USE_STREAM_SCREENSHOTS,
-                    use_vision=use_vision,
                     solve_captcha=settings.BROWSER_USE_SOLVE_CAPTCHA,
                     flash_mode=settings.BROWSER_USE_FLASH_MODE,
                 ),

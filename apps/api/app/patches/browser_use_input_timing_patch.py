@@ -1,14 +1,13 @@
-"""Give keystrokes human variance without making the agent noticeably slower.
+"""Give keystrokes human variance without making the agent slower in any noticeable way.
 
-Browser-Use types on two fixed timers (5ms key hold, 1ms inter-key gap; a single
-10ms gap in the _type_to_page fallback), so every keystroke is identical to the
-microsecond. Behavioural checks read event.timeStamp deltas, and that zero-variance
-metronome survives every fingerprint defence because it comes from our own input.
+Browser-Use types character by character on two fixed timers: a 5ms hold
+between keyDown and keyUp, then a 1ms gap before the next character. Every
+keystroke is identical to the microsecond, and that zero-variance metronome
+is the tell behavioural checks read, not the speed.
 
-Only the distribution changes: each delay is scaled by a draw averaging ~1.9x,
-about 100ms on a 20-character field. The residual tell (still faster than a
-human's ~60ms/char) is accepted; the variance is what defeats the check. The RNG
-is seeded per user so one person's rhythm stays consistent across tasks.
+Only the distribution changes, not the pace: each delay is scaled by a draw
+averaging ~1.9x, costing ~100ms on a 20-character field. The RNG is seeded
+per user so one person's typing rhythm stays consistent across tasks.
 
 The shim is armed only while a typing method is on the stack, and it rebinds the
 watchdog module's asyncio name to a proxy rather than patching asyncio.sleep.
@@ -31,9 +30,9 @@ from app.services.browser.fingerprint import current_fingerprint_seed
 # Only the per-keystroke timers are this short; every other wait in the module
 # is 50ms or longer, so this threshold separates rhythm from page timing.
 _KEYSTROKE_DELAY_CEILING_SECONDS = 0.010
-# Log-normal scale per delay, the shape human inter-key intervals take (clustered, with an
-# occasional long pause). mu/sigma give a mean scale of ~1.9x; the cap keeps a tail draw
-# from stalling.
+# Log-normal draw: mostly clustered with an occasional long pause, the shape
+# human inter-key intervals actually take. mu/sigma give a mean scale of
+# ~1.9x; the cap keeps a tail draw from stalling.
 _SCALE_MU = 0.49
 _SCALE_SIGMA = 0.55
 _MAX_SCALE = 6.0

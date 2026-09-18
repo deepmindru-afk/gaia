@@ -18,9 +18,7 @@ from app.services.browser.exceptions import BrowserHandoffNotOwned, BrowserUnava
 
 
 class _FakeRedisCache:
-    """In-memory stand-in for redis_cache that also records every call so.
-
-    tests can assert on the exact key/ttl/model a seam was invoked with."""
+    """In-memory stand-in for redis_cache that also records every call so tests can assert on the exact key, ttl and model a seam was invoked with."""
 
     def __init__(self) -> None:
         self.store: dict[str, object] = {}
@@ -136,7 +134,7 @@ async def test_await_handoff_polls_then_picks_up_resolution(fake_redis, monkeypa
 
 
 async def test_await_handoff_stops_exactly_at_deadline(fake_redis, monkeypatch):
-    """At loop.time() == deadline the loop must stop (<, not <=) — one."""
+    """Stop the loop at loop.time() == deadline using a strict less-than; one extra iteration could turn a timeout into a false completion."""
     await handoff_mod.create_pending_handoff("h6d", "user-1", "conv-h6d")
     await handoff_mod.resolve_handoff("h6d", HandoffDecision.CONTINUE, "user-1")
 
@@ -270,7 +268,7 @@ async def test_resolve_handoff_blank_message_becomes_none(fake_redis):
 
 
 async def test_resolve_handoff_no_message_argument_becomes_none(fake_redis):
-    """The message default (None), not just a blank string, must fall through."""
+    """Fall through to no note when message is omitted entirely (None), not just when it is blank."""
     await handoff_mod.create_pending_handoff("h14b", "user-1", "conv-h14b")
     await handoff_mod.resolve_handoff("h14b", HandoffDecision.CONTINUE, "user-1")
     record = await handoff_mod.get_handoff("h14b")
@@ -289,7 +287,7 @@ def captured_events(monkeypatch):
 async def test_resolve_handoff_attributes_the_event_to_the_resolving_user(
     fake_redis, captured_events
 ):
-    """Resolution can run in the stream's background task, where no request."""
+    """Resolution can run in the stream's background task, where no request context exists — the user id must travel explicitly or the event lands on an anonymous profile and never joins that user's funnel."""
     await handoff_mod.create_pending_handoff("h-an1", "user-1", "conv-an1")
     await handoff_mod.resolve_handoff("h-an1", HandoffDecision.CONTINUE, "user-1", "buy the small")
 
@@ -436,7 +434,7 @@ class _FailingRedisCache:
 
 
 async def test_persistence_failure_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A handoff that was never persisted can never be resolved by the awaiting."""
+    """A handoff that was never persisted can never be resolved by the awaiting run — fail loudly instead of stranding both sides in a silent stall."""
     fake = _FailingRedisCache()
     monkeypatch.setattr(handoff_mod, "redis_cache", fake)
     with pytest.raises(BrowserUnavailableError, match="persist handoff"):
@@ -446,7 +444,7 @@ async def test_persistence_failure_fails_loud(monkeypatch: pytest.MonkeyPatch) -
 async def test_persistence_failure_message_names_the_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pin the exact failure text (not just a substring) so the id and the."""
+    """Pin the exact failure text (not just a substring) so the id and the 'storage unavailable' cause both stay intact for whoever reads the error."""
     fake = _FailingRedisCache()
     monkeypatch.setattr(handoff_mod, "redis_cache", fake)
     with pytest.raises(BrowserUnavailableError) as exc_info:
@@ -455,7 +453,7 @@ async def test_persistence_failure_message_names_the_handoff(
 
 
 async def test_store_succeeds_when_redis_confirms_the_write(fake_redis) -> None:
-    """The inverse of the failure case: a truthy set() result must NOT raise."""
+    """Do not raise when set() returns a truthy result, the inverse of the failure case."""
     await handoff_mod.create_pending_handoff("h9c", "user-1", "conv-h9c")
     record = await handoff_mod.get_handoff("h9c")
     assert record is not None
@@ -463,7 +461,7 @@ async def test_store_succeeds_when_redis_confirms_the_write(fake_redis) -> None:
 
 
 async def test_resolve_persistence_failure_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Settling a handoff whose status write fails must not silently drop the."""
+    """Settling a handoff whose status write fails must not silently drop the user's decision — the endpoint surfaces the storage failure instead."""
 
     class _FlakyRedis:
         def __init__(self) -> None:

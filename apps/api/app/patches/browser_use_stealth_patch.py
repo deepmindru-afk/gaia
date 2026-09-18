@@ -1,16 +1,14 @@
 """Auto-inject GAIA's stealth init script on every page Browser-Use drives.
 
 Page.addScriptToEvaluateOnNewDocument is scoped to the CDP session that
-registers it, so a one-shot call after browser.start() covers only the first
-tab and a window.open second tab drives fingerprint-naked. Hooking Browser-Use's
-own per-target accessor, get_or_create_cdp_session, injects once per target
-(tracked, so a repeat call never stacks duplicates) and covers the whole session.
+registers it, so a one-shot call after browser.start() only covers the first
+tab, leaving a window.open second tab fingerprint-naked. This hooks
+get_or_create_cdp_session instead, the single funnel Browser-Use routes every
+page interaction through, injecting once per target (tracked to avoid
+duplicate scripts) so it covers the whole session automatically.
 
-Browser-Use 0.11.13 drives pages with one-shot Runtime.evaluate, never a
-persistent Runtime.enable, so there is no rebrowser-style leak to patch.
-
-Pinned to browser-use==0.11.13; the import fails loudly if the private accessor
-or CDPSession shape moves.
+Pinned to browser-use==0.11.13; the import fails loudly if the private
+accessor or CDPSession shape moves.
 """
 
 from browser_use.browser.session import BrowserSession, CDPSession

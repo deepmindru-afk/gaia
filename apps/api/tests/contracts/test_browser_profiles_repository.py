@@ -20,7 +20,7 @@ def repo(raw_collection) -> BrowserProfilesRepository:
 
 @pytest.fixture
 def encryption_key(monkeypatch) -> str:
-    """Provide a real Fernet key wired into settings, with the module's cached cipher reset."""
+    """Return a real Fernet key wired into settings, with the module's cached cipher reset."""
     key = Fernet.generate_key().decode()
     monkeypatch.setattr(settings, "BROWSER_STATE_ENCRYPTION_KEY", key, raising=False)
     monkeypatch.setattr(storage_persistence, "_cipher", None)

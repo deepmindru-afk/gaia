@@ -6,9 +6,9 @@ hand control to the human. Values a deployment may tune live in settings;
 values that are part of the wire/UI contract live here so backend and frontend
 cannot drift.
 
-The *startup* gate ("do you want me to use a browser?") is handled by the shared
+The startup gate ("do you want me to use a browser?") is handled by the shared
 HIL system (browser_task is registered destructive). This module governs the
-*mid-run* gate: when the agent reaches a payment / credential / irreversible
+mid-run gate: when the agent reaches a payment, credential, or irreversible
 step, a per-task policy decides whether to hand off to the user (live-view),
 proceed autonomously (e.g. a configured agent card), or abort.
 """
@@ -25,16 +25,15 @@ BROWSER_TOOL_CATEGORY = "browser"
 class BrowserEngine(StrEnum):
     """Which browser binary gaia-browser-host launches behind its CDP plane.
 
-    CHROMIUM is the default headless-shell path. OBSCURA runs the Obscura
-    CDP server beside it — a drop-in over the same CDP everything downstream
-    speaks, selected by the BROWSER_ENGINE setting."""
+    CHROMIUM is the default headless-shell path. OBSCURA runs the Obscura CDP
+    server beside it, a drop-in over the same CDP, selected by BROWSER_ENGINE."""
 
     CHROMIUM = "chromium"
     OBSCURA = "obscura"
 
 
 # ---------------------------------------------------------------------------
-# SSE card-event key (must match tool_fields in chat_models.py and the frontend toolRegistry)
+# SSE card-event key (must match tool_fields in chat_models.py and the frontend TOOL_RENDERERS/toolRegistry registration).
 # ---------------------------------------------------------------------------
 BROWSER_TASK_EVENT = "browser_task_data"
 
@@ -68,11 +67,11 @@ class SensitiveCategory(str, Enum):
     IRREVERSIBLE = "irreversible"
 
 
-# Shown on a CREDENTIALS handoff. Keep truthful: the session is saved (Fernet-encrypted per
-# user+site) and reused next task, exactly what storage_persistence.py does, and the Browser
-# settings list/remove saved sites.
+# Shown on a CREDENTIALS handoff: the session is saved (Fernet-encrypted per
+# user+site) and reused so the next task skips the login. Kept truthful to
+# storage_persistence.py; the Browser settings page can list/remove saved sites.
 BROWSER_CREDENTIALS_SAVED_NOTE = (
-    "Once you're signed in I'll save this site's session, encrypted, so I can "
+    "Once you're signed in, I'll save this site's session, encrypted, so I can "
     "skip the login next time. You can remove saved sites anytime in "
     "your Browser settings."
 )
@@ -98,19 +97,23 @@ class BrowserLoginSource(StrEnum):
     """Where a saved login came from.
 
     Absent for logins acquired by browsing; stamped on the per-host docs the
-    gaia connect CLI import writes.
-    """
+    gaia connect CLI import writes."""
 
     IMPORT = "import"
 
 
-# ---------------------------------------------------------------------------
-# Redis handoff bridge
-# ---------------------------------------------------------------------------
+# Defined here rather than beside JevOperation because BROWSER_TAKEOVER_PREAMBLE
+# below interpolates it at import time.
+class BrowserHandoffAction(StrEnum):
+    """The two actions GAIA registers with Browser-Use to hand a step to the human."""
 
-# A running task blocks on this key; /browser/handoffs/{id}/decision writes the resolution
-# from a possibly-different worker process. Browser-session continue/cancel only, NOT
-# tool-call approval (the shared HIL system owns that).
+    REQUEST_HUMAN_TAKEOVER = "request_human_takeover"
+    SOLVE_CAPTCHA_WITH_HELP = "solve_captcha_with_help"
+
+
+# --- Redis handoff bridge ---
+# Browser-session continue/cancel signal only, not tool-call approval
+# (the shared HIL system owns that).
 BROWSER_HANDOFF_KEY_PREFIX = "browser:handoff:"
 # Maps a conversation to its one in-flight handoff id, so a plain chat reply
 # ("yeah I paid, continue") can resolve it — the text-channel equivalent of the
@@ -118,9 +121,9 @@ BROWSER_HANDOFF_KEY_PREFIX = "browser:handoff:"
 BROWSER_HANDOFF_CONV_KEY_PREFIX = "browser:handoff:conv:"
 HANDOFF_POLL_INTERVAL_SECONDS = 1.0
 
-# Auto-resolve a login handoff once the page navigates off the sign-in URL (best-effort;
-# manual resolution always races it). Debounced across STABLE_POLLS polls so a transient
-# mid-login redirect doesn't fire it early.
+# Auto-resolve a login handoff when the page navigates off the sign-in URL, so
+# a visible sign-in success spares the user the "I'm done" tap. Best-effort,
+# the manual resolution always races it; debounced so a transient redirect doesn't fire it early.
 HANDOFF_AUTORESOLVE_POLL_SECONDS = 2.0
 HANDOFF_AUTORESOLVE_STABLE_POLLS = 2
 HANDOFF_KEY_TTL_SECONDS = 3600
@@ -148,10 +151,9 @@ BROWSER_LIVE_CODE_ENTROPY_BYTES = 9
 BROWSER_SHOT_CODE_KEY_PREFIX = "browser:shotcode:"
 BROWSER_SHOT_SESSION_KEY_PREFIX = "browser:shotsess:"
 
-
-# Session-import handoff: a single-use code a signed-in web user gives the local
-# `gaia connect` CLI to upload its extracted browser profile. Short TTL (redeemed within
-# seconds); single-use because it authorises writing the user's whole login state.
+# Session-import handoff: a short-lived, single-use code minted for a signed-in
+# web user that the local gaia connect CLI presents to upload the extracted
+# browser profile. Short TTL: redeemed within seconds; single-use: authorises writing the user's whole login state.
 BROWSER_IMPORT_TOKEN_KEY_PREFIX = "browser:import:"  # nosec B105 -- Redis key prefix, not a credential
 BROWSER_IMPORT_TOKEN_TTL_SECONDS = 600
 BROWSER_IMPORT_TOKEN_ENTROPY_BYTES = 32
@@ -169,6 +171,11 @@ BROWSER_TASK_FAILED_PREFIX = "Browser task failed: "
 BROWSER_HANDOFF_ACK_CONTINUE = "Got it, continuing the browser task."
 BROWSER_HANDOFF_ACK_CANCEL = "Okay, I've stopped the browser task."
 
+# The run's own summary when nobody finished the step in the live browser: a
+# handoff that expired is a failed run, not the completed one an earlier
+# takeover made it look like.
+BROWSER_RUN_HANDOFF_TIMED_OUT = "Stopped: nobody finished the step in the live browser in time."
+
 # Upper bound on how many times one task may hand off to the human, so a
 # misbehaving agent can't loop the user forever.
 MAX_HANDOFFS_PER_TASK = 5
@@ -178,24 +185,24 @@ MAX_HANDOFFS_PER_TASK = 5
 BROWSER_TAKEOVER_PREAMBLE = (
     "\n\nIMPORTANT: For any payment, login/password/OTP/2FA, or irreversible or "
     "legally-binding confirmation, do NOT do it yourself. Call the "
-    "`request_human_takeover` action first so the user completes that step in the "
+    f"`{BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER}` action first so the user completes that step in the "
     "live browser, then continue toward the goal.\n"
     "If you encounter a CAPTCHA, reCAPTCHA, hCaptcha, or an 'I'm not a robot' / "
     "image-grid challenge, do NOT attempt to solve it yourself. Call the "
-    "`solve_captcha_with_help` action immediately on the FIRST challenge so the user "
+    f"`{BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP}` action immediately on the FIRST challenge so the user "
     "solves it in the live browser, then continue. Never keep clicking challenge tiles.\n"
     # The human's part of a login should be only the secret part. Filling the
     # username yourself first means they open the live view to just a password.
     "Before you hand off a login, first fill every NON-secret field you can "
-    "yourself (username, email, the account identifier) so the takeover leaves "
+    "yourself: username, email, the account identifier, so the takeover leaves "
     "the user only the secret step (password, OTP, 2FA). Then hand off.\n"
-    # Measured on a real investor-application form: given only a name and an email, the
-    # agent invented a phone number and a country and reported the form correctly filled.
-    # On a form that submits, that is fabricated data sent under the user's name.
-    "NEVER invent a value for a field the task did not give you: no made-up phone "
+    # Measured on a real investor-application form: given only a name and email,
+    # the agent invented a phone number and country and reported the form as
+    # correctly filled, fabricated data submitted under the user's name.
+    "NEVER invent a value for a field the task did not give you. No made-up phone "
     "numbers, addresses, dates, amounts, countries or company details, and no "
     "plausible-looking placeholder. If a field you cannot leave empty has no value "
-    "in the task, call `request_human_takeover` and say which field is missing. "
+    f"in the task, call `{BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER}` and say which field is missing. "
     "The one exception is when the task itself says the run is a test or that dummy "
     "values are fine. Reporting a field as filled with a value you invented is a "
     "failure, not a completion.\n"
@@ -204,7 +211,7 @@ BROWSER_TAKEOVER_PREAMBLE = (
     # actions read the option list and select in one step — it called them once.
     "For any dropdown, select, combobox or multiple-choice control, call "
     "`dropdown_options` to read the choices and `select_dropdown` to pick one. Do "
-    "not open it by clicking and choose by sight, which takes several steps and "
+    "not open it by clicking and choose by sight. That takes several steps and "
     "mis-selects."
 )
 
@@ -213,3 +220,46 @@ BROWSER_TAKEOVER_PREAMBLE = (
 # downscaled stream, a takeover coordinate mismatch and bigger vision payloads.
 BROWSER_VIEWPORT_WIDTH = 1280
 BROWSER_VIEWPORT_HEIGHT = 800
+
+
+# --- Jev decision policy ---
+# The operation vocabulary browser-use/jev-ultrafast offers Jev, each mapping
+# onto one Browser-Use action, plus the two human-takeover controls registered here.
+class JevOperation(StrEnum):
+    """One Jev choice per step; the element-bound ones also carry a target index."""
+
+    CLICK = "CLICK"
+    TYPE_TEXT = "TYPE_TEXT"
+    SELECT = "SELECT"
+    SCROLL_UP = "SCROLL_UP"
+    SCROLL_DOWN = "SCROLL_DOWN"
+    WAIT = "WAIT"
+    NAVIGATE = "NAVIGATE"
+    GO_BACK = "GO_BACK"
+    REQUEST_HUMAN = "REQUEST_HUMAN"
+    SOLVE_CAPTCHA = "SOLVE_CAPTCHA"
+    DONE = "DONE"
+    BLOCKED = "BLOCKED"
+
+
+# Operations that need an observed element; each gets its own speculative
+# target question in the same Jev request (see services/browser/jev/policy.py).
+JEV_TARGET_OPERATIONS = (JevOperation.CLICK, JevOperation.TYPE_TEXT, JevOperation.SELECT)
+
+# Jev sees the viewport only; this bounds one screen. Measured on Wikipedia:
+# 200 rows is 64,483 bytes, the gateway 400s max_tokens_exceeded from 86,133
+# bytes up, and refuses a question with over 255 choices.
+JEV_MAX_ELEMENTS = 200
+
+JEV_GATEWAY_TIMEOUT_SECONDS = 25.0
+JEV_GATEWAY_MAX_ATTEMPTS = 3
+
+# Observation budget: visible page text sent as Jev state, and how much of the
+# run's own action history rides along as context.
+JEV_PAGE_TEXT_MAX_CHARS = 6000
+JEV_ELEMENT_LABEL_MAX_CHARS = 120
+JEV_RECENT_ACTIONS = 10
+JEV_TEXT_HELPER_RECENT_ACTIONS = 6
+JEV_TEXT_VALUE_MAX_CHARS = 2000
+# Probability mass across a choice question must sum to ~1; the gateway rounds.
+JEV_PROBABILITY_SUM_TOLERANCE = 0.02

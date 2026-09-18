@@ -287,8 +287,8 @@ def format_browser_action_entry(
 
     The browser agent runs its own loop inside the browser_task tool, so its
     actions never pass through the graph's tool node and cannot be formatted by
-    :func:format_tool_call_entry. Tagging them with subagent_id is what
-    nests them under the run's "Browser" group in the chat thread.
+    format_tool_call_entry. Tagging them with subagent_id is what nests them
+    under the run's "Browser" group in the chat thread.
     """
     return cast(
         ToolDataEntry,

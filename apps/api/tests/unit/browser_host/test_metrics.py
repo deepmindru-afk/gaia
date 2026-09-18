@@ -24,7 +24,7 @@ def _fake_proc(rss_mb: float, cpu: float) -> MagicMock:
 
 
 def _sampler_over(root: MagicMock, pid: int = 4321) -> ProcessSampler:
-    """Build a real sampler for pid whose process tree resolves to root."""
+    """Return a real sampler for pid whose process tree resolves to root."""
     with patch.object(metrics_module.psutil, "Process", return_value=root):
         return ProcessSampler(pid)
 

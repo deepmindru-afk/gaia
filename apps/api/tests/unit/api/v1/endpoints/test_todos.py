@@ -626,16 +626,20 @@ class TestGetTodo:
 
 class TestGetTodoCanvas:
     async def test_success_returns_content(self, client: AsyncClient) -> None:
-        doc = MagicMock(canvas_content="# Canvas\nhello", activity_content="- did a thing")
+        doc = _todo_doc()
+        doc.canvas_content = "# Canvas\nhello"
+        doc.activity_content = "## Activity"
         with patch(f"{TODOS_MOD}.todo_repository.get", new_callable=AsyncMock, return_value=doc):
             resp = await client.get("/api/v1/todos/todo-1/canvas")
 
         assert resp.status_code == 200
-        assert resp.json() == {"content": "# Canvas\nhello", "activity": "- did a thing"}
+        assert resp.json()["content"] == "# Canvas\nhello"
+        assert resp.json()["activity"] == "## Activity"
 
-    async def test_empty_canvas_returns_empty_strings(self, client: AsyncClient) -> None:
-        doc = MagicMock(canvas_content=None, activity_content=None)
-        with patch(f"{TODOS_MOD}.todo_repository.get", new_callable=AsyncMock, return_value=doc):
+    async def test_empty_canvas_returns_empty_string(self, client: AsyncClient) -> None:
+        with patch(
+            f"{TODOS_MOD}.todo_repository.get", new_callable=AsyncMock, return_value=_todo_doc()
+        ):
             resp = await client.get("/api/v1/todos/todo-1/canvas")
 
         assert resp.status_code == 200

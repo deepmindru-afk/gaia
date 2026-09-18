@@ -42,7 +42,7 @@ here survives across conversations for this user.
                       daily journal, facts by topic. Read-only projection;
                       mutate via the memory tools. (see memory/GUIDE.md)
     account/          the USER's account: subscription, usage, settings.
-                      Read-only projection; mutate via the account tools.
+                      Read-only projection, mutate via the account tools.
                       (see account/GUIDE.md)
     pinned/           cross-session files the user has pinned for reuse
 
@@ -163,10 +163,10 @@ One file per supported platform (`telegram.json`, `whatsapp.json`,
 connected, since when and which handle.
 
 TO LINK a new platform: `manage_linked_account(platform, action="generate_link")`
-It returns a single-use URL the user opens to finish connecting. This does not
+returns a single-use URL the user opens to finish connecting. This does not
 need approval.
 
-TO DISCONNECT: `manage_linked_account(platform, action="disconnect")`. It always
+TO DISCONNECT: `manage_linked_account(platform, action="disconnect")` always
 asks for confirmation first. Never edit these files; they only report status.
 """
 

@@ -149,7 +149,7 @@ def render_index(docs: list[GaiaTaskProjection]) -> str:
     """Build the generated index.md body: one line per task, newest-updated first."""
     header = (
         "<!-- Generated index of active gaia-tasks. Sorted by "
-        "last-updated, newest first. Do not edit. Regenerated on every "
+        "last-updated, newest first. Do not edit, regenerated on every "
         "sync. -->\n"
     )
     sorted_docs = sorted(docs, key=lambda d: updated_at_key(d["meta"]), reverse=True)

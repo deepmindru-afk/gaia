@@ -41,7 +41,7 @@ async def mint_replay_code(session_id: str, steps: int, shots: list[str] | None 
 
 
 async def resolve_replay_code(code: str) -> ReplayRecord | None:
-    """Return the finished session a replay code opens, or None if unknown/expired."""
+    """Return the finished session a replay code opens, or None if unknown or expired."""
     return await redis_cache.get(_key(code), model=ReplayRecord)
 
 
@@ -58,7 +58,7 @@ async def create_replay_link(session_id: str, shots: list[str]) -> str | None:
 
 
 def render_replay_page(record: ReplayRecord) -> str:
-    """Render the self-contained slideshow HTML for one finished session."""
+    """Return the self-contained slideshow HTML for one finished session."""
     r2_base = (settings.R2_PUBLIC_BASE_URL or "").rstrip("/")
     shots = record.shots or [
         f"{r2_base}/browser_steps/{record.session_id}/step_{i}.png"
@@ -74,7 +74,7 @@ _REPLAY_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
-<title>GAIA Browser Recap</title>
+<title>GAIA: Browser Recap</title>
 <style>
   :root { --bg:#0b0b0d; --panel:#141417; --panel2:#1c1c21; --line:#26262c; --fg:#e7e7ea; --muted:#8a8a93; --accent:#00bbff; }
   * { box-sizing:border-box; }

@@ -281,7 +281,7 @@ def _missing_keys(
 
 
 def test_predefined_groups_registered_count_and_order() -> None:
-    """A dropped, duplicated, or reordered register_group call changes."""
+    """Catch a dropped, duplicated, or reordered register_group call by asserting count and name order."""
     groups = SettingsValidator().groups
 
     assert len(groups) == len(EXPECTED_GROUPS)
@@ -290,7 +290,7 @@ def test_predefined_groups_registered_count_and_order() -> None:
 
 @pytest.mark.parametrize("expected", EXPECTED_GROUPS, ids=[e.name for e in EXPECTED_GROUPS])
 def test_predefined_group_fields_match_exactly(expected: _ExpectedGroup) -> None:
-    """Every field of every registered group, asserted against its exact."""
+    """Every field of every registered group, asserted against its exact expected value — catches a mutated string literal, a flipped boolean, or an altered key list on any single group."""
     groups = {g.name: g for g in SettingsValidator().groups}
 
     group = groups[expected.name]

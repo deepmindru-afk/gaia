@@ -172,17 +172,15 @@ class CommonSettings(BaseAppSettings):
             return CRAWL4AI_DEFAULT_MAX_BROWSERS
         return max(CRAWL4AI_MIN_MAX_BROWSERS, parsed)
 
-    # ----------------------------------------------
-    # Browser-Use (autonomous browser automation)
-    # ----------------------------------------------
-    BROWSER_USE_ENABLED: bool = False  # opt-in; off = tool registered but reports unavailable
+    # --- Browser-Use (autonomous browser automation) ---
+    # Opt-in: disabled by default until BROWSER_HOST_URL is configured; when
+    # false the tool reports unavailable instead of spinning up a browser.
+    BROWSER_USE_ENABLED: bool = False
 
-    # Browser-agent LLM, decoupled from the chat harness. Provider: openai | anthropic |
-    # google | openrouter | deepseek; key falls back to the matching GAIA *_API_KEY setting.
-    # Default is kept equal to VISION_MODEL_* in app/constants/llm.py by hand (import is circular).
-    BROWSER_USE_LLM_PROVIDER: str = "google"
-    BROWSER_USE_LLM_MODEL: str = "gemini-3.1-flash-lite"
-    BROWSER_USE_LLM_API_KEY: str | None = None
+    # Strips thinking/evaluation_previous_goal/next_goal/plan from step output.
+    # On by default: measured ~26% fewer prompt tokens, per-step cost roughly
+    # halves. NOT measured on recovery-heavy tasks; turn off if those regress.
+
     # Dev-only: suffixes every ChromaDB collection name so parallel worktrees,
     # which share one local Chroma, stop deleting each other's indexed tools.
     # Empty in production (dedicated Chroma); set per worktree by `mise run wt:env`.
@@ -191,34 +189,31 @@ class CommonSettings(BaseAppSettings):
     # output schema. Measured 2026-08-27 (glm-5.3-flash, 7-field form): same accuracy, ~26%
     # fewer prompt tokens (27k vs 36k median). Not measured on recovery-heavy tasks.
     BROWSER_USE_FLASH_MODE: bool = True
-    # Cloudflare R2 (S3-compatible) edge store for browser step screenshots; Cloudinary stays
-    # the durable store for user files. Optional: any unset -> inline data URLs. Public base
-    # URL is the bucket's r2.dev domain (rate-limited; use a custom domain in prod).
+    # Cloudflare R2, the fast edge store for browser step screenshots; Cloudinary
+    # stays the durable store for arbitrary user files. Optional: any unset field
+    # falls back to inline data URLs. Use a custom domain in prod, r2.dev is rate-limited.
     CLOUDFLARE_ACCOUNT_ID: str | None = None
     R2_ACCESS_KEY_ID: str | None = None
     R2_SECRET_ACCESS_KEY: str | None = None
     R2_BUCKET: str = "gaia-browser-shots"
     R2_PUBLIC_BASE_URL: str | None = None
-    BROWSER_USE_LLM_BASE_URL: str | None = None
-    # Some OpenAI-wire endpoints have no json_schema response format (Merge Gateway +
-    # zai/glm-* answers 400 "no vendor that supports the requested capabilities"); set this
-    # to put the schema in the system prompt and parse plain-text JSON back instead.
-    BROWSER_USE_LLM_SCHEMA_IN_PROMPT: bool = False
-    # Browser-Use only forwards reasoning_effort for model NAMES on its hardcoded OpenAI list,
-    # so an unrecognised thinking model (zai/glm-*) thinks unthrottled: ~1.2k thinking chars
-    # and 8.6s/step vs 1.8s at "low". Set this to force the lane's model onto that path.
-    BROWSER_USE_LLM_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] | None = None
-    # Vision (screenshots to the model) is the biggest cost driver — keep it on
-    # for reliability, but a deployment optimizing cost can disable it.
-    BROWSER_USE_VISION: bool = True
+    # Jev "System One" decision policy (TypeSafe AI, served by OpenRouter): each
+    # step's decision is a single Jev evaluation over the page's indexed element
+    # table, not a generative chat completion. Screenshots are never sent to Jev.
+    BROWSER_USE_JEV_DECISIONS_URL: str = "https://openrouter.ai/api/alpha/decisions"
+    BROWSER_USE_JEV_MODEL: str = "~typesafe/jev-latest"
+    # Text helper for the loop, called only when a decision needs a typed value.
+    # gemini-3.5-flash-lite is the verified model: mercury-2.5 returned empty
+    # content when it spent its token budget on reasoning (measured 2026-09-18).
+    BROWSER_USE_JEV_TEXT_MODEL: str = "google/gemini-3.5-flash-lite"
 
     # Hard limits — everything is bounded so no browser task can run away.
     BROWSER_USE_MAX_STEPS: int = 25
     BROWSER_USE_MAX_ACTIONS_PER_STEP: int = 5
     BROWSER_USE_TASK_TIMEOUT_SECONDS: int = 600
-    # Wait for the human to finish a handoff step (2FA phone, card). Deliberately generous:
-    # the paused session is kept alive by the keepalive in session.py and costs nothing
-    # idle. Bounds only the wait; resolving sooner resumes immediately.
+    # How long a paused run waits for the human to finish a handoff step,
+    # deliberately generous since people get pulled away mid-login. Kept alive
+    # by the keepalive in session.py; resolving sooner resumes immediately.
     BROWSER_USE_HANDOFF_TIMEOUT_SECONDS: int = 1800
     # Active work budget for a single step. The effective per-step timeout adds the
     # handoff timeout on top, so a step that pauses for a human live-view takeover
@@ -231,20 +226,11 @@ class CommonSettings(BaseAppSettings):
     # hand a CAPTCHA to the user, who solves it in live-view before it continues.
     BROWSER_USE_SOLVE_CAPTCHA: bool = True
 
-    # Per-category policy for mid-run sensitive actions: "handoff" (pause, user completes it
-    # in live-view, continue), "proceed" or "abort". BROWSER_USE_AUTONOMOUS_SENSITIVE=true
-    # skips handoffs entirely for a user with an agent-usable payment method set up.
-    BROWSER_USE_AUTONOMOUS_SENSITIVE: bool = False
-    BROWSER_USE_PAYMENT_STRATEGY: str = "handoff"
-    BROWSER_USE_CREDENTIALS_STRATEGY: str = "handoff"
-    BROWSER_USE_IRREVERSIBLE_STRATEGY: str = "handoff"
+    # --- Browser host (gaia-browser-host, our own low-RAM Chromium host) ---
 
-    # ----------------------------------------------
-    # Browser host (gaia-browser-host — our own low-RAM Chromium host)
-    # ----------------------------------------------
-
-    # Reached by service name on the internal overlay network; the host port is never
-    # published. Locally override to http://localhost:8930.
+    # One long-lived Chromium, one isolated context per session, proxied over
+    # CDP with an authenticated screencast live view. Reached internally by
+    # service name; override locally to http://localhost:8930.
     BROWSER_HOST_URL: str = "http://browser-host:8930"  # NOSONAR python:S5332 — internal docker service, plain HTTP on the private network by design (TLS terminates at the edge)
     # Port the host binds inside its container.
     BROWSER_HOST_PORT: int = 8930
@@ -252,17 +238,17 @@ class CommonSettings(BaseAppSettings):
     # container on the internal overlay network and this port is never published; a
     # value from settings also makes the bind configurable for local runs.
     BROWSER_HOST_BIND: str = "0.0.0.0"  # noqa: S104  # nosec B104 — internal overlay only, port never published
-    # Shared secret for every host endpoint (REST header X-Host-Key, WS query param ?hk=).
-    # Required in production: the host renders attacker-controlled pages in the SAME
-    # container, so page JS must never reach the control plane. Generate: openssl rand -hex 32
+    # Shared secret the API/worker must present to every host endpoint. Required
+    # in production: the host renders attacker-controlled pages in the SAME
+    # container, so a page could otherwise reach the control plane on localhost.
     BROWSER_HOST_KEY: str | None = None
     # Absolute anti-runaway backstop on concurrent contexts, NOT the real gate:
     # admission is memory-based (see the watermarks below), so this only guards
     # against a pathological leak spawning unbounded contexts. 0 disables it.
     BROWSER_HOST_MAX_SESSIONS: int = 200
-    # Memory-based admission: reads the cgroup used/limit and admits while the new session's
-    # projected cost keeps usage under HIGH_WATERMARK; between SOFT and HIGH the reaper sheds
-    # idle sessions faster. LIMIT_MB pins the budget when the cgroup is unreadable (dev/mac).
+    # Memory-based admission reading the cgroup's used/limit: admits while a new
+    # session's projected cost stays under HIGH_WATERMARK, sheds idle sessions
+    # between SOFT and HIGH. LIMIT_MB pins the budget when the cgroup is unreadable.
     BROWSER_HOST_MEMORY_LIMIT_MB: int | None = None
     BROWSER_HOST_MEMORY_HIGH_WATERMARK: float = 0.85
     BROWSER_HOST_MEMORY_SOFT_WATERMARK: float = 0.75
@@ -285,9 +271,9 @@ class CommonSettings(BaseAppSettings):
     # Per-renderer V8 heap ceiling. One runaway page must not be able to eat the
     # whole host's budget and OOM every other user's session with it.
     BROWSER_HOST_JS_HEAP_MB: int = 512
-    # Obscura (low-RAM Rust CDP server) is the default and is baked into the gaia image with
-    # OBSCURA_BIN pointing at it; set BROWSER_ENGINE=chromium to fall back to headless-shell
-    # over the same CDP plane.
+    # Which engine the host launches. Obscura (a low-RAM Rust CDP server) is the
+    # default; Chromium (headless-shell) is the flag-selectable break-glass engine
+    # over the same CDP plane. Set BROWSER_ENGINE=chromium to fall back.
     BROWSER_ENGINE: BrowserEngine = BrowserEngine.OBSCURA
     # Path to the Obscura binary; required when BROWSER_ENGINE=obscura (the gaia
     # image sets it via ENV). Missing it fails the host launch loud, no fallback.
@@ -295,9 +281,9 @@ class CommonSettings(BaseAppSettings):
     # Port Obscura's CDP server binds. Fixed (not ephemeral) because Obscura only
     # publishes its /json/version — and thus its ws endpoint — at a port we name.
     OBSCURA_PORT: int = 9222
-    # Base port for the crawl4ai engine's dedicated Obscura; distinct from OBSCURA_PORT and
-    # probed upward when taken. High range on purpose: 9222/9223 collide with a developer's
-    # local Chrome.
+    # Base port for the dedicated Obscura the crawl4ai engine drives, distinct
+    # from OBSCURA_PORT so the two never collide; the manager probes upward from
+    # here if taken. High range on purpose: 9222/9223 collide with local Chrome.
     OBSCURA_CRAWL_PORT: int = 39222
 
     # Fernet key (32 url-safe base64 bytes) encrypting each user's saved browser
@@ -310,18 +296,14 @@ class CommonSettings(BaseAppSettings):
     # When false, a session's login is never persisted or restored (per-deployment
     # opt-out of "log in once, reuse next time").
     BROWSER_PERSIST_LOGINS: bool = True
-    # Public base URL fronting the authenticated /live/{session_id} route, e.g.
-    # https://browser.heygaia.io, whose vhost reverse-proxies to THIS api service (never the
-    # browser host). Unset falls back to HOST.
+    # Public base URL fronting the authenticated live-view route, e.g.
+    # https://browser.heygaia.io in prod, where a vhost reverse-proxies to this
+    # api service. When unset, live-view links fall back to HOST.
     BROWSER_LIVE_VIEW_BASE_URL: str | None = None
 
-    # ----------------------------------------------
-    # Dev-only LLM overrides (honored only when ENV=development)
-    # ----------------------------------------------
-
-    # Custom OpenRouter/OpenAI-compatible endpoint for cheap bulk dev/test usage. All three
-    # must be set; the "custom" provider is registered only in development
-    # (register_llm_providers), so these have no effect in production.
+    # Custom OpenRouter/OpenAI-compatible endpoint for cheap bulk dev/test usage.
+    # All three must be set; the "custom" provider is registered exclusively in
+    # development (see register_llm_providers), so these have no effect in production.
     DEV_LLM_BASE_URL: str | None = None
     DEV_LLM_API_KEY: str | None = None
     DEV_LLM_MODEL: str | None = None

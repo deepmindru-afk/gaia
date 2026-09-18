@@ -5,12 +5,10 @@ bookkeeping — the host feeds it samples at the three moments that already
 happen (session create, navigation complete, session dispose) and the CDP proxy
 feeds it navigation/page events, so nothing here polls or busy-loops.
 
-The resource numbers come from the Chromium *process tree* (browser + renderers
-+ GPU), which is shared by every session on this host: they answer "what did the
-browser cost while this session was open", not "what did this session alone
-cost". Attributing them per session is only meaningful when comparing runs that
-each own the host — which is exactly the engine/profile A-B comparison this
-exists for.
+The resource numbers come from the whole Chromium process tree (browser,
+renderers, GPU), shared by every session on this host, so they cost the
+browser while this session was open, not this session alone. Attributing them
+per session is only meaningful when comparing runs that each own the host.
 """
 
 from __future__ import annotations
@@ -167,8 +165,8 @@ class ProcessSampler:
     def sample(self) -> tuple[float, float] | None:
         """(rss_mb, cpu_percent) for the tree, or None if it cannot be read.
 
-        A process that died (or a permission the host does not have) must not
-        take a session down with it — the metric is missing, the session is not.
+        A process that died, or a permission the host does not have, must not
+        take a session down with it; the metric is missing, the session is not.
         """
         try:
             procs = [self._root, *self._root.children(recursive=True)]

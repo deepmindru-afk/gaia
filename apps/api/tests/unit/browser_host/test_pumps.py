@@ -49,7 +49,7 @@ class TestIsDisconnect:
     def test_classifies_in_an_interpreter_that_never_imported_the_submodule(
         self, tmp_path: Path
     ) -> None:
-        """Import websockets alone does not bind websockets.exceptions (15.x)."""
+        """Import websockets alone does not bind websockets.exceptions on 15.x, so a real script file is needed since the mutation gate's trampoline resolves the caller's filename strictly."""
         probe = tmp_path / "probe.py"
         probe.write_text(
             "from app.browser_host.pumps import is_disconnect\n"

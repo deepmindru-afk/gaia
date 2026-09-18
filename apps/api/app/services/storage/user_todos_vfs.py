@@ -114,7 +114,7 @@ def _index_line(doc: UserTodoProjection) -> str:
 def _index_lines(docs: list[UserTodoProjection]) -> str:
     header = (
         "<!-- Generated index of the user's active todos. Sorted by "
-        "last-updated, newest first. Do not edit. Regenerated on every "
+        "last-updated, newest first. Do not edit, regenerated on every "
         "sync. -->\n"
     )
     sorted_docs = sorted(docs, key=lambda d: updated_at_key(d["meta"]), reverse=True)

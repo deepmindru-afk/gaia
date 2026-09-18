@@ -201,7 +201,7 @@ class TestFinalizeStreamBackstop:
         assert get_session("s1") is None  # cleanup still happens
 
     async def test_saved_but_interrupted_attach_still_attaches_cards(self) -> None:
-        """The bug the user hit: a turn cut short DURING the executor wait has."""
+        """Regression: gating the attach on saved (the old behavior) skipped it when cancelled mid-wait; the backstop must still drain and persist the cards."""
         _ready_session_with_cards("s1")
         state = _state(cancelled=True, saved=True, attached=False)
 

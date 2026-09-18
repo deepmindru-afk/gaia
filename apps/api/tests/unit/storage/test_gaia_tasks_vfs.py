@@ -496,7 +496,7 @@ def test_the_index_header_warns_the_agent_its_edits_would_be_regenerated_away(
     text = (tmp_path / gtv.GAIA_TASKS_DIRNAME / "index.md").read_text()
     assert text.startswith(
         "<!-- Generated index of active gaia-tasks. Sorted by "
-        "last-updated, newest first. Do not edit. Regenerated on every "
+        "last-updated, newest first. Do not edit, regenerated on every "
         "sync. -->\n"
     )
 

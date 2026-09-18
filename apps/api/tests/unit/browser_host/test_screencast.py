@@ -3,7 +3,7 @@
 Regression: add_viewer sat outside the try/finally, so a failure during
 live-view setup (e.g. the CDP client cannot connect) left viewer_count > 0
 forever. The idle reaper skips sessions with viewers, so that session was never
-reclaimed — a permanent capacity leak that only a host restart cleared.
+reclaimed, a permanent capacity leak that only a host restart cleared.
 """
 
 import asyncio
@@ -50,9 +50,9 @@ async def test_run_live_view_removes_viewer_when_setup_fails() -> None:
     host.remove_viewer.assert_called_once_with(_SESSION_ID)
 
 
-# --- _make_frame_handler: per-frame CSS size --------------------------
-# Regression: clicks mapped in frame-bitmap space landed short in a larger CSS
-# viewport; every queued frame must carry the CSS size from screencast metadata.
+# _register_frame_handler: per-frame CSS size. Regression: viewers mapped click
+# coords in frame-bitmap space into a larger CSS viewport, so takeover clicks
+# landed short; every queued frame must carry the page's CSS size.
 
 
 def _make_handler_and_queue(

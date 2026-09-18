@@ -71,14 +71,15 @@ class Section:
 
 
 async def _platform_banner(ctx: SectionContext) -> str:
-    """Which messaging app comms is replying in, so replies read native to it.
+    """Build the banner naming which messaging app comms is replying in.
 
-    Bot channels only: on web/mobile/desktop the rich UI is the point, so telling
-    those clients to write plain short text would be wrong.
+    The model cannot read configurable directly, so this is the only way it
+    learns the platform. Applies to bot channels only, not web/mobile/desktop.
     """
     source = ConversationSource.coerce(ctx.source)
-    # Desktop-only capability, stated only on desktop: retrieval already gates these tools
-    # by source, so naming them in the STATIC prompt only cost other surfaces tokens.
+    # Desktop tools are named only here, not in the static prompt: retrieval
+    # already gates them by source, so naming them for every channel cost
+    # tokens off-desktop for no benefit.
     if source is ConversationSource.DESKTOP:
         return (
             "You are on the user's desktop app, so desktop tools are available "

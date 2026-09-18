@@ -166,7 +166,7 @@ class LoopGuardMiddleware(AgentMiddleware):
                     result,
                     f"{TOOL_RESULT_NOTE_SEPARATOR}[Loop guard: `{tool_name}` has now been called "
                     f"{repeat} times in a row "
-                    "with identical arguments. The result won't change, so reuse the earlier result "
+                    "with identical arguments. The result won't change. Reuse the earlier result "
                     "and move on instead of repeating this call.]",
                 )
             return result
@@ -222,7 +222,7 @@ class LoopGuardMiddleware(AgentMiddleware):
             return (
                 f"\n\n[Loop guard: this exact call to `{tool_name}` has now failed {identical} "
                 "times in a row. Re-read the error above and change your arguments or approach. "
-                "Retrying it unchanged will keep failing.]"
+                "retrying it unchanged will keep failing.]"
             )
         if same_tool >= LOOP_GUARD_WARN_SAME_TOOL:
             return (

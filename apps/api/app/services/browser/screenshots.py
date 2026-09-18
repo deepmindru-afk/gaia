@@ -30,9 +30,7 @@ _UPLOAD_TIMEOUT_SECONDS = 15
 
 
 class _S3Putter(Protocol):
-    """The one boto3 S3 method we use (its clients are dynamically generated and.
-
-    have no static type, so we narrow to exactly what we call)."""
+    """The one boto3 S3 method we use (its clients are dynamically generated and have no static type, so we narrow to exactly what we call)."""
 
     def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str) -> object: ...
 
@@ -64,8 +62,10 @@ def _r2_client() -> _S3Putter:
     return cast(_S3Putter, client)
 
 
-def _put(png: bytes, key: str) -> None:
-    _r2_client().put_object(Bucket=settings.R2_BUCKET, Key=key, Body=png, ContentType="image/png")
+def _put(image: bytes, key: str) -> None:
+    # Browser-Use captures PNG, and a frame stored under the wrong type is also
+    # *served* under it, so the type is stated once here rather than passed in.
+    _r2_client().put_object(Bucket=settings.R2_BUCKET, Key=key, Body=image, ContentType="image/png")
 
 
 async def publish_step_screenshot(png: bytes, conversation_id: str, index: int) -> str | None:

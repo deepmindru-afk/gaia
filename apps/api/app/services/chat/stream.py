@@ -225,13 +225,13 @@ class _StreamState:
         # Whether the turn was persisted in the try block (early save). When
         # False, the finally block does a fallback save.
         self.saved: bool = False
-        # Whether the executor tool_data (browser cards etc.) was attached to the
-        # saved message. Separate from `saved`: the early save sets saved=True before
-        # the executor wait, so a turn cut short during that wait still needs the backstop.
+        # Whether executor tool_data (browser cards etc.) was attached to the
+        # saved message. Separate from saved: a turn cut short during the
+        # executor wait would otherwise skip the attach backstop and lose it.
         self.attached: bool = False
-        # Client send id doubles as the user message id (no reload/sync
-        # reconciliation needed); clients that don't send one (bots) get a
-        # server-minted id.
+        # The client's send id IS the user message id: the client's optimistic
+        # record and the persisted message share one key, so there is nothing
+        # to reconcile after a reload. Bots get a server-minted id instead.
         self.user_message_id: str = turn_id or str(uuid4())
         self.bot_message_id: str = str(uuid4())
         # When comms finished — stamped before any voice-mode executor wait so
@@ -378,19 +378,22 @@ async def _run_chat_stream(
             status="cancelled" if state.is_cancelled else "success",
         )
         if user_id:
+            # Latency props are omitted, not sent as null, when a stage never ran.
+            latencies = (
+                ("ttft_ms", state.ttft_ms),
+                ("e2e_ack_ms", state.e2e_ack_ms),
+                ("e2e_full_ms", state.e2e_full_ms),
+            )
             event_props: dict[str, Any] = {
                 "conversation_id": conversation_id,
                 "voice_mode": body.voice_mode,
                 "is_new_conversation": is_new_conversation,
                 "delegated": state.delegated,
                 "queued": state.queued,
+                **{name: value for name, value in latencies if value is not None},
             }
-            if state.ttft_ms is not None:
-                event_props["ttft_ms"] = state.ttft_ms
-            if state.e2e_ack_ms is not None:
-                event_props["e2e_ack_ms"] = state.e2e_ack_ms
-            if state.e2e_full_ms is not None:
-                event_props["e2e_full_ms"] = state.e2e_full_ms
+            # Source is falsy-checked, not None-checked: a bot platform is a bare
+            # str, and a blank one is no source rather than an empty-string one.
             if source:
                 event_props["source"] = source
             capture_event(
@@ -505,10 +508,9 @@ async def _resolve_pending_browser_handoff_turn(
 ) -> bool:
     """Resolve a paused browser task's handoff from the user's chat reply.
 
-    Returns True when the reply continued/cancelled the handoff — the turn is
-    fully handled here and the caller must not run the agent (the paused browser
-    task resumes on its original stream). False when nothing was pending or
-    the message was unrelated, so the normal turn runs.
+    Returns True when the reply continued or cancelled the handoff, so the
+    caller must not run the agent (the paused task resumes on its own stream).
+    False when nothing was pending, so the normal turn runs.
     """
     user_id = user.user_id
     message = user_message_content_from(body)
@@ -717,7 +719,7 @@ async def _dispatch_stream_chunk(
     turn: _TurnContext,
     state: _StreamState,
 ) -> None:
-    """Route one non-control chunk: parse a data: frame into tool_data, or pass any other frame through."""
+    """Route one non-control chunk: parse a data frame into tool_data, or pass any other frame straight through to the client."""
     if not chunk.startswith("data: "):
         await stream_manager.publish_chunk(stream_id, chunk)
         return
@@ -1063,9 +1065,9 @@ async def _finalize_stream(
                 conversation_id=conversation_id,
             )
 
-    # Backstop for the executor cards. Gated on `attached`, not `saved`: the early
-    # save sets saved=True before the executor wait, so a turn cut short there has
-    # saved=True but attached=False. `attached` flips after the await, so this runs once.
+    # Independent backstop for the executor cards. Gated on attached, not saved:
+    # the early save sets saved=True before the executor wait, so a turn cut
+    # short there leaves saved=True but attached=False. Runs exactly once.
     if not state.attached:
         try:
             await _attach_executor_tool_data(stream_id, body, user, conversation_id, state)

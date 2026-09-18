@@ -1,11 +1,11 @@
-"""API-side client for the browser host — thin async wrapper over its JSON API.
+"""API-side client for the browser host, a thin async wrapper over its JSON API.
 
 The host owns the Chromium and enforces the concurrency cap; this client just
 speaks to it. create_session returns the two websocket URLs the runner hands
-to browser-use (cdp_ws) and to the live-view proxy (live_ws). A host that
-is at capacity surfaces as :class:BrowserConcurrencyLimit; any transport
-failure surfaces as :class:BrowserUnavailableError — the browser tool degrades
-to a clean "not available" message rather than a raw stack trace.
+to browser-use, cdp_ws and live_ws for the live-view proxy. A host at capacity
+raises BrowserConcurrencyLimit; any transport failure raises
+BrowserUnavailableError, so the browser tool degrades to a clean "not
+available" message rather than a raw stack trace.
 """
 
 from __future__ import annotations

@@ -73,7 +73,7 @@ class GatedApproval:
 
 
 class ApprovalCard(Protocol):
-    """What an approval card renders — the slice of GatedApproval the entry reads."""
+    """What an approval card renders, the slice of GatedApproval the entry reads."""
 
     @property
     def approval_id(self) -> str: ...
@@ -252,7 +252,7 @@ def build_summary(tool_name: str, args: Mapping[str, object], integration_name: 
     if integration_name:
         label = f"{label} ({integration_name})"
     parts = _summary_arg_parts(args)
-    return f"{label}, {', '.join(parts)}" if parts else label
+    return f"{label}: {', '.join(parts)}" if parts else label
 
 
 def build_action_detail(summary: str, args: Mapping[str, object]) -> str:

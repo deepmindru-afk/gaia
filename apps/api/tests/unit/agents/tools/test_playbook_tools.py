@@ -1737,7 +1737,7 @@ class TestBlockedDeclines:
         assert result == {
             "success": True,
             "data": {"declined": True, "blocked": True, "counted": False},
-            "message": "Noted, this run never reached the work, so it does not count against "
+            "message": "Noted. This run never reached the work, so it does not count against "
             "the workflow. It will be asked again on a run that gets further.",
         }
         assert call("playbook", blocked=True, blocked_integrations=[]) in log.set_ns.call_args_list

@@ -231,7 +231,7 @@ class Workflow(BaseScheduledTask, ResponseModel):
         default=None,
         description=(
             "Why the workflow is not activated. None means the user turned it off "
-            "themselves; only system-paused workflows may be resumed automatically."
+            "themselves. Only system-paused workflows may be resumed automatically."
         ),
     )
     notify_on_completion: bool = Field(

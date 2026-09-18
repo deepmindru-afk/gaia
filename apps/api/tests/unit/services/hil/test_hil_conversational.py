@@ -543,14 +543,14 @@ class TestTheBatchPromptStatesItsRules:
 
     def test_a_selective_answer_decides_each_action_it_names(self) -> None:
         assert (
-            "every action. A selective answer names some actions, so mark each named one "
+            "every action. A selective answer names some actions: mark each named one "
             "approve or deny."
         ) in self._text()
 
     def test_an_exclusive_answer_denies_every_action_it_did_not_name(self) -> None:
         assert (
             "means the user wants ONLY the "
-            "named actions, so mark every unnamed action 'deny'. A non-exclusive partial "
+            "named actions: mark every unnamed action 'deny'. A non-exclusive partial "
             "answer"
         ) in self._text()
 

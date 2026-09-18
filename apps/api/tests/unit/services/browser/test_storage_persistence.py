@@ -234,7 +234,7 @@ class TestSplitStorageStateByHost:
         assert sp.split_storage_state_by_host(state) == {}  # type: ignore[arg-type]  # passes a plain dict literal in place of the StorageState TypedDict
 
     def test_export_with_no_cookies_key_still_splits_its_origins(self) -> None:
-        """A localStorage-only export omits cookies entirely — it must still."""
+        """Still yield an origin's slice when a localStorage-only export omits cookies entirely."""
         state = {"origins": [{"origin": "https://github.com", "localStorage": []}]}
 
         slices = sp.split_storage_state_by_host(state)  # type: ignore[arg-type]  # passes a plain dict literal in place of the StorageState TypedDict
@@ -252,7 +252,7 @@ class TestSplitStorageStateByHost:
         assert slices["github.com"]["origins"] == []
 
     def test_entries_missing_their_domain_or_origin_are_ignored(self) -> None:
-        """A cookie with no domain and an origin entry with no origin URL."""
+        """Neither crash the split nor create a junk slice for a cookie with no domain or an origin entry with no origin URL."""
         state = {
             "cookies": [
                 {"name": "good", "value": "1", "domain": "github.com"},

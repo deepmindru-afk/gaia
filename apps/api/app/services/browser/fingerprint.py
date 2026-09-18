@@ -28,7 +28,7 @@ _current_seed: contextvars.ContextVar[int] = contextvars.ContextVar(
 
 
 def seed_for_user(user_id: str | None) -> int:
-    """Return a stable 32-bit seed for user_id (not secret, just deterministic)."""
+    """Return a stable 32-bit seed for user_id, not secret, just deterministic."""
     if not user_id:
         return _DEFAULT_SEED
     digest = hashlib.sha256(user_id.encode()).digest()

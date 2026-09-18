@@ -1,17 +1,11 @@
-"""Observability + contract coverage for app/api/v1/endpoints/browser.py.
+"""Cover observability and contract details for app/api/v1/endpoints/browser.py.
 
-tests/unit/api/v1/endpoints/test_browser_endpoints.py already pins the
-happy paths and the HTTP status codes of every route in this module. What it
-does not pin is everything *else* these thin handlers exist to do: the exact
-error text the card shows the user, the wide-event context an operator greps
-for, the audit trail a login deletion leaves behind, and the precise arguments
-handed to each service seam. Those lines run in the existing tests but nothing
-asserts on them, so they could all be wrong and the suite would stay green.
+test_browser_endpoints.py pins happy paths and HTTP status codes. This file pins
+what those tests do not assert on: exact error text, wide-event context, audit
+trail, and exact arguments passed to each service seam.
 
-This file closes that gap. Wide-event fields are read back through a real
-boundary (captured_wide_event) rather than by mocking log — outside a
-boundary every log.set is discarded by design, so a mocked logger would
-prove nothing about what actually reaches Loki.
+Wide-event fields are read back through a real boundary, captured_wide_event,
+since log.set is discarded outside a boundary.
 """
 
 from __future__ import annotations
@@ -24,9 +18,12 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from annotated_types import Ge, Le
 from fastapi import HTTPException
+from httpx import AsyncClient
 import pytest
+from tests.conftest import FAKE_USER
 from tests.helpers import captured_wide_event
 
+from app.api.v1.dependencies.oauth_dependencies import get_user_id
 from app.api.v1.endpoints import browser as browser_ep
 from app.constants.browser import BrowserSessionStatus, HandoffDecision, HandoffStatus
 from app.constants.log_tags import LogTag
@@ -47,12 +44,11 @@ pytestmark = pytest.mark.unit
 
 
 class _SinkRecorder:
-    """Stand-in for the loguru sink so real-time lines become assertable.
+    """Stand in for the loguru sink so real-time lines become assertable.
 
-    log.info/log.audit write a real-time line through the module-level
-    _loguru and (for audit) also append to the wide event. Patching that
-    one global is the only way to see the message text and bound fields of the
-    info line, which is otherwise deliberately absent from the event.
+    log.info and log.audit write through the module-level _loguru global;
+    patching it is the only way to see the info line, which never reaches
+    the wide event.
     """
 
     def __init__(self) -> None:
@@ -76,13 +72,13 @@ class _SinkRecorder:
         return lambda *_a, **_k: None
 
     def at(self, level: str) -> list[tuple[str, dict[str, Any]]]:
-        """(message, bound fields) for every line emitted at level."""
+        """Return the (message, bound fields) pairs emitted at level."""
         return [(msg, fields) for lvl, msg, fields in self.lines if lvl == level]
 
 
 @asynccontextmanager
 async def _recorded() -> AsyncIterator[tuple[dict[str, Any], _SinkRecorder]]:
-    """Open a real wide-event boundary plus a capture of the real-time log lines."""
+    """Return a real wide-event boundary plus a capture of the real-time log lines."""
     recorder = _SinkRecorder()
     with patch("shared.py.wide_events._loguru", recorder):
         async with captured_wide_event() as event:
@@ -601,3 +597,61 @@ class TestRouteMetadata:
         constraints = {type(m): m for m in limit.field_info.metadata}
         assert constraints[Ge].ge == 1
         assert constraints[Le].le == 100
+
+
+# ---------------------------------------------------------------------------
+# The authenticated user through the real dependency (not a hand-made dict)
+# ---------------------------------------------------------------------------
+
+
+class TestAuthenticatedUserThroughTheApp:
+    """get_current_user yields an AuthenticatedUser, never a dict.
+
+    These go through the mounted app so the real dependency result reaches the
+    handler; a handler that treats it as a mapping 500s here and nowhere else.
+    """
+
+    async def test_decision_with_a_note_returns_200_and_forwards_the_note(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        resolve = AsyncMock(return_value=HandoffStatus.COMPLETED)
+        monkeypatch.setattr(browser_ep, "resolve_handoff", resolve)
+
+        resp = await client.post(
+            "/api/v1/browser/handoffs/h-1/decision",
+            json={"decision": "continue", "message": "skip the login"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"handoff_id": "h-1", "status": "completed"}
+        assert resolve.await_args == call(
+            "h-1", HandoffDecision.CONTINUE, FAKE_USER.user_id, "skip the login"
+        )
+
+    async def test_pending_handoff_get_returns_200(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            browser_ep,
+            "get_handoff",
+            AsyncMock(return_value=_record(user_id=FAKE_USER.user_id)),
+        )
+
+        resp = await client.get("/api/v1/browser/handoffs/h-1")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"handoff_id": "h-1", "status": "pending"}
+
+    @pytest.mark.parametrize(
+        ("path", "method"),
+        [
+            ("/browser/handoffs/{handoff_id}", "GET"),
+            ("/browser/handoffs/{handoff_id}/decision", "POST"),
+            ("/browser/sessions/{session_id}/live-view-token", "GET"),
+            ("/browser/import/token", "POST"),
+        ],
+    )
+    def test_user_id_comes_from_the_auth_dependency(self, path: str, method: str) -> None:
+        """A route resolving its own id from request.state is how the 500s got in."""
+        route = next(r for r in browser_ep.router.routes if r.path == path and method in r.methods)
+        assert [d.call for d in route.dependant.dependencies] == [get_user_id]

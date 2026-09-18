@@ -503,7 +503,7 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
                     slug="gmail_poll_inbox",
                     composio_slug="GMAIL_NEW_GMAIL_MESSAGE",
                     name="Poll Inbox",
-                    description="Polls your inbox every N minutes. Good for periodic email triage",
+                    description="Polls your inbox every N minutes, ideal for periodic email triage",
                     config_schema={
                         "interval": TriggerConfigFieldSchema(
                             type="integer",
@@ -537,9 +537,9 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
             # miners into the agent AND its spawned chunk-readers so triage mines
             # the offload with query_json/grep instead of read-whole-file + bash.
             extra_initial_tools=["query_json", "grep"],
-            # GMAIL_FETCH_MESSAGES (paginated) replaces GMAIL_FETCH_EMAILS's capped
-            # page size; GMAIL_FETCH_THREAD (normalized) replaces the raw thread view.
-            # Excluded here so the agent can't retrieve them; REST mail still calls them by name.
+            # GMAIL_FETCH_MESSAGES/THREAD replace the fixed-page-size, unshaped
+            # stock tools. exclude_tools only gates agent retrieval; the REST
+            # mail layer still invokes the stock tools by name.
             exclude_tools=["GMAIL_FETCH_EMAILS", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"],
             memory_prompt=GMAIL_MEMORY_PROMPT,
         ),
@@ -1986,6 +1986,7 @@ OAUTH_INTEGRATIONS: list[OAuthIntegration] = [
 
 @cache
 def get_integration_by_id(integration_id: str) -> OAuthIntegration | None:
+    """Return the matching integration, or None if no integration has this id."""
     return next((i for i in OAUTH_INTEGRATIONS if i.id == integration_id), None)
 
 

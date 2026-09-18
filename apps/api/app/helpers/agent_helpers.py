@@ -1324,9 +1324,9 @@ async def _stream_messages(
 
     # Stream AI response content (only from comms_agent to avoid duplication)
     if chunk and isinstance(chunk, (AIMessage, AIMessageChunk)):
-        # Comms thinking, streamed like the executor's, so a reasoning model's
-        # seconds of thinking are visible instead of a frozen UI. No subagent_id:
-        # this is the root turn, rendered as a top-level thinking block.
+        # Comms thinking, streamed like the executor's, so reasoning before a
+        # reply is visible instead of a frozen UI. No subagent_id: the client
+        # renders the root turn as a top-level thinking block.
         if is_comms:
             reasoning_delta = extract_reasoning_delta(chunk)
             if reasoning_delta:

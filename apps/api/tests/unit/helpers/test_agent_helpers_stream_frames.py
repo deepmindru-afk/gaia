@@ -896,7 +896,7 @@ async def test_messages_thread_the_user_id_into_the_mcp_resource_fetch() -> None
 
 
 def _reasoning_chunk(text: str, *, content: str = "") -> AIMessageChunk:
-    """Build a chunk carrying provider-style thinking, as ChatOpenRouter streams it."""
+    """Return a chunk carrying provider-style thinking, as ChatOpenRouter streams it."""
     return AIMessageChunk(
         content=content, id="msg-1", additional_kwargs={"reasoning_content": text}
     )
@@ -904,7 +904,7 @@ def _reasoning_chunk(text: str, *, content: str = "") -> AIMessageChunk:
 
 @pytest.mark.asyncio
 async def test_comms_thinking_is_streamed_as_a_top_level_reasoning_frame() -> None:
-    """Without this frame the user watches a frozen UI while comms reasons."""
+    """No subagent_id: the root turn renders as a top-level thinking block, not nested under a delegate."""
     state = _StreamAccumulators()
 
     frames = await _drain(
@@ -932,7 +932,7 @@ async def test_a_thinking_chunk_carrying_reply_text_emits_both_in_order() -> Non
 
 @pytest.mark.asyncio
 async def test_a_chunk_with_no_thinking_emits_no_reasoning_frame() -> None:
-    """Non-reasoning models stream every chunk with empty thinking — one empty."""
+    """Non-reasoning models stream every chunk with empty thinking — one empty frame each would be a per-token spinner the client cannot tell from real work."""
     state = _StreamAccumulators()
 
     frames = await _drain(

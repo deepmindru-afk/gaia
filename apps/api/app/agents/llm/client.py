@@ -481,9 +481,9 @@ def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChat
     """
     if settings.GAIA_SIM_MODE:
         return _sim_llm(temperature)
-    # The custom lane (DEV_LLM_*) also serves auxiliary work, not just the chat
-    # agent: otherwise every title/classification helper still billed OpenRouter
-    # and failed on its credits while the agent ran. Unset in production.
+    # A configured custom lane takes precedence over OpenRouter for auxiliary
+    # work too, not just the chat agent, so DEV_LLM_* also covers titles,
+    # classification and structured-output helpers. Unset in production.
     if _custom_lane_configured():
         return _build_custom_default_llm(temperature)
     if not settings.OPENROUTER_API_KEY:
@@ -498,7 +498,7 @@ def _custom_lane_configured() -> bool:
 
 @cache
 def _build_custom_default_llm(temperature: float) -> BaseChatModel:
-    """Build the auxiliary-task model served by the custom endpoint (DEV_LLM_*)."""
+    """Return the auxiliary-task model served by the custom endpoint (DEV_LLM_*)."""
     llm = without_sdk_retry(
         ChatOpenRouter(
             model=settings.DEV_LLM_MODEL or "",
@@ -1303,7 +1303,7 @@ async def ainvoke_structured_gemini(
     config: RunnableConfig | None = None,
     options: StructuredCallOptions = _DEFAULT_STRUCTURED_OPTIONS,
 ) -> _StructuredT:
-    """Run the structured one-shot call for the memory pipeline: aux lane primary, direct Gemini fallback.
+    """Run a structured one-shot on the lane that fails over: aux lane primary, direct Gemini fallback.
 
     Same contract as :func:ainvoke_structured. Preference is measured: Gemini
     flash-lite's cache never extends past tools+system (repeat prompts always

@@ -155,9 +155,7 @@ class TestTheTableIsWellFormed:
 
 @pytest.mark.unit
 class TestPlatformBanner:
-    """The model cannot read configurable, so the channel has to be said out.
-
-    loud or comms writes web-app prose into a Telegram bubble."""
+    """The model cannot read configurable, so the channel has to be said out loud or comms writes web-app prose into a Telegram bubble."""
 
     @pytest.mark.parametrize(
         ("source", "expected_name"),
@@ -183,11 +181,11 @@ class TestPlatformBanner:
 
     @pytest.mark.parametrize("source", ["web", "mobile", "workflow_system"])
     async def test_the_rich_clients_get_no_banner(self, source: str) -> None:
-        """Telling the web app to write plain short text would be actively wrong —."""
+        """Telling the web app to write plain short text would be actively wrong — its whole point is the cards the bots cannot render."""
         assert await section("platform_banner").fetch(ctx(source=source)) == ""
 
     async def test_desktop_is_told_about_its_own_tools(self) -> None:
-        """Desktop tools are retrievable only on desktop, so the capability is."""
+        """Desktop tools are retrievable only on desktop, so the capability is stated only on desktop — it used to sit in the STATIC prompt, where every web/bot turn read it and reasoned about whether it applied."""
         rendered = await section("platform_banner").fetch(ctx(source="desktop"))
 
         # Exact, not a substring match: the tool names are the payload, and a
@@ -205,7 +203,7 @@ class TestPlatformBanner:
 
     @pytest.mark.parametrize("source", ["web", "mobile", "telegram", "workflow_system"])
     async def test_non_desktop_never_hears_about_desktop_tools(self, source: str) -> None:
-        """The bug this fixes: naming desktop tools off-desktop made the model."""
+        """The bug this fixes: naming desktop tools off-desktop made the model stop and reason about a capability it cannot use."""
         assert "take_screenshot" not in await section("platform_banner").fetch(ctx(source=source))
 
     @pytest.mark.parametrize("source", [None, "", "not_a_real_channel"])
@@ -215,11 +213,11 @@ class TestPlatformBanner:
         assert await section("platform_banner").fetch(ctx(source=source)) == ""
 
     def test_only_comms_receives_it(self) -> None:
-        """The worker tiers never address the user, so channel voice is not theirs."""
+        """The worker tiers never address the user, so channel voice is not theirs to act on — and a section they do not need still costs a fetch."""
         assert section("platform_banner").applies_to == frozenset({AgentTier.COMMS})
 
     def test_it_is_stable_not_volatile(self) -> None:
-        """The channel is fixed for a conversation."""
+        """Keep the slot DYNAMIC_STABLE so MEMORY_RECALL doesn't push it outside the cacheable prefix."""
         assert section("platform_banner").slot is PromptSlot.DYNAMIC_STABLE
 
 

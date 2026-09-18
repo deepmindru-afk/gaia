@@ -109,7 +109,7 @@ async def get_live_view_token(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this session"
         )
 
-    token = create_takeover_token(session_id, str(user_id))
+    token = create_takeover_token(session_id, user_id)
     log.info(f"{LogTag.BROWSER} browser live view token issued")
     claims = verify_takeover_token(token)
     return LiveViewTokenResponse(

@@ -1,4 +1,4 @@
-"""Reading a model's "thinking" off a streamed chunk.
+"""Read a model's "thinking" off a streamed chunk.
 
 Shared by the comms stream and the subagent runner. It lives under
 agents/llm rather than utils (app.utils may not import the model stack) or

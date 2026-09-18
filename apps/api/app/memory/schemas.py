@@ -74,13 +74,13 @@ class ExtractedFact(BaseModel):
         description=(
             "How long this assertion stays true. 'durable': identity, "
             "relationships, preferences, style, health, values, long-run goals "
-            "never expires. 'state': a value that was only true as of a "
+            ". Never expires. 'state': a value that was only true as of a "
             "moment (counts, balances, metrics, connection status, deployment "
             "state, open bugs, in-flight applications, anything you would write "
-            "'as of <date>') expires. 'task': a commitment, deadline or "
-            "intention, becomes an agenda item, never a plain fact. 'journal': "
+            "'as of <date>'). Expires. 'task': a commitment, deadline or "
+            "intention. Becomes an agenda item, never a plain fact. 'journal': "
             "what happened today, anything GAIA itself recommended, produced, "
-            "drafted or advised, or a world fact merely looked up, becomes a "
+            "drafted or advised, or a world fact merely looked up. Becomes a "
             "journal line, never a fact. When torn between durable and state, "
             "choose state."
         )
@@ -142,7 +142,7 @@ class AgendaUpdate(BaseModel):
     resolved: bool = Field(
         description=(
             "True when this conversation CLOSED the loop (it was delivered, "
-            "cancelled, or otherwise finished). The matching agenda item is "
+            "cancelled, or otherwise finished), the matching agenda item is "
             "then retired. False when it opens or restates an open loop."
         )
     )

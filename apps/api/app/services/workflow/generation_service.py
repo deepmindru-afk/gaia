@@ -190,7 +190,7 @@ def _build_available_triggers(
         for tc in integration.associated_triggers:
             schema = tc.workflow_trigger_schema
             if schema:
-                desc = f": {schema.description}" if schema.description else ""
+                desc = f", {schema.description}" if schema.description else ""
                 lines.append(f"- {schema.slug}: {schema.name} ({integration.name}){desc}")
     if not lines:
         return ""
@@ -324,7 +324,7 @@ def _build_integration_hints(
     if explicit_set:
         friendly_explicit = [_hint_label(s) for s in sorted(explicit_set)]
         hint_parts.append(
-            "Integrations the user explicitly named, which MUST appear in the steps: "
+            "Integrations the user explicitly named, MUST appear in the steps: "
             + ", ".join(friendly_explicit)
         )
     return hint_parts
@@ -459,7 +459,7 @@ class WorkflowGenerationService:
         # gaia is always a valid category — for pure LLM reasoning steps
         category_names.append("gaia")
         tools_with_categories.append(
-            "gaia: GAIA reasoning. Summarize content, draft text, classify items, "
+            "gaia: GAIA reasoning, summarize content, draft text, classify items, "
             "generate outlines, extract key points, write briefs. No external tool call."
         )
 

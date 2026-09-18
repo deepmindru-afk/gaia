@@ -1,4 +1,4 @@
-"""Authenticated screencast + input for a session's focused page.
+"""Authenticated screencast and input for a session's focused page.
 
 WS /live/{session_id} is the backend of the live view the user watches (and,
 during a handoff, drives). It attaches to the context's focused page, streams

@@ -1,11 +1,10 @@
-"""Tests for the custom Browser-Use actions — registration, defaults, and the.
-
-exact reason/category values handed to the takeover seam."""
+"""Tests for the custom Browser-Use actions — registration, defaults, and the exact reason/category values handed to the takeover seam."""
 
 from collections.abc import Awaitable, Callable
 
 import pytest
 
+from app.constants.browser import BrowserHandoffAction
 from app.services.browser.tools import build_browser_tools
 
 CAPTCHA_DESCRIPTION = (
@@ -122,3 +121,17 @@ def test_takeover_action_description_mentions_all_three_categories() -> None:
     action = _get_action(tools, "request_human_takeover")
 
     assert "payment | credentials | irreversible" in action.description
+
+
+def test_the_registered_handoff_actions_are_exactly_the_enum() -> None:
+    """Keep the enum spelling the same def names Browser-Use registers so the two cannot drift."""
+    takeover: Callable[[str, str], Awaitable[str]] = _FakeTakeover()
+
+    both = build_browser_tools(solve_captcha=True, handle_takeover=takeover)
+    takeover_only = build_browser_tools(solve_captcha=False, handle_takeover=takeover)
+
+    assert {a.value for a in BrowserHandoffAction} <= set(both.registry.registry.actions)
+    registered_handoffs = {a.value for a in BrowserHandoffAction} & set(
+        takeover_only.registry.registry.actions
+    )
+    assert registered_handoffs == {BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER.value}

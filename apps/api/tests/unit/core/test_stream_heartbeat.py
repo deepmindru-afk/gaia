@@ -28,9 +28,9 @@ async def test_silent_producer_still_writes_to_the_socket() -> None:
     """A producer that yields nothing for several intervals is padded, since the bot translator swallows web-only frames."""
 
     async def silent_then_speak() -> AsyncGenerator[str, None]:
-        # 6 intervals rather than a tight 3.5: under xdist load the loop can stall
-        # for a couple of interval-lengths, and the old 0.5-interval margin flaked
-        # once in CI. Six still guarantees the >= 3 keepalives with a wide margin.
+        # 6 intervals, not 3.5: under heavy xdist load the loop can stall for a
+        # couple of interval-lengths, and the old 0.5-interval margin was one
+        # flaky sleep tick (observed once in CI); 6 still keeps >= 3 keepalives.
         await asyncio.sleep(INTERVAL * 6)
         yield "data: real\n\n"
 

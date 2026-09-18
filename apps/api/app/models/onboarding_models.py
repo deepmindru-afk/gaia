@@ -128,7 +128,7 @@ class HoloCardLLMOutput(BaseModel):
     personality_phrase: str = Field(
         description=(
             "Unique 2-3 word personality phrase capturing the user's essence. "
-            "Poetic, metaphorical, and unexpected, never corporate buzzwords, "
+            "Poetic, metaphorical, and unexpected. Never corporate buzzwords, "
             "generic descriptors, or obvious profession references. Examples of "
             "the right register: 'Midnight Architect', 'Velvet Rebel', 'Pattern "
             "Seeker', 'Quiet Thunder'."

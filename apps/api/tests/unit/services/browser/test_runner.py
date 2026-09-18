@@ -1,10 +1,10 @@
-"""Tests for BrowserTaskRunner — progress, the agent-driven handoff, cancel, timeout.
+"""Tests for BrowserTaskRunner: progress, the agent-driven handoff, cancel, timeout.
 
 Browser-Use is faked so the tests exercise the runner's orchestration without a
 real browser: a scripted FakeAgent invokes the runner's step callback exactly as
 Browser-Use does (after the model picks actions, before they execute). The runner
-no longer judges sensitivity itself — the agent hands off for itself by calling
-_handle_takeover (the request_human_takeover / solve_captcha_with_help
+no longer judges sensitivity itself; the agent hands off for itself by calling
+_handle_takeover (the request_human_takeover and solve_captcha_with_help
 actions), which is what the takeover tests below exercise directly.
 """
 
@@ -17,16 +17,20 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call
 import browser_use
 import pytest
 
-from app.constants.browser import BrowserEventKind, BrowserSessionStatus, HandoffStatus
+from app.constants.browser import (
+    BROWSER_RUN_HANDOFF_TIMED_OUT,
+    BrowserEventKind,
+    BrowserSessionStatus,
+    HandoffStatus,
+)
 from app.constants.log_tags import LogTag
 from app.schemas.browser import BrowserAction, HandoffOutcome
-from app.services.browser import runner as runner_mod
-from app.services.browser.runner import (
-    ActionResultsFn,
-    BrowserRunConfig,
-    BrowserRunnerCallbacks,
-    BrowserTaskRunner,
-)
+from app.services.browser import agent_run, run_contract, runner as runner_mod
+from app.services.browser.agent_run import outcome_from_history
+from app.services.browser.jev.chat_model import JevChatModel
+from app.services.browser.jev.policy import JevHistoryEntry
+from app.services.browser.run_contract import ActionResultsFn, BrowserRunConfig, StepFrame
+from app.services.browser.runner import BrowserRunnerCallbacks, BrowserTaskRunner
 from app.services.browser.session import BrowserHostSession
 from app.services.llm_metering import LLMCallContext, TokenUsage
 
@@ -188,7 +192,6 @@ def _make_runner(*, emit, request_handoff=None, is_cancelled=None, overrides=_Ru
             # runner adds a per-handoff allowance on top).
             handoff_timeout_seconds=0,
             stream_screenshots=overrides.stream_screenshots,
-            use_vision=True,
             solve_captcha=False,
         ),
         user_id=overrides.user_id,
@@ -205,28 +208,13 @@ def _collector():
     return events, emit
 
 
-# The exact verify-before-you-continue instruction the runner appends to every
-# completed takeover. Asserted verbatim so a reworded prompt has to be deliberate.
-TAKEOVER_VERIFY_TAIL = (
-    "Do NOT assume the page is in the state you expect. Look at the "
-    "CURRENT page now and VERIFY before doing anything else. A solved CAPTCHA "
-    "shows a green checkmark and no 'please verify that you are not a robot' error "
-    "remains; a login lands on the signed-in page. If the step is NOT actually "
-    "complete, call the takeover / solve_captcha_with_help action again instead of "
-    "proceeding. Only continue toward the goal once you have confirmed the page state "
-    "yourself, and never report success you cannot see on the page."
-)
-TAKEOVER_DEFAULT_PREFACE = "The user says they finished that step in the live browser. "
-
-
 async def test_takeover_completed_lets_agent_continue():
     _, emit = _collector()
     runner = _make_runner(
         emit=emit,
         request_handoff=AsyncMock(return_value=HandoffOutcome(status=HandoffStatus.COMPLETED)),
     )
-    out = await runner._handle_takeover("Enter your card", "payment")
-    assert "verify" in out.lower() or "continue" in out.lower()
+    await runner._handle_takeover("Enter your card", "payment")
     assert runner._handed_off is True
     assert runner._stopped is False
 
@@ -310,7 +298,7 @@ async def test_timeout_marks_failed(patch_browser, monkeypatch):
 
 
 async def test_unexpected_agent_error_finishes_failed(patch_browser, monkeypatch):
-    """An unexpected runtime failure must not leave the card stuck in RUNNING."""
+    """Emit a terminal FAILED result instead of leaving the card stuck in RUNNING."""
 
     async def _boom(self, max_steps: int, on_step_end=None):
         raise RuntimeError("LLM provider exploded")
@@ -349,7 +337,7 @@ class _Opaque:
 
 def test_extract_actions_keeps_every_action_with_its_params() -> None:
     output = _Output("goal", [_Action("navigate", {"url": "x"}), _Action("click", {"index": 2})])
-    assert [(a.name, a.inputs) for a in runner_mod._extract_actions(output)] == [
+    assert [(a.name, a.inputs) for a in agent_run._extract_actions(output)] == [
         ("navigate", {"url": "x"}),
         ("click", {"index": 2}),
     ]
@@ -357,23 +345,23 @@ def test_extract_actions_keeps_every_action_with_its_params() -> None:
 
 def test_extract_actions_gives_a_paramless_action_empty_inputs() -> None:
     output = _Output("goal", [_Action("go_back", {}), _Action("click", {"index": 1})])
-    assert [(a.name, a.inputs) for a in runner_mod._extract_actions(output)] == [
+    assert [(a.name, a.inputs) for a in agent_run._extract_actions(output)] == [
         ("go_back", {}),
         ("click", {"index": 1}),
     ]
 
 
 def test_extract_actions_is_empty_without_actions() -> None:
-    assert runner_mod._extract_actions(_Output("goal", [])) == []
-    assert runner_mod._extract_actions(_Opaque()) == []
+    assert agent_run._extract_actions(_Output("goal", [])) == []
+    assert agent_run._extract_actions(_Opaque()) == []
 
 
 def test_extract_actions_ignores_actions_it_cannot_dump() -> None:
-    assert runner_mod._extract_actions(_Output("goal", [_Opaque()])) == []
+    assert agent_run._extract_actions(_Output("goal", [_Opaque()])) == []
 
 
 def _targeted_state(index: int) -> SimpleNamespace:
-    """Step state where element index is a named button with a known box."""
+    """Build step state where element index is a named button with a known box."""
     node = _LabelNode(
         text="",
         ax_node=SimpleNamespace(name="Sign in"),
@@ -387,9 +375,9 @@ def _targeted_state(index: int) -> SimpleNamespace:
 
 
 def test_extract_actions_names_and_locates_the_element_the_action_targets() -> None:
-    """An index is meaningless to a reader: the step state the agent saw resolves."""
+    """An index is meaningless to a reader: the step state the agent saw resolves it to the control's own name and to where it sits on screen."""
     output = _Output("goal", [_Action("click", {"index": 4})])
-    [action] = runner_mod._extract_actions(output, _targeted_state(4))
+    [action] = agent_run._extract_actions(output, _targeted_state(4))
     assert action.target == "Sign in"
     assert action.point == (1.0, 1.0)
 
@@ -398,7 +386,7 @@ def test_extract_actions_leaves_target_and_point_unset_for_a_different_element()
     # The index is looked up in the map, not assumed present — a stale index names
     # nothing rather than mislabelling another control.
     output = _Output("goal", [_Action("click", {"index": 4})])
-    [action] = runner_mod._extract_actions(output, _targeted_state(9))
+    [action] = agent_run._extract_actions(output, _targeted_state(9))
     assert action.target is None
     assert action.point is None
 
@@ -406,7 +394,7 @@ def test_extract_actions_leaves_target_and_point_unset_for_a_different_element()
 def test_extract_actions_leaves_target_and_point_unset_for_an_untargeted_action() -> None:
     # An action with no element index (scroll, go_back) targets nothing on the page.
     output = _Output("goal", [_Action("go_back", {})])
-    [action] = runner_mod._extract_actions(output, _targeted_state(4))
+    [action] = agent_run._extract_actions(output, _targeted_state(4))
     assert action.target is None
     assert action.point is None
 
@@ -414,14 +402,14 @@ def test_extract_actions_leaves_target_and_point_unset_for_an_untargeted_action(
 def test_extract_actions_leaves_target_and_point_unset_without_step_state() -> None:
     # Without the state the agent saw there is no DOM to resolve the index against.
     output = _Output("goal", [_Action("click", {"index": 4})])
-    [action] = runner_mod._extract_actions(output)
+    [action] = agent_run._extract_actions(output)
     assert action.target is None
     assert action.point is None
 
 
 def test_extract_actions_dumps_without_unset_params() -> None:
     action = _RecordingAction("click", {"index": 1})
-    runner_mod._extract_actions(_Output("goal", [action]))
+    agent_run._extract_actions(_Output("goal", [action]))
     assert action.dump_kwargs == {"exclude_none": True}
 
 
@@ -441,7 +429,7 @@ class _SparseResult:
 def test_summarize_action_result_shows_the_error_over_any_content() -> None:
     # A failed action's reason is the thing worth reading, whatever it also returned.
     result = _SparseResult(error="element not found", extracted_content="partial page text")
-    assert runner_mod._summarize_action_result(result) == "element not found"
+    assert agent_run._summarize_action_result(result) == "element not found"
 
 
 def test_summarize_action_result_falls_back_to_the_long_term_memory() -> None:
@@ -449,41 +437,39 @@ def test_summarize_action_result_falls_back_to_the_long_term_memory() -> None:
     result = _SparseResult(
         error=None, extracted_content=None, long_term_memory="Saved 3 rows to memory"
     )
-    assert runner_mod._summarize_action_result(result) == "Saved 3 rows to memory"
+    assert agent_run._summarize_action_result(result) == "Saved 3 rows to memory"
 
 
 def test_summarize_action_result_is_none_for_a_result_with_no_outcome_fields() -> None:
-    """Browser-Use result shapes differ per action; one missing every text field is a."""
-    assert runner_mod._summarize_action_result(_SparseResult()) is None
-    assert runner_mod._summarize_action_result(_SparseResult(error=None)) is None
+    """Browser-Use result shapes differ per action; one missing every text field is a silent success, which needs no output row rather than a crashed step."""
+    assert agent_run._summarize_action_result(_SparseResult()) is None
+    assert agent_run._summarize_action_result(_SparseResult(error=None)) is None
 
 
 def test_summarize_action_result_collapses_whitespace_to_one_line() -> None:
     # Extracted page text arrives with the page's own wrapping; the row is one line.
     result = _SparseResult(extracted_content="  Total:\n\n   $42  ")
-    assert runner_mod._summarize_action_result(result) == "Total: $42"
+    assert agent_run._summarize_action_result(result) == "Total: $42"
 
 
 def test_summarize_action_result_keeps_text_at_the_limit_whole() -> None:
     # Exactly at the limit is short enough to show — truncation starts past it.
-    at_limit = "c" * runner_mod._OUTPUT_MAX_CHARS
-    assert (
-        runner_mod._summarize_action_result(_SparseResult(extracted_content=at_limit)) == at_limit
-    )
+    at_limit = "c" * agent_run._OUTPUT_MAX_CHARS
+    assert agent_run._summarize_action_result(_SparseResult(extracted_content=at_limit)) == at_limit
 
 
 def test_summarize_action_result_truncates_longer_text_to_the_limit() -> None:
-    """Over the limit the row is cut one character short and given an ellipsis, so."""
-    limit = runner_mod._OUTPUT_MAX_CHARS
+    """Over the limit the row is cut one character short and given an ellipsis, so the whole thing is still exactly the limit and reads as continuing."""
+    limit = agent_run._OUTPUT_MAX_CHARS
     long_text = "c" * (limit + 50)
-    summary = runner_mod._summarize_action_result(_SparseResult(extracted_content=long_text))
+    summary = agent_run._summarize_action_result(_SparseResult(extracted_content=long_text))
     assert summary == "c" * (limit - 1) + "…"
     assert len(summary) == limit
 
     # A cut landing on a space must not leave the ellipsis floating off the word.
     on_a_space = "a" * (limit - 2) + " " + "b" * 50
     assert (
-        runner_mod._summarize_action_result(_SparseResult(extracted_content=on_a_space))
+        agent_run._summarize_action_result(_SparseResult(extracted_content=on_a_space))
         == "a" * (limit - 2) + "…"
     )
 
@@ -512,7 +498,6 @@ def test_init_derives_timeouts_and_starts_from_a_clean_slate() -> None:
             step_timeout_seconds=180,
             handoff_timeout_seconds=60,
             stream_screenshots=True,
-            use_vision=True,
             solve_captcha=True,
         ),
     )
@@ -521,18 +506,31 @@ def test_init_derives_timeouts_and_starts_from_a_clean_slate() -> None:
     # the wall clock allows every permitted handoff to run its full duration.
     assert runner._step_timeout == 240
     assert runner._wall_clock_timeout == 300 + MAX_HANDOFFS_PER_TASK * 60
-    assert runner._max_steps == 7
-    assert runner._max_actions_per_step == 3
+    assert runner._config.max_steps == 7
+    assert runner._config.max_actions_per_step == 3
     assert runner._task_timeout == 300
-    assert runner._flash_mode is True
-    assert runner._agent is None
+    assert runner._config.flash_mode is True
+    assert runner._agent_run._agent is None
     assert runner._stopped is False
     assert runner._handed_off is False
     assert runner._handoffs == 0
     assert runner._last_step == 0
-    assert runner._last_step_at == 0.0
     assert runner._shots == []
     assert runner._emit_tasks == set()
+
+
+async def test_an_agent_run_with_no_chat_model_says_so_instead_of_crashing_deep_inside(
+    patch_browser,
+) -> None:
+    """A run built without a chat model refuses loudly rather than handing None to an Agent."""
+    from app.services.browser.exceptions import BrowserUnavailableError
+
+    _, emit = _collector()
+    runner = _make_runner(emit=emit, overrides=_RunnerOverrides(llm=object()))
+    runner._agent_run._llm = None
+
+    with pytest.raises(BrowserUnavailableError, match="chat model"):
+        await runner._agent_run.execute("x")
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +539,7 @@ def test_init_derives_timeouts_and_starts_from_a_clean_slate() -> None:
 
 
 def test_element_viewport_fraction_maps_centre_minus_scroll_to_a_0_1_fraction() -> None:
-    """The pulse point is the element centre in viewport space, normalised."""
+    """Normalise the element centre in viewport space to a 0..1 fraction so the UI needs no pixel size."""
     node = SimpleNamespace(
         absolute_position=SimpleNamespace(x=200.0, y=900.0, width=100.0, height=40.0)
     )
@@ -551,7 +549,7 @@ def test_element_viewport_fraction_maps_centre_minus_scroll_to_a_0_1_fraction() 
             viewport_width=1280, viewport_height=800, scroll_x=0, scroll_y=800
         ),
     )
-    fx, fy = runner_mod._element_viewport_fraction(state, 5)
+    fx, fy = agent_run._element_viewport_fraction(state, 5)
     assert fx == round((200 + 50) / 1280, 4)
     assert fy == round((900 + 20 - 800) / 800, 4)
 
@@ -567,7 +565,7 @@ def test_element_viewport_fraction_is_none_when_the_centre_is_off_screen() -> No
             viewport_width=1280, viewport_height=800, scroll_x=0, scroll_y=5000
         ),
     )
-    assert runner_mod._element_viewport_fraction(state, 1) is None
+    assert agent_run._element_viewport_fraction(state, 1) is None
 
 
 def _box(x: float, y: float, width: float, height: float) -> SimpleNamespace:
@@ -575,7 +573,7 @@ def _box(x: float, y: float, width: float, height: float) -> SimpleNamespace:
 
 
 def _fraction_state(box: object | None, **page: object) -> SimpleNamespace:
-    """Build a state whose element 1 has the given box, seen through the given viewport."""
+    """Return a state whose element 1 has the given box, seen through the given viewport."""
     return SimpleNamespace(
         dom_state=SimpleNamespace(selector_map={1: SimpleNamespace(absolute_position=box)}),
         page_info=SimpleNamespace(**page),
@@ -583,7 +581,7 @@ def _fraction_state(box: object | None, **page: object) -> SimpleNamespace:
 
 
 def test_element_viewport_fraction_subtracts_the_scroll_offset_on_both_axes() -> None:
-    """Page coordinates are not viewport coordinates: a scrolled page moves the."""
+    """Page coordinates are not viewport coordinates: a scrolled page moves the element towards the top-left, so the offset is subtracted, never added."""
     state = _fraction_state(
         _box(300.0, 1000.0, 100.0, 100.0),
         viewport_width=1000,
@@ -591,35 +589,35 @@ def test_element_viewport_fraction_subtracts_the_scroll_offset_on_both_axes() ->
         scroll_x=100,
         scroll_y=800,
     )
-    assert runner_mod._element_viewport_fraction(state, 1) == (0.25, 0.25)
+    assert agent_run._element_viewport_fraction(state, 1) == (0.25, 0.25)
 
 
 def test_element_viewport_fraction_is_none_when_only_the_box_is_missing() -> None:
     # A node the DOM never gave a box to has no point, even though the page does.
     state = _fraction_state(None, viewport_width=1000, viewport_height=1000, scroll_x=0, scroll_y=0)
-    assert runner_mod._element_viewport_fraction(state, 1) is None
+    assert agent_run._element_viewport_fraction(state, 1) is None
 
 
 def test_element_viewport_fraction_is_none_when_only_the_page_is_missing() -> None:
     # Without page_info there is no viewport to normalise against.
     state = _fraction_state(_box(0.0, 0.0, 10.0, 10.0), viewport_width=1000, viewport_height=1000)
     state.page_info = None
-    assert runner_mod._element_viewport_fraction(state, 1) is None
+    assert agent_run._element_viewport_fraction(state, 1) is None
 
 
 def test_element_viewport_fraction_is_none_when_the_page_reports_no_viewport_size() -> None:
-    """A page whose size is unknown or zero on *either* axis cannot be normalised."""
+    """A page whose size is unknown or zero on *either* axis cannot be normalised against — dividing by it would either explode or invent a position."""
     # A 1x1 box so a substituted unit viewport would produce a plausible-looking
     # in-range fraction rather than an obviously off-screen one.
     missing_width = _fraction_state(
         _box(0.0, 0.0, 1.0, 1.0), viewport_height=800, scroll_x=0, scroll_y=0
     )
-    assert runner_mod._element_viewport_fraction(missing_width, 1) is None
+    assert agent_run._element_viewport_fraction(missing_width, 1) is None
 
     missing_height = _fraction_state(
         _box(0.0, 0.0, 1.0, 1.0), viewport_width=1280, scroll_x=0, scroll_y=0
     )
-    assert runner_mod._element_viewport_fraction(missing_height, 1) is None
+    assert agent_run._element_viewport_fraction(missing_height, 1) is None
 
     zero_width = _fraction_state(
         _box(0.0, 0.0, 10.0, 10.0),
@@ -628,7 +626,7 @@ def test_element_viewport_fraction_is_none_when_the_page_reports_no_viewport_siz
         scroll_x=0,
         scroll_y=0,
     )
-    assert runner_mod._element_viewport_fraction(zero_width, 1) is None
+    assert agent_run._element_viewport_fraction(zero_width, 1) is None
 
     zero_height = _fraction_state(
         _box(0.0, 0.0, 10.0, 10.0),
@@ -637,11 +635,11 @@ def test_element_viewport_fraction_is_none_when_the_page_reports_no_viewport_siz
         scroll_x=0,
         scroll_y=0,
     )
-    assert runner_mod._element_viewport_fraction(zero_height, 1) is None
+    assert agent_run._element_viewport_fraction(zero_height, 1) is None
 
 
 def test_element_viewport_fraction_keeps_a_centre_on_either_viewport_edge() -> None:
-    """The edges are on-screen: an element centred in the very corner is still."""
+    """The edges are on-screen: an element centred in the very corner is still something the UI can point at, so the range is inclusive at 0.0 and 1.0."""
     top_left = _fraction_state(
         _box(-10.0, -10.0, 20.0, 20.0),
         viewport_width=100,
@@ -649,7 +647,7 @@ def test_element_viewport_fraction_keeps_a_centre_on_either_viewport_edge() -> N
         scroll_x=0,
         scroll_y=0,
     )
-    assert runner_mod._element_viewport_fraction(top_left, 1) == (0.0, 0.0)
+    assert agent_run._element_viewport_fraction(top_left, 1) == (0.0, 0.0)
 
     bottom_right = _fraction_state(
         _box(90.0, 90.0, 20.0, 20.0),
@@ -658,7 +656,7 @@ def test_element_viewport_fraction_keeps_a_centre_on_either_viewport_edge() -> N
         scroll_x=0,
         scroll_y=0,
     )
-    assert runner_mod._element_viewport_fraction(bottom_right, 1) == (1.0, 1.0)
+    assert agent_run._element_viewport_fraction(bottom_right, 1) == (1.0, 1.0)
 
 
 def test_element_viewport_fraction_is_none_just_past_either_edge() -> None:
@@ -670,7 +668,7 @@ def test_element_viewport_fraction_is_none_just_past_either_edge() -> None:
         scroll_x=0,
         scroll_y=0,
     )
-    assert runner_mod._element_viewport_fraction(past_right, 1) is None
+    assert agent_run._element_viewport_fraction(past_right, 1) is None
 
     past_bottom = _fraction_state(
         _box(40.0, 140.0, 20.0, 20.0),
@@ -679,13 +677,13 @@ def test_element_viewport_fraction_is_none_just_past_either_edge() -> None:
         scroll_x=0,
         scroll_y=0,
     )
-    assert runner_mod._element_viewport_fraction(past_bottom, 1) is None
+    assert agent_run._element_viewport_fraction(past_bottom, 1) is None
 
 
 def test_element_viewport_fraction_treats_an_unscrolled_page_as_offset_zero() -> None:
-    """A page that never scrolled may not report an offset at all — that is zero."""
+    """A page that never scrolled may not report an offset at all — that is zero displacement, so the element sits where its page coordinates say."""
     state = _fraction_state(_box(40.0, 40.0, 20.0, 20.0), viewport_width=100, viewport_height=100)
-    assert runner_mod._element_viewport_fraction(state, 1) == (0.5, 0.5)
+    assert agent_run._element_viewport_fraction(state, 1) == (0.5, 0.5)
 
 
 def test_element_viewport_fraction_rounds_to_four_places() -> None:
@@ -698,7 +696,7 @@ def test_element_viewport_fraction_rounds_to_four_places() -> None:
         scroll_x=0,
         scroll_y=0,
     )
-    assert runner_mod._element_viewport_fraction(state, 1) == (0.3333, 0.3333)
+    assert agent_run._element_viewport_fraction(state, 1) == (0.3333, 0.3333)
 
 
 class _LabelNode:
@@ -721,40 +719,40 @@ def _label_state(node: object, index: int = 3) -> SimpleNamespace:
 
 
 def test_element_label_prefers_the_accessibility_name() -> None:
-    """The a11y name is what a person calls the control, and it is the only label."""
+    """The a11y name is what a person calls the control, and it is the only label an icon-only button has — it must win over every other source."""
     node = _LabelNode(
         text="",
         ax_node=SimpleNamespace(name="Submit application"),
         attributes={"aria-label": "ignored", "id": "btn-1"},
     )
-    assert runner_mod._element_label(_label_state(node), 3) == "Submit application"
+    assert agent_run._element_label(_label_state(node), 3) == "Submit application"
 
 
 def test_element_label_falls_back_to_visible_text_on_a_node_with_no_ax_node() -> None:
     # Browser-Use nodes do not all carry ax_node/attributes; a missing one is a
     # fallback, never a lost caption.
     node = _LabelNode(text="  Sign in  ", node_name="A")
-    assert runner_mod._element_label(_label_state(node), 3) == "Sign in"
+    assert agent_run._element_label(_label_state(node), 3) == "Sign in"
 
 
 def test_element_label_falls_back_to_a_labelling_attribute() -> None:
     node = _LabelNode(text="   ", ax_node=None, attributes={"aria-label": "Close dialog"})
-    assert runner_mod._element_label(_label_state(node), 3) == "Close dialog"
+    assert agent_run._element_label(_label_state(node), 3) == "Close dialog"
 
 
 def test_element_label_falls_back_to_the_lowercased_tag_name() -> None:
     node = _LabelNode(text="", ax_node=None, attributes={})
-    assert runner_mod._element_label(_label_state(node), 3) == "button"
+    assert agent_run._element_label(_label_state(node), 3) == "button"
 
 
 def test_element_label_is_none_for_an_index_that_is_not_an_int() -> None:
     node = _LabelNode(text="Sign in")
-    assert runner_mod._element_label(_label_state(node), "3") is None
-    assert runner_mod._element_label(_label_state(node), None) is None
+    assert agent_run._element_label(_label_state(node), "3") is None
+    assert agent_run._element_label(_label_state(node), None) is None
 
 
 def test_element_label_is_none_when_the_index_is_not_in_the_selector_map() -> None:
-    assert runner_mod._element_label(_label_state(_LabelNode(text="Sign in")), 99) is None
+    assert agent_run._element_label(_label_state(_LabelNode(text="Sign in")), 99) is None
 
 
 class _NamelessNode:
@@ -769,17 +767,17 @@ class _NamelessNode:
 
 
 def test_element_label_is_none_and_silent_for_a_node_with_no_tag_name(monkeypatch) -> None:
-    """A node with nothing to name it yields no label — and that is an ordinary."""
+    """A node with nothing to name it yields no label — and that is an ordinary outcome, not a DOM shape worth warning about."""
     warning = Mock()
     monkeypatch.setattr(runner_mod.log, "warning", warning)
-    assert runner_mod._element_label(_label_state(_NamelessNode()), 3) is None
+    assert agent_run._element_label(_label_state(_NamelessNode()), 3) is None
     warning.assert_not_called()
 
 
 def test_element_label_is_none_when_the_tag_name_is_empty() -> None:
     # A blank tag names nothing — "Clicking" beats "Clicking <blank>".
     node = _LabelNode(text="", node_name=None, ax_node=None, attributes={})
-    assert runner_mod._element_label(_label_state(node), 3) is None
+    assert agent_run._element_label(_label_state(node), 3) is None
 
 
 class _ExplodingNode:
@@ -794,11 +792,11 @@ class _ExplodingNode:
 def test_element_label_warns_with_the_error_type_when_a_node_shape_is_unrecognised(
     monkeypatch,
 ) -> None:
-    """Losing one caption's name must not kill the step, but a systematic DOM."""
+    """Losing one caption's name must not kill the step, but a systematic DOM shape change has to be visible in the wide event."""
     warning = Mock()
     monkeypatch.setattr(runner_mod.log, "warning", warning)
 
-    assert runner_mod._element_label(_label_state(_ExplodingNode()), 3) is None
+    assert agent_run._element_label(_label_state(_ExplodingNode()), 3) is None
 
     warning.assert_called_once_with(
         f"{LogTag.BROWSER} Could not resolve element label from DOM node",
@@ -807,13 +805,13 @@ def test_element_label_warns_with_the_error_type_when_a_node_shape_is_unrecognis
 
 
 async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> None:
-    """Browser-Use runs on_step_end AFTER the actions, so results exist there."""
+    """Key the output to the step _on_step already emitted rows for; a silent success adds no row."""
     calls: list[tuple[int, list]] = []
     runner = _make_runner(
         emit=AsyncMock(),
         overrides=_RunnerOverrides(action_results=lambda step, outs: calls.append((step, outs))),
     )
-    runner._last_step = 4
+    runner._agent_run._last_step = 4
 
     agent = SimpleNamespace(
         state=SimpleNamespace(
@@ -824,7 +822,7 @@ async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> 
             ]
         )
     )
-    await runner._on_step_end(agent)
+    await runner._agent_run._on_step_end(agent)
 
     assert len(calls) == 1
     step, outputs = calls[0]
@@ -834,16 +832,16 @@ async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> 
 
 
 async def test_on_step_end_reports_nothing_for_an_agent_with_no_results_yet() -> None:
-    """Browser-Use does not promise state/last_result on every call — a step."""
+    """Report nothing instead of failing the run when Browser-Use does not promise state or last_result on a call."""
     calls: list[tuple[int, list]] = []
     runner = _make_runner(
         emit=AsyncMock(),
         overrides=_RunnerOverrides(action_results=lambda step, outs: calls.append((step, outs))),
     )
 
-    await runner._on_step_end(SimpleNamespace())
-    await runner._on_step_end(SimpleNamespace(state=SimpleNamespace()))
-    await runner._on_step_end(SimpleNamespace(state=SimpleNamespace(last_result=None)))
+    await runner._agent_run._on_step_end(SimpleNamespace())
+    await runner._agent_run._on_step_end(SimpleNamespace(state=SimpleNamespace()))
+    await runner._agent_run._on_step_end(SimpleNamespace(state=SimpleNamespace(last_result=None)))
 
     assert calls == []
 
@@ -852,7 +850,7 @@ async def test_on_step_end_is_a_noop_without_an_action_results_sink() -> None:
     runner = _make_runner(emit=AsyncMock())
     assert runner._action_results is None
     agent = SimpleNamespace(state=SimpleNamespace(last_result=[_ActionResult(error="x")]))
-    await runner._on_step_end(agent)  # must not raise
+    await runner._agent_run._on_step_end(agent)  # must not raise
 
 
 def test_the_task_preamble_forbids_inventing_field_values() -> None:
@@ -872,7 +870,7 @@ def test_the_task_preamble_routes_dropdowns_through_the_native_actions() -> None
 
 
 def test_the_tool_docs_say_each_call_is_a_fresh_browser() -> None:
-    """The executor re-ran a whole form fill believing the previous session's."""
+    """Regression: the executor re-ran a whole form fill believing prior values were still on the page."""
     from app.templates.docstrings.browser_tool_docs import BROWSER_TASK
 
     assert "Each call is a fresh browser" in BROWSER_TASK
@@ -888,11 +886,11 @@ async def test_run_configures_the_agent_from_the_runner_settings(patch_browser) 
     kwargs = FakeAgent.last_kwargs
     assert kwargs["task"] == "book a table" + BROWSER_TAKEOVER_PREAMBLE
     assert kwargs["llm"] is runner._llm
-    assert kwargs["use_vision"] is True
+    assert kwargs["use_vision"] is False
     assert kwargs["flash_mode"] is True
     assert kwargs["max_actions_per_step"] == 5
     assert kwargs["step_timeout"] == runner._step_timeout
-    assert kwargs["register_new_step_callback"] == runner._on_step
+    assert kwargs["register_new_step_callback"] == runner._agent_run._on_step
     assert kwargs["register_should_stop_callback"] == runner._should_stop
     assert FakeAgent.last_max_steps == 10
     # Browser-Use's own prompt suggests todo.md; small models then burn a whole
@@ -906,7 +904,7 @@ async def test_run_configures_the_agent_from_the_runner_settings(patch_browser) 
 
 
 async def test_run_mirrors_each_steps_action_results_into_the_thread(patch_browser) -> None:
-    """The per-action outcomes only exist after the actions execute, so the runner."""
+    """The per-action outcomes only exist after the actions execute, so the runner has to be wired into Browser-Use's post-step hook for any of them to arrive."""
     calls: list[tuple[int, list]] = []
     _, emit = _collector()
     runner = _make_runner(
@@ -933,14 +931,58 @@ async def test_run_builds_the_tools_with_the_runner_takeover_and_captcha_policy(
         captured.update(kwargs)
         return "tools-sentinel"
 
-    monkeypatch.setattr(runner_mod, "build_browser_tools", _build)
+    monkeypatch.setattr(agent_run, "build_browser_tools", _build)
     _, emit = _collector()
     runner = _make_runner(emit=emit)
     await runner.run("x")
 
     assert captured["solve_captcha"] is False
-    assert captured["handle_takeover"] == runner._handle_takeover
+    assert captured["handle_takeover"] == runner._agent_run._takeover
     assert FakeAgent.last_kwargs["tools"] == "tools-sentinel"
+
+
+async def _registered_takeover(monkeypatch, message: str | None) -> tuple[str, JevChatModel]:
+    """Run the agent with a Jev model bound, then call the takeover the tools got."""
+    captured: dict = {}
+
+    def _build(**kwargs):
+        captured.update(kwargs)
+        return "tools-sentinel"
+
+    monkeypatch.setattr(agent_run, "build_browser_tools", _build)
+    llm = JevChatModel(client=MagicMock(), text_model=MagicMock())
+    llm._history.append(
+        JevHistoryEntry(action="REQUEST_HUMAN", kind="request_human", text="Log in")
+    )
+    _, emit = _collector()
+    runner = _make_runner(
+        emit=emit,
+        request_handoff=AsyncMock(
+            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message=message)
+        ),
+        overrides=_RunnerOverrides(llm=llm),
+    )
+    await runner.run("x")
+
+    return await captured["handle_takeover"]("Log in", "credentials"), llm
+
+
+async def test_the_registered_takeover_puts_the_note_on_the_models_takeover_step(
+    patch_browser, monkeypatch
+) -> None:
+    result, llm = await _registered_takeover(monkeypatch, "just grab the photo")
+
+    assert result == "just grab the photo"
+    assert llm._history[-1].note == "just grab the photo"
+
+
+async def test_the_registered_takeover_without_a_note_tells_the_agent_the_step_is_done(
+    patch_browser, monkeypatch
+) -> None:
+    result, llm = await _registered_takeover(monkeypatch, None)
+
+    assert result == "The user finished that step in the live browser."
+    assert llm._history[-1].note is None
 
 
 async def test_run_attaches_the_browser_to_the_session_cdp_at_desktop_resolution(
@@ -1000,7 +1042,6 @@ async def test_run_bounds_the_agent_by_the_wall_clock_budget(patch_browser, monk
             step_timeout_seconds=180,
             handoff_timeout_seconds=60,
             stream_screenshots=True,
-            use_vision=True,
             solve_captcha=False,
         ),
     )
@@ -1050,6 +1091,52 @@ async def test_handoff_cancellation_without_a_takeover_cancels_the_task(
     assert result.status == BrowserSessionStatus.CANCELLED
     assert result.success is False
     assert result.summary == "Browser task was stopped."
+
+
+@pytest.mark.parametrize(
+    ("second", "expected"),
+    [
+        (
+            HandoffStatus.TIMEOUT,
+            (BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT),
+        ),
+        (
+            HandoffStatus.CANCELLED,
+            (
+                BrowserSessionStatus.COMPLETED,
+                True,
+                "You completed the sensitive step in the live browser.",
+            ),
+        ),
+    ],
+)
+async def test_a_handoff_that_times_out_after_one_completed_fails_the_run(
+    patch_browser, monkeypatch, second, expected
+) -> None:
+    """Regression: an expired second handoff reported the run as a success."""
+    holder: dict[str, BrowserTaskRunner] = {}
+
+    async def _two_takeovers(self, max_steps: int, on_step_end=None):
+        await holder["runner"]._handle_takeover("Log in", "credentials")
+        await holder["runner"]._handle_takeover("Pay now", "payment")
+        return _History()
+
+    monkeypatch.setattr(FakeAgent, "run", _two_takeovers)
+    _, emit = _collector()
+    runner = _make_runner(
+        emit=emit,
+        request_handoff=AsyncMock(
+            side_effect=[
+                HandoffOutcome(status=HandoffStatus.COMPLETED),
+                HandoffOutcome(status=second),
+            ]
+        ),
+    )
+    holder["runner"] = runner
+
+    result = await runner.run("x")
+
+    assert (result.status, result.success, result.summary) == expected
 
 
 async def test_interrupted_agent_is_treated_as_a_stop(patch_browser, monkeypatch) -> None:
@@ -1175,35 +1262,31 @@ async def test_unknown_takeover_category_falls_back_to_irreversible() -> None:
     assert handoff.await_args.args[0].category == SensitiveCategory.IRREVERSIBLE
 
 
-async def test_takeover_note_becomes_a_direct_instruction_for_the_agent() -> None:
+async def test_a_takeover_hands_the_note_back_verbatim() -> None:
     _, emit = _collector()
     runner = _make_runner(
         emit=emit,
         request_handoff=AsyncMock(
             return_value=HandoffOutcome(
-                status=HandoffStatus.COMPLETED, message="  just grab the photo  "
+                status=HandoffStatus.COMPLETED, message="  just grab the photo "
             )
         ),
     )
-    out = await runner._handle_takeover("Log in", "credentials")
 
-    assert out == (
-        'The user handed control back with this instruction: "just grab the photo". '
-        "Follow it.\n\n" + TAKEOVER_VERIFY_TAIL
-    )
+    assert await runner._handle_takeover("Log in", "credentials") == "just grab the photo"
 
 
-async def test_takeover_without_a_note_uses_the_default_preface() -> None:
+@pytest.mark.parametrize("message", [None, "   "])
+async def test_a_takeover_with_no_note_hands_back_none(message: str | None) -> None:
     _, emit = _collector()
     runner = _make_runner(
         emit=emit,
         request_handoff=AsyncMock(
-            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message="   ")
+            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message=message)
         ),
     )
-    out = await runner._handle_takeover("Log in", "credentials")
 
-    assert out == TAKEOVER_DEFAULT_PREFACE + TAKEOVER_VERIFY_TAIL
+    assert await runner._handle_takeover("Log in", "credentials") is None
 
 
 @pytest.mark.parametrize(
@@ -1261,28 +1344,19 @@ async def test_step_card_carries_the_goal_actions_and_page(patch_browser) -> Non
     runner = _make_runner(emit=emit)
     state = _State("https://example.com/cart")
     state.title = "Your cart"
-    await runner._on_step(state, _Output("Check out", [_Action("click", {"index": 4})]), 3)
+    await runner._agent_run._on_step(
+        state, _Output("Check out", [_Action("click", {"index": 4})]), 3
+    )
     await _drain(runner)
 
     step = events[-1]
     assert step.kind == BrowserEventKind.STEP
     assert step.index == 3
-    assert step.goal == "Check out"
+    assert step.goal == "Clicking"
     assert [(a.name, a.inputs) for a in step.actions] == [("click", {"index": 4})]
     assert step.url == "https://example.com/cart"
     assert step.title == "Your cart"
     assert runner._last_step == 3
-
-
-async def test_step_goal_falls_back_to_the_models_thinking(patch_browser) -> None:
-    events, emit = _collector()
-    runner = _make_runner(emit=emit)
-    output = _Output("", [_Action("click", {})])
-    output.thinking = "Deciding what to click"
-    await runner._on_step(_State("https://x"), output, 1)
-    await _drain(runner)
-
-    assert events[-1].goal == "Deciding what to click"
 
 
 async def test_step_goal_falls_back_to_a_caption_from_the_actions(patch_browser) -> None:
@@ -1290,7 +1364,7 @@ async def test_step_goal_falls_back_to_a_caption_from_the_actions(patch_browser)
     runner = _make_runner(emit=emit)
     output = _Output("", [_Action("navigate", {"url": "https://www.example.com/x"})])
     output.thinking = ""
-    await runner._on_step(_State("https://x"), output, 1)
+    await runner._agent_run._on_step(_State("https://x"), output, 1)
     await _drain(runner)
 
     assert events[-1].goal == "Opening example.com"
@@ -1299,7 +1373,7 @@ async def test_step_goal_falls_back_to_a_caption_from_the_actions(patch_browser)
 async def test_a_step_with_no_actions_carries_no_actions(patch_browser) -> None:
     events, emit = _collector()
     runner = _make_runner(emit=emit)
-    await runner._on_step(_State("https://x"), _Output("Waiting", []), 1)
+    await runner._agent_run._on_step(_State("https://x"), _Output("Waiting", []), 1)
     await _drain(runner)
 
     assert events[-1].actions == []
@@ -1313,9 +1387,9 @@ async def test_only_uploaded_screenshots_become_replay_frames(patch_browser, mon
     )
     _, emit = _collector()
     runner = _make_runner(emit=emit)
-    await runner._on_step(_State("https://x"), _Output("a", []), 1)
+    await runner._agent_run._on_step(_State("https://x"), _Output("a", []), 1)
     await _drain(runner)
-    await runner._on_step(_State("https://x"), _Output("b", []), 2)
+    await runner._agent_run._on_step(_State("https://x"), _Output("b", []), 2)
     await _drain(runner)
 
     # The inline data-URL fallback is not a frame the recap can play back.
@@ -1344,23 +1418,35 @@ async def test_step_cards_are_flushed_before_the_result(patch_browser) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _shot_frame(raw: str | None, index: int = 1) -> StepFrame:
+    return StepFrame(
+        index=index,
+        goal="goal",
+        actions=[],
+        url="https://x",
+        title="Page",
+        raw_screenshot=raw,
+        since_prev_ms=0,
+    )
+
+
 async def test_no_screenshot_when_streaming_is_off() -> None:
     _, emit = _collector()
     runner = _make_runner(emit=emit, overrides=_RunnerOverrides(stream_screenshots=False))
-    assert await runner._render_screenshot("ZmFrZQ==", 1) is None
+    assert await runner._render_screenshot(_shot_frame("ZmFrZQ==")) is None
 
 
 async def test_no_screenshot_when_the_state_has_none() -> None:
     _, emit = _collector()
     runner = _make_runner(emit=emit)
-    assert await runner._render_screenshot(None, 1) is None
-    assert await runner._render_screenshot("", 1) is None
+    assert await runner._render_screenshot(_shot_frame(None)) is None
+    assert await runner._render_screenshot(_shot_frame("")) is None
 
 
 async def test_undecodable_screenshot_is_dropped(patch_browser) -> None:
     _, emit = _collector()
     runner = _make_runner(emit=emit)
-    assert await runner._render_screenshot("abc", 1) is None
+    assert await runner._render_screenshot(_shot_frame("abc")) is None
 
 
 async def test_screenshot_is_uploaded_under_the_session_and_step(
@@ -1371,7 +1457,7 @@ async def test_screenshot_is_uploaded_under_the_session_and_step(
     _, emit = _collector()
     runner = _make_runner(emit=emit)
 
-    url = await runner._render_screenshot("ZmFrZQ==", 4)
+    url = await runner._render_screenshot(_shot_frame("ZmFrZQ==", 4))
 
     assert url == "https://cdn.example.com/browser_steps/s1/step_4.png"
     # Keyed by session id (not conversation) so each run is its own replay folder.
@@ -1381,7 +1467,9 @@ async def test_screenshot_is_uploaded_under_the_session_and_step(
 async def test_screenshot_falls_back_to_an_inline_data_url(patch_browser) -> None:
     _, emit = _collector()
     runner = _make_runner(emit=emit)
-    assert await runner._render_screenshot("ZmFrZQ==", 1) == "data:image/png;base64,ZmFrZQ=="
+    assert (
+        await runner._render_screenshot(_shot_frame("ZmFrZQ==")) == "data:image/png;base64,ZmFrZQ=="
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1409,7 +1497,7 @@ async def test_finish_links_a_recap_built_from_the_uploaded_frames(monkeypatch) 
 
 
 # ---------------------------------------------------------------------------
-# _finish_from_history
+# _finish_from_outcome — what the agent's history says the run achieved
 # ---------------------------------------------------------------------------
 
 
@@ -1419,18 +1507,18 @@ class _BrokenHistory(_History):
 
 
 class _HalfReadableHistory(_History):
-    """Reads the result and the done flag, then breaks — so the success flag keeps.
-
-    whatever the runner initialised it to."""
+    """Reads the result and the done flag, then breaks — so the success flag keeps whatever the runner initialised it to."""
 
     def is_successful(self):
         raise RuntimeError("success flag unreadable")
 
 
 async def test_unreadable_history_reports_an_honest_failure() -> None:
-    """A history that cannot be read falls back to a complete, honest FAILED."""
+    """Fall back to a complete, honest FAILED snapshot, every field of it, when a history cannot be read."""
     events, emit = _collector()
-    result = await _make_runner(emit=emit)._finish_from_history(_BrokenHistory())
+    result = await _make_runner(emit=emit)._finish_from_outcome(
+        outcome_from_history(_BrokenHistory())
+    )
 
     assert result.model_dump() == {
         "kind": BrowserEventKind.RESULT,
@@ -1444,10 +1532,10 @@ async def test_unreadable_history_reports_an_honest_failure() -> None:
 
 
 async def test_a_history_that_breaks_midway_still_reports_what_it_read() -> None:
-    """is_done succeeded and is_successful raised: the run is judged done."""
+    """Judge the run done when is_done succeeded even though is_successful raised, using the final result it did read as the summary."""
     events, emit = _collector()
-    result = await _make_runner(emit=emit)._finish_from_history(
-        _HalfReadableHistory(result="Booked seat 14C.")
+    result = await _make_runner(emit=emit)._finish_from_outcome(
+        outcome_from_history(_HalfReadableHistory(result="Booked seat 14C."))
     )
 
     assert result.model_dump() == {
@@ -1463,8 +1551,8 @@ async def test_a_history_that_breaks_midway_still_reports_what_it_read() -> None
 
 async def test_a_finished_history_without_a_final_result_gets_a_default_summary() -> None:
     _, emit = _collector()
-    result = await _make_runner(emit=emit)._finish_from_history(
-        _History(done=True, successful=True, result=None)
+    result = await _make_runner(emit=emit)._finish_from_outcome(
+        outcome_from_history(_History(done=True, successful=True, result=None))
     )
 
     assert result.status == BrowserSessionStatus.COMPLETED
@@ -1474,8 +1562,8 @@ async def test_a_finished_history_without_a_final_result_gets_a_default_summary(
 
 async def test_an_explicitly_unsuccessful_history_fails() -> None:
     _, emit = _collector()
-    result = await _make_runner(emit=emit)._finish_from_history(
-        _History(done=True, successful=False, result=None)
+    result = await _make_runner(emit=emit)._finish_from_outcome(
+        outcome_from_history(_History(done=True, successful=False, result=None))
     )
 
     assert result.status == BrowserSessionStatus.FAILED
@@ -1485,8 +1573,8 @@ async def test_an_explicitly_unsuccessful_history_fails() -> None:
 
 async def test_an_unfinished_history_fails_even_when_not_marked_unsuccessful() -> None:
     _, emit = _collector()
-    result = await _make_runner(emit=emit)._finish_from_history(
-        _History(done=False, successful=True, result=None)
+    result = await _make_runner(emit=emit)._finish_from_outcome(
+        outcome_from_history(_History(done=False, successful=True, result=None))
     )
 
     assert result.status == BrowserSessionStatus.FAILED
@@ -1494,10 +1582,10 @@ async def test_an_unfinished_history_fails_even_when_not_marked_unsuccessful() -
 
 
 async def test_an_unknown_success_flag_still_counts_as_done() -> None:
-    """Browser-Use reports None when it cannot judge — only an explicit False is a failure."""
+    """Treat only an explicit False as a failure; Browser-Use reports None when it cannot judge."""
     _, emit = _collector()
-    result = await _make_runner(emit=emit)._finish_from_history(
-        _History(done=True, successful=None, result="Booked.")
+    result = await _make_runner(emit=emit)._finish_from_outcome(
+        outcome_from_history(_History(done=True, successful=None, result="Booked."))
     )
 
     assert result.status == BrowserSessionStatus.COMPLETED
@@ -1507,8 +1595,10 @@ async def test_an_unknown_success_flag_still_counts_as_done() -> None:
 
 async def test_the_agents_final_result_becomes_the_summary() -> None:
     _, emit = _collector()
-    result = await _make_runner(emit=emit)._finish_from_history(
-        _History(done=True, successful=True, result="The cheapest flight is 42 pounds.")
+    result = await _make_runner(emit=emit)._finish_from_outcome(
+        outcome_from_history(
+            _History(done=True, successful=True, result="The cheapest flight is 42 pounds.")
+        )
     )
 
     assert result.summary == "The cheapest flight is 42 pounds."
@@ -1534,7 +1624,7 @@ async def test_no_usage_is_recorded_when_browser_use_reports_none(monkeypatch) -
     record = AsyncMock()
     monkeypatch.setattr(runner_mod, "record_llm_call", record)
     _, emit = _collector()
-    await _make_runner(emit=emit)._record_usage(_History(usage=None))
+    await _make_runner(emit=emit)._record_usage(outcome_from_history(_History(usage=None)).usage)
 
     assert record.await_count == 0
 
@@ -1548,7 +1638,11 @@ async def test_each_models_tokens_are_charged_to_the_users_budget(monkeypatch) -
     )
 
     await runner._record_usage(
-        _History(usage=_Usage({"gemini-flash": _Stats(1200, 34), "claude-sonnet": _Stats(90, 7)}))
+        outcome_from_history(
+            _History(
+                usage=_Usage({"gemini-flash": _Stats(1200, 34), "claude-sonnet": _Stats(90, 7)})
+            )
+        ).usage
     )
 
     by_model = {call.kwargs["model_name"]: call.kwargs for call in record.await_args_list}
@@ -1606,6 +1700,23 @@ async def test_run_hands_browser_use_exactly_the_expected_agent_keys(patch_brows
     assert set(FakeAgent.last_kwargs) == AGENT_KWARG_KEYS
 
 
+async def test_a_jev_model_is_bound_to_the_session_and_its_helper_extracts(patch_browser) -> None:
+    """Jev reads the observation off the session Browser-Use drives, gets the raw task (not the takeover preamble), and its text helper is what Browser-Use meters and extracts with."""
+    from app.services.browser.jev import JevChatModel
+
+    helper = object()
+    jev = MagicMock(spec=JevChatModel)
+    jev.text_model = helper
+    _, emit = _collector()
+
+    await _make_runner(emit=emit, overrides=_RunnerOverrides(llm=jev)).run("Book it")
+
+    jev.bind.assert_called_once_with(FakeAgent.last_kwargs["browser"], "Book it")
+    assert FakeAgent.last_kwargs["llm"] is jev
+    assert FakeAgent.last_kwargs["page_extraction_llm"] is helper
+    assert set(FakeAgent.last_kwargs) == AGENT_KWARG_KEYS | {"page_extraction_llm"}
+
+
 async def test_run_gives_the_agent_the_llm_it_was_constructed_with(patch_browser) -> None:
     sentinel = object()
     _, emit = _collector()
@@ -1645,19 +1756,6 @@ async def test_an_unexpected_failure_is_logged_with_its_type_and_session(
     )
 
 
-async def test_a_takeover_without_any_note_uses_the_default_preface_verbatim() -> None:
-    _, emit = _collector()
-    runner = _make_runner(
-        emit=emit,
-        request_handoff=AsyncMock(
-            return_value=HandoffOutcome(status=HandoffStatus.COMPLETED, message=None)
-        ),
-    )
-    out = await runner._handle_takeover("Log in", "credentials")
-
-    assert out == TAKEOVER_DEFAULT_PREFACE + TAKEOVER_VERIFY_TAIL
-
-
 class _GoalOutput:
     """A step output whose goal fields are set independently, unlike _Output."""
 
@@ -1679,23 +1777,11 @@ class _BareState:
     """A browser state summary Browser-Use gave no url, title or screenshot."""
 
 
-async def test_the_models_next_goal_wins_over_its_thinking(patch_browser) -> None:
-    events, emit = _collector()
-    runner = _make_runner(emit=emit)
-    output = _GoalOutput(
-        next_goal="Check out", thinking="Deciding what to click", actions=[_Action("click", {})]
-    )
-    await runner._on_step(_State("https://x"), output, 1)
-    await _drain(runner)
-
-    assert events[-1].goal == "Check out"
-
-
 async def test_a_step_with_no_thinking_attribute_captions_from_its_actions(patch_browser) -> None:
     events, emit = _collector()
     runner = _make_runner(emit=emit)
     output = _ThinklessOutput([_Action("navigate", {"url": "https://www.example.com/x"})])
-    await runner._on_step(_State("https://x"), output, 1)
+    await runner._agent_run._on_step(_State("https://x"), output, 1)
     await _drain(runner)
 
     assert events[-1].goal == "Opening example.com"
@@ -1709,27 +1795,28 @@ class _GoallessOutput:
         self.action = actions
 
 
-async def test_a_step_output_with_no_goal_attribute_captions_from_its_thinking(
+async def test_a_step_output_with_no_goal_attribute_still_captions_its_actions(
     patch_browser,
 ) -> None:
-    # Browser-Use's output shape varies by mode; a missing field is a fallback,
-    # never a failed step.
+    # Browser-Use's output shape varies by mode; a missing field is never a failed step.
     events, emit = _collector()
     runner = _make_runner(emit=emit)
-    await runner._on_step(_State("https://x"), _GoallessOutput([_Action("click", {})]), 1)
+    await runner._agent_run._on_step(
+        _State("https://x"), _GoallessOutput([_Action("navigate", {"url": "https://x.dev/a"})]), 1
+    )
     await _drain(runner)
 
-    assert events[-1].goal == "Deciding what to click"
+    assert events[-1].goal == "Opening x.dev"
 
 
 async def test_a_step_names_and_locates_the_element_its_actions_target(patch_browser) -> None:
-    """The step card resolves the agent's element index against the state the agent."""
+    """The step card resolves the agent's element index against the state the agent saw, so the row reads as the control's own name and the UI can pulse over it."""
     events, emit = _collector()
     runner = _make_runner(emit=emit)
     state = _targeted_state(4)
     state.url, state.title, state.screenshot = "https://x", "Page", None
 
-    await runner._on_step(state, _Output("Sign in", [_Action("click", {"index": 4})]), 1)
+    await runner._agent_run._on_step(state, _Output("Sign in", [_Action("click", {"index": 4})]), 1)
     await _drain(runner)
 
     [action] = events[-1].actions
@@ -1740,7 +1827,7 @@ async def test_a_step_names_and_locates_the_element_its_actions_target(patch_bro
 async def test_a_state_without_url_title_or_screenshot_still_emits_a_step(patch_browser) -> None:
     events, emit = _collector()
     runner = _make_runner(emit=emit)
-    await runner._on_step(_BareState(), _Output("Waiting", []), 1)
+    await runner._agent_run._on_step(_BareState(), _Output("Waiting", []), 1)
     await _drain(runner)
 
     step = events[-1]
@@ -1756,21 +1843,21 @@ async def test_each_step_reports_the_wall_clock_since_the_previous_one(
     runner = _make_runner(emit=emit)
     emit_step = AsyncMock()
     monkeypatch.setattr(runner, "_emit_step", emit_step)
-    monkeypatch.setattr(runner_mod, "perf_counter", Mock(side_effect=[100.0, 102.5]))
+    monkeypatch.setattr(run_contract, "perf_counter", Mock(side_effect=[100.0, 102.5]))
 
     output = _Output("Check out", [_Action("click", {"index": 4})])
     state = _State("https://example.com/cart")
-    await runner._on_step(state, output, 1)
+    await runner._agent_run._on_step(state, output, 1)
     await _drain(runner)
-    await runner._on_step(state, output, 2)
+    await runner._agent_run._on_step(state, output, 2)
     await _drain(runner)
 
     # The first step has no predecessor to measure against; the second reports 2.5s.
     assert emit_step.await_args_list == [
         call(
-            runner_mod._StepFrame(
+            StepFrame(
                 index=1,
-                goal="Check out",
+                goal="Clicking",
                 actions=[BrowserAction(name="click", inputs={"index": 4})],
                 url="https://example.com/cart",
                 title="Page",
@@ -1779,9 +1866,9 @@ async def test_each_step_reports_the_wall_clock_since_the_previous_one(
             )
         ),
         call(
-            runner_mod._StepFrame(
+            StepFrame(
                 index=2,
-                goal="Check out",
+                goal="Clicking",
                 actions=[BrowserAction(name="click", inputs={"index": 4})],
                 url="https://example.com/cart",
                 title="Page",
@@ -1805,7 +1892,7 @@ async def test_the_step_emit_is_spawned_as_a_named_background_task(
     monkeypatch.setattr(runner_mod, "spawn_background_task", _spy)
     _, emit = _collector()
     runner = _make_runner(emit=emit)
-    await runner._on_step(_State("https://x"), _Output("a", []), 1)
+    await runner._agent_run._on_step(_State("https://x"), _Output("a", []), 1)
     await _drain(runner)
 
     assert spawned == [{"name": "browser_step_emit"}]
@@ -1814,7 +1901,7 @@ async def test_the_step_emit_is_spawned_as_a_named_background_task(
 async def test_a_finished_step_emit_releases_its_slot(patch_browser) -> None:
     _, emit = _collector()
     runner = _make_runner(emit=emit)
-    await runner._on_step(_State("https://x"), _Output("a", []), 1)
+    await runner._agent_run._on_step(_State("https://x"), _Output("a", []), 1)
     await _drain(runner)
     await asyncio.sleep(0)
 
@@ -1831,7 +1918,7 @@ async def test_the_step_frame_is_uploaded_under_that_steps_index(
     runner = _make_runner(emit=emit)
 
     await runner._emit_step(
-        runner_mod._StepFrame(
+        StepFrame(
             index=7,
             goal="goal",
             actions=[BrowserAction(name="click")],
@@ -1846,12 +1933,12 @@ async def test_the_step_frame_is_uploaded_under_that_steps_index(
 
 
 async def test_a_step_card_carries_the_time_the_previous_step_took(patch_browser) -> None:
-    """The card shows how long the step took; the very first step has no."""
+    """The card shows how long the step took; the very first step has no predecessor to measure, and reports no duration rather than a bogus zero."""
     events, emit = _collector()
     runner = _make_runner(emit=emit)
 
     def _frame(since_prev_ms: int) -> object:
-        return runner_mod._StepFrame(
+        return StepFrame(
             index=1,
             goal="goal",
             actions=[],
@@ -1879,7 +1966,7 @@ async def test_the_step_timing_log_reports_the_screenshot_and_emit_cost(
     runner = _make_runner(emit=emit)
 
     await runner._emit_step(
-        runner_mod._StepFrame(
+        StepFrame(
             index=7,
             goal="goal",
             actions=[BrowserAction(name="click")],
@@ -1915,12 +2002,45 @@ async def test_a_failed_step_emit_never_sinks_the_result(patch_browser) -> None:
 
 async def test_an_unreadable_history_is_logged_with_the_error_type(monkeypatch) -> None:
     logger = MagicMock()
-    monkeypatch.setattr(runner_mod, "log", logger)
+    monkeypatch.setattr(agent_run, "log", logger)
     _, emit = _collector()
 
-    await _make_runner(emit=emit)._finish_from_history(_BrokenHistory())
+    await _make_runner(emit=emit)._finish_from_outcome(outcome_from_history(_BrokenHistory()))
 
     logger.warning.assert_called_once_with(
         f"{LogTag.BROWSER} Could not read browser history result",
         error_type="RuntimeError",
     )
+
+
+async def test_the_step_caption_describes_the_step_not_the_models_label(patch_browser) -> None:
+    """JevChatModel fills next_goal with its raw decision label ("CLICK [6] Log In")."""
+    events, emit = _collector()
+    runner = _make_runner(emit=emit)
+    state = _targeted_state(4)
+    state.url, state.title, state.screenshot = "https://x", "Page", None
+    output = _GoalOutput(
+        next_goal="CLICK [4] Sign in",
+        thinking="CLICK [4] Sign in",
+        actions=[_Action("click", {"index": 4})],
+    )
+
+    await runner._agent_run._on_step(state, output, 1)
+    await _drain(runner)
+
+    assert events[-1].goal == 'Clicking "Sign in"'
+
+
+async def test_a_blocked_finish_reads_as_a_sentence(patch_browser) -> None:
+    events, emit = _collector()
+    runner = _make_runner(emit=emit)
+    output = _GoalOutput(
+        next_goal="BLOCKED",
+        thinking="BLOCKED",
+        actions=[_Action("done", {"text": "", "success": False})],
+    )
+
+    await runner._agent_run._on_step(_State("https://x"), output, 1)
+    await _drain(runner)
+
+    assert events[-1].goal == "Could not find a way forward on this page"

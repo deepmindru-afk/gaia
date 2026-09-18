@@ -455,7 +455,7 @@ class TestIndexToolsToStore:
         mock_execute.assert_awaited_once()
 
     async def test_failed_batch_write_does_not_cache_the_namespace_hash(self):
-        """A partial write must not be recorded as a success."""
+        """Regression: a partial write must not cache the namespace hash as a success."""
         tool = SimpleNamespace(name="t", description="d")
 
         mock_store = AsyncMock()

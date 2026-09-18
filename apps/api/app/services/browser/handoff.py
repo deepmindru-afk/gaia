@@ -1,12 +1,11 @@
 """Redis-backed handoff bridge for the mid-run browser gate.
 
-When the agent reaches a sensitive step and the policy says "hand off", the
-runner blocks on :func:await_handoff; the user completes the step in the
-live-view and the /browser/handoffs/{id}/decision endpoint calls
-:func:resolve_handoff (continue or cancel) from a possibly-different worker
-process. Redis is the cross-process channel — the same decoupling the
-cancel-stream flag uses. This is a browser-session continue/cancel signal, NOT
-tool-call approval (the shared HIL system owns that).
+When the agent hands off at a sensitive step the runner blocks on
+await_handoff; the user completes the step in the live-view and the handoff
+decision endpoint calls resolve_handoff (continue or cancel) from a possibly
+different worker process, with Redis as the cross-process channel. This is a
+browser-session continue/cancel signal, not tool-call approval (the shared
+HIL system owns that).
 """
 
 import asyncio
@@ -92,12 +91,11 @@ async def get_conversation_pending_handoff(conversation_id: str) -> str | None:
 async def resolve_handoff(
     handoff_id: str, decision: HandoffDecision, user_id: str, message: str | None = None
 ) -> HandoffStatus | None:
-    """Resolve a pending handoff, optionally attaching the user's free-text note.
+    """Resolve a pending handoff, optionally attaching a free-text note the user sends back with a continue.
 
-    Returns the new status, or None if it does not exist or expired. Raises
-    BrowserHandoffNotOwned if the caller does not own it. One-time: a settled
-    handoff keeps its original status, and when the card, a chat reply and the
-    login auto-resolver race, the first decision to land is the one kept.
+    Return the new status, or None when it does not exist or expired. Raise
+    BrowserHandoffNotOwned when the caller does not own it. One-time: a settled
+    handoff keeps its original status.
     """
     record = await get_handoff(handoff_id)
     if record is None:
@@ -138,10 +136,7 @@ async def resolve_handoff(
 
 
 async def await_handoff(handoff_id: str, timeout_seconds: int) -> HandoffOutcome:
-    """Block until the handoff is resolved or timeout_seconds elapses.
-
-    Returns the terminal status plus any note the user attached.
-    """
+    """Block until the handoff is resolved or timeout_seconds elapses, returning the terminal status plus any note the user attached."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_seconds
     while loop.time() < deadline:

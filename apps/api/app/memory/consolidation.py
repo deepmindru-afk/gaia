@@ -439,6 +439,6 @@ def _format_inputs(previous_content: str, sections: list[str]) -> str:
     previous_block = previous_content.strip() or "(no previous version)"
     inputs_block = "\n\n".join(sections) if sections else "(no facts)"
     return (
-        "## Previous version of the document (a draft; the facts below outrank it)\n"
+        "## Previous version of the document (a draft outranked by the facts below)\n"
         f"{previous_block}\n\n{inputs_block}"
     )

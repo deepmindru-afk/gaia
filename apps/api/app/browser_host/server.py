@@ -1,4 +1,4 @@
-"""The browser-host HTTP/WS service — one Chromium behind a small JSON API.
+"""The browser-host HTTP/WS service, one Chromium behind a small JSON API.
 
 Endpoints (all internal; the port is never published):
   * POST   /sessions            create an isolated context (429 at capacity)

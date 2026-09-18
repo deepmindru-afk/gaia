@@ -841,7 +841,7 @@ async def test_apply_input_resize_coerces_string_dimensions_to_int() -> None:
 
 @pytest.mark.unit
 async def test_read_favicon_returns_the_evaluated_href() -> None:
-    """The icon shown in the live-view tab is whatever the page's own JS resolved."""
+    """The icon shown in the live-view tab is whatever the page's own JS resolved, read out of the CDP Runtime.evaluate result envelope."""
     with patch.object(
         screencast,
         "cdp_call",
@@ -873,7 +873,7 @@ async def test_read_favicon_returns_none_for_a_missing_or_non_string_value(
 
 @pytest.mark.unit
 async def test_read_favicon_swallows_evaluation_failure_and_names_the_exception() -> None:
-    """A page that blocks evaluation costs the favicon only, and the failure is logged by type."""
+    """A page that blocks evaluation must not break the tab's real metadata, but a persistent failure has to be diagnosable -- the warning carries the real exception type, which is all an operator gets."""
     with (
         patch.object(screencast, "cdp_call", new=AsyncMock(side_effect=TimeoutError("boom"))),
         patch.object(screencast.log, "warning") as mock_warning,

@@ -283,7 +283,7 @@ class ChromiumHost:
     # --- session registry ---
 
     async def create_context(self, storage_state: StorageState | None) -> HostSession:
-        """Create an isolated context (+ one blank page), optionally seeding cookies.
+        """Create an isolated context, plus one blank page, optionally seeding cookies.
 
         Fails fast with :class:AtCapacityError once BROWSER_HOST_MAX_SESSIONS
         contexts are live, so a caller gets a clean 429 instead of a Chromium that

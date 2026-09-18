@@ -436,7 +436,7 @@ async def _record_blocked_run(
     if kind not in INTEGRATION_DECLINE_KINDS:
         return success_response(
             {"declined": True, "blocked": True, "counted": False},
-            "Noted, this run never reached the work, so it does not count against the "
+            "Noted. This run never reached the work, so it does not count against the "
             "workflow. It will be asked again on a run that gets further.",
         )
 

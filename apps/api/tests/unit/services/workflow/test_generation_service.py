@@ -494,7 +494,7 @@ class TestBuildAvailableTriggers:
         with _catalog(integration):
             assert _build_available_triggers() == (
                 "Available integration triggers (use the slug for trigger_name):\n"
-                "- gmail_new_message: New message (Gmail): Fires on every new email"
+                "- gmail_new_message: New message (Gmail), Fires on every new email"
             )
 
     def test_a_trigger_with_no_description_is_listed_without_a_dangling_separator(self):
@@ -538,7 +538,7 @@ class TestBuildIntegrationHints:
         """Preferred is a soft hint, explicit a hard requirement — the two lines must read differently or the model treats them the same."""
         with _catalog(_FakeIntegration("notion", name="Notion")):
             assert _build_integration_hints(set(), {"notion"}, {}) == [
-                "Integrations the user explicitly named, which MUST appear in the steps: "
+                "Integrations the user explicitly named, MUST appear in the steps: "
                 "Notion (category: notion)"
             ]
 
@@ -550,7 +550,7 @@ class TestBuildIntegrationHints:
 
         assert hints == [
             "Preferred integrations (use where the workflow makes sense): Gmail (category: gmail)",
-            "Integrations the user explicitly named, which MUST appear in the steps: "
+            "Integrations the user explicitly named, MUST appear in the steps: "
             "Notion (category: notion)",
         ]
 
@@ -576,7 +576,7 @@ class TestBuildIntegrationHints:
             hints = _build_integration_hints(set(), {"notion", "gmail"}, {})
 
         assert hints == [
-            "Integrations the user explicitly named, which MUST appear in the steps: "
+            "Integrations the user explicitly named, MUST appear in the steps: "
             "Gmail (category: gmail), Notion (category: notion)"
         ]
 
@@ -1013,7 +1013,7 @@ class TestGenerateStepsWithLlm:
 
         prompt = mock_llm.await_args.args[1]
         assert (
-            "gaia: GAIA reasoning. Summarize content, draft text, classify items, "
+            "gaia: GAIA reasoning, summarize content, draft text, classify items, "
             "generate outlines, extract key points, write briefs. No external tool call."
         ) in prompt
 
@@ -1164,7 +1164,7 @@ class TestGenerateStepsWithLlm:
 
         prompt = mock_llm.await_args.args[1]
         assert (
-            "Integrations the user explicitly named, which MUST appear in the steps: "
+            "Integrations the user explicitly named, MUST appear in the steps: "
             "Notion (category: notion)" in prompt
         )
         assert "notion: search" in prompt

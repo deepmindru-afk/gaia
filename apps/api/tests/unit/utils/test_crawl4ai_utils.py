@@ -22,8 +22,8 @@ def _record_wait_for_timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float | N
     """Record every deadline the module hands asyncio.wait_for.
 
     The per-crawl recovery deadline never reaches an error message or a return
-    value, so the timeout argument itself is the only place the computed
-    deadline is observable without waiting out ten real seconds.
+    value, so the timeout argument is the only place it is observable without
+    waiting out ten real seconds.
     """
     recorded: list[float | None] = []
     real_wait_for = asyncio.wait_for
@@ -39,12 +39,11 @@ def _record_wait_for_timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float | N
 def _expire_batch_deadline_once_only_a_straggler_remains(
     monkeypatch: pytest.MonkeyPatch, *, batch_timeout: float
 ) -> None:
-    """Fire the batch deadline the moment every fetch that can finish has.
+    """Fire the batch deadline once exactly one fetch (the one parked on an Event) is still pending.
 
-    A real 50 ms budget raced the loop on a loaded CI box. The batch wait_for
-    (recognised by its budget; per-URL and teardown waits stay real) instead
-    expires once exactly one fetch, the one parked on an Event, is pending,
-    so the outcome depends on code ordering, never on machine speed.
+    Only the wait_for call matching batch_timeout is intercepted; per-URL and
+    teardown waits keep the real one. Ties the outcome to task ordering, not
+    machine speed, avoiding a flaky real timeout race.
     """
     real_wait_for = asyncio.wait_for
 
@@ -76,9 +75,8 @@ def _make_result(markdown: str = "ok", *, success: bool = True, error: str = "")
 def _warning_call(mock_log: MagicMock, needle: str) -> Any:
     """Return the single log.warning call whose message contains needle.
 
-    warning/error both append their message AND kwargs to the wide event's
-    warnings[], so the whole call is the observable artefact — assert the
-    message and every field, not just that something was logged.
+    warning/error both append message and kwargs to the wide event's
+    warnings[], so assert the whole call, not just that something logged.
     """
     matches = [call for call in mock_log.warning.call_args_list if needle in str(call.args[0])]
     assert len(matches) == 1, f"expected exactly one {needle!r} warning, got {len(matches)}"
@@ -86,7 +84,7 @@ def _warning_call(mock_log: MagicMock, needle: str) -> Any:
 
 
 def _warning_kwargs(mock_log: MagicMock, needle: str) -> dict[str, Any]:
-    """Return the kwargs of the single log.warning whose message contains needle."""
+    """Return the kwargs of the single log.warning call whose message contains needle."""
     return dict(_warning_call(mock_log, needle).kwargs)
 
 

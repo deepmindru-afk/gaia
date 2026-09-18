@@ -263,13 +263,6 @@ jobs:
                 API_SCHEMA=false
               fi
             fi
-            # The Go tool is a standalone module outside the nx graph, so it is
-            # path-scoped the same way the alert rules are.
-            if [[ "$AFFECTED_FILES" == "__FULL__" ]] || echo "$AFFECTED_FILES" | grep -qE '^tools/gaia-connect/'; then
-              GO=true
-            else
-              GO=false
-            fi
           fi
 
           echo "python_projects=$PY" >> "$GITHUB_OUTPUT"
@@ -1879,12 +1872,8 @@ jobs:
         timeout-minutes: 30
         # Through env, not inline expansion: the value is generated, but an
         # inline ${{ }} in a run block is a shell-injection seam regardless.
-        # SHARD_COUNT is how many shards share the box's core budget: the shard
-        # takes nproc-2 divided by it, so packed shards run side by side instead
-        # of each claiming the whole box and queueing on the host governor.
         env:
           GROUP: ${{ matrix.group }}
-          SHARD_COUNT: ${{ matrix.shards }}
         run: bash scripts/ci/mutation.sh shard
       # Only the services shards took a namespace, and only they hand it back.
       # Releasing a lane a shard never claimed is a teardown error, and
@@ -1961,7 +1950,6 @@ jobs:
       - components-per-file
       - duplicates
       - package-hygiene
-      - go-connect
       - type-check
       - python-static
       - python-mypy

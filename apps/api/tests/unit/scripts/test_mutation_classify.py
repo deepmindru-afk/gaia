@@ -274,9 +274,11 @@ class TestPopThroughCastWithEarlyExit:
 
 
 class TestLookupThroughAConditionalExpression:
-    """The reasoning extractor's shape: the lookup is one arm of a if c else b.
+    """The reasoning extractor's shape.
 
-    and only the conditional's value is bound and truth-tested."""
+    The lookup is one arm of "a if c else b", and only the conditional's value
+    is bound and truth-tested.
+    """
 
     _BODY = (
         '    text = d.get("k") if isinstance(d, dict) else getattr(d, "k", "")\n'
@@ -311,9 +313,11 @@ class TestLookupThroughAConditionalExpression:
 
 
 class TestTwoLookupsGuardedByOneEarlyExit:
-    """The runner's viewport shape: two getattr defaults, one if not w or not h:.
+    """The runner's viewport shape.
 
-    return guard, and real arithmetic on both past it."""
+    Two getattr defaults, one "if not w or not h: return" guard, and real
+    arithmetic on both past it.
+    """
 
     _BODY = (
         '    w = getattr(p, "w", 0)\n'
@@ -357,9 +361,11 @@ class TestTwoLookupsGuardedByOneEarlyExit:
 
 
 class TestToolDumpModeLiteral:
-    """A tools-tree model_dump(mode="json") is guarded by the tool-dump-boundary lint, not by tests: rewriting the literal fails the lint lane of the same gate,.
+    """A tools-tree model_dump(mode="json") is guarded by a lint, not by tests.
 
-    so it is reported under its own verdict — never as an equivalence."""
+    Rewriting the literal fails the tool-dump-boundary lint lane of the same
+    gate, so it is reported under its own verdict, never as an equivalence.
+    """
 
     _TOOL_REL = "app/agents/tools/sample_tool.py"
     _BODY = '    return {"out": payload.model_dump(mode="json", exclude_none=True)}'
@@ -424,9 +430,11 @@ class TestToolDumpModeLiteral:
 
 
 class TestArgumentThatIsTheCalleeDefault:
-    """An argument stating the callee's own default constructs an identical object, so deleting it cannot be killed — while re-valuing it can, and must stay reported.
+    """An argument stating the callee's own default constructs an identical object.
 
-    Both directions are pinned, on the real shapes from _build_browser_config (crawl4ai) and seed_for_user (fingerprint).
+    Deleting it cannot be killed, while re-valuing it can and must stay
+    reported. Both directions are pinned on the real shapes from
+    _build_browser_config (crawl4ai) and seed_for_user (fingerprint).
     """
 
     _WRAPPED = (
@@ -526,9 +534,11 @@ class TestArgumentThatIsTheCalleeDefault:
 
 
 class TestUrlparseHostDefault:
-    """urlparse(x).hostname is None for every non-URL, so the lookup default.
+    """urlparse(x).hostname is None for every non-URL.
 
-    feeding it cannot be observed — but the lookup's KEY still can be."""
+    So the lookup default feeding it cannot be observed, but the lookup's KEY
+    still can be.
+    """
 
     _BODY = (
         '    host = urlparse(origin.get("origin", "")).hostname\n'
@@ -625,9 +635,11 @@ class TestContainerFunctionWithNestedDefs:
 
 
 class TestCacheSetModelArgument:
-    """redis_cache.set dumps through TypeAdapter(model or Any), so a model=C beside a value that already IS a C(...) writes identical.
+    """redis_cache.set dumps through TypeAdapter(model or Any).
 
-    bytes either way — but only then. The shape is mint_import_token's."""
+    So a model=C beside a value that already is a C(...) writes identical
+    bytes either way, but only then. The shape is mint_import_token's.
+    """
 
     _WRAPPED = (
         "    redis_cache.set(\n"

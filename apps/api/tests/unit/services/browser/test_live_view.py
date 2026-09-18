@@ -117,9 +117,7 @@ def test_render_live_view_page_differs_by_session_id():
 
 @pytest.mark.unit
 def test_render_live_view_page_maps_pointer_input_via_per_frame_css_size():
-    # Regression: pointer math assumed frame-bitmap pixels == CSS pixels, so takeover
-    # clicks landed short on a downscaled stream. The viewer must read the per-frame
-    # cssWidth/cssHeight and use a CDP modifiers bitmask for shift/ctrl/meta state.
+    """Regression: pointer math reads per-frame cssWidth/cssHeight, not bitmap pixels."""
     page = live_view.render_live_view_page("x")
 
     assert "cssWidth" in page

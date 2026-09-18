@@ -236,9 +236,9 @@ class TestPublishStepScreenshot:
         assert result == "https://cdn.example.comX/browser_steps/c1/step_1.png"
 
     async def test_falsy_public_base_url_yields_empty_base_not_a_placeholder(self, monkeypatch):
-        # Pins the exact fallback in `settings.R2_PUBLIC_BASE_URL or ""`: it must be
-        # the empty string. _r2_configured is mocked independently so this exercises
-        # the line's own fallback rather than relying on _r2_configured to prevent it.
+        # Pins `settings.R2_PUBLIC_BASE_URL or ""` to the empty string, not some
+        # other default. `_r2_configured` is mocked independently so this exercises
+        # the line's own fallback, not `_r2_configured` preventing it in practice.
         monkeypatch.setattr(shots, "_r2_configured", lambda: True)
         monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", None)
         with patch.object(shots.asyncio, "to_thread", AsyncMock(return_value=None)):

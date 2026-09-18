@@ -230,7 +230,7 @@ class ChromaStore(BaseStore):
     ) -> tuple[dict[int, tuple[SearchOp, list[str]]], Exception | None]:
         """Await the batch's filter tasks, keyed by op index.
 
-        The first filter failure is captured and returned (not raised) so the
+        The first filter failure is captured and returned, not raised, so the
         caller's abatch can still apply sibling writes before surfacing it.
         """
         search_ops: dict[int, tuple[SearchOp, list[str]]] = {}
@@ -420,7 +420,7 @@ class ChromaStore(BaseStore):
     async def _vector_search(
         self, op: SearchOp, embeddings: Embeddings, collection: AsyncCollection
     ) -> list[SearchItem]:
-        """Native ChromaDB similarity search over op's namespace, paginated."""
+        """Run native ChromaDB similarity search over op's namespace, paginated."""
         query_embedding = await embeddings.aembed_query(op.query or "")
 
         try:
@@ -575,9 +575,9 @@ class ChromaStore(BaseStore):
                     doc_id=d,
                     error_type=type(exc).__name__,
                 )
-            # A partially-written batch must never read as success: logging alone
-            # let index_tools_to_store cache the namespace hash after failed
-            # embeds, so the skipped tools stayed undiscoverable forever.
+            # Raise so a partially-written batch can never be recorded as a
+            # success: logging alone let index_tools_to_store cache the namespace
+            # hash after docs failed to embed, stranding tools undiscoverable forever.
             raise ChromaBatchWriteError(
                 f"{len(failures)} of {len(results)} ChromaDB writes failed"
             ) from failures[0][1]

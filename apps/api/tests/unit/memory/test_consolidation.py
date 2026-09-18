@@ -788,12 +788,12 @@ class TestInferDocTypes:
 class TestFormatInputs:
     def test_the_previous_version_is_labelled_as_outranked_by_the_facts(self) -> None:
         assert consolidation._format_inputs("prev", ["## A", "## B"]) == (
-            "## Previous version of the document (a draft; the facts below outrank it)\n"
+            "## Previous version of the document (a draft outranked by the facts below)\n"
             "prev\n\n## A\n\n## B"
         )
 
     def test_a_first_rewrite_says_so_rather_than_leaving_a_blank(self) -> None:
         assert consolidation._format_inputs("   ", []) == (
-            "## Previous version of the document (a draft; the facts below outrank it)\n"
+            "## Previous version of the document (a draft outranked by the facts below)\n"
             "(no previous version)\n\n(no facts)"
         )

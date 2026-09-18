@@ -1,10 +1,10 @@
-"""Mirror browser progress to messaging bots (Telegram/WhatsApp/…).
+"""Mirror browser progress to messaging bots (Telegram/WhatsApp/etc).
 
 Bots consume backend-pushed messages over RabbitMQ, not the SSE stream. Step
 screenshots are already uploaded to the CDN as signed URLs (see
-screenshots.py), so a bot step is delivered as a real photo — the same
-artifact the web card renders, sent through the platform's native image
-message instead of a pasted link.
+screenshots.py), so a bot step is delivered as a real photo, the same
+artifact the web card renders, through the platform's native image message
+instead of a pasted link.
 """
 
 from app.constants.browser import (
@@ -49,6 +49,7 @@ class BotProgressDelivery:
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._stream_screenshots = stream_screenshots
+        self._links: dict[str, str] = {}
 
     async def session(self, snapshot: BrowserSessionSnapshot) -> None:
         """Emit a session lifecycle event to the conversation."""
@@ -57,8 +58,13 @@ class BotProgressDelivery:
         # only exists once the session is allocated, which is exactly now.
         if not snapshot.session_id:
             return
-        link = await create_live_view_link(snapshot.session_id, self._user_id)
-        await self._text(f"Opening the browser now. You can watch here:\n{link}")
+        await self._text(f"On it. Watch along live here:\n{await self._link(snapshot.session_id)}")
+
+    async def _link(self, session_id: str) -> str:
+        """One live-view link per session: every mint is a different code for the same browser, and a second link reads as a second browser."""
+        if session_id not in self._links:
+            self._links[session_id] = await create_live_view_link(session_id, self._user_id)
+        return self._links[session_id]
 
     async def step(self, snapshot: BrowserStepSnapshot) -> None:
         """Emit a per-step progress event to the conversation."""
@@ -80,7 +86,7 @@ class BotProgressDelivery:
                 self._platform,
                 self._user_id,
                 snapshot.screenshot,
-                filename=f"browser-step-{snapshot.index}.jpg",
+                filename=f"browser-step-{snapshot.index}.png",
                 caption=caption,
             )
             if sent:
@@ -88,6 +94,9 @@ class BotProgressDelivery:
         await self._text(caption)
 
     async def handoff(self, snapshot: BrowserHandoffSnapshot) -> None:
+        # Only PENDING needs a message: resolution is already acked in-chat and
+        # the final result line closes the task, so a "handoff completed"
+        # message here would be redundant noise.
         """Emit a live-view handoff event to the conversation."""
         # Only the PENDING snapshot needs a message: resolution is already acked
         # in-chat and the final result line closes the task.
@@ -101,8 +110,7 @@ class BotProgressDelivery:
         if snapshot.category == SensitiveCategory.CREDENTIALS:
             msg += f"\n\n{BROWSER_CREDENTIALS_SAVED_NOTE}"
         if snapshot.session_id:
-            link = await create_live_view_link(snapshot.session_id, self._user_id)
-            msg += f"\n\nOpen the live browser: {link}"
+            msg += f"\n\nOpen the live browser: {await self._link(snapshot.session_id)}"
         await self._text(msg)
 
     async def result(self, snapshot: BrowserResultSnapshot) -> None:
@@ -140,11 +148,7 @@ def _is_blank_tab(url: str | None) -> bool:
 
 
 def _step_caption(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
-    """Build a short, human caption for a step photo.
-
-    Uses the agent's goal in plain language, falling back to a clean action
-    label; never a raw URL or an action's parameter dump.
-    """
+    """Return a short, human caption for a step photo — what the agent is doing, in plain language (its goal), falling back to a clean action label; never a raw URL or an action's parameter dump."""
     label = (goal or "").strip().rstrip(".") or caption_from_action_list(actions)
     if len(label) > _CAPTION_MAX_CHARS:
         label = label[: _CAPTION_MAX_CHARS - 1].rstrip() + "…"

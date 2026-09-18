@@ -2,10 +2,9 @@
 
 Page.addScriptToEvaluateOnNewDocument is scoped to the CDP session that
 registers it, so the fingerprint script must be injected on every per-target
-session — not just the first page. The patch hooks
-BrowserSession.get_or_create_cdp_session, which Browser-Use routes every page
-interaction through, and injects once per target (a repeat call must not stack a
-duplicate script; a brand-new tab must get its own injection).
+session, not just the first page. The patch hooks
+BrowserSession.get_or_create_cdp_session and injects once per target: a
+repeat call must not stack a duplicate script, and a new tab must get its own.
 """
 
 from __future__ import annotations
@@ -181,7 +180,7 @@ def test_apply_binds_the_wrapper_onto_browser_session():
 
 @pytest.mark.unit
 def test_build_stealth_script_bakes_the_seed_into_the_template() -> None:
-    """The seed must actually reach the script: an unsubstituted placeholder ships."""
+    """Substitute the seed placeholder with a real, per-call value instead of a constant or the literal __FINGERPRINT_SEED__."""
     script = build_stealth_script(1234567)
 
     assert "__FINGERPRINT_SEED__" not in script
@@ -191,7 +190,7 @@ def test_build_stealth_script_bakes_the_seed_into_the_template() -> None:
 
 @pytest.mark.unit
 def test_seed_for_user_is_a_stable_32_bit_value_that_differs_per_user() -> None:
-    """The seed baked into the script above is a 32-bit number the page's PRNG consumes."""
+    """Derive a stable 32-bit seed per user; an unstable or non-distinct seed is itself a bot signal."""
     users = ("user-1", "user-2", "alice@example.com")
     seeds = {user: seed_for_user(user) for user in users}
 

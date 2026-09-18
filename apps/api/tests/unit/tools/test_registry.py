@@ -391,9 +391,9 @@ class TestToolWrapper:
         assert tool.is_core is True
 
 
-# ---------------------------------------------------------------------------
-# _initialize_categories() for real — every other test patches it out (_patch_initialize_categories)
-# ---------------------------------------------------------------------------
+# _initialize_categories() is exercised for real here (not stubbed like every
+# other test via _patch_initialize_categories below), so its category metadata,
+# integration flags, and HIL destructive-tool classification are actually asserted.
 
 # name -> (space, require_integration, integration_name, is_delegated, internal)
 _EXPECTED_CATEGORY_METADATA: dict[str, tuple[str, bool, str | None, bool, bool]] = {
@@ -434,7 +434,7 @@ _EXPECTED_DESTRUCTIVE_TOOL_NAMES = {
 
 @pytest.fixture(scope="module")
 def initialized_registry() -> ToolRegistry:
-    """Build a registry with the real _initialize_categories() body, not the stub."""
+    """Return a registry built by the real _initialize_categories() body, not the stub."""
     registry = ToolRegistry()
     registry._initialize_categories()
     return registry
@@ -442,7 +442,7 @@ def initialized_registry() -> ToolRegistry:
 
 @pytest.fixture(scope="module")
 def expected_category_tool_names() -> dict[str, set[str]]:
-    """Read each category's expected tool names from the modules _initialize_categories() imports."""
+    """Return expected tool-name membership per category, read from the same tool modules _initialize_categories() itself imports."""
     from app.agents.tools import (
         account_tools,
         browser_tool,
@@ -510,9 +510,9 @@ class TestInitializeCategoriesReal:
         initialized_registry: ToolRegistry,
         expected_category_tool_names: dict[str, set[str]],
     ):
-        # `initialized_registry` is module-scoped, so `_initialize_categories()` runs
-        # once, in whichever test pytest collects first; mutation testing only credits
-        # the tests RUNNING then, so every _add_category(...) invariant is asserted here.
+        # `initialized_registry` is module-scoped: `_initialize_categories()` runs
+        # once, in whichever test runs first, and mutation testing only credits
+        # that test — so every `_add_category(...)` invariant is asserted here.
         assert set(initialized_registry._categories.keys()) == set(
             _EXPECTED_CATEGORY_METADATA.keys()
         )
@@ -546,7 +546,7 @@ class TestInitializeCategoriesReal:
         assert category.internal is internal
 
     def test_no_tool_is_left_unclassified(self, initialized_registry: ToolRegistry):
-        """HIL invariant from the docstring: every internal category passes an."""
+        """HIL invariant from the docstring: every internal category passes an explicit destructive_tools set, so no tool from _initialize_categories should ever be left with destructive=None (unreviewed)."""
         all_tools = [
             tool
             for category in initialized_registry._categories.values()

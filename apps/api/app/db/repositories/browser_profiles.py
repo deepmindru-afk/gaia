@@ -1,4 +1,4 @@
-"""Repository for the browser_profiles collection — one saved login per (user, domain).
+"""Provide the repository for the browser_profiles collection, one saved login per user and domain.
 
 Uncached: a profile is read once per browser task, right before the session is
 created, and written once when a task ends with a fresh storage_state.

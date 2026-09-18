@@ -35,7 +35,7 @@ def test_private_network_access_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> No
 async def test_launch_obscura_builds_the_serve_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """engine=obscura spawns <bin> serve --port <port> --stealth, with no private-network access."""
+    """engine=obscura spawns <bin> serve --port <port> --stealth --allow-private-network."""
     monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
     monkeypatch.setattr(settings, "OBSCURA_BIN", "/opt/obscura/obscura")
     monkeypatch.setattr(settings, "OBSCURA_PORT", 9931)

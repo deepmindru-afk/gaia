@@ -50,13 +50,7 @@ from tests.unit.browser_host.conftest import (
 
 @pytest.fixture(autouse=True)
 def _pin_chromium_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the engine to Chromium for this file's launch/readiness tests.
-
-    Production runs Obscura, so the argv and endpoint-discovery tests that want
-    the Chromium branch must select it explicitly (the Obscura branch is covered
-    in test_chromium_obscura.py). Everything past launch speaks plain CDP over a
-    fake connection and never launches, so the pin is a no-op for it.
-    """
+    """Pin BROWSER_ENGINE to Chromium; the host default is now Obscura."""
     monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.CHROMIUM)
 
 
@@ -1079,7 +1073,7 @@ async def test_focused_target_id_filters_by_context_and_type() -> None:
 
 @pytest.mark.unit
 async def test_focused_target_id_excludes_a_page_from_another_context() -> None:
-    """type=="page" AND matching context — an or would leak cross-context."""
+    """Require type=="page" and matching context; an or would leak cross-context pages in."""
     host = ChromiumHost()
     s = make_session(
         target_id="t-primary",
@@ -1974,7 +1968,7 @@ async def test_reap_idle_handles_gone_session_between_stale_and_lock() -> None:
 
 @pytest.mark.unit
 async def test_reap_idle_continues_past_a_gone_session_to_reap_the_next_one() -> None:
-    """A session vanishing mid-sweep must skip only that one entry, not abort."""
+    """A session vanishing mid-sweep must skip only that one entry, not abort the whole sweep; a break here would strand every stale session after it."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
     first = make_session(
@@ -2012,7 +2006,7 @@ async def test_reap_idle_continues_past_a_gone_session_to_reap_the_next_one() ->
 
 @pytest.mark.unit
 async def test_reap_idle_pop_tolerates_concurrent_removal() -> None:
-    """The pop of a stale session must not KeyError when a concurrent dispose already removed it."""
+    """The pop of a stale session must not KeyError if another coroutine, like dispose_context, removed it between the lookup and the lock."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
     stale = make_session(session_id="s1", context_id="ctx1", target_id="t1", last_activity_at=0)
@@ -2069,7 +2063,7 @@ async def test_reaper_loop_propagates_cancelled_from_recover() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Real-stack tests: CDP faked at send_raw only, so cdp_call/_seed_cookies/... run for real
+# Real-stack coverage: drives cdp_call/_cdp_call/_seed_cookies/_dump_storage_state via a low-level CDP fake at send_raw.
 # ---------------------------------------------------------------------------
 
 
@@ -3483,7 +3477,7 @@ def test_cdp_cookie_to_storage_state_carries_every_field_across() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Supervision, admission boundaries, and the resource sampler (no CDP traffic)
+# Supervision, admission, and the resource sampler: memory-pressure and admission-budget flips, no CDP traffic.
 # ---------------------------------------------------------------------------
 
 
@@ -3531,7 +3525,7 @@ def _idle_session(idle_for: float) -> HostSession:
 async def test_reap_idle_pressure_switch_needs_a_real_limit_and_a_strict_excess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each side of limit > 0 and used > limit * soft decides a session's life."""
+    """Each side of "limit > 0 and used > limit * soft" decides a session's life."""
     monkeypatch.setattr(settings, "BROWSER_HOST_IDLE_TTL_SECONDS", 300)
     monkeypatch.setattr(settings, "BROWSER_HOST_MEMORY_SOFT_WATERMARK", 0.75)
 
@@ -3879,7 +3873,7 @@ async def test_note_navigation_finished_samples_only_a_navigation_the_client_ask
 async def test_launch_binds_the_sampler_to_the_engine_pid_not_the_host_process(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """psutil.Process(None) is *this* process, so the pid handed over must be real."""
+    """psutil.Process(None) is this process; a sampler seeded with None reports API memory, not the browser's."""
     host = ChromiumHost()
     host._chromium_path = str(tmp_path / "headless_shell")
     monkeypatch.setattr(settings, "BROWSER_HOST_HEADED", True)

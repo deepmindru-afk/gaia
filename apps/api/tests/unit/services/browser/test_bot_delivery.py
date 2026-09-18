@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.constants.browser import HandoffStatus
+from app.constants.browser import HandoffStatus, SensitiveCategory
 from app.models.chat_models import ConversationSource
 from app.schemas.browser import (
     BrowserAction,
@@ -258,7 +258,7 @@ class TestBotProgressDeliveryStep:
                 ConversationSource.TELEGRAM,
                 "user-1",
                 "https://cdn.example.com/shot.png",
-                filename="browser-step-2.jpg",
+                filename="browser-step-2.png",
                 caption="Step 2 · Clicking",
             )
             mock_text.assert_not_awaited()
@@ -315,9 +315,7 @@ class TestBotProgressDeliveryStep:
             assert mm.call_args[0][2][0] == "Step 1 · Open"
 
     async def test_empty_goal_uses_snapshot_actions_for_caption(self, delivery):
-        # goal="" forces the caption to fall back to the snapshot's own actions;
-        # an arg-drop mutant passing [] instead of snapshot.actions would caption
-        # "Step 1" instead of "Step 1 · Clicking".
+        """goal="" must still caption from the snapshot's own actions, not an empty list."""
         snap = BrowserStepSnapshot(
             index=1,
             goal="",
@@ -410,7 +408,7 @@ class TestBotProgressDeliveryHandoff:
             )
 
     async def test_credentials_handoff_reassures_the_login_is_saved(self, delivery):
-        """A sign-in handoff tells the user the session will be saved encrypted —."""
+        """A sign-in handoff tells the user the session will be saved encrypted — it is true (storage_persistence.py) and it is what makes a login worth doing once."""
         from app.constants.browser import BROWSER_CREDENTIALS_SAVED_NOTE, SensitiveCategory
 
         snap = BrowserHandoffSnapshot(
@@ -433,7 +431,7 @@ class TestBotProgressDeliveryHandoff:
             assert BROWSER_CREDENTIALS_SAVED_NOTE in mp.call_args[0][2][0]
 
     async def test_credentials_note_is_appended_not_substituted(self, delivery):
-        """The saved-login note is an addition to the takeover request, never a."""
+        """The saved-login note is an addition to the takeover request, never a replacement — a sign-in handoff that dropped the reason and the done/stop instructions would leave the user with reassurance and no idea what to do."""
         from app.constants.browser import BROWSER_CREDENTIALS_SAVED_NOTE, SensitiveCategory
 
         snap = BrowserHandoffSnapshot(
@@ -462,7 +460,7 @@ class TestBotProgressDeliveryHandoff:
             )
 
     async def test_non_credentials_handoff_omits_the_saved_note(self, delivery):
-        """A payment handoff must NOT promise to store anything — nothing is saved."""
+        """A payment handoff must NOT promise to store anything — nothing is saved for a payment, so the note would be a false reassurance."""
         from app.constants.browser import BROWSER_CREDENTIALS_SAVED_NOTE, SensitiveCategory
 
         snap = BrowserHandoffSnapshot(
@@ -653,3 +651,36 @@ class TestBotProgressDeliveryResult:
             assert msg == (
                 "⚠️ Couldn't finish that: Fail\n\n📽 Here's a recap of the run: https://cdn/replay"
             )
+
+
+class TestOneLinkPerRun:
+    async def test_the_handoff_reuses_the_link_the_run_already_sent(self, delivery):
+        """Two links to one browser leaves the user guessing which tab is the real one."""
+        codes = iter(["https://live.example.com/first", "https://live.example.com/second"])
+        with (
+            patch(
+                "app.services.browser.bot_delivery.create_live_view_link",
+                new=AsyncMock(side_effect=lambda *_: next(codes)),
+            ) as mock_link,
+            patch(
+                "app.services.browser.bot_delivery.publish_outbound_message",
+                new=AsyncMock(return_value="published"),
+            ) as mock_pub,
+        ):
+            await delivery.session(
+                BrowserSessionSnapshot(task="sign in", status="running", session_id="sess-1")
+            )
+            await delivery.handoff(
+                BrowserHandoffSnapshot(
+                    handoff_id="h1",
+                    status=HandoffStatus.PENDING,
+                    reason="Enter your password and sign in",
+                    category=SensitiveCategory.CREDENTIALS,
+                    session_id="sess-1",
+                )
+            )
+
+        assert mock_link.await_count == 1
+        sent = [call[0][2][0] for call in mock_pub.await_args_list]
+        assert all("https://live.example.com/first" in message for message in sent)
+        assert not any("second" in message for message in sent)

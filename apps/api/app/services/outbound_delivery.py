@@ -231,11 +231,12 @@ async def publish_outbound_file(
 async def publish_outbound_photo(
     platform: ConversationSource, user_id: str, url: str, filename: str, caption: str | None = None
 ) -> bool:
-    """Enqueue a CDN-hosted image (a browser step screenshot, say) for the bot to send as a photo.
+    """Enqueue a CDN-hosted image (e.g. a browser-automation step screenshot) for the bot to deliver as a photo.
 
-    Unlike publish_outbound_file the bot fetches the bytes straight from url.
-    Best-effort: an unknown platform, unlinked account, unavailable broker or
-    publish error returns False without raising.
+    Unlike publish_outbound_file, the bot fetches the bytes directly from url;
+    nothing is proxied through the session artifact store. Best-effort: unknown
+    platform, unlinked account, unavailable broker, and publish errors all
+    return False without raising.
     """
     prep = await _prepare(platform, user_id, "publish_outbound_photo")
     if isinstance(prep, OutboundResult):

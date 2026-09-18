@@ -200,7 +200,7 @@ def build_returned_to_frontend_note(stream_id: str) -> str:
         "row-by-row and don't re-emit them as OpenUI. That literal duplication "
         "is the ONLY thing to avoid here.\n"
         "The cards are visual aids, NOT your reply. You still owe the user the "
-        "ANSWER in your own voice: the substance the executor produced, what it "
+        "ANSWER in your own voice, the substance the executor produced: what it "
         "found, grouped and counted, the few items that actually matter (and "
         'why), and the natural next step. This synthesis is never "card '
         'contents"; suppressing it because a card exists is the worst failure '
@@ -211,12 +211,12 @@ def build_returned_to_frontend_note(stream_id: str) -> str:
         'the list 👇" with no substance, when the executor did real work, fails '
         "the user. Point them to the card for the granular rows AFTER you've "
         "actually delivered the gist.\n"
-        "CRITICAL EXCEPTION, LONG-FORM DELIVERABLE: if the executor's result is "
+        "CRITICAL EXCEPTION (LONG-FORM DELIVERABLE): if the executor's result is "
         "itself a finished written piece (a research report, an article, an "
         "analysis, a document), that is the ANSWER, not raw card rows. The cards "
         "above were just the research/loading steps along the way. Deliver the "
         "deliverable IN FULL per the long-form rule: every section, point, and "
-        "citation. Do NOT compress it to a 'here's the breakdown' summary. "
+        "citation, and do NOT compress it to a 'here's the breakdown' summary. "
         "This note never authorizes shrinking a report; it only stops you "
         "re-typing rows a card already lists.",
     )

@@ -18,7 +18,7 @@ _BIND_SETTLE_SECONDS = 0.5
 
 
 class FakeProcess:
-    """Stands in for asyncio.subprocess.Process — records terminate/kill/wait."""
+    """Stand in for asyncio.subprocess.Process, recording terminate/kill/wait."""
 
     def __init__(
         self,
@@ -108,8 +108,7 @@ def _record_wait_for_timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float | N
     """Record every deadline the module hands asyncio.wait_for.
 
     The shutdown grace period never reaches a return value or an error message,
-    so the timeout argument is the only place it is observable without wedging
-    a fake process for the full five seconds.
+    so the timeout argument is the only place it is observable.
     """
     recorded: list[float | None] = []
     real_wait_for = asyncio.wait_for

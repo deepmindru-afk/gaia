@@ -1,4 +1,4 @@
-"""localStorage restore on context creation — the symmetric partner of the dump.
+"""localStorage restore on context creation, the symmetric partner of the dump.
 
 The host dumps per-origin localStorage into storage_state on dispose but used
 to re-seed only cookies on the next context, so saved localStorage was stored and
@@ -207,9 +207,9 @@ async def test_create_context_skips_restore_when_no_local_storage(
     assert all(m != "Target.attachToTarget" for m, _, _ in mux.calls)
 
 
-# ---------------------------------------------------------------------------
-# Exact restore script (one stray char is a silent JS syntax error) + page session
-# ---------------------------------------------------------------------------
+# The exact script, and the exact page session it is registered on: it pins
+# the whole string, since the restore runs as page JS and a stray character
+# anywhere in it is a syntax error that silently restores nothing.
 
 _EXPECTED_RESTORE_JS = (
     '(() => { if (location.origin !== "https://example.com") return;'

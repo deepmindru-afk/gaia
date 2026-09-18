@@ -46,7 +46,7 @@ export const helpCommand: BotCommand = {
         {
           name: "Or just mention me",
           value:
-            "@mention me in any channel for a quick question. I'll keep track of the thread.",
+            "@mention me in any channel for a quick question, and I'll keep track of the thread.",
         },
       ],
       links: [

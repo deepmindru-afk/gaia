@@ -166,9 +166,7 @@ class TestNothingPendingOrMissingInputs:
 
 @pytest.mark.unit
 class TestLookupFailureDegradesToNormalTurn:
-    """An optional-feature lookup failing must not take chat down — chat runs.
-
-    as a normal turn instead (see the docstring on the guarded except)."""
+    """An optional-feature lookup failing must not take chat down — chat runs as a normal turn instead (see the docstring on the guarded except)."""
 
     async def test_exception_returns_false(self, published: list[str], persist: AsyncMock) -> None:
         with patch.object(
@@ -319,14 +317,10 @@ class TestCancelResolution:
 
 @pytest.mark.unit
 class TestRunChatStreamShortCircuitsOnHandoffResolution:
-    """The orchestrator must return without running the agent when the browser-handoff resolver fully handled the turn, and must fall through to.
-
-    the normal turn otherwise."""
+    """The orchestrator must return without running the agent when the browser-handoff resolver fully handled the turn, and must fall through to the normal turn otherwise."""
 
     def _patched(self, *, handoff_resolved: bool):
-        """Mock every collaborator of _run_chat_stream except the handoff.
-
-        resolution branch under test."""
+        """Mock every collaborator of _run_chat_stream except the handoff resolution branch under test."""
         return patch.multiple(
             chat_stream,
             register_executor_capture=MagicMock(),
@@ -347,6 +341,7 @@ class TestRunChatStreamShortCircuitsOnHandoffResolution:
                 publish_chunk=AsyncMock(),
                 complete_stream=AsyncMock(),
                 is_cancelled=AsyncMock(return_value=False),
+                set_error=AsyncMock(),
             ),
             capture_event=MagicMock(),
         )

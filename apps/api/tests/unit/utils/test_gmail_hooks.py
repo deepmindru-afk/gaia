@@ -1,4 +1,5 @@
-"""Thorough unit tests for app.utils.composio_hooks.gmail_hooks.
+"""
+Thorough unit tests for app.utils.composio_hooks.gmail_hooks.
 
 Covers every helper, schema modifier, before hook and after hook,
 including edge cases, error paths and streaming branches.
@@ -145,6 +146,84 @@ class TestEntryValue:
         assert _entry_value(v) is None
 
 
+class TestContactCard:
+    def test_full_person(self) -> None:
+        from app.models.composio_schemas.google_people import (
+            GooglePerson,
+            GooglePersonFieldMetadata,
+            GooglePersonName,
+            GooglePersonValue,
+        )
+        from app.utils.composio_hooks.gmail_hooks import _Contact
+
+        person = GooglePerson(
+            resourceName="people/123",
+            names=[
+                GooglePersonName(
+                    displayName="Bob", metadata=GooglePersonFieldMetadata(primary=True)
+                )
+            ],
+            emailAddresses=[
+                GooglePersonValue(
+                    value="bob@example.com", metadata=GooglePersonFieldMetadata(primary=True)
+                )
+            ],
+            phoneNumbers=[
+                GooglePersonValue(value="123", metadata=GooglePersonFieldMetadata(primary=True))
+            ],
+        )
+        card = _Contact.from_person(person).card()
+        assert card["name"] == "Bob"
+        assert card["email"] == "bob@example.com"
+        assert card["phone"] == "123"
+        assert card["resource_name"] == "people/123"
+
+    def test_missing_resource_name_returns_empty(self) -> None:
+        from app.models.composio_schemas.google_people import GooglePerson
+        from app.utils.composio_hooks.gmail_hooks import _Contact
+
+        person = GooglePerson()
+        card = _Contact.from_person(person).card()
+        assert card["resource_name"] == ""
+        assert card["name"] == "Unknown"
+        assert card["email"] == ""
+        assert card["phone"] == ""
+
+    def test_explicit_null_resource_name_preserved(self) -> None:
+        from app.models.composio_schemas.google_people import GooglePerson
+        from app.utils.composio_hooks.gmail_hooks import _Contact
+
+        person = GooglePerson(resourceName=None)
+        # resourceName explicitly present as null -> stays None, not ""
+        card = _Contact.from_person(person).card()
+        assert card["resource_name"] is None
+
+
+class TestContactSummary:
+    def test_name_only_when_blank(self) -> None:
+        from app.utils.composio_hooks.gmail_hooks import _Contact
+
+        contact = _Contact(name="Alice", email="", phone="", resource_name="people/1")
+        summary = contact.summary()
+        assert summary == {"name": "Alice"}
+
+    def test_includes_email_and_phone_when_present(self) -> None:
+        from app.utils.composio_hooks.gmail_hooks import _Contact
+
+        contact = _Contact(name="Bob", email="bob@x.com", phone="555", resource_name="p/1")
+        summary = contact.summary()
+        assert summary["email"] == "bob@x.com"
+        assert summary["phone"] == "555"
+
+    def test_excludes_empty_phone_includes_email(self) -> None:
+        from app.utils.composio_hooks.gmail_hooks import _Contact
+
+        contact = _Contact(name="Bob", email="bob@x.com", phone="", resource_name="p/1")
+        summary = contact.summary()
+        assert "phone" not in summary
+        assert summary["email"] == "bob@x.com"
+
+
 # ---------------------------------------------------------------------------
 # schema modifiers
 # ---------------------------------------------------------------------------
@@ -218,7 +297,7 @@ class TestGmailComposeRequireSubjectSchemaModifier:
         # The description is the model's only instruction on WHAT subject to write;
         # minLength alone would be satisfied by a single character.
         assert result.input_parameters["properties"]["subject"]["description"] == (
-            "Email subject line. Required, so write a clear, specific subject "
+            "Email subject line. Required: write a clear, specific subject "
             "that summarizes the email. Never leave it blank."
         )
 
@@ -1100,7 +1179,7 @@ class TestGmailThreadAfterHook:
                     "time": "now",
                     "snippet": "...",
                     "body": "text",
-                    "content": None,
+                    "content": {"text": "text", "html": "<p>text</p>"},
                 }
             ],
             "messageCount": 1,

@@ -477,7 +477,7 @@ def test_filter_downstream_non_gettargets_response_passes() -> None:
 
 @pytest.mark.unit
 def test_filter_downstream_scoped_event_missing_params_key_passes_through() -> None:
-    """A scoped event with no params key at all (not merely an empty dict) must."""
+    """A scoped event with no params key at all, not merely an empty dict, must still resolve to raw without raising: _event_context_id gets a dict default for a missing key, never None."""
     ids: set[int] = set()
     for method in ["Target.attachedToTarget", "Target.targetCreated", "Target.targetInfoChanged"]:
         frame = {"method": method}

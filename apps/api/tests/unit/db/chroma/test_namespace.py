@@ -59,7 +59,7 @@ class TestChromaStoreAppliesNamespace:
         assert store.collection_name == "langgraph_tools_store__wt510"
 
     def test_store_namespaces_the_name_it_was_given(self) -> None:
-        """The name the caller passed is what gets namespaced — a store that."""
+        """The name the caller passed is what gets namespaced — a store that namespaced something else would address one shared collection for every store, which is the collision this suffix exists to prevent."""
         from app.db.chroma.chroma_store import ChromaStore
 
         with patch.object(namespace_mod, "get_settings") as get_settings:

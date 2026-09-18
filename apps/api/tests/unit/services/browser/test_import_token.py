@@ -60,7 +60,7 @@ class TestImportToken:
         assert await mod.consume_import_token(token) == "user-1"
 
     async def test_token_is_single_use(self, fake_redis: _FakeRedis) -> None:
-        """The code authorises writing the user's whole login state — a second."""
+        """The code authorises writing the user's whole login state — a second redemption must fail, or a leaked code could overwrite it repeatedly."""
         token = await mod.mint_import_token("user-1")
         assert await mod.consume_import_token(token) == "user-1"
         assert await mod.consume_import_token(token) is None

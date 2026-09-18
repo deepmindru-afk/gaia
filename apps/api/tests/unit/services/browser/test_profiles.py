@@ -1,8 +1,8 @@
 """Tests for the saved-login settings service (list/forget).
 
-Pins that list_saved_logins surfaces each domain plus its provenance
-(source / browser / IP) so Settings can show where a login was imported from,
-and that it queries the user's own logins most-recently-used first.
+Pins that list_saved_logins surfaces each domain plus its provenance (source,
+browser, IP) so Settings can show where a login was imported from, and that it
+queries the user's own logins most-recently-used first.
 """
 
 from collections.abc import Sequence
@@ -33,9 +33,7 @@ def _doc(
 
 
 class _FakeProfileRepository:
-    """Applies the user filter and sort the way Mongo would, so a wrong query.
-
-    shows up as wrong results rather than passing against a blind mock."""
+    """Applies the user filter and sort the way Mongo would, so a wrong query shows up as wrong results rather than passing against a blind mock."""
 
     def __init__(self, docs: list[BrowserProfileDocument]) -> None:
         self._docs = docs
@@ -108,7 +106,7 @@ class TestListSavedLogins:
     async def test_expiry_counts_forward_from_last_use(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """expires_at is when Mongo's TTL will forget the login — always in."""
+        """expires_at, when Mongo's TTL will forget the login, is always in the future relative to updated_at."""
         last_used = datetime(2026, 1, 1, tzinfo=UTC)
         _use_repo(monkeypatch, [_doc("github.com", updated_at=last_used)])
 

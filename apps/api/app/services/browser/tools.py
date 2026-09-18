@@ -1,15 +1,11 @@
 """Custom Browser-Use actions the agent can call mid-run.
 
-Two seams the agent reaches for itself:
-
-* request_human_takeover — the agent's *own* way to pause for the human at a
-  sensitive step (payment / credentials / irreversible). Because it is a normal
-  action that blocks and returns a result string, Browser-Use resumes its loop
-  natively afterwards with full task memory — no dispose/recreate. The per-step
-  classifier in the runner remains as a safety net for a model that acts without
-  asking.
-* solve_captcha_with_help — there is no automatic solver, so a CAPTCHA is a
-  human takeover: the user solves it in live-view and the agent then continues.
+Two seams the agent reaches for itself: request_human_takeover is the agent's
+own way to pause for the human at a sensitive step (payment, credentials,
+irreversible); because it is a normal action that blocks and returns a result
+string, Browser-Use resumes its loop natively afterwards with full task
+memory, no dispose or recreate. solve_captcha_with_help hands a CAPTCHA to a
+human takeover since there is no automatic solver.
 
 Imports of browser_use are local so the module loads without the package.
 """
@@ -33,13 +29,14 @@ def build_browser_tools(
     """Build the Browser-Use Tools the agent can call during a run.
 
     handle_takeover(reason, category) performs the live-view handoff and
-    returns a result string to feed back to the agent (or raises to stop the run
-    when the user cancels).
+    returns a result string to feed back to the agent, or raises to stop the
+    run when the user cancels.
     """
     from browser_use import Tools  # noqa: PLC0415 -- heavy optional dep
 
     tools: Tools[None] = Tools()
 
+    # Registered by function name; BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER must spell it the same.
     @tools.action(
         description=(
             "Hand control to the human for a step you must NOT do yourself: "
@@ -47,7 +44,7 @@ def build_browser_tools(
             "irreversible action. Call this BEFORE such a step. The user completes "
             "it in the live browser; you then continue. `reason` is shown to the "
             "user verbatim as their instruction, so write ONE short second-person "
-            "directive of 10 words or fewer, no restating what the field is for "
+            "directive, 10 words or fewer, no restating what the field is for "
             "(e.g. 'Enter your password and sign in'), NOT a third-person explanation. `category` "
             "is one of payment | credentials | irreversible."
         )
@@ -57,7 +54,7 @@ def build_browser_tools(
         return await handle_takeover(reason, category)
 
     if solve_captcha:
-
+        # Registered by function name; BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP must spell it the same.
         @tools.action(
             description=(
                 "Hand a CAPTCHA to the human to solve in the live browser. Call this "
