@@ -59,7 +59,7 @@ async def _drive(graph: Any, world: JobWorld, prompt: str = "book me a table") -
         prompt,
         thread_id=CONVERSATION,
         user_id=USER,
-        configurable=_configurable(),
+        **_configurable(),
     )
     await world.settle()
     return run
@@ -124,7 +124,7 @@ async def test_a_bot_conversation_gets_one_photo_per_step_and_the_result_line(
                 "book me a table",
                 thread_id=CONVERSATION,
                 user_id=USER,
-                configurable=_configurable(
+                **_configurable(
                     source_category=SourceCategory.BOT.value,
                     conversation_source=ConversationSource.DISCORD.value,
                 ),
@@ -189,7 +189,7 @@ async def test_a_stop_reaches_the_browser_and_releases_the_conversation(
                 "book me a table",
                 thread_id=CONVERSATION,
                 user_id=USER,
-                configurable=_configurable(),
+                **_configurable(),
             )
             assert world.enqueued, "the job never reached the worker"
 
@@ -240,7 +240,7 @@ async def test_a_handoff_note_reaches_the_run_and_the_policy_deciding_it(
                     "book me a table",
                     thread_id=CONVERSATION,
                     user_id=USER,
-                    configurable=_configurable(),
+                    **_configurable(),
                 )
             )
             handoff_id = await _wait_for_pending_handoff(world)

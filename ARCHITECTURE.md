@@ -76,7 +76,7 @@ The worker tier. Has access to **everything** that does work.
 
 ### Initial tool IDs (comms → executor handoff)
 
-`handoff`, `plan_tasks`, `update_tasks`, `read`, `write`, `edit`, `bash`, `deep_research`, `wait_for_subagents`, `read_manual`, `create_tracked_todo`, `update_tracked_todo`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos`, `save_learned_skill`, `write_playbook`, `decline_playbook`, `read_playbook`, `disable_playbook`.
+`handoff`, `plan_tasks`, `update_tasks`, `read`, `write`, `edit`, `bash`, `deep_research`, `wait_for_subagents`, `read_manual`, `create_tracked_todo`, `update_tracked_todo`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos`, `save_learned_skill`, `wait_for_browser_task`, `write_playbook`, `decline_playbook`, `read_playbook`, `disable_playbook`.
 
 ### Handoff lifecycle (background, async)
 
@@ -348,6 +348,7 @@ A **PG-backed** memory engine projected to VFS as Markdown (`/workspace/memory/.
 ### 9.3 Subagent coordination
 
 - `apps/api/app/agents/tools/wait_for_subagents_tool.py` — `wait_for_subagents(timeout=120)`. Polls `get_pending_subagents(stream_id)`; returns concatenated results from all background-dispatched subagents. Used by the executor for parallel subagent dispatch.
+- `apps/api/app/agents/tools/browser_tool.py` — `wait_for_browser_task(timeout=600)`. The same shape for a browser job, but it polls **Redis** rather than an in-process counter, because the run lives in an ARQ worker: it takes the joiner lease, waits on the job's durable state, and returns the run's answer. Dropping the lease on every exit is what hands delivery back to the worker.
 
 ### 9.4 Lifecycle / orchestration
 
@@ -499,7 +500,15 @@ A **PG-backed** memory engine projected to VFS as Markdown (`/workspace/memory/.
 
 ## Browser automation
 
-- `apps/api/app/agents/tools/browser_tool.py`: the executor's only browser tool.
+A browser task is a background job, not a tool call the turn holds open. `browser_task` claims the conversation's one browser slot, enqueues an ARQ job and returns a started notice; the run itself happens in the worker and outlives the turn that asked for it.
+
+- `apps/api/app/agents/tools/browser_tool.py`: the executor's two browser tools. `browser_task` starts a job and never returns a result; `wait_for_browser_task` joins the job and returns the run's own answer.
+- `apps/api/app/services/browser/jobs.py`: the Redis state one run shares across processes. The per-conversation slot lease (one browser per conversation, heartbeated by the worker), the job's durable state, the joiner lease that decides who speaks the result, and the cancel flag a stop sets on a job whose turn has already ended.
+- `apps/api/app/workers/tasks/browser_tasks.py`: `run_browser_job`, registered in `apps/api/app/worker.py` with no retry, because a browser run is not idempotent. It owns the slot heartbeat, the terminal state a joiner reads, and the delivery hand-off.
+- `apps/api/app/services/browser/job_runner.py`: `execute_browser_job`, the process-agnostic run. No stream writer, no LangGraph config, no tool result: every card snapshot goes to the job's own feed and to the bot platform, and every failure becomes a terminal result card.
+- `apps/api/app/services/browser/job_events.py`: one replayable Redis stream per job. A relay reads it from `0-0`, so a relay that starts late or restarts still shows the run from step 1; a sentinel frame closes it.
+- `apps/api/app/services/browser/job_relay.py`: `relay_job_events`, running in the API beside the turn. It replays the feed through `make_redis_stream_writer(stream_id)`, which is what puts the cards on live SSE **and** into the turn's collected tool events. A worker publishing to the stream itself would reach the first but not the second, and the cards would vanish on reload.
+- Who speaks the result: a joining executor holds a Redis lease while it waits, and reports the run's answer itself. With no live joiner (the turn ended, or the API restarted) the worker narrates the result and delivers it as a follow-up message carrying the run's cards.
 - `apps/api/app/services/browser/runner.py`: `BrowserTaskRunner` owns one task's progress, handoff, budgets and metering.
 - `apps/api/app/services/browser/agent_run.py`: `BrowserAgentRun` runs Browser-Use's `Agent`, with `JevChatModel` (`apps/api/app/services/browser/jev/chat_model.py`) as its model. Jev picks each step's operation and element; a small OpenRouter chat model writes typed values.
 - Handoff: `request_human_takeover` and `solve_captcha_with_help`, registered in `apps/api/app/services/browser/tools.py`, are the agent's own way to pause; the runner blocks the task and resumes it with the user's note.

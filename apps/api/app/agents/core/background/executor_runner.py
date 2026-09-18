@@ -51,6 +51,7 @@ from app.agents.core.subagents.subagent_runner import (
 )
 from app.constants.executor import (
     EXECUTOR_APPROVAL_LOST_MESSAGE,
+    EXECUTOR_CRASH_MESSAGE,
     EXECUTOR_PAUSED,
     EXECUTOR_STEP_LIMIT_MESSAGE,
     MESSAGE_ID_KEY,
@@ -82,16 +83,6 @@ from shared.py.wide_events import WorkflowContext, get_trace_id, log, wide_task
 #: Task name for a queued executor run. Tests drain by this name to wait out
 #: exactly the runs a turn handed off, not every background task in the process.
 QUEUED_EXECUTOR_TASK_NAME = "queued-executor-run"
-
-#: What comms is told when a run crashed. Belongs with EXECUTOR_STEP_LIMIT_MESSAGE
-#: in app/constants/executor.py; kept here because that file is outside this
-#: change's assigned scope.
-EXECUTOR_CRASH_MESSAGE = (
-    "The background task stopped before it finished, so there is no result and part "
-    "of the work may have already happened. Tell the user plainly that it could not "
-    "be completed, and ask how they would like to proceed. Never offer to re-run it "
-    "yourself, and never claim a result."
-)
 
 
 @traceable(name="executor_background", run_type="chain")
