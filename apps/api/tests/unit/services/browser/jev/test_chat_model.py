@@ -75,7 +75,7 @@ def _agent_output(
             create_model(f"{name}ActionModel", __base__=ActionModel, **{name: (annotation, ...)})
             for name, (annotation, _) in fields.items()
         ]
-        actions = RootModel[Union[tuple(members)]]  # type: ignore[misc]
+        actions = RootModel[Union[tuple(members)]]  # type: ignore[misc]  # a dynamically built RootModel stands in for browser-use's action union
     else:
         actions = create_model("ActionModel", __base__=ActionModel, **fields)
     return AgentOutput.type_with_custom_actions_flash_mode(actions)
@@ -173,9 +173,9 @@ def _model(
 ) -> tuple[JevChatModel, ScriptedGateway, FakeTextModel, FakeSession]:
     gateway = ScriptedGateway(script=list(script))
     text_model = FakeTextModel(replies=list(replies or []))
-    model = JevChatModel(client=gateway, text_model=text_model)  # type: ignore[arg-type]
+    model = JevChatModel(client=gateway, text_model=text_model)  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
     session = FakeSession(flights_state)
-    model.bind(session, "Fly Zurich to London")  # type: ignore[arg-type]
+    model.bind(session, "Fly Zurich to London")  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
     return model, gateway, text_model, session
 
 
@@ -464,8 +464,8 @@ async def test_an_invalid_jev_answer_executes_nothing_but_a_wait(
             )
 
     gateway = BadGateway(script=[])
-    model = JevChatModel(client=gateway, text_model=FakeTextModel())  # type: ignore[arg-type]
-    model.bind(FakeSession(flights_state), "g")  # type: ignore[arg-type]
+    model = JevChatModel(client=gateway, text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
+    model.bind(FakeSession(flights_state), "g")  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
 
     result = await model.ainvoke([], _agent_output())
 
@@ -493,7 +493,7 @@ async def test_calls_that_are_not_a_step_decision_go_to_the_text_helper(flights_
 
 
 async def test_an_unbound_model_cannot_decide(flights_state) -> None:
-    model = JevChatModel(client=ScriptedGateway(script=[]), text_model=FakeTextModel())  # type: ignore[arg-type]
+    model = JevChatModel(client=ScriptedGateway(script=[]), text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
 
     with pytest.raises(BrowserUnavailableError, match="no browser session bound"):
         await model.ainvoke([], _agent_output())
@@ -501,7 +501,7 @@ async def test_an_unbound_model_cannot_decide(flights_state) -> None:
 
 async def test_the_goal_falls_back_to_browser_uses_own_user_request_block(flights_state) -> None:
     gateway = ScriptedGateway(script=[("WAIT", None)])
-    model = JevChatModel(client=gateway, text_model=FakeTextModel())  # type: ignore[arg-type]
+    model = JevChatModel(client=gateway, text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
     model._browser = FakeSession(flights_state)  # bound without a task
     messages = [
         UserMessage(content="<user_request>\nOpen the article\n</user_request>\n<browser_state>x")
@@ -513,7 +513,7 @@ async def test_the_goal_falls_back_to_browser_uses_own_user_request_block(flight
 
 
 def test_identity_is_the_gateway_model(flights_state) -> None:
-    model = JevChatModel(client=ScriptedGateway(script=[]), text_model=FakeTextModel())  # type: ignore[arg-type]
+    model = JevChatModel(client=ScriptedGateway(script=[]), text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
 
     assert (model.model, model.name, model.model_name, model.provider) == (
         "typesafe-ai/jev",
@@ -527,7 +527,7 @@ def test_build_requires_the_gateway_key(monkeypatch) -> None:
     monkeypatch.setattr("app.services.browser.jev.chat_model.settings.OPENROUTER_API_KEY", None)
 
     with pytest.raises(BrowserUnavailableError, match="OPENROUTER_API_KEY"):
-        build_jev_chat_model(text_model=FakeTextModel())  # type: ignore[arg-type]
+        build_jev_chat_model(text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake text model in place of the real one
 
 
 def test_build_wires_the_configured_gateway_and_keeps_the_text_model(monkeypatch) -> None:
@@ -543,7 +543,7 @@ def test_build_wires_the_configured_gateway_and_keeps_the_text_model(monkeypatch
     )
     helper = FakeTextModel()
 
-    model = build_jev_chat_model(text_model=helper)  # type: ignore[arg-type]
+    model = build_jev_chat_model(text_model=helper)  # type: ignore[arg-type]  # the test hands a fake text model in place of the real one
 
     assert isinstance(model, JevChatModel)
     assert model.text_model is helper
@@ -582,8 +582,8 @@ async def test_a_rejected_decision_on_the_done_only_last_step_fails_the_run_hone
     done_only = AgentOutput.type_with_custom_actions_flash_mode(
         create_model("ActionModel", __base__=ActionModel, done=(DoneAction | None, None))
     )
-    model = JevChatModel(client=BadGateway(script=[]), text_model=FakeTextModel())  # type: ignore[arg-type]
-    model.bind(FakeSession(flights_state), "g")  # type: ignore[arg-type]
+    model = JevChatModel(client=BadGateway(script=[]), text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
+    model.bind(FakeSession(flights_state), "g")  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
 
     result = await model.ainvoke([], done_only)
 
@@ -594,7 +594,7 @@ async def test_a_rejected_decision_on_the_done_only_last_step_fails_the_run_hone
 async def test_typed_text_shows_up_as_the_fields_live_value_on_the_next_step(flights_state) -> None:
     """The HTML value attribute never changes when the agent types; the DOM snapshot does."""
     gateway = ScriptedGateway(script=[("WAIT", None)])
-    model = JevChatModel(client=gateway, text_model=FakeTextModel())  # type: ignore[arg-type]
+    model = JevChatModel(client=gateway, text_model=FakeTextModel())  # type: ignore[arg-type]  # the test hands a fake gateway client and a fake text model in place of the real ones
     for index, node in flights_state.dom_state.selector_map.items():
         node.backend_node_id = index
     snapshot = {
@@ -603,7 +603,7 @@ async def test_typed_text_shows_up_as_the_fields_live_value_on_the_next_step(fli
             {"nodes": {"backendNodeId": [1, 23, 31], "inputValue": {"index": [1], "value": [0]}}}
         ],
     }
-    model.bind(FakeSession(flights_state, snapshot), "g")  # type: ignore[arg-type]
+    model.bind(FakeSession(flights_state, snapshot), "g")  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
 
     await model.ainvoke([], _agent_output())
 

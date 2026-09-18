@@ -85,7 +85,7 @@ async def test_read_takes_one_snapshot_from_the_sessions_cdp_client() -> None:
 
     browser = SimpleNamespace(get_or_create_cdp_session=get_or_create_cdp_session)
 
-    live = await read_live_values(browser)  # type: ignore[arg-type]
+    live = await read_live_values(browser)  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
 
     assert live.values == {3: "x"}
     assert seen == [({"computedStyles": [], "includeDOMRects": False}, "sess")]
@@ -100,7 +100,7 @@ async def test_a_failed_read_degrades_to_attribute_values_and_is_logged(monkeypa
 
     browser = SimpleNamespace(get_or_create_cdp_session=get_or_create_cdp_session)
 
-    assert await read_live_values(browser) == LiveValues()  # type: ignore[arg-type]
+    assert await read_live_values(browser) == LiveValues()  # type: ignore[arg-type]  # the test hands a fake session in place of Browser-Use's session
     logger.warning.assert_called_once_with(
         f"{LogTag.BROWSER} Jev live-value snapshot failed", error_type="ConnectionError"
     )
