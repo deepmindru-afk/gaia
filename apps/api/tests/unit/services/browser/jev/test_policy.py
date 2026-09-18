@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.constants.browser import JevOperation
+from app.constants.browser import JEV_MAX_TARGETS_PER_OPERATION, JevOperation
 from app.services.browser.jev.gateway import JevChoiceAnswer, JevEvaluation, JevUsage
 from app.services.browser.jev.observation import observe
 from app.services.browser.jev.policy import (
@@ -20,6 +20,8 @@ from app.services.browser.jev.prompts import (
     NEXT_ACTION,
     TARGET,
 )
+
+from .conftest import FakeAXNode, FakeNode, FakeRect, make_page_info, make_state
 
 pytestmark = pytest.mark.unit
 
@@ -224,3 +226,23 @@ async def test_choose_posts_the_built_request_and_resolves_its_answer(flights_st
     assert posted[0].state["page"]["url"] == "https://x"
     assert decision.label == "CLICK [4] Search"
     assert decision.element is not None and decision.element.browser_index == 40
+
+
+def test_a_target_head_never_exceeds_the_gateways_choice_limit() -> None:
+    """The gateway 400s a question with more than 255 criteria, killing the run."""
+    state = make_state(
+        {
+            i: FakeNode(
+                "BUTTON",
+                text=f"Button {i}",
+                ax_node=FakeAXNode(role="button", name=f"Button {i}"),
+                absolute_position=FakeRect(y=10.0),
+            )
+            for i in range(300)
+        },
+        page_info=make_page_info(),
+    )
+
+    request = build_request(observe(state), "click something", [], ALL)
+
+    assert len(request.questions["click_target"].criteria) == JEV_MAX_TARGETS_PER_OPERATION

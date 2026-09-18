@@ -2,13 +2,13 @@
 
 Single source of truth for the tool name, the SSE card-event keys, the Redis
 handoff namespace, and the heuristics that decide when the browser agent must
-hand control to the human. Values a deployment may tune live in ``settings``;
+hand control to the human. Values a deployment may tune live in settings;
 values that are part of the wire/UI contract live here so backend and frontend
 cannot drift.
 
-The *startup* gate ("do you want me to use a browser?") is handled by the shared
-HIL system (``browser_task`` is registered destructive). This module governs the
-*mid-run* gate: when the agent reaches a payment / credential / irreversible
+The startup gate ("do you want me to use a browser?") is handled by the shared
+HIL system (browser_task is registered destructive). This module governs the
+mid-run gate: when the agent reaches a payment, credential, or irreversible
 step, a per-task policy decides whether to hand off to the user (live-view),
 proceed autonomously (e.g. a configured agent card), or abort.
 """
@@ -23,25 +23,23 @@ BROWSER_TOOL_CATEGORY = "browser"
 
 
 class BrowserEngine(StrEnum):
-    """Which browser binary ``gaia-browser-host`` launches behind its CDP plane.
+    """Which browser binary gaia-browser-host launches behind its CDP plane.
 
-    ``CHROMIUM`` is the default headless-shell path. ``OBSCURA`` runs the Obscura
-    CDP server beside it — a drop-in over the same CDP everything downstream
-    speaks, selected by the ``BROWSER_ENGINE`` setting."""
+    CHROMIUM is the default headless-shell path. OBSCURA runs the Obscura CDP
+    server beside it, a drop-in over the same CDP, selected by BROWSER_ENGINE."""
 
     CHROMIUM = "chromium"
     OBSCURA = "obscura"
 
 
 # ---------------------------------------------------------------------------
-# SSE card-event key (must match `tool_fields` in app/models/chat_models.py and
-# the frontend TOOL_RENDERERS / toolRegistry registration).
+# SSE card-event key (must match tool_fields in chat_models.py and the frontend TOOL_RENDERERS/toolRegistry registration).
 # ---------------------------------------------------------------------------
 BROWSER_TASK_EVENT = "browser_task_data"
 
 
 class BrowserEventKind(str, Enum):
-    """Discriminator for a single ``browser_task_data`` snapshot entry."""
+    """Discriminator for a single browser_task_data snapshot entry."""
 
     SESSION = "session"
     STEP = "step"
@@ -69,10 +67,9 @@ class SensitiveCategory(str, Enum):
     IRREVERSIBLE = "irreversible"
 
 
-# Shown to the user on a CREDENTIALS handoff so they know the sign-in isn't wasted
-# effort: the resulting session is saved (Fernet-encrypted per user+site) and
-# reused so the next task skips the login. Kept truthful — this is exactly what
-# storage_persistence.py does, and the Browser settings list/remove saved sites.
+# Shown on a CREDENTIALS handoff: the session is saved (Fernet-encrypted per
+# user+site) and reused so the next task skips the login. Kept truthful to
+# storage_persistence.py; the Browser settings page can list/remove saved sites.
 BROWSER_CREDENTIALS_SAVED_NOTE = (
     "Once you're signed in, I'll save this site's session, encrypted, so I can "
     "skip the login next time. You can remove saved sites anytime in "
@@ -99,8 +96,8 @@ class HandoffDecision(str, Enum):
 class BrowserLoginSource(StrEnum):
     """Where a saved login came from.
 
-    Absent for logins acquired by browsing; stamped on the per-host docs the ``gaia connect`` CLI
-    import writes."""
+    Absent for logins acquired by browsing; stamped on the per-host docs the
+    gaia connect CLI import writes."""
 
     IMPORT = "import"
 
@@ -114,12 +111,9 @@ class BrowserHandoffAction(StrEnum):
     SOLVE_CAPTCHA_WITH_HELP = "solve_captcha_with_help"
 
 
-# ---------------------------------------------------------------------------
-# Redis handoff bridge. A running browser task blocks on one of these keys; the
-# `/browser/handoffs/{id}/decision` endpoint writes the resolution from a
-# possibly-different worker process. This is a browser-session continue/cancel
-# signal, NOT tool-call approval — the shared HIL system owns the latter.
-# ---------------------------------------------------------------------------
+# --- Redis handoff bridge ---
+# Browser-session continue/cancel signal only, not tool-call approval
+# (the shared HIL system owns that).
 BROWSER_HANDOFF_KEY_PREFIX = "browser:handoff:"
 # Maps a conversation to its one in-flight handoff id, so a plain chat reply
 # ("yeah I paid, continue") can resolve it — the text-channel equivalent of the
@@ -127,10 +121,9 @@ BROWSER_HANDOFF_KEY_PREFIX = "browser:handoff:"
 BROWSER_HANDOFF_CONV_KEY_PREFIX = "browser:handoff:conv:"
 HANDOFF_POLL_INTERVAL_SECONDS = 1.0
 
-# Auto-resolve a login handoff when the page navigates off the sign-in URL, so a
-# visible sign-in success spares the user the extra "I'm done" tap. Best-effort —
-# the manual resolution always races it. Debounced across a couple of polls so a
-# transient mid-login redirect doesn't fire it early.
+# Auto-resolve a login handoff when the page navigates off the sign-in URL, so
+# a visible sign-in success spares the user the "I'm done" tap. Best-effort,
+# the manual resolution always races it; debounced so a transient redirect doesn't fire it early.
 HANDOFF_AUTORESOLVE_POLL_SECONDS = 2.0
 HANDOFF_AUTORESOLVE_STABLE_POLLS = 2
 HANDOFF_KEY_TTL_SECONDS = 3600
@@ -154,9 +147,8 @@ BROWSER_LIVE_CODE_ENTROPY_BYTES = 9
 
 
 # Session-import handoff: a short-lived, single-use code minted for a signed-in
-# web user that the local `gaia connect` CLI presents to upload the browser
-# profile it extracted. Short TTL because it is redeemed within seconds of being
-# shown; single-use because it authorises writing the user's whole login state.
+# web user that the local gaia connect CLI presents to upload the extracted
+# browser profile. Short TTL: redeemed within seconds; single-use: authorises writing the user's whole login state.
 BROWSER_IMPORT_TOKEN_KEY_PREFIX = "browser:import:"  # nosec B105 -- Redis key prefix, not a credential
 BROWSER_IMPORT_TOKEN_TTL_SECONDS = 600
 BROWSER_IMPORT_TOKEN_ENTROPY_BYTES = 32
@@ -190,10 +182,9 @@ BROWSER_TAKEOVER_PREAMBLE = (
     "Before you hand off a login, first fill every NON-secret field you can "
     "yourself: username, email, the account identifier, so the takeover leaves "
     "the user only the secret step (password, OTP, 2FA). Then hand off.\n"
-    # Measured on a real investor-application form: given a name and an email and
-    # nothing else, the agent typed a phone number it made up and a country it
-    # made up, and reported the form as correctly filled. On a form that submits,
-    # that is fabricated data sent under the user's name.
+    # Measured on a real investor-application form: given only a name and email,
+    # the agent invented a phone number and country and reported the form as
+    # correctly filled, fabricated data submitted under the user's name.
     "NEVER invent a value for a field the task did not give you. No made-up phone "
     "numbers, addresses, dates, amounts, countries or company details, and no "
     "plausible-looking placeholder. If a field you cannot leave empty has no value "
@@ -210,24 +201,16 @@ BROWSER_TAKEOVER_PREAMBLE = (
     "mis-selects."
 )
 
-# Desktop viewport for the browser agent so pages render at a normal laptop
-# resolution instead of the ~800x600 CDP default (which collapses sites to their
-# mobile layout and makes screenshots look broken).
-# Sized to MATCH the screencast cap (screencast.py) exactly: the live view streams
-# at most 1280px wide, so a larger viewport is never seen at full size — it only
-# buys a downscaled (blurry) stream, a coordinate mismatch for takeover input, and
-# bigger step screenshots for the vision model to chew on. At 1:1 the stream is
-# pixel-crisp, takeover clicks land exactly where the user aims, and vision
-# payloads stay small. 1280 is still comfortably desktop-layout territory.
+# Desktop viewport so pages render at normal laptop resolution instead of the
+# ~800x600 CDP default. Sized to match the screencast cap (screencast.py, max
+# 1280px wide) exactly, so the live view stays pixel-crisp at 1:1.
 BROWSER_VIEWPORT_WIDTH = 1280
 BROWSER_VIEWPORT_HEIGHT = 800
 
 
-# ---------------------------------------------------------------------------
-# Jev decision policy. The operation vocabulary is the
-# one browser-use/jev-ultrafast offers Jev — each maps onto one Browser-Use
-# action — plus the two human-takeover controls this codebase registers.
-# ---------------------------------------------------------------------------
+# --- Jev decision policy ---
+# The operation vocabulary browser-use/jev-ultrafast offers Jev, each mapping
+# onto one Browser-Use action, plus the two human-takeover controls registered here.
 class JevOperation(StrEnum):
     """One Jev choice per step; the element-bound ones also carry a target index."""
 
@@ -248,6 +231,12 @@ class JevOperation(StrEnum):
 # Operations that need an observed element; each gets its own speculative
 # target question in the same Jev request (see services/browser/jev/policy.py).
 JEV_TARGET_OPERATIONS = (JevOperation.CLICK, JevOperation.TYPE_TEXT, JevOperation.SELECT)
+
+# The decisions gateway rejects a question with more than 255 criteria
+# ("Too many choices"), and a page like Wikipedia offers ~1,700 elements, so the
+# choices are ranked and cut here instead. The headroom under 255 leaves room
+# for a future per-question extra without walking back into a 400.
+JEV_MAX_TARGETS_PER_OPERATION = 240
 
 JEV_GATEWAY_TIMEOUT_SECONDS = 25.0
 JEV_GATEWAY_MAX_ATTEMPTS = 3

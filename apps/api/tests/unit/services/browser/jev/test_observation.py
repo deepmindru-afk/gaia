@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from app.constants.browser import JevOperation
+from app.constants.browser import JEV_MAX_TARGETS_PER_OPERATION, JevOperation
 from app.services.browser.jev.observation import observe
 
-from .conftest import FakeAXNode, FakeAXProperty, FakeNode, make_state
+from .conftest import (
+    FakeAXNode,
+    FakeAXProperty,
+    FakeNode,
+    FakeRect,
+    make_page_info,
+    make_state,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -202,3 +209,94 @@ def test_live_values_override_attributes_for_text_selects_and_checkboxes(flights
     assert elements["Zurich"].value == ""  # cleared live, whatever the attribute says
     assert elements["Cabin class"].value == "Business"
     assert elements["Search"].checked is True
+
+
+# ---------------------------------------------------------------------------
+# The gateway refuses a question with more than 255 choices
+# ---------------------------------------------------------------------------
+
+
+def _big_page(count: int = 300, *, in_viewport_from: int = 0):
+    """``count`` buttons; those from ``in_viewport_from`` on sit inside the viewport."""
+    return make_state(
+        {
+            i: FakeNode(
+                "BUTTON",
+                text=f"Button {i}",
+                ax_node=FakeAXNode(role="button", name=f"Button {i}"),
+                absolute_position=FakeRect(y=10.0 if i >= in_viewport_from else 5000.0),
+            )
+            for i in range(count)
+        },
+        page_info=make_page_info(),
+    )
+
+
+def test_a_huge_page_is_capped_to_the_gateways_choice_limit() -> None:
+    observation = observe(_big_page())
+
+    assert len(observation.targets(JevOperation.CLICK)) == JEV_MAX_TARGETS_PER_OPERATION
+
+
+def test_an_in_viewport_element_outranks_an_earlier_one_below_the_fold() -> None:
+    # 241 in-viewport elements (document indices 60..300) crowd out every element
+    # above the fold, so the cap is decided by the viewport and not by position.
+    observation = observe(_big_page(in_viewport_from=59))
+
+    targets = observation.targets(JevOperation.CLICK)
+
+    assert "299" in targets  # in the viewport, near the end of the document
+    assert "10" not in targets  # below the fold, near the start
+    assert len(targets) == JEV_MAX_TARGETS_PER_OPERATION
+
+
+def test_the_options_of_one_select_are_capped_in_document_order() -> None:
+    state = make_state(
+        {
+            1: FakeNode(
+                "SELECT",
+                ax_node=FakeAXNode(role="combobox", name="Year"),
+                children_nodes=[
+                    FakeNode("OPTION", {"value": str(i)}, text=str(i)) for i in range(300)
+                ],
+            )
+        },
+        page_info=make_page_info(),
+    )
+
+    targets = observe(state).targets(JevOperation.SELECT)
+
+    assert len(targets) == JEV_MAX_TARGETS_PER_OPERATION
+    assert list(targets)[:2] == ["1:1", "1:2"]
+    assert f"1:{JEV_MAX_TARGETS_PER_OPERATION}" in targets
+    assert f"1:{JEV_MAX_TARGETS_PER_OPERATION + 1}" not in targets
+
+
+def test_a_cap_that_cuts_choices_is_never_silent(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from app.constants.log_tags import LogTag
+    from app.services.browser.jev import observation as observation_mod
+
+    logger = MagicMock()
+    monkeypatch.setattr(observation_mod, "log", logger)
+
+    observe(_big_page()).targets(JevOperation.CLICK)
+
+    logger.warning.assert_called_once_with(
+        f"{LogTag.BROWSER} Jev targets capped",
+        browser={"operation": "CLICK", "dropped": 60, "url": "https://x"},
+    )
+
+
+def test_a_cap_that_cuts_nothing_logs_nothing(monkeypatch, flights_state) -> None:
+    from unittest.mock import MagicMock
+
+    from app.services.browser.jev import observation as observation_mod
+
+    logger = MagicMock()
+    monkeypatch.setattr(observation_mod, "log", logger)
+
+    observe(flights_state).targets(JevOperation.CLICK)
+
+    logger.warning.assert_not_called()

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from app.constants.browser import (
     JEV_ELEMENT_LABEL_MAX_CHARS,
+    JEV_MAX_TARGETS_PER_OPERATION,
     JEV_PAGE_TEXT_MAX_CHARS,
     JevOperation,
 )
@@ -54,6 +55,10 @@ class JevElement:
     role: str
     operations: tuple[JevOperation, ...]
     value: str | None = None
+    #: Inside the scrolled-to region of the page. Browser-Use 0.11.13 has no
+    #: viewport flag on the node, so this is its ``absolute_position`` box
+    #: against ``page_info``'s scroll window; unknown geometry ranks as visible.
+    in_viewport: bool = True
     checked: bool | None = None
     expanded: bool | None = None
     selected: bool | None = None
@@ -113,16 +118,32 @@ class JevObservation:
     def targets(
         self, operation: JevOperation
     ) -> dict[str, tuple[JevElement, JevSelectOption | None]]:
-        """Return the target choices for one operation: element index (or ``index:option`` for SELECT)."""
+        """Return the target choices for one operation: element index (or ``index:option`` for SELECT).
+
+        Capped at ``JEV_MAX_TARGETS_PER_OPERATION`` — the gateway refuses a
+        question with more choices. What survives the cut is what the user can
+        see: elements inside the viewport first, document order within each
+        group (and, for a SELECT, its options in document order).
+        """
         choices: dict[str, tuple[JevElement, JevSelectOption | None]] = {}
-        for element in self.elements:
+        dropped = 0
+        for element in sorted(self.elements, key=lambda e: not e.in_viewport):
             if operation not in element.operations:
                 continue
             if operation is JevOperation.SELECT:
-                for option in element.options:
-                    choices[option.target] = (element, option)
+                candidates = [(option.target, option) for option in element.options]
             else:
-                choices[str(element.index)] = (element, None)
+                candidates = [(str(element.index), None)]
+            for key, option in candidates:
+                if len(choices) < JEV_MAX_TARGETS_PER_OPERATION:
+                    choices[key] = (element, option)
+                else:
+                    dropped += 1
+        if dropped:
+            log.warning(
+                f"{LogTag.BROWSER} Jev targets capped",
+                browser={"operation": operation.value, "dropped": dropped, "url": self.url},
+            )
         return choices
 
     def element(self, index: int) -> JevElement | None:
@@ -137,9 +158,11 @@ def observe(state: BrowserStateSummary, live: LiveValues | None = None) -> JevOb
     """
     selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
     live = live or LiveValues()
+    window = _scroll_window(state)
     elements: list[JevElement] = []
     for browser_index in sorted(selector_map):
-        element = _element(len(elements) + 1, browser_index, selector_map[browser_index], live)
+        node = selector_map[browser_index]
+        element = _element(len(elements) + 1, browser_index, node, live, _in_viewport(node, window))
         if element is not None:
             elements.append(element)
     text = _page_text(state)
@@ -153,6 +176,51 @@ def observe(state: BrowserStateSummary, live: LiveValues | None = None) -> JevOb
         **{k: v for k, v in observation.__dict__.items() if k != "fingerprint"},
         fingerprint=_fingerprint(observation),
     )
+
+
+def _scroll_window(state: BrowserStateSummary) -> tuple[float, float, float, float] | None:
+    """Return the on-screen page region as ``(left, top, right, bottom)``.
+
+    Document coordinates; None when Browser-Use reported no page geometry.
+    """
+    page_info = getattr(state, "page_info", None)
+    if page_info is None:
+        return None
+    try:
+        left, top = float(page_info.scroll_x), float(page_info.scroll_y)
+        return (
+            left,
+            top,
+            left + float(page_info.viewport_width),
+            top + float(page_info.viewport_height),
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _in_viewport(
+    node: EnhancedDOMTreeNode, window: tuple[float, float, float, float] | None
+) -> bool:
+    """Whether the node's box overlaps the on-screen region.
+
+    Unknown geometry counts as on-screen: without it the ranking falls back to
+    document order rather than demoting the whole page below the fold.
+    """
+    if getattr(node, "is_visible", None) is False:
+        return False
+    rect = getattr(node, "absolute_position", None)
+    if window is None or rect is None:
+        return True
+    left, top, right, bottom = window
+    try:
+        return bool(
+            rect.x <= right
+            and rect.x + rect.width >= left
+            and rect.y <= bottom
+            and rect.y + rect.height >= top
+        )
+    except (AttributeError, TypeError):
+        return True
 
 
 def _page_text(state: BrowserStateSummary) -> str:
@@ -181,7 +249,11 @@ def _fingerprint(observation: JevObservation) -> str:
 
 
 def _element(
-    index: int, browser_index: int, node: EnhancedDOMTreeNode, live: LiveValues
+    index: int,
+    browser_index: int,
+    node: EnhancedDOMTreeNode,
+    live: LiveValues,
+    in_viewport: bool,
 ) -> JevElement | None:
     try:
         attributes: dict[str, str] = getattr(node, "attributes", None) or {}
@@ -221,6 +293,7 @@ def _element(
             role=str(role),
             operations=tuple(operations),
             value=value,
+            in_viewport=in_viewport,
             checked=checked,
             expanded=_flag(properties, "expanded", attributes.get("aria-expanded"), None),
             selected=_flag(properties, "selected", attributes.get("aria-selected"), None),
