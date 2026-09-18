@@ -62,6 +62,8 @@ export function approvalOutcomeLabel(data: ApprovalRequestData): string {
       return "Expired without a response";
     case "abandoned":
       return "Dropped when you moved on";
+    case "revoked":
+      return "Agent withdrew this";
     default:
       return "";
   }
