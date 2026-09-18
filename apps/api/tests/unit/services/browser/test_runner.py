@@ -18,6 +18,7 @@ import browser_use
 import pytest
 
 from app.constants.browser import (
+    BROWSER_RUN_HANDOFF_TIMED_OUT,
     BrowserEventKind,
     BrowserSessionStatus,
     HandoffStatus,
@@ -1090,6 +1091,52 @@ async def test_handoff_cancellation_without_a_takeover_cancels_the_task(
     assert result.status == BrowserSessionStatus.CANCELLED
     assert result.success is False
     assert result.summary == "Browser task was stopped."
+
+
+@pytest.mark.parametrize(
+    ("second", "expected"),
+    [
+        (
+            HandoffStatus.TIMEOUT,
+            (BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT),
+        ),
+        (
+            HandoffStatus.CANCELLED,
+            (
+                BrowserSessionStatus.COMPLETED,
+                True,
+                "You completed the sensitive step in the live browser.",
+            ),
+        ),
+    ],
+)
+async def test_a_handoff_that_times_out_after_one_completed_fails_the_run(
+    patch_browser, monkeypatch, second, expected
+) -> None:
+    """Regression: an expired second handoff reported the run as a success."""
+    holder: dict[str, BrowserTaskRunner] = {}
+
+    async def _two_takeovers(self, max_steps: int, on_step_end=None):
+        await holder["runner"]._handle_takeover("Log in", "credentials")
+        await holder["runner"]._handle_takeover("Pay now", "payment")
+        return _History()
+
+    monkeypatch.setattr(FakeAgent, "run", _two_takeovers)
+    _, emit = _collector()
+    runner = _make_runner(
+        emit=emit,
+        request_handoff=AsyncMock(
+            side_effect=[
+                HandoffOutcome(status=HandoffStatus.COMPLETED),
+                HandoffOutcome(status=second),
+            ]
+        ),
+    )
+    holder["runner"] = runner
+
+    result = await runner.run("x")
+
+    assert (result.status, result.success, result.summary) == expected
 
 
 async def test_interrupted_agent_is_treated_as_a_stop(patch_browser, monkeypatch) -> None:

@@ -18,6 +18,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from app.constants.browser import (
+    BROWSER_RUN_HANDOFF_TIMED_OUT,
     MAX_HANDOFFS_PER_TASK,
     BrowserSessionStatus,
     HandoffStatus,
@@ -106,6 +107,7 @@ class BrowserTaskRunner:
         self._root_request_id = root_request_id
         self._stopped = False
         self._handed_off = False
+        self._handoff_timed_out = False
         self._handoffs = 0
         self._last_step = 0
         # CDN URLs that really uploaded, in step order — the recap's frames.
@@ -147,6 +149,10 @@ class BrowserTaskRunner:
                 self._agent_run.execute(task), timeout=self._wall_clock_timeout
             )
         except (BrowserHandoffCancelled, InterruptedError):
+            if self._handoff_timed_out:
+                return await self._finish(
+                    BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT
+                )
             if self._handed_off:
                 return await self._finish(
                     BrowserSessionStatus.COMPLETED,
@@ -220,6 +226,7 @@ class BrowserTaskRunner:
             log.info(f"{LogTag.BROWSER} Browser takeover completed by user; agent continuing.")
             return (outcome.message or "").strip() or None
         self._stopped = True
+        self._handoff_timed_out = outcome.status == HandoffStatus.TIMEOUT
         log.info(f"{LogTag.BROWSER} Browser takeover ended", status=outcome.status.value)
         raise BrowserHandoffCancelled(outcome.status.value)
 

@@ -162,6 +162,11 @@ BROWSER_PROFILE_TTL_SECONDS = BROWSER_PROFILE_TTL_DAYS * 24 * 3600
 BROWSER_HANDOFF_ACK_CONTINUE = "Got it, continuing the browser task."
 BROWSER_HANDOFF_ACK_CANCEL = "Okay, I've stopped the browser task."
 
+# The run's own summary when nobody finished the step in the live browser: a
+# handoff that expired is a failed run, not the completed one an earlier
+# takeover made it look like.
+BROWSER_RUN_HANDOFF_TIMED_OUT = "Stopped: nobody finished the step in the live browser in time."
+
 # Upper bound on how many times one task may hand off to the human, so a
 # misbehaving agent can't loop the user forever.
 MAX_HANDOFFS_PER_TASK = 5
