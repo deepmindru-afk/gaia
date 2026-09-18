@@ -106,7 +106,6 @@ class TestGetSubagentTools:
             has_subagent=True,
             agent_name="gmail_agent",
             tool_space="gmail_space",
-            handoff_tool_name="call_gmail",
             domain="email",
             use_cases="send, read",
             capabilities="full CRUD",

@@ -47,7 +47,6 @@ def _make_subagent_config(agent_name: str = "gmail_agent") -> SubAgentConfig:
         has_subagent=True,
         agent_name=agent_name,
         tool_space="gmail_space",
-        handoff_tool_name="call_gmail",
         domain="gmail",
         capabilities="email",
         use_cases="emails",

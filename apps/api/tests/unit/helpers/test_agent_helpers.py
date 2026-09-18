@@ -53,7 +53,6 @@ def _make_subagent(
         has_subagent=True,
         agent_name=f"{subagent_id}_agent",
         tool_space=f"{subagent_id}_space",
-        handoff_tool_name=f"call_{subagent_id}",
         domain=subagent_id,
         capabilities=f"{subagent_id} stuff",
         use_cases=f"{subagent_id} use",

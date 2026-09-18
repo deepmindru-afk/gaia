@@ -620,7 +620,7 @@ async def test_retrieval_query_mode_excludes_subagent_results_inside_spawned_age
 
 
 @pytest.mark.asyncio
-async def test_retrieval_query_mode_hides_subagents_and_filters_non_activated_delegated():
+async def test_retrieval_query_mode_hides_non_mcp_subagents_and_filters_non_activated_delegated():
     retrieve_tools = get_retrieve_tools_function(tool_space="general", include_subagents=True)
     registry = _RetrieveRegistry(["normal_tool", "delegated_tool"])
     store = _FakeStore(
@@ -650,6 +650,10 @@ async def test_retrieval_query_mode_hides_subagents_and_filters_non_activated_de
             # _get_user_context returns (user_namespaces, connected_integrations).
             new=AsyncMock(return_value=({"general"}, {})),
         ),
+        patch(
+            "app.agents.tools.core.retrieval.search_public_integrations",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         result = await retrieve_tools(
             store=store,
@@ -661,10 +665,11 @@ async def test_retrieval_query_mode_hides_subagents_and_filters_non_activated_de
     # delegated direct tools are filtered in include_subagents=True mode
     assert "delegated_tool" not in result["response"]
     assert "normal_tool" in result["response"]
-    # no subagent surface anywhere: not in the response, namespace never searched
-    assert all(not item.startswith("subagent:") for item in result["response"])
+    # the subagents namespace IS searched (MCP pointers live there), but this
+    # stale provider doc has no source=='custom' marker, so nothing surfaces
     searched_namespaces = {ns for ns, _q, _l in store.calls}
-    assert ("subagents",) not in searched_namespaces
+    assert ("subagents",) in searched_namespaces
+    assert all(not item.startswith("subagent:") for item in result["response"])
 
 
 @pytest.mark.asyncio
@@ -1080,28 +1085,37 @@ class TestDiscoveryResponseIsIndentedJson:
         assert min(indents) == 2
 
 
-class TestDiscoveryHasNoSubagentSurface:
-    """Discovery returns real tools only: no subagent entries, buckets, or
-    handoff pointers anywhere in the payload the model receives."""
+class TestDiscoveryHasNoProviderSubagentSurface:
+    """Discovery returns real tools plus two narrow entry kinds: subagent:
+    pointers to per-user MCP integrations (the sole subagent surface) and
+    integration: pointers to not-yet-connected integrations. Provider and
+    built-in integrations surface as tools, never as pointers."""
 
-    def test_no_subagent_buckets_exist(self) -> None:
+    def test_buckets_exist_for_mcp_and_new_integrations(self) -> None:
         payload = _render(
             ["web_search_tool"],
             options=_DiscoveryOptions(categories={"web_search_tool": "search"}),
         )
 
+        assert payload["mcp_subagents"] == []
+        assert payload["new_integrations"] == []
         assert "subagents_builtin" not in payload
         assert "subagents_connected" not in payload
         assert "subagents_needing_connection" not in payload
-        assert "handoff" not in json.dumps(payload)
+        assert "handoff" not in payload["next"]
 
-    def test_stray_subagent_entries_are_listed_as_tools_not_split(self) -> None:
-        """A subagent:-looking string makes no bucket: it is just a name the
-        membership filter upstream would already have dropped."""
-        payload = _render(["subagent:gmail (Gmail)"])
+    def test_mcp_entries_land_in_the_mcp_bucket(self) -> None:
+        payload = _render(["subagent:my-mcp (My MCP)"])
 
-        assert [t["name"] for t in payload["tools_to_bind"]] == ["subagent:gmail (Gmail)"]
-        assert "subagents_builtin" not in payload
+        assert payload["mcp_subagents"] == [{"id": "my-mcp", "name": "My MCP"}]
+        assert [t["name"] for t in payload["tools_to_bind"]] == []
+        assert "handoff" in payload["next"]
+
+    def test_integration_entries_land_in_the_new_bucket(self) -> None:
+        payload = _render(["integration:linear (Linear)"])
+
+        assert payload["new_integrations"] == [{"id": "linear", "name": "Linear"}]
+        assert "activate_integration" in payload["next"]
 
 
 class TestDiscoveryToolEntries:
@@ -1199,7 +1213,7 @@ class TestDiscoveryZeroMatchSignal:
             "Load with retrieve_tools(exact_tool_names=[...]): internal tools bind "
             "and are called by name, integration tools (ALLCAPS) return schemas to "
             "run via execute and are never bound. Integrations are not subagents: "
-            "act on them yourself, never hand work off."
+            "act on them yourself."
         )
 
 

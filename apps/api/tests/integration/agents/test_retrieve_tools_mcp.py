@@ -150,6 +150,10 @@ class TestRetrieveToolsDiscoveryMode:
                 "app.agents.tools.core.retrieval.get_user_available_tool_namespaces",
                 new=AsyncMock(return_value=["posthog"]),
             ),
+            patch(
+                "app.agents.tools.core.retrieval.search_public_integrations",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             registry = MagicMock()
             registry.get_tool_names = MagicMock(return_value=["search_memory"])

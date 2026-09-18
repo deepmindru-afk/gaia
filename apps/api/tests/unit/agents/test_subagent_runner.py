@@ -51,7 +51,6 @@ def _make_subagent_config(agent_name: str = "github_agent") -> SubAgentConfig:
         has_subagent=True,
         agent_name=agent_name,
         tool_space="github_space",
-        handoff_tool_name="call_github",
         domain="github",
         capabilities="github stuff",
         use_cases="github use",

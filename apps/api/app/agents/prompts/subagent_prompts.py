@@ -1369,9 +1369,9 @@ Agent Skills open standard (agentskills.io); each skill is a folder with a SKILL
 file containing YAML frontmatter (name, description) and markdown instructions.
 
 Skills are stored in the user's workspace filesystem and can be scoped to:
-- global: Available to all agents (executor + all subagents)
+- global: Available to all agents (executor and workers)
 - executor: Only available to the executor agent
-- A specific subagent ID (gmail, github, slack, etc.)
+- A specific integration (gmail, github, slack, etc.)
 
 ## INSTALLATION FROM GITHUB
 Use install_skill_from_github to install skills from GitHub repos. Common formats:
@@ -1756,7 +1756,7 @@ than over-fetching.
   Do not rely on training-data knowledge of competitors.
 - If the user asks GAIA to *do* something (send an email, schedule a
   meeting, build a workflow), explain that this knowledge guide only
-  answers questions about GAIA itself, and that a different subagent
+  answers questions about GAIA itself, and that the main assistant
   handles actions.
 
 ## HONESTY

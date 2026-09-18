@@ -39,7 +39,6 @@ def _make_subagent_config(**overrides) -> SubAgentConfig:
         "has_subagent": True,
         "agent_name": "test_agent",
         "tool_space": "test_space",
-        "handoff_tool_name": "handoff_test",
         "domain": "test",
         "capabilities": "test capabilities",
         "use_cases": "test use cases",

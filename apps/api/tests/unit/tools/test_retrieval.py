@@ -111,7 +111,7 @@ class TestBuildSearchTasks:
         store = MagicMock()
         store.asearch = AsyncMock(return_value=[])
         tasks = _build_search_tasks(
-            store, "email", "gmail", {"gmail", "general"}, limit=10
+            store, "email", "gmail", {"gmail", "general"}, include_subagents=False, limit=10
         )
         # gmail search + general search (limited)
         assert len(tasks) == 2
@@ -124,21 +124,39 @@ class TestBuildSearchTasks:
 
         store = MagicMock()
         store.asearch = AsyncMock(return_value=[])
-        tasks = _build_search_tasks(store, "email", "general", {"general"}, limit=10)
+        tasks = _build_search_tasks(
+            store, "email", "general", {"general"}, include_subagents=False, limit=10
+        )
         # Only one search for general (tool_space == general, skip second general search)
         assert len(tasks) == 1
         for t in tasks:
             if asyncio.iscoroutine(t):
                 t.close()
 
-    def test_no_subagent_searches(self):
+    def test_no_subagent_searches_when_disabled(self):
         from app.agents.tools.core.retrieval import _build_search_tasks
 
         store = MagicMock()
         store.asearch = AsyncMock(return_value=[])
-        tasks = _build_search_tasks(store, "email", "general", {"general"}, limit=10)
-        # Only the general search — discovery never searches subagent namespaces.
+        tasks = _build_search_tasks(
+            store, "email", "general", {"general"}, include_subagents=False, limit=10
+        )
+        # Only the general search — scoped agents never look for subagents.
         assert len(tasks) == 1
+        for t in tasks:
+            if asyncio.iscoroutine(t):
+                t.close()
+
+    def test_subagent_and_public_searches_when_enabled(self):
+        from app.agents.tools.core.retrieval import _build_search_tasks
+
+        store = MagicMock()
+        store.asearch = AsyncMock(return_value=[])
+        tasks = _build_search_tasks(
+            store, "email", "general", {"general"}, include_subagents=True, limit=10
+        )
+        # general + subagents namespace (MCP pointers) + public integrations
+        assert len(tasks) == 3
         for t in tasks:
             if asyncio.iscoroutine(t):
                 t.close()
@@ -148,7 +166,9 @@ class TestBuildSearchTasks:
 
         store = MagicMock()
         store.asearch = AsyncMock(return_value=[])
-        tasks = _build_search_tasks(store, "email", "slack", {"general"}, limit=10)
+        tasks = _build_search_tasks(
+            store, "email", "slack", {"general"}, include_subagents=False, limit=10
+        )
         # Only general search (slack not in namespaces)
         assert len(tasks) == 1
         for t in tasks:
@@ -275,7 +295,7 @@ class TestProcessSearchResults:
         assert processed == []
 
     @pytest.mark.asyncio
-    async def test_dict_results_are_ignored(self):
+    async def test_dict_results_render_as_integration_entries(self):
         from app.agents.tools.core.retrieval import _process_search_results
 
         registry = MagicMock()
@@ -283,7 +303,7 @@ class TestProcessSearchResults:
         processed = await _process_search_results(
             [public_results], set(), registry, include_subagents=True
         )
-        assert processed == []
+        assert [r["id"] for r in processed] == ["integration:abc (App)"]
 
 
 # ---------------------------------------------------------------------------
@@ -831,10 +851,10 @@ class TestActivatedNamespaceTools:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_discovery_end_to_end_no_subagent_surface(self):
+    async def test_discovery_end_to_end_no_provider_subagent_surface(self):
         """The reported bug: a github-namespace Chroma hit reached the model as
         nothing (delegated filter) next to a subagent:github pointer. Now the
-        real tool is in the response and no subagent surface exists anywhere."""
+        real tool is in the response and no provider subagent surface exists."""
         import json
 
         from app.agents.tools.core import retrieval
@@ -880,6 +900,11 @@ class TestActivatedNamespaceTools:
                 new_callable=AsyncMock,
                 return_value=set(),
             ),
+            patch(
+                "app.agents.tools.core.retrieval.search_public_integrations",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             fn = retrieval.get_retrieve_tools_function(tool_space="general")
             result = await fn(
@@ -889,7 +914,45 @@ class TestActivatedNamespaceTools:
         assert "GITHUB_LIST_PULL_REQUESTS" in result["response"]
         assert not [e for e in result["response"] if e.startswith("subagent:")]
         body = json.loads(result["response_text"])
-        assert "subagents_builtin" not in body
-        assert "subagents_connected" not in body
-        assert "subagents_needing_connection" not in body
+        assert body["mcp_subagents"] == []
+        assert body["new_integrations"] == []
         assert "handoff" not in result["response_text"]
+
+    def test_mcp_pointer_in_subagents_namespace_survives(self):
+        """Custom MCP pointers are the one subagent surface: source=='custom'
+        entries render as subagent: entries for handoff."""
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        item = self._delegated_hit("my-mcp", namespace=("subagents",))
+        item.value = {"name": "My MCP", "source": "custom"}
+        registry = MagicMock()
+        result = _process_chroma_search_result(
+            [item], set(), registry, include_subagents=True
+        )
+        assert [r["id"] for r in result] == ["subagent:my-mcp (My MCP)"]
+
+    def test_stale_provider_doc_in_subagents_namespace_dropped(self):
+        """Docs without source=='custom' (pre-removal provider entries) never
+        surface, even though the namespace is searched."""
+        from app.agents.tools.core.retrieval import _process_chroma_search_result
+
+        item = self._delegated_hit("github", namespace=("subagents",))
+        item.value = {"name": "GitHub"}
+        registry = MagicMock()
+        result = _process_chroma_search_result(
+            [item], {"github"}, registry, include_subagents=True
+        )
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_public_hits_render_as_integration_entries(self):
+        """Marketplace hits render as integration: entries — activatable, never
+        handed off."""
+        from app.agents.tools.core.retrieval import _process_search_results
+
+        registry = MagicMock()
+        public = [{"integration_id": "linear", "name": "Linear", "relevance_score": 0.7}]
+        processed = await _process_search_results(
+            [public], set(), registry, include_subagents=True
+        )
+        assert [r["id"] for r in processed] == ["integration:linear (Linear)"]

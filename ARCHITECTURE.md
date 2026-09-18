@@ -23,16 +23,16 @@ GAIA's agent runtime is a **three-tier system**:
 │  Executor Agent  (worker tier)                               │
 │  - Full tool registry: bash, read, retrieve_tools, todos,     │
 │    tracked_todos, memory, deep_research, ...                  │
-│  - Handoff to integration subagents (blocking OR background)  │
+│  - activate_integration(id) loads tools in-context, then act  │
 │  - Tracked-todo canvas, plan_tasks, update_tasks              │
 └─────────────────────┬────────────────────────────────────────┘
-                      │  handoff(subagent_id, task, background=...)
+                      │  execute(...) / direct calls (in-context)
                       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  Subagents  (per-integration specialists)                    │
-│  - One graph per provider: gmail, notion, github, calendar,  │
-│    slack, linear, sheets, docs, todoist, twitter, ...         │
-│  - Basic tools: bash, read, retrieve_tools + integration tools│
+│  Subagents  (per-user MCP workers + spawned isolation)       │
+│  - One graph per custom/auth-required MCP integration only   │
+│  - spawn_subagent workers for bulky isolated work            │
+│  - Provider/built-in integrations activate, never spawn      │
 │  - finish_task signal + memory node end-hook                 │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -63,7 +63,7 @@ That's it. No `bash`. No `read`. No per-integration tools. The comms agent is a 
 
 ---
 
-## 3. Executor Agent (handoff target)
+## 3. Executor Agent (worker tier)
 
 The worker tier. Has access to **everything** that does work.
 
@@ -73,7 +73,7 @@ The worker tier. Has access to **everything** that does work.
 - `apps/api/app/agents/tools/executor_tool.py` — `call_executor` and `cancel_executor` LangChain tools.
 - `apps/api/app/agents/core/subagents/subagent_runner.py` — `prepare_executor_execution()` and `execute_subagent_stream()`. Each executor call runs on a **deterministic per-conversation thread** (`EXECUTOR_THREAD_PREFIX + thread_id`, `subagent_runner.py:773`) — it is NOT ephemeral, so its history persists across runs and a cancelled task stays in it until something says otherwise (see Live channel → Interrupts). VFS session stays pinned to the parent conversation.
 
-### Initial tool IDs (comms → executor handoff)
+### Initial tool IDs (the executor's initial bind set)
 
 `handoff`, `plan_tasks`, `update_tasks`, `read`, `bash`, `deep_research`, `read_manual`, `create_tracked_todo`, `update_tracked_todo`, `update_tracked_todo_canvas`, `complete_tracked_todo`, `search_todo_context`, `list_tracked_todos`.
 
@@ -122,24 +122,24 @@ One rule governs it:
 
 ---
 
-## 4. Subagents (integration specialists)
+## 4. Subagents (per-user MCP workers)
 
-Every integration is a `CompiledStateGraph` of its own. The executor hands off to the matching subagent via the `handoff` tool. **Subagents can never spawn sub-subagents**: `create_subagent_middleware` force-disables the spawn middleware whatever a caller passes (only the executor carries `spawn_subagent`), and `handoff` is neither in a subagent's tool space nor bindable by it (retrieval validates against the scoped set).
+Provider and built-in integrations are NOT subagents: the executor loads them in-context via `activate_integration` and acts itself. Subagent graphs exist only where tools cannot load in-context — per-user MCP integrations (custom MCP connections and auth-required MCP, whose tools are issued per user) — plus `spawn_subagent` workers for bulky isolated work. `handoff` to any other id redirects to `activate_integration` at resolve time. **Spawned workers can never spawn sub-workers**: `create_subagent_middleware` force-disables the spawn middleware whatever a caller passes (only the executor carries `spawn_subagent`), and `handoff` is neither in a worker's tool space nor bindable by it (retrieval validates against the scoped set).
 
 ### Core subagent files
 
 - `apps/api/app/agents/core/subagents/__init__.py`
 - `apps/api/app/agents/core/subagents/registry.py` — `all_subagents()` and `get_subagent_by_id()`. **Single source of truth** that combines OAuth-derived subagents + builtins. Process-lifetime `@cache`'d.
 - `apps/api/app/agents/core/subagents/builtin_subagents.py` — `BUILTIN_SUBAGENTS` (currently `docgen`, `gaia_knowledge_guide`). Excluded from the marketplace.
-- `apps/api/app/agents/core/subagents/base_subagent.py` — `SubAgentFactory.create_provider_subagent()`. Wires the per-integration graph: scoped tool dict, `SubagentMiddleware`, todo tools, MCP/Composio tools, no end-hooks (memory learning runs once per comms turn, not per subagent), checkpointer, and the three pre-model hooks.
-- `apps/api/app/agents/core/subagents/provider_subagents.py` — `create_subagent()` (non-auth MCP) and `create_subagent_for_user()` (per-user auth MCP; rebuilt on every handoff, no memoization). `register_subagent_providers()` registers lazy loaders.
-- `apps/api/app/agents/core/subagents/handoff_tools.py` — `@tool handoff(subagent_id, task, config, background=False)`. Resolves the subagent via `_resolve_subagent()`, builds a `SubagentExecutionContext`, then runs blocking (`_run_blocking_handoff`) or fires `run_subagent_background()`. Includes `_get_subagent_by_id` (Redis cached at `SUBAGENT_CACHE_PREFIX`), `_sanitize_task_user_reference` (replaces Gaia display name with service username), and `index_custom_mcp_as_subagent` (ChromaDB indexing for semantic search). Also exports `check_integration_connection()`.
+- `apps/api/app/agents/core/subagents/base_subagent.py` — `SubAgentFactory.create_provider_subagent()`. Wires a scoped worker graph: scoped tool dict, `SubagentMiddleware`, todo tools, MCP/Composio tools, no end-hooks (memory learning runs once per comms turn, not per subagent), checkpointer, and the three pre-model hooks. Reached at runtime only for per-user MCP integrations, spawn workers, and dev direct-invocation.
+- `apps/api/app/agents/core/subagents/provider_subagents.py` — `create_subagent()` (provider graphs; kept for dev/tests — unreachable from `handoff`, which redirects those ids) and `create_subagent_for_user()` (per-user auth MCP; rebuilt on every handoff, no memoization). `register_subagent_providers()` registers lazy loaders.
+- `apps/api/app/agents/core/subagents/handoff_tools.py` — `@tool handoff(subagent_id, task, config, background=False)`. Per-user MCP only: resolving a provider or built-in id returns an `activate_integration` redirect instead of a graph. Resolves the worker via `_resolve_subagent()`, builds a `SubagentExecutionContext`, then runs blocking (`_run_blocking_handoff`) or fires `run_subagent_background()`. Includes `_get_subagent_by_id` (Redis cached at `SUBAGENT_CACHE_PREFIX`), `_sanitize_task_user_reference` (replaces Gaia display name with service username), and `index_custom_mcp_as_subagent` (ChromaDB pointer docs so unactivated custom MCPs stay discoverable). Also exports `check_integration_connection()`.
 - `apps/api/app/agents/core/subagents/subagent_runner.py` — `SubagentExecutionContext`, `build_initial_messages` (seeds `[static_system, dynamic_stable, memory_recall?, human_task, current_time]` in canonical slot order — see §Context assembly), `execute_subagent_stream` (handles `messages`/`custom`/`updates` events; emits `subagent_start`/`subagent_end` lifecycle), `prepare_executor_execution` (builds executor context with `DIRECT EXECUTION HINT`).
 - `apps/api/app/agents/core/subagents/subagent_helpers.py` — `build_subagent_system_prompt` / `create_subagent_system_message`: the STATIC per-integration prompt only. Byte-identical across users so the implicit prompt cache hits; everything per-user is assembled separately (below).
 
 ### Context assembly (all five tiers)
 
-One module builds the per-run context for comms, the executor, provider subagents, spawned subagents and the workflow author. Tier differences are rows in a table, not divergent code paths.
+One module builds the per-run context for comms, the executor, MCP/spawned subagents and the workflow author. Tier differences are rows in a table, not divergent code paths.
 
 - `apps/api/app/agents/context/slots.py` — `PromptSlot`, the canonical message order `[static, dynamic_stable, onboarding, todo_context, background_executor, executor_status, memory_recall, …conversation…, time]`, plus the marker read/write helpers. The two constraints that fix this order (Gemini's leading-contiguous system block; longest-common-prefix cache matching) are documented there.
 - `apps/api/app/agents/context/tiers.py` — `AgentTier`, the closed set of tiers a section declares applicability against.
@@ -153,7 +153,7 @@ Tests: `apps/api/tests/_harness/context_chain.py` produces the *effective* array
 
 ### OAuth integration definitions (source of subagent configs)
 
-- `apps/api/app/config/oauth_config.py` — `OAUTH_INTEGRATIONS: list[OAuthIntegration]`. Each entry has `subagent_config=SubAgentConfig(has_subagent, agent_name, tool_space, handoff_tool_name, domain, capabilities, use_cases, system_prompt, use_direct_tools, disable_retrieve_tools, auto_bind_tools, include_finish_task)`.
+- `apps/api/app/config/oauth_config.py` — `OAUTH_INTEGRATIONS: list[OAuthIntegration]`. Each entry has `subagent_config=SubAgentConfig(has_subagent, agent_name, tool_space, domain, capabilities, use_cases, system_prompt, use_direct_tools, disable_retrieve_tools, auto_bind_tools, include_finish_task)`.
 - `apps/api/app/config/oauth_content.py` — per-integration UI content (icons, descriptions, setup screens).
 - `apps/api/app/models/oauth_models.py` — `OAuthIntegration` Pydantic model.
 - `apps/api/app/models/mcp_config.py` — `SubAgentConfig`, `MCPConfig`, `ComposioConfig`, `OAuthScope`, `ProviderMetadataConfig`, `ToolMetadataConfig`, `VariableExtraction`.
@@ -167,9 +167,9 @@ Tests: `apps/api/tests/_harness/context_chain.py` produces the *effective* array
 - **Google Calendar** — `composio`, `toolkit="GOOGLECALENDAR"`.
 - **Slack** — line 1129, `toolkit="SLACK"`.
 
-### Tools per subagent
+### Tools per integration
 
-- **Composio subagents** — `tool_registry.register_provider_tools(toolkit_name, space_name, specific_tools)` in `provider_subagents.py`. User OAuth token attached server-side via `@composio.tools.custom_tool`.
+- **Composio integrations** — `tool_registry.register_provider_tools(toolkit_name, space_name, specific_tools)` in `provider_subagents.py` loads their tools into the registry for activation; the executor runs them via `execute`. User OAuth token attached server-side via `@composio.tools.custom_tool`.
 - **MCP subagents (auth-required)** — live tools read from `MCPClient` (source of truth), not copied into a registry. `get_mcp_client(user_id)` in `apps/api/app/services/mcp/mcp_client.py`.
 - **Custom MCP subagents** — `_create_custom_mcp_subagent` in `provider_subagents.py` reads from `integrations_collection` in MongoDB. If `1 <= tool_count <= 10`, sets `use_direct_tools=True, disable_retrieve_tools=True` for low latency.
 - **Always-on tools for every subagent** (in `base_subagent.py::_build_scoped_tool_dict`): `search_memory`, `read`, `bash`, `web_search_tool`, `fetch_webpages`, `deep_research`, `update_integration_instructions`, and optionally `finish_task`.
@@ -218,7 +218,7 @@ All five bots live in `apps/bots/`, share a unified command system in `libs/shar
 
 ### How a bot message reaches the agent
 
-Bot receives message → adapter builds `CommandContext` → unified `BotCommand` (`gaia.ts` etc.) → `GaiaClient` HTTP call to API → `apps/api/app/agents/core/agent.py::call_agent()` → comms graph → executor → subagents → SSE stream back through `outbound-consumer.ts`.
+Bot receives message → adapter builds `CommandContext` → unified `BotCommand` (`gaia.ts` etc.) → `GaiaClient` HTTP call to API → `apps/api/app/agents/core/agent.py::call_agent()` → comms graph → executor (→ per-user MCP workers where needed) → SSE stream back through `outbound-consumer.ts`.
 
 ---
 
@@ -236,7 +236,7 @@ Bot receives message → adapter builds `CommandContext` → unified `BotCommand
 - `apps/voice-agent/src/__main__.py` — CLI entrypoint: `start` or `download-files`.
 - **Wake word** — `libs/wake-word/` (`@gaia/wake-word`): `src/core` (3-stage openWakeWord pipeline), `src/web` (onnxruntime-web + AudioWorklet + React hook), `src/native` (onnxruntime-react-native), `models/` (mel + embedding + VAD + classifier ONNX), `training/` (Piper TTS + LibriSpeech negatives + MPS training). 122 KB ONNX, ~80ms time-to-wake.
 
-The voice worker is **just a transport** — speech in, speech out. All reasoning still goes through the comms → executor → subagent chain via HTTP.
+The voice worker is **just a transport** — speech in, speech out. All reasoning still goes through the comms → executor chain via HTTP.
 
 ---
 
@@ -269,11 +269,11 @@ Each is a directory containing a `SKILL.md` with YAML frontmatter. Examples:
 - Other: `linear-create-issue/`, `linear-gather-context/`, `linkedin-create-post/`, `reddit-research-post/`, `posthog-find-metrics/`, `twitter-create-thread/`, `twitter-send-dm/`, `twitter-send-dm-legacy/`, `todoist-organize-tasks/`, `task-management/`
 - GAIA system skills: `gaia-custom-instructions/`, `gaia-self-knowledge/`, `gaia-task-tracking/`
 
-A skill's `target:` frontmatter binds it to a subagent (e.g. `target: gmail_agent`).
+A skill's `target:` frontmatter binds it to an integration (e.g. `target: gmail_agent`).
 
-### Skill tools (for the skills subagent)
+### Skill tools (for the skills integration)
 
-- `apps/api/app/agents/tools/skill_tools.py` — `install_skill_from_github`, `install_skill_inline`, `uninstall_skill`, `enable_skill`, `disable_skill`, `list_skills`. Consumed by the `skills` OAuth integration's subagent (system prompt `SKILLS_AGENT_SYSTEM_PROMPT` in `subagent_prompts.py`).
+- `apps/api/app/agents/tools/skill_tools.py` — `install_skill_from_github`, `install_skill_inline`, `uninstall_skill`, `enable_skill`, `disable_skill`, `list_skills`. Run in-context via the `skills` integration (`activate_integration("skills")`; system prompt `SKILLS_AGENT_SYSTEM_PROMPT` in `subagent_prompts.py`).
 - The skills integration is itself defined in `oauth_config.py` (`subagent_config.tool_space="skills"`, `agent_name="skills_agent"`).
 
 ### Workspace mounting

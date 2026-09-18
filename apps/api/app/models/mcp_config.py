@@ -165,7 +165,6 @@ class SubAgentConfig(BaseModel):
     has_subagent: bool = False
     agent_name: str
     tool_space: str
-    handoff_tool_name: str
     domain: str
     capabilities: str
     use_cases: str

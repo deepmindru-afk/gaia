@@ -416,7 +416,6 @@ class TestGetUserAvailableToolNamespaces:
         subagent = SubAgentConfig(
             agent_name="github_agent",
             tool_space="github",
-            handoff_tool_name="call_github",
             domain="code",
             capabilities="Git operations",
             use_cases="Code management",

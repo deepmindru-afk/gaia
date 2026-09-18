@@ -156,7 +156,6 @@ def _retrieval_disabled_handoff_space():
         config=SubAgentConfig(
             agent_name="calendar_agent",
             tool_space="calendar",
-            handoff_tool_name="handoff_to_calendar",
             domain="calendar",
             capabilities="c",
             use_cases="u",

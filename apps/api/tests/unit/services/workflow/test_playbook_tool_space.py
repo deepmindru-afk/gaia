@@ -65,7 +65,6 @@ def _subagent(
         config=SubAgentConfig(
             agent_name=f"{SUBAGENT_ID}_agent",
             tool_space=TOOL_SPACE,
-            handoff_tool_name=f"handoff_to_{SUBAGENT_ID}",
             domain="analytics",
             capabilities="c",
             use_cases="u",

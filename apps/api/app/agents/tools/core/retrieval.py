@@ -39,6 +39,7 @@ from app.agents.tools.research_tool import deep_research
 from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 from app.config.oauth_config import OAUTH_INTEGRATIONS
 from app.constants.log_tags import LogTag
+from app.db.chroma.public_integrations_store import search_public_integrations
 from app.models.agent_models import agent_configurable
 from app.models.chat_models import ConversationSource
 from app.override.langgraph_bigtool.utils import RetrieveToolsResult
@@ -459,6 +460,7 @@ def _build_search_tasks(
     query: str,
     tool_space: str,
     user_namespaces: set[str],
+    include_subagents: bool,
     limit: int,
     include_desktop: bool = False,
     active_namespaces: set[str] | None = None,
@@ -511,7 +513,37 @@ def _build_search_tasks(
         log.info(f"{LogTag.TOOL} Adding search for desktop namespace")
         search_tasks.append(store.asearch((DESKTOP_TOOL_SPACE,), query=query, limit=10))
 
+    # Custom MCP integrations index a pointer doc here (and only MCP does:
+    # provider entries were never written to this namespace). Surfacing it is
+    # what makes an unactivated custom MCP discoverable at all — its tools
+    # live in a per-user namespace this fan-out never enters, so without this
+    # search the model could never learn its id to hand off to.
+    if include_subagents:
+        log.info(f"{LogTag.TOOL} Adding search for subagents namespace")
+        search_tasks.append(store.asearch(("subagents",), query=query, limit=15))
+        search_tasks.append(search_public_integrations(query=query, limit=15))
+
     return search_tasks
+
+
+def _process_public_integration_result(
+    result: list[dict[str, Any]],
+) -> list[ScoredToolHit]:
+    """Process public integration search results.
+
+    These are integrations the user has NOT connected: they render as
+    ``integration:<id> (Name)`` entries (never ``subagent:`` — only per-user
+    MCP integrations run as subagents), so the model can activate them
+    directly, which is also what renders the connect card.
+    """
+    processed: list[ScoredToolHit] = []
+    for item in result:
+        integration_id = item.get("integration_id")
+        if integration_id:
+            name = item.get("name")
+            key = f"integration:{integration_id} ({name})" if name else f"integration:{integration_id}"
+            processed.append(ScoredToolHit(id=key, score=item.get("relevance_score", 0)))
+    return processed
 
 
 def _process_chroma_search_result(
@@ -527,6 +559,24 @@ def _process_chroma_search_result(
 
     for item in result:
         tool_key = str(item.key)
+
+        # Subagents-namespace pointers exist only for custom MCP integrations
+        # (the sole writer of that namespace): they are the one subagent
+        # surface discovery keeps, because a custom MCP's tools live in a
+        # per-user namespace this search never enters — without the pointer
+        # the model could never learn its id to hand off to. Anything else
+        # found here is a stale doc from before provider entries stopped
+        # being indexed under this namespace; drop it, never surface it.
+        if hasattr(item, "namespace") and item.namespace == ("subagents",):
+            if not include_subagents:
+                continue
+            value = getattr(item, "value", None)
+            if not isinstance(value, dict) or value.get("source") != "custom":
+                continue
+            name = value.get("name")
+            subagent_key = f"subagent:{tool_key} ({name})" if name else f"subagent:{tool_key}"
+            processed.append(ScoredToolHit(id=subagent_key, score=item.score))
+            continue
 
         # Filter general namespace results for subagents - only allow webpage tools
         if (
@@ -582,41 +632,39 @@ async def _process_search_results(
             continue
 
         if isinstance(result[0], dict):
-            # No dict-result producer remains (the public-integrations search
-            # only fed subagent discovery); ignore defensively, don't crash.
-            continue
-
-        items = cast(list[SearchItem], result)
-        try:
-            preview = [
-                {
-                    "key": str(item.key),
-                    "namespace": item.namespace if hasattr(item, "namespace") else None,
-                    "score": item.score,
-                }
-                for item in items[:20]
-            ]
-            log.debug(
-                f"{LogTag.TOOL} Chroma search raw hits",
-                task_index=idx,
-                tool_space=tool_space,
-                hit_count=len(result),
-                preview=preview,
+            processed = _process_public_integration_result(cast(list[dict[str, Any]], result))
+        else:
+            items = cast(list[SearchItem], result)
+            try:
+                preview = [
+                    {
+                        "key": str(item.key),
+                        "namespace": item.namespace if hasattr(item, "namespace") else None,
+                        "score": item.score,
+                    }
+                    for item in items[:20]
+                ]
+                log.debug(
+                    f"{LogTag.TOOL} Chroma search raw hits",
+                    task_index=idx,
+                    tool_space=tool_space,
+                    hit_count=len(result),
+                    preview=preview,
+                )
+            except Exception as e:
+                log.debug(
+                    f"{LogTag.TOOL} Chroma search raw hits log failed",
+                    task_index=idx,
+                    error_type=type(e).__name__,
+                )
+            processed = _process_chroma_search_result(
+                items,
+                available_tool_names,
+                tool_registry,
+                include_subagents,
+                tool_space,
+                active_namespaces,
             )
-        except Exception as e:
-            log.debug(
-                f"{LogTag.TOOL} Chroma search raw hits log failed",
-                task_index=idx,
-                error_type=type(e).__name__,
-            )
-        processed = _process_chroma_search_result(
-            items,
-            available_tool_names,
-            tool_registry,
-            include_subagents,
-            tool_space,
-            active_namespaces,
-        )
 
         all_results.extend(processed)
 
@@ -639,6 +687,15 @@ def _deduplicate_and_sort(
     return [str(r["id"]) for r in unique_results[:limit]]
 
 
+def _split_prefixed_entry(entry: str, prefix: str) -> tuple[str, str | None]:
+    """``<prefix><id> (Name)`` -> (id, name)."""
+    tail = entry[len(prefix) :]
+    if " (" in tail and tail.endswith(")"):
+        entry_id, name = tail.split(" (", 1)
+        return entry_id, name[:-1]
+    return tail, None
+
+
 def _render_discovery_response(
     final_tools: list[str],
     tool_registry: ToolRegistry,
@@ -649,10 +706,24 @@ def _render_discovery_response(
 ) -> str:
     """Render discovery hits as the JSON the model acts on.
 
-    Only real tools are listed — integrations surface as their tools (run via
-    ``execute``), never as subagent pointers. ``connected_integrations`` only
-    labels each tool entry with its source.
+    Only real tools are listed, plus two narrow entry kinds: ``subagent:``
+    pointers to per-user MCP integrations (the sole subagent surface — their
+    tools live in per-user namespaces discovery never enters) and
+    ``integration:`` pointers to not-yet-connected integrations (activating
+    one renders its connect card). Provider and built-in integrations surface
+    as their tools, never as pointers. ``connected_integrations`` only labels
+    each tool entry with its source.
     """
+    bindable: list[str] = []
+    mcp: list[tuple[str, str | None]] = []
+    new: list[tuple[str, str | None]] = []
+    for entry in final_tools:
+        if entry.startswith("subagent:"):
+            mcp.append(_split_prefixed_entry(entry, "subagent:"))
+        elif entry.startswith("integration:"):
+            new.append(_split_prefixed_entry(entry, "integration:"))
+        else:
+            bindable.append(entry)
 
     def _tool_entry(name: str) -> dict[str, Any]:
         category = tool_registry.get_category_of_tool(name)
@@ -667,8 +738,14 @@ def _render_discovery_response(
             entry["needs_approval"] = True
         return entry
 
+    def _id_entry(pair: tuple[str, str | None]) -> dict[str, str]:
+        sid, name = pair
+        return {"id": sid, "name": name} if name else {"id": sid}
+
     payload: dict[str, Any] = {
-        "tools_to_bind": [_tool_entry(n) for n in final_tools],
+        "tools_to_bind": [_tool_entry(n) for n in bindable],
+        "mcp_subagents": [_id_entry(p) for p in mcp],
+        "new_integrations": [_id_entry(p) for p in new],
     }
     if total_candidates > limit:
         payload["truncated"] = {"shown": len(final_tools), "total": total_candidates}
@@ -683,12 +760,24 @@ def _render_discovery_response(
             "user the capability is unavailable. Never repeat the same query."
         )
     else:
-        payload["next"] = (
+        steps = [
             "Load with retrieve_tools(exact_tool_names=[...]): internal tools bind "
             "and are called by name, integration tools (ALLCAPS) return schemas to "
             "run via execute and are never bound. Integrations are not subagents: "
-            "act on them yourself, never hand work off."
-        )
+            "act on them yourself."
+        ]
+        if mcp:
+            steps.append(
+                "subagent: entries are per-user MCP integrations, the ONLY "
+                "subagents: delegate with handoff(subagent_id=\"<id>\", task=\"...\")."
+            )
+        if new:
+            steps.append(
+                "new_integrations are not connected yet: call "
+                "activate_integration(id) anyway — that call is what shows the user "
+                "the connect card."
+            )
+        payload["next"] = " ".join(steps)
     if query:
         payload["query"] = query
     return json.dumps(payload, indent=2)
@@ -953,6 +1042,7 @@ def get_retrieve_tools_function(
             query or "",
             tool_space,
             user_namespaces,
+            include_subagents,
             limit,
             include_desktop=desktop_enabled,
             active_namespaces=active_namespaces,

@@ -932,9 +932,11 @@ async def handoff(
     subagent_id: Annotated[
         str,
         "The ID of a per-user MCP integration to delegate to (custom MCP "
-        "connections only — e.g. 'my-notion-mcp'). Provider and built-in "
-        "integrations (gmail, github, todos, ...) are NOT handoff targets: "
-        "load those with activate_integration instead.",
+        "connections only — e.g. 'my-notion-mcp'). Discovered via "
+        "retrieve_tools as subagent: entries (only per-user MCP integrations "
+        "appear there). Provider and built-in integrations (gmail, github, "
+        "todos, ...) are NOT handoff targets: load those with "
+        "activate_integration instead.",
     ],
     task: Annotated[
         str,
