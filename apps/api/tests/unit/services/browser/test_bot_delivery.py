@@ -253,7 +253,7 @@ class TestBotProgressDeliveryStep:
                 ConversationSource.TELEGRAM,
                 "user-1",
                 "https://cdn.example.com/shot.png",
-                filename="browser-step-2.jpg",
+                filename="browser-step-2.png",
                 caption="Step 2 · Clicking",
             )
             mock_text.assert_not_awaited()

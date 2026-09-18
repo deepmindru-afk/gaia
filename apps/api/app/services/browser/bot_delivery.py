@@ -82,7 +82,7 @@ class BotProgressDelivery:
                 self._platform,
                 self._user_id,
                 snapshot.screenshot,
-                filename=f"browser-step-{snapshot.index}.jpg",
+                filename=f"browser-step-{snapshot.index}.png",
                 caption=caption,
             )
             if sent:

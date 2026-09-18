@@ -7,13 +7,12 @@ its lifecycle into injected, swappable seams:
   * ``request_handoff`` — pause for the human at a sensitive step (live-view)
   * ``is_cancelled`` — cooperative cancellation (wired to the chat stream)
 
-Which loop actually decides and executes the steps is a *lane*
-(``services/browser/lanes``): Browser-Use's own agent, or the ported
-jev-ultrafast loop. The runner owns everything else — progress, the handoff,
-cancellation, the budgets, metering, the replay link — so a lane never learns
-about SSE, Redis or bots, and neither does the runner.
+Deciding and executing the steps is the Browser-Use agent run's job
+(``services/browser/agent_run``). The runner owns everything else — progress,
+the handoff, cancellation, the budgets, metering, the replay link — so the agent
+run never learns about SSE, Redis or bots, and neither does the runner.
 
-The runner does NOT judge whether a step is sensitive. The lane decides for
+The runner does NOT judge whether a step is sensitive. The agent decides for
 itself when it cannot proceed — a CAPTCHA it can't solve, a login/2FA/payment it
 must not do — and calls the takeover hook, which pauses for the human in
 live-view (``_handle_takeover``).
@@ -43,18 +42,17 @@ from app.schemas.browser import (
     HandoffOutcome,
     HandoffRequest,
 )
+from app.services.browser.agent_run import BrowserAgentRun
 from app.services.browser.exceptions import BrowserHandoffCancelled, BrowserUnavailableError
-from app.services.browser.lanes import (
+from app.services.browser.replay import create_replay_link
+from app.services.browser.run_contract import (
     ActionResultsFn,
-    BrowserLane,
     BrowserRunConfig,
-    BrowserUseLane,
-    LaneHooks,
-    LaneOutcome,
-    LaneUsage,
+    RunHooks,
+    RunOutcome,
+    RunUsage,
     StepFrame,
 )
-from app.services.browser.replay import create_replay_link
 from app.services.browser.screenshots import upload_step_screenshot
 from app.services.browser.session import BrowserHostSession
 from app.services.llm_metering import LLMCallContext, TokenUsage, record_llm_call
@@ -88,7 +86,7 @@ class BrowserRunnerCallbacks:
 
 
 class BrowserTaskRunner:
-    """Orchestrates one browser task: session, lane, handoffs, delivery."""
+    """Orchestrates one browser task: session, agent run, handoffs, delivery."""
 
     def __init__(
         self,
@@ -124,20 +122,20 @@ class BrowserTaskRunner:
         self._last_step = 0
         # CDN URLs that really uploaded, in step order — the recap's frames.
         self._shots: list[str] = []
-        # Step emits run off the lane's loop; the lock keeps them ordered and the
+        # Step emits run off the agent's loop; the lock keeps them ordered and the
         # set lets _finish() flush them before the result (see _record_step / _finish).
         self._emit_lock = asyncio.Lock()
         self._emit_tasks: set[asyncio.Task[Any]] = set()
-        self._lane = self._build_lane()
+        self._agent_run = self._build_agent_run()
 
-    def _build_lane(self) -> BrowserLane:
-        hooks = LaneHooks(
+    def _build_agent_run(self) -> BrowserAgentRun:
+        hooks = RunHooks(
             step=self._record_step,
             takeover=self._handle_takeover,
             should_stop=self._should_stop,
             action_results=self._action_results,
         )
-        return BrowserUseLane(
+        return BrowserAgentRun(
             session=self._session,
             llm=self._llm,
             config=self._config,
@@ -158,7 +156,7 @@ class BrowserTaskRunner:
 
         try:
             outcome = await asyncio.wait_for(
-                self._lane.execute(task), timeout=self._wall_clock_timeout
+                self._agent_run.execute(task), timeout=self._wall_clock_timeout
             )
         except (BrowserHandoffCancelled, InterruptedError):
             if self._handed_off:
@@ -171,21 +169,21 @@ class BrowserTaskRunner:
                 BrowserSessionStatus.CANCELLED, False, "Browser task was stopped."
             )
         except TimeoutError:
-            self._lane.stop()
+            self._agent_run.stop()
             return await self._finish(
                 BrowserSessionStatus.FAILED,
                 False,
                 f"Browser task timed out after {self._task_timeout}s.",
             )
         except (ConnectionError, OSError) as exc:
-            # The host created the session but the lane couldn't attach over CDP —
+            # The host created the session but the agent couldn't attach over CDP —
             # almost always the host's CDP proxy websocket isn't reachable from here.
             raise BrowserUnavailableError(
                 f"Could not attach to the browser over CDP at {self._session.cdp_url}: {exc}. "
                 "Check that the browser host is reachable from the API at BROWSER_HOST_URL."
             ) from exc
         except Exception as exc:
-            # Any other unexpected lane/runtime failure (an LLM-provider error, a
+            # Any other unexpected agent/runtime failure (an LLM-provider error, a
             # browser_use internal crash, a malformed tool output, a failed handoff
             # persistence write) must not leave the card stuck in RUNNING — emit a
             # terminal FAILED result so the UI resolves and the user gets an honest
@@ -218,7 +216,7 @@ class BrowserTaskRunner:
         return self._stopped or await self._is_cancelled()
 
     async def _handle_takeover(self, reason: str, category: str) -> str | None:
-        """The lane's takeover hook: pause for the human and return the note they left,
+        """The agent's takeover hook: pause for the human and return the note they left,
         if any. Raises to stop the run on cancel."""
         self._handoffs += 1
         if self._handoffs > MAX_HANDOFFS_PER_TASK:
@@ -239,14 +237,14 @@ class BrowserTaskRunner:
         raise BrowserHandoffCancelled(outcome.status.value)
 
     def _record_step(self, frame: StepFrame) -> None:
-        """One executed step, straight off a lane's loop.
+        """One executed step, straight off the agent's loop.
 
         Emits OFF that loop's critical path: the screenshot upload is a ~1s CDN
         round-trip, and Browser-Use awaits its callback *before the step's actions
         run*, so uploading inline taxed every step. Spawn it — the per-runner lock
         keeps the step emits ordered, and _finish() flushes them before the result
         so the SSE writer is still open. The runner does not judge sensitivity; the
-        lane hands off for itself (see _handle_takeover).
+        agent hands off for itself (see _handle_takeover).
         """
         self._last_step = frame.index
         task = spawn_background_task(self._emit_step(frame), name="browser_step_emit")
@@ -291,10 +289,8 @@ class BrowserTaskRunner:
         except (ValueError, TypeError):
             return None
         # Keyed by session id (not conversation) so each run is its own replay folder.
-        url = await upload_step_screenshot(
-            image, self._session.session_id, frame.index, frame.screenshot_media_type
-        )
-        return url or f"data:{frame.screenshot_media_type};base64,{raw_b64}"
+        url = await upload_step_screenshot(image, self._session.session_id, frame.index)
+        return url or f"data:image/png;base64,{raw_b64}"
 
     async def _finish(
         self, status: BrowserSessionStatus, success: bool, summary: str
@@ -315,19 +311,19 @@ class BrowserTaskRunner:
         await self._emit(result)
         return result
 
-    async def _finish_from_outcome(self, outcome: LaneOutcome) -> BrowserResultSnapshot:
+    async def _finish_from_outcome(self, outcome: RunOutcome) -> BrowserResultSnapshot:
         status = BrowserSessionStatus.COMPLETED if outcome.success else BrowserSessionStatus.FAILED
         await self._record_usage(outcome.usage)
         return await self._finish(status, outcome.success, outcome.summary)
 
-    async def _record_usage(self, usage: list[LaneUsage]) -> None:
+    async def _record_usage(self, usage: list[RunUsage]) -> None:
         """Price and record the run's LLM spend into GAIA's usage pipeline.
 
         One :func:`record_llm_call` per model matches how ``LLMAccountingMiddleware``
         records the chat graph's own multi-model runs; token counts are re-priced
-        through GAIA's own catalog rather than trusting the lane's pricing data.
-        Both of the ultrafast lane's models land here under their real names, so
-        the Jev spend is not silently lost. This is agent-graph work the user asked
+        through GAIA's own catalog rather than trusting Browser-Use's pricing data.
+        Every model the run billed lands here under its real name, so the Jev
+        spend is not silently lost. This is agent-graph work the user asked
         for (the ``browser_task`` tool), so it charges the budget like any other
         tool-driven model call.
         """

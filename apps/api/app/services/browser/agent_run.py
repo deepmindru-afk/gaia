@@ -1,9 +1,7 @@
-"""The shipped lane: Browser-Use's own agent decides and executes every step.
+"""Drives one Browser-Use ``Agent`` over the session's CDP endpoint.
 
-Moved out of ``runner.py`` unchanged when the second lane landed — the runner
-kept progress, handoff, cancellation, budgets, metering and the replay link;
-this kept the Browser-Use ``Agent``, its two step callbacks, and the reading of
-its history into a :class:`LaneOutcome`.
+Jev is its model; every executed step is reported back to the runner through
+:class:`RunHooks`, and the agent's history is read into a :class:`RunOutcome`.
 """
 
 from __future__ import annotations
@@ -20,11 +18,11 @@ from app.schemas.browser import BrowserAction, BrowserActionOutput
 from app.services.browser.captions import caption_from_action_list
 from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev import JevChatModel
-from app.services.browser.lanes.base import (
+from app.services.browser.run_contract import (
     BrowserRunConfig,
-    LaneHooks,
-    LaneOutcome,
-    LaneUsage,
+    RunHooks,
+    RunOutcome,
+    RunUsage,
     StepClock,
     StepFrame,
 )
@@ -160,7 +158,7 @@ def _summarize_action_result(result: object) -> str | None:
     )
 
 
-def outcome_from_history(history: AgentHistoryList[BaseModel]) -> LaneOutcome:
+def outcome_from_history(history: AgentHistoryList[BaseModel]) -> RunOutcome:
     """What the agent's history says the run achieved, and what it cost."""
     # The three fallbacks the try leaves in place if reading history fails.
     # pragma-exempt below: every consumer collapses falsy values to one answer
@@ -187,10 +185,10 @@ def outcome_from_history(history: AgentHistoryList[BaseModel]) -> LaneOutcome:
     summary = final or (
         "Completed the browser task." if success else "Could not complete the browser task."
     )
-    return LaneOutcome(success=success, summary=str(summary), usage=_usage_from_history(history))
+    return RunOutcome(success=success, summary=str(summary), usage=_usage_from_history(history))
 
 
-def _usage_from_history(history: AgentHistoryList[BaseModel]) -> list[LaneUsage]:
+def _usage_from_history(history: AgentHistoryList[BaseModel]) -> list[RunUsage]:
     """Browser-Use's own per-model token totals, under the names it billed them.
 
     Populated whenever ``Agent.run`` returns normally — not on the
@@ -200,7 +198,7 @@ def _usage_from_history(history: AgentHistoryList[BaseModel]) -> list[LaneUsage]
     if usage is None:
         return []
     return [
-        LaneUsage(
+        RunUsage(
             model_name=model_name,
             input_tokens=stats.prompt_tokens,
             output_tokens=stats.completion_tokens,
@@ -209,8 +207,8 @@ def _usage_from_history(history: AgentHistoryList[BaseModel]) -> list[LaneUsage]
     ]
 
 
-class BrowserUseLane:
-    """Browser-Use's ``Agent`` over the session's CDP endpoint."""
+class BrowserAgentRun:
+    """One Browser-Use ``Agent`` run: decides and executes this task's steps."""
 
     def __init__(
         self,
@@ -218,7 +216,7 @@ class BrowserUseLane:
         session: BrowserHostSession,
         llm: BaseChatModel | None,
         config: BrowserRunConfig,
-        hooks: LaneHooks,
+        hooks: RunHooks,
         step_timeout: float,
     ) -> None:
         self._session = session
@@ -230,11 +228,11 @@ class BrowserUseLane:
         self._clock = StepClock()
         self._last_step = 0
 
-    async def execute(self, task: str) -> LaneOutcome:
+    async def execute(self, task: str) -> RunOutcome:
         from browser_use import Agent, Browser  # noqa: PLC0415 -- heavy optional dep
 
         if self._llm is None:
-            raise BrowserUnavailableError("The Browser-Use lane needs a chat model to drive it.")
+            raise BrowserUnavailableError("The Browser-Use agent needs a chat model to drive it.")
 
         browser = Browser(
             cdp_url=self._session.cdp_url,

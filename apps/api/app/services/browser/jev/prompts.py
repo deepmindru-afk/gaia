@@ -19,9 +19,8 @@ a matching link is not enough. BLOCKED means no supported operation can make pro
 A recent action that carries a note is an instruction the user gave when handing the browser back.
 Follow it before anything else."""
 
-# The human-in-the-loop rules this codebase's takeover flow relies on. Both lanes
-# offer REQUEST_HUMAN / SOLVE_CAPTCHA, so the rules and their criteria live here;
-# only the chat-model lane offers NAVIGATE, so its rule is separate.
+# The human-in-the-loop rules this codebase's takeover flow relies on; NAVIGATE
+# is a separate rule because it is not part of handing the browser over.
 HUMAN_RULES = """REQUEST_HUMAN hands the live browser to the user for a step you must NOT do: entering a
 payment, a password / OTP / 2FA, confirming an irreversible or legally-binding action, or a
 required field whose value the goal did not provide. Never invent personal information.

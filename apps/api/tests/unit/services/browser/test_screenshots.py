@@ -138,7 +138,7 @@ class TestPut:
         monkeypatch.setattr(shots.settings, "R2_BUCKET", "my-bucket")
         fake_client = MagicMock()
         with patch.object(shots, "_r2_client", return_value=fake_client):
-            shots._put(b"pngbytes", "browser_steps/c1/step_1.png", "image/png")
+            shots._put(b"pngbytes", "browser_steps/c1/step_1.png")
             fake_client.put_object.assert_called_once_with(
                 Bucket="my-bucket",
                 Key="browser_steps/c1/step_1.png",
@@ -173,32 +173,6 @@ class TestUploadStepScreenshot:
         assert args[0] is shots._put
         assert args[1] == b"pngdata"
         assert args[2] == "browser_steps/conv-abc/step_3.png"
-
-    async def test_a_jpeg_frame_is_stored_and_served_as_a_jpeg(self, monkeypatch):
-        """The ultrafast loop captures JPEG. Storing it under a .png key with
-        ContentType image/png serves every viewer the wrong type."""
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        monkeypatch.setattr(shots.settings, "R2_PUBLIC_BASE_URL", "https://cdn.example.com")
-        mock_to_thread = AsyncMock(return_value=None)
-        with patch.object(shots.asyncio, "to_thread", mock_to_thread):
-            result = await shots.upload_step_screenshot(b"jpegdata", "c1", 2, "image/jpeg")
-        assert result == "https://cdn.example.com/browser_steps/c1/step_2.jpg"
-        assert mock_to_thread.call_args.args[2:] == (
-            "browser_steps/c1/step_2.jpg",
-            "image/jpeg",
-        )
-
-    async def test_an_unknown_media_type_is_refused_rather_than_mislabelled(self, monkeypatch):
-        monkeypatch.setattr(shots, "_r2_configured", lambda: True)
-        mock_to_thread = AsyncMock(return_value=None)
-        with (
-            patch.object(shots.asyncio, "to_thread", mock_to_thread),
-            patch.object(shots.log, "warning") as mock_warn,
-        ):
-            result = await shots.upload_step_screenshot(b"x", "c1", 1, "image/webp")
-        assert result is None
-        assert mock_to_thread.await_count == 0
-        assert mock_warn.call_args.kwargs["browser"] == {"media_type": "image/webp"}
 
     async def test_strips_trailing_slash_from_base_url(self, monkeypatch):
         monkeypatch.setattr(shots, "_r2_configured", lambda: True)
@@ -300,9 +274,7 @@ class TestUploadStepScreenshot:
         mock_to_thread = AsyncMock(return_value=None)
         with patch.object(shots.asyncio, "to_thread", mock_to_thread):
             await shots.upload_step_screenshot(b"abc", "conv", 5)
-        mock_to_thread.assert_awaited_once_with(
-            shots._put, b"abc", "browser_steps/conv/step_5.png", "image/png"
-        )
+        mock_to_thread.assert_awaited_once_with(shots._put, b"abc", "browser_steps/conv/step_5.png")
 
     async def test_not_configured_does_not_call_to_thread(self, monkeypatch):
         monkeypatch.setattr(shots, "_r2_configured", lambda: False)
