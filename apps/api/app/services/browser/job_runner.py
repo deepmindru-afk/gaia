@@ -1,10 +1,9 @@
 """One browser task, run end to end with nothing of the request around it.
 
 The process-agnostic half of the browser tool: no stream writer, no LangGraph
-config, no tool result. Card snapshots go to an injected frame publisher (the
-job's Redis feed in the worker, the turn's stream writer while the tool still
-runs in-process), bots are mirrored here, and every failure becomes a terminal
-result card because nobody is holding a tool call to hear an exception.
+config, no tool result. Card snapshots go to the job's own Redis feed, bots are
+mirrored here, and every failure becomes a terminal result card because nobody
+is holding a tool call to hear an exception.
 """
 
 import asyncio
@@ -67,8 +66,7 @@ from app.utils.agent_utils import (
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log
 
-#: Where one already-shaped stream frame goes: the job's feed, or the turn's own
-#: writer while browser_task still runs the job in its own process.
+#: Where one already-shaped stream frame goes: the job's own replayable feed.
 FramePublisher = Callable[[dict[str, Any]], Awaitable[None]]
 
 # Screenshots stream into the chat live, so the reply must never narrate them.
@@ -413,16 +411,12 @@ async def _terminal_failure(emitter: ProgressEmitter, summary: str) -> BrowserRe
     return result
 
 
-async def execute_browser_job(
-    request: BrowserJobRequest, *, publish: FramePublisher | None = None
-) -> BrowserResultSnapshot:
+async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapshot:
     """Run one browser task end to end, publishing cards to the job's feed and to bots.
 
-    publish overrides where the frames go, which is how browser_task keeps
-    streaming them straight onto its own turn until it becomes an enqueue.
     Raises nothing the caller must handle — every failure is a FAILED card.
     """
-    emit_frame = publish or partial(publish_frame_to_job, request.job_id)
+    emit_frame = partial(publish_frame_to_job, request.job_id)
     thread_mirror = BrowserThreadMirror(emit_frame)
     emitter = ProgressEmitter(emit_frame, thread_mirror, _build_bot_delivery(request))
 

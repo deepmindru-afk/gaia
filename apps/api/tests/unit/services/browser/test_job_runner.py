@@ -63,9 +63,14 @@ def _bot_request(**overrides: Any) -> BrowserJobRequest:
     return _request(**(bot | overrides))
 
 
+#: The real publisher, kept so the feed-shape cases can put it back after _install
+#: has swapped it for a recorder.
+_REAL_PUBLISH_FRAME = jr.publish_frame_to_job
+
+
 async def _run(h: "Harness", request: BrowserJobRequest) -> str:
     """Run the job body and read its outcome the way the worker and the join tool do."""
-    return jr.agent_result_message(await jr.execute_browser_job(request, publish=h.publish))
+    return jr.agent_result_message(await jr.execute_browser_job(request))
 
 
 def _failed_card(summary: str) -> dict[str, Any]:
@@ -207,6 +212,7 @@ class Harness:
 
     def __init__(self) -> None:
         self.writes: list[dict[str, Any]] = []
+        self.published_to: list[str] = []
         self.session = MagicMock(session_id="sess-1", live_view_url="https://live/abc")
         self.session_kwargs: dict[str, Any] = {}
         self.runner_kwargs: dict[str, Any] = {}
@@ -221,8 +227,9 @@ class Harness:
         self.job_cancel_checks: list[str] = []
         self.states: list[BrowserJobState] = []
 
-    async def publish(self, payload: dict[str, Any]) -> None:
-        """Stand in for the job's feed, the way the worker's publisher is wired in."""
+    async def publish(self, job_id: str, payload: dict[str, Any]) -> None:
+        """Stand in for the job's feed, recording the raw frame the run produced."""
+        self.published_to.append(job_id)
         self.writes.append(payload)
 
     @property
@@ -299,6 +306,7 @@ def _install(
     final = result if result is not None else _result(BrowserSessionStatus.COMPLETED, True, "Done")
 
     monkeypatch.setattr(jr, "build_browser_llm", lambda: LLM_SENTINEL)
+    monkeypatch.setattr(jr, "publish_frame_to_job", h.publish)
 
     async def _put_state(state: BrowserJobState) -> None:
         h.states.append(state)
@@ -598,6 +606,8 @@ async def test_step_card_is_written_as_json_under_the_browser_event_key(
     h = _install(monkeypatch, run_body=body)
     await _run(h, _request(task="x"))
     assert list(h.writes[0]) == [BROWSER_TASK_EVENT]
+    # Every frame is addressed to THIS job's feed; a relay reads one job's stream.
+    assert set(h.published_to) == {"job-1"}
     # JSON mode, not python mode: the payload goes onto the SSE wire, so the
     # discriminator must be a plain string rather than an enum member.
     assert type(h.cards[0]["kind"]) is str
@@ -1454,6 +1464,7 @@ async def test_a_card_reaches_the_jobs_feed_in_the_shape_the_wire_expects(
         published.append((job_id, payload))
 
     monkeypatch.setattr(jr, "publish_job_event", _publish)
+    monkeypatch.setattr(jr, "publish_frame_to_job", _REAL_PUBLISH_FRAME)
 
     await jr.execute_browser_job(_request(task="x"))
 
@@ -1483,6 +1494,7 @@ async def test_an_already_normalized_mirror_frame_is_published_unchanged(
         published.append(payload)
 
     monkeypatch.setattr(jr, "publish_job_event", _publish)
+    monkeypatch.setattr(jr, "publish_frame_to_job", _REAL_PUBLISH_FRAME)
 
     await jr.execute_browser_job(_request(task="x"))
 

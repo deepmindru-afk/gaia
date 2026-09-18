@@ -1,4 +1,4 @@
-"""Docstrings for the browser-automation tool."""
+"""Docstrings for the browser-automation tools."""
 
 BROWSER_TASK = """
 Autonomously operate a real web browser to complete a task the user asked for
@@ -12,6 +12,12 @@ a dedicated integration (Gmail, Calendar, etc.) when one exists.
 
 The browser runs on isolated, self-hosted infrastructure. The user sees every
 step live (goal + screenshot).
+
+This tool STARTS the run and returns immediately. It does NOT return a result.
+The run continues in the background even after your turn ends. When you need the
+outcome in this turn, call wait_for_browser_task() and report what IT returns;
+if you finish the turn without joining, the result is delivered to the user as a
+follow-up message and you must not claim an outcome you never saw.
 
 This tool CAN handle logins and CAPTCHAs: it hands the step to the user, it does
 not fail. When it reaches a login/password, a one-time code / 2FA, a payment
@@ -45,5 +51,24 @@ Args:
     start_url (str, optional): A URL to open first, if the user named a site.
 
 Returns:
-    str: A summary of the outcome (what was accomplished or why it stopped).
+    str: Confirmation that the run has STARTED, with its job id. Never a result.
+"""
+
+WAIT_FOR_BROWSER_TASK = """
+Wait for this conversation's background browser task and return its outcome.
+
+Call this after browser_task when you need the run's answer in this turn. It
+returns the run's own guidance text: what it accomplished, that the user stopped
+it, or why it could not be finished. Report that and stop; never re-run the
+browser on the strength of it.
+
+Returns immediately when no browser task is running in this conversation. If the
+run outlasts the wait, it says so: the result is then delivered to the user as a
+follow-up message, so do not claim an outcome and do not start the task again.
+
+Args:
+    timeout (int, optional): Maximum seconds to wait. Default 600.
+
+Returns:
+    str: The run's outcome guidance, or a note that it is still running.
 """

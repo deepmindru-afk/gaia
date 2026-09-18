@@ -1,7 +1,8 @@
-"""The browser_task tool: the settings and URL gates, the job it describes, and where its frames go."""
+"""The browser_task tool: the gates, the slot it claims, the job it enqueues, and the relay it leaves behind."""
 
+from collections.abc import Coroutine
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.runnables.config import RunnableConfig
 import pytest
@@ -9,11 +10,9 @@ import pytest
 from app.agents.tools import browser_tool as tool_mod
 from app.agents.tools.browser_tool import browser_task
 from app.config.settings import settings
-from app.constants.browser import BROWSER_TASK_EVENT, BrowserSessionStatus
+from app.constants.browser import BROWSER_JOB_TASK
 from app.models.chat_models import ConversationSource
-from app.schemas.browser import BrowserResultSnapshot, BrowserStepSnapshot
-from app.schemas.browser_job import BrowserJobRequest
-from app.services.browser.job_runner import agent_result_message
+from app.schemas.browser_job import BrowserJobRequest, BrowserJobState, BrowserJobStatus
 
 pytestmark = pytest.mark.unit
 
@@ -32,55 +31,92 @@ BOT_CONFIG: RunnableConfig = {
 
 
 class Recorder:
-    """The job the tool asked for, and the frames it let the run publish."""
+    """Everything the tool did to the world before returning."""
 
     def __init__(self) -> None:
-        self.requests: list[BrowserJobRequest] = []
-        self.writes: list[dict[str, Any]] = []
+        self.claims: list[tuple[str, str]] = []
+        self.states: list[BrowserJobState] = []
+        self.enqueued: list[tuple[str, dict[str, Any]]] = []
+        self.released: list[tuple[str, str]] = []
+        self.relays: list[tuple[str, str]] = []
+        self.spawned: list[str] = []
 
     @property
     def request(self) -> BrowserJobRequest:
-        (request,) = self.requests
-        return request
+        """The one job that crossed the queue, as the worker will read it back."""
+        ((_function, payload),) = self.enqueued
+        return BrowserJobRequest.model_validate(payload)
 
 
 def _install(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    result: BrowserResultSnapshot | None = None,
-    cards: list[BrowserStepSnapshot] | None = None,
+    holder: str | None = None,
+    enqueued_job: object | None = object(),
+    enqueue_error: Exception | None = None,
 ) -> Recorder:
-    """Stand in for the job body: record the request, replay any cards through its publisher."""
+    """Wire every seam the enqueue touches; holder is the job already owning the slot."""
     recorder = Recorder()
-    final = result or BrowserResultSnapshot(
-        status=BrowserSessionStatus.COMPLETED, success=True, summary="Done"
+
+    async def _claim(conversation_id: str, job_id: str) -> str | None:
+        recorder.claims.append((conversation_id, job_id))
+        return holder
+
+    async def _put_state(state: BrowserJobState) -> None:
+        recorder.states.append(state)
+
+    async def _release(conversation_id: str, job_id: str) -> None:
+        recorder.released.append((conversation_id, job_id))
+
+    async def _enqueue(pool: object, function: str, payload: dict[str, Any]) -> object | None:
+        recorder.enqueued.append((function, payload))
+        if enqueue_error is not None:
+            raise enqueue_error
+        return enqueued_job
+
+    async def _relayed() -> None:
+        return None
+
+    def _relay(job_id: str, stream_id: str) -> Coroutine[Any, Any, None]:
+        # Recorded on the call, not in the body: the tool spawns this coroutine
+        # rather than awaiting it, so a body-side record would never run.
+        recorder.relays.append((job_id, stream_id))
+        return _relayed()
+
+    def _spawn(operation: str, coro: Any, **_context: Any) -> MagicMock:
+        recorder.spawned.append(operation)
+        coro.close()
+        return MagicMock()
+
+    monkeypatch.setattr(tool_mod, "claim_conversation_slot", _claim)
+    monkeypatch.setattr(tool_mod, "put_job_state", _put_state)
+    monkeypatch.setattr(tool_mod, "release_conversation_slot", _release)
+    monkeypatch.setattr(tool_mod, "enqueue_worker_job", _enqueue)
+    monkeypatch.setattr(tool_mod, "relay_job_events", _relay)
+    monkeypatch.setattr(tool_mod, "spawn_logged_task", _spawn)
+    monkeypatch.setattr(
+        tool_mod.RedisPoolManager, "get_pool", AsyncMock(return_value=MagicMock(name="pool"))
     )
-
-    async def _execute(request: BrowserJobRequest, *, publish: Any = None) -> BrowserResultSnapshot:
-        recorder.requests.append(request)
-        for card in cards or []:
-            await publish({BROWSER_TASK_EVENT: card.model_dump(mode="json")})
-        return final
-
-    monkeypatch.setattr(tool_mod, "execute_browser_job", _execute)
-    monkeypatch.setattr(tool_mod, "get_stream_writer", lambda: recorder.writes.append)
     monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_ENABLED", True)
     return recorder
 
 
 # ---------------------------------------------------------------------------
-# the gates — what never reaches the browser at all
+# the gates — what never reaches the queue at all
 # ---------------------------------------------------------------------------
 
 
-async def test_disabled_message_is_exact_and_no_job_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_disabled_message_is_exact_and_no_job_is_claimed_or_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     recorder = _install(monkeypatch)
     monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_ENABLED", False)
 
     out = await browser_task.ainvoke({"task": "do it"}, config=UI_CONFIG)
 
     assert out == "Browser automation is currently disabled."
-    assert recorder.requests == []
+    assert recorder.claims == []
+    assert recorder.enqueued == []
 
 
 async def test_a_private_start_url_is_refused_before_any_job_exists(
@@ -98,7 +134,8 @@ async def test_a_private_start_url_is_refused_before_any_job_exists(
         "I can't open http://169.254.169.254/latest/meta-data: refusing to connect to "
         "non-public address 169.254.169.254. Only public http(s) sites are reachable."
     )
-    assert recorder.requests == []
+    assert recorder.claims == []
+    assert recorder.enqueued == []
 
 
 async def test_the_private_network_switch_lets_a_local_start_url_through(
@@ -115,8 +152,20 @@ async def test_the_private_network_switch_lets_a_local_start_url_through(
 
 
 # ---------------------------------------------------------------------------
-# the job the tool describes
+# the job the tool enqueues
 # ---------------------------------------------------------------------------
+
+
+async def test_the_job_crosses_the_queue_under_the_name_the_worker_registers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The enqueue site and worker.py share one constant; a drifting string enqueues a job nobody runs."""
+    recorder = _install(monkeypatch)
+
+    await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
+
+    ((function, _payload),) = recorder.enqueued
+    assert function == BROWSER_JOB_TASK
 
 
 async def test_the_job_carries_the_turns_identity_and_provenance(
@@ -149,6 +198,21 @@ async def test_the_job_carries_the_turns_identity_and_provenance(
         "source_category": "bot",
         "conversation_source": ConversationSource.DISCORD,
     }
+
+
+async def test_the_claimed_slot_the_queued_state_and_the_job_all_name_one_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three keys are minted from this id; a mismatch orphans the state a joiner reads or the slot the worker releases."""
+    recorder = _install(monkeypatch)
+
+    await browser_task.ainvoke({"task": "book a table"}, config=UI_CONFIG)
+
+    job_id = recorder.request.job_id
+    assert recorder.claims == [("c1", job_id)]
+    assert recorder.states == [
+        BrowserJobState(job_id=job_id, status=BrowserJobStatus.QUEUED, task="book a table")
+    ]
 
 
 async def test_conversation_id_prefers_the_user_facing_conversation(
@@ -224,42 +288,120 @@ async def test_each_call_describes_its_own_job(monkeypatch: pytest.MonkeyPatch) 
     await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
     await browser_task.ainvoke({"task": "y"}, config=UI_CONFIG)
 
-    first, second = recorder.requests
+    first, second = (BrowserJobRequest.model_validate(p) for _, p in recorder.enqueued)
     assert len(first.job_id) == 32
     assert first.job_id != second.job_id
 
 
 # ---------------------------------------------------------------------------
-# what the turn sees
+# one browser task per conversation
 # ---------------------------------------------------------------------------
 
 
-async def test_the_runs_cards_go_straight_onto_this_turns_stream(
+async def test_a_second_task_is_refused_by_name_and_never_reaches_the_queue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The run still belongs to the turn, so its frames reach the graph's writer unchanged — normalization happens downstream, exactly as before."""
-    recorder = _install(
-        monkeypatch, cards=[BrowserStepSnapshot(index=2, goal="find the menu", url="https://x")]
+    """Two browsers in one conversation would interleave their cards and their handoffs; the refusal names the run the user is already watching."""
+    recorder = _install(monkeypatch, holder="job-already-running")
+
+    out = await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
+
+    assert out == (
+        "A browser task is already running in this conversation (job job-already-running). "
+        "Call wait_for_browser_task() to collect it before starting another."
     )
+    assert recorder.enqueued == []
+    assert recorder.states == []
+    assert recorder.released == []
+
+
+async def test_a_refused_task_does_not_release_the_running_jobs_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Releasing here would free the slot out from under the run that owns it."""
+    recorder = _install(monkeypatch, holder="job-already-running")
 
     await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
 
-    assert [list(write) for write in recorder.writes] == [[BROWSER_TASK_EVENT]]
-    assert recorder.writes[0][BROWSER_TASK_EVENT]["goal"] == "find the menu"
+    assert recorder.released == []
+    assert recorder.spawned == []
 
 
-async def test_the_result_is_handed_back_as_the_runs_own_guidance(
+# ---------------------------------------------------------------------------
+# the enqueue failing
+# ---------------------------------------------------------------------------
+
+
+async def test_a_dropped_enqueue_frees_the_slot_and_says_so(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    result = BrowserResultSnapshot(
-        status=BrowserSessionStatus.COMPLETED, success=True, summary="Booked the table."
+    """A wedged slot would refuse every later browser task in this conversation for a run that never started."""
+    recorder = _install(monkeypatch, enqueued_job=None)
+
+    out = await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
+
+    assert out == "I couldn't start the browser task right now. Try again in a moment."
+    assert recorder.released == [("c1", recorder.request.job_id)]
+    assert recorder.spawned == []
+
+
+async def test_an_enqueue_that_raises_is_reported_and_frees_the_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Redis being down must not surface as a tool exception the model narrates as a browser failure."""
+    recorder = _install(monkeypatch, enqueue_error=ConnectionError("redis is down"))
+
+    out = await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
+
+    assert out == "I couldn't start the browser task right now. Try again in a moment."
+    assert recorder.released == [("c1", recorder.request.job_id)]
+
+
+# ---------------------------------------------------------------------------
+# the relay and the notice
+# ---------------------------------------------------------------------------
+
+
+async def test_the_relay_is_started_for_this_turns_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing else puts the worker's cards on this conversation's live stream, or into the turn's collected tool events."""
+    recorder = _install(monkeypatch)
+
+    await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
+
+    assert recorder.relays == [(recorder.request.job_id, "s1")]
+    assert recorder.spawned == ["browser_job_relay"]
+
+
+async def test_no_stream_means_no_relay_but_the_job_still_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A turn with no stream has nowhere to replay to; the worker still runs the job and delivers the result itself."""
+    recorder = _install(monkeypatch)
+
+    await browser_task.ainvoke(
+        {"task": "x"}, config={"configurable": {"user_id": "u1", "thread_id": "c1"}}
     )
-    _install(monkeypatch, result=result)
 
-    out = await browser_task.ainvoke({"task": "book a table"}, config=UI_CONFIG)
+    assert recorder.relays == []
+    assert len(recorder.enqueued) == 1
 
-    assert out == agent_result_message(result)
-    assert out.startswith("Booked the table.")
+
+async def test_the_tool_returns_immediately_naming_the_job_and_the_join(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The executor must learn it has NOT got a result yet, and how to collect one."""
+    recorder = _install(monkeypatch)
+
+    out = await browser_task.ainvoke({"task": "x"}, config=UI_CONFIG)
+
+    assert out == (
+        f"Browser task started in the background (job {recorder.request.job_id}). Progress "
+        "and the live-view link are streaming into this conversation. Call "
+        "wait_for_browser_task() when you need the outcome; if you end the turn first, "
+        "the result is delivered to the user as a follow-up."
+    )
 
 
 async def test_the_surface_the_task_came_from_is_logged(monkeypatch: pytest.MonkeyPatch) -> None:
