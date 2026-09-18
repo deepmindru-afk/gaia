@@ -59,6 +59,7 @@ from app.services.hil.bridge import (
     publish_approval_request,
     publish_auto_approval,
     publish_decision,
+    publish_ledger_request,
     recall_declined_call,
     remember_declined_call,
 )
@@ -255,6 +256,15 @@ async def _decide_ledger(
             f"{LogTag.HIL} Ledger registered gated call",
             approval_id=ap_id,
             tool_name=call.name,
+        )
+        await publish_ledger_request(
+            approval_id=ap_id,
+            stream_id=context.stream_id,
+            user_id=context.user_id,
+            conversation_id=context.conversation_id,
+            tool_call=call,
+            summary=summary,
+            integration_name=integration_name,
         )
         return _tool_message(
             call,

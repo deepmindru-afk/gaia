@@ -95,6 +95,40 @@ async def publish_approval_request(
     _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
 
 
+async def publish_ledger_request(
+    *,
+    approval_id: str,
+    stream_id: str,
+    user_id: str,
+    conversation_id: str,
+    tool_call: GatedCall,
+    summary: str,
+    integration_name: str | None,
+    rationale: str | None = None,
+) -> None:
+    """Surface a ledger PENDING card — exactly once per registration.
+
+    Same ``approval_request`` wire shape as the barrier path (same tool_name,
+    so web TOOL_RENDERERS and bot streaming render it with no registry
+    changes); the ledger-only fields (rationale, age 0, version 0) ride as
+    optional extras old clients ignore. Called only on fresh registration —
+    the dedup hit means the card is already up, so the caller skips this.
+    """
+    log.set(hil={"approval_id": approval_id, "tool": tool_call.name, "stream_id": stream_id})
+    entry = _approval_entry(
+        approval_id,
+        tool_call,
+        HILApprovalStatus.PENDING,
+        summary,
+        integration_name,
+    )
+    entry.data.rationale = rationale
+    entry.data.age_seconds = 0
+    entry.data.ledger_version = 0
+    await _publish_entry(stream_id, entry)
+    _schedule_pending_notification(user_id, conversation_id, approval_id, summary)
+
+
 async def publish_decision(
     record: HILApprovalRecord, status: HILApprovalStatus, *, stream_id: str, feedback: str | None
 ) -> None:

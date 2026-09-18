@@ -53,6 +53,7 @@ class TestLedgerBranch:
             patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
             patch(f"{MODULE}.approval_ledger_repository", new=ledger),
             patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()),
             patch(f"{MODULE}.interrupt") as intr,
         ):
             result = await gate.decide_tool_call(_gated_request())
@@ -132,6 +133,7 @@ class TestLedgerBranch:
             patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="ask")),
             patch(f"{MODULE}.approval_ledger_repository", new=ledger),
             patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()),
             patch(f"{MODULE}.interrupt") as intr,
         ):
             result = await gate.decide_tool_call(_gated_request())
