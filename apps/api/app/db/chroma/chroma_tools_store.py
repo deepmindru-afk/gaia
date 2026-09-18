@@ -141,14 +141,23 @@ def _get_current_tools_with_hashes(
 
 
 def _get_subagent_tools() -> dict[str, IndexedToolEntry]:
-    """Get subagent tools with their hashes.
+    """Get MCP subagent pointers with their hashes.
+
+    Only MCP-managed integrations are indexed here: their tools are issued
+    per user and live in namespaces discovery never enters, so the pointer
+    doc is the only way the model learns their id to hand off to. Provider
+    and built-in integrations surface as their own tools (never as
+    pointers), so indexing them would resurrect the removed subagent
+    discovery surface — and the seed diff deletes those stale docs.
 
     Returns:
-        Dictionary mapping subagent tool names to their hash and namespace info
+        Dictionary mapping subagent pointer names to their hash and namespace info
     """
     subagent_tools: dict[str, IndexedToolEntry] = {}
 
     for subagent in all_subagents():
+        if subagent.managed_by != "mcp":
+            continue
         cfg = subagent.config
         provider_name = subagent.name
         short_name = subagent.short_name or subagent.id

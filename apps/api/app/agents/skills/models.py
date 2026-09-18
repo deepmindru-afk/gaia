@@ -2,7 +2,7 @@
 Agent Skills Models - Pydantic models for installable skills.
 
 Follows the Agent Skills open standard (agentskills.io) with GAIA-specific
-extensions for scoping skills to executor/subagents.
+extensions for scoping skills to executor/integrations.
 
 Flat schema: all fields are top-level on the Skill document (no nested
 skill_metadata). SkillMetadata is retained only for parsing external
@@ -91,7 +91,7 @@ class SkillMetadata(BaseModel):
     target: str = Field(
         default="executor",
         description=(
-            "Target agent: 'executor', or a subagent agent_name (gmail_agent, github_agent, etc.)"
+            "Target agent: 'executor', or an integration agent_name (gmail_agent, github_agent, etc.)"
         ),
     )
 
@@ -134,7 +134,7 @@ class Skill(MongoDocument):
     target: str = Field(
         default="executor",
         description=(
-            "Target agent: 'executor', or a subagent agent_name (gmail_agent, github_agent, etc.)"
+            "Target agent: 'executor', or an integration agent_name (gmail_agent, github_agent, etc.)"
         ),
     )
 
@@ -222,7 +222,7 @@ class SkillInlineCreateRequest(BaseModel):
     instructions: str = Field(..., description="Markdown instructions (body of SKILL.md)")
     target: str = Field(
         default="executor",
-        description="Target agent: 'executor' or a subagent agent_name (e.g., gmail_agent)",
+        description="Target agent: 'executor' or an integration agent_name (e.g., gmail_agent)",
     )
 
 
@@ -241,7 +241,7 @@ class SkillUpdateRequest(BaseModel):
     )
     target: str | None = Field(
         default=None,
-        description="Target agent: 'executor' or a connected subagent agent_name (unchanged if omitted)",
+        description="Target agent: 'executor' or a connected integration agent_name (unchanged if omitted)",
     )
 
 
@@ -261,9 +261,9 @@ class SkillToggleResponse(BaseModel):
 
 
 class SkillTarget(BaseModel):
-    """A place a skill can run: the executor, or a connected integration subagent.
+    """A place a skill can run: the executor, or a connected integration.
 
-    ``value`` is the subagent ``agent_name`` written to a skill's ``target``;
+    ``value`` is the integration ``agent_name`` written to a skill's ``target``;
     ``icon`` is the integration id (``executor`` for the general bucket) so the
     UI can reuse the integration logo set.
     """
@@ -307,9 +307,9 @@ class BuiltinSkillInfo(BaseModel):
     slug: str = Field(..., description="Skill directory slug")
     name: str = Field(..., description="Skill name")
     description: str = Field(..., description="What the skill does")
-    target: str = Field(..., description="Target agent_name (executor or a subagent)")
+    target: str = Field(..., description="Target agent_name (executor or an integration)")
     group_label: str = Field(..., description="Display name of the owning agent")
-    icon: str = Field(..., description="Icon key (owning subagent id, or 'executor')")
+    icon: str = Field(..., description="Icon key (owning integration id, or 'executor')")
     connected: bool = Field(
         default=True,
         description="Whether the owning agent is available to the user (always-on, or a connected integration)",

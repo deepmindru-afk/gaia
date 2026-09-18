@@ -556,7 +556,7 @@ class ToolRegistry:
         exclude_tools: list[str] | None = None,
     ) -> ToolCategory:
         """
-        Register provider tools on-demand when subagent is created.
+        Register provider tools on-demand when an integration is first used.
         Tools are loaded from Composio and indexed in ChromaDB.
         """
         if toolkit_name in self._categories:
