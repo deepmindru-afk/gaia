@@ -4,6 +4,7 @@ from . import (
     browser_use_click_patch,
     browser_use_input_timing_patch,
     browser_use_page_ready_patch,
+    browser_use_scroll_patch,
     browser_use_stealth_patch,
     composio_custom_tool_patch,
     composio_custom_tool_schema_patch,
