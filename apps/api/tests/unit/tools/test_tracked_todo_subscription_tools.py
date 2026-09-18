@@ -130,6 +130,17 @@ class TestListTriggerFields:
 
         assert "Scope this watch with" not in out
 
+    async def test_an_optional_scope_field_renders_without_the_required_marker(self) -> None:
+        # calendar_ids is optional, so its line must NOT carry ', required' — the
+        # exact line guards the required/optional branch of the render.
+        out = await list_trigger_fields.coroutine(trigger_name="calendar_event_starting_soon")
+        lines = out.splitlines()
+
+        assert (
+            "  calendar_ids (list of text): Calendar IDs to monitor. Use ['all'] for all calendars."
+            in lines
+        )
+
     async def test_an_unknown_trigger_returns_the_available_ones(self) -> None:
         out = await list_trigger_fields.coroutine(trigger_name="nope")
 
@@ -257,6 +268,27 @@ class TestSubscribe:
             )
 
         assert "'branch' is not a scope field on 'github_pr_event'" in out
+        register.assert_not_awaited()
+
+    async def test_multiple_scope_errors_are_joined_by_a_single_space(self) -> None:
+        # An unknown key AND the missing required repos: both errors must reach the
+        # model, space-separated (not run together or padded).
+        register = AsyncMock()
+        with patch(f"{_MOD}.register_subscription", register):
+            out = await subscribe_todo_to_trigger.coroutine(
+                config=_config(),
+                todo_id=TODO_ID,
+                trigger_name="github_pr_event",
+                action="notify",
+                scope={"branch": "main"},
+            )
+
+        unknown = "'branch' is not a scope field on 'github_pr_event'. Scope fields: repos."
+        missing = (
+            "'github_pr_event' requires a 'repos' scope "
+            "(List of repositories in owner/repo format); none was provided."
+        )
+        assert f"Error: {unknown} {missing}" in out
         register.assert_not_awaited()
 
     async def test_no_calendar_window_sends_no_registration_config(self) -> None:

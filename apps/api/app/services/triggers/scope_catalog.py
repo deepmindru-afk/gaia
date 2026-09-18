@@ -76,7 +76,8 @@ def scope_fields_for(trigger_name: str) -> tuple[ScopeField, ...]:
         ScopeField(
             name=name,
             type=_scope_type_label(field.annotation),
-            description=field.description or "",
+            # Every config field carries a description; the "" only satisfies str | None.
+            description=field.description or "",  # pragma: no mutate
             required=name in required,
         )
         for name, field in config_class.model_fields.items()

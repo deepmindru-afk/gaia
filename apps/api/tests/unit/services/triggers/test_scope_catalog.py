@@ -5,16 +5,54 @@ so it is checked field by field, and a drift guard proves every required name is
 a real field on its config class.
 """
 
+from typing import get_args
+
 import pytest
 
+from app.models.trigger_configs import (
+    GitHubPrEventConfig,
+    GmailNewMessageConfig,
+    TriggerConfigData,
+)
 from app.services.triggers.scope_catalog import (
     REQUIRED_SCOPE,
     TRIGGER_CONFIG_CLASSES,
     ScopeField,
+    _config_classes,
+    _scope_type_label,
     scope_fields_for,
 )
 
 pytestmark = pytest.mark.unit
+
+
+class TestConfigClasses:
+    """_config_classes maps every trigger name to the class that declares it."""
+
+    def test_it_maps_each_trigger_name_to_its_owning_config_class(self) -> None:
+        classes = _config_classes()
+
+        assert classes["github_pr_event"] is GitHubPrEventConfig
+        assert classes["gmail_new_message"] is GmailNewMessageConfig
+
+    def test_it_covers_every_union_member(self) -> None:
+        # One entry per config class; a wrong index or an early return would drop some.
+        member_count = len(get_args(get_args(TriggerConfigData)[0]))
+        assert len(_config_classes()) == member_count
+
+
+class TestScopeTypeLabel:
+    def test_a_list_annotation_is_list_of_text(self) -> None:
+        assert _scope_type_label(list[str]) == "list of text"
+
+    def test_an_int_is_integer_and_a_bool_is_boolean_and_a_str_is_text(self) -> None:
+        assert _scope_type_label(int) == "integer"
+        assert _scope_type_label(bool) == "true/false"
+        assert _scope_type_label(str) == "text"
+
+    def test_an_unknown_annotation_falls_back_to_text(self) -> None:
+        # float is neither a list origin nor in the label table, so it hits the default.
+        assert _scope_type_label(float) == "text"
 
 
 class TestScopeFieldsFor:
