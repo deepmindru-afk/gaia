@@ -169,7 +169,7 @@ def observe(state: BrowserStateSummary, live: LiveValues | None = None) -> JevOb
         url=url,
         title=getattr(state, "title", "") or "",
         text=text,
-        elements=_ranked(elements, url),
+        elements=_on_screen(elements, url),
     )
     return JevObservation(
         **{k: v for k, v in observation.__dict__.items() if k != "fingerprint"},
@@ -177,20 +177,20 @@ def observe(state: BrowserStateSummary, live: LiveValues | None = None) -> JevOb
     )
 
 
-def _ranked(elements: list[JevElement], url: str) -> tuple[JevElement, ...]:
-    """Rank the observed elements in viewport-then-document order and cap them.
+def _on_screen(elements: list[JevElement], url: str) -> tuple[JevElement, ...]:
+    """Keep the elements inside the viewport, in document order, under the gateway cap.
 
-    One table serves the state and every target head, so the cap is what keeps
-    the request under the gateway's token limit.
+    Jev decides on what a person sees; anything below the fold is one SCROLL away.
+    The cap only bites on a screen denser than one decision can carry, and says so.
     """
-    ranked = sorted(elements, key=lambda e: not e.in_viewport)
-    dropped = len(ranked) - JEV_MAX_ELEMENTS
+    visible = [e for e in elements if e.in_viewport]
+    dropped = len(visible) - JEV_MAX_ELEMENTS
     if dropped > 0:
         log.warning(
-            f"{LogTag.BROWSER} Jev element table capped",
+            f"{LogTag.BROWSER} Jev screen has more elements than one decision can carry",
             browser={"dropped": dropped, "url": url},
         )
-    return tuple(ranked[:JEV_MAX_ELEMENTS])
+    return tuple(visible[:JEV_MAX_ELEMENTS])
 
 
 def _scroll_window(state: BrowserStateSummary) -> tuple[float, float, float, float] | None:

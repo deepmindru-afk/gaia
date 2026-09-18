@@ -232,22 +232,35 @@ def _big_page(count: int = 300, *, in_viewport_from: int = 0):
     )
 
 
-def test_a_huge_page_is_capped_to_the_gateways_choice_limit() -> None:
+def test_a_screen_denser_than_the_gateway_allows_is_capped_in_document_order() -> None:
     observation = observe(_big_page())
 
     assert len(observation.targets(JevOperation.CLICK)) == JEV_MAX_ELEMENTS
 
 
-def test_an_in_viewport_element_outranks_an_earlier_one_below_the_fold() -> None:
-    # 241 in-viewport elements (document indices 60..300) crowd out every element
-    # above the fold, so the cap is decided by the viewport and not by position.
-    observation = observe(_big_page(in_viewport_from=59))
+def test_jev_sees_only_the_elements_on_screen() -> None:
+    """Off-screen elements are one SCROLL away, not part of this decision."""
+    observation = observe(_big_page(count=100, in_viewport_from=40))
 
-    indexes = {e.index for e in observation.elements}
+    indexes = sorted(e.index for e in observation.elements)
 
-    assert 59 + JEV_MAX_ELEMENTS in indexes  # in the viewport, past the cap position
-    assert 11 not in indexes  # below the fold, near the start
-    assert len(observation.elements) == JEV_MAX_ELEMENTS
+    assert indexes == list(range(41, 101))
+
+
+def test_elements_without_geometry_are_kept_on_screen() -> None:
+    state = make_state(
+        {
+            1: FakeNode(
+                "BUTTON",
+                text="Go",
+                ax_node=FakeAXNode(role="button", name="Go"),
+                absolute_position=None,
+            )
+        },
+        page_info=make_page_info(),
+    )
+
+    assert [e.index for e in observe(state).elements] == [1]
 
 
 def test_the_options_of_one_select_are_capped_in_document_order() -> None:
@@ -284,7 +297,7 @@ def test_a_cap_that_cuts_choices_is_never_silent(monkeypatch) -> None:
     observe(_big_page()).targets(JevOperation.CLICK)
 
     logger.warning.assert_called_once_with(
-        f"{LogTag.BROWSER} Jev element table capped",
+        f"{LogTag.BROWSER} Jev screen has more elements than one decision can carry",
         browser={"dropped": 300 - JEV_MAX_ELEMENTS, "url": "https://x"},
     )
 
