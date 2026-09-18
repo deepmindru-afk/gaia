@@ -292,7 +292,7 @@ async def test_select_becomes_select_dropdown_by_option_text(flights_state) -> N
             "BLOCKED",
             {
                 "done": {
-                    "text": "Could not make progress: no supported action can advance the task on this page.",
+                    "text": "I couldn't find a way to move forward on this page.",
                     "success": False,
                     "files_to_display": [],
                 }
@@ -652,9 +652,37 @@ async def test_a_takeover_note_amends_the_goal_jev_decides_against(flights_state
     await model.ainvoke([], _agent_output())
 
     goal = gateway.requests[1].questions["operation"].instructions["goal"]
-    assert goal.startswith("Fly Zurich to London")
-    assert "The user then said: skip the login, just tell me the page title" in goal
-    assert "skip the login, just tell me the page title" in helper.context(1)["goal"]
+    assert goal.startswith(
+        "Latest instruction from the user, which overrides the task below: "
+        "skip the login, just tell me the page title"
+    )
+    assert "Original task: Fly Zurich to London" in goal
+    assert helper.context(1)["goal"] == goal
+
+
+async def test_the_closing_answer_is_written_against_the_latest_instruction(flights_state) -> None:
+    """Regression: DONE reported the original task as unfinished instead of answering the note."""
+    model, _, helper, _ = _model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("DONE", None)],
+        [
+            {"text": "Sign in to continue", "category": "credentials"},
+            {"text": "The page title is Flights."},
+        ],
+    )
+    await model.ainvoke([], _agent_output())
+
+    model.note_from_user("skip the login, just tell me the page title")
+    await model.ainvoke([], _agent_output())
+
+    assert helper.system_prompt(1) == DONE_SUMMARY
+    assert helper.context(1)["goal"].startswith(
+        "Latest instruction from the user, which overrides the task below: "
+        "skip the login, just tell me the page title"
+    )
+    assert "Original task: Fly Zurich to London" in helper.context(1)["goal"]
+    # The page the answer must be read off is still in the helper's context.
+    assert set(helper.context(1)["page"]) == {"title", "url", "text"}
 
 
 async def test_a_note_survives_the_page_change_settle(flights_state) -> None:

@@ -70,7 +70,8 @@ _OPERATIONS_BY_ACTION: dict[str, tuple[JevOperation, ...]] = {
     BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: (JevOperation.SOLVE_CAPTCHA,),
     "done": (JevOperation.DONE, JevOperation.BLOCKED),
 }
-_BLOCKED_SUMMARY = "Could not make progress: no supported action can advance the task on this page."
+# Reaches the user verbatim on the failure card, so it reads like a person.
+_BLOCKED_SUMMARY = "I couldn't find a way to move forward on this page."
 _DEFAULT_TAKEOVER_REASON = "Complete this step in the live browser"
 _DEFAULT_CAPTCHA_CHALLENGE = "Solve the CAPTCHA, then continue"
 _USER_REQUEST = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.DOTALL)
@@ -378,14 +379,17 @@ class JevChatModel:
         self._last_fingerprint = observation.fingerprint
 
     def _effective_goal(self, messages: list[BaseMessage]) -> str:
-        """Return the task, plus the latest takeover note, which overrides it.
+        """Return the goal to decide and answer against: the latest instruction first, then the task.
 
-        Jev classifies against this goal, so a note left only in recent_actions
-        never changed what DONE is measured against.
+        Jev and the text helper both read only this, so the note goes first and
+        says it overrides -- appended at the end it read as an aside, and the
+        closing answer reported the original task as unfinished instead.
         """
         goal = self._task or _goal_from_messages(messages)
         note = self._latest_note()
-        return f"{goal}\nThe user then said: {note}" if note else goal
+        if not note:
+            return goal
+        return f"Latest instruction from the user, which overrides the task below: {note}\nOriginal task: {goal}"
 
     def _latest_note(self) -> str | None:
         return next((h.note for h in reversed(self._history) if h.note), None)
