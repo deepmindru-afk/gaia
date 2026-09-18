@@ -213,7 +213,7 @@ BROWSER_VIEWPORT_HEIGHT = 800
 
 
 # ---------------------------------------------------------------------------
-# Jev decision policy (BROWSER_USE_JEV_ENABLED). The operation vocabulary is the
+# Jev decision policy. The operation vocabulary is the
 # one browser-use/jev-ultrafast offers Jev — each maps onto one Browser-Use
 # action — plus the two human-takeover controls this codebase registers.
 # ---------------------------------------------------------------------------

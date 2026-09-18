@@ -70,8 +70,6 @@ def _patch_runner(monkeypatch: pytest.MonkeyPatch, result: BrowserResultSnapshot
 
     monkeypatch.setattr(tool_mod, "browser_session", _fake_session)
     monkeypatch.setattr(tool_mod, "build_browser_llm", lambda: object())
-    # Vision resolution hits a live model catalog; unit tests pin it.
-    monkeypatch.setattr(tool_mod, "resolve_use_vision", AsyncMock(return_value=True))
     runner = MagicMock()
     runner.run = AsyncMock(return_value=result)
     monkeypatch.setattr(tool_mod, "BrowserTaskRunner", MagicMock(return_value=runner))
@@ -111,7 +109,6 @@ async def test_happy_path_runs_and_returns_summary(
 
 async def test_capacity_limit_returns_message(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tool_mod, "build_browser_llm", lambda: object())
-    monkeypatch.setattr(tool_mod, "resolve_use_vision", AsyncMock(return_value=True))
 
     @asynccontextmanager
     async def _at_capacity(**kwargs: object) -> AsyncIterator[MagicMock]:
@@ -169,7 +166,6 @@ async def test_bot_delivery_outage_does_not_abort_run(
     monkeypatch.setattr(tool_mod, "BotProgressDelivery", _FailingDelivery)
     monkeypatch.setattr(tool_mod, "BrowserTaskRunner", _Runner)
     monkeypatch.setattr(tool_mod, "build_browser_llm", lambda: object())
-    monkeypatch.setattr(tool_mod, "resolve_use_vision", AsyncMock(return_value=True))
 
     fake_session = MagicMock(
         session_id="s1",
@@ -355,7 +351,6 @@ def _install(
     run_body: RunBody | None = None,
     session_error: Exception | None = None,
     handoff_outcome: HandoffOutcome | None = None,
-    use_vision: bool = True,
 ) -> Harness:
     """Wire every seam of ``browser_task`` to a recorder and return the recording."""
     h = Harness()
@@ -363,7 +358,6 @@ def _install(
 
     monkeypatch.setattr(tool_mod, "get_stream_writer", lambda: h.writes.append)
     monkeypatch.setattr(tool_mod, "build_browser_llm", lambda: LLM_SENTINEL)
-    monkeypatch.setattr(tool_mod, "resolve_use_vision", AsyncMock(return_value=use_vision))
 
     @asynccontextmanager
     async def _session(**kwargs: Any) -> AsyncIterator[MagicMock]:
@@ -552,7 +546,7 @@ async def test_runner_is_configured_from_settings_and_config(
 ) -> None:
     """Every knob the runner gets must come from its own setting — not a
     neighbouring one, and not a hardcoded default."""
-    h = _install(monkeypatch, use_vision=False)
+    h = _install(monkeypatch)
     monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_MAX_STEPS", 7)
     monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_MAX_ACTIONS_PER_STEP", 3)
     monkeypatch.setattr(tool_mod.settings, "BROWSER_USE_TASK_TIMEOUT_SECONDS", 111)
@@ -587,7 +581,6 @@ async def test_runner_is_configured_from_settings_and_config(
         step_timeout_seconds=22,
         handoff_timeout_seconds=333,
         stream_screenshots=False,
-        use_vision=False,
         solve_captcha=False,
         flash_mode=False,
     )

@@ -2,7 +2,7 @@
 
 One Jev evaluation per step picks the operation and the target element from the
 page's indexed element table; a small chat model writes text only when needed.
-Wired in behind ``BROWSER_USE_JEV_ENABLED`` by ``services/browser/llm.py``; the
+Built by ``services/browser/llm.py`` as the browser's only model; the
 runner binds the live browser session so the policy reads the same observation
 Browser-Use just took (``chat_model.py``).
 """

@@ -195,7 +195,6 @@ def _make_runner(*, emit, request_handoff=None, is_cancelled=None, overrides=_Ru
             # runner adds a per-handoff allowance on top).
             handoff_timeout_seconds=0,
             stream_screenshots=overrides.stream_screenshots,
-            use_vision=True,
             solve_captcha=False,
         ),
         user_id=overrides.user_id,
@@ -524,7 +523,6 @@ def test_init_derives_timeouts_and_starts_from_a_clean_slate() -> None:
             step_timeout_seconds=180,
             handoff_timeout_seconds=60,
             stream_screenshots=True,
-            use_vision=True,
             solve_captcha=True,
         ),
     )
@@ -939,7 +937,7 @@ async def test_run_configures_the_agent_from_the_runner_settings(patch_browser) 
     kwargs = FakeAgent.last_kwargs
     assert kwargs["task"] == "book a table" + BROWSER_TAKEOVER_PREAMBLE
     assert kwargs["llm"] is runner._llm
-    assert kwargs["use_vision"] is True
+    assert kwargs["use_vision"] is False
     assert kwargs["flash_mode"] is True
     assert kwargs["max_actions_per_step"] == 5
     assert kwargs["step_timeout"] == runner._step_timeout
@@ -1052,7 +1050,6 @@ async def test_run_bounds_the_agent_by_the_wall_clock_budget(patch_browser, monk
             step_timeout_seconds=180,
             handoff_timeout_seconds=60,
             stream_screenshots=True,
-            use_vision=True,
             solve_captcha=False,
         ),
     )

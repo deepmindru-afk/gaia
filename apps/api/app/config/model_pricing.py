@@ -65,6 +65,14 @@ MODEL_PRICING: dict[str, ModelPricing] = {
         output_cost_per_1k=0.00012852,
         cached_input_cost_per_1k=0.000012852,
     ),
+    # BROWSER_USE_JEV_TEXT_MODEL — the text helper that writes typed values for
+    # Jev's decisions, served by OpenRouter. $0.30/1M input, $2.50/1M output,
+    # $0.03/1M cached input, read from https://openrouter.ai/api/v1/models.
+    "google/gemini-3.5-flash-lite": ModelPricing(
+        input_cost_per_1k=0.0003,
+        output_cost_per_1k=0.0025,
+        cached_input_cost_per_1k=0.00003,
+    ),
     # BROWSER_USE_JEV_MODEL — TypeSafe's decision model, served by OpenRouter.
     # $0.042 per 1M input tokens and nothing for output: a decision returns
     # choices, not generated tokens. Confirmed against a real call, which billed

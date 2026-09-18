@@ -262,7 +262,8 @@ class BrowserUseLane:
             ),
             "register_new_step_callback": self._on_step,
             "register_should_stop_callback": self._hooks.should_stop,
-            "use_vision": self._config.use_vision,
+            # Jev decides from structured state; no model on this path takes images.
+            "use_vision": False,
             "flash_mode": self._config.flash_mode,
             "max_actions_per_step": self._config.max_actions_per_step,
             "step_timeout": self._step_timeout,

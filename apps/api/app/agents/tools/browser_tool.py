@@ -50,7 +50,7 @@ from app.services.browser.bot_delivery import BotProgressDelivery
 from app.services.browser.exceptions import BrowserConcurrencyLimit, BrowserUnavailableError
 from app.services.browser.fingerprint import reset_fingerprint_seed, set_fingerprint_seed
 from app.services.browser.handoff import await_handoff, create_pending_handoff
-from app.services.browser.llm import build_browser_llm, resolve_use_vision
+from app.services.browser.llm import build_browser_llm
 from app.services.browser.runner import (
     BrowserRunConfig,
     BrowserRunnerCallbacks,
@@ -461,7 +461,6 @@ async def browser_task(
     seed_token = set_fingerprint_seed(params.user_id)
 
     full_task = task if not start_url else f"{task}\n\nStart at: {start_url}"
-    use_vision = await resolve_use_vision()
 
     try:
         async with browser_session(user_id=params.user_id, start_url=start_url) as session:
@@ -489,7 +488,6 @@ async def browser_task(
                     step_timeout_seconds=settings.BROWSER_USE_STEP_TIMEOUT_SECONDS,
                     handoff_timeout_seconds=settings.BROWSER_USE_HANDOFF_TIMEOUT_SECONDS,
                     stream_screenshots=settings.BROWSER_USE_STREAM_SCREENSHOTS,
-                    use_vision=use_vision,
                     solve_captcha=settings.BROWSER_USE_SOLVE_CAPTCHA,
                     flash_mode=settings.BROWSER_USE_FLASH_MODE,
                 ),

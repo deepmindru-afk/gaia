@@ -3,8 +3,8 @@
 ``BrowserTaskRunner`` owns everything about a run that is not the stepping
 itself: the progress card, the human handoff, cancellation, the budgets, the
 metering, the replay link. A *lane* owns only "decide and execute the steps" —
-Browser-Use's agent (``lanes/browser_use.py``) or the ported jev-ultrafast loop
-(``lanes/ultrafast.py``) — and reaches back through :class:`LaneHooks`.
+Browser-Use's agent (``lanes/browser_use.py``) — and reaches back through
+:class:`LaneHooks`.
 
 A lane therefore never learns about SSE, Redis, bots or live-view links: it hands
 the runner a :class:`StepFrame` per executed step, calls ``takeover`` when it
@@ -35,7 +35,6 @@ class BrowserRunConfig:
     step_timeout_seconds: int
     handoff_timeout_seconds: int
     stream_screenshots: bool
-    use_vision: bool
     solve_captcha: bool
     flash_mode: bool = True
 

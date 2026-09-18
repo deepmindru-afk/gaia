@@ -52,8 +52,10 @@ RUNTIME_MODEL_IDS = sorted(
         AUX_MODEL_NAME,
         MEMORY_MODEL_NAME,
         VISION_MODEL_NAME,
-        # The browser lane's decision model — metered from Browser-Use's history.
+        # The browser lane's decision model and its text helper — both metered
+        # from Browser-Use's history.
         settings.BROWSER_USE_JEV_MODEL,
+        settings.BROWSER_USE_JEV_TEXT_MODEL,
     }
 )
 

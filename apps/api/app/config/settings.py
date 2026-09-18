@@ -202,26 +202,6 @@ class CommonSettings(BaseAppSettings):
     # up a browser.
     BROWSER_USE_ENABLED: bool = False
 
-    # LLM that drives the browser agent — decoupled from the chat harness so
-    # browser work uses a deliberately-chosen, vision-capable model. Provider:
-    # openai | anthropic | google | openrouter | deepseek. The key is sourced
-    # from the matching GAIA setting (OPENAI_API_KEY / GOOGLE_API_KEY /
-    # OPENROUTER_API_KEY; anthropic and deepseek have no GAIA-wide key) unless
-    # BROWSER_USE_LLM_API_KEY is set. Defaults to a cheap, vision-capable model
-    # to keep per-task token cost low.
-    #
-    # The default below is manually kept equal to VISION_MODEL_PROVIDER /
-    # VISION_MODEL_NAME in app/constants/llm.py (currently gemini / the model
-    # DEFAULT_GEMINI_MODEL_NAME points at) rather than importing that constant:
-    # app.constants.llm imports app.models.models_models -> app.db.repositories.base
-    # -> app.db.redis -> app.config.settings, a real circular import back into this
-    # module (verified — `settings` is not yet bound in this file when that chain
-    # runs). Breaking it means extracting the vision-model constants into a module
-    # with no import path back to settings; that's a change to files outside this
-    # component's scope, so it's called out here rather than made silently.
-    BROWSER_USE_LLM_PROVIDER: str = "google"
-    BROWSER_USE_LLM_MODEL: str = "gemini-3.1-flash-lite"
-    BROWSER_USE_LLM_API_KEY: str | None = None
     # Browser-Use "flash mode" strips thinking / evaluation_previous_goal /
     # next_goal / plan from every step's output schema, leaving memory + action.
     # The agent still reasons and still carries state; it stops narrating.
@@ -260,47 +240,25 @@ class CommonSettings(BaseAppSettings):
     R2_SECRET_ACCESS_KEY: str | None = None
     R2_BUCKET: str = "gaia-browser-shots"
     R2_PUBLIC_BASE_URL: str | None = None
-    BROWSER_USE_LLM_BASE_URL: str | None = None
-    # Some OpenAI-wire endpoints route to vendors with no `json_schema` response
-    # format (Merge Gateway + zai/glm-* answers 400 "no vendor that supports the
-    # requested capabilities"). Browser-Use can instead put the schema in the
-    # system prompt and parse plain-text JSON back — set this for those lanes.
-    BROWSER_USE_LLM_SCHEMA_IN_PROMPT: bool = False
-    # Reasoning budget for a thinking model on the browser lane. Browser-Use only
-    # forwards `reasoning_effort` for models whose NAME matches its hardcoded
-    # OpenAI reasoning list, so a thinking model it doesn't recognise (zai/glm-*)
-    # silently thinks unthrottled — measured at ~1.2k thinking chars and 8.6s per
-    # step, versus 1.8s at "low". Set this to have the lane's own model treated as
-    # a reasoning model so the effort actually reaches the wire.
-    BROWSER_USE_LLM_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] | None = None
-    # Jev "System One" decision policy (TypeSafe AI via Vercel AI Gateway).
-    # Feature flag: when on, the browser agent's per-step decision — which
-    # operation, on which observed element — is a single Jev evaluation over the
-    # page's indexed element table instead of a generative chat completion, the
-    # way browser-use/jev-ultrafast does it. The chat model configured above is
-    # kept as the text helper: it writes a field value only when Jev picks
-    # TYPE_TEXT (and a URL / takeover reason / final summary when those are
-    # picked). Screenshots are never sent to Jev, so vision is forced off.
-    # On by default; without a gateway key the lane falls back to the chat model
-    # (logged), so an unconfigured deployment keeps working.
-    BROWSER_USE_JEV_ENABLED: bool = True
+    # Jev "System One" decision policy (TypeSafe AI, served by OpenRouter) — the
+    # only thing that drives the browser. Each step's decision, which operation on
+    # which observed element, is a single Jev evaluation over the page's indexed
+    # element table rather than a generative chat completion, the way
+    # browser-use/jev-ultrafast does it. Screenshots are never sent to Jev.
+    #
     # Served through OpenRouter on OPENROUTER_API_KEY, so Jev needs no credential
     # of its own. Decisions models are refused by chat/completions and answered
     # by this endpoint instead.
     BROWSER_USE_JEV_DECISIONS_URL: str = "https://openrouter.ai/api/alpha/decisions"
     BROWSER_USE_JEV_MODEL: str = "~typesafe/jev-latest"
-    # Text helper for the ultrafast loop (services/browser/jev/ultrafast), called
-    # only when Jev picks TYPE_TEXT. Mercury is the reference implementation's
-    # model and the cheapest/fastest of the candidates measured on OpenRouter
-    # (median 903ms, $0.04/$0.15 per 1M tokens, against gemini-3.5-flash-lite's
-    # 1175ms and $0.30/$2.50). Served on OPENROUTER_API_KEY like the decisions
+    # Text helper for the loop, called only when a decision needs a typed value
+    # (TYPE_TEXT, a URL, a takeover reason, the final summary). On this path it is
+    # called through Browser-Use's ChatOpenAI with structured output, and
+    # gemini-3.5-flash-lite is the model the path was verified with: mercury-2.5
+    # returned empty content when it spent its token budget on reasoning
+    # (measured 2026-09-18). Served on OPENROUTER_API_KEY like the decisions
     # endpoint, so the loop needs exactly one credential.
-    BROWSER_USE_JEV_TEXT_URL: str = "https://openrouter.ai/api/v1/chat/completions"
-    BROWSER_USE_JEV_TEXT_MODEL: str = "inception/mercury-2.5"
-
-    # Vision (screenshots to the model) is the biggest cost driver — keep it on
-    # for reliability, but a deployment optimizing cost can disable it.
-    BROWSER_USE_VISION: bool = True
+    BROWSER_USE_JEV_TEXT_MODEL: str = "google/gemini-3.5-flash-lite"
 
     # Hard limits — everything is bounded so no browser task can run away.
     BROWSER_USE_MAX_STEPS: int = 25
@@ -322,15 +280,6 @@ class CommonSettings(BaseAppSettings):
     # There is no automatic CAPTCHA solver: when set, the agent gets an action to
     # hand a CAPTCHA to the user, who solves it in live-view before it continues.
     BROWSER_USE_SOLVE_CAPTCHA: bool = True
-
-    # Mid-run sensitive-action policy. Per category: "handoff" (pause → user
-    # completes it in live-view → continue), "proceed" (agent does it), "abort".
-    # Safe defaults hand off. BROWSER_USE_AUTONOMOUS_SENSITIVE=true lets a user
-    # who has set up an agent-usable payment method skip handoffs entirely.
-    BROWSER_USE_AUTONOMOUS_SENSITIVE: bool = False
-    BROWSER_USE_PAYMENT_STRATEGY: str = "handoff"
-    BROWSER_USE_CREDENTIALS_STRATEGY: str = "handoff"
-    BROWSER_USE_IRREVERSIBLE_STRATEGY: str = "handoff"
 
     # ----------------------------------------------
     # Browser host (gaia-browser-host — our own low-RAM Chromium host)
