@@ -284,10 +284,11 @@ def _execution_context(todo_id: str | None, origin: TriggerOrigin | None) -> dic
     One builder because the workflow path and the agent path were stamping
     the same literal separately, so only one would have been updated.
     """
+    trigger_type = _trigger_type(origin).value
     if origin is None:
-        return {"trigger_type": _trigger_type(origin).value, "todo_id": todo_id}
+        return {"trigger_type": trigger_type, "todo_id": todo_id}
     return {
-        "trigger_type": _trigger_type(origin).value,
+        "trigger_type": trigger_type,
         "todo_id": todo_id,
         "trigger_name": origin.trigger_name,
         "subscription_id": origin.subscription_id,
@@ -398,9 +399,7 @@ def _build_execution_prompt(
         prompt_parts.append(f"{label}:\n{tail}")
     if reference_context:
         prompt_parts.append(reference_context)
-    prompt_parts.append(
-        DELIVERED_RESULT_GUIDANCE if doc.notify_on_run else SILENT_RUN_GUIDANCE
-    )
+    prompt_parts.append(DELIVERED_RESULT_GUIDANCE if doc.notify_on_run else SILENT_RUN_GUIDANCE)
     return "\n\n".join(prompt_parts)
 
 

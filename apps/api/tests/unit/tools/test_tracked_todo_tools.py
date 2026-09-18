@@ -506,9 +506,7 @@ class TestCreateTrackedTodoValidation:
                 created_at=_FUTURE,
                 updated_at=_FUTURE,
             )
-            await create_tracked_todo.coroutine(
-                config=_config(), title="t", notify_on_run=False
-            )
+            await create_tracked_todo.coroutine(config=_config(), title="t", notify_on_run=False)
 
         assert create.await_args.kwargs["notify_on_run"] is False
 
