@@ -18,6 +18,6 @@ def test_the_takeover_preamble_names_the_registered_actions() -> None:
 
 @pytest.mark.unit
 def test_handoff_action_members_render_as_their_value_in_prompts() -> None:
-    """StrEnum, not (str, Enum): interpolating a member into the preamble must yield the bare action name, never `BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER`."""
+    """StrEnum, not (str, Enum): interpolating a member yields the bare action name, never BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER."""
     assert f"{BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER}" == "request_human_takeover"
     assert f"{BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP}" == "solve_captcha_with_help"

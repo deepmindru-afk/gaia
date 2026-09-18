@@ -1573,7 +1573,7 @@ class TestRunChatStreamBackground:
     async def test_a_non_data_frame_is_published_verbatim_on_its_own_stream(
         self, test_user
     ) -> None:
-        """Anything that is not a ``data:`` frame is not ours to parse — it goes through untouched, and to the stream the client is actually listening on."""
+        """Pass a non-data: frame through untouched to the stream the client is listening on."""
         sm = _make_stream_manager_mock()
 
         await self._drive(["keepalive\n\n", "data: [DONE]\n\n"], sm, AsyncMock())
@@ -1585,9 +1585,7 @@ class TestRunChatStreamBackground:
     async def test_an_error_frame_from_the_agent_is_persisted_onto_the_turn(
         self, test_user
     ) -> None:
-        """Errors reach the loop two ways; a frame YIELDED by call_agent's setup guard is the one nothing else records.
-
-        Without it the reloaded turn is an empty bubble with no explanation."""
+        """Persist an error frame yielded by call_agent's setup guard, the one path nothing else records."""
         save = AsyncMock()
 
         await self._drive(
@@ -1610,10 +1608,7 @@ class TestRunChatStreamBackground:
         assert save.call_args.kwargs["error"] is None
 
     async def test_comms_thinking_is_folded_into_the_persisted_tool_data(self, test_user) -> None:
-        """Comms streams its own reasoning as a plain frame (the executor's rides the tool-event collector).
-
-        Folding it in with the same helper is what lets a reloaded turn keep the thinking block for
-        both agents."""
+        """Fold comms's plain-frame reasoning into tool_data the same way the executor's is, so a reload keeps it."""
         save = AsyncMock()
 
         await self._drive(
@@ -1675,7 +1670,7 @@ class TestRunChatStreamBackground:
     async def test_a_malformed_data_frame_does_not_take_the_turn_down(
         self, test_user, frame: str
     ) -> None:
-        """SSE frames arrive split and third-party tools inject their own, so a ``data:`` line that mentions error/reasoning but is not a JSON object is a frame we cannot read — not a reason to fail the user's turn."""
+        """Treat a data: line that mentions error or reasoning but is not valid JSON as unreadable, not a reason to fail the turn."""
         sm = _make_stream_manager_mock()
         save = AsyncMock()
 
@@ -1688,7 +1683,7 @@ class TestRunChatStreamBackground:
     async def test_a_parsed_data_frame_reaches_the_client_on_its_own_stream(
         self, test_user
     ) -> None:
-        """The parsed path publishes through ``process_data_chunk``; the stream id it forwards is what decides whether the frame reaches THIS client or vanishes into a stream nobody is subscribed to."""
+        """Route a parsed frame through process_data_chunk using the stream id passed in, not a default."""
         sm = _make_stream_manager_mock()
         frame = f"data: {json.dumps({'response': 'hello'})}\n\n"
 
@@ -1745,10 +1740,7 @@ class TestRunChatStreamBackground:
     async def test_a_completed_attach_is_not_repeated_by_the_finally_backstop(
         self, test_user
     ) -> None:
-        """``attached`` is what makes the backstop a backstop.
-
-        If it never flips, every happy-path turn waits on the executor twice and drains it twice.
-        """
+        """Flip attached on a completed attach so the finally backstop does not wait and drain twice."""
         wait = AsyncMock(return_value=True)
 
         with (
@@ -1762,10 +1754,7 @@ class TestRunChatStreamBackground:
     async def test_the_fallback_save_persists_this_turn_recovered_from_its_own_stream(
         self, test_user, existing_conv_body
     ) -> None:
-        """The error path never reached the early save, so this IS the turn.
-
-        It must recover from THIS stream's progress and save it under this conversation/user —
-        anything else silently writes an empty turn."""
+        """Recover this stream's progress and save it under this conversation and user, or write an empty turn."""
         sm = _make_stream_manager_mock()
         sm.get_progress = AsyncMock(
             side_effect=lambda sid: {"complete_message": "recovered"}

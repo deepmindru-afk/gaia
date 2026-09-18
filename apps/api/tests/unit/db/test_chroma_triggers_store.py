@@ -339,12 +339,7 @@ class TestInitializeChromaTriggersStore:
         assert delete_op.key == "old_slug"
 
     async def test_batch_write_failure_does_not_abort_startup(self):
-        """A warmup embedding failure must not propagate out of init.
-
-        The triggers store is registered strategy=ERROR + auto_initialize=True, so
-        a ChromaBatchWriteError escaping initialize_chroma_triggers_store would
-        abort app boot. run_index_warmup must swallow it and still return the store.
-        """
+        """A warmup embedding failure must not propagate out of init and abort app boot."""
         upsert = [
             (
                 "new_slug",

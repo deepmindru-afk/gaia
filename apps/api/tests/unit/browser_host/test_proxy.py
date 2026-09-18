@@ -1,9 +1,9 @@
 """Regression: the CDP proxy did not allowlist navigation schemes.
 
-Before the fix, ``Page.navigate``/``Target.createTarget`` requests reached
+Before the fix, Page.navigate and Target.createTarget requests reached
 Chromium unfiltered. The agent renders attacker-influenced pages, so a
-prompt-injected link could steer the browser at ``file:///etc/passwd`` or
-``chrome://settings`` — ``Network.setBlockedURLs`` only filters subresources,
+prompt-injected link could steer the browser at file:///etc/passwd or
+chrome://settings. Network.setBlockedURLs only filters subresources,
 never a top-level navigation, so this has to be enforced in the proxy itself.
 """
 
@@ -52,11 +52,7 @@ def test_refused_navigation_url(method: str, url: str | None, expected_refusal: 
     ["Browser.setDownloadBehavior", "Page.setDownloadBehavior"],
 )
 def test_setdownloadbehavior_is_refused(method: str) -> None:
-    """A client cannot re-enable downloads the host denied at context creation.
-
-    browser-use's DownloadsWatchdog sends ``behavior: "allow"`` on every run, so
-    without this the per-context deny only survives by accident.
-    """
+    """A client cannot re-enable downloads the host denied at context creation, even though DownloadsWatchdog sends behavior allow on every run."""
     message = {
         "id": 7,
         "method": method,

@@ -1,10 +1,10 @@
 """Tests for the page-readiness timeout cap patch.
 
-Browser-Use's ``_navigate_and_wait`` defaults ``timeout`` to ``None``, which
-lets a hung subresource stall a step for the library's full 3s/8s budget. The
-patch caps the default to ``_MAX_READINESS_WAIT_SECONDS`` while leaving explicit
-timeouts untouched. These tests pin exactly what timeout reaches the wrapped
-original, plus that ``apply()`` really rebinds the method on the class.
+Browser-Use's _navigate_and_wait defaults timeout to None, which lets a hung
+subresource stall a step for the library's full 3s/8s budget. The patch caps
+the default to _MAX_READINESS_WAIT_SECONDS while leaving explicit timeouts
+untouched. These tests pin exactly what timeout reaches the wrapped original,
+plus that apply() really rebinds the method on the class.
 """
 
 from __future__ import annotations

@@ -28,7 +28,7 @@ class TestExecuteBatchOperations:
         assert store.abatch.await_count == 2
 
     async def test_every_op_is_written_exactly_once_in_contiguous_batches(self):
-        """Each batch is the next `batch_size` slice — no op dropped, none written twice."""
+        """Each batch is the next batch_size slice, no op dropped, none written twice."""
         store = AsyncMock()
         ops = [MagicMock(spec=PutOp) for _ in range(75)]
 

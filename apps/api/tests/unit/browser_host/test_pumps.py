@@ -1,7 +1,7 @@
 """Tests for the shared bidirectional websocket pump.
 
-`pump_until_first_close` backs both the CDP proxy and the screencast bridge:
-it must stop the instant either direction ends, swallow an ordinary peer
+pump_until_first_close backs both the CDP proxy and the screencast bridge.
+It must stop the instant either direction ends, swallow an ordinary peer
 disconnect, but re-raise a real error so the caller's teardown sees it.
 """
 
@@ -38,7 +38,7 @@ async def _blocks_forever() -> None:
 
 
 class WebSocketDisconnect(Exception):
-    """Stand-in for FastAPI's exception, checked by `is_disconnect` by name only."""
+    """Stand-in for FastAPI's exception, checked by is_disconnect by name only."""
 
 
 @pytest.mark.unit
@@ -49,13 +49,7 @@ class TestIsDisconnect:
     def test_classifies_in_an_interpreter_that_never_imported_the_submodule(
         self, tmp_path: Path
     ) -> None:
-        """``import websockets`` alone does not bind ``websockets.exceptions`` (15.x).
-
-        The pump must import what it reads, or whether a disconnect is
-        recognised depends on which other module happened to load first.
-        A real script file, not ``-c``: under the mutation gate the module is
-        trampoline-wrapped and resolves its caller's filename strictly.
-        """
+        """Import websockets alone does not bind websockets.exceptions on 15.x, so a real script file is needed since the mutation gate's trampoline resolves the caller's filename strictly."""
         probe = tmp_path / "probe.py"
         probe.write_text(
             "from app.browser_host.pumps import is_disconnect\n"
@@ -140,7 +134,7 @@ class TestPumpUntilFirstClose:
         )
 
     async def test_real_error_wins_even_when_another_direction_finished_cleanly(self) -> None:
-        """Both directions complete before `asyncio.wait` returns; the error must still surface."""
+        """Both directions complete before asyncio.wait returns; the error must still surface."""
         with pytest.raises(RuntimeError, match="second failed"):
             await asyncio.wait_for(
                 pump_until_first_close(

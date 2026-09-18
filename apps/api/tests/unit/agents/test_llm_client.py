@@ -735,7 +735,7 @@ class TestGetDefaultLlmCustomLane:
     def test_the_custom_lane_carries_the_context_window_profile(
         self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
     ) -> None:
-        """The fractional-window middleware reads ``profile["max_input_tokens"]`` at graph-build time and raises without it — an arbitrary custom endpoint has no curated LangChain profile, so this lane must supply one."""
+        """The fractional-window middleware reads profile["max_input_tokens"] at graph-build time and raises without it; an arbitrary custom endpoint has no curated LangChain profile, so this lane must supply one."""
         mock_settings.GAIA_SIM_MODE = False
         mock_settings.DEV_LLM_BASE_URL = "https://gw/v1"
         mock_settings.DEV_LLM_API_KEY = "dev-key"  # pragma: allowlist secret
@@ -750,10 +750,7 @@ class TestGetDefaultLlmCustomLane:
     def test_an_unset_model_asks_for_no_model_rather_than_a_placeholder(
         self, mock_settings: MagicMock, mock_chat_openrouter: MagicMock
     ) -> None:
-        """``DEV_LLM_MODEL`` is ``str | None``; the ``or ""`` exists only to keep the kwarg a str.
-
-        It must stay empty — any stand-in id would be sent to the endpoint as a real model request.
-        """
+        """DEV_LLM_MODEL is str or None; the or "" only keeps the kwarg typed as str, never a stand-in model id."""
         mock_settings.DEV_LLM_MODEL = None
         mock_settings.DEV_LLM_API_KEY = "dev-key"  # pragma: allowlist secret
         mock_settings.DEV_LLM_BASE_URL = "https://gw/v1"

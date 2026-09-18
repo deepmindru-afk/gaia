@@ -490,7 +490,7 @@ class TestSummary:
 
 
 class TestBrowserTaskSummary:
-    """``browser_task`` gets a bespoke summary: the LLM's ``task`` argument, not the tool name — so the card reads as what will happen, not the internal tool it calls."""
+    """browser_task gets a bespoke summary: the LLM's task argument, not the tool name, so the card reads as what will happen."""
 
     def test_a_missing_task_argument_falls_back_to_a_generic_line(self) -> None:
         assert build_summary("browser_task", {}, None) == "Start a browser task"

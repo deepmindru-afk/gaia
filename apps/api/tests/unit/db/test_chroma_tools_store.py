@@ -455,13 +455,7 @@ class TestIndexToolsToStore:
         mock_execute.assert_awaited_once()
 
     async def test_failed_batch_write_does_not_cache_the_namespace_hash(self):
-        """A partial write must not be recorded as a success.
-
-        Regression: _apply_put_ops logged failures but returned normally, so
-        the hash was cached after N docs failed to embed. Every later boot then
-        hit the cache guard and skipped the namespace, leaving the tools that
-        never made it in (browser_task) permanently undiscoverable.
-        """
+        """Regression: a partial write must not cache the namespace hash as a success."""
         tool = SimpleNamespace(name="t", description="d")
 
         mock_store = AsyncMock()

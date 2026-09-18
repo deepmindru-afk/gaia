@@ -904,10 +904,7 @@ def _reasoning_chunk(text: str, *, content: str = "") -> AIMessageChunk:
 
 @pytest.mark.asyncio
 async def test_comms_thinking_is_streamed_as_a_top_level_reasoning_frame() -> None:
-    """Without this frame the user watches a frozen UI while comms reasons.
-
-    No ``subagent_id``: this is the root turn, which the client renders as a top-level thinking
-    block rather than nesting it under a delegate."""
+    """No subagent_id: the root turn renders as a top-level thinking block, not nested under a delegate."""
     state = _StreamAccumulators()
 
     frames = await _drain(

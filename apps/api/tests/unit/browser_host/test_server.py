@@ -278,7 +278,7 @@ def test_cdp_endpoint_accepts_and_bridges_live_session(
 def test_live_endpoint_accepts_and_bridges_live_session(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mirrors the CDP happy path: the live-view route must actually accept and hand off to ``run_live_view`` -- previously nothing exercised this branch at all, so a broken handoff here would have shipped silently."""
+    """Mirrors the CDP happy path: the live-view route must actually accept and hand off to run_live_view -- previously nothing exercised this branch at all, so a broken handoff here would have shipped silently."""
     _, host = client
     live_session = MagicMock(session_id="exact-id-123", dead=False)
     host.get.return_value = live_session
@@ -311,7 +311,7 @@ def test_live_endpoint_does_not_touch_host_get_when_unauthorized(
 def test_live_endpoint_does_not_bridge_dead_session(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A dead session must close 4404 without ever reaching ``run_live_view`` -- catches a mutant that drops or inverts the ``session.dead`` check."""
+    """A dead session must close 4404 without ever reaching run_live_view -- catches a mutant that drops or inverts the session.dead check."""
     _, host = client
     host.get.return_value = MagicMock(session_id="s1", dead=True)
     live_view = AsyncMock()
@@ -323,7 +323,7 @@ def test_live_endpoint_does_not_bridge_dead_session(
 
 
 def test_healthz_body_reports_every_field(client) -> None:
-    """The health probe surfaces session count and each sub-check, not just ``ok`` -- the orchestrator/dashboard reads all four fields."""
+    """The health probe surfaces session count and each sub-check, not just ok -- the orchestrator/dashboard reads all four fields."""
     _, host = client
     host.healthz.return_value = {
         "ok": True,
@@ -453,7 +453,7 @@ def test_ws_url_key_appends_hk_query_param(monkeypatch: pytest.MonkeyPatch) -> N
 def test_ws_url_key_uses_ampersand_when_path_already_has_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A path that already carries a query string must get ``&hk=``, not a second ``?`` that would produce an invalid URL."""
+    """A path that already carries a query string must get an &hk= suffix, not a second ? that would produce an invalid URL."""
     monkeypatch.setattr(
         server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930", raising=False
     )
@@ -531,7 +531,7 @@ def test_require_host_key_passes_silently_with_valid_key(monkeypatch: pytest.Mon
 
 
 class _FakeWebSocket:
-    """Duck-types the bits of ``WebSocket`` that ``_ws_authorized`` reads."""
+    """Duck-types the bits of WebSocket that _ws_authorized reads."""
 
     def __init__(self, hk: str | None, origin: str | None = None) -> None:
         self.query_params: dict[str, str] = {"hk": hk} if hk is not None else {}
@@ -604,13 +604,13 @@ def test_ws_authorized_rejects_unparsable_origin(monkeypatch: pytest.MonkeyPatch
 def test_ws_authorized_accepts_loopback_origin_with_path_but_no_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only the authority is compared: a port-less Origin carrying a multi-segment path still resolves to ``localhost``, so the socket is allowed."""
+    """Only the authority is compared: a port-less Origin carrying a multi-segment path still resolves to localhost, so the socket is allowed."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost/some/path")) is True
 
 
 def test_ws_authorized_accepts_bare_ipv6_loopback_origin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``::1`` is in the allow-list, and its colons must not be mistaken for the port separator -- only the last one is."""
+    """::1 is in the allow-list, and its colons must not be mistaken for the port separator -- only the last one is."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://::1:8930")) is True
 
@@ -618,7 +618,7 @@ def test_ws_authorized_accepts_bare_ipv6_loopback_origin(monkeypatch: pytest.Mon
 def test_ws_authorized_rejects_origin_with_a_second_scheme_in_the_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``http://localhost:8080://x`` has ``localhost:8080:`` as its authority, not ``localhost`` -- only the FIRST ``://`` separates the scheme, so this stays a rejection rather than being smuggled through as loopback."""
+    """http://localhost:8080://x has localhost:8080: as its authority, not localhost -- only the first :// separates the scheme, so this stays a rejection rather than being smuggled through as loopback."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost:8080://x")) is False
 
@@ -626,7 +626,7 @@ def test_ws_authorized_rejects_origin_with_a_second_scheme_in_the_authority(
 def test_ws_authorized_accepts_loopback_origin_with_a_scheme_inside_its_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A ``://`` later in the path does not move the host boundary -- the host is read from the FIRST ``://``, so this is still loopback."""
+    """A :// later in the path does not move the host boundary -- the host is read from the first ://, so this is still loopback."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "http://localhost/x://y")) is True
 
@@ -634,7 +634,7 @@ def test_ws_authorized_accepts_loopback_origin_with_a_scheme_inside_its_path(
 def test_ws_authorized_rejects_origin_with_two_port_separators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``localhost:1:2`` is not ``localhost``: only the last colon is a port separator, so the leftover ``localhost:1`` fails the allow-list."""
+    """localhost:1:2 is not localhost: only the last colon is a port separator, so the leftover localhost:1 fails the allow-list."""
     monkeypatch.setattr(server_mod.settings, "BROWSER_HOST_KEY", "s3cret", raising=False)
     assert server_mod._ws_authorized(_fake_ws("s3cret", "https://localhost:1:2")) is False
 
@@ -681,7 +681,7 @@ def test_ws_authorized_logs_nothing_when_it_allows_the_socket(
 
 
 def test_ws_url_rewrites_only_the_leading_http_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A later ``http://`` inside the URL is data, not a scheme -- rewriting it too would corrupt the address."""
+    """A later http:// inside the URL is data, not a scheme -- rewriting it too would corrupt the address."""
     monkeypatch.setattr(
         server_mod.settings, "BROWSER_HOST_URL", "http://proxy/http://inner", raising=False
     )
@@ -700,7 +700,7 @@ def test_ws_url_rewrites_only_the_leading_https_scheme(monkeypatch: pytest.Monke
 def test_ws_url_strips_only_a_trailing_slash_not_path_characters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A base URL mounted under a path prefix keeps that prefix intact -- only a trailing ``/`` is removed."""
+    """A base URL mounted under a path prefix keeps that prefix intact -- only a trailing slash is removed."""
     monkeypatch.setattr(
         server_mod.settings, "BROWSER_HOST_URL", "http://browser-host:8930/PREFIX", raising=False
     )
@@ -750,7 +750,7 @@ def test_get_session_sets_exact_log_context(client) -> None:
 
 
 def test_healthz_sets_exact_log_context(client) -> None:
-    """Health checks carry an empty ``session_id`` so the field is present on the wide event rather than absent for this one route."""
+    """Health checks carry an empty session_id so the field is present on the wide event rather than absent for this one route."""
     _, host = client
     host.healthz.return_value = {
         "ok": True,

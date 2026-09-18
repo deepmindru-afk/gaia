@@ -1,10 +1,7 @@
-"""Tests for the ``python -m app.browser_host`` entrypoint.
+"""Tests for the python -m app.browser_host entrypoint.
 
-The entrypoint's whole job is wiring: hand the browser-host FastAPI app to
-uvicorn on the configured bind/port with logging left to the app. Running the
-module under ``__main__`` with ``uvicorn.run`` faked pins that the guard fires
-and that the exact app + address flow through -- a swapped host/port here would
-publish the internal-only host on the wrong interface.
+Runs the module under __main__ with uvicorn.run faked to pin that the guard
+fires and the exact app and bind address flow through unchanged.
 """
 
 from __future__ import annotations

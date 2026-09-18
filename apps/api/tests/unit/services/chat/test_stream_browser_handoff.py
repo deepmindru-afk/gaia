@@ -1,9 +1,9 @@
 """Unit tests for the paused-browser-handoff chat-reply resolution path.
 
-``_resolve_pending_browser_handoff_turn`` is the text-channel equivalent of the
+_resolve_pending_browser_handoff_turn is the text-channel equivalent of the
 browser handoff card's Continue/Cancel buttons: a chat reply on a conversation
 with a pending handoff can continue or cancel the paused browser task instead
-of running as a normal turn. ``_run_chat_stream`` must short-circuit the whole
+of running as a normal turn. _run_chat_stream must short-circuit the whole
 turn when that resolution fires, and fall through to the normal agent run
 otherwise.
 """
@@ -320,7 +320,7 @@ class TestRunChatStreamShortCircuitsOnHandoffResolution:
     """The orchestrator must return without running the agent when the browser-handoff resolver fully handled the turn, and must fall through to the normal turn otherwise."""
 
     def _patched(self, *, handoff_resolved: bool):
-        """Mock every collaborator of ``_run_chat_stream`` except the handoff resolution branch under test."""
+        """Mock every collaborator of _run_chat_stream except the handoff resolution branch under test."""
         return patch.multiple(
             chat_stream,
             register_executor_capture=MagicMock(),

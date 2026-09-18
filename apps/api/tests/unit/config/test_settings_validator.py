@@ -281,7 +281,7 @@ def _missing_keys(
 
 
 def test_predefined_groups_registered_count_and_order() -> None:
-    """A dropped, duplicated, or reordered ``register_group`` call changes either the count or the name sequence — both are asserted here so either kind of mutation is caught even before any per-field check runs."""
+    """Catch a dropped, duplicated, or reordered register_group call by asserting count and name order."""
     groups = SettingsValidator().groups
 
     assert len(groups) == len(EXPECTED_GROUPS)

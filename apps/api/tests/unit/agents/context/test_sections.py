@@ -155,7 +155,7 @@ class TestTheTableIsWellFormed:
 
 @pytest.mark.unit
 class TestPlatformBanner:
-    """The model cannot read ``configurable``, so the channel has to be said out loud or comms writes web-app prose into a Telegram bubble."""
+    """The model cannot read configurable, so the channel has to be said out loud or comms writes web-app prose into a Telegram bubble."""
 
     @pytest.mark.parametrize(
         ("source", "expected_name"),
@@ -217,9 +217,7 @@ class TestPlatformBanner:
         assert section("platform_banner").applies_to == frozenset({AgentTier.COMMS})
 
     def test_it_is_stable_not_volatile(self) -> None:
-        """The channel is fixed for a conversation.
-
-        In MEMORY_RECALL it would sit outside the cacheable prefix for no reason."""
+        """Keep the slot DYNAMIC_STABLE so MEMORY_RECALL doesn't push it outside the cacheable prefix."""
         assert section("platform_banner").slot is PromptSlot.DYNAMIC_STABLE
 
 

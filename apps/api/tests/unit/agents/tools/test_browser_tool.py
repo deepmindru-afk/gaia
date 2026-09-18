@@ -123,12 +123,7 @@ async def test_capacity_limit_returns_message(monkeypatch: pytest.MonkeyPatch) -
 async def test_bot_delivery_outage_does_not_abort_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A messaging/platform outage must never kill the in-flight browser run.
-
-    The web card is already on the SSE stream before the bot mirror runs, so a
-    failing platform delivery is logged and skipped — the tool still returns the
-    result summary instead of surfacing a delivery exception.
-    """
+    """A failing platform delivery is logged and skipped; the tool still returns the result summary."""
 
     class _FailingDelivery:
         def __init__(self, **kwargs: object) -> None:
@@ -233,7 +228,7 @@ def test_result_message_completed_success_is_exact() -> None:
 
 
 def test_result_message_completed_without_success_reports_failure() -> None:
-    """`status == COMPLETED and success` — a completed-but-unsuccessful run must never be reported as an accomplishment."""
+    """Status == COMPLETED and success: a completed-but-unsuccessful run must never be reported as an accomplishment."""
     out = tool_mod._agent_result_message(
         _result(BrowserSessionStatus.COMPLETED, False, "Login wall")
     )
@@ -351,7 +346,7 @@ def _install(
     session_error: Exception | None = None,
     handoff_outcome: HandoffOutcome | None = None,
 ) -> Harness:
-    """Wire every seam of ``browser_task`` to a recorder and return the recording."""
+    """Wire every seam of browser_task to a recorder and return the recording."""
     h = Harness()
     final = result if result is not None else _result(BrowserSessionStatus.COMPLETED, True, "Done")
 
@@ -630,14 +625,7 @@ async def test_missing_identifiers_degrade_to_blank_and_none(
 async def test_a_config_with_no_configurable_key_still_degrades_cleanly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Same degradation as above, for a config missing ``configurable`` entirely.
-
-    Called through the raw coroutine rather than ``ainvoke``: LangChain's
-    ``ensure_config`` injects ``configurable`` into every config it normalises, so
-    the tool's own ``config.get("configurable", {})`` fallback is unreachable via
-    the public path — and a fallback nothing exercises is one nothing would notice
-    losing. Without the ``{}`` the next line would raise AttributeError on None.
-    """
+    """Use the raw coroutine, not ainvoke, because LangChain's ensure_config always injects configurable; without the empty-dict fallback the next line raises AttributeError on None."""
     h = _install(monkeypatch)
 
     await browser_task.coroutine(config={}, task="x")
@@ -732,13 +720,7 @@ async def test_step_card_is_written_as_json_under_the_browser_event_key(
 async def test_mirrored_action_row_names_the_element_it_touched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The tool-thread row must use the resolved target, like the step caption does.
-
-    The runner resolves each action's element against the DOM the model saw and
-    puts it on ``BrowserAction.target``. The step caption used it; the mirrored
-    row did not, so a form fill rendered as "Clicking" twice with nothing to tell
-    the two apart.
-    """
+    """Use the resolved target on the tool-thread row, like the step caption does, so two different clicks don't both render as "Clicking"."""
 
     async def body(h: Harness) -> BrowserResultSnapshot:
         # The mirror opens its group on the session snapshot; without one there
@@ -769,12 +751,7 @@ async def test_mirrored_action_row_names_the_element_it_touched(
 async def test_action_output_lands_on_the_row_for_that_step_and_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A per-action output frame must key to the same tool_call_id as its row.
-
-    The row is emitted before the action runs (Browser-Use fires the step
-    callback pre-execution), so the output arrives later via on_step_end and has
-    to match the row by {group}:{step}:{position} or it renders detached.
-    """
+    """Match the row by {group}:{step}:{position}; the row lands before the action runs, the output arrives later via on_step_end."""
     from app.schemas.browser import BrowserActionOutput
 
     async def body(h: Harness) -> BrowserResultSnapshot:
@@ -810,13 +787,7 @@ async def test_action_output_lands_on_the_row_for_that_step_and_position(
 async def test_action_output_arriving_before_its_row_is_buffered_then_flushed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The live ordering: results arrive before the row.
-
-    The runner emits step rows through a background task that uploads the
-    screenshot first (~1s), while the action result arrives synchronously on the
-    next hook. So `results` can run before `_actions` for the same step. The
-    output must still attach — buffered, then flushed when the row lands.
-    """
+    """Buffer the output when results arrives before its row, roughly a 1s screenshot-upload delay, then flush it once the row lands."""
     from app.schemas.browser import BrowserActionOutput
 
     async def body(h: Harness) -> BrowserResultSnapshot:
@@ -922,10 +893,7 @@ async def test_handoff_registers_emits_pending_then_resolution_and_returns_outco
 async def test_handoff_keepalive_is_cancelled_after_the_handoff_resolves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A paused session gets no CDP/live-view traffic, so ``request_handoff`` spawns a keepalive to hold the host's idle clock open.
-
-    Once the handoff resolves, that keepalive must be cancelled -- otherwise it keeps touching a
-    session nobody is waiting on anymore."""
+    """request_handoff spawns a keepalive to hold the host's idle clock open; cancel it once the handoff resolves so it stops touching an abandoned session."""
     tasks: list[asyncio.Task[None]] = []
 
     async def _fake_keep_alive(session_id: str) -> None:
@@ -955,7 +923,7 @@ async def test_handoff_keepalive_is_cancelled_after_the_handoff_resolves(
 async def test_handoff_keepalive_is_cancelled_when_await_handoff_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The keepalive must be cancelled on the failure path too -- a raised ``await_handoff`` must not leak the keepalive task running forever."""
+    """Cancel the keepalive on the failure path too; a raised await_handoff must not leak the keepalive task running forever."""
     tasks: list[asyncio.Task[None]] = []
 
     async def _fake_keep_alive(session_id: str) -> None:
@@ -1398,7 +1366,7 @@ async def test_capture_source_is_the_surface_the_run_came_from(
 async def test_capture_duration_measures_the_run_not_the_whole_tool_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``duration_ms`` is milliseconds between starting and finishing the agent loop -- the clock is read after the session is open, so setup time is not charged to the run."""
+    """duration_ms is milliseconds between starting and finishing the agent loop; the clock is read after the session is open, so setup time is not charged to the run."""
     captured = _capture(monkeypatch)
     _install(monkeypatch)
     # Reads, in order: the thread mirror's start, run_t0, then the persist clock.
@@ -1418,12 +1386,7 @@ async def test_capture_duration_measures_the_run_not_the_whole_tool_call(
 async def test_run_presents_the_users_own_device_fingerprint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The canvas/audio seed is pinned to the user for the duration of the run, so the same person always presents the same device instead of a new one per task -- and it is released afterwards so the next run is not stuck with it.
-
-    Driven through the raw coroutine, not ``ainvoke``: the seed rides a
-    contextvar, and a task-based invocation runs in a copy of the context, so the
-    caller could never see either the pin or the leak.
-    """
+    """Pin the canvas/audio seed to the user for the run and release it after; use the raw coroutine, not ainvoke, since the seed rides a contextvar that a task-based call would only see a copy of."""
     seen: list[int] = []
 
     async def body(h: Harness) -> BrowserResultSnapshot:
@@ -1469,7 +1432,7 @@ def _session_snapshot(session_id: str | None = "sess-1") -> BrowserSessionSnapsh
 
 
 def test_a_fresh_mirror_belongs_to_no_group() -> None:
-    """``None``, not a falsy placeholder: the group id is the value emitted as ``subagent_id`` on every row, so an empty string would ship as a real (and unattachable) group the moment any guard let it through."""
+    """None, not a falsy placeholder: the group id is emitted as subagent_id on every row, so an empty string would ship as a real, unattachable group the moment a guard let it through."""
     mirror, _ = _mirror()
 
     assert mirror._group_id is None

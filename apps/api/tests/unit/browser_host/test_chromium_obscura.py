@@ -1,8 +1,7 @@
-"""``ChromiumHost`` launching Obscura instead of Chromium behind ``BROWSER_ENGINE``.
+"""ChromiumHost launching Obscura instead of Chromium behind BROWSER_ENGINE.
 
-Obscura is a CDP *server* (`obscura serve`), not chrome-with-a-debug-flag, so the
-launch argv and the endpoint discovery differ — but everything past launch speaks
-plain CDP and is shared. These cover the engine branch only.
+Obscura is a CDP server (obscura serve), not chrome-with-a-debug-flag, so the
+launch argv and endpoint discovery differ; everything past launch is shared.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ from app.constants.browser import BrowserEngine
 async def test_launch_obscura_builds_the_serve_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """engine=obscura spawns ``<bin> serve --port <port> --stealth --allow-private-network``."""
+    """engine=obscura spawns <bin> serve --port <port> --stealth --allow-private-network."""
     monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
     monkeypatch.setattr(settings, "OBSCURA_BIN", "/opt/obscura/obscura")
     monkeypatch.setattr(settings, "OBSCURA_PORT", 9931)
@@ -76,7 +75,7 @@ async def test_launch_obscura_without_bin_fails_loud(
 async def test_await_cdp_ready_obscura_derives_endpoint_from_json_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Obscura's ws endpoint comes from ``/json/version`` at OBSCURA_PORT, no port file."""
+    """Obscura's ws endpoint comes from /json/version at OBSCURA_PORT, no port file."""
     monkeypatch.setattr(settings, "BROWSER_ENGINE", BrowserEngine.OBSCURA)
     monkeypatch.setattr(settings, "OBSCURA_PORT", 9931)
     host = ChromiumHost()

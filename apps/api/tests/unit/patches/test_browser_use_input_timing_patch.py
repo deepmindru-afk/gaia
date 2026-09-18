@@ -7,7 +7,7 @@ no hand produces. The patch scales those two delays by a log-normal draw.
 The scope is the delicate part and is what these tests mostly guard: the jitter
 must reach the per-keystroke timers and nothing else. The same module uses
 comparable float literals for scroll-settle and readback waits, which are
-load-bearing page timing, and `asyncio.sleep` itself must stay untouched
+load-bearing page timing, and asyncio.sleep itself must stay untouched
 process-wide.
 """
 
@@ -29,7 +29,7 @@ SETTLE_SECONDS = 0.05
 
 
 async def _record(delays: list[float], requested: list[float]) -> None:
-    """Run `delays` through the patched module sleep, capturing what it asks for."""
+    """Run delays through the patched module sleep, capturing what it asks for."""
     real_sleep = asyncio.sleep
 
     async def spy(delay: float, result: object = None) -> object:

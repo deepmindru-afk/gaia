@@ -1,14 +1,8 @@
-"""localStorage restore on context creation — the symmetric partner of the dump.
+"""localStorage restore on context creation, the symmetric partner of the dump.
 
-The host dumps per-origin localStorage into ``storage_state`` on dispose but used
-to re-seed only cookies on the next context, so saved localStorage was stored and
-never re-injected (session reuse was cookie-only). These cover the restore:
-
-  * the restore JS if-absent semantics (absent -> set, present -> left alone) and
-    its origin-match guard, both mutation-checked,
-  * ``_seed_local_storage`` registers one restore script per localStorage-bearing
-    origin on the context's page, and is a no-op when no origin carries any,
-  * ``create_context`` wires the restore in after cookies.
+Covers the restore JS if-absent and origin-match guards, _seed_local_storage
+registering one restore script per localStorage-bearing origin (a no-op when
+none carry any), and create_context wiring the restore in after cookies.
 """
 
 from __future__ import annotations
@@ -29,7 +23,7 @@ _ENTRIES = [{"name": "token", "value": "abc123"}, {"name": "theme", "value": "da
 
 
 class _RecordingCDP:
-    """Records every ``send_raw`` call and answers from a per-method response map."""
+    """Record every send_raw call and answer from a per-method response map."""
 
     def __init__(self, responses: dict[str, dict[str, Any]] | None = None) -> None:
         self.responses = responses or {}
@@ -72,7 +66,7 @@ def test_restore_js_only_sets_a_key_that_is_absent() -> None:
 
 @pytest.mark.unit
 def test_restore_js_guards_on_the_origin() -> None:
-    """The script must run only when ``location.origin`` matches its own origin."""
+    """The script must run only when location.origin matches its own origin."""
     js = _build_local_storage_restore_js(_ORIGIN, _ENTRIES)
     assert f'location.origin !== "{_ORIGIN}"' in js
     # The guard returns early, so a mismatched origin writes nothing.

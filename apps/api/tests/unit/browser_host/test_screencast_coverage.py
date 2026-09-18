@@ -989,7 +989,7 @@ async def test_apply_input_resize_coerces_string_dimensions_to_int() -> None:
 
 @pytest.mark.unit
 async def test_read_favicon_returns_the_evaluated_href() -> None:
-    """The icon shown in the live-view tab is whatever the page's own JS resolved, read out of the CDP ``Runtime.evaluate`` result envelope."""
+    """The icon shown in the live-view tab is whatever the page's own JS resolved, read out of the CDP Runtime.evaluate result envelope."""
     with patch.object(
         screencast,
         "cdp_call",

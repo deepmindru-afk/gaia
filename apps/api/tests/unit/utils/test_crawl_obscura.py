@@ -18,7 +18,7 @@ _BIND_SETTLE_SECONDS = 0.5
 
 
 class FakeProcess:
-    """Stands in for ``asyncio.subprocess.Process`` — records terminate/kill/wait."""
+    """Stand in for asyncio.subprocess.Process, recording terminate/kill/wait."""
 
     def __init__(
         self,
@@ -77,7 +77,7 @@ def _isolated_engine_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def _running(monkeypatch: pytest.MonkeyPatch, proc: FakeProcess) -> None:
-    """Install ``proc`` as the engine on record, published at the base port."""
+    """Install proc as the engine on record, published at the base port."""
     engine = crawl_obscura._CrawlEngine(
         proc=cast(asyncio.subprocess.Process, proc), cdp_url=f"http://127.0.0.1:{_BASE_PORT}"
     )
@@ -105,11 +105,10 @@ def _spawn(monkeypatch: pytest.MonkeyPatch, processes: list[FakeProcess]) -> _Sp
 
 
 def _record_wait_for_timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float | None]:
-    """Record every deadline the module hands ``asyncio.wait_for``.
+    """Record every deadline the module hands asyncio.wait_for.
 
     The shutdown grace period never reaches a return value or an error message,
-    so the timeout argument is the only place it is observable without wedging
-    a fake process for the full five seconds.
+    so the timeout argument is the only place it is observable.
     """
     recorded: list[float | None] = []
     real_wait_for = asyncio.wait_for

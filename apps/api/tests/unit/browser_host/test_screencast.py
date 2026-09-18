@@ -1,9 +1,9 @@
 """Live-view screencast setup must never strand a viewer slot.
 
-Regression: ``add_viewer`` sat outside the try/finally, so a failure during
-live-view setup (e.g. the CDP client cannot connect) left ``viewer_count`` > 0
+Regression: add_viewer sat outside the try/finally, so a failure during
+live-view setup (e.g. the CDP client cannot connect) left viewer_count > 0
 forever. The idle reaper skips sessions with viewers, so that session was never
-reclaimed — a permanent capacity leak that only a host restart cleared.
+reclaimed, a permanent capacity leak that only a host restart cleared.
 """
 
 import asyncio

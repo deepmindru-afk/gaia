@@ -201,11 +201,7 @@ class TestFinalizeStreamBackstop:
         assert get_session("s1") is None  # cleanup still happens
 
     async def test_saved_but_interrupted_attach_still_attaches_cards(self) -> None:
-        """The bug the user hit: a turn cut short DURING the executor wait has saved=True (early save ran) but attached=False (attach never finished).
-
-        The backstop must still drain and persist the executor cards, or the reloaded turn loses
-        its whole browser card. Gating the attach on `saved` (the old behavior) skipped it here —
-        this is the regression pin."""
+        """Regression: gating the attach on saved (the old behavior) skipped it when cancelled mid-wait; the backstop must still drain and persist the cards."""
         _ready_session_with_cards("s1")
         state = _state(cancelled=True, saved=True, attached=False)
 
