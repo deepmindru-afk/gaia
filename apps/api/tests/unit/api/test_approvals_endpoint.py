@@ -302,3 +302,82 @@ class TestSetToolOverride:
     async def test_requires_auth(self, unauthed_client: AsyncClient):
         resp = await unauthed_client.put(f"{APPROVALS_BASE}/tools/email_send", json={"ask": True})
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Ledger flag routing (executor-free HIL)
+# ---------------------------------------------------------------------------
+
+
+class TestLedgerDecisionRouting:
+    """Flag on routes both decision endpoints to decide_ledger; flag off keeps
+    the interrupt-barrier path. Same URLs, same status codes, one truth."""
+
+    @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock)
+    async def test_single_decision_routes_to_ledger_with_v(
+        self, mock_resolve: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
+        client: AsyncClient,
+    ):
+        from app.services.hil.ledger_decide import LedgerDecision
+        from app.models.hil_models import LedgerState
+
+        mock_flag.return_value = True
+        mock_decide.return_value = LedgerDecision(
+            committed=True, approval_id="ap_1",
+            prior_state=LedgerState.PENDING, state=LedgerState.APPROVED,
+        )
+        resp = await client.post(
+            f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 3}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True}
+        mock_decide.assert_awaited_once_with(
+            "ap_1", user_id=USER_ID, kind="approve", feedback=None, v=3,
+        )
+        mock_resolve.assert_not_awaited()
+
+    @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock)
+    async def test_single_decision_stays_on_old_path_when_flag_off(
+        self, mock_resolve: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
+        client: AsyncClient,
+    ):
+        mock_flag.return_value = False
+        resp = await client.post(f"{APPROVALS_BASE}/a1/decision", json={"decision": "deny"})
+        assert resp.status_code == 200
+        mock_resolve.assert_awaited_once()
+        mock_decide.assert_not_awaited()
+
+    @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.resolve_approvals_batch", new_callable=AsyncMock)
+    async def test_batch_decision_routes_each_item_to_ledger(
+        self, mock_batch: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
+        client: AsyncClient,
+    ):
+        from app.services.hil.ledger_decide import LedgerDecision
+        from app.models.hil_models import LedgerState
+
+        mock_flag.return_value = True
+        mock_decide.side_effect = [
+            LedgerDecision(committed=True, approval_id="ap_1",
+                           prior_state=LedgerState.PENDING, state=LedgerState.APPROVED),
+            LedgerDecision(committed=False, approval_id="ap_2",
+                           prior_state=LedgerState.APPROVED, state=LedgerState.APPROVED),
+        ]
+        resp = await client.post(
+            f"{APPROVALS_BASE}/batch-decision",
+            json={"decisions": [
+                {"approval_id": "ap_1", "decision": "approve", "v": 1},
+                {"approval_id": "ap_2", "decision": "approve", "v": 0},
+            ]},
+        )
+        assert resp.status_code == 200
+        outcomes = resp.json()["outcomes"]
+        assert outcomes[0] == {"approval_id": "ap_1", "resolved": True, "reason": None}
+        assert outcomes[1]["resolved"] is False
+        mock_batch.assert_not_awaited()
+        assert mock_decide.await_count == 2

@@ -14,6 +14,9 @@ class ApprovalDecisionRequest(BaseModel):
     feedback: str | None = Field(None, max_length=2000)
     # once: this call only. always_tool: also set a "never ask" override for the tool.
     scope: Literal["once", "always_tool"] = "once"
+    # Row version the client rendered. Ledger path only: a stale v refreshes
+    # instead of overwriting. Omitted (None) skips the check.
+    v: int | None = None
 
 
 class ApprovalDecisionResponse(BaseModel):
@@ -28,6 +31,8 @@ class BatchDecisionItem(BaseModel):
     approval_id: str
     decision: Literal["approve", "deny"]
     feedback: str | None = Field(None, max_length=2000)
+    # Row version the client rendered; see ApprovalDecisionRequest.v.
+    v: int | None = None
 
 
 class BatchApprovalDecisionRequest(BaseModel):

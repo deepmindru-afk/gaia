@@ -5,12 +5,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.v1.dependencies.oauth_dependencies import get_current_user
+from app.constants.log_tags import LogTag
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.models.user_models import AuthenticatedUser
 from app.schemas.hil_schemas import (
     ApprovalDecisionRequest,
     ApprovalDecisionResponse,
     BatchApprovalDecisionRequest,
     BatchApprovalDecisionResponse,
+    BatchDecisionOutcome,
     HILPreferencesResponse,
     SetToolOverrideRequest,
     UpdateHILPreferencesRequest,
@@ -20,7 +23,14 @@ from app.services.hil.preferences import (
     set_tool_override,
     update_hil_preferences,
 )
-from app.services.hil.resolution import resolve_approval, resolve_approvals_batch
+from app.services.feature_flags import is_hil_ledger_enabled
+from app.services.hil.ledger_decide import decide_ledger
+from app.services.hil.resolution import (
+    ApprovalRequestForbiddenError,
+    ApprovalRequestNotFoundError,
+    resolve_approval,
+    resolve_approvals_batch,
+)
 from shared.py.wide_events import log
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -42,6 +52,23 @@ async def post_approval_decision(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id is required")
     log.set(user={"id": user_id}, hil={"approval_id": approval_id, "decision": payload.decision})
+    if await is_hil_ledger_enabled(user_id):
+        # Executor-free path: CAS commit on the ledger, instant-eligible
+        # execution, agent wake — no paused run to resume. Errors are the same
+        # AppError shapes, so status codes never diverge between paths.
+        outcome = await decide_ledger(
+            approval_id,
+            user_id=user_id,
+            kind=payload.decision,
+            feedback=payload.feedback,
+            v=payload.v,
+        )
+        if payload.scope == "always_tool" and outcome.committed and outcome.state.value == "approved":
+            row = await approval_ledger_repository.get_by_approval_id(approval_id)
+            if row is not None:
+                await set_tool_override(user_id, row.tool_name, False)
+        log.set(hil={"resolved": outcome.committed})
+        return ApprovalDecisionResponse(success=True)
     await resolve_approval(
         approval_id=approval_id,
         user_id=user_id,
@@ -71,6 +98,58 @@ async def post_batch_decision(
         user={"id": user_id},
         hil={"operation": "batch_decision", "count": len(payload.decisions)},
     )
+    if await is_hil_ledger_enabled(user_id):
+        # Executor-free path: each item commits exactly once on the ledger;
+        # one item never blocks the others. No resume dispatch exists here —
+        # execution and wake already happened inside decide_ledger.
+        outcomes: list[BatchDecisionOutcome] = []
+        for item in payload.decisions:
+            try:
+                outcome = await decide_ledger(
+                    item.approval_id,
+                    user_id=user_id,
+                    kind=item.decision,
+                    feedback=item.feedback,
+                    v=item.v,
+                )
+            except ApprovalRequestNotFoundError:
+                outcomes.append(
+                    BatchDecisionOutcome(
+                        approval_id=item.approval_id, resolved=False, reason="not_found"
+                    )
+                )
+                continue
+            except ApprovalRequestForbiddenError:
+                outcomes.append(
+                    BatchDecisionOutcome(
+                        approval_id=item.approval_id, resolved=False, reason="forbidden"
+                    )
+                )
+                continue
+            except Exception as e:
+                log.error(
+                    f"{LogTag.HIL} Ledger batch decision failed for",
+                    approval_id=item.approval_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    user_id=user_id,
+                )
+                outcomes.append(
+                    BatchDecisionOutcome(
+                        approval_id=item.approval_id, resolved=False, reason="error"
+                    )
+                )
+                continue
+            if outcome.committed:
+                outcomes.append(BatchDecisionOutcome(approval_id=item.approval_id, resolved=True))
+            else:
+                outcomes.append(
+                    BatchDecisionOutcome(
+                        approval_id=item.approval_id, resolved=False, reason="not_found"
+                    )
+                )
+        log.set(hil={"resolved": sum(1 for o in outcomes if o.resolved)})
+        return BatchApprovalDecisionResponse(outcomes=outcomes)
     outcomes = await resolve_approvals_batch(
         user_id,
         [(item.approval_id, item.decision, item.feedback) for item in payload.decisions],
