@@ -83,6 +83,16 @@ from shared.py.wide_events import WorkflowContext, get_trace_id, log, wide_task
 #: exactly the runs a turn handed off, not every background task in the process.
 QUEUED_EXECUTOR_TASK_NAME = "queued-executor-run"
 
+#: What comms is told when a run crashed. Belongs with EXECUTOR_STEP_LIMIT_MESSAGE
+#: in app/constants/executor.py; kept here because that file is outside this
+#: change's assigned scope.
+EXECUTOR_CRASH_MESSAGE = (
+    "The background task stopped before it finished, so there is no result and part "
+    "of the work may have already happened. Tell the user plainly that it could not "
+    "be completed, and ask how they would like to proceed. Never offer to re-run it "
+    "yourself, and never claim a result."
+)
+
 
 @traceable(name="executor_background", run_type="chain")
 async def run_executor_background(
@@ -404,8 +414,11 @@ async def _execute_executor(
         )
         return _ExecutorResult(EXECUTOR_STEP_LIMIT_MESSAGE, "error")
     except Exception as e:
+        # The raw exception is for the log, never for comms: a bare string (often
+        # empty) is not a story, so comms invented one and offered to re-run work
+        # that may have half-landed. Say what happened and ask instead.
         log.error(f"{LogTag.AGENT} Executor run failed", stream_id=stream_id, error=str(e))
-        return _ExecutorResult(str(e), "error")
+        return _ExecutorResult(EXECUTOR_CRASH_MESSAGE, "error")
 
 
 async def _finalize_executor_run(
