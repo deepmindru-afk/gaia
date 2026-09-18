@@ -59,6 +59,7 @@ async def create_all_indexes() -> None:
             create_bot_session_indexes(),
             create_e2b_sandbox_indexes(),
             create_hil_approvals_indexes(),
+            create_approval_ledger_indexes(),
             create_pending_platform_registration_indexes(),
             create_llm_call_indexes(),
             create_playbook_indexes(),
@@ -93,6 +94,7 @@ async def create_all_indexes() -> None:
             "bot_sessions",
             "e2b_sandboxes",
             "hil_approvals",
+            "approval_ledger",
             "pending_platform_registrations",
             "llm_calls",
             "playbooks",
@@ -754,6 +756,40 @@ async def create_tool_output_shapes_indexes() -> None:
     except Exception as e:
         log.error(
             f"{LogTag.MONGO} Error creating tool_output_shapes indexes",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise
+
+
+async def create_approval_ledger_indexes() -> None:
+    """Create indexes for the approval_ledger collection.
+
+    Unique on approval_id: the CAS filter keys on it, so the lookup must never
+    scan. Partial unique on (conversation_id, fingerprint) over live states:
+    this index IS the dedup atomicity — concurrent proposes race on the insert
+    and the loser reads the winner's id instead of double-executing on
+    approve-all. (conversation_id, state) serves the OPEN PENDINGS injection;
+    (state, executing_started_at) serves the lazy EXECUTING reconciler.
+    """
+    approval_ledger_collection = get_async_collection("approval_ledger")
+    try:
+        await asyncio.gather(
+            approval_ledger_collection.create_index("approval_id", unique=True),
+            approval_ledger_collection.create_index(
+                [("conversation_id", 1), ("fingerprint", 1)],
+                unique=True,
+                partialFilterExpression={
+                    "state": {"$in": ["pending", "approved"]},
+                },
+                name="conv_fingerprint_live_unique",
+            ),
+            approval_ledger_collection.create_index([("conversation_id", 1), ("state", 1)]),
+            approval_ledger_collection.create_index([("state", 1), ("executing_started_at", 1)]),
+        )
+    except Exception as e:
+        log.error(
+            f"{LogTag.MONGO} Error creating approval_ledger indexes",
             error=str(e),
             error_type=type(e).__name__,
         )

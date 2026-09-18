@@ -155,7 +155,12 @@ class TestPostBatchDecision:
         assert resp.status_code == 200
         outcomes = resp.json()["outcomes"]
         assert outcomes[0]["resolved"] is True
-        assert outcomes[1] == {"approval_id": "a2", "resolved": False, "reason": "not_found"}
+        assert outcomes[1] == {
+            "approval_id": "a2",
+            "resolved": False,
+            "reason": "not_found",
+            "status": None,
+        }
 
     async def test_empty_decisions_is_rejected(self, client: AsyncClient):
         resp = await client.post(f"{APPROVALS_BASE}/batch-decision", json={"decisions": []})
@@ -377,7 +382,59 @@ class TestLedgerDecisionRouting:
         )
         assert resp.status_code == 200
         outcomes = resp.json()["outcomes"]
-        assert outcomes[0] == {"approval_id": "ap_1", "resolved": True, "reason": None}
+        assert outcomes[0]["approval_id"] == "ap_1"
+        assert outcomes[0]["resolved"] is True
         assert outcomes[1]["resolved"] is False
         mock_batch.assert_not_awaited()
         assert mock_decide.await_count == 2
+
+
+class TestLedgerAutoPolicyParity:
+    """Auto-aligned calls run cardless on both paths: the flag flip must never
+    change what gets asked."""
+
+    @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock)
+    async def test_stale_single_carries_reason_and_status(
+        self, mock_resolve: AsyncMock, mock_flag: AsyncMock, mock_decide: AsyncMock,
+        client: AsyncClient,
+    ):
+        from app.models.hil_models import LedgerState
+        from app.services.hil.ledger_decide import LedgerDecision
+
+        mock_flag.return_value = True
+        mock_decide.return_value = LedgerDecision(
+            committed=False, approval_id="ap_1",
+            prior_state=LedgerState.APPROVED, state=LedgerState.APPROVED, stale=True,
+        )
+        resp = await client.post(
+            f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 0}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"success": False, "reason": "stale", "status": "approved"}
+        mock_resolve.assert_not_awaited()
+
+
+class TestLedgerStaleVersionHonesty:
+    """A stale-v tap must not report success: the client refreshes the row
+    instead of believing its tap committed."""
+
+    @patch("app.api.v1.endpoints.approvals.decide_ledger", new_callable=AsyncMock)
+    @patch("app.api.v1.endpoints.approvals.is_hil_ledger_enabled", new_callable=AsyncMock)
+    async def test_stale_version_returns_success_false(
+        self, mock_flag: AsyncMock, mock_decide: AsyncMock, client: AsyncClient
+    ):
+        from app.models.hil_models import LedgerState
+        from app.services.hil.ledger_decide import LedgerDecision
+
+        mock_flag.return_value = True
+        mock_decide.return_value = LedgerDecision(
+            committed=False, approval_id="ap_1",
+            prior_state=LedgerState.APPROVED, state=LedgerState.APPROVED,
+        )
+        resp = await client.post(
+            f"{APPROVALS_BASE}/ap_1/decision", json={"decision": "approve", "v": 0}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"success": False, "reason": "not_found", "status": "approved"}

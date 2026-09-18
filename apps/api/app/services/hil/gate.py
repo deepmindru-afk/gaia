@@ -184,7 +184,7 @@ async def _verdict(request: ToolCallRequest) -> ToolMessage | _Pending | None:
         # Executor-free path: register PENDING and return. No interrupt, no
         # pause — background runs gate exactly like live ones, which is the
         # whole point (pausable is irrelevant when nobody needs to pause).
-        return await _decide_ledger(request, context, call)
+        return await _decide_ledger(request, context, call, policy)
     if not context.pausable:
         # The call is gated and HIL is on, but this run (background subagent, workflow,
         # scheduled task) has no live client to approve it. Fail closed: refuse rather
@@ -195,15 +195,33 @@ async def _verdict(request: ToolCallRequest) -> ToolMessage | _Pending | None:
 
 
 async def _decide_ledger(
-    request: ToolCallRequest, context: GateContext, call: GatedCall
-) -> ToolMessage:
-    """Ledger verdict: register PENDING and return. Never interrupts.
+    request: ToolCallRequest,
+    context: GateContext,
+    call: GatedCall,
+    policy: GatingPolicy,
+) -> ToolMessage | None:
+    """Ledger verdict: register PENDING and return, or clear an auto-aligned call.
 
     The executor-free path: dedup against live rows, surface reject memory,
     refuse same-run nag re-issues, otherwise register and hand the model a
-    pending id to work around. Any failure fails closed (deny), never open.
+    pending id to work around. ``auto`` policy keeps its intent judge — an
+    aligned call runs with no card on either path, so the flag flip never
+    changes what gets asked. Any failure fails closed (deny), never open.
+
+    Returns ``None`` only for the auto-aligned case (the tool may run).
     """
     try:
+        if policy == "auto":
+            integration_name = await _integration_name_for(call.name)
+            summary = build_summary(call.name, call.args, integration_name)
+            decision = await _judge(request, context, call, None, summary)
+            if decision is not None and decision.aligned:
+                log.info(
+                    f"{LogTag.HIL} auto-approved (ledger path)",
+                    call_name=call.name,
+                    reason=decision.reason,
+                )
+                return None
         fingerprint = approval_fingerprint(call.name, call.args)
         live = await approval_ledger_repository.find_live(
             fingerprint, context.conversation_id
@@ -252,6 +270,9 @@ async def _decide_ledger(
             preview=clip_text(json.dumps(call.args, default=str), 500),
             owner_agent=str(owner),
             proposing_run_id=context.stream_id,
+            # blocked_by arrives with ordering chains (Phase 3): the chain
+            # joins the fingerprint there, so identical calls on different
+            # chains never share an envelope.
         )
         log.info(
             f"{LogTag.HIL} Ledger registered gated call",

@@ -13,21 +13,26 @@ Guarantees (mirror ``resolution.py`` for the old path):
   version ``v``; a decide call with a mismatched ``v`` returns the current
   row with ``committed=False``.
 * **Execution never blocks the tap.** Approval commits in the request;
-  the envelope runs in a strong-ref'd in-process task right after, and the
+  the envelope runs in a canonical background task right after, and the
   agent learns from the executor-inbox DECISIONS wake. Crash between commit
   and receipt lands the row in UNKNOWN, reconciled lazily (never blind-retried).
+* **No daemon.** Crash recovery (stalled EXECUTING, orphaned APPROVED) runs
+  lazily inside the decide path via :func:`reconcile_conversation_ledger` —
+  every decide heals its own conversation as a side effect.
 """
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
 from app.agents.core.background.executor_channel import ExecutorInbox
-from app.agents.tools.execute.dispatch import dispatch_tool
+from app.agents.tools.execute.dispatch import DispatchErrorKind, dispatch_tool
 from app.constants.agents import AgentTag
 from app.constants.log_tags import LogTag
 from app.core.websocket_manager import websocket_manager
+from app.db.redis import redis_cache
 from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.conversations import conversation_repository
 from app.models.hil_models import (
@@ -41,13 +46,15 @@ from app.services.hil.resolution import (
     ApprovalRequestNotFoundError,
 )
 from app.services.hil.utils import GatedCall
+from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log
 
 DecisionKind = Literal["approve", "deny"]
 
-# In-flight ledger executions, strongly referenced until done — a bare
-# create_task can be GC'd mid-flight, stranding an APPROVED row in EXECUTING.
-_execution_tasks: set[asyncio.Task[None]] = set()
+# EXECUTING rows older than this never had a live claimant: the process died
+# holding the claim. Reconciled lazily to UNKNOWN on the decide path — there
+# is no sweeper by design, so this cutoff is the only crash detector.
+STALLED_EXECUTING_MINUTES = 10
 
 # Bounded parallelism for batch submits: a 12-item approve-all must not fan
 # out 12 concurrent provider calls.
@@ -66,6 +73,10 @@ class LedgerDecision:
     # execution scheduled. Ordering chains (claim rule + dep_unmet reconciler)
     # arrive in Phase 3; this flag is their seam.
     queued: bool = False
+    # The call lost on version, not on state: the row may still be PENDING.
+    # Callers must report "stale/refresh", never "not found", or clients drop
+    # live cards they should keep.
+    stale: bool = False
 
 
 async def decide_ledger(
@@ -80,7 +91,9 @@ async def decide_ledger(
     row = await approval_ledger_repository.get_by_approval_id(approval_id)
     if row is None:
         raise ApprovalRequestNotFoundError()
-    if row.user_id and row.user_id != user_id:
+    # Strict match, no empty bypass: a row without an owner must never be
+    # decidable by whoever asks first. The gate always stamps a real id.
+    if row.user_id != user_id:
         raise ApprovalRequestForbiddenError()
 
     if v is not None and v != row.v:
@@ -89,6 +102,7 @@ async def decide_ledger(
             approval_id=approval_id,
             prior_state=row.state,
             state=row.state,
+            stale=True,
         )
 
     target = LedgerState.APPROVED if kind == "approve" else LedgerState.DENIED
@@ -106,17 +120,21 @@ async def decide_ledger(
         )
 
     log.set(hil={"approval_id": approval_id, "decision": kind, "tool": row.tool_name})
-    await publish_ledger_decision(row, target, feedback=feedback)
-
     queued = bool(target is LedgerState.APPROVED and row.blocked_by)
     if target is LedgerState.APPROVED and not queued:
+        # Schedule BEFORE the best-effort fan-out below: a cancel or shutdown
+        # between commit and claim must still leave a live task holding the
+        # execution, never a committed row nobody owns.
         schedule_ledger_execution(approval_id)
-    if queued:
-        log.info(
-            f"{LogTag.HIL} Ledger approval queued behind dependencies",
-            approval_id=approval_id,
-            blocked_by=row.blocked_by,
-        )
+    await publish_ledger_decision(row, target, feedback=feedback)
+    if target is LedgerState.DENIED:
+        # Denials schedule nothing, but the agent still needs the verdict: it
+        # exited on the PENDING message and list_open will never show this row
+        # again. Without the wake "user said no" arrives nowhere.
+        await _wake_agent(row, "DENIED", feedback)
+    elif queued:
+        await _wake_agent(row, "QUEUED", f"waiting on {','.join(row.blocked_by)}")
+    await reconcile_conversation_ledger(row.conversation_id)
     return LedgerDecision(
         committed=True,
         approval_id=approval_id,
@@ -124,6 +142,31 @@ async def decide_ledger(
         state=target,
         queued=queued,
     )
+
+
+async def reconcile_conversation_ledger(conversation_id: str) -> None:
+    """Heal one conversation's ledger as a decide-path side effect.
+
+    No daemon exists by design, so every decide also repairs: stalled
+    EXECUTING rows go UNKNOWN (with a wake, so the agent learns), and
+    APPROVED-but-unscheduled rows get their execution task back. Every step
+    is CAS-guarded, so concurrent deciders racing here converge instead of
+    duplicating.
+    """
+    cutoff = datetime.now(UTC) - timedelta(minutes=STALLED_EXECUTING_MINUTES)
+    for stalled in await approval_ledger_repository.list_stalled_executing(cutoff):
+        if stalled.conversation_id != conversation_id:
+            continue
+        if await approval_ledger_repository.transition(
+            stalled.approval_id, LedgerState.EXECUTING, LedgerState.UNKNOWN
+        ):
+            log.error(
+                f"{LogTag.HIL} Ledger execution stalled; reconciled as UNKNOWN, never retried",
+                approval_id=stalled.approval_id,
+            )
+            await _wake_agent(stalled, "UNKNOWN", "stalled execution reconciled; never retried")
+    for orphan in await approval_ledger_repository.list_approved_unblocked(conversation_id):
+        schedule_ledger_execution(orphan.approval_id)
 
 
 async def publish_ledger_decision(
@@ -197,52 +240,90 @@ async def publish_ledger_decision(
 
 
 def schedule_ledger_execution(approval_id: str) -> None:
-    """Run an approved envelope post-response, strongly referenced to completion."""
-    task = asyncio.create_task(_execute_ledger_envelope(approval_id))
-    _execution_tasks.add(task)
-    task.add_done_callback(_execution_tasks.discard)
+    """Run an approved envelope post-response on the canonical task runner.
+
+    ``spawn_background_task`` strong-refs the task to completion and carries
+    the request's trace boundary — a bare create_task would risk both GC
+    mid-flight and detached logs.
+    """
+    spawn_background_task(
+        _execute_ledger_envelope(approval_id),
+        name=f"ledger-execute-{approval_id}",
+        on_done=lambda task: (
+            log.error(
+                f"{LogTag.HIL} Ledger execution task ended with an error",
+                approval_id=approval_id,
+                error=str(task.exception()),
+            )
+            if not task.cancelled() and task.exception() is not None
+            else None
+        ),
+    )
 
 
 async def _execute_ledger_envelope(approval_id: str) -> None:
-    """Claim EXECUTING exactly once, run the stored envelope, receipt, wake."""
-    claimed = await approval_ledger_repository.transition(
-        approval_id, LedgerState.APPROVED, LedgerState.EXECUTING
-    )
-    if not claimed:
-        return
-    row = await approval_ledger_repository.get_by_approval_id(approval_id)
-    if row is None:
-        return
-    try:
-        async with _EXECUTION_SEMAPHORE:
+    """Claim EXECUTING exactly once, run the stored envelope, receipt, wake.
+
+    The semaphore comes FIRST so EXECUTING always means a provider call in
+    flight — never "queued behind 8 siblings". The provider timeout is the
+    one genuinely ambiguous outcome (may or may not have run), so it lands
+    UNKNOWN, never FAILED: FAILED invites a re-proposal that could duplicate
+    a send that already happened.
+    """
+    async with _EXECUTION_SEMAPHORE:
+        claimed = await approval_ledger_repository.claim_executing(approval_id)
+        if not claimed:
+            return
+        row = await approval_ledger_repository.get_by_approval_id(approval_id)
+        if row is None:
+            return
+        try:
             result = await dispatch_tool(
                 user_id=row.user_id or None,
                 tool_name=row.tool_name,
                 data=dict(row.args),
                 config={"configurable": {"user_id": row.user_id}},
             )
-    except Exception as e:
-        await approval_ledger_repository.transition(
-            approval_id, LedgerState.EXECUTING, LedgerState.UNKNOWN
+        except Exception as e:
+            await approval_ledger_repository.transition(
+                approval_id, LedgerState.EXECUTING, LedgerState.UNKNOWN
+            )
+            log.error(
+                f"{LogTag.HIL} Ledger execution raised; reconciled as UNKNOWN, never retried",
+                approval_id=approval_id,
+                error_type=type(e).__name__,
+            )
+            await _wake_agent(row, "UNKNOWN", None)
+            return
+        if not result.ok and result.error is not None and result.error.kind == DispatchErrorKind.TIMEOUT:
+            state, outcome = LedgerState.UNKNOWN, "UNKNOWN"
+            detail: object = (
+                "provider timed out; may or may not have run — never auto-retried"
+            )
+        elif result.ok:
+            state, outcome, detail = LedgerState.EXECUTED, "EXECUTED", result.output
+        else:
+            state, outcome = LedgerState.FAILED, "FAILED"
+            detail = result.error.detail if result.error is not None else "unknown error"
+        committed = await approval_ledger_repository.transition(
+            approval_id, LedgerState.EXECUTING, state
         )
-        log.error(
-            f"{LogTag.HIL} Ledger execution raised; reconciled as UNKNOWN, never retried",
-            approval_id=approval_id,
-            error_type=type(e).__name__,
-        )
-        await _wake_agent(row, "UNKNOWN", None)
-        return
-    if result.ok:
-        await approval_ledger_repository.transition(
-            approval_id, LedgerState.EXECUTING, LedgerState.EXECUTED
-        )
-        await _wake_agent(row, "EXECUTED", result.output)
-    else:
-        await approval_ledger_repository.transition(
-            approval_id, LedgerState.EXECUTING, LedgerState.FAILED
-        )
-        detail = result.error.detail if result.error is not None else "unknown error"
-        await _wake_agent(row, "FAILED", detail)
+        if not committed:
+            # A reconciler moved the row under us (stalled cutoff fired
+            # mid-flight): report what the ledger actually says, not what we
+            # attempted. Never a silent overwrite of its verdict.
+            current = await approval_ledger_repository.get_by_approval_id(approval_id)
+            live = current if current is not None else row
+            actual = live.state.value
+            log.error(
+                f"{LogTag.HIL} Ledger receipt lost its CAS; waking with actual state",
+                approval_id=approval_id,
+                attempted=state.value,
+                actual=actual,
+            )
+            await _wake_agent(live, actual, detail)
+            return
+        await _wake_agent(row, outcome, detail)
 
 
 async def _wake_agent(
@@ -251,12 +332,29 @@ async def _wake_agent(
     """One DECISIONS line into the executor inbox — the agent's only signal.
 
     Inbox is transport, ledger is truth: a lost wake re-surfaces via the next
-    OPEN PENDINGS injection, never via re-execution.
+    OPEN PENDINGS injection, never via re-execution. A missing Redis client is
+    a loud error, never a silent drop — ``append`` no-ops without one, so this
+    checks first instead of reporting a delivery that never happened.
     """
+    if redis_cache.client is None:
+        log.error(
+            f"{LogTag.HIL} Ledger wake dropped: no Redis client; agent will not learn this outcome",
+            approval_id=row.approval_id,
+            outcome=outcome,
+        )
+        return
     preview = "" if result is None else str(result)[:500]
-    await ExecutorInbox(row.conversation_id).append(
-        str(uuid4()),
-        f"DECISIONS: {row.approval_id}={outcome} {row.summary}"
-        + (f" :: {preview}" if preview else ""),
-        AgentTag.HIL_DECISION,
-    )
+    try:
+        await ExecutorInbox(row.conversation_id).append(
+            str(uuid4()),
+            f"DECISIONS: {row.approval_id}={outcome} {row.summary}"
+            + (f" :: {preview}" if preview else ""),
+            AgentTag.HIL_DECISION,
+        )
+    except Exception as e:
+        log.error(
+            f"{LogTag.HIL} Ledger wake failed; outcome lives on the row only",
+            approval_id=row.approval_id,
+            outcome=outcome,
+            error_type=type(e).__name__,
+        )

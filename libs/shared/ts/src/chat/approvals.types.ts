@@ -65,6 +65,8 @@ export interface BatchDecisionOutcome {
   approval_id: string;
   resolved: boolean;
   reason: string | null;
+  /** Current ledger state when unresolved (e.g. already decided elsewhere). */
+  status?: string | null;
 }
 
 /** Response of POST /approvals/batch-decision. */

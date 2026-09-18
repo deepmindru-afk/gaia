@@ -5,9 +5,10 @@ decision state read at low volume, and every transition is a conditional write
 the entity cache could only misrepresent. Rows never expire — a pending row
 leaves only by user decision or agent revoke.
 
-Dedup is query-first on (conversation_id, fingerprint) over live states. An
-exact-race duplicate insert is possible but harmless: each id stays consistent
-under CAS, and nothing auto-executes in Phase 1.
+Dedup is atomic: a partial unique index on (conversation_id, fingerprint)
+over live states makes the second concurrent insert fail, and the loser reads
+the winner's id. Query-first alone would double-insert under races and an
+approve-all would double-execute.
 """
 
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from app.models.hil_models import (
     ApprovalLedgerDocument,
     LedgerState,
 )
+from pymongo.errors import DuplicateKeyError
 
 
 class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalLedgerDocument]):
@@ -48,27 +50,37 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
 
         Dedup consults live states only: a terminal fingerprint re-registers
         fresh (revoked-then-reproposed must not collapse into a dead id).
+        The loser's read-after-conflict is what makes concurrent proposes
+        converge on one id instead of double-executing on approve-all.
         """
         existing = await self.find_live(fingerprint, conversation_id)
         if existing is not None:
             return existing.approval_id
         approval_id = f"ap_{uuid4().hex[:12]}"
-        await self.create(
-            ApprovalLedgerDocument(
-                approval_id=approval_id,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                fingerprint=fingerprint,
-                tool_name=tool_name,
-                args=args,
-                summary=summary,
-                rationale=rationale,
-                preview=preview,
-                owner_agent=owner_agent,
-                blocked_by=list(blocked_by or []),
-                proposing_run_id=proposing_run_id,
+        try:
+            await self.create(
+                ApprovalLedgerDocument(
+                    approval_id=approval_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    fingerprint=fingerprint,
+                    tool_name=tool_name,
+                    args=args,
+                    summary=summary,
+                    rationale=rationale,
+                    preview=preview,
+                    owner_agent=owner_agent,
+                    blocked_by=list(blocked_by or []),
+                    proposing_run_id=proposing_run_id,
+                )
             )
-        )
+        except DuplicateKeyError:
+            # Lost the insert race (partial unique index on live
+            # conversation+fingerprint): the winner's row is the id.
+            winner = await self.find_live(fingerprint, conversation_id)
+            if winner is not None:
+                return winner.approval_id
+            raise
         return approval_id
 
     async def transition(
@@ -99,6 +111,61 @@ class ApprovalLedgerRepository(MongoRepository[ApprovalLedgerDocument, ApprovalL
             {"$set": update, "$inc": {"v": 1}},
         )
         return bool(result.modified_count)
+
+    async def claim_executing(self, approval_id: str) -> bool:
+        """Move APPROVED -> EXECUTING and stamp the claim time, atomically.
+
+        Exactly one claimant wins per id; the timestamp lets the lazy
+        reconciler tell "provider call in flight" from "process died holding
+        the claim". Called only after acquiring the execution semaphore, so a
+        row in EXECUTING always means work actually started.
+        """
+        result = await self._raw_collection().update_one(
+            {"approval_id": approval_id, "state": str(LedgerState.APPROVED)},
+            {
+                "$set": {
+                    "state": str(LedgerState.EXECUTING),
+                    "executing_started_at": datetime.now(UTC),
+                },
+                "$inc": {"v": 1},
+            },
+        )
+        return bool(result.modified_count)
+
+    async def list_stalled_executing(self, cutoff: datetime) -> list[ApprovalLedgerDocument]:
+        """EXECUTING rows whose claim predates the cutoff — presumed crashed."""
+        cursor = (
+            self._raw_collection()
+            .find(
+                {
+                    "state": str(LedgerState.EXECUTING),
+                    "executing_started_at": {"$lt": cutoff},
+                }
+            )
+            .sort("executing_started_at", 1)
+        )
+        return [ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)]
+
+    async def list_approved_unblocked(
+        self, conversation_id: str
+    ) -> list[ApprovalLedgerDocument]:
+        """APPROVED rows with no unresolved dependencies, oldest first.
+
+        The recovery seam: anything here should be executing or queued, so a
+        row found here by the reconciler is a commit whose task never ran.
+        """
+        cursor = (
+            self._raw_collection()
+            .find(
+                {
+                    "conversation_id": conversation_id,
+                    "state": str(LedgerState.APPROVED),
+                    "blocked_by": {"$size": 0},
+                }
+            )
+            .sort("created_at", 1)
+        )
+        return [ApprovalLedgerDocument.model_validate(raw) for raw in await cursor.to_list(length=200)]
 
     async def get_by_approval_id(self, approval_id: str) -> ApprovalLedgerDocument | None:
         """One row by its ``ap_`` id, or ``None``."""

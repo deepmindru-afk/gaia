@@ -160,3 +160,57 @@ class TestLedgerBranch:
         intr.assert_not_called()
         assert result is not None
         assert result.additional_kwargs[HIL_STATUS_KWARG] == "error"
+
+
+@pytest.mark.unit
+class TestLedgerAutoParity:
+    async def test_auto_aligned_call_runs_without_card_or_row(self) -> None:
+        """Auto mode keeps its intent judge on the ledger path: an aligned
+        call clears to run with no card and no ledger row, exactly like the
+        barrier path. The flag flip must never change what gets asked."""
+        from app.services.hil import gate
+        from app.services.hil.intent import IntentDecision
+
+        ledger = _ledger()
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="auto")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(
+                f"{MODULE}._judge",
+                new=AsyncMock(return_value=IntentDecision(aligned=True, reason="asked")),
+            ),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()) as pub,
+            patch(f"{MODULE}.interrupt") as intr,
+        ):
+            result = await gate.decide_tool_call(_gated_request())
+
+        assert result is None
+        ledger.register.assert_not_awaited()
+        pub.assert_not_awaited()
+        intr.assert_not_called()
+
+    async def test_auto_misaligned_call_still_registers(self) -> None:
+        from app.services.hil import gate
+        from app.services.hil.intent import IntentDecision
+
+        ledger = _ledger()
+        with (
+            patch(f"{MODULE}.is_hil_ledger_enabled", new=AsyncMock(return_value=True)),
+            patch(f"{MODULE}.resolve_policy", new=AsyncMock(return_value="auto")),
+            patch(f"{MODULE}.approval_ledger_repository", new=ledger),
+            patch(f"{MODULE}._integration_name_for", new=AsyncMock(return_value="gmail")),
+            patch(
+                f"{MODULE}._judge",
+                new=AsyncMock(return_value=IntentDecision(aligned=False, reason="unclear")),
+            ),
+            patch(f"{MODULE}.publish_ledger_request", new=AsyncMock()),
+            patch(f"{MODULE}.interrupt") as intr,
+        ):
+            result = await gate.decide_tool_call(_gated_request())
+
+        ledger.register.assert_awaited_once()
+        intr.assert_not_called()
+        assert result is not None
+        assert "PENDING ap_abc1234567" in str(result.content)

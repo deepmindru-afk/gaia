@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.v1.dependencies.oauth_dependencies import get_current_user
 from app.constants.log_tags import LogTag
 from app.db.repositories.approval_ledger import approval_ledger_repository
+from app.models.hil_models import LedgerState
 from app.models.user_models import AuthenticatedUser
 from app.schemas.hil_schemas import (
     ApprovalDecisionRequest,
@@ -63,12 +64,28 @@ async def post_approval_decision(
             feedback=payload.feedback,
             v=payload.v,
         )
-        if payload.scope == "always_tool" and outcome.committed and outcome.state.value == "approved":
+        if payload.scope == "always_tool" and outcome.committed and outcome.state is LedgerState.APPROVED:
             row = await approval_ledger_repository.get_by_approval_id(approval_id)
             if row is not None:
                 await set_tool_override(user_id, row.tool_name, False)
+            else:
+                # The commit won but the row vanished before the override read:
+                # success would lie about "never ask again", so say so loudly.
+                log.error(
+                    f"{LogTag.HIL} Ledger row gone after commit; tool override skipped",
+                    approval_id=approval_id,
+                )
         log.set(hil={"resolved": outcome.committed})
-        return ApprovalDecisionResponse(success=True)
+        # Honest, not optimistic: a stale-v tap committed nothing, and the
+        # client must refresh the row instead of believing its tap landed.
+        # "stale" (row may still be live) is never "not_found" (row is gone).
+        if outcome.committed:
+            return ApprovalDecisionResponse(success=True, status=outcome.state.value)
+        return ApprovalDecisionResponse(
+            success=False,
+            reason="stale" if outcome.stale else "not_found",
+            status=outcome.state.value,
+        )
     await resolve_approval(
         approval_id=approval_id,
         user_id=user_id,
@@ -145,7 +162,10 @@ async def post_batch_decision(
             else:
                 outcomes.append(
                     BatchDecisionOutcome(
-                        approval_id=item.approval_id, resolved=False, reason="not_found"
+                        approval_id=item.approval_id,
+                        resolved=False,
+                        reason="stale" if outcome.stale else "not_found",
+                        status=outcome.state.value,
                     )
                 )
         log.set(hil={"resolved": sum(1 for o in outcomes if o.resolved)})

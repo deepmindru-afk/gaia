@@ -23,6 +23,11 @@ class ApprovalDecisionResponse(BaseModel):
     """Result of relaying an approval decision to the awaiting gate."""
 
     success: bool
+    # Ledger path only: why success is False ("stale" — refresh the row from
+    # status instead of retrying) and the row's current state. Old path leaves
+    # both unset; a committed ledger tap sets status to the decided state.
+    reason: str | None = None
+    status: str | None = None
 
 
 class BatchDecisionItem(BaseModel):
@@ -49,6 +54,9 @@ class BatchDecisionOutcome(BaseModel):
     # Set when resolved is False: "not_found" (already decided/expired),
     # "forbidden", or "not_resumable".
     reason: str | None = None
+    # Current ledger state when a ledger item did not commit (stale client
+    # refreshes the row instead of retrying blind). Old path leaves it unset.
+    status: str | None = None
 
 
 class BatchApprovalDecisionResponse(BaseModel):

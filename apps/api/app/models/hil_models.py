@@ -197,3 +197,6 @@ class ApprovalLedgerDocument(MongoDocument):
     proposing_run_id: str | None = None
     v: int = 0
     created_at: datetime | None = None
+    # When this row entered EXECUTING. The lazy reconciler treats EXECUTING
+    # older than the cutoff as crashed (UNKNOWN) — never blind-retried.
+    executing_started_at: datetime | None = None

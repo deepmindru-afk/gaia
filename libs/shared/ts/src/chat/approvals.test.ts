@@ -40,3 +40,17 @@ describe("ledger-extended approval shapes", () => {
     expect(payload.v).toBe(4);
   });
 });
+
+describe("formatApprovalAge", () => {
+  it("renders compact age strings", async () => {
+    const { formatApprovalAge } = await import("./approvals");
+    expect(formatApprovalAge(30)).toBe("asked just now");
+    expect(formatApprovalAge(3600)).toBe("asked 1h ago");
+    expect(formatApprovalAge(172800)).toBe("asked 2d ago");
+  });
+
+  it("re-confirm threshold is one day", async () => {
+    const { RECONFIRM_AGE_SECONDS } = await import("./approvals");
+    expect(RECONFIRM_AGE_SECONDS).toBe(86400);
+  });
+});
