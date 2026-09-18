@@ -108,6 +108,8 @@ class AnalyticsEvents(StrEnum):
     TODO_SUBSCRIPTION_REGISTERED = "todos:subscription_registered"
     TODO_SUBSCRIPTION_FAILED = "todos:subscription_failed"
     TODO_TRIGGER_FIRED = "todos:trigger_fired"
+    # A tracked todo's run result reaching (or not reaching) the user's chat app.
+    TODO_RUN_RESULT_DELIVERED = "todos:run_result_delivered"
 
     PROJECT_CREATED = "projects:created"
     PROJECT_UPDATED = "projects:updated"

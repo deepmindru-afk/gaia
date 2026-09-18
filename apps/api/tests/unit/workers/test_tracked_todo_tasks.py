@@ -31,6 +31,7 @@ from app.agents.prompts.todo_prompts import (
 )
 from app.constants.todos import ACTIVITY_PROMPT_TAIL_CHARS, FAILED_LABEL
 from app.models.agent_models import SilentRunResult
+from app.models.chat_models import ConversationSource
 from app.models.notification.notification_models import (
     NotificationSourceEnum,
     NotificationType,
@@ -39,6 +40,7 @@ from app.models.todo_models import TodoDocument
 from app.models.trigger_subscription_models import TriggerOrigin
 from app.models.user_models import AuthenticatedUser
 from app.models.workflow_models import TriggerType
+from app.services.analytics_service import AnalyticsEvents
 from app.workers.tasks.tracked_todo_tasks import (
     LOCK_DEFER_BACKOFF,
     MAX_RETRY_ATTEMPTS,
@@ -1284,6 +1286,7 @@ class TestExecuteViaAgentDelivery:
     """
 
     def _patches(self, *, agent, deliver):
+        self.capture = MagicMock()
         return (
             patch(f"{MODULE}.call_agent_silent", agent),
             patch(f"{MODULE}.read_canvas", AsyncMock(return_value="")),
@@ -1294,14 +1297,15 @@ class TestExecuteViaAgentDelivery:
             ),
             patch(f"{MODULE}._collect_reference_context", AsyncMock(return_value="")),
             patch(f"{MODULE}.deliver_result_to_platforms", deliver),
+            patch(f"{MODULE}.capture_event", self.capture),
         )
 
     async def test_the_final_message_is_delivered_to_the_users_platform(self):
         user = AuthenticatedUser(user_id="user-1")
         agent = AsyncMock(return_value=SilentRunResult(message="Deploy is green.", tool_data=[]))
         deliver = AsyncMock()
-        p1, p2, p3, p4, p5, p6 = self._patches(agent=agent, deliver=deliver)
-        with p1, p2, p3, p4, p5, p6:
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6, p7:
             await _execute_via_agent(
                 _doc(id="todo-3", title="Watch the deploy"), "user-1", user_data=user
             )
@@ -1321,13 +1325,56 @@ class TestExecuteViaAgentDelivery:
     async def test_a_silent_todo_delivers_nothing(self):
         agent = AsyncMock(return_value=SilentRunResult(message="Deploy is green.", tool_data=[]))
         deliver = AsyncMock()
-        p1, p2, p3, p4, p5, p6 = self._patches(agent=agent, deliver=deliver)
-        with p1, p2, p3, p4, p5, p6:
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6, p7:
             await _execute_via_agent(
                 _doc(notify_on_run=False), "user-1", user_data=AuthenticatedUser(user_id="user-1")
             )
 
         deliver.assert_not_awaited()
+
+    async def test_the_delivery_outcome_is_captured_against_the_gaia_user_id(self):
+        """A worker has no request context: a missing user id lands the event on an anonymous profile."""
+        agent = AsyncMock(return_value=SilentRunResult(message="Deploy is green.", tool_data=[]))
+        deliver = AsyncMock(return_value=ConversationSource.TELEGRAM)
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6, p7:
+            await _execute_via_agent(
+                _doc(recurrence="daily"), "user-1", user_data=AuthenticatedUser(user_id="user-1")
+            )
+
+        user_id, event, props = self.capture.call_args.args
+        assert user_id == "user-1"
+        assert event == AnalyticsEvents.TODO_RUN_RESULT_DELIVERED
+        assert props["delivered"] is True
+        assert props["platform"] == "telegram"
+        assert props["recurring"] is True
+
+    async def test_a_result_that_reached_nobody_is_captured_as_undelivered(self):
+        """Counting an unlinked user's skipped delivery as a success hides the failure entirely."""
+        agent = AsyncMock(return_value=SilentRunResult(message="Deploy is green.", tool_data=[]))
+        deliver = AsyncMock(return_value=None)
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6, p7:
+            await _execute_via_agent(
+                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1")
+            )
+
+        props = self.capture.call_args.args[2]
+        assert props["delivered"] is False
+        assert props["platform"] is None
+
+    async def test_a_silent_todo_captures_nothing(self):
+        """A todo that opted out never attempted delivery, so an event would be a phantom."""
+        agent = AsyncMock(return_value=SilentRunResult(message="Deploy is green.", tool_data=[]))
+        deliver = AsyncMock()
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6, p7:
+            await _execute_via_agent(
+                _doc(notify_on_run=False), "user-1", user_data=AuthenticatedUser(user_id="user-1")
+            )
+
+        self.capture.assert_not_called()
 
     async def test_a_queued_dispatch_delivers_nothing(self):
         """The queued acknowledgement is not a result; delivering it announces work that never ran."""
@@ -1337,8 +1384,8 @@ class TestExecuteViaAgentDelivery:
             )
         )
         deliver = AsyncMock()
-        p1, p2, p3, p4, p5, p6 = self._patches(agent=agent, deliver=deliver)
-        with p1, p2, p3, p4, p5, p6:
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6, p7:
             await _execute_via_agent(
                 _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1")
             )

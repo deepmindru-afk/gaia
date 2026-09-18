@@ -40,6 +40,7 @@ from app.models.todo_models import TodoDocument, TodoUpdate
 from app.models.trigger_subscription_models import TriggerOrigin
 from app.models.user_models import AuthenticatedUser
 from app.models.workflow_models import TriggerType
+from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.canvas_markdown import section_body
 from app.services.hil.utils import untrusted_fence
 from app.services.notification_service import notification_service
@@ -518,11 +519,23 @@ async def _execute_via_agent(
     # in its prompt not to also send_notification. Swallows its own failures and
     # skips an empty message, so the work never re-runs over a delivery problem.
     if doc.notify_on_run:
-        await deliver_result_to_platforms(
+        delivered_to = await deliver_result_to_platforms(
             user=user_data,
             user_id=user_id,
             notification_text=complete_message,
             origin=f'tracked todo "{doc.title}" (id {doc.id})',
+        )
+        # A worker has no request context, so the user id is passed explicitly or
+        # the event lands on an anonymous profile.
+        capture_event(
+            user_id,
+            AnalyticsEvents.TODO_RUN_RESULT_DELIVERED,
+            {
+                "delivered": delivered_to is not None,
+                "platform": delivered_to.value if delivered_to else None,
+                "trigger_type": _execution_context(todo_id, origin)["trigger_type"],
+                "recurring": bool(doc.recurrence),
+            },
         )
 
     log.info("tracked_todo.agent_completed", todo_id=todo_id)
