@@ -8,8 +8,6 @@ import { useFounderLetter } from "@/features/chat/hooks/useFounderLetter";
 import { useFirstSteps } from "@/features/first-steps";
 import { ANALYTICS_EVENTS, trackEvent } from "@/lib/analytics";
 import {
-  BODY_FONT,
-  INK,
   INK_SOFT,
   LETTER_PARAGRAPHS,
   MEETING_CTA,
@@ -293,10 +291,7 @@ export function FounderLetter({ hidden = false }: FounderLetterProps) {
             </button>
 
             {/* Letter content */}
-            <div
-              className="relative px-[var(--letter-pad-x)] pt-[var(--letter-pad-t)] pb-[var(--letter-pad-b)]"
-              style={{ fontFamily: BODY_FONT, color: INK }}
-            >
+            <div className="relative px-[var(--letter-pad-x)] pt-[var(--letter-pad-t)] pb-[var(--letter-pad-b)] font-sans text-black">
               {/* Salutation */}
               <p
                 className="font-semibold"

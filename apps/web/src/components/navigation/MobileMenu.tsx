@@ -132,9 +132,7 @@ export default function MobileMenu() {
           <Menu01Icon color="foreground" />
         </div>
       </SheetTrigger>
-      <SheetContent
-        className="z-100 w-full overflow-y-auto! border-none bg-zinc-950/50 text-foreground backdrop-blur-2xl dark"
-      >
+      <SheetContent className="z-100 w-full overflow-y-auto! border-none bg-zinc-950/50 text-foreground backdrop-blur-2xl dark">
         <SheetHeader>
           <SheetTitle>
             <VisuallyHidden.Root>Menu</VisuallyHidden.Root>

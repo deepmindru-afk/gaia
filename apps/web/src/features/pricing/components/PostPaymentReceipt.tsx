@@ -172,9 +172,7 @@ export function PostPaymentReceipt({
         <ReceiptPrinter.Output>
           <ReceiptPrinter.Paper>
             <div className="flex items-baseline justify-between gap-4 text-xs">
-              <span className="font-semibold tracking-[0.2em]">
-                RECEIPT
-              </span>
+              <span className="font-semibold tracking-[0.2em]">RECEIPT</span>
               {purchased && <span className="opacity-60">{purchased}</span>}
             </div>
             {customerEmail && (

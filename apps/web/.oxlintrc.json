@@ -24,7 +24,7 @@
         "allow": ["layout"],
         "contracts": [
           {
-            "pattern": "^(Accordion|AccordionItem|Autocomplete|AutocompleteSection|Avatar|Badge|Button|Card|CardBody|CardHeader|Checkbox|Chip|Divider|Dropdown|DropdownItem|DropdownSection|Input|Kbd|Link|Modal|ModalBody|ModalContent|ModalHeader|PopoverContent|Progress|Radio|RadioGroup|ScrollShadow|Select|SelectItem|SelectSection|Switch|Tab|Table|TableCell|TableColumn|Tabs|Textarea|Tooltip|User)$",
+            "pattern": "^(Accordion|AccordionItem|Autocomplete|AutocompleteSection|Avatar|Badge|Button|Card|CardBody|CardHeader|Checkbox|Chip|Divider|Dropdown|DropdownItem|DropdownSection|Input|Kbd|Link|Modal|ModalContent|ModalHeader|PopoverContent|Progress|Radio|RadioGroup|ScrollShadow|Select|SelectItem|SelectSection|Switch|Tab|Table|TableCell|TableColumn|Tabs|Textarea|Tooltip|User)$",
             "allow": [
               "layout",
               "typography",
@@ -39,8 +39,7 @@
               "duration-150",
               "duration-200",
               "duration-300",
-              "hover:bg-transparent",
-              "bg-zinc-700"
+              "hover:bg-transparent"
             ]
           },
           {
@@ -129,10 +128,6 @@
             "allow": ["layout", "spacing", "electron-drag"]
           },
           {
-            "pattern": "^ModalBody$",
-            "allow": ["layout", "spacing"]
-          },
-          {
             "pattern": "^SheetContent$",
             "allow": [
               "layout",
@@ -141,6 +136,14 @@
               "text-foreground",
               "backdrop-blur-2xl"
             ]
+          },
+          {
+            "pattern": "^ModalBody$",
+            "allow": ["layout", "spacing"]
+          },
+          {
+            "pattern": "^Progress$",
+            "allow": ["layout", "bg-zinc-700", "transition-all"]
           }
         ],
         "message": {
@@ -262,7 +265,8 @@
           "compact-chat",
           "mermaid",
           "colored",
-          "markdown-table"
+          "markdown-table",
+          "chat-demo-thread"
         ]
       }
     ],
@@ -488,7 +492,10 @@
               "filter",
               "top",
               "left",
-              "width"
+              "width",
+              "rotate",
+              "zIndex",
+              "fontSize"
             ]
           }
         ]

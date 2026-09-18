@@ -1156,7 +1156,7 @@ importers:
         specifier: ^1.62.1
         version: 1.62.1
       '@shadcn/lint':
-        specifier: ^0.1.0
+        specifier: 0.1.0
         version: 0.1.0(eslint@9.39.4(jiti@2.7.0))(typescript@7.0.2)
       '@types/node':
         specifier: ^24.13.3
@@ -1177,7 +1177,7 @@ importers:
         specifier: ^1.4.7
         version: 1.4.7
       oxlint:
-        specifier: ^1.83.0
+        specifier: 1.83.0
         version: 1.83.0
       schema-dts:
         specifier: ^1.1.5
@@ -31822,7 +31822,7 @@ snapshots:
       '@typescript-eslint/types': 8.70.0
       '@typescript-eslint/typescript-estree': 8.70.0(typescript@7.0.2)
       '@typescript-eslint/visitor-keys': 8.70.0
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3(supports-color@10.2.2)
       eslint: 9.39.4(jiti@2.7.0)
       typescript: 7.0.2
     transitivePeerDependencies:
@@ -31832,7 +31832,7 @@ snapshots:
     dependencies:
       '@typescript-eslint/tsconfig-utils': 8.70.0(typescript@7.0.2)
       '@typescript-eslint/types': 8.70.0
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3(supports-color@10.2.2)
       typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color
@@ -31856,7 +31856,7 @@ snapshots:
       '@typescript-eslint/tsconfig-utils': 8.70.0(typescript@7.0.2)
       '@typescript-eslint/types': 8.70.0
       '@typescript-eslint/visitor-keys': 8.70.0
-      debug: 4.4.3(supports-color@7.2.0)
+      debug: 4.4.3(supports-color@10.2.2)
       minimatch: 10.2.5
       semver: 7.8.5
       tinyglobby: 0.2.17
