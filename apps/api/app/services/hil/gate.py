@@ -163,6 +163,15 @@ async def _verdict(request: ToolCallRequest) -> ToolMessage | _Pending | None:
 
     context = read_gate_context(request)
     if context is None:
+        # AUDIT HOLE, instrumented 2026-09-19: an identity-less call runs with
+        # no gate, no record, no message. If this line ever fires for a real
+        # user-facing run, that run's tool calls are invisible to HIL — the
+        # log below is the only trail. Do not remove until read_gate_context
+        # can fail closed without breaking identity-less system flows.
+        log.warning(
+            f"{LogTag.HIL} Gate skipped: no run identity on the call",
+            tool_name=call.name,
+        )
         return None
 
     try:
