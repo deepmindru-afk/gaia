@@ -1,16 +1,17 @@
-"""Upload browser step screenshots to Cloudflare R2 and return public URLs.
+"""Publish a browser step screenshot and return the URL that serves it back.
 
 Step frames are display-only progress artifacts that can show the user's
 logged-in pages, so they must never be persisted as base64 in the conversation
-document (Mongo bloat). Each frame is uploaded to a Cloudflare R2 bucket and
-referenced by its public r2.dev URL — the only thing persisted in tool_data.
-R2 is on Cloudflare's edge and free-tier (unlike Cloudflare Images, which needs a
-paid plan); the per-step upload was the browser loop's biggest tax on the old
-Cloudinary path, and it now runs off that critical path (see runner _emit_step).
-Reused by web and bots alike (both just render the URL).
+document (Mongo bloat). With credentials they go to a Cloudflare R2 bucket and
+are referenced by their public URL, which is the only thing persisted; R2 is on
+Cloudflare's edge and free-tier, and the upload runs off the browser loop's
+critical path (see runner _emit_step). Without credentials they go to local disk
+and are served back through a short code (see shot_store), so a run with no
+object store still produces real URLs for web and bots alike.
 
-Best-effort: if R2 is unconfigured or the upload fails, returns None so the
-caller degrades to an inline data URL (dev) rather than failing the run.
+Best-effort throughout: a failed upload falls back to disk, and only a failed
+local write returns None, leaving the caller to degrade to an inline data URL
+rather than failing the run.
 """
 
 import asyncio
@@ -22,6 +23,7 @@ from botocore.config import Config
 
 from app.config.settings import settings
 from app.constants.log_tags import LogTag
+from app.services.browser.shot_store import store_step_screenshot
 from shared.py.wide_events import log
 
 _UPLOAD_TIMEOUT_SECONDS = 15
@@ -66,19 +68,31 @@ def _put(png: bytes, key: str) -> None:
     _r2_client().put_object(Bucket=settings.R2_BUCKET, Key=key, Body=png, ContentType="image/png")
 
 
-async def upload_step_screenshot(png: bytes, conversation_id: str, index: int) -> str | None:
-    """Upload one step screenshot to R2; return its public URL or None."""
+async def publish_step_screenshot(png: bytes, conversation_id: str, index: int) -> str | None:
+    """Publish one step screenshot and return the URL that serves it, or None."""
     if not _r2_configured():
-        return None
+        return await _store_locally(png, conversation_id, index)
     key = f"browser_steps/{conversation_id}/step_{index}.png"
     try:
         # boto3 is blocking — run it off the event loop.
         await asyncio.to_thread(_put, png, key)
     except Exception as exc:  # a screenshot is non-essential progress
         log.warning(
-            f"{LogTag.BROWSER} Browser screenshot upload failed; using inline fallback",
+            f"{LogTag.BROWSER} Browser screenshot upload failed; storing it locally instead",
+            error_type=type(exc).__name__,
+        )
+        return await _store_locally(png, conversation_id, index)
+    base = (settings.R2_PUBLIC_BASE_URL or "").rstrip("/")  # guaranteed set by _r2_configured
+    return f"{base}/{key}"
+
+
+async def _store_locally(png: bytes, conversation_id: str, index: int) -> str | None:
+    """Keep the frame on this host, or None when even that fails."""
+    try:
+        return await store_step_screenshot(png, conversation_id, index)
+    except OSError as exc:
+        log.warning(
+            f"{LogTag.BROWSER} Browser screenshot could not be stored; using inline fallback",
             error_type=type(exc).__name__,
         )
         return None
-    base = (settings.R2_PUBLIC_BASE_URL or "").rstrip("/")  # guaranteed set by _r2_configured
-    return f"{base}/{key}"

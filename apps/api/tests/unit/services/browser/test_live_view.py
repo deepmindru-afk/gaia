@@ -1,12 +1,11 @@
-"""Cover _live_view_base, create_live_view_link, live_view_url and render_live_view_page.
+"""Cover create_live_view_link, live_view_url and render_live_view_page.
 
 test_live_code.py already covers the vhost-vs-plain-host branch of
 create_live_view_link with an exact-match assertion on the returned URL; this
-file targets what that leaves open: the base-URL fallback/precedence logic in
-_live_view_base itself, that mint_live_code is called with the right
-arguments in the right order (an AsyncMock return value alone can't catch an
-argument swap), and live_view_url/render_live_view_page — neither of
-which any existing test in the suite calls at all.
+file targets what that leaves open: that mint_live_code is called with the right
+arguments in the right order (an AsyncMock return value alone cannot catch an
+argument swap), and live_view_url/render_live_view_page, neither of which any
+existing test in the suite calls at all.
 """
 
 from unittest.mock import AsyncMock
@@ -14,64 +13,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.browser import live_view
-
-
-@pytest.mark.unit
-def test_live_view_base_prefers_configured_base_url_over_host(monkeypatch):
-    monkeypatch.setattr(
-        live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.io"
-    )
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
-
-    assert live_view._live_view_base() == "https://browser.heygaia.io"
-
-
-@pytest.mark.unit
-def test_live_view_base_falls_back_to_host_when_unset(monkeypatch):
-    monkeypatch.setattr(live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
-
-    assert live_view._live_view_base() == "https://api.heygaia.io"
-
-
-@pytest.mark.unit
-def test_live_view_base_falls_back_to_host_when_base_url_is_empty_string(monkeypatch):
-    # "" is falsy but not None — the fallback is an `or`, not an `is None` check.
-    monkeypatch.setattr(live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "")
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
-
-    assert live_view._live_view_base() == "https://api.heygaia.io"
-
-
-@pytest.mark.unit
-def test_live_view_base_strips_trailing_slash_from_configured_base_url(monkeypatch):
-    monkeypatch.setattr(
-        live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.io/"
-    )
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
-
-    assert live_view._live_view_base() == "https://browser.heygaia.io"
-
-
-@pytest.mark.unit
-def test_live_view_base_rstrip_only_strips_slash_not_other_trailing_chars(monkeypatch):
-    # Pins the exact character set passed to rstrip(): "/" only. A mutant padding
-    # it to "XX/XX" would also strip "X", so a base URL ending in "X/" tells the
-    # two apart.
-    monkeypatch.setattr(
-        live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.ioX/"
-    )
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io")
-
-    assert live_view._live_view_base() == "https://browser.heygaia.ioX"
-
-
-@pytest.mark.unit
-def test_live_view_base_strips_trailing_slash_from_host_fallback(monkeypatch):
-    monkeypatch.setattr(live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", None)
-    monkeypatch.setattr(live_view.settings, "HOST", "https://api.heygaia.io/")
-
-    assert live_view._live_view_base() == "https://api.heygaia.io"
 
 
 @pytest.mark.unit

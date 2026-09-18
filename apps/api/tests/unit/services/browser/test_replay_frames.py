@@ -269,15 +269,23 @@ async def test_create_replay_link_returns_none_when_no_screenshots_uploaded(
 
 
 @pytest.mark.unit
-async def test_create_replay_link_returns_none_when_r2_is_not_configured(
+async def test_create_replay_link_is_produced_without_an_object_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The recap gates on frames, not on the bucket: a run served off local disk
+    # produced real URLs, so refusing the link there loses the recap entirely.
     monkeypatch.setattr(replay_module.settings, "R2_PUBLIC_BASE_URL", None)
+    monkeypatch.setattr(
+        replay_module.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.test"
+    )
     fake_cache = _FakeRedisCache()
     monkeypatch.setattr(replay_module, "redis_cache", fake_cache)
 
-    assert await create_replay_link("s1", ["https://cdn/1.png"]) is None
-    assert fake_cache.set_calls == []
+    link = await create_replay_link("s1", ["https://browser.test/shots/abc/1.png"])
+
+    assert link is not None
+    assert link.startswith("https://browser.test/replays/")
+    assert fake_cache.set_calls[0]["value"].shots == ["https://browser.test/shots/abc/1.png"]
 
 
 @pytest.mark.unit

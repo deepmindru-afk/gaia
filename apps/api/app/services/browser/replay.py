@@ -4,7 +4,8 @@ When a browser task finishes (success or failure), its step screenshots already
 live in R2. A short code maps to that session + its step count, so the delivered
 recap link (browser.heygaia.io/replays/{code}) opens a self-contained
 slideshow that plays every step back — a scrubber, a filmstrip of thumbnails, and
-arrow-key navigation. The code is the secret; the images are public R2 URLs.
+arrow-key navigation. The code is the secret, and the images are whatever URLs
+the run produced, whether an object store or this API served them.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from app.constants.browser import (
 )
 from app.db.redis import redis_cache
 from app.schemas.browser import ReplayRecord
+from app.services.browser.links import browser_link_base
 
 
 def _key(code: str) -> str:
@@ -49,11 +51,10 @@ async def create_replay_link(session_id: str, shots: list[str]) -> str | None:
     Takes the URLs the run really produced rather than a step count: an upload is
     best-effort, so a count would promise frames the slideshow cannot show.
     """
-    if not shots or not settings.R2_PUBLIC_BASE_URL:
+    if not shots:
         return None
     code = await mint_replay_code(session_id, len(shots), shots)
-    base = (settings.BROWSER_LIVE_VIEW_BASE_URL or settings.HOST).rstrip("/")
-    return f"{base}/replays/{code}"
+    return f"{browser_link_base()}/replays/{code}"
 
 
 def render_replay_page(record: ReplayRecord) -> str:

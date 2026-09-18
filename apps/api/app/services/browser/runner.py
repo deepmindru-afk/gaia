@@ -48,7 +48,7 @@ from app.schemas.browser import (
 from app.services.browser.captions import caption_from_action_list
 from app.services.browser.exceptions import BrowserHandoffCancelled, BrowserUnavailableError
 from app.services.browser.replay import create_replay_link
-from app.services.browser.screenshots import upload_step_screenshot
+from app.services.browser.screenshots import publish_step_screenshot
 from app.services.browser.session import BrowserHostSession
 from app.services.browser.tools import build_browser_tools
 from app.services.llm_metering import LLMCallContext, TokenUsage, record_llm_call
@@ -533,7 +533,7 @@ class BrowserTaskRunner:
         except (ValueError, TypeError):
             return None
         # Keyed by session id (not conversation) so each run is its own replay folder.
-        url = await upload_step_screenshot(png, self._session.session_id, index)
+        url = await publish_step_screenshot(png, self._session.session_id, index)
         return url or f"data:image/png;base64,{raw_b64}"
 
     async def _finish(

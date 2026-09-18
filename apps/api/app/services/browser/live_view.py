@@ -17,6 +17,7 @@ import html
 from pathlib import Path
 
 from app.config.settings import settings
+from app.services.browser.links import browser_link_base
 from app.services.browser.live_code import mint_live_code
 
 _WORDMARK_DATA_URI = "data:image/png;base64," + base64.b64encode(
@@ -26,15 +27,9 @@ _WORDMARK_DATA_URI = "data:image/png;base64," + base64.b64encode(
 _LIVE_VIEW_PATH_TEMPLATE = "/live/{session_id}"
 
 
-def _live_view_base() -> str:
-    """Public base URL fronting the live-view route (friendly vhost, or HOST)."""
-    base: str = settings.BROWSER_LIVE_VIEW_BASE_URL or settings.HOST
-    return base.rstrip("/")
-
-
 def live_view_url(session_id: str) -> str:
     """Return the public live-view URL for a session (the base the chat card connects to)."""
-    return f"{_live_view_base()}{_LIVE_VIEW_PATH_TEMPLATE.format(session_id=session_id)}"
+    return f"{browser_link_base()}{_LIVE_VIEW_PATH_TEMPLATE.format(session_id=session_id)}"
 
 
 async def create_live_view_link(session_id: str, user_id: str) -> str:
@@ -43,7 +38,7 @@ async def create_live_view_link(session_id: str, user_id: str) -> str:
     {vhost}/{code} when a dedicated live-view vhost is configured (the vhost rewrites /{code} to the app's /live/{code}), else {host}/live/{code}. The
     code maps to the session + owner in Redis — no session id or token in the URL."""
     code = await mint_live_code(session_id, user_id)
-    base = _live_view_base()
+    base = browser_link_base()
     if settings.BROWSER_LIVE_VIEW_BASE_URL:
         return f"{base}/{code}"
     return f"{base}/live/{code}"

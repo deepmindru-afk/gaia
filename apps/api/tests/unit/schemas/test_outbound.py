@@ -1,4 +1,4 @@
-"""The outbound envelope's validation rules: exactly one attachment source, https-only."""
+"""The outbound envelope's validation rules: one attachment source, and which URLs may be http."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from functools import partial
 from pydantic import BaseModel, ValidationError
 import pytest
 
+from app.config.settings import settings
 from app.schemas.outbound import OutboundAttachment, OutboundMessageEnvelope
 
 _ONE_SOURCE = "attachment requires exactly one of `url` or (`conversation_id` + `path`)"
@@ -70,6 +71,53 @@ class TestAttachmentUrlScheme:
 
     def test_the_scheme_rule_does_not_apply_to_an_artifact_source(self) -> None:
         assert OutboundAttachment(**_artifact()).url is None
+
+
+@pytest.mark.unit
+class TestAttachmentUrlOnThisApi:
+    """http is allowed only for this API's own URLs, where the bot authenticates the fetch."""
+
+    @pytest.fixture(autouse=True)
+    def _own_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "HOST", "http://localhost:8480")
+
+    def test_this_apis_own_http_url_is_accepted(self) -> None:
+        url = "http://localhost:8480/shots/c0de/1.png"
+        assert OutboundAttachment(url=url, filename="1.png").url == url
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # Another host entirely, while ours happens to be http.
+            "http://cdn.example/a.png",
+            # Our host as a path or a query, which a prefix test would wave through.
+            "http://cdn.example/http://localhost:8480/a.png",
+            "http://cdn.example/a.png?u=http://localhost:8480",
+            # Our host, another port.
+            "http://localhost:9999/shots/c0de/1.png",
+            # Our host as someone else's subdomain.
+            "http://localhost:8480.evil.example/a.png",
+        ],
+    )
+    def test_an_http_url_that_is_not_this_api_is_still_rejected(self, url: str) -> None:
+        assert _rejection(lambda: OutboundAttachment(url=url, filename="a.png")) == _HTTPS_ONLY
+
+    def test_a_different_scheme_on_our_host_is_not_this_api(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Served over https, so an http link to the same host is someone downgrading it.
+        monkeypatch.setattr(settings, "HOST", "https://api.heygaia.io")
+        assert (
+            _rejection(lambda: OutboundAttachment(url="http://api.heygaia.io/a.png", filename="a"))
+            == _HTTPS_ONLY
+        )
+
+    def test_no_configured_host_exempts_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "HOST", "")
+        assert (
+            _rejection(lambda: OutboundAttachment(url="http://localhost:8480/a.png", filename="a"))
+            == _HTTPS_ONLY
+        )
 
 
 @pytest.mark.unit

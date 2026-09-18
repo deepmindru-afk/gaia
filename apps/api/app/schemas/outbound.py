@@ -9,9 +9,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Self
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
+
+from app.config.settings import settings
+
+
+def _is_own_api(url: str) -> bool:
+    """Whether this URL is served by this API, compared by origin rather than prefix."""
+    host = urlsplit(settings.HOST)
+    target = urlsplit(url)
+    return bool(host.netloc) and (target.scheme, target.netloc) == (host.scheme, host.netloc)
 
 
 class OutboundAttachment(BaseModel):
@@ -25,7 +35,7 @@ class OutboundAttachment(BaseModel):
     path: str | None = Field(
         default=None, min_length=1
     )  # artifact path relative to the session's artifacts/
-    url: str | None = None  # CDN source; fetched directly, no GAIA auth involved
+    url: str | None = None  # a CDN asset, or this API serving the bytes itself
     filename: str = Field(min_length=1)
     content_type: str | None = None
     caption: str | None = None
@@ -38,9 +48,10 @@ class OutboundAttachment(BaseModel):
             raise ValueError(
                 "attachment requires exactly one of `url` or (`conversation_id` + `path`)"
             )
-        if has_url and not self.url.startswith("https://"):
-            # The URL is the bearer authorization for the attachment bytes, so it
-            # must never ride a cleartext hop a network observer could read.
+        if has_url and not self.url.startswith("https://") and not _is_own_api(self.url):
+            # A third-party URL IS the authorization for the bytes, so it must
+            # never ride a cleartext hop. Our own API is not: the bot authenticates
+            # that fetch, so the URL carries no secret.
             raise ValueError("attachment `url` must be an https URL")
         return self
 

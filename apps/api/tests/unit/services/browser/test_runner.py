@@ -136,7 +136,7 @@ def patch_browser(monkeypatch):
 
     monkeypatch.setattr(browser_use, "Browser", _browser)
     # CDN off by default → screenshots fall back to inline data URLs.
-    monkeypatch.setattr(runner_mod, "upload_step_screenshot", AsyncMock(return_value=None))
+    monkeypatch.setattr(runner_mod, "publish_step_screenshot", AsyncMock(return_value=None))
     FakeAgent.script = []
     FakeAgent.history = _History()
     FakeAgent.last_kwargs = {}
@@ -279,7 +279,7 @@ async def test_happy_path_emits_steps_and_result(patch_browser):
 async def test_screenshot_uses_cdn_url_when_available(patch_browser, monkeypatch):
     monkeypatch.setattr(
         runner_mod,
-        "upload_step_screenshot",
+        "publish_step_screenshot",
         AsyncMock(return_value="https://cdn.example.com/browser_steps/c1/step_1.png?sig=abc"),
     )
     FakeAgent.script = [{"goal": "Open", "actions": [("navigate", {"url": "x"})]}]
@@ -1308,7 +1308,7 @@ async def test_a_step_with_no_actions_carries_no_actions(patch_browser) -> None:
 async def test_only_uploaded_screenshots_become_replay_frames(patch_browser, monkeypatch) -> None:
     monkeypatch.setattr(
         runner_mod,
-        "upload_step_screenshot",
+        "publish_step_screenshot",
         AsyncMock(side_effect=["https://cdn.example.com/step_1.png", None]),
     )
     _, emit = _collector()
@@ -1367,7 +1367,7 @@ async def test_screenshot_is_uploaded_under_the_session_and_step(
     patch_browser, monkeypatch
 ) -> None:
     upload = AsyncMock(return_value="https://cdn.example.com/browser_steps/s1/step_4.png")
-    monkeypatch.setattr(runner_mod, "upload_step_screenshot", upload)
+    monkeypatch.setattr(runner_mod, "publish_step_screenshot", upload)
     _, emit = _collector()
     runner = _make_runner(emit=emit)
 
@@ -1826,7 +1826,7 @@ async def test_the_step_frame_is_uploaded_under_that_steps_index(
     patch_browser, monkeypatch
 ) -> None:
     upload = AsyncMock(return_value="https://cdn.example.com/step_7.png")
-    monkeypatch.setattr(runner_mod, "upload_step_screenshot", upload)
+    monkeypatch.setattr(runner_mod, "publish_step_screenshot", upload)
     _, emit = _collector()
     runner = _make_runner(emit=emit)
 

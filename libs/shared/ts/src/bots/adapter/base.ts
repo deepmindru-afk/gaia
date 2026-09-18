@@ -35,7 +35,6 @@
 
 import { Analytics, type AnalyticsContext, BOT_EVENTS } from "../../analytics";
 import { GaiaClient } from "../api";
-import { downloadUrlRequest } from "../api/media";
 import { loadConfig } from "../config";
 import type { OutboundAttachment } from "../consumer/envelope";
 import { OutboundConsumer } from "../consumer/outbound-consumer";
@@ -316,7 +315,10 @@ export abstract class BaseBotAdapter {
   ): Promise<{ data: Buffer; contentType: string } | null> {
     let artifact: { data: Buffer; contentType: string };
     if (attachment.url) {
-      artifact = await downloadUrlRequest(attachment.url);
+      artifact = await this.gaia.downloadAttachmentUrl(attachment.url, {
+        platform: this.platform,
+        platformUserId: destinationId,
+      });
     } else {
       if (!attachment.conversation_id || !attachment.path) {
         // The envelope schema's refine already guarantees exactly one source —

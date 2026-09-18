@@ -20,17 +20,19 @@ import contextlib
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from jose import JWTError
 import websockets
 
 from app.api.v1.dependencies.oauth_dependencies import get_current_user, get_current_user_ws
 from app.browser_host.pumps import pump_until_first_close
 from app.constants.log_tags import LogTag
+from app.schemas.errors import HTML_ROUTE_ERROR_RESPONSES
 from app.services.browser import registry
 from app.services.browser.live_code import live_code_remaining_seconds, resolve_live_code
 from app.services.browser.live_view import render_live_view_page
 from app.services.browser.replay import render_replay_page, resolve_replay_code
+from app.services.browser.shot_store import resolve_shot_code, shot_path
 from app.services.browser.takeover_token import (
     TakeoverTokenClaims,
     takeover_token_ttl_seconds,
@@ -44,7 +46,29 @@ router = APIRouter(tags=["Browser"])
 _WS_SESSION_GONE = 4404
 
 
-@router.get("/replays/{code}")
+@router.get("/shots/{code}/{index}.png", response_class=FileResponse)
+async def step_screenshot(code: str, index: int) -> FileResponse:
+    """One step frame of a finished run, for deployments with no object store.
+
+    Same capability model as the recap page it feeds: the code is the secret, so
+    a frame cannot be reached by guessing a session id, and it expires with the
+    code. The index is an int, so it cannot walk out of the run's directory.
+    """
+    log.set(browser={"operation": "step_screenshot"})
+    session_id = await resolve_shot_code(code)
+    if session_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Screenshot not found or expired"
+        )
+    path = shot_path(session_id, index)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screenshot not found")
+    log.set(browser={"session_id": session_id})
+    # Starlette reads the type off the .png suffix shot_path always writes.
+    return FileResponse(path)
+
+
+@router.get("/replays/{code}", response_class=HTMLResponse, responses=HTML_ROUTE_ERROR_RESPONSES)
 async def replay_page(code: str) -> HTMLResponse:
     """Standalone recap slideshow for a finished session. ``code`` resolves to the
     session + step count in Redis; the step screenshots are public R2 URLs, so no
@@ -60,7 +84,7 @@ async def replay_page(code: str) -> HTMLResponse:
     return HTMLResponse(content=render_replay_page(record))
 
 
-@router.get("/live/{code}")
+@router.get("/live/{code}", response_class=HTMLResponse, responses=HTML_ROUTE_ERROR_RESPONSES)
 async def live_view_page(
     code: str,
     request: Request,
