@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.llm.client import StructuredCallOptions
-from app.constants.hil import HIL_ACK_APPROVED, HIL_LLM_TIMEOUT_SECONDS
+from app.constants.hil import HIL_ACK_APPROVED, HIL_ACK_DENIED, HIL_LLM_TIMEOUT_SECONDS
 from app.services.hil.conversational import (
     UNRELATED_FEEDBACK,
     BatchDecisionResult,
@@ -580,19 +580,42 @@ class TestResolverTurnTelemetry:
         resolver["llm"].return_value = DecisionResult(action="approve")
         with (
             pending("Send email"),
+            patch("app.services.hil.conversational.begin_turn_all") as mock_begin,
             patch("app.services.agnost_service.end_turn") as mock_agnost_end,
             patch("app.services.latitude_service.end_turn") as mock_lat_end,
             patch("app.services.laminar_service.end_turn") as mock_lam_end,
         ):
             assert (
-                await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes", None)
+                await resolve_pending_from_message(
+                    CONVERSATION_ID, USER_ID, "yes", None, source="telegram"
+                )
                 == "approve"
             )
 
+        spec = mock_begin.call_args.args[0]
+        assert spec.user_id == USER_ID
+        assert spec.conversation_id == CONVERSATION_ID
+        assert spec.user_input == "yes"
+        assert spec.source == "telegram"
+        assert spec.mode == "interactive"
+        assert spec.properties == {"approval_flow": "hil_classifier"}
         assert mock_agnost_end.call_args.kwargs["output"] == HIL_ACK_APPROVED
         assert mock_agnost_end.call_args.kwargs["success"] is True
         assert mock_lat_end.call_args.kwargs["error"] is None
         assert mock_lam_end.call_args.kwargs["error"] is None
+
+    async def test_deny_closes_turn_with_deny_ack(self, resolver: dict) -> None:
+        resolver["llm"].return_value = DecisionResult(action="deny")
+        with (
+            pending("Send email"),
+            patch("app.services.hil.conversational.end_turn_all") as mock_end,
+        ):
+            assert (
+                await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "no", None)
+                == "deny"
+            )
+
+        assert mock_end.call_args.kwargs["output"] == HIL_ACK_DENIED
 
     async def test_unrelated_closes_turn_quietly(self, resolver: dict) -> None:
         resolver["llm"].return_value = DecisionResult(action="unrelated")
@@ -623,4 +646,5 @@ class TestResolverTurnTelemetry:
             await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "later", None)
 
         assert mock_agnost_end.call_args.kwargs["success"] is False
+        assert mock_agnost_end.call_args.kwargs["output"] == "db down"
         assert mock_lat_end.call_args.kwargs["error"] is not None
