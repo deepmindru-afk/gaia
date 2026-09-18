@@ -1,9 +1,8 @@
 """
-Skill Management Tools - LangChain tools for the skills subagent.
+Skill Management Tools - LangChain tools for the skills integration.
 
 These tools handle installing, creating, listing, and managing skills.
-The skills subagent is delegated to via handoff when the user wants to
-manage their installed skills.
+They run in-context after activate_integration("skills").
 """
 
 import json

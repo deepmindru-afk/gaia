@@ -17,7 +17,6 @@ from app.agents.prompts.workflow_prompts import (
 from app.agents.templates.agent_template import (
     EXECUTOR_PROMPT_TEMPLATE,
     get_comms_static_prompt,
-    get_executor_prompt,
 )
 from app.agents.workspace.paths import safe_upload_filename
 from app.constants.agents import PLAYBOOK_FALLBACK_CONTEXT_KEY
@@ -42,27 +41,22 @@ def create_system_message(
     agent_type: Literal["comms", "executor"] = "comms",
     source: str | None = None,
     openui_enabled: bool = True,
-    activation_enabled: bool | None = None,
 ) -> SystemMessage:
     """Return the STATIC main system prompt for the given agent.
 
-    The content is byte-identical across every user on the same channel and
-    flag variant so the provider's implicit prompt cache can match
-    across users — the first web user of the day warms the cache, every
-    subsequent web user on the same variant hits it on turn 1. For comms,
-    the per-channel variants embed the output-format addendum (OpenUI or its
-    markdown fallback on web/mobile/desktop per ``openui_enabled``; text-only
-    restrictions on messaging platforms). The executor prompt is
-    single-variant per activation assignment (``None`` keeps the env default).
+    The content is byte-identical across every user on the same channel so the
+    provider's implicit prompt cache can match across users — the first web
+    user of the day warms the cache, every subsequent web user hits it on
+    turn 1. For comms, the per-channel variants embed the output-format
+    addendum (OpenUI or its markdown fallback on web/mobile/desktop per
+    ``openui_enabled``; text-only restrictions on messaging platforms).
 
     All user, time, and memory context is assembled by ``app.agents.context``
     and delivered in its own messages — never in this static prefix.
     """
     del user_id, user_name  # intentionally unused — static prefix only
     if agent_type == "executor":
-        if activation_enabled is None:
-            return SystemMessage(content=EXECUTOR_PROMPT_TEMPLATE)
-        return SystemMessage(content=get_executor_prompt(activation_enabled))
+        return SystemMessage(content=EXECUTOR_PROMPT_TEMPLATE)
     return SystemMessage(content=get_comms_static_prompt(source, openui_enabled=openui_enabled))
 
 
@@ -105,7 +99,7 @@ def format_tool_selection_message(
     """Format tool selection message, handling both standalone and combined requests.
 
     The comms_agent delegates to executor via call_executor. The executor will
-    use semantic search to find the right tool/subagent, then execute.
+    activate the integration and run its tools itself.
     """
     tool_name = selected_tool.replace("_", " ").title()
     search_hint = f"{selected_tool} {tool_category}" if tool_category else selected_tool
@@ -117,9 +111,8 @@ def format_tool_selection_message(
 **TOOL SELECTION:** The user has specifically selected the '{tool_name}' tool (category: {tool_category or "general"}).
 
 Use call_executor to delegate this task. The executor should:
-1. Use `retrieve_tools(query="{search_hint}")` to find the tool or subagent
-2. If a subagent is returned (e.g. subagent:{tool_category}), use `handoff(subagent_id="{tool_category}", task="Use {selected_tool} to [user's request]")`
-3. If a direct tool is returned, bind it with `retrieve_tools(exact_tool_names=[...])` and execute
+1. Use `activate_integration(integration_id="{tool_category}")` to load the integration (or `retrieve_tools(query="{search_hint}")` to find the tool first)
+2. Run it via `execute(task_description="...", tool_name="{selected_tool}", data={{...}})` built from its schema
 
 Execute immediately without asking for clarification."""
 
@@ -127,9 +120,8 @@ Execute immediately without asking for clarification."""
     return f"""**TOOL EXECUTION REQUEST:** The user has selected the '{tool_name}' tool (category: {tool_category or "general"}).
 
 Use call_executor to delegate this task. The executor should:
-1. Use `retrieve_tools(query="{search_hint}")` to find the tool or subagent
-2. If a subagent is returned (e.g. subagent:{tool_category}), use `handoff(subagent_id="{tool_category}", task="Use {selected_tool} to execute the user's request")`
-3. If a direct tool is returned, bind it with `retrieve_tools(exact_tool_names=[...])` and execute
+1. Use `activate_integration(integration_id="{tool_category}")` to load the integration (or `retrieve_tools(query="{search_hint}")` to find the tool first)
+2. Run it via `execute(task_description="...", tool_name="{selected_tool}", data={{...}})` built from its schema
 
 Execute immediately without asking for clarification."""
 

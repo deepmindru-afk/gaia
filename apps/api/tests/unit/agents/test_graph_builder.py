@@ -433,20 +433,15 @@ class TestBuildExecutorGraph:
 
         assert "handoff" in kwargs["tools_config"].initial_tool_ids
         assert "handoff" in registry
-        # activate_integration is bound unconditionally now; the per-user
-        # experiment is enforced by its entry guard, not by graph membership.
+        # activate_integration is always bound; handoff stays for per-user MCP.
         assert "activate_integration" in kwargs["tools_config"].initial_tool_ids
         assert "activate_integration" in registry
 
-    async def test_activation_flag_adds_activate_integration_and_keeps_handoff(self, monkeypatch):
+    async def test_activate_integration_bound_and_handoff_kept(self):
         """Activation leads with activate_integration but keeps handoff bound: it
         is the only path for per-user MCP integrations, which cannot be activated
         in-context, so both live in the bound set and the registry.
         """
-        from app.config.settings import settings
-
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
-
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -462,13 +457,9 @@ class TestBuildExecutorGraph:
         assert "handoff" in kwargs["tools_config"].initial_tool_ids
         assert "handoff" in registry
 
-    async def test_activation_flag_keeps_the_rest_of_the_initial_tool_set(self, monkeypatch):
+    async def test_activate_integration_leads_the_initial_tool_set(self):
         """activate_integration leads; the full initial set (handoff included) follows."""
         from app.agents.core.graph_builder.build_graph import EXECUTOR_INITIAL_TOOL_IDS
-        from app.config.settings import settings
-
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
-
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -481,14 +472,10 @@ class TestBuildExecutorGraph:
         expected = ["activate_integration", *EXECUTOR_INITIAL_TOOL_IDS]
         assert kwargs["tools_config"].initial_tool_ids == expected
 
-    async def test_no_join_tool_in_either_mode(self, monkeypatch):
+    async def test_no_join_tool_bound(self):
         """Neither wait_for_subagents nor any successor is bound: background
         results arrive via the executor inbox and steering needs no join.
         """
-        from app.config.settings import settings
-
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
-
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -559,8 +546,7 @@ class TestBuildExecutorGraph:
             # Exact equality, not membership: a renamed id silently drops that
             # tool from the executor's initial bind set, and membership lets the
             # typo through as long as one asserted name survives.
-            # activate_integration leads unconditionally; its entry guard
-            # enforces the per-user experiment.
+            # activate_integration leads unconditionally.
             assert kwargs["tools_config"].initial_tool_ids == [
                 "activate_integration",
                 "handoff",

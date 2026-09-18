@@ -1,4 +1,4 @@
-"""End-to-end: ENABLE_INTEGRATION_ACTIVATION through the REAL executor graph.
+"""End-to-end: integration activation through the REAL executor graph.
 
 These build the production executor graph (create_agent, the real middleware
 stack, the real selected_tool_ids channel) with only the model and the two I/O
@@ -28,7 +28,6 @@ from app.agents.core.graph_builder.build_graph import (
     build_executor_graph,
 )
 from app.agents.tools.todo_tools import TODO_TOOL_NAMES
-from app.config.settings import settings
 from tests.helpers import BindableToolsFakeModel
 
 _ACTIVATION_MOD = "app.agents.core.subagents.integration_activation"
@@ -90,9 +89,7 @@ def _tool_message_for(result: dict, call_id: str) -> ToolMessage | None:
 
 @pytest.mark.asyncio
 class TestActivationThroughRealExecutorGraph:
-    async def test_activated_helper_is_bound_for_the_next_turn(self, monkeypatch) -> None:
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
-
+    async def test_activated_helper_is_bound_for_the_next_turn(self) -> None:
         model = BindableToolsFakeModel(
             responses=[
                 AIMessage(
@@ -152,10 +149,8 @@ class TestActivationThroughRealExecutorGraph:
         assert "stub:helper_tool" in sent.text
 
     async def test_activated_integration_tool_is_documented_not_bound(
-        self, monkeypatch
+        self,
     ) -> None:
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
-
         model = BindableToolsFakeModel(
             responses=[
                 AIMessage(
@@ -216,8 +211,7 @@ class TestActivationThroughRealExecutorGraph:
         assert sent, "gmail_send call vanished instead of being rejected"
         assert "is not bound" in sent.text, sent.text
 
-    async def test_per_user_mcp_is_routed_to_handoff(self, monkeypatch) -> None:
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
+    async def test_per_user_mcp_is_routed_to_handoff(self) -> None:
 
         model = BindableToolsFakeModel(
             responses=[
@@ -256,15 +250,14 @@ class TestActivationThroughRealExecutorGraph:
         assert activation and "handoff(" in activation.text
         activate_tools.assert_not_awaited()
 
-    async def test_handoff_runs_when_the_agent_follows_the_redirect(self, monkeypatch) -> None:
-        """The other half of the redirect: handoff must actually work under the flag.
+    async def test_handoff_runs_when_the_agent_follows_the_redirect(self) -> None:
+        """The other half of the redirect: handoff must actually work.
 
         Activation tells the model to use handoff for a per-user integration; if
-        handoff were unbound (it is dropped under the old exclusive-swap wiring)
-        that instruction would dead-end. This walks the whole chain — activate,
-        get redirected, call handoff — and asserts handoff's own body ran.
+        handoff were unbound that instruction would dead-end. This walks the whole
+        chain — activate, get redirected, call handoff — and asserts handoff's
+        own body ran.
         """
-        monkeypatch.setattr(settings, "ENABLE_INTEGRATION_ACTIVATION", True)
 
         model = BindableToolsFakeModel(
             responses=[

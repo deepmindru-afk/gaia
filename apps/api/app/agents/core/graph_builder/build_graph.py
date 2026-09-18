@@ -38,7 +38,6 @@ from app.agents.tools.subagent_control_tool import (
     message_subagent,
 )
 from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_tools
-from app.config.settings import settings
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
 from app.override.langgraph_bigtool.agent_config import (
@@ -50,11 +49,8 @@ from app.override.langgraph_bigtool.create_agent import create_agent
 from shared.py.wide_events import log
 
 #: Tools the executor binds before its first turn, ahead of any retrieve_tools call.
-#: "activate_integration" is always bound; its entry guard enforces the
-#: per-user experiment (``is_integration_activation_enabled``), since the
-#: compiled graph is global and cannot vary tools per user. `handoff` stays
-#: for per-user MCP integrations that cannot be activated in-context — see
-#: build_executor_graph.
+#: "activate_integration" is always bound. `handoff` stays for per-user MCP
+#: integrations that cannot be activated in-context — see build_executor_graph.
 EXECUTOR_INITIAL_TOOL_IDS = [
     "handoff",
     "execute",
@@ -110,15 +106,11 @@ async def build_executor_graph(
     tool_dict = tool_registry.get_tool_dict()
     tool_dict.update({t.name: t for t in todo_tools})
 
-    # handoff stays bound in both modes. Under activation it loads most
-    # integrations in-context via activate_integration, but per-user MCP
-    # integrations (auth-required or custom) issue their tools per user, so they
-    # never enter the global registry and can only run through their own per-user
-    # graph — which is exactly what handoff builds. activate_integration routes
-    # those to handoff rather than dead-ending them. activate_integration is
-    # bound unconditionally (its entry guard enforces the per-user experiment);
-    # the prompt each run gets decides whether the model reaches for it.
-    activation_mode = settings.ENABLE_INTEGRATION_ACTIVATION
+    # handoff stays bound for per-user MCP integrations (auth-required or
+    # custom), which issue their tools per user, so they never enter the
+    # global registry and can only run through their own per-user graph —
+    # which is exactly what handoff builds. activate_integration routes those
+    # to handoff rather than dead-ending them.
     tool_dict.update({"handoff": handoff_tool})
     tool_dict.update({"activate_integration": activate_integration})
     # Executor-only tools to steer or cancel a specific running subagent by id.
@@ -143,11 +135,9 @@ async def build_executor_graph(
         chat_llm=chat_llm,
         subagent_excluded_tools=excluded_subagent_tools,
         subagent_tool_runtime_config=build_executor_child_tool_runtime_config(),
-        # Under activation the executor binds an integration's tools in its own
-        # turn, so a spawn it delegates to must inherit them to do the work.
-        # Still process-wide (the compiled graph is global): per-user
-        # inheritance would need per-variant graphs.
-        subagent_inherit_parent_tools=activation_mode,
+        # The executor binds an integration's tools in its own turn, so a
+        # spawn it delegates to must inherit them to do the work.
+        subagent_inherit_parent_tools=True,
     )
 
     # Wire SubagentMiddleware with LLM and full tool registry
@@ -167,10 +157,8 @@ async def build_executor_graph(
 
     pre_model_hooks = worker_pre_model_hooks(todo_hook, drains_inbox=True)
 
-    # activate_integration leads; handoff and its pair stay for the per-user
-    # MCP integrations activation cannot bind in-context (routed there).
-    # Unconditional: the entry guard enforces the per-user experiment, and the
-    # per-run prompt decides whether the model reaches for it.
+    # activate_integration leads; handoff stays for the per-user MCP
+    # integrations activation cannot bind in-context (routed there).
     initial_tools = ["activate_integration", *EXECUTOR_INITIAL_TOOL_IDS]
 
     builder = create_agent(

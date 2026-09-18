@@ -84,6 +84,9 @@ class TestFormatToolSelectionMessage:
         assert "Find info about AI" in result
         assert "Web Search" in result
         assert "TOOL SELECTION" in result
+        assert "activate_integration" in result
+        assert "handoff" not in result
+        assert "subagent:" not in result
 
     def test_without_content(self) -> None:
         result = format_tool_selection_message(

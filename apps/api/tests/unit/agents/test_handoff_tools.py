@@ -384,23 +384,14 @@ class TestIndexCustomMcpAsSubagent:
 @pytest.mark.asyncio
 class TestResolveSubagent:
     async def test_returns_error_when_not_found(self):
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "app.agents.core.subagents.handoff_tools.all_subagents",
-                return_value=(
-                    _make_subagent("gmail"),
-                    _make_subagent("slack"),
-                ),
-            ),
+        with patch(
+            "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
+            new_callable=AsyncMock,
+            return_value=None,
         ):
             graph, name, error, is_custom = await _resolve_subagent("unknown", "user1")
         assert graph is None
-        assert "not found" in error
+        assert "Unknown integration" in error
 
     async def test_resolves_custom_mcp(self):
         custom_dict = {"id": "abc", "name": "Custom"}
@@ -530,7 +521,7 @@ class TestResolveSubagent:
         assert error == "Error: gmail_agent requires authentication. Please sign in first."
         assert is_custom is False
 
-    async def test_platform_non_mcp_uses_provider(self):
+    async def test_platform_non_mcp_redirects_to_activation(self):
         subagent = _make_subagent(
             "gcal",
             "gcal",
@@ -538,21 +529,17 @@ class TestResolveSubagent:
             managed_by="internal",
             agent_name="calendar_agent",
         )
-        mock_graph = MagicMock()
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
-                new_callable=AsyncMock,
-                return_value=subagent,
-            ),
-            patch("app.agents.core.subagents.handoff_tools.providers") as mock_providers,
+        with patch(
+            "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
+            new_callable=AsyncMock,
+            return_value=subagent,
         ):
-            mock_providers.aget = AsyncMock(return_value=mock_graph)
-            graph, name, int_id, is_custom = await _resolve_subagent("gcal", "user1")
-        assert graph is mock_graph
-        assert name == "calendar_agent"
+            graph, name, error, is_custom = await _resolve_subagent("gcal", "user1")
+        assert graph is None
+        assert "activate_integration" in error
+        assert "not a handoff target" in error
 
-    async def test_platform_composio_checks_connection(self):
+    async def test_platform_composio_redirects_without_connection_check(self):
         subagent = _make_subagent(
             "composio",
             "composio",
@@ -570,26 +557,23 @@ class TestResolveSubagent:
                 "app.agents.core.subagents.handoff_tools.check_integration_connection",
                 new_callable=AsyncMock,
                 return_value="Not connected",
-            ),
+            ) as check,
         ):
             graph, name, error, is_custom = await _resolve_subagent("composio", "user1")
         assert graph is None
-        assert error == "Not connected"
+        assert "activate_integration" in error
+        check.assert_not_awaited()
 
-    async def test_platform_provider_not_available(self):
+    async def test_platform_provider_redirects_to_activation(self):
         subagent = _make_subagent("x", "x", "X", managed_by="internal", agent_name="missing_agent")
-        with (
-            patch(
-                "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
-                new_callable=AsyncMock,
-                return_value=subagent,
-            ),
-            patch("app.agents.core.subagents.handoff_tools.providers") as mock_providers,
+        with patch(
+            "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
+            new_callable=AsyncMock,
+            return_value=subagent,
         ):
-            mock_providers.aget = AsyncMock(return_value=None)
             graph, name, error, is_custom = await _resolve_subagent("x", "user1")
         assert graph is None
-        assert error == "Error: missing_agent not available"
+        assert "activate_integration" in error
         assert is_custom is False
 
     async def test_platform_mcp_graph_creation_fails(self):
@@ -838,7 +822,8 @@ class TestHandoffRejectsAForeignProviderInTheTask:
 
         dispatch.assert_not_awaited()
         assert "Todoist" in result
-        assert "subagent:todoist" in result
+        assert "activate_integration" in result
+        assert "subagent:todoist" not in result
 
     async def test_the_same_task_without_the_provider_name_dispatches(self) -> None:
         with _resolved_subagent("todo_agent", "todos") as dispatch:
@@ -1166,108 +1151,6 @@ class TestAuthMcpResolutionUsesItsArguments:
 
 
 @pytest.mark.asyncio
-class TestPlainSubagentGraphResolution:
-    """The connection check is skipped for integrations that are always
-    available. Running it anyway hides every builtin behind a connect card the
-    user can never satisfy; skipping it for a real OAuth integration dispatches
-    a subagent with no credentials."""
-
-    @staticmethod
-    @contextmanager
-    def _resolves(subagent: Subagent) -> Iterator[None]:
-        with patch(
-            "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
-            new_callable=AsyncMock,
-            return_value=subagent,
-        ):
-            yield
-
-    async def test_an_internal_subagent_skips_the_connection_check(self):
-        subagent = _make_subagent(
-            "gcal", "gcal", "Google Calendar", managed_by="internal", agent_name="calendar_agent"
-        )
-        mock_graph = MagicMock()
-        with (
-            self._resolves(subagent),
-            patch(
-                "app.agents.core.subagents.handoff_tools.check_integration_connection",
-                new_callable=AsyncMock,
-                return_value="Not connected",
-            ),
-            patch("app.agents.core.subagents.handoff_tools.providers") as mock_providers,
-        ):
-            mock_providers.aget = AsyncMock(return_value=mock_graph)
-            graph, name, int_id, is_custom = await _resolve_subagent("gcal", "user1")
-
-        assert graph is mock_graph
-        assert (name, int_id, is_custom) == ("calendar_agent", "gcal", False)
-
-    async def test_an_mcp_subagent_that_needs_no_auth_skips_the_connection_check(self):
-        subagent = _make_subagent(
-            "docs", "docs", "Docs", managed_by="mcp", mcp_config=None, agent_name="docs_agent"
-        )
-        mock_graph = MagicMock()
-        with (
-            self._resolves(subagent),
-            patch(
-                "app.agents.core.subagents.handoff_tools.check_integration_connection",
-                new_callable=AsyncMock,
-                return_value="Not connected",
-            ),
-            patch("app.agents.core.subagents.handoff_tools.providers") as mock_providers,
-        ):
-            mock_providers.aget = AsyncMock(return_value=mock_graph)
-            graph, _name, _int_id, _is_custom = await _resolve_subagent("docs", "user1")
-
-        assert graph is mock_graph
-
-    async def test_the_connection_check_is_scoped_to_the_asking_user_and_integration(self):
-        subagent = _make_subagent(
-            "composio", "composio", "Composio", managed_by="composio", agent_name="composio_agent"
-        )
-        mock_graph = MagicMock()
-
-        async def _check(integration_id: str, user_id: str) -> str | None:
-            if (integration_id, user_id) == ("composio", "user1"):
-                return None
-            return f"wrong args: {integration_id!r}, {user_id!r}"
-
-        with (
-            self._resolves(subagent),
-            patch(
-                "app.agents.core.subagents.handoff_tools.check_integration_connection", new=_check
-            ),
-            patch("app.agents.core.subagents.handoff_tools.providers") as mock_providers,
-        ):
-            mock_providers.aget = AsyncMock(return_value=mock_graph)
-            graph, name, _int_id, _is_custom = await _resolve_subagent("composio", "user1")
-
-        assert graph is mock_graph
-        assert name == "composio_agent"
-
-    async def test_the_graph_is_fetched_under_the_configured_agent_name(self):
-        """``agent_name`` is the provider-registry key — asking for the wrong one
-        (or for ``None``) resolves to no graph and the handoff dies as "not
-        available" on an integration that is connected and fine."""
-        subagent = _make_subagent(
-            "gcal", "gcal", "Google Calendar", managed_by="internal", agent_name="calendar_agent"
-        )
-        mock_graph = MagicMock()
-
-        async def _aget(name: str) -> MagicMock | None:
-            return mock_graph if name == "calendar_agent" else None
-
-        with (
-            self._resolves(subagent),
-            patch("app.agents.core.subagents.handoff_tools.providers") as mock_providers,
-        ):
-            mock_providers.aget = _aget
-            graph, name, _int_id, _is_custom = await _resolve_subagent("gcal", "user1")
-
-        assert graph is mock_graph
-        assert name == "calendar_agent"
-
-
 # ---------------------------------------------------------------------------
 # _run_blocking_handoff
 # ---------------------------------------------------------------------------
@@ -1746,10 +1629,9 @@ class TestHandoffBuildsItsDispatch:
 
 @pytest.mark.unit
 class TestHandoffPassesTheRunModeToTheRejectionCheck:
-    """``background`` and ``stream_id`` decide which collision the pre-dispatch
-    check is even looking for. Losing either turns the check on its head: a
-    blocking run stops colliding with a live background task, or a background
-    run starts refusing itself."""
+    """``background`` and ``stream_id`` decide the dispatch path: a call with a
+    stream_id is forced to background (the background branch guards the session
+    slot itself), so the blocking-collision refusal only sees runs without one."""
 
     @staticmethod
     @contextmanager
@@ -1788,7 +1670,7 @@ class TestHandoffPassesTheRunModeToTheRejectionCheck:
         ):
             yield
 
-    async def test_a_blocking_handoff_checks_this_streams_background_slot(self) -> None:
+    async def test_a_stream_handoff_is_forced_to_background(self) -> None:
         with self._live_background_run_on("s1"):
             result = await handoff.coroutine(
                 subagent_id="gmail",
@@ -1796,10 +1678,7 @@ class TestHandoffPassesTheRunModeToTheRejectionCheck:
                 config={"configurable": {"user_id": "u1", "thread_id": "t1", "stream_id": "s1"}},
             )
 
-        assert result == (
-            "A background gmail_agent subagent is already running on this "
-            "integration. Steer it with message_subagent or wait for its result to arrive."
-        )
+        assert result == "started"
 
     async def test_a_background_handoff_is_not_refused_by_that_same_slot(self) -> None:
         with self._live_background_run_on("s1"):
@@ -1813,10 +1692,44 @@ class TestHandoffPassesTheRunModeToTheRejectionCheck:
         assert result == "started"
 
 
+class TestHandoffRefusesProviderIds:
+    """Provider and built-in integrations are not handoff targets: the tool
+    redirects to activate_integration instead of building a graph. Only
+    per-user MCP integrations proceed to dispatch."""
+
+    async def test_provider_id_redirects_to_activation(self):
+        subagent = _make_subagent("gmail", "gmail", "Gmail", managed_by="composio")
+        with patch(
+            "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
+            new_callable=AsyncMock,
+            return_value=subagent,
+        ):
+            result = await handoff.coroutine(
+                subagent_id="gmail",
+                task="Summarize the inbox.",
+                config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
+            )
+        assert "not a handoff target" in result
+        assert 'activate_integration(integration_id=\'gmail\')' in result
+
+    async def test_unknown_id_reports_unknown(self):
+        with patch(
+            "app.agents.core.subagents.handoff_tools._get_subagent_by_id",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = await handoff.coroutine(
+                subagent_id="nope",
+                task="Do it.",
+                config={"configurable": {"user_id": "u1", "thread_id": "t1"}},
+            )
+        assert "Unknown integration" in result
+
+
 class TestActivationForcesBackgroundHandoff:
-    """Under ENABLE_INTEGRATION_ACTIVATION the executor only reaches handoff for
-    per-user MCP subagents; those run in the background by default so the executor
-    stays alive to steer/cancel them. The switch is the dispatch path taken."""
+    """The executor only reaches handoff for per-user MCP subagents; those run
+    in the background by default so the executor stays alive to steer/cancel
+    them. The switch is the dispatch path taken."""
 
     @staticmethod
     def _patches(bg: AsyncMock, blocking: AsyncMock):
@@ -1834,14 +1747,10 @@ class TestActivationForcesBackgroundHandoff:
             patch("app.agents.core.subagents.handoff_tools._run_blocking_handoff", blocking),
         )
 
-    async def test_flag_on_with_stream_id_forces_background(self):
+    async def test_with_stream_id_forces_background(self):
         bg, blocking = AsyncMock(return_value="[bg]"), AsyncMock(return_value="[blocking]")
         p1, p2, p3, p4 = self._patches(bg, blocking)
-        flag = patch(
-            "app.agents.core.subagents.handoff_tools.is_integration_activation_enabled",
-            AsyncMock(return_value=True),
-        )
-        with p1, p2, p3, p4, flag:
+        with p1, p2, p3, p4:
             result = await handoff.ainvoke(
                 {
                     "args": {"subagent_id": "custommcp", "task": "do it"},
@@ -1855,14 +1764,10 @@ class TestActivationForcesBackgroundHandoff:
         bg.assert_awaited_once()
         blocking.assert_not_awaited()
 
-    async def test_flag_on_without_stream_id_stays_blocking(self):
+    async def test_without_stream_id_stays_blocking(self):
         bg, blocking = AsyncMock(return_value="[bg]"), AsyncMock(return_value="[blocking]")
         p1, p2, p3, p4 = self._patches(bg, blocking)
-        flag = patch(
-            "app.agents.core.subagents.handoff_tools.is_integration_activation_enabled",
-            AsyncMock(return_value=True),
-        )
-        with p1, p2, p3, p4, flag:
+        with p1, p2, p3, p4:
             result = await handoff.ainvoke(
                 {
                     "args": {"subagent_id": "custommcp", "task": "do it"},
@@ -1871,27 +1776,6 @@ class TestActivationForcesBackgroundHandoff:
                     "id": "tc-1",
                 },
                 config={"configurable": {"user_id": "u1"}},
-            )
-        assert result.content == "[blocking]"
-        blocking.assert_awaited_once()
-        bg.assert_not_awaited()
-
-    async def test_flag_off_stays_blocking(self):
-        bg, blocking = AsyncMock(return_value="[bg]"), AsyncMock(return_value="[blocking]")
-        p1, p2, p3, p4 = self._patches(bg, blocking)
-        flag = patch(
-            "app.agents.core.subagents.handoff_tools.is_integration_activation_enabled",
-            AsyncMock(return_value=False),
-        )
-        with p1, p2, p3, p4, flag:
-            result = await handoff.ainvoke(
-                {
-                    "args": {"subagent_id": "custommcp", "task": "do it"},
-                    "name": "handoff",
-                    "type": "tool_call",
-                    "id": "tc-1",
-                },
-                config={"configurable": {"user_id": "u1", "stream_id": "s-1"}},
             )
         assert result.content == "[blocking]"
         blocking.assert_awaited_once()

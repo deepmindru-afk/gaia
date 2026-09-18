@@ -1,13 +1,12 @@
 """
-Subagent Tools - Consolidated Delegation Pattern
+Subagent Tools - per-user MCP delegation.
 
-This module provides two tools for subagent delegation:
-1. search_subagents - Semantic search for available subagents
-2. handoff - Generic handoff tool that delegates to any subagent
-
-Subagents are lazy-loaded on first invocation via providers.aget().
-Subagent identity/metadata comes from agents/core/subagents/registry.py
-(unified view of OAuth-derived + builtin subagents).
+This module provides the `handoff` tool, which delegates ONLY to per-user MCP
+integrations (custom/auth-required MCP) that run in their own per-user graph.
+Provider and built-in integrations activate in-context instead and are
+redirected at resolve time. Subagent identity/metadata comes from
+agents/core/subagents/registry.py (unified view of OAuth-derived + builtin
+subagents).
 """
 
 from dataclasses import dataclass
@@ -62,7 +61,6 @@ from app.agents.tools.core.retrieval import preloaded_startup_docs
 from app.constants.cache import SUBAGENT_CACHE_PREFIX, SUBAGENT_CACHE_TTL
 from app.constants.hil import HIL_RESUME_CONFIG_KEY
 from app.constants.log_tags import LogTag
-from app.core.lazy_loader import providers
 from app.db.redis import get_cache, set_cache
 from app.db.repositories.integrations import integration_repository
 from app.helpers.agent_helpers import AgentIdentity, AgentThread, build_agent_config
@@ -75,7 +73,6 @@ from app.models.agent_models import (
 )
 from app.models.hil_models import HILApprovalRecord, HILApprovalStatus
 from app.models.subagent_models import Subagent
-from app.services.feature_flags import is_integration_activation_enabled
 from app.services.hil.approvals_store import list_parked_subagents_for_conversation
 from app.services.integrations.integration_resolver import IntegrationResolver
 from app.services.mcp.mcp_token_store import MCPTokenStore
@@ -365,28 +362,6 @@ async def _resolve_auth_mcp_graph(
         return None, f"Error: {agent_name} is unavailable: {e.reason}"
 
 
-async def _resolve_plain_subagent_graph(
-    subagent: Subagent,
-    agent_name: str,
-    integration_id: str,
-    user_id: str | None,
-) -> tuple[CompiledAgentGraph | None, str | None]:
-    """Graph for a non-MCP / non-auth-required integration, or (None, error_message)."""
-    # Skip connection check for internal integrations (always available)
-    if subagent.managed_by not in ("mcp", "internal") and user_id:
-        error_message = await check_integration_connection(integration_id, user_id)
-        if error_message:
-            return None, error_message
-
-    try:
-        subagent_graph = await providers.aget(agent_name)
-    except KeyError:
-        return None, f"Error: {agent_name} not available"
-    if not subagent_graph:
-        return None, f"Error: {agent_name} not available"
-    return subagent_graph, None
-
-
 async def _resolve_subagent(
     subagent_id: str,
     user_id: str | None,
@@ -409,11 +384,18 @@ async def _resolve_subagent(
 
     if not resolved:
         available = [s.id for s in all_subagents()][:5]
-        error = (
-            f"Subagent '{subagent_id}' not found. "
-            f"Use retrieve_tools to find available subagents. "
-            f"Examples: {', '.join([f'subagent:{a}' for a in available])}{'...' if len(available) == 5 else ''}"
-        )
+        known = get_subagent_by_id(clean_id)
+        if known is not None:
+            error = (
+                f"'{subagent_id}' is not a handoff target. Use "
+                f"activate_integration(integration_id='{known.id}') to load it "
+                "in-context, then act on it yourself."
+            )
+        else:
+            error = (
+                f"Unknown integration '{subagent_id}'. "
+                f"Examples: {', '.join(available)}{'...' if len(available) == 5 else ''}"
+            )
         return None, None, error, False
 
     # Handle custom MCPs (returned as dict from MongoDB)
@@ -431,9 +413,18 @@ async def _resolve_subagent(
             subagent, agent_name, integration_id, user_id
         )
     else:
-        # Non-MCP or non-auth-required MCP integrations
-        subagent_graph, graph_error = await _resolve_plain_subagent_graph(
-            subagent, agent_name, integration_id, user_id
+        # Only per-user MCP integrations run as subagents: their tools are
+        # issued per user and can never load in-context. Provider and built-in
+        # integrations activate in-context instead — handing one off would
+        # resurrect the per-integration-subagent model activation replaced.
+        log.set(handoff={"integration": integration_id, "routed_to_activation": True})
+        return (
+            None,
+            None,
+            f"'{integration_id}' is not a handoff target. Load it in-context with "
+            f"activate_integration(integration_id='{integration_id}'), then act on "
+            "it yourself with its tools.",
+            False,
         )
     if graph_error is not None:
         return None, None, graph_error, False
@@ -837,11 +828,11 @@ async def _handoff_rejection(
         return (
             f"HANDOFF REJECTED: this task is routed to the {agent_name} subagent "
             f"({integration_id}) but its text names {foreign.name}. {foreign.name} is a "
-            f"separate integration with its own subagent, and nothing you hand to "
+            f"separate integration with its own tools, and nothing you hand to "
             f"{integration_id} touches it: leaving the name in makes the result claim "
-            f"{foreign.name} did work it never did. Either re-issue this handoff to "
-            f"subagent:{foreign.id} if that is where the work belongs, or send it again "
-            f"with every mention of {foreign.name} removed from the task."
+            f"{foreign.name} did work it never did. Either activate {foreign.id} with "
+            f"activate_integration and do that part yourself, or send this handoff "
+            f"again with every mention of {foreign.name} removed from the task."
         )
 
     # An uncollected parked subagent owns this integration's checkpoint thread.
@@ -940,8 +931,10 @@ async def _dispatch_background_handoff(
 async def handoff(
     subagent_id: Annotated[
         str,
-        "The ID of the subagent to delegate to (e.g., 'gmail', 'subagent:gmail'). "
-        "Get this from retrieve_tools results (subagent IDs have 'subagent:' prefix).",
+        "The ID of a per-user MCP integration to delegate to (custom MCP "
+        "connections only — e.g. 'my-notion-mcp'). Provider and built-in "
+        "integrations (gmail, github, todos, ...) are NOT handoff targets: "
+        "load those with activate_integration instead.",
     ],
     task: Annotated[
         str,
@@ -957,10 +950,13 @@ async def handoff(
     ] = False,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> str:
-    """Delegate a task to a specialized subagent.
+    """Delegate a task to a per-user MCP integration's own subagent.
 
-    Use this tool to hand off tasks to expert subagents that specialize in specific domains.
-    First use retrieve_tools to find available subagents (they appear with 'subagent:' prefix).
+    This is the ONLY path for custom/auth-required MCP integrations, whose
+    tools are issued per user and can never load in-context (activate_integration
+    tells you to come here for exactly those). Every other integration is
+    activated in-context with activate_integration and acted on directly —
+    never handed off.
 
     The subagent will:
     1. Process the task using its specialized tools
@@ -970,7 +966,7 @@ async def handoff(
     results arrive automatically; steer meanwhile.
 
     Args:
-        subagent_id: ID of the subagent from retrieve_tools (e.g., 'subagent:gmail', 'gmail')
+        subagent_id: ID of the per-user MCP integration (NOT a provider id)
         task: Complete task description with all necessary context
         background: If True, run non-blocking and return immediately
     """
@@ -1007,13 +1003,13 @@ async def handoff(
         agent_name: str = ctx.agent_name
         integration_id: str = ctx.integration_id
 
-        # Activation mode: the executor loads provider integrations in-context and
-        # only reaches handoff for per-user MCP subagents. Run those in the
-        # background by default so the executor stays alive to steer or cancel
-        # them mid-run (results arrive via the executor inbox). An explicit
-        # background caller is unaffected; without a stream_id results can't be
-        # routed back, so that case stays blocking.
-        if stream_id and not background and await is_integration_activation_enabled(user_id):
+        # The executor loads provider integrations in-context and only reaches
+        # handoff for per-user MCP subagents. Run those in the background by
+        # default so the executor stays alive to steer or cancel them mid-run
+        # (results arrive via the executor inbox). An explicit background
+        # caller is unaffected; without a stream_id results can't be routed
+        # back, so that case stays blocking.
+        if stream_id and not background:
             background = True
 
         rejection = await _handoff_rejection(ctx, task, background, stream_id)

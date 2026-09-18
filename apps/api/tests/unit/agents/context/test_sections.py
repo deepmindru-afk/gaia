@@ -22,7 +22,7 @@ from app.agents.context.sections import SECTIONS, Section, sections_for
 from app.agents.context.slots import PromptSlot
 from app.agents.context.text import (
     CONNECTED_INTEGRATIONS_HEADER,
-    EXECUTOR_CONNECTED_INTEGRATIONS_HEADER,
+    EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER,
 )
 from app.agents.context.tiers import ALL_TIERS, AgentTier
 from app.config.oauth_config import get_integration_by_id
@@ -260,21 +260,21 @@ class TestUserPreferences:
 
 @pytest.mark.unit
 class TestIntegrationsManifest:
-    """The executor performs the handoffs, so its header states the list is live
-    and names the parenthesised id as the ``subagent_id``. Comms only hands off,
-    so it gets the short form."""
+    """The executor activates integrations itself, so its header states the list
+    is live and names the parenthesised id as the ``activate_integration`` id.
+    Comms gets the short form."""
 
     @staticmethod
     def _connected() -> AsyncMock:
         return AsyncMock(return_value=[{"id": "gmail", "name": "Gmail"}])
 
-    async def test_the_executor_gets_the_handoff_instructions(self) -> None:
+    async def test_the_executor_gets_the_activation_instructions(self) -> None:
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named", self._connected()
         ):
             rendered = await section("integrations_manifest").fetch(ctx(AgentTier.EXECUTOR))
 
-        assert rendered.startswith(EXECUTOR_CONNECTED_INTEGRATIONS_HEADER)
+        assert rendered.startswith(EXECUTOR_ACTIVATION_CONNECTED_INTEGRATIONS_HEADER)
 
     async def test_comms_gets_the_capability_awareness_header(self) -> None:
         with patch(

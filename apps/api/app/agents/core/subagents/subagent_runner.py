@@ -56,7 +56,6 @@ from app.models.agent_models import (
 )
 from app.models.stream_events import ReasoningPayload, ToolOutputPayload
 from app.services.chat.chunks import normalize_custom_event
-from app.services.feature_flags import is_integration_activation_enabled
 from app.services.files import FileService
 from app.utils.agent_utils import IntegrationMetadata, StreamWriterCallable
 from app.utils.multimodal import extract_text_content
@@ -851,20 +850,17 @@ async def prepare_executor_execution(
     )
     new_configurable = agent_configurable(config)
 
-    # Create system message (executor-specific). The activation variant is
-    # resolved per user so the prompt matches the tools this run can reach.
+    # Create system message (executor-specific).
     system_message = create_system_message(
         user_id=user_id,
         agent_type="executor",
         user_name=configurable.get("user_name"),
-        activation_enabled=await is_integration_activation_enabled(user_id),
     )
 
     # When comms provides a known tool_category, hint the executor to go
-    # straight to handoff(subagent_id=...) and skip the ChromaDB discovery
-    # call. We do NOT pre-bind tools — the target subagent still does its own
-    # retrieval. This only removes one redundant round-trip where comms
-    # already knows the category.
+    # straight to activate_integration(...) and skip the ChromaDB discovery
+    # call. This only removes one redundant round-trip where comms already
+    # knows the category.
     enhanced_task = task
     tool_category = configurable.get("tool_category")
     selected_tool = configurable.get("selected_tool")
@@ -874,8 +870,8 @@ async def prepare_executor_execution(
             f"{task}\n\n"
             f"DIRECT EXECUTION HINT: This request should be handled by "
             f"'{tool_category}'. Skip retrieve_tools discovery and directly "
-            f'call handoff(subagent_id="{tool_category}", task="{task}") to '
-            f"route {tool_hint}."
+            f'call activate_integration(integration_id="{tool_category}"), then '
+            f"act on {tool_hint} yourself with its tools."
         )
         log.set(
             executor_prep={

@@ -64,7 +64,7 @@ Use when:
 - Heavy extraction/summarization from large responses
 
 Do NOT use when:
-- The task involves a third-party provider (use handoff instead)
+- The task involves a third-party provider (activate it with activate_integration instead)
 - A single direct tool call suffices
 
 The subagent has full access to your currently bound tools (except handoff and spawn_subagent), and returns only the distilled result.

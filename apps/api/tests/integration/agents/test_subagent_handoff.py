@@ -875,7 +875,6 @@ class TestHandoffFunctionDirectly:
             "configurable": {
                 "user_id": user_id,
                 "thread_id": thread_id,
-                "stream_id": "stream-abc",
             }
         }
 

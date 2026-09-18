@@ -293,9 +293,9 @@ async def build_connected_integrations_manifest(user_id: str, header: str) -> st
 
     Capability awareness only — detailed tool schemas still come from
     ``retrieve_tools`` at inference time. The parenthesised id doubles as the
-    ``subagent_id`` the executor passes to ``handoff``. A line collapses to
-    ``- id`` when the name IS the id, so a custom integration never renders the
-    same value twice.
+    ``integration_id`` the executor passes to ``activate_integration``. A line
+    collapses to ``- id`` when the name IS the id, so a custom integration
+    never renders the same value twice.
 
     A built-in whose job a connected provider is mistaken for gets its own row
     above the accounts, because a capability the agent cannot see in this list

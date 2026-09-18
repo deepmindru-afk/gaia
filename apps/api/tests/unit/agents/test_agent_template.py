@@ -46,15 +46,11 @@ class TestOpenuiVariants:
         )
 
 
-class TestExecutorVariants:
-    def test_variants_differ_only_by_activation(self) -> None:
-        on = get_executor_prompt(True)
-        off = get_executor_prompt(False)
-        assert on != off
-        assert "activate_integration" in on
-        assert "activate_integration" not in off
-        assert "You activate one, then do" in on
-        assert "You activate one, then do" not in off
+class TestExecutorPrompt:
+    def test_teaches_activation(self) -> None:
+        prompt = get_executor_prompt()
+        assert "activate_integration" in prompt
+        assert "You activate one, then do" in prompt
 
     def test_default_matches_env_template(self) -> None:
         from app.agents.templates.agent_template import EXECUTOR_PROMPT_TEMPLATE

@@ -35,7 +35,6 @@ from app.agents.workspace.system_docs import integration_skills_block
 from app.constants.log_tags import LogTag
 from app.models.agent_models import AgentConfigurable
 from app.models.subagent_models import Subagent
-from app.services.feature_flags import is_integration_activation_enabled
 from app.services.integration_instructions_service import get_instructions
 from shared.py.wide_events import log
 
@@ -178,9 +177,6 @@ async def activate_integration(
     """
     configurable = cast(AgentConfigurable, config.get("configurable", {}))
     user_id = configurable.get("user_id")
-
-    if not await is_integration_activation_enabled(user_id):
-        return _reply(tool_call_id, "activate_integration is disabled.")
 
     # Repository-aware resolution: covers the static OAuth/builtin registry AND
     # user-created custom MCP integrations (a dict), which the manifest lists but

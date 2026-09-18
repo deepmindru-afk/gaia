@@ -1,11 +1,10 @@
-"""The activation executor prompt must only teach tools the executor can call.
+"""The executor prompt must only teach tools the executor can call.
 
-Under ENABLE_INTEGRATION_ACTIVATION the executor leads with `activate_integration`
-and keeps `handoff` bound solely for per-user MCP integrations that cannot be
-activated in-context. So the prompt teaches handoff only as that fallback, and
-no join tool at all: background outcomes arrive on their own. Anything else
-would produce calls that mislead the model, invisible until someone reads a
-transcript, so it is pinned here instead.
+The executor leads with `activate_integration` and keeps `handoff` bound solely
+for per-user MCP integrations that cannot be activated in-context. So the prompt
+teaches handoff only as that fallback, and no join tool at all: background
+outcomes arrive on their own. Anything else would produce calls that mislead the
+model, invisible until someone reads a transcript, so it is pinned here instead.
 """
 
 import pytest

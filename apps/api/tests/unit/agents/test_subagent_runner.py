@@ -1216,6 +1216,8 @@ class TestPrepareExecutorExecution:
             if m.type == "human" and not m.additional_kwargs.get("time_context")
         )
         assert "DIRECT EXECUTION HINT" in task_msg.content
+        assert 'activate_integration(integration_id="github")' in task_msg.content
+        assert "handoff(" not in task_msg.content
 
     @pytest.mark.asyncio
     async def test_no_hint_without_tool_category(self):

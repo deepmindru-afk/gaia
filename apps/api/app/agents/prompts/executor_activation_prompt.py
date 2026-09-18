@@ -1,7 +1,6 @@
-"""The executor prompt under ENABLE_INTEGRATION_ACTIVATION.
+"""The executor prompt doctrine: integrations are activated in-context.
 
-The executor's doctrine changes shape under the experiment. There is no handoff
-and no per-integration subagent, so every passage that teaches "hand this to the
+The executor's doctrine: there is no handoff and no per-integration subagent, so every passage that teaches "hand this to the
 gmail subagent" has to teach "activate gmail, then do the work yourself".
 
 This rewrites those passages rather than forking the prompt. Two copies of a
@@ -142,6 +141,22 @@ _PHRASE_REWRITES: tuple[tuple[str, str], ...] = (
     (
         "subagent:todos is GAIA's list and nothing else.",
         'The "todos" integration is GAIA\'s list and nothing else.',
+    ),
+    (
+        "each provider subagent reloads its whole toolset (~20s of pure overhead) and usually repeats the same outcome",
+        "each spawn repeats the same setup cost and usually repeats the same outcome",
+    ),
+    (
+        "Spawning the same provider subagent more than once for a single request is almost always a mistake",
+        "Spawning the same worker more than once for a single request is almost always a mistake",
+    ),
+    (
+        "hand off to THAT provider's subagent instead, and",
+        "activate THAT provider's integration instead, and",
+    ),
+    (
+        "Emails ALWAYS go through the draft flow (the gmail subagent drafts → user confirms → then send), never compose-and-send in one shot.",
+        "Emails ALWAYS go through the draft flow (draft with the gmail integration's tools → user confirms → then send), never compose-and-send in one shot.",
     ),
 )
 

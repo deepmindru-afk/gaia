@@ -26,22 +26,6 @@ CONNECTED_INTEGRATIONS_HEADER = (
     "Connected integrations (hand off to the matching subagent to use them):"
 )
 
-#: The executor performs the handoffs, so its header states that the list is
-#: live, names the parenthesised id as the handoff ``subagent_id``, and guards
-#: against reading always-available built-ins as "not connected" just because
-#: they are absent from the list.
-EXECUTOR_CONNECTED_INTEGRATIONS_HEADER = (
-    "CONNECTED INTEGRATIONS (live snapshot of the user's currently connected accounts as of "
-    "this turn; this is the latest connected set, so trust it over retrieve_tools for what is "
-    "connected). To act on one, handoff to its subagent using the id in parentheses as the "
-    "handoff subagent_id. If the user asks for a provider that is NOT listed here, STILL do the "
-    "handoff: the handoff is what shows the user the connect card. Telling the user to connect "
-    "WITHOUT handing off leaves them hunting for a button that was never rendered. Built-in "
-    "subagents (todos, gaia_knowledge_guide, docgen) are always available; one is "
-    "listed below only where a connected account could be mistaken for it:"
-)
-
-
 class BuiltinOverlap(NamedTuple):
     """A built-in subagent whose job a connected provider gets mistaken for."""
 

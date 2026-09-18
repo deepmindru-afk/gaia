@@ -16,11 +16,10 @@ in a separate dynamic-context system message placed AFTER this one.
 
 from typing import Final
 
-from app.agents.prompts.comms_prompts import COMMS_AGENT_PROMPT, EXECUTOR_AGENT_PROMPT
+from app.agents.prompts.comms_prompts import COMMS_AGENT_PROMPT
 from app.agents.prompts.executor_activation_prompt import build_activation_executor_prompt
 from app.agents.prompts.openui_prompts import MARKDOWN_ONLY_ADDENDUM, OPENUI_ADDENDUM
 from app.agents.workspace.operational_docs import GAIA_CORE
-from app.config.settings import settings
 from app.constants.general import NEW_MESSAGE_BREAKER
 
 # Output-format addenda for renderable channels (web, mobile, desktop). Both
@@ -155,25 +154,16 @@ COMMS_PROMPT_TEMPLATE: Final[str] = COMMS_PROMPT_DEFAULT
 # The executor's static prefix carries the always-on operating core (GAIA_CORE):
 # user-independent self-knowledge + the self-management capability menu + the
 # read_manual topic routing. It is appended here (not interpolated per user) so
-# each variant stays byte-identical across users and rides the provider's
-# prompt cache. Both variants are precomputed: the per-user activation decision
-# only picks between these two byte-stable strings.
-_EXECUTOR_BASE_ACTIVATION_ON: Final[str] = build_activation_executor_prompt()
-_EXECUTOR_BASE_ACTIVATION_OFF: Final[str] = EXECUTOR_AGENT_PROMPT
+# the prompt stays byte-identical across users and rides the provider's
+# prompt cache. The base is the activation rewrite of EXECUTOR_AGENT_PROMPT,
+# precomputed once (building it anchors against the base text and raises on
+# drift, so a stale rewrite can never ship silently).
+_EXECUTOR_BASE: Final[str] = build_activation_executor_prompt()
 
 
-def get_executor_prompt(activation_enabled: bool | None = None) -> str:
-    """Return the static executor prompt for the activation variant.
-
-    ``None`` (the default) preserves the process-wide env default so callers
-    that do not resolve the flag keep today's behavior; per-user
-    callers pass the result of
-    ``app.services.feature_flags.is_integration_activation_enabled``.
-    """
-    if activation_enabled is None:
-        activation_enabled = settings.ENABLE_INTEGRATION_ACTIVATION
-    base = _EXECUTOR_BASE_ACTIVATION_ON if activation_enabled else _EXECUTOR_BASE_ACTIVATION_OFF
-    return base + "\n\n" + GAIA_CORE
+def get_executor_prompt() -> str:
+    """Return the static executor prompt (activation doctrine, always)."""
+    return _EXECUTOR_BASE + "\n\n" + GAIA_CORE
 
 
 EXECUTOR_PROMPT_TEMPLATE: Final[str] = get_executor_prompt()
