@@ -204,19 +204,48 @@ async def publish_ledger_decision(
                 approval_id=row.approval_id,
                 error_type=type(e).__name__,
             )
+    await _persist_decision_status(row, mapped.value)
+    await _broadcast_decision(
+        row, mapped.value, feedback if feedback is not None else row.feedback
+    )
+
+
+async def publish_ledger_revocation(row: ApprovalLedgerDocument) -> None:
+    """Surface an agent-side revoke: tombstone, not a silent row change.
+
+    Without this, a revoked card stays actionable in every open client
+    forever — the tombstone UI would be unreachable. Best-effort like every
+    other delivery here: the row is the truth, frames are hints.
+    """
+    await _persist_decision_status(row, "revoked")
+    await _broadcast_decision(row, "revoked", None)
+
+
+async def _persist_decision_status(row: ApprovalLedgerDocument, status: str) -> None:
+    """Settle the persisted card frame so reload renders the terminal state.
+
+    Isolated on purpose (mirrors ``bridge.publish_decision``): a write error
+    here must never fail the decision or revocation it reports on.
+    """
     try:
         await conversation_repository.set_message_approval_status(
             row.conversation_id,
             user_id=row.user_id,
             approval_id=row.approval_id,
-            status=mapped.value,
+            status=status,
         )
     except Exception as e:
         log.warning(
-            f"{LogTag.HIL} Ledger decision persist missed; live frame already sent",
+            f"{LogTag.HIL} Ledger decision persist missed; live delivery already attempted",
             approval_id=row.approval_id,
             error_type=type(e).__name__,
         )
+
+
+async def _broadcast_decision(
+    row: ApprovalLedgerDocument, status: str, feedback: str | None
+) -> None:
+    """Tell listening clients a card settled — same shape for decide + revoke."""
     try:
         await websocket_manager.broadcast_to_user(
             user_id=row.user_id or "",
@@ -225,8 +254,8 @@ async def publish_ledger_decision(
                 "data": {
                     "conversation_id": row.conversation_id,
                     "approval_id": row.approval_id,
-                    "status": mapped.value,
-                    "feedback": feedback if feedback is not None else row.feedback,
+                    "status": status,
+                    "feedback": feedback,
                     "version": row.v + 1,
                 },
             },

@@ -59,4 +59,11 @@ async def revoke_tool(
         current = await approval_ledger_repository.get_by_approval_id(approval_id)
         state = current.state.value if current else "gone"
         return f"Cannot revoke '{approval_id}': already {state}."
+    # Deferred import: ledger_decide reaches the tool registry (via dispatch),
+    # which imports this module — top-level would close a cycle.
+    from app.services.hil.ledger_decide import publish_ledger_revocation  # noqa: PLC0415
+
+    revoked_row = await approval_ledger_repository.get_by_approval_id(approval_id)
+    if revoked_row is not None:
+        await publish_ledger_revocation(revoked_row)
     return f"Revoked '{approval_id}' ({row.summary}). It will never be asked."

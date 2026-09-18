@@ -40,11 +40,29 @@ def _ledger(row=None, transitioned=True):
 @pytest.mark.unit
 class TestRevokeTool:
     async def test_revokes_own_pending(self) -> None:
-        with patch(f"{MODULE}.approval_ledger_repository", new=_ledger(_row())) as ledger:
+        with (
+            patch(f"{MODULE}.approval_ledger_repository", new=_ledger(_row())) as ledger,
+            patch("app.services.hil.ledger_decide.publish_ledger_revocation", new=AsyncMock()),
+        ):
             result = await revoke_tool.ainvoke({"approval_id": "ap_abc"}, CONFIG)
 
         ledger.transition.assert_awaited_once_with("ap_abc", LedgerState.PENDING, LedgerState.REVOKED)
         assert result == "Revoked 'ap_abc' (Send it). It will never be asked."
+
+    async def test_revoke_publishes_the_tombstone(self) -> None:
+        """Without the revoked frame + persist, the tombstone UI is unreachable:
+        open clients keep an actionable card forever."""
+        with (
+            patch(f"{MODULE}.approval_ledger_repository", new=_ledger(_row())),
+            patch(
+                "app.services.hil.ledger_decide.publish_ledger_revocation",
+                new=AsyncMock(),
+            ) as pub,
+        ):
+            await revoke_tool.ainvoke({"approval_id": "ap_abc"}, CONFIG)
+
+        pub.assert_awaited_once()
+        assert pub.await_args.args[0].approval_id == "ap_abc"
 
     async def test_unknown_id_reads_as_not_found(self) -> None:
         with patch(f"{MODULE}.approval_ledger_repository", new=_ledger(None)):

@@ -153,6 +153,14 @@ export default function ApprovalReviewSheet({
               <div className="mb-3 space-y-2">
                 {list.map((item) => {
                   const picked = decisions[item.approval_id]?.decision ?? null;
+                  const argRows = Object.entries(
+                    item.args_preview ?? {},
+                  ).filter(
+                    ([, value]) =>
+                      typeof value === "string" ||
+                      typeof value === "number" ||
+                      typeof value === "boolean",
+                  );
                   return (
                     <div
                       key={item.approval_id}
@@ -167,6 +175,18 @@ export default function ApprovalReviewSheet({
                           {formatApprovalAge(item.age_seconds)}
                         </div>
                       )}
+                      {argRows.length > 0 && (
+                        <div className="mt-1.5 space-y-0.5">
+                          {argRows.slice(0, 3).map(([key, value]) => (
+                            <div key={key} className="text-xs text-zinc-400">
+                              <span className="text-zinc-500">
+                                {key.replaceAll("_", " ")}:{" "}
+                              </span>
+                              {String(value)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div className="mt-2 flex items-center gap-2">
                         <Button
                           size="sm"
@@ -178,7 +198,7 @@ export default function ApprovalReviewSheet({
                         </Button>
                         <Button
                           size="sm"
-                          variant="flat"
+                          variant={picked === "deny" ? "solid" : "flat"}
                           color={picked === "deny" ? "danger" : "default"}
                           onPress={() => toggle(item.approval_id, "deny")}
                         >
