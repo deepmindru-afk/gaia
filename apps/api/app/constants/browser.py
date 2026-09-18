@@ -299,5 +299,10 @@ BROWSER_JOB_CANCEL_PREFIX = "browser:job:cancel:"
 
 BROWSER_JOB_POLL_INTERVAL_SECONDS = 0.5
 
+# How long the relay's read parks on an empty feed before looking at the turn
+# again. Long enough that an idle run costs one read a second, short enough that
+# a cancelled turn stops relaying about as fast as the user expects.
+BROWSER_JOB_RELAY_BLOCK_MS = 1000
+
 # The ARQ function name, shared by the enqueue site and the worker registration.
 BROWSER_JOB_TASK = "run_browser_job"
