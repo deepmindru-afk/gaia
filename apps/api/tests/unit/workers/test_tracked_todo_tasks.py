@@ -24,7 +24,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.agents.prompts.todo_prompts import TRIGGERED_RELEVANCE_GUIDANCE
+from app.agents.prompts.todo_prompts import (
+    DELIVERED_RESULT_GUIDANCE,
+    SILENT_RUN_GUIDANCE,
+    TRIGGERED_RELEVANCE_GUIDANCE,
+)
 from app.constants.todos import ACTIVITY_PROMPT_TAIL_CHARS, FAILED_LABEL
 from app.models.agent_models import SilentRunResult
 from app.models.notification.notification_models import (
@@ -415,6 +419,39 @@ class TestTriggeredExecutionPrompt:
         )
 
         assert TRIGGERED_RELEVANCE_GUIDANCE in prompt
+
+
+class TestDeliveryContractInThePrompt:
+    """The run has to be TOLD where its final message goes.
+
+    Without it the model has no way to know whether anyone reads its answer, so
+    it reaches for send_notification to be safe — and the user gets the result
+    twice, once as the delivered message and once as the notification.
+    """
+
+    def test_a_delivering_run_is_told_its_message_reaches_the_user(self):
+        prompt = _build_execution_prompt(
+            title="Chase Acme",
+            description="",
+            canvas_content=None,
+            reference_context="",
+            notify_on_run=True,
+        )
+
+        assert DELIVERED_RESULT_GUIDANCE in prompt
+        assert SILENT_RUN_GUIDANCE not in prompt
+
+    def test_a_silent_run_is_told_its_message_reaches_nobody(self):
+        prompt = _build_execution_prompt(
+            title="Chase Acme",
+            description="",
+            canvas_content=None,
+            reference_context="",
+            notify_on_run=False,
+        )
+
+        assert SILENT_RUN_GUIDANCE in prompt
+        assert DELIVERED_RESULT_GUIDANCE not in prompt
 
 
 class TestTriggeredExecutionGating:
@@ -894,7 +931,7 @@ class TestBuildExecutionPrompt:
                 activity_content=None,
                 reference_context="",
             )
-            == "Execute the following scheduled task: Ship it"
+            == f"Execute the following scheduled task: Ship it\n\n{DELIVERED_RESULT_GUIDANCE}"
         )
 
     def test_all_sections_appear_in_order(self):
@@ -911,6 +948,9 @@ class TestBuildExecutionPrompt:
             "Canvas (canvas.md):\n## Current State\nblocked",
             "Recent activity (activity.md):\n- 2026-09-01T09:00:00+00:00 started",
             "past stuff",
+            # Last on purpose: the delivery contract is what the model should still
+            # have in view when it writes the message this section is about.
+            DELIVERED_RESULT_GUIDANCE,
         ]
 
     def test_empty_bodies_are_omitted_not_rendered_as_empty_headers(self):
@@ -936,7 +976,7 @@ class TestBuildExecutionPrompt:
         assert "- entry 1999" in prompt
         assert "- entry 0\n" not in prompt
         assert "older entries omitted" in prompt
-        assert len(prompt) < ACTIVITY_PROMPT_TAIL_CHARS + 300
+        assert len(prompt) < ACTIVITY_PROMPT_TAIL_CHARS + 300 + len(DELIVERED_RESULT_GUIDANCE)
 
     def test_a_truncated_activity_carries_the_full_exact_label(self):
         """The marker is appended to the label, not substituted — a dropped or reworded marker hides the cut."""
@@ -1223,6 +1263,87 @@ class TestExecuteViaAgent:
 
         assert result == "x" * 200
         assert f"summary={'x' * 120!r}" in self._entries()[1]
+
+
+# ---------------------------------------------------------------------------
+# _execute_via_agent — result delivery
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteViaAgentDelivery:
+    """The run's final message has to actually reach the user.
+
+    Before this, a scheduled run wrote a 120-char slice of its answer into
+    activity.md and delivered nothing anywhere: the run's conversation is a
+    throwaway uuid4 that is never persisted, so the executor's own delivery path
+    drops the message too. The only way the user ever heard about a tracked todo
+    was the agent choosing to call send_notification.
+
+    Blank text and a failed publish are the delivery helper's own contract and
+    are proved in test_workflow_platform_delivery.py, not re-proved here.
+    """
+
+    def _patches(self, *, agent, deliver):
+        return (
+            patch(f"{MODULE}.call_agent_silent", agent),
+            patch(f"{MODULE}.read_canvas", AsyncMock(return_value="")),
+            patch(f"{MODULE}.read_activity", AsyncMock(return_value="")),
+            patch(
+                f"{MODULE}.tracked_todo_service.append_activity_entry",
+                AsyncMock(return_value=True),
+            ),
+            patch(f"{MODULE}._collect_reference_context", AsyncMock(return_value="")),
+            patch(f"{MODULE}.deliver_result_to_platforms", deliver),
+        )
+
+    async def test_the_final_message_is_delivered_to_the_users_platform(self):
+        user = AuthenticatedUser(user_id="user-1")
+        agent = AsyncMock(return_value=SilentRunResult(message="Deploy is green.", tool_data=[]))
+        deliver = AsyncMock()
+        p1, p2, p3, p4, p5, p6 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6:
+            await _execute_via_agent(
+                _doc(id="todo-3", title="Watch the deploy"), "user-1", user_data=user
+            )
+
+        deliver.assert_awaited_once()
+        kwargs = deliver.await_args.kwargs
+        # Comms' voiced reply is what the user reads — not the executor's
+        # internal report, and not the truncated activity-log summary.
+        assert kwargs["notification_text"] == "Deploy is green."
+        assert kwargs["user_id"] == "user-1"
+        assert kwargs["user"] is user
+        # The origin is recorded into the platform thread, so it has to name the
+        # todo a later turn there would need to look up.
+        assert "todo-3" in kwargs["origin"]
+        assert "Watch the deploy" in kwargs["origin"]
+
+    async def test_a_silent_todo_delivers_nothing(self):
+        agent = AsyncMock(return_value=SilentRunResult(message="Deploy is green.", tool_data=[]))
+        deliver = AsyncMock()
+        p1, p2, p3, p4, p5, p6 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6:
+            await _execute_via_agent(
+                _doc(notify_on_run=False), "user-1", user_data=AuthenticatedUser(user_id="user-1")
+            )
+
+        deliver.assert_not_awaited()
+
+    async def test_a_queued_dispatch_delivers_nothing(self):
+        """The queued acknowledgement is not a result; delivering it announces work that never ran."""
+        agent = AsyncMock(
+            return_value=SilentRunResult(
+                message="That task is queued.", tool_data=[], queued_task_id="task-9"
+            )
+        )
+        deliver = AsyncMock()
+        p1, p2, p3, p4, p5, p6 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6:
+            await _execute_via_agent(
+                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1")
+            )
+
+        deliver.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

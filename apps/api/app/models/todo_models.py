@@ -77,6 +77,14 @@ class TodoBase(BaseModel):
         default_factory=list,
         description="IDs of related past tracked todos (institutional memory references)",
     )
+    notify_on_run: bool = Field(
+        default=True,
+        description=(
+            "Deliver this tracked todo's run result to the user's chat platform when a "
+            "scheduled or triggered run finishes. The tracked-todo equivalent of a "
+            "workflow's notify_on_completion; unrelated to the todo being marked completed."
+        ),
+    )
 
 
 # For creating new todos
@@ -107,6 +115,7 @@ class TodoUpdateRequest(BaseModel):
     scheduled_at: datetime | None = None
     recurrence: str | None = None
     expires_at: datetime | None = None
+    notify_on_run: bool | None = None
 
 
 # For responses with ID and user_id
@@ -419,6 +428,7 @@ class TodoDocument(UserScopedDocument):
     gaia_retry_count: int = 0
     expires_at: datetime | None = None
     references: list[str] = Field(default_factory=list)
+    notify_on_run: bool = True
     completed_at: datetime | None = None
     # Canvas + activity + log bodies for tracked todos live on the document itself.
     canvas_content: str | None = None
@@ -456,6 +466,7 @@ class TodoUpdate(BaseModel):
     gaia_retry_count: int | None = None
     expires_at: datetime | None = None
     references: list[str] | None = None
+    notify_on_run: bool | None = None
     completed_at: datetime | None = None
     canvas_content: str | None = None
     activity_content: str | None = None

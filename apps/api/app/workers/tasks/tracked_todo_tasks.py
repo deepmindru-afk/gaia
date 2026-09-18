@@ -18,7 +18,14 @@ from uuid import uuid4
 from arq.connections import ArqRedis
 
 from app.agents.core.agent import AgentRunOptions, call_agent_silent
-from app.agents.prompts.todo_prompts import TRIGGERED_RELEVANCE_GUIDANCE
+from app.agents.core.background.workflow_platform_delivery import (
+    deliver_result_to_platforms,
+)
+from app.agents.prompts.todo_prompts import (
+    DELIVERED_RESULT_GUIDANCE,
+    SILENT_RUN_GUIDANCE,
+    TRIGGERED_RELEVANCE_GUIDANCE,
+)
 from app.constants.todos import ACTIVITY_PROMPT_TAIL_CHARS, FAILED_LABEL
 from app.db.repositories.todos import todo_repository
 from app.decorators import enforce_daily_cost_budget
@@ -344,6 +351,7 @@ def _build_execution_prompt(
     reference_context: str,
     activity_content: str | None = None,
     origin: TriggerOrigin | None = None,
+    notify_on_run: bool = True,
 ) -> str:
     """Assemble the run prompt from the todo's fields and context.
 
@@ -351,6 +359,9 @@ def _build_execution_prompt(
     which the agent path never calls, so the payload goes in the prompt itself.
     It is attacker-influenceable, so it is fenced with a random nonce and
     labelled untrusted, as the HIL intent judge does.
+
+    notify_on_run states where the final message goes: a run that is not told
+    reaches for send_notification and the user gets the result twice.
     """
     if origin is None:
         prompt_parts = [f"Execute the following scheduled task: {title}"]
@@ -379,6 +390,7 @@ def _build_execution_prompt(
         prompt_parts.append(f"{label}:\n{tail}")
     if reference_context:
         prompt_parts.append(reference_context)
+    prompt_parts.append(DELIVERED_RESULT_GUIDANCE if notify_on_run else SILENT_RUN_GUIDANCE)
     return "\n\n".join(prompt_parts)
 
 
@@ -419,6 +431,7 @@ async def _execute_via_agent(
         activity_content=activity_content,
         reference_context=reference_context,
         origin=origin,
+        notify_on_run=doc.notify_on_run,
     )
 
     # Generate a fresh conversation_id for each execution to prevent
@@ -500,6 +513,17 @@ async def _execute_via_agent(
         user_id=user_id,
         entry=f"{end_iso} ✓ scheduled run finished (summary={summary!r})",
     )
+
+    # The same delivery a finished workflow gets, and the reason the run is told
+    # in its prompt not to also send_notification. Swallows its own failures and
+    # skips an empty message, so the work never re-runs over a delivery problem.
+    if doc.notify_on_run:
+        await deliver_result_to_platforms(
+            user=user_data,
+            user_id=user_id,
+            notification_text=complete_message,
+            origin=f'tracked todo "{doc.title}" (id {doc.id})',
+        )
 
     log.info("tracked_todo.agent_completed", todo_id=todo_id)
     return complete_message[:200] if complete_message else ""

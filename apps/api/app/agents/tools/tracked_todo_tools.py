@@ -45,6 +45,13 @@ from shared.py.wide_events import log
 
 _RECURRENCE_SHORTCUTS = {"daily", "weekly", "every_4h", "every_1h"}
 _UTC_OFFSET = "+00:00"
+_NOTIFY_ON_RUN_DESC = (
+    "Deliver this todo's run result to the user's chat app when a scheduled or "
+    "triggered run finishes. Default True. Set False only for a todo whose runs "
+    "are housekeeping the user does not want to hear about (a frequent poll that "
+    "usually finds nothing); a silent run can still reach them with "
+    "send_notification when something genuinely needs them."
+)
 _ERR_NO_USER_ID = "Error: user_id not found in config"
 
 
@@ -541,6 +548,10 @@ async def create_tracked_todo(
         "or 'follow up if no reply' (expires in 2 weeks). "
         "Different from due_date: due_date means 'should be done by'; expires_at means 'no longer matters after'.",
     ] = None,
+    notify_on_run: Annotated[
+        bool,
+        _NOTIFY_ON_RUN_DESC,
+    ] = True,
 ) -> str:
     """
     Create a tracked todo: a GAIA-managed todo with a working-memory canvas.
@@ -578,6 +589,8 @@ async def create_tracked_todo(
     expires_at: ISO datetime string when this todo becomes irrelevant regardless of completion.
                 Different from due_date: due_date = deadline (overdue = still needs doing),
                 expires_at = relevance window (expired = no longer worth tracking).
+    notify_on_run: Whether each run's final message is delivered to the user's chat app.
+                On by default; turn it off for runs the user should not hear about.
     """
     user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
@@ -603,6 +616,7 @@ async def create_tracked_todo(
         labels=labels,
         priority=priority,
         source_conversation_id=source_conversation_id,
+        notify_on_run=notify_on_run,
     )
 
     persist_error = await _persist_scheduling_fields(
@@ -723,6 +737,10 @@ async def update_tracked_todo(
         list[str] | None,
         "IDs of related past tracked todos to link. Appended to existing references.",
     ] = None,
+    notify_on_run: Annotated[
+        bool | None,
+        _NOTIFY_ON_RUN_DESC,
+    ] = None,
 ) -> str:
     """Update properties of an existing tracked todo.
 
@@ -739,6 +757,7 @@ async def update_tracked_todo(
         recurrence: Set or clear recurrence pattern.
         expires_at: Set or clear the expiry datetime (when the todo becomes irrelevant).
         references: IDs of related past tracked todos to link (appended to existing).
+        notify_on_run: Turn this todo's run-result delivery on or off.
     """
     user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
@@ -756,6 +775,8 @@ async def update_tracked_todo(
     )
     if error := await _apply_field_updates(inputs, user_id, update_fields, notes):
         return error
+    if notify_on_run is not None:
+        update_fields["notify_on_run"] = notify_on_run
 
     if not update_fields:
         return "No fields to update. Provide at least one field to change."
