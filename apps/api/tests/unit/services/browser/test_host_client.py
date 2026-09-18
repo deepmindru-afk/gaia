@@ -44,7 +44,7 @@ def _http_status_error(
 
 
 def _make_client_mock(response: MagicMock) -> MagicMock:
-    """An async-context-manager mock whose HTTP verb returns *response*."""
+    """Return an async-context-manager mock whose HTTP verb returns *response*."""
     client = AsyncMock()
     client.post = AsyncMock(return_value=response)
     client.get = AsyncMock(return_value=response)

@@ -44,11 +44,7 @@ class CrawlBatchParams:
 def _build_markdown_generator(content_query: str | None = None) -> DefaultMarkdownGenerator:
     """Build a markdown generator tuned for clean, LLM-ready output.
 
-    Plain fetch keeps the full raw markdown — links, emails and inline text are
-    preserved (boilerplate is already removed via ``excluded_tags``). Deep
-    research passes a ``content_query`` so BM25 keeps only the passages most
-    relevant to the topic. (A pruning filter was dropping inline links, so it is
-    not used for plain fetch.)
+    Plain fetch keeps the full raw markdown (links/emails preserved, boilerplate stripped via excluded_tags); a content_query switches to BM25, keeping only passages relevant to the topic — a pruning filter was dropping inline links, so it isn't used for plain fetch.
     """
     content_filter = (
         BM25ContentFilter(user_query=content_query, bm25_threshold=_BM25_THRESHOLD)
@@ -71,11 +67,7 @@ def _build_markdown_generator(content_query: str | None = None) -> DefaultMarkdo
 def _build_run_config(params: CrawlBatchParams) -> CrawlerRunConfig:
     """Build a crawl run config.
 
-    ``thorough`` (single-page fetch) scrolls the whole page, lets late JS and
-    animations settle, and enables ``magic`` (overlay handling + light stealth)
-    so lazy-loaded / scroll-revealed content is captured. It is several times
-    slower, so batch crawls (deep research) leave it off. ``networkidle`` is
-    deliberately not used — it hangs on SPAs that hold persistent connections.
+    thorough scrolls the whole page, waits for late JS/animations, and enables magic (overlay handling + light stealth) to capture lazy-loaded content — several times slower, so batch crawls (deep research) leave it off. networkidle is deliberately not used: it hangs on SPAs with persistent connections.
     """
     kwargs: dict[str, Any] = {
         "page_timeout": params.page_timeout_ms,
@@ -98,7 +90,7 @@ def _is_obscura() -> bool:
 
 
 async def _build_browser_config() -> BrowserConfig:
-    """The crawl4ai browser config for the active engine.
+    """Return the crawl4ai browser config for the active engine.
 
     Obscura: connect over CDP to the dedicated crawl Obscura (one shared process,
     started on demand). ``cdp_cleanup_on_close=False`` so a crawler's teardown
@@ -145,13 +137,7 @@ def _spawn_shielded_close(crawler: AsyncWebCrawler, context_name: str) -> asynci
 async def managed_crawler(*, context_name: str = "crawl4ai") -> AsyncIterator[AsyncWebCrawler]:
     """Yield a started ``AsyncWebCrawler`` for the active engine, whose teardown survives cancellation.
 
-    ``async with AsyncWebCrawler()`` runs ``close()`` inside ``__aexit__``, so a
-    ``CancelledError`` arriving mid-close (stream cancellation, tool timeout,
-    client disconnect) aborts the cleanup and orphans the Playwright driver
-    subprocess (~50-130 MB each; these accumulated for days in prod). Running
-    ``close()`` as a detached task means cancellation of the calling task can
-    no longer interrupt the browser teardown; ``app.utils.browser_reaper`` is
-    the backstop for anything that still slips through.
+    async with AsyncWebCrawler runs close() inside __aexit__, so a CancelledError mid-close (stream cancellation, tool timeout, disconnect) orphans the Playwright driver subprocess (~50-130 MB each; these accumulated for days in prod). Detaching close() as its own task means the calling task's cancellation can no longer interrupt it; browser_reaper is the backstop for anything that still slips through.
     """
     crawler = AsyncWebCrawler(config=await _build_browser_config())
     try:

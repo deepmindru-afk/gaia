@@ -102,8 +102,7 @@ def _is_auth_url(url: str | None) -> bool:
 
 
 def _navigated_away(start: str | None, current: str | None) -> bool:
-    """Whether the sign-in is visibly finished: the page moved to a different
-    page AND that page is no longer part of the auth flow.
+    """Whether the sign-in is visibly finished: the page moved to a different page AND that page is no longer part of the auth flow.
 
     Compared by scheme+host+path (query/fragment ignored, so a login adding
     ``?return_to=`` is not a navigation). Staying inside auth (2FA, OTP,

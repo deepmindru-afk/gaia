@@ -1,5 +1,5 @@
 """
-Thorough unit tests for app.utils.composio_hooks.gmail_hooks
+Thorough unit tests for app.utils.composio_hooks.gmail_hooks.
 
 Covers every helper, schema modifier, before hook and after hook,
 including edge cases, error paths and streaming branches.
@@ -154,7 +154,7 @@ class TestContactCard:
             GooglePersonName,
             GooglePersonValue,
         )
-        from app.utils.composio_hooks.gmail_hooks import _contact_card
+        from app.utils.composio_hooks.gmail_hooks import _Contact
 
         person = GooglePerson(
             resourceName="people/123",
@@ -172,7 +172,7 @@ class TestContactCard:
                 GooglePersonValue(value="123", metadata=GooglePersonFieldMetadata(primary=True))
             ],
         )
-        card = _contact_card(person)
+        card = _Contact.from_person(person).card()
         assert card["name"] == "Bob"
         assert card["email"] == "bob@example.com"
         assert card["phone"] == "123"
@@ -180,10 +180,10 @@ class TestContactCard:
 
     def test_missing_resource_name_returns_empty(self) -> None:
         from app.models.composio_schemas.google_people import GooglePerson
-        from app.utils.composio_hooks.gmail_hooks import _contact_card
+        from app.utils.composio_hooks.gmail_hooks import _Contact
 
         person = GooglePerson()
-        card = _contact_card(person)
+        card = _Contact.from_person(person).card()
         assert card["resource_name"] == ""
         assert card["name"] == "Unknown"
         assert card["email"] == ""
@@ -191,35 +191,35 @@ class TestContactCard:
 
     def test_explicit_null_resource_name_preserved(self) -> None:
         from app.models.composio_schemas.google_people import GooglePerson
-        from app.utils.composio_hooks.gmail_hooks import _contact_card
+        from app.utils.composio_hooks.gmail_hooks import _Contact
 
         person = GooglePerson(resourceName=None)
         # resourceName explicitly present as null -> stays None, not ""
-        card = _contact_card(person)
+        card = _Contact.from_person(person).card()
         assert card["resource_name"] is None
 
 
 class TestContactSummary:
     def test_name_only_when_blank(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import _contact_summary
+        from app.utils.composio_hooks.gmail_hooks import _Contact
 
-        card = {"name": "Alice", "email": "", "phone": "", "resource_name": "people/1"}
-        summary = _contact_summary(card)
+        contact = _Contact(name="Alice", email="", phone="", resource_name="people/1")
+        summary = contact.summary()
         assert summary == {"name": "Alice"}
 
     def test_includes_email_and_phone_when_present(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import _contact_summary
+        from app.utils.composio_hooks.gmail_hooks import _Contact
 
-        card = {"name": "Bob", "email": "bob@x.com", "phone": "555", "resource_name": "p/1"}
-        summary = _contact_summary(card)
+        contact = _Contact(name="Bob", email="bob@x.com", phone="555", resource_name="p/1")
+        summary = contact.summary()
         assert summary["email"] == "bob@x.com"
         assert summary["phone"] == "555"
 
     def test_excludes_empty_phone_includes_email(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import _contact_summary
+        from app.utils.composio_hooks.gmail_hooks import _Contact
 
-        card = {"name": "Bob", "email": "bob@x.com", "phone": "", "resource_name": "p/1"}
-        summary = _contact_summary(card)
+        contact = _Contact(name="Bob", email="bob@x.com", phone="", resource_name="p/1")
+        summary = contact.summary()
         assert "phone" not in summary
         assert summary["email"] == "bob@x.com"
 
@@ -278,24 +278,6 @@ class TestGmailComposeHideIsHtmlSchemaModifier:
         assert result is schema
         assert result.input_parameters == "not_a_dict"
 
-    def test_non_dict_properties_returns_unchanged(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import gmail_compose_hide_is_html_schema_modifier
-
-        schema = _mock_tool({"properties": "not_dict", "required": ["is_html"]})
-        result = gmail_compose_hide_is_html_schema_modifier("GMAIL_SEND_EMAIL", "gmail", schema)
-        # should still try to remove from required even if properties not dict
-        assert result.input_parameters["required"] == []
-
-    def test_required_not_list_ignored(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import gmail_compose_hide_is_html_schema_modifier
-
-        schema = _mock_tool(
-            {"properties": {"is_html": {"type": "boolean"}}, "required": "not_a_list"}
-        )
-        result = gmail_compose_hide_is_html_schema_modifier("GMAIL_SEND_EMAIL", "gmail", schema)
-        assert result.input_parameters["required"] == "not_a_list"
-        assert "is_html" not in result.input_parameters["properties"]
-
 
 class TestGmailComposeRequireSubjectSchemaModifier:
     def test_adds_required_and_min_length(self) -> None:
@@ -338,16 +320,6 @@ class TestGmailComposeRequireSubjectSchemaModifier:
         result = gmail_compose_require_subject_schema_modifier("GMAIL_SEND_EMAIL", "gmail", schema)
         assert result is schema
 
-    def test_subject_property_not_dict_not_modified(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import (
-            gmail_compose_require_subject_schema_modifier,
-        )
-
-        schema = _mock_tool({"properties": {"subject": "not_dict"}, "required": []})
-        result = gmail_compose_require_subject_schema_modifier("GMAIL_SEND_EMAIL", "gmail", schema)
-        assert result.input_parameters["properties"]["subject"] == "not_dict"
-        assert "subject" in result.input_parameters["required"]
-
     def test_input_params_without_properties_adds_required(self) -> None:
         from app.utils.composio_hooks.gmail_hooks import (
             gmail_compose_require_subject_schema_modifier,
@@ -356,15 +328,6 @@ class TestGmailComposeRequireSubjectSchemaModifier:
         schema = _mock_tool({"required": []})
         result = gmail_compose_require_subject_schema_modifier("GMAIL_SEND_EMAIL", "gmail", schema)
         assert "subject" in result.input_parameters["required"]
-
-    def test_required_not_list_not_appended(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import (
-            gmail_compose_require_subject_schema_modifier,
-        )
-
-        schema = _mock_tool({"properties": {"subject": {"type": "string"}}, "required": "bad"})
-        result = gmail_compose_require_subject_schema_modifier("GMAIL_SEND_EMAIL", "gmail", schema)
-        assert result.input_parameters["required"] == "bad"
 
 
 class TestGmailFetchMessageSchemaModifier:
@@ -394,24 +357,6 @@ class TestGmailFetchMessageSchemaModifier:
             "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", "gmail", schema
         )
         assert "default" not in result.input_parameters["properties"]["other"]
-
-    def test_format_not_dict_not_modified(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import gmail_fetch_message_schema_modifier
-
-        schema = _mock_tool({"properties": {"format": "not_dict"}})
-        result = gmail_fetch_message_schema_modifier(
-            "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", "gmail", schema
-        )
-        assert result.input_parameters["properties"]["format"] == "not_dict"
-
-    def test_properties_not_dict_no_crash(self) -> None:
-        from app.utils.composio_hooks.gmail_hooks import gmail_fetch_message_schema_modifier
-
-        schema = _mock_tool({"properties": "bad"})
-        result = gmail_fetch_message_schema_modifier(
-            "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", "gmail", schema
-        )
-        assert result is schema or result.input_parameters["properties"] == "bad"
 
 
 class TestGmailHideUserIdSchemaModifier:
@@ -626,7 +571,7 @@ class TestGmailComposeBeforeHook:
         writer.assert_not_called()
         held = _pending_draft_card.get()
         assert held is not None
-        assert held["subject"] == "draft"
+        assert held.subject == "draft"
 
     @patch("app.utils.composio_hooks.gmail_hooks.get_stream_writer")
     def test_sends_email_sent_payload_for_send(self, mock_writer: MagicMock) -> None:
@@ -1229,7 +1174,7 @@ class TestGmailThreadAfterHook:
                     "time": "now",
                     "snippet": "...",
                     "body": "text",
-                    "content": "text",
+                    "content": {"text": "text", "html": "<p>text</p>"},
                 }
             ],
             "messageCount": 1,

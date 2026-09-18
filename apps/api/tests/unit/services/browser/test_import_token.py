@@ -55,8 +55,7 @@ class TestImportToken:
         assert await mod.consume_import_token(token) == "user-1"
 
     async def test_token_is_single_use(self, fake_redis: _FakeRedis) -> None:
-        """The code authorises writing the user's whole login state — a second
-        redemption must fail, or a leaked code could overwrite it repeatedly."""
+        """The code authorises writing the user's whole login state — a second redemption must fail, or a leaked code could overwrite it repeatedly."""
         token = await mod.mint_import_token("user-1")
         assert await mod.consume_import_token(token) == "user-1"
         assert await mod.consume_import_token(token) is None
@@ -70,8 +69,7 @@ class TestImportToken:
     async def test_code_expires_after_the_import_ttl_not_the_cache_default(
         self, fake_redis: _FakeRedis
     ) -> None:
-        """The code authorises a login overwrite — it must live 10 minutes, not
-        the cache's 1-hour default."""
+        """The code authorises a login overwrite — it must live 10 minutes, not the cache's 1-hour default."""
         token = await mod.mint_import_token("user-1")
 
         assert fake_redis.ttls[mod._key(token)] == BROWSER_IMPORT_TOKEN_TTL_SECONDS

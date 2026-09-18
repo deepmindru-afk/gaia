@@ -3,7 +3,7 @@ from typing import Any, ClassVar, Literal, TypedDict
 from pydantic import BaseModel, Field
 
 from app.models.user_models import OnboardingPhase
-from app.models.workflow_models import IntegrationRef, TriggerType, WorkflowStep
+from app.models.workflow_models import WorkflowStep
 
 # The four holo-card houses. The frontend types the same closed set.
 House = Literal["frostpeak", "greenvale", "mistgrove", "bluehaven"]
@@ -172,25 +172,10 @@ class SocialProfileFilterOutput(BaseModel):
 
 # --------------------------------------------------------------------- clarify
 
-ClarifyQuestionKind = Literal["scope", "blocker", "constraint"]
-
-
-class ClarifyQuestion(BaseModel):
-    """One no-Gmail follow-up question from ``POST /onboarding/clarify-questions``."""
-
-    id: ClarifyQuestionKind
-    kind: ClarifyQuestionKind
-    question: str
-    options: list[str]
-
-
-class ClarifyQuestionsResponse(BaseModel):
-    questions: list[ClarifyQuestion]
-
 
 class ClarifyAnswerRecord(TypedDict, total=False):
-    """``users.onboarding.clarify_answers`` as persisted by ``complete_onboarding``
-    from :class:`~app.models.user_models.ClarifyAnswer`.
+    """``users.onboarding.clarify_answers`` as persisted by the pre-paid-flow
+    onboarding submission. Read-only legacy data — nothing writes it now.
 
     A ``TypedDict``, not a model (Type Safety item 6): it is read straight off an
     already-persisted subdocument and only ever consumed in-process, so validating
@@ -205,45 +190,6 @@ class ClarifyAnswerRecord(TypedDict, total=False):
 
 
 # ------------------------------------------------------- pipeline output shapes
-
-
-class OnboardingTodoSource(BaseModel):
-    """The email a generated onboarding todo was drafted from."""
-
-    sender: str
-    subject: str
-
-
-class OnboardingTodoSummary(BaseModel):
-    """A todo the onboarding pipeline created, as sent on ``todos_ready`` and fed
-    to the first-message prompt."""
-
-    id: str
-    title: str
-    source_email: OnboardingTodoSource | None = None
-
-
-class OnboardingTriggerPayload(BaseModel):
-    """A created workflow's trigger, shaped like the workflow API's own ``trigger``
-    field so the onboarding cards and the app render it identically."""
-
-    type: TriggerType
-    cron_expression: str | None = None
-    timezone: str | None = None
-    trigger_name: str | None = None
-
-
-class OnboardingWorkflowSummary(BaseModel):
-    """A workflow the onboarding pipeline created, as sent on ``workflows_ready``."""
-
-    id: str
-    title: str
-    description: str
-    categories: list[str]
-    trigger: OnboardingTriggerPayload
-    # Omitted from the wire (not null) on the fallback workflow, which is built
-    # without the connected-integration check.
-    missing_integrations: list[IntegrationRef] | None = None
 
 
 class UserProfileMetadata(BaseModel):
@@ -267,10 +213,9 @@ class ProfileCardDesign(BaseModel):
 class StagePayload(BaseModel):
     """Base for the ``payload`` of an ``onboarding_stage`` WebSocket event."""
 
-    # Whether a None field is dropped from the wire payload or sent as an explicit
-    # null. Both are load-bearing: the frontend reads a missing `source_email` as
-    # "this todo came from no email", but a null `style_summary` as "style learning
-    # ran and came back empty".
+    # Whether a None field is dropped from the wire payload or sent as explicit
+    # null. Both are load-bearing: a missing source_email means "no email", but
+    # a null style_summary means "style learning ran and came back empty".
     omit_none_on_wire: ClassVar[bool] = False
 
     def to_wire(self) -> dict[str, Any]:
@@ -298,22 +243,6 @@ class TriageReadyPayload(StagePayload):
     summary: str | None
     patterns: list[str]
     important_emails: list[TriageEmailSummary]
-
-
-class TodosReadyPayload(StatusTextPayload):
-    omit_none_on_wire: ClassVar[bool] = True
-
-    todos: list[OnboardingTodoSummary]
-
-
-class WorkflowsReadyPayload(StatusTextPayload):
-    omit_none_on_wire: ClassVar[bool] = True
-
-    workflows: list[OnboardingWorkflowSummary]
-
-
-class CompletePayload(StagePayload):
-    conversation_id: str | None
 
 
 # ----------------------------------------------------------- endpoint responses
@@ -371,10 +300,9 @@ class PersonalizationTodo(BaseModel):
     id: str
     title: str
     description: str | None
-    # `TodoDocument.source_email` is a `str | None` that nothing in the backend
-    # writes, so this is always null — while the `todos_ready` WebSocket event
-    # carries a {sender, subject} object the frontend renders. Typed as it really
-    # is; reconciling the two is a product change, not a typing fix.
+    # TodoDocument.source_email is str | None but nothing in the backend writes
+    # it, so this is always null — the todos_ready WebSocket event carries a
+    # {sender, subject} object instead. Reconciling is a product change, not a fix.
     source_email: str | None
 
 

@@ -22,10 +22,6 @@ export interface BotConfig {
   icon: string;
   name: string;
   description: string;
-  badge: {
-    label: string;
-    color: "warning" | "success" | "primary" | "default" | "secondary";
-  };
   primaryAction?: BotAction;
   secondaryAction?: BotAction;
 }
@@ -37,7 +33,6 @@ export const BOTS: BotConfig[] = [
     name: "Discord",
     description:
       "Add GAIA to any server or chat one-on-one. Use slash commands, @mention in any channel, or DM for personal help.",
-    badge: { label: "Beta", color: "success" },
     primaryAction: {
       label: "Add to Server",
       href: BOT_LINKS.discord,
@@ -55,7 +50,6 @@ export const BOTS: BotConfig[] = [
     name: "Telegram",
     description:
       "Just open a chat with @heygaia_bot and start talking. No setup, no group required. It's just you and GAIA.",
-    badge: { label: "Beta", color: "success" },
     primaryAction: {
       label: "Start Chatting",
       href: BOT_LINKS.telegram,
@@ -73,7 +67,6 @@ export const BOTS: BotConfig[] = [
     name: "Slack",
     description:
       "Bring GAIA into your workspace. Delegate tasks, run workflows, and get answers, all inside Slack.",
-    badge: { label: "Beta", color: "success" },
     primaryAction: {
       label: "Add to Workspace",
       href: BOT_LINKS.slack,
@@ -85,7 +78,6 @@ export const BOTS: BotConfig[] = [
     name: "WhatsApp",
     description:
       "Talk to GAIA on the app already on your phone. Ask questions, delegate tasks. No new accounts, no new habits.",
-    badge: { label: "Beta", color: "success" },
     primaryAction: {
       label: "Start Chatting",
       href: BOT_LINKS.whatsapp,
@@ -103,7 +95,6 @@ export const BOTS: BotConfig[] = [
     name: "iMessage",
     description:
       "Text GAIA from the Messages app already on your iPhone. Register your number once, then it's just another conversation in blue bubbles.",
-    badge: { label: "Pro", color: "primary" },
     primaryAction: {
       label: "Connect Your Number",
       href: BOT_LINKS.imessage,

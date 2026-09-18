@@ -31,8 +31,7 @@ _BIND_SETTLE_SECONDS = 0.5
 
 @dataclass(frozen=True)
 class _CrawlEngine:
-    """The running crawl Obscura and the CDP endpoint it publishes — one value, so
-    the process and its URL can never disagree about whether an engine exists."""
+    """The running crawl Obscura and the CDP endpoint it publishes — one value, so the process and its URL can never disagree about whether an engine exists."""
 
     proc: asyncio.subprocess.Process
     cdp_url: str
@@ -51,7 +50,7 @@ async def _terminate(proc: asyncio.subprocess.Process) -> None:
 
 
 async def ensure_crawl_obscura() -> str:
-    """The CDP http endpoint of the crawl Obscura, launching (or relaunching) it if needed.
+    """Return the CDP http endpoint of the crawl Obscura, launching (or relaunching) it if needed.
 
     Probes upward from ``OBSCURA_CRAWL_PORT`` so a taken base port (e.g. a dev's
     local Chrome) doesn't wedge crawling — Obscura publishes its endpoint only at

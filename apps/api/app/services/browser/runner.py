@@ -76,8 +76,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class BrowserRunnerCallbacks:
-    """The runner's injected seams — how it streams progress, pauses for the
-    human, checks cancellation, and mirrors per-action results into the thread."""
+    """The runner's injected seams — how it streams progress, pauses for the human, checks cancellation, and mirrors per-action results into the thread."""
 
     emit: EmitFn
     request_handoff: RequestHandoffFn
@@ -216,8 +215,9 @@ class BrowserTaskRunner:
         return self._stopped or await self._is_cancelled()
 
     async def _handle_takeover(self, reason: str, category: str) -> str | None:
-        """The agent's takeover hook: pause for the human and return the note they left,
-        if any. Raises to stop the run on cancel."""
+        """Pause for the human (the agent's takeover hook) and return the note they left, if any.
+
+        Raises to stop the run on cancel."""
         self._handoffs += 1
         if self._handoffs > MAX_HANDOFFS_PER_TASK:
             self._stopped = True
@@ -279,8 +279,9 @@ class BrowserTaskRunner:
             )
 
     async def _render_screenshot(self, frame: StepFrame) -> str | None:
-        """A step frame as a signed CDN URL (persisted), or an inline data URL as
-        a dev fallback when the CDN is unconfigured. ``None`` when off/absent."""
+        """Return a step frame as a signed CDN URL (persisted), or an inline data URL as a dev fallback when the CDN is unconfigured.
+
+        ``None`` when off/absent."""
         raw_b64 = frame.raw_screenshot
         if not raw_b64 or not self._config.stream_screenshots:
             return None

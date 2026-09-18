@@ -8,7 +8,7 @@ import { formatDistanceToNow } from "date-fns";
 import type React from "react";
 import { useState } from "react";
 import { SidebarContent, SidebarFooter } from "@/components/ui/sidebar";
-import { useUser } from "@/features/auth/hooks/useUser";
+import { useCurrentUser } from "@/features/auth/hooks/useCurrentUser";
 import CanvasViewer from "@/features/todo/components/CanvasViewer";
 import SubtaskManager from "@/features/todo/components/shared/SubtaskManager";
 import TodoFieldsRow from "@/features/todo/components/shared/TodoFieldsRow";
@@ -34,7 +34,7 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
   onDelete,
   projects,
 }) => {
-  const user = useUser();
+  const user = useCurrentUser();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
 
@@ -190,10 +190,10 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
           <div className="py-2">
             <TodoFieldsRow
               priority={todo.priority}
-              projectId={todo.project_id}
+              projectId={todo.project_id ?? undefined}
               projects={projects}
-              dueDate={todo.due_date}
-              dueDateTimezone={todo.due_date_timezone}
+              dueDate={todo.due_date ?? undefined}
+              dueDateTimezone={todo.due_date_timezone ?? undefined}
               labels={todo.labels}
               onPriorityChange={(priority: Priority) =>
                 handleFieldChange("priority", priority)

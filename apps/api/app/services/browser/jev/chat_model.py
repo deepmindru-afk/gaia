@@ -208,7 +208,7 @@ class JevChatModel:
     async def _action_for(
         self, decision: JevDecision, observation: JevObservation, goal: str, registered: set[str]
     ) -> tuple[dict[str, dict[str, object]], str | None]:
-        """The Browser-Use action a decision executes as, plus any text the helper wrote."""
+        """Return the Browser-Use action a decision executes as, plus any text the helper wrote."""
         element = decision.element
         input_action = "input" if "input" in registered else "input_text"
         match decision.operation:
@@ -343,7 +343,7 @@ def _takeover(
 
 
 def _idle_action(output_format: type[BaseModel]) -> dict[str, dict[str, object]]:
-    """An action that changes nothing and is valid for this step's schema."""
+    """Return an action that changes nothing and is valid for this step's schema."""
     if "wait" in _registered_actions(output_format):
         return {"wait": {"seconds": 1}}
     return {"done": {"text": _BLOCKED_SUMMARY, "success": False}}
@@ -361,7 +361,7 @@ def _offered_operations(registered: set[str]) -> frozenset[JevOperation]:
 
 
 def _registered_actions(output_format: type[BaseModel]) -> set[str]:
-    """The action names in ``AgentOutput.action``'s element model.
+    """Return the action names in ``AgentOutput.action``'s element model.
 
     Browser-Use builds that model two ways: one model with an optional field per
     action, or (0.11+) a ``RootModel`` over a union of single-field models.
@@ -381,7 +381,7 @@ def _output(
 
 
 def _goal_from_messages(messages: list[BaseMessage]) -> str:
-    """The task as Browser-Use's own prompt carries it, for an unbound adapter."""
+    """Return the task as Browser-Use's own prompt carries it, for an unbound adapter."""
     for message in reversed(messages):
         text = getattr(message, "text", None)
         if not isinstance(text, str):
@@ -393,7 +393,7 @@ def _goal_from_messages(messages: list[BaseMessage]) -> str:
 
 
 def build_jev_chat_model(*, text_model: BaseChatModel) -> JevChatModel:
-    """The Jev policy over OpenRouter, with ``text_model`` as its text helper.
+    """Return the Jev policy over OpenRouter, with ``text_model`` as its text helper.
 
     Raises :class:`BrowserUnavailableError` when no OpenRouter key is configured.
     """

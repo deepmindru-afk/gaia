@@ -1,9 +1,3 @@
-"""
-Workflow Execution Models.
-
-Models for tracking workflow execution history.
-"""
-
 from collections.abc import Callable, Mapping
 from datetime import datetime
 import json
@@ -13,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.constants.agents import TOOL_RESULT_NOTE_SEPARATOR
 from app.db.repositories.base import MongoDocument
+from app.schemas.common import ResponseModel
 
 #: How much of a tool's result is kept on the record. Enough to tell the next run
 #: what came back (ids, a count, a cursor) without storing message bodies — the
@@ -242,12 +237,9 @@ def largest_list_len(value: object) -> int | None:
     return best
 
 
-# The run-states an execution record may hold: created as ``running``, then
-# exactly one terminal write. Named once here because the document, the update
-# model, the repository's ``complete`` and the service's ``complete_execution``
-# all speak it (Type Safety items 3 and 5).
-#: ``skipped``: the fire never ran because another run of the same workflow
-#: was in flight; that run delivered the result. Not a failure to show in red.
+# Run-states an execution record may hold (Type Safety items 3, 5): created as
+# running, then exactly one terminal write. skipped means another run of the
+# same workflow was already in flight and delivered the result — not a failure.
 WorkflowExecutionStatus = Literal["running", "success", "failed", "skipped"]
 
 
@@ -281,7 +273,7 @@ class RecordedCall(BaseModel):
     replayed: bool = False
 
 
-class WorkflowExecution(BaseModel):
+class WorkflowExecution(ResponseModel):
     """A single workflow execution record."""
 
     execution_id: str = Field(description="Unique execution identifier")
@@ -306,14 +298,13 @@ class WorkflowExecution(BaseModel):
         default="manual",
         description="What triggered the execution: manual, schedule, or integration name",
     )
-    #: What this run actually did, in order. Replaces the LangGraph checkpoint as
-    #: the way a workflow remembers itself: the previous run's trace is injected
-    #: into the next run's opening message, so history stops being re-sent as a
-    #: full transcript on every fire.
+    #: What this run did, in order. Replaces the LangGraph checkpoint as how a
+    #: workflow remembers itself: the previous run's trace is injected into the
+    #: next run's opening message, instead of re-sending history as a full transcript.
     trace: list[RecordedCall] = Field(default_factory=list)
 
 
-class WorkflowExecutionsResponse(BaseModel):
+class WorkflowExecutionsResponse(ResponseModel):
     """Response for workflow executions list endpoint."""
 
     executions: list[WorkflowExecution] = Field(

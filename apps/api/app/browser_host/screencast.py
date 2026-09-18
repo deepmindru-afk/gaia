@@ -203,7 +203,7 @@ _FAVICON_JS = """(() => {
 
 
 async def _read_favicon(cdp: CDPClient, page_session: str) -> str | None:
-    """The page's own favicon URL, or ``None`` when it cannot be read.
+    """Return the page's own favicon URL, or ``None`` when it cannot be read.
 
     Best-effort: a favicon is decoration, so a page that blocks evaluation (or
     is mid-navigation) must not break the metadata the tab actually needs.

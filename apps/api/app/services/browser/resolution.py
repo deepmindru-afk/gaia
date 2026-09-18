@@ -59,8 +59,10 @@ async def resolve_handoff_from_message(
 
 
 async def _interpret(message: str, reason: str) -> HandoffReplyDecision:
-    """Classify the reply. Fails toward ``unrelated`` (normal chat), never toward
-    silently continuing a sensitive browser task."""
+    """Classify the reply.
+
+    Fails toward ``unrelated`` (normal chat), never toward silently continuing a sensitive browser
+    task."""
     try:
         return await ainvoke_structured(
             HandoffReplyDecision,

@@ -9,9 +9,11 @@ Covers:
 """
 
 from contextlib import ExitStack
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+
+from app.constants.db import LANGGRAPH_SETUP_LOCK_ID
 
 _MOD = "app.agents.core.graph_builder.build_graph"
 _CM_MOD = "app.agents.core.graph_builder.checkpointer_manager"
@@ -80,6 +82,15 @@ def _apply_patches(stack: ExitStack, overrides: dict | None = None):
 _TEST_DB_URL = "postgresql://localhost/test"
 
 
+def _mock_pool() -> AsyncMock:
+    """Build an AsyncConnectionPool mock whose connection() is the context manager setup() borrows."""
+    pool = AsyncMock()
+    pool.connection = MagicMock()
+    pool.connection.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
+    pool.connection.return_value.__aexit__ = AsyncMock(return_value=False)
+    return pool
+
+
 class TestCheckpointerManager:
     """Tests for CheckpointerManager lifecycle."""
 
@@ -122,7 +133,7 @@ class TestCheckpointerManager:
     async def test_setup_creates_pool_and_checkpointer(
         self, mock_pool_cls, mock_saver_cls, mock_store_cls
     ):
-        mock_pool = AsyncMock()
+        mock_pool = _mock_pool()
         mock_pool_cls.return_value = mock_pool
 
         mock_saver = AsyncMock()
@@ -149,7 +160,7 @@ class TestCheckpointerManager:
     @patch(f"{_CM_MOD}.AsyncPostgresSaver")
     @patch(f"{_CM_MOD}.AsyncConnectionPool")
     async def test_setup_returns_self(self, mock_pool_cls, mock_saver_cls, mock_store_cls):
-        mock_pool_cls.return_value = AsyncMock()
+        mock_pool_cls.return_value = _mock_pool()
         mock_saver_cls.return_value = AsyncMock()
         mock_store_ctx = AsyncMock()
         mock_store_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
@@ -166,7 +177,7 @@ class TestCheckpointerManager:
     async def test_setup_pool_connection_kwargs(
         self, mock_pool_cls, mock_saver_cls, mock_store_cls
     ):
-        mock_pool_cls.return_value = AsyncMock()
+        mock_pool_cls.return_value = _mock_pool()
         mock_saver_cls.return_value = AsyncMock()
         mock_store_ctx = AsyncMock()
         mock_store_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
@@ -196,6 +207,65 @@ class TestCheckpointerManager:
         mgr = self._make_manager()
         # Should not raise
         await mgr.close()
+
+    @staticmethod
+    def _record_setup_order(
+        mock_pool_cls, mock_saver_cls, mock_store_cls, *, store_error: Exception | None = None
+    ) -> MagicMock:
+        order = MagicMock()
+        pool = _mock_pool()
+        conn = pool.connection.return_value.__aenter__.return_value
+        conn.execute.side_effect = lambda sql, params: order.execute(sql, params)
+        mock_pool_cls.return_value = pool
+
+        saver = AsyncMock()
+        saver.setup.side_effect = lambda: order.saver_setup()
+        mock_saver_cls.return_value = saver
+
+        store = AsyncMock()
+        store.setup.side_effect = store_error or (lambda: order.store_setup())
+        store_ctx = AsyncMock()
+        store_ctx.__aenter__ = AsyncMock(return_value=store)
+        store_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_store_cls.from_conn_string.return_value = store_ctx
+        return order
+
+    @patch(f"{_CM_MOD}.AsyncPostgresStore")
+    @patch(f"{_CM_MOD}.AsyncPostgresSaver")
+    @patch(f"{_CM_MOD}.AsyncConnectionPool")
+    async def test_migrations_run_under_the_advisory_lock(
+        self, mock_pool_cls, mock_saver_cls, mock_store_cls
+    ):
+        """Concurrent starters must not race langgraph's CREATE TYPE checkpoint_migrations."""
+        order = self._record_setup_order(mock_pool_cls, mock_saver_cls, mock_store_cls)
+
+        await self._make_manager().setup()
+
+        mock_store_cls.from_conn_string.assert_called_once_with(_TEST_DB_URL)
+        lock = (LANGGRAPH_SETUP_LOCK_ID,)
+        assert order.mock_calls == [
+            call.execute("SELECT pg_advisory_lock(%s)", lock),
+            call.saver_setup(),
+            call.store_setup(),
+            call.execute("SELECT pg_advisory_unlock(%s)", lock),
+        ]
+
+    @patch(f"{_CM_MOD}.AsyncPostgresStore")
+    @patch(f"{_CM_MOD}.AsyncPostgresSaver")
+    @patch(f"{_CM_MOD}.AsyncConnectionPool")
+    async def test_a_failed_migration_still_releases_the_lock(
+        self, mock_pool_cls, mock_saver_cls, mock_store_cls
+    ):
+        order = self._record_setup_order(
+            mock_pool_cls, mock_saver_cls, mock_store_cls, store_error=RuntimeError("store DDL")
+        )
+
+        with pytest.raises(RuntimeError, match="store DDL"):
+            await self._make_manager().setup()
+
+        assert order.mock_calls[-1] == call.execute(
+            "SELECT pg_advisory_unlock(%s)", (LANGGRAPH_SETUP_LOCK_ID,)
+        )
 
 
 class TestGetCheckpointerManager:
@@ -291,8 +361,7 @@ class TestBuildCommsGraph:
             deps["mocks"][f"{_MOD}.init_llm"].assert_called_once()
 
     async def test_comms_middleware_receives_the_chat_llm(self):
-        """build_comms_graph must forward chat_llm into the middleware stack —
-        the summarizer inside comms rides the conversation's model."""
+        """build_comms_graph must forward chat_llm into the middleware stack, so the summarizer rides the conversation's model."""
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_comms_graph
@@ -325,6 +394,8 @@ class TestBuildCommsGraph:
             assert kwargs["tools_config"].initial_tool_ids == [
                 "call_executor",
                 "cancel_executor",
+                "find_integration",
+                "search_public_workflows",
                 web_search_tool.name,
                 fetch_webpages.name,
                 *[memory_tool.name for memory_tool in memory_tools.tools],
@@ -409,11 +480,7 @@ class TestBuildExecutorGraph:
                 assert graph is deps["compiled"]
 
     async def test_executor_is_built_with_the_completion_guard_and_skill_tool(self):
-        """Two things the executor cannot lose. ``require_finish_to_end`` is what
-        opts it into the harness-owned completion check — without it a plain-text
-        stop is taken at face value and the guard is inert. ``save_learned_skill``
-        is bound up front rather than retrieved, so a renamed id silently drops the
-        tool from the executor's initial set."""
+        """require_finish_to_end opts the executor into the completion check; save_learned_skill is bound up front, not retrieved."""
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -486,13 +553,14 @@ class TestBuildExecutorGraph:
                 "plan_tasks",
                 "update_tasks",
                 "read",
+                "write",
+                "edit",
                 "bash",
                 "deep_research",
                 "wait_for_subagents",
                 "read_manual",
                 "create_tracked_todo",
                 "update_tracked_todo",
-                "update_tracked_todo_canvas",
                 "complete_tracked_todo",
                 "search_todo_context",
                 "list_tracked_todos",
@@ -504,6 +572,10 @@ class TestBuildExecutorGraph:
                 "decline_playbook",
                 "read_playbook",
                 "disable_playbook",
+                "add_device",
+                "approve_device_pairing",
+                "list_devices",
+                "run_on_device",
             ]
 
     async def test_executor_tool_registry_includes_handoff(self):
@@ -532,13 +604,7 @@ class TestBuildExecutorGraph:
             assert len(pre_model_hooks) == 4
 
     async def test_a_supplied_model_is_the_one_the_graph_is_built_with(self):
-        """A caller that hands in a model gets that model, not a freshly built one.
-
-        Every caller that supplies one is pinning the lane deliberately (a test
-        harness, a deployment on a custom endpoint). Rebuilding it here sends the
-        run to whatever the default provider is, which on a custom deployment is
-        a provider it has no key for.
-        """
+        """A caller that hands in a model gets that model, not a freshly built one — rebuilding could pick a provider with no key."""
         with ExitStack() as stack:
             deps = _apply_patches(stack)
             from app.agents.core.graph_builder.build_graph import build_executor_graph
@@ -552,12 +618,7 @@ class TestBuildExecutorGraph:
         assert call.args[0] is deps["llm"]
 
     async def test_it_checkpoints_to_postgres_unless_asked_not_to(self):
-        """In-memory checkpointing is opt-in, and the default must stay durable.
-
-        An executor built with an in-memory saver loses every conversation the
-        moment the worker restarts: the next turn resumes from nothing and the
-        run reads as a user who never said anything.
-        """
+        """In-memory checkpointing is opt-in; the default must stay durable, or a worker restart loses every conversation."""
         fake_checkpointer = MagicMock(name="postgres_checkpointer")
         fake_manager = MagicMock()
         fake_manager.get_checkpointer.return_value = fake_checkpointer
@@ -859,3 +920,21 @@ class TestCompileKwargs:
 
             call_kwargs = deps["builder"].compile.call_args.kwargs
             assert isinstance(call_kwargs["checkpointer"], InMemorySaver)
+
+
+class TestCommsToolRegistry:
+    async def test_the_discovery_tools_are_registered_under_their_own_names(self):
+        with ExitStack() as stack:
+            deps = _apply_patches(stack)
+            from app.agents.core.graph_builder.build_graph import build_comms_graph
+            from app.agents.tools.discovery_tools import (
+                find_integration,
+                search_public_workflows,
+            )
+
+            async with build_comms_graph(chat_llm=deps["llm"], in_memory_checkpointer=True) as _:
+                pass
+
+            registry = deps["mocks"][f"{_MOD}.create_agent"].call_args.args[1]
+            assert registry["find_integration"] is find_integration
+            assert registry["search_public_workflows"] is search_public_workflows

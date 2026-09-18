@@ -25,7 +25,7 @@ from app.services.browser.tasks import (
 
 
 def _result(**kw: object) -> BrowserResultSnapshot:
-    """A valid result snapshot, with any field overridden by ``kw``.
+    """Return a valid result snapshot, with any field overridden by ``kw``.
 
     Constructed field-by-field rather than by unpacking a ``dict[str, object]``:
     the literal keywords are type-checked against the model, and overrides ride
@@ -41,7 +41,7 @@ def _result(**kw: object) -> BrowserResultSnapshot:
 
 
 def _doc(**kw: object) -> BrowserTaskDocument:
-    """A valid task document, with any field overridden by ``kw``."""
+    """Return a valid task document, with any field overridden by ``kw``."""
     return BrowserTaskDocument(
         user_id="u1",
         conversation_id="c1",

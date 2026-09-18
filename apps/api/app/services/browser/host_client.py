@@ -49,7 +49,7 @@ class HostSessionInfo:
 
 
 def _host_headers() -> dict[str, str]:
-    """The shared-secret header the host requires on every REST call."""
+    """Return the shared-secret header the host requires on every REST call."""
     headers: dict[str, str] = {}
     key = settings.BROWSER_HOST_KEY
     if key:

@@ -132,9 +132,7 @@ async def forget_browser_logins(user_id: str, domain: str | None = None) -> int:
 
 
 def _cookie_applies_to_host(cookie_domain: str, host: str) -> bool:
-    """Playwright/browser cookie-domain semantics: a leading-dot domain
-    (``.google.com``) applies to that registrable host and every subdomain; a
-    host-only domain applies only to the exact host."""
+    """Playwright/browser cookie-domain semantics: a leading-dot domain (``.google.com``) applies to that registrable host and every subdomain; a host-only domain applies only to the exact host."""
     cookie_domain = cookie_domain.lower()
     host = host.lower()
     if cookie_domain.startswith("."):
@@ -144,8 +142,7 @@ def _cookie_applies_to_host(cookie_domain: str, host: str) -> bool:
 
 
 def _cookie_host(cookie: Mapping[str, object]) -> str | None:
-    """The registrable host a cookie is scoped to (leading dot stripped,
-    lowercased), or None when it carries no usable domain and so applies nowhere.
+    """Return the registrable host a cookie is scoped to (leading dot stripped, lowercased), or None when it carries no usable domain and so applies nowhere.
 
     Uploads are validated at the boundary, but a slice must never be created
     for a cookie that lost its domain — hence the runtime check, not a cast."""

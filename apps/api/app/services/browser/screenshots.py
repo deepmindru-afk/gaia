@@ -28,8 +28,7 @@ _UPLOAD_TIMEOUT_SECONDS = 15
 
 
 class _S3Putter(Protocol):
-    """The one boto3 S3 method we use (its clients are dynamically generated and
-    have no static type, so we narrow to exactly what we call)."""
+    """The one boto3 S3 method we use (its clients are dynamically generated and have no static type, so we narrow to exactly what we call)."""
 
     def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str) -> object: ...
 

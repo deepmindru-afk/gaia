@@ -108,7 +108,7 @@ def build_request(
     history: list[JevHistoryEntry],
     offered: frozenset[JevOperation],
 ) -> JevEvaluationRequest:
-    """The shared state plus one operation head and one target head per offered element operation."""
+    """Return the shared state plus one operation head and one target head per offered element operation."""
     targets = {op: observation.targets(op) for op in JEV_TARGET_OPERATIONS if op in offered}
     operations = {
         op.value: _OPERATION_LABELS[op]
@@ -191,8 +191,9 @@ def _target_head(operation: JevOperation) -> str:
 def _validate_choice(
     answer: JevChoiceAnswer | None, criteria: dict[str, JsonInput]
 ) -> JevChoiceAnswer:
-    """jev-ultrafast's guard: the choice is offered, the distribution is over exactly the offered
-    keys, sums to ~1, and the choice is its argmax. Anything else executes nothing."""
+    """jev-ultrafast's guard: the choice is offered, the distribution is over exactly the offered keys, sums to ~1, and the choice is its argmax.
+
+    Anything else executes nothing."""
     if answer is None:
         raise JevDecisionError("Jev returned no answer for a question; no action executed.")
     probabilities = answer.probabilities

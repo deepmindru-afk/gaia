@@ -53,7 +53,7 @@ def make_state(selector_map: dict[int, FakeNode], *, url: str = "https://x", tit
 
 @pytest.fixture
 def flights_state():
-    """A tiny Google-Flights-like page: two comboboxes, a native select, a button."""
+    """Return a tiny Google-Flights-like page: two comboboxes, a native select, a button."""
     return make_state(
         {
             17: FakeNode(

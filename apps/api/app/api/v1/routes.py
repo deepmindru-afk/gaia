@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     approvals,
     blog,
     bot,
+    bot_links,
     browser,
     calendar,
     chat,
@@ -19,6 +20,7 @@ from app.api.v1.endpoints import (
     device_ws,
     feedback,
     file,
+    first_steps,
     image,
     mail,
     mcp,
@@ -74,6 +76,7 @@ router.include_router(mcp.router, prefix="/mcp", tags=["MCP"])
 router.include_router(mcp_proxy.router, prefix="/mcp", tags=["MCP"])
 router.include_router(onboarding.router, prefix="/onboarding", tags=["Onboarding"])
 router.include_router(user.router, prefix="/user", tags=["User"])
+router.include_router(first_steps.router)
 router.include_router(mail.router, tags=["Mail"])
 router.include_router(blog.router, tags=["Blog"])
 router.include_router(file.router, tags=["File"])
@@ -91,5 +94,8 @@ router.include_router(usage.router, tags=["Usage"])
 router.include_router(tools.router, tags=["Tools"])
 router.include_router(models.router, tags=["Models"])
 router.include_router(bot.router, prefix="/bot", tags=["Bot"])
+# Same prefix as bot.router above: the platform-linking routes live in their
+# own module but are part of the same public /api/v1/bot surface.
+router.include_router(bot_links.router, prefix="/bot", tags=["Bot"])
 router.include_router(platform_auth.router, prefix="/platform-auth", tags=["Platform Auth"])
 router.include_router(platform_links.router, prefix="/platform-links", tags=["Platform Links"])

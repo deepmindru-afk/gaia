@@ -336,8 +336,7 @@ class TestMintBrowserImportToken:
         assert exc.value.detail == "User id required"
 
     async def test_wide_event_names_the_actor_and_operation(self, monkeypatch):
-        """Support reads these fields to answer "who minted an import code, and
-        when" — an unattributed event cannot answer it."""
+        """Support reads these fields to answer "who minted an import code, and when" — an unattributed event cannot answer it."""
         monkeypatch.setattr(browser_ep, "mint_import_token", AsyncMock(return_value="tok-123"))
 
         async with captured_wide_event() as event:
@@ -381,8 +380,7 @@ class TestImportBrowserSessions:
         )
 
     def _consume(self, valid_token="tok", user_id="u1"):
-        """Resolves only the code it was handed, the way the real single-use
-        store does — a blanket stub would accept any token."""
+        """Resolve only the code it was handed, the way the real single-use store does — a blanket stub would accept any token."""
         return AsyncMock(side_effect=lambda tok: user_id if tok == valid_token else None)
 
     def _request(self, forwarded=None, client_host="198.51.100.9"):
@@ -416,9 +414,9 @@ class TestImportBrowserSessions:
         assert imp.await_args.kwargs["source_ip"] == "203.0.113.7"
 
     async def test_uploaded_cookies_and_origins_reach_the_store(self, monkeypatch):
-        """The payload is rebuilt into Playwright's ``{cookies, origins}`` shape —
-        the only shape the storage layer can split by host. A wrong key silently
-        imports nothing."""
+        """The payload is rebuilt into Playwright's ``{cookies, origins}`` shape — the only shape the storage layer can split by host.
+
+        A wrong key silently imports nothing."""
         monkeypatch.setattr(browser_ep, "consume_import_token", self._consume("tok"))
         monkeypatch.setattr(browser_ep.settings, "BROWSER_PERSIST_LOGINS", True)
         imp = AsyncMock(return_value=[("github.com", 1)])
@@ -446,8 +444,7 @@ class TestImportBrowserSessions:
         assert set(state["origins"][0]) == {"origin", "localStorage"}
 
     async def test_wide_event_attributes_the_import_to_the_token_owner(self, monkeypatch):
-        """No session cookie on this route — without the token owner on the event,
-        an import of someone's whole login state is untraceable."""
+        """No session cookie on this route — without the token owner on the event, an import of someone's whole login state is untraceable."""
         monkeypatch.setattr(browser_ep, "consume_import_token", self._consume("tok", "u1"))
         monkeypatch.setattr(browser_ep.settings, "BROWSER_PERSIST_LOGINS", True)
         monkeypatch.setattr(

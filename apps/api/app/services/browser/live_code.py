@@ -36,5 +36,5 @@ async def mint_live_code(session_id: str, user_id: str) -> str:
 
 
 async def resolve_live_code(code: str) -> LiveCodeRecord | None:
-    """The session + owner a code opens, or ``None`` if unknown/expired."""
+    """Return the session + owner a code opens, or ``None`` if unknown/expired."""
     return await redis_cache.get(_key(code), model=LiveCodeRecord)

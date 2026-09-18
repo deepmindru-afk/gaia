@@ -97,8 +97,10 @@ class HandoffDecision(str, Enum):
 
 
 class BrowserLoginSource(StrEnum):
-    """Where a saved login came from. Absent for logins acquired by browsing;
-    stamped on the per-host docs the ``gaia connect`` CLI import writes."""
+    """Where a saved login came from.
+
+    Absent for logins acquired by browsing; stamped on the per-host docs the ``gaia connect`` CLI
+    import writes."""
 
     IMPORT = "import"
 

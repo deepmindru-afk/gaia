@@ -165,7 +165,7 @@ def _headless_shell_beside(chromium: Path) -> Path | None:
 
 
 def _resolve_chromium_path() -> str:
-    """The browser binary: the configured override, else Playwright's headless shell.
+    """Return the browser binary: the configured override, else Playwright's headless shell.
 
     Playwright installs ``chromium_headless_shell-<rev>`` beside the full browser,
     and that is the right binary for this host: it never shows a window, and the
@@ -396,7 +396,7 @@ class ChromiumHost:
                 )
 
     def get(self, session_id: str) -> HostSession | None:
-        """The live session, or ``None`` if unknown/disposed."""
+        """Return the live session, or ``None`` if unknown/disposed."""
         return self._sessions.get(session_id)
 
     def touch(self, session_id: str) -> None:
@@ -415,20 +415,20 @@ class ChromiumHost:
             session.metrics.add_resource_sample(*reading)
 
     def note_navigation_started(self, session_id: str) -> None:
-        """A ``Page.navigate`` command left the client (called by the CDP proxy)."""
+        """Record that a ``Page.navigate`` command left the client (called by the CDP proxy)."""
         session = self._sessions.get(session_id)
         if session is not None:
             session.metrics.start_navigation()
 
     def note_navigation_finished(self, session_id: str) -> None:
-        """A load event came back; closes the timing and samples resources."""
+        """Close the timing and sample resources now that a load event came back."""
         session = self._sessions.get(session_id)
         if session is None or session.metrics.finish_navigation() is None:
             return
         self.sample_resources(session_id)
 
     def note_page_created(self, session_id: str) -> None:
-        """A ``Target.createTarget`` opened another page inside this session."""
+        """Record that a ``Target.createTarget`` opened another page inside this session."""
         session = self._sessions.get(session_id)
         if session is not None:
             session.metrics.page_count += 1
@@ -448,7 +448,7 @@ class ChromiumHost:
             session.last_activity_at = time.monotonic()
 
     async def session_info(self, session_id: str) -> dict[str, Any]:
-        """The GET ``/sessions/{id}`` view: liveness, activity, and page url/title."""
+        """Return the GET ``/sessions/{id}`` view: liveness, activity, and page url/title."""
         session = self._get(session_id)
         url, title = await self._focused_page_meta(session)
         return {
@@ -486,7 +486,7 @@ class ChromiumHost:
         }
 
     async def focused_target_id(self, session_id: str) -> str:
-        """The target id of the context's focused page (for the screencast attach)."""
+        """Return the target id of the context's focused page (for the screencast attach)."""
         session = self._get(session_id)
         targets = await self._cdp_call("Target.getTargets", {})
         pages = [
@@ -523,7 +523,7 @@ class ChromiumHost:
         session_id: str | None = None,
         timeout: float = _CDP_CALL_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
-        """A bounded round-trip on the root CDP connection."""
+        """Return a bounded round-trip on the root CDP connection."""
         return await cdp_call(
             self._require_cdp(), method, params, session_id=session_id, timeout=timeout
         )
@@ -716,7 +716,7 @@ class ChromiumHost:
             await self._recover_crash()
 
     def _chromium_command(self) -> list[str]:
-        """The full headless-shell argv, incl. the fresh user-data-dir it needs."""
+        """Return the full headless-shell argv, incl. the fresh user-data-dir it needs."""
         if self._chromium_path is None:
             raise RuntimeError("chromium_path not set")
         self._user_data_dir = tempfile.mkdtemp(prefix="gaia-browser-host-")
@@ -877,7 +877,7 @@ _LOCAL_STORAGE_DUMP_JS = (
 
 
 def _build_local_storage_restore_js(origin: str, entries: list[LocalStorageEntry]) -> str:
-    """The restore counterpart of ``_LOCAL_STORAGE_DUMP_JS`` for one origin.
+    """Return the restore counterpart of ``_LOCAL_STORAGE_DUMP_JS`` for one origin.
 
     Guards on ``location.origin`` so it only writes on the matching origin, and sets
     each key IF-ABSENT so a value the page updated during the session is never

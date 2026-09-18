@@ -102,13 +102,14 @@ class SessionMetrics:
         self.cpu_percent.add(cpu_percent)
 
     def start_navigation(self) -> None:
-        """A ``Page.navigate`` left the client. A second one supersedes the first:
-        the earlier load event is never observed, so keeping the old start would
-        bill the abandoned navigation's wait to the new one."""
+        """Return a ``Page.navigate`` left the client.
+
+        A second one supersedes the first: the earlier load event is never observed, so keeping the
+        old start would bill the abandoned navigation's wait to the new one."""
         self.navigation_started_at = time.monotonic()
 
     def finish_navigation(self) -> float | None:
-        """A load event arrived; returns the elapsed ms, or ``None`` if unsolicited.
+        """Close the navigation timing for a load event and return the elapsed ms, or ``None`` if unsolicited.
 
         Load events also fire for navigations the client never asked for (a
         redirect chain's final document, a page's own ``location`` assignment),
@@ -150,7 +151,7 @@ class ProcessSampler:
 
     @classmethod
     def for_pid(cls, pid: int) -> ProcessSampler | None:
-        """A sampler for ``pid``, or ``None`` — losing metrics must not fail a launch."""
+        """Return a sampler for ``pid``, or ``None`` — losing metrics must not fail a launch."""
         try:
             return cls(pid)
         # TypeError covers a pid that is not a usable process id at all; psutil

@@ -1,5 +1,4 @@
-"""Addressing for the API-authenticated browser live view, and the standalone
-viewer page a bot user opens.
+"""Addressing for the API-authenticated browser live view, and the standalone viewer page a bot user opens.
 
 The live view is served through our API (never the browser host directly), at a
 short root path: ``{BROWSER_LIVE_VIEW_BASE_URL or HOST}/live/{session_id}``. In
@@ -34,15 +33,16 @@ def _live_view_base() -> str:
 
 
 def live_view_url(session_id: str) -> str:
-    """The public live-view URL for a session (the base the chat card connects to)."""
+    """Return the public live-view URL for a session (the base the chat card connects to)."""
     return f"{_live_view_base()}{_LIVE_VIEW_PATH_TEMPLATE.format(session_id=session_id)}"
 
 
 async def create_live_view_link(session_id: str, user_id: str) -> str:
-    """A short capability link a bot delivers so ``user_id`` can take over without a web
-    login. ``{vhost}/{code}`` when a dedicated live-view vhost is configured (the vhost
-    rewrites ``/{code}`` to the app's ``/live/{code}``), else ``{host}/live/{code}``. The
-    code maps to the session + owner in Redis — no session id or token in the URL."""
+    """Return a short capability link a bot delivers so ``user_id`` can take over without a web login.
+
+    ``{vhost}/{code}`` when a dedicated live-view vhost is configured (the vhost rewrites
+    ``/{code}`` to the app's ``/live/{code}``), else ``{host}/live/{code}``. The code maps to the
+    session + owner in Redis — no session id or token in the URL."""
     code = await mint_live_code(session_id, user_id)
     base = _live_view_base()
     if settings.BROWSER_LIVE_VIEW_BASE_URL:

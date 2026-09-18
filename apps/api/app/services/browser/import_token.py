@@ -23,7 +23,7 @@ def _key(token: str) -> str:
 
 
 async def mint_import_token(user_id: str) -> str:
-    """A single-use code that authorises ``user_id`` to upload a browser profile."""
+    """Return a single-use code that authorises ``user_id`` to upload a browser profile."""
     # The entropy constant is 32, which is exactly secrets' own default, so every
     # mutant of this argument (None, or dropping it) mints the same 32-byte token.
     token = secrets.token_urlsafe(BROWSER_IMPORT_TOKEN_ENTROPY_BYTES)  # pragma: no mutate
@@ -37,7 +37,7 @@ async def mint_import_token(user_id: str) -> str:
 
 
 async def consume_import_token(token: str) -> str | None:
-    """The user a code authorises, or ``None`` if unknown/expired/already used.
+    """Return the user a code authorises, or ``None`` if unknown/expired/already used.
 
     Single-use: the code is deleted before the user id is returned, so two
     concurrent redemptions cannot both succeed.

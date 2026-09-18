@@ -21,7 +21,7 @@ _CDP_READY_POLL_SECONDS = 0.2
 
 
 def obscura_serve_argv(port: int) -> list[str]:
-    """The ``obscura serve`` argv for ``port``, stealthed and private-network-permitted.
+    """Return the ``obscura serve`` argv for ``port``, stealthed and private-network-permitted.
 
     Raises when ``OBSCURA_BIN`` is unset — fail loud, never silently fall back to
     another engine.

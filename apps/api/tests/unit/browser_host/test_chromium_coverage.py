@@ -43,7 +43,7 @@ from app.constants.log_tags import LogTag
 
 @pytest.fixture(autouse=True)
 def _pin_chromium_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    """This file covers the Chromium launch/readiness branch.
+    """Return the file covers the Chromium launch/readiness branch.
 
     The host default is now Obscura, so the launch/`_await_cdp_ready` tests here
     must select Chromium explicitly (the Obscura tests do the same in reverse).
@@ -1096,8 +1096,7 @@ async def test_focused_target_id_filters_by_context_and_type() -> None:
 
 @pytest.mark.unit
 async def test_focused_target_id_excludes_a_page_from_another_context() -> None:
-    """type=="page" AND matching context — an ``or`` would leak cross-context
-    pages into the candidate list even though our session can't see them."""
+    """type=="page" AND matching context — an ``or`` would leak cross-context pages into the candidate list even though our session can't see them."""
     host = ChromiumHost()
     s = HostSession(
         session_id="s1", context_id="ctx1", target_id="t-primary", created_at=0, last_activity_at=0
@@ -1387,6 +1386,7 @@ async def test_dispose_context_raises_when_unknown() -> None:
 @pytest.mark.unit
 async def test_dispose_context_pop_tolerates_concurrent_removal() -> None:
     """The finally block's pop must not KeyError if another coroutine (e.g.
+
     the idle reaper) already removed this session while the dump was in flight."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
@@ -2042,8 +2042,7 @@ async def test_reap_idle_handles_gone_session_between_stale_and_lock() -> None:
 
 @pytest.mark.unit
 async def test_reap_idle_continues_past_a_gone_session_to_reap_the_next_one() -> None:
-    """A session vanishing mid-sweep must skip only that one entry, not abort
-    the whole sweep — a ``break`` here would strand every stale session after it."""
+    """A session vanishing mid-sweep must skip only that one entry, not abort the whole sweep — a ``break`` here would strand every stale session after it."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
     first = HostSession(
@@ -2079,8 +2078,9 @@ async def test_reap_idle_continues_past_a_gone_session_to_reap_the_next_one() ->
 
 @pytest.mark.unit
 async def test_reap_idle_pop_tolerates_concurrent_removal() -> None:
-    """The pop of a stale session must not KeyError if another coroutine
-    (e.g. ``dispose_context``) removed it between the lookup and the lock."""
+    """The pop of a stale session must not KeyError if another coroutine (e.g.
+
+    ``dispose_context``) removed it between the lookup and the lock."""
     host = ChromiumHost()
     host._proc = MagicMock(returncode=None)
     stale = HostSession(

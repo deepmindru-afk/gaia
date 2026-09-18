@@ -55,8 +55,7 @@ class BotProgressDelivery:
         await self._text(f"On it. Watch along live here:\n{await self._link(snapshot.session_id)}")
 
     async def _link(self, session_id: str) -> str:
-        """One live-view link per session: every mint is a different code for the same
-        browser, and a second link reads as a second browser."""
+        """One live-view link per session: every mint is a different code for the same browser, and a second link reads as a second browser."""
         if session_id not in self._links:
             self._links[session_id] = await create_live_view_link(session_id, self._user_id)
         return self._links[session_id]
@@ -123,14 +122,12 @@ class BotProgressDelivery:
 
 
 def _is_blank_tab(url: str | None) -> bool:
-    """The pre-navigation empty tab — nothing worth showing the user yet."""
+    """Return the pre-navigation empty tab — nothing worth showing the user yet."""
     return not url or url.startswith("about:") or url == "chrome://newtab/"
 
 
 def _step_caption(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
-    """A short, human caption for a step photo — what the agent is doing, in plain
-    language (its goal), falling back to a clean action label; never a raw URL or
-    an action's parameter dump."""
+    """Return a short, human caption for a step photo — what the agent is doing, in plain language (its goal), falling back to a clean action label; never a raw URL or an action's parameter dump."""
     label = (goal or "").strip().rstrip(".") or caption_from_action_list(actions)
     if len(label) > _CAPTION_MAX_CHARS:
         label = label[: _CAPTION_MAX_CHARS - 1].rstrip() + "…"

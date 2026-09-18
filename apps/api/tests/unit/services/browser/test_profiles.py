@@ -33,8 +33,7 @@ def _doc(
 
 
 class _FakeProfileRepository:
-    """Applies the user filter and sort the way Mongo would, so a wrong query
-    shows up as wrong results rather than passing against a blind mock."""
+    """Applies the user filter and sort the way Mongo would, so a wrong query shows up as wrong results rather than passing against a blind mock."""
 
     def __init__(self, docs: list[BrowserProfileDocument]) -> None:
         self._docs = docs
@@ -107,8 +106,7 @@ class TestListSavedLogins:
     async def test_expiry_counts_forward_from_last_use(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``expires_at`` is when Mongo's TTL will forget the login — always in
-        the future relative to ``updated_at``, so the UI can count down to it."""
+        """``expires_at`` is when Mongo's TTL will forget the login — always in the future relative to ``updated_at``, so the UI can count down to it."""
         last_used = datetime(2026, 1, 1, tzinfo=UTC)
         _use_repo(monkeypatch, [_doc("github.com", updated_at=last_used)])
 

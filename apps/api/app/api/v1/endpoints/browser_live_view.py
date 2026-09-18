@@ -27,6 +27,7 @@ import websockets
 from app.api.v1.dependencies.oauth_dependencies import get_current_user, get_current_user_ws
 from app.browser_host.pumps import pump_until_first_close
 from app.constants.log_tags import LogTag
+from app.schemas.errors import HTML_ROUTE_ERROR_RESPONSES
 from app.services.browser import registry
 from app.services.browser.live_code import resolve_live_code
 from app.services.browser.live_view import render_live_view_page
@@ -44,7 +45,11 @@ router = APIRouter(tags=["Browser"])
 _WS_SESSION_GONE = 4404
 
 
-@router.get("/replays/{code}")
+@router.get(
+    "/replays/{code}",
+    response_class=HTMLResponse,
+    responses={**HTML_ROUTE_ERROR_RESPONSES},
+)
 async def replay_page(code: str) -> HTMLResponse:
     """Standalone recap slideshow for a finished session. ``code`` resolves to the
     session + step count in Redis; the step screenshots are public R2 URLs, so no
@@ -60,7 +65,11 @@ async def replay_page(code: str) -> HTMLResponse:
     return HTMLResponse(content=render_replay_page(record))
 
 
-@router.get("/live/{code}")
+@router.get(
+    "/live/{code}",
+    response_class=HTMLResponse,
+    responses={**HTML_ROUTE_ERROR_RESPONSES},
+)
 async def live_view_page(
     code: str,
     request: Request,
@@ -147,10 +156,7 @@ async def _authorize_page(request: Request, session_id: str, token: str | None) 
         claims = _verify_scoped_token(token, session_id)
         return claims["user_id"]
     user = await get_current_user(request)
-    user_id = user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id required")
-    return str(user_id)
+    return user.user_id
 
 
 async def _authorize_ws(
@@ -175,10 +181,7 @@ async def _authorize_ws(
         return claims["user_id"], max(takeover_token_ttl_seconds(claims), 0.0)
 
     user = await get_current_user_ws(websocket)  # closes the socket on auth failure
-    user_id = user.get("user_id")
-    if not user_id:
-        return None
-    return str(user_id), None
+    return user.user_id, None
 
 
 def _verify_scoped_token(token: str, session_id: str) -> TakeoverTokenClaims:

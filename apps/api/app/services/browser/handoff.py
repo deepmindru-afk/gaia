@@ -70,7 +70,7 @@ async def get_handoff(handoff_id: str) -> HandoffRecord | None:
 
 
 async def get_conversation_pending_handoff(conversation_id: str) -> str | None:
-    """The conversation's in-flight handoff id, if a browser task is waiting."""
+    """Return the conversation's in-flight handoff id, if a browser task is waiting."""
     handoff_id = await redis_cache.get(_conv_key(conversation_id), model=str)
     return handoff_id or None
 
@@ -78,11 +78,10 @@ async def get_conversation_pending_handoff(conversation_id: str) -> str | None:
 async def resolve_handoff(
     handoff_id: str, decision: HandoffDecision, user_id: str, message: str | None = None
 ) -> HandoffStatus | None:
-    """Resolve a pending handoff, optionally attaching a free-text note the user
-    sends back with a continue. Returns the new status, None if it does not
-    exist/expired. Raises ``BrowserHandoffNotOwned`` if the caller does not own it.
-    One-time: a settled handoff keeps its original status.
-    """
+    """Resolve a pending handoff, optionally attaching a free-text note the user sends back with a continue.
+
+    Returns the new status, None if it does not exist/expired. Raises ``BrowserHandoffNotOwned`` if
+    the caller does not own it. One-time: a settled handoff keeps its original status."""
     record = await get_handoff(handoff_id)
     if record is None:
         return None
@@ -113,8 +112,7 @@ async def resolve_handoff(
 
 
 async def await_handoff(handoff_id: str, timeout_seconds: int) -> HandoffOutcome:
-    """Block until the handoff is resolved or ``timeout_seconds`` elapses, returning
-    the terminal status plus any note the user attached."""
+    """Block until the handoff is resolved or ``timeout_seconds`` elapses, returning the terminal status plus any note the user attached."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_seconds
     while loop.time() < deadline:

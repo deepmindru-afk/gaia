@@ -220,5 +220,5 @@ _STEALTH_TEMPLATE = r"""(() => {
 
 
 def build_stealth_script(seed: int) -> str:
-    """The init script with this user's fingerprint seed baked in."""
+    """Return the init script with this user's fingerprint seed baked in."""
     return _STEALTH_TEMPLATE.replace("__FINGERPRINT_SEED__", str(int(seed)))

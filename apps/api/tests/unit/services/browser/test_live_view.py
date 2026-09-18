@@ -1,5 +1,4 @@
-"""``_live_view_base`` resolution, the ``create_live_view_link`` code-minting flow,
-the raw ``live_view_url`` builder, and the tokened ``render_live_view_page`` HTML.
+"""``_live_view_base`` resolution, the ``create_live_view_link`` code-minting flow, the raw ``live_view_url`` builder, and the tokened ``render_live_view_page`` HTML.
 
 ``test_live_code.py`` already covers the vhost-vs-plain-host branch of
 ``create_live_view_link`` with an exact-match assertion on the returned URL; this

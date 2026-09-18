@@ -54,8 +54,7 @@ def _make_session_fakes(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 async def test_registry_write_failure_aborts_before_yield(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed ownership write must fail the session (releasing the host context)
-    instead of handing the user a live-view link that can never authorize."""
+    """A failed ownership write must fail the session (releasing the host context) instead of handing the user a live-view link that can never authorize."""
     _make_session_fakes(monkeypatch)
     monkeypatch.setattr(session_mod, "register_session", AsyncMock(return_value=False))
 
@@ -136,8 +135,7 @@ async def test_create_session_receives_the_loaded_storage_state(
 async def test_session_fields_are_mapped_from_the_host_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each ``BrowserHostSession`` field must come from the matching host attribute —
-    not a swapped one — and the live-view URL is derived from the session id."""
+    """Each ``BrowserHostSession`` field must come from the matching host attribute — not a swapped one — and the live-view URL is derived from the session id."""
     _make_session_fakes(monkeypatch)
     host = MagicMock(
         session_id="sid-x",
@@ -177,8 +175,7 @@ async def test_register_session_called_with_session_id_user_id_and_live_ws(
 async def test_host_create_failure_skips_all_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the host never created a session, there is nothing to release — the
-    finally block (register/delete/save/unregister) must not run at all."""
+    """If the host never created a session, there is nothing to release — the finally block (register/delete/save/unregister) must not run at all."""
     _make_session_fakes(monkeypatch)
     monkeypatch.setattr(
         session_mod.host_client,
@@ -240,9 +237,7 @@ async def test_save_storage_state_called_with_user_domain_and_returned_state(
 async def test_release_failure_is_caught_logged_and_unregister_still_runs(
     monkeypatch: pytest.MonkeyPatch, fake_log: _FakeLog
 ) -> None:
-    """A release-time failure must not propagate out of the context manager (the
-    body's own outcome should not be masked by a cleanup error), must be logged
-    with the actual exception type, and unregister must still run."""
+    """A release-time failure must not propagate out of the context manager (the body's own outcome should not be masked by a cleanup error), must be logged with the actual exception type, and unregister must still run."""
     _make_session_fakes(monkeypatch)
     monkeypatch.setattr(
         session_mod.host_client,
@@ -301,9 +296,7 @@ async def test_log_set_and_info_calls_on_create_and_release(
 async def test_keep_session_alive_touches_the_session_each_iteration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A paused handoff session gets no CDP/live-view traffic, so this loop is the
-    only thing resetting the host's idle clock — it must actually touch every
-    iteration, not just the first."""
+    """A paused handoff session gets no CDP/live-view traffic, so this loop is the only thing resetting the host's idle clock — it must actually touch every iteration, not just the first."""
     sleep_mock = AsyncMock(side_effect=[None, None, asyncio.CancelledError()])
     monkeypatch.setattr(session_mod.asyncio, "sleep", sleep_mock)
     touch = AsyncMock()
@@ -319,8 +312,7 @@ async def test_keep_session_alive_touches_the_session_each_iteration(
 async def test_keep_session_alive_waits_the_configured_keepalive_interval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The interval is the whole point: it has to stay under the host's idle TTL, so a
-    hardcoded or dropped delay silently lets the reaper win the race."""
+    """The interval is the whole point: it has to stay under the host's idle TTL, so a hardcoded or dropped delay silently lets the reaper win the race."""
     sleep_mock = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     monkeypatch.setattr(session_mod.asyncio, "sleep", sleep_mock)
     monkeypatch.setattr(session_mod.host_client, "touch_session", AsyncMock())
@@ -334,8 +326,7 @@ async def test_keep_session_alive_waits_the_configured_keepalive_interval(
 async def test_keep_session_alive_logs_a_failed_touch_and_keeps_looping(
     monkeypatch: pytest.MonkeyPatch, fake_log: _FakeLog
 ) -> None:
-    """A single failed touch must not break the loop -- the next iteration still
-    tries again, since the alternative is the host reaping the browser mid-handoff."""
+    """A single failed touch must not break the loop -- the next iteration still tries again, since the alternative is the host reaping the browser mid-handoff."""
     sleep_mock = AsyncMock(side_effect=[None, None, asyncio.CancelledError()])
     monkeypatch.setattr(session_mod.asyncio, "sleep", sleep_mock)
     touch = AsyncMock(side_effect=[BrowserUnavailableError("host down"), None])
@@ -386,9 +377,10 @@ class TestNavigatedAway:
         ],
     )
     def test_false_while_still_inside_the_auth_flow(self, current: str) -> None:
-        """A login walks /login -> /two-factor -> /verify. Treating each hop as
-        'signed in' woke the agent mid-2FA, which then handed off again — the user
-        got interrupted twice and a model call was burned each time."""
+        """A login walks /login -> /two-factor -> /verify.
+
+        Treating each hop as 'signed in' woke the agent mid-2FA, which then handed off again — the
+        user got interrupted twice and a model call was burned each time."""
         assert not session_mod._navigated_away("https://x.com/login", current)
 
     def test_false_for_same_page_ignoring_query(self) -> None:
@@ -421,8 +413,7 @@ class TestAutoResolveHandoffOnNavigation:
     async def test_resolves_after_navigating_away_and_staying(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A visible sign-in (URL leaves the login page for 2 stable polls) auto
-        -completes the handoff via the same resolve_handoff the button uses."""
+        """A visible sign-in (URL leaves the login page for 2 stable polls) auto -completes the handoff via the same resolve_handoff the button uses."""
         monkeypatch.setattr(session_mod.asyncio, "sleep", AsyncMock())
         # start=login, then post-login twice (debounce needs 2 stable polls).
         monkeypatch.setattr(
@@ -468,8 +459,7 @@ class TestAutoResolveHandoffOnNavigation:
     async def test_every_poll_asks_about_the_handoffs_own_session(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Both the baseline read and each poll must name THIS session — reading any
-        other browser's URL would resolve the handoff off a page the user never saw."""
+        """Both the baseline read and each poll must name THIS session — reading any other browser's URL would resolve the handoff off a page the user never saw."""
         monkeypatch.setattr(session_mod.asyncio, "sleep", AsyncMock())
         asked = _serve_urls(monkeypatch, "https://x/login", "https://x/", "https://x/")
         monkeypatch.setattr(session_mod, "resolve_handoff", AsyncMock())
@@ -493,8 +483,7 @@ class TestAutoResolveHandoffOnNavigation:
     async def test_the_resume_note_tells_the_user_why_the_agent_carried_on(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The note is attached to the handoff and shown in the chat, so it is the only
-        explanation the user gets for the agent resuming without them tapping anything."""
+        """The note is attached to the handoff and shown in the chat, so it is the only explanation the user gets for the agent resuming without them tapping anything."""
         monkeypatch.setattr(session_mod.asyncio, "sleep", AsyncMock())
         _serve_urls(monkeypatch, "https://x/login", "https://x/", "https://x/")
         resolve = AsyncMock()
@@ -507,8 +496,10 @@ class TestAutoResolveHandoffOnNavigation:
     async def test_a_slow_sign_in_is_still_detected_after_idling_on_the_login_page(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Typing a password takes longer than one poll. Giving up on the first
-        still-on-login read would leave every real login to the manual button."""
+        """Typing a password takes longer than one poll.
+
+        Giving up on the first still-on-login read would leave every real login to the manual
+        button."""
         monkeypatch.setattr(session_mod.asyncio, "sleep", AsyncMock())
         _serve_urls(monkeypatch, "https://x/login", "https://x/login", "https://x/", "https://x/")
         resolve = AsyncMock()
@@ -521,9 +512,7 @@ class TestAutoResolveHandoffOnNavigation:
     async def test_a_blip_restarts_the_debounce_from_zero_rather_than_shortening_it(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """After a snap-back to login, the next off-login read is the FIRST stable poll
-        again — not a resumption of the earlier count, which would resolve a whole poll
-        early and wake the agent onto a page still mid-redirect."""
+        """After a snap-back to login, the next off-login read is the FIRST stable poll again — not a resumption of the earlier count, which would resolve a whole poll early and wake the agent onto a page still mid-redirect."""
         monkeypatch.setattr(session_mod.asyncio, "sleep", AsyncMock())
         asked = _serve_urls(
             monkeypatch,
@@ -542,8 +531,7 @@ class TestAutoResolveHandoffOnNavigation:
         assert len(asked) == 5, "resolved before the debounce had run its full length again"
 
     async def test_transient_redirect_is_debounced(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A single off-login blip that snaps back must NOT resolve — the stable
-        counter resets, so a mid-login redirect can't complete the handoff early."""
+        """A single off-login blip that snaps back must NOT resolve — the stable counter resets, so a mid-login redirect can't complete the handoff early."""
         monkeypatch.setattr(session_mod.asyncio, "sleep", AsyncMock())
         monkeypatch.setattr(
             session_mod.host_client,

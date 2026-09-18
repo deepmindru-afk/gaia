@@ -73,7 +73,7 @@ class _FakeCDP:
 
 
 def _make_host(cdp: _FakeCDP) -> ChromiumHost:
-    """A ``ChromiumHost`` wired to a fake CDP client, no real Chromium involved."""
+    """Return a ``ChromiumHost`` wired to a fake CDP client, no real Chromium involved."""
     host = ChromiumHost()
     host._cdp = cdp
     host._proc = MagicMock(returncode=None)  # chromium_up == True

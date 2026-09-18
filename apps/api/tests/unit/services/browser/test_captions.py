@@ -156,8 +156,7 @@ class TestDescribeAction:
         ids=["x-only", "y-only", "y-none", "x-none"],
     )
     def test_click_needs_both_coordinates_to_name_a_point(self, params):
-        """Half a coordinate pair names no point on the page -- the caption has
-        to fall back to the bare verb rather than print "Clicking at 412, None"."""
+        """Half a coordinate pair names no point on the page -- the caption has to fall back to the bare verb rather than print "Clicking at 412, None"."""
         assert describe_action("click", params) == "Clicking"
 
     @pytest.mark.parametrize("name", ["scroll", "scroll_to_text"])
@@ -245,8 +244,7 @@ class TestCaptionFromActionList:
         assert caption_from_action_list([BrowserAction(name="click")]) == "Clicking"
 
     def test_navigate_names_the_host(self):
-        """The whole point of structured actions: params survive, so the caption
-        says which site was opened instead of a generic phrase."""
+        """The whole point of structured actions: params survive, so the caption says which site was opened instead of a generic phrase."""
         actions = [BrowserAction(name="navigate", inputs={"url": "https://www.github.com/x"})]
         assert caption_from_action_list(actions) == "Opening github.com"
 
@@ -268,9 +266,10 @@ class TestCaptionFromActionList:
         )
 
     def test_click_names_the_element_it_hit(self):
-        """A bare "Clicking" tells a reader nothing. The element's own name is
-        what makes the step readable — and it is grounded in the page, not in
-        the model's claim about its intent."""
+        """A bare "Clicking" tells a reader nothing.
+
+        The element's own name is what makes the step readable — and it is grounded in the page,
+        not in the model's claim about its intent."""
         actions = [BrowserAction(name="click", inputs={"index": 9}, target="Add to cart")]
         assert caption_from_action_list(actions) == 'Clicking "Add to cart"'
 
@@ -303,9 +302,7 @@ class TestShorten:
         assert _shorten("a  \n b\tc") == "a b c"
 
     def test_exactly_at_the_limit_is_kept_whole(self):
-        """40 chars is the last length that still fits, so it must survive
-        untouched -- truncating it would put an ellipsis on a caption that had
-        room to spare."""
+        """40 chars is the last length that still fits, so it must survive untouched -- truncating it would put an ellipsis on a caption that had room to spare."""
         text = "y" * _TARGET_MAX_CHARS
         assert _shorten(text) == text
 
@@ -319,8 +316,7 @@ class TestShorten:
 
 @pytest.mark.unit
 def test_every_handoff_action_has_a_caption() -> None:
-    """A handoff with no caption entry falls through to the underscore fallback
-    ("request human takeover"), so the caption table has to cover the enum."""
+    """A handoff with no caption entry falls through to the underscore fallback ("request human takeover"), so the caption table has to cover the enum."""
     for member in BrowserHandoffAction:
         actions = [BrowserAction(name=member.value, inputs={}, target=None)]
         assert caption_from_action_list(actions) == "Handing this step to you"

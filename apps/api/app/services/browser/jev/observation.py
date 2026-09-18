@@ -71,7 +71,7 @@ class JevElement:
         }
 
     def state_entry(self) -> dict[str, object]:
-        """The row in ``state.elements`` — the table every question shares."""
+        """Return the row in ``state.elements`` — the table every question shares."""
         entry: dict[str, object] = {
             "index": str(self.index),
             "label": self.label,
@@ -88,7 +88,7 @@ class JevElement:
         return entry
 
     def criterion(self, label: str | None = None) -> dict[str, object]:
-        """The description of this element as one option of a target question."""
+        """Return the description of this element as one option of a target question."""
         return {
             "element": f"[{self.index}] {label or self.label}",
             "current_value": self.value or "",
@@ -113,7 +113,7 @@ class JevObservation:
     def targets(
         self, operation: JevOperation
     ) -> dict[str, tuple[JevElement, JevSelectOption | None]]:
-        """The target choices for one operation: element index (or ``index:option`` for SELECT)."""
+        """Return the target choices for one operation: element index (or ``index:option`` for SELECT)."""
         choices: dict[str, tuple[JevElement, JevSelectOption | None]] = {}
         for element in self.elements:
             if operation not in element.operations:
@@ -273,7 +273,7 @@ def _accepts_text(
 def _select_options(
     index: int, node: EnhancedDOMTreeNode, live: LiveValues
 ) -> tuple[tuple[JevSelectOption, ...], JevSelectOption | None]:
-    """The enabled options, and the one currently selected (live, else ``selected`` attr)."""
+    """Return the enabled options, and the one currently selected (live, else ``selected`` attr)."""
     options: list[JevSelectOption] = []
     selected: JevSelectOption | None = None
     selected_live = False

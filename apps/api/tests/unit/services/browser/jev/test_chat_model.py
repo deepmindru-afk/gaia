@@ -56,8 +56,7 @@ class Wait(BaseModel):
 def _agent_output(
     *, captcha: bool = True, union: bool = False, input_name: str = "input_text"
 ) -> type[AgentOutput]:
-    """The flash-mode AgentOutput Browser-Use builds for this codebase's registered tools —
-    one optional field per action, or (``union``) 0.11's RootModel over single-field models."""
+    """Return the flash-mode AgentOutput Browser-Use builds for this codebase's registered tools — one optional field per action, or (``union``) 0.11's RootModel over single-field models."""
     fields: dict[str, Any] = {
         "click": (ClickElementActionIndexOnly | None, None),
         input_name: (InputTextAction | None, None),

@@ -8,10 +8,10 @@ agent_utils -> subagents.registry -> subagent_runner -> agent_utils a cycle.
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk
 
 
-def extract_reasoning_delta(chunk: AIMessageChunk) -> str:
+def extract_reasoning_delta(chunk: AIMessage | AIMessageChunk) -> str:
     """Pull this chunk's reasoning ("thinking") text, model-agnostic.
 
     ChatOpenRouter surfaces reasoning as standard ``reasoning`` content blocks;

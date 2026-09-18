@@ -181,9 +181,7 @@ def test_apply_binds_the_wrapper_onto_browser_session():
 
 @pytest.mark.unit
 def test_build_stealth_script_bakes_the_seed_into_the_template() -> None:
-    """The seed must actually reach the script: an unsubstituted placeholder ships
-    a literal ``__FINGERPRINT_SEED__`` to the page (a syntax error, so no stealth at
-    all), and a substituted-but-constant value gives every user one fingerprint."""
+    """The seed must actually reach the script: an unsubstituted placeholder ships a literal ``__FINGERPRINT_SEED__`` to the page (a syntax error, so no stealth at all), and a substituted-but-constant value gives every user one fingerprint."""
     script = build_stealth_script(1234567)
 
     assert "__FINGERPRINT_SEED__" not in script
@@ -193,10 +191,10 @@ def test_build_stealth_script_bakes_the_seed_into_the_template() -> None:
 
 @pytest.mark.unit
 def test_seed_for_user_is_a_stable_32_bit_value_that_differs_per_user() -> None:
-    """The seed baked into the script above is a 32-bit number the page's PRNG
-    consumes. Widening it re-fingerprints every user; a per-user seed that were
-    not stable (or not distinct) is itself the bot signal the script exists to
-    remove."""
+    """The seed baked into the script above is a 32-bit number the page's PRNG consumes.
+
+    Widening it re-fingerprints every user; a per-user seed that were not stable (or not distinct)
+    is itself the bot signal the script exists to remove."""
     users = ("user-1", "user-2", "alice@example.com")
     seeds = {user: seed_for_user(user) for user in users}
 

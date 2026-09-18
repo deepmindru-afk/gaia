@@ -98,9 +98,7 @@ _STATIC_CAPTIONS: dict[str, str] = {
 
 
 def describe_action(name: str, params: dict[str, Any], target: str | None = None) -> str:
-    """A plain-language phrase for one action, using its real target (the URL it
-    opens, the text it types, the query it searches) so a caption reads like intent,
-    not "Clicking" five times."""
+    """Return a plain-language phrase for one action, using its real target (the URL it opens, the text it types, the query it searches) so a caption reads like intent, not "Clicking" five times."""
     dynamic = _DYNAMIC_CAPTIONS.get(name)
     if dynamic is not None:
         return dynamic(params, target)
@@ -108,8 +106,7 @@ def describe_action(name: str, params: dict[str, Any], target: str | None = None
 
 
 def caption_from_action_list(actions: list[BrowserAction]) -> str:
-    """Same captions, from a step snapshot's structured actions — the params are
-    real here, so a caption can name what was opened or typed, not just the verb."""
+    """Return the same captions, from a step snapshot's structured actions — the params are real here, so a caption can name what was opened or typed, not just the verb."""
     return _dedupe_join([describe_action(a.name, a.inputs, a.target) for a in actions])
 
 

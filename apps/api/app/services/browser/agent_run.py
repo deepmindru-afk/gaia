@@ -45,7 +45,7 @@ _OUTPUT_MAX_CHARS = 200
 
 
 def _element_label(state: BrowserStateSummary, index: object) -> str | None:
-    """The on-page name of the element an action targets, by its DOM index.
+    """Return the on-page name of the element an action targets, by its DOM index.
 
     Browser-Use addresses elements by index, which is meaningless to a reader.
     The same step state the agent saw carries the DOM, so the index resolves to
@@ -88,7 +88,7 @@ def _element_label(state: BrowserStateSummary, index: object) -> str | None:
 def _element_viewport_fraction(
     state: BrowserStateSummary, index: object
 ) -> tuple[float, float] | None:
-    """The element's centre as (x, y) fractions of the viewport, for the UI pulse.
+    """Return the element's centre as (x, y) fractions of the viewport, for the UI pulse.
 
     Page coordinates minus the scroll offset give the viewport position; dividing
     by the viewport size makes it resolution-independent, so the same fraction
@@ -117,8 +117,7 @@ def _element_viewport_fraction(
 def _extract_actions(
     agent_output: AgentOutput, state: BrowserStateSummary | None = None
 ) -> list[BrowserAction]:
-    """The step's actions as the agent's own tool calls — name, arguments, and
-    the on-page text of whatever each one targets."""
+    """Return the step's actions as the agent's own tool calls — name, arguments, and the on-page text of whatever each one targets."""
     actions: list[BrowserAction] = []
     for action in getattr(agent_output, "action", None) or []:
         dumped = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else {}
@@ -137,8 +136,7 @@ def _extract_actions(
 
 
 def _summarize_action_result(result: object) -> str | None:
-    """One action's outcome as short display text, or None when there is nothing
-    worth showing (a click that succeeded silently needs no output row)."""
+    """One action's outcome as short display text, or None when there is nothing worth showing (a click that succeeded silently needs no output row)."""
     error = getattr(result, "error", None)
     if error:
         text = str(error)
@@ -159,7 +157,7 @@ def _summarize_action_result(result: object) -> str | None:
 
 
 def outcome_from_history(history: AgentHistoryList[BaseModel]) -> RunOutcome:
-    """What the agent's history says the run achieved, and what it cost."""
+    """Return what the agent's history says the run achieved, and what it cost."""
     # The three fallbacks the try leaves in place if reading history fails.
     # pragma-exempt below: every consumer collapses falsy values to one answer
     # (`final or ...`, `bool(is_done and ...)`, `is_successful is not False`),
@@ -290,8 +288,7 @@ class BrowserAgentRun:
             self._agent.stop()
 
     async def _takeover(self, reason: str, category: str) -> str:
-        """Hand the browser to the user, then give the note they left to both readers:
-        Jev's own state, and the action result Browser-Use records for this step."""
+        """Hand the browser to the user, then give the note they left to both readers: Jev's own state, and the action result Browser-Use records for this step."""
         note = await self._hooks.takeover(reason, category)
         if isinstance(self._llm, JevChatModel):
             self._llm.note_from_user(note)
@@ -300,7 +297,7 @@ class BrowserAgentRun:
     async def _on_step(
         self, browser_state_summary: BrowserStateSummary, agent_output: AgentOutput, n_steps: int
     ) -> None:
-        """Fires after the model picks actions, before they execute."""
+        """Fire after the model picks actions, before they execute."""
         self._last_step = n_steps
         step_actions = _extract_actions(agent_output, browser_state_summary)
         goal = (

@@ -4,7 +4,7 @@ Gmail trigger payload and tool output models.
 Reference: node_modules/@composio/core/generated/gmail.ts
 """
 
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, Self, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -168,14 +168,9 @@ class FetchThreadInput(BaseModel):
     )
 
 
-# =============================================================================
-# Gmail REST wire shapes
-# =============================================================================
-# Everything below models what the Gmail REST API itself returns through the
-# Composio proxy (users.messages / users.threads / users.labels / getProfile).
-# Every field is optional or defaulted because Gmail's response varies by
-# ``format`` (``metadata`` omits the MIME tree entirely) and ``extra="allow"``
-# keeps the fields we don't read rather than silently dropping them.
+# Gmail REST wire shapes: what the Gmail REST API returns via the Composio
+# proxy. Fields are optional/defaulted since response shape varies by `format`
+# (`metadata` omits the MIME tree); extra="allow" keeps unread fields.
 
 
 class GmailHeader(BaseModel):
@@ -184,7 +179,8 @@ class GmailHeader(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str = ""
-    value: str = ""
+    # Null on some Composio-relayed messages (see transform_gmail_message's regression test).
+    value: str | None = None
 
 
 class GmailPartBody(BaseModel):
@@ -195,6 +191,26 @@ class GmailPartBody(BaseModel):
     attachment_id: str | None = Field(default=None, alias="attachmentId")
     size: int | None = None
     data: str | None = None
+
+
+class GmailResourceId(BaseModel):
+    """A Gmail resource (message, draft) in a tool result, read only for its ``id``.
+
+    Optional because Composio documents only the result envelope, not the Gmail
+    resource inside it.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+
+
+class GmailDraftEntry(BaseModel):
+    """One ``GMAIL_LIST_DRAFTS`` draft, read only for the message it wraps."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    message: dict[str, object] | None = None
 
 
 class GmailMessagePart(BaseModel):
@@ -211,7 +227,7 @@ class GmailMessagePart(BaseModel):
     filename: str | None = None
     headers: list[GmailHeader] = Field(default_factory=list)
     body: GmailPartBody | None = None
-    parts: list["GmailMessagePart"] = Field(default_factory=list)
+    parts: list[Self] = Field(default_factory=list)
 
 
 class GmailAttachmentMetadata(TypedDict):
@@ -288,12 +304,9 @@ class GmailProfile(BaseModel):
     threads_total: int | None = Field(default=None, alias="threadsTotal")
 
 
-# =============================================================================
-# Custom Tool Result Shapes
-# =============================================================================
-# In-process contracts between the Gmail custom tools and their helpers. They
-# are TypedDicts rather than models because nothing validates them at runtime —
-# the tools build them and hand them straight to the agent as JSON.
+# Custom Tool Result Shapes: in-process contracts between Gmail custom tools
+# and their helpers. TypedDicts, not models, because nothing validates them at
+# runtime — tools build them and hand them straight to the agent as JSON.
 
 
 class GmailReadRange(TypedDict):

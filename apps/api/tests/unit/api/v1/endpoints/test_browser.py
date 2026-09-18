@@ -1,4 +1,4 @@
-"""Observability + contract coverage for app/api/v1/endpoints/browser.py
+"""Observability + contract coverage for app/api/v1/endpoints/browser.py.
 
 ``tests/unit/api/v1/endpoints/test_browser_endpoints.py`` already pins the
 happy paths and the HTTP status codes of every route in this module. What it
@@ -82,7 +82,7 @@ class _SinkRecorder:
 
 @asynccontextmanager
 async def _recorded() -> AsyncIterator[tuple[dict[str, Any], _SinkRecorder]]:
-    """A real wide-event boundary plus a capture of the real-time log lines."""
+    """Return a real wide-event boundary plus a capture of the real-time log lines."""
     recorder = _SinkRecorder()
     with patch("shared.py.wide_events._loguru", recorder):
         async with captured_wide_event() as event:

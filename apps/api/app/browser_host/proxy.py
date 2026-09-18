@@ -90,7 +90,7 @@ _REFUSAL_REASONS: dict[str, str] = {
 
 
 def _refused_navigation_url(message: dict[str, Any]) -> str | None:
-    """The URL to refuse when this command navigates outside http(s), else ``None``."""
+    """Return the URL to refuse when this command navigates outside http(s), else ``None``."""
     if message.get("method") not in _NAVIGATION_METHODS:
         return None
     params = message.get("params")
@@ -119,7 +119,7 @@ def _refusal_reason(message: dict[str, Any]) -> str | None:
 
 
 def _refusal_reply(message_id: int | None, reason: str) -> str:
-    """A CDP error reply, so a refused command fails the caller instead of hanging it."""
+    """Return a CDP error reply, so a refused command fails the caller instead of hanging it."""
     return json.dumps({"id": message_id, "error": {"code": _CDP_REFUSED_CODE, "message": reason}})
 
 

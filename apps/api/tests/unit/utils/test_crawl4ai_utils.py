@@ -77,7 +77,7 @@ def _make_result(markdown: str = "ok", *, success: bool = True, error: str = "")
 
 
 def _warning_call(mock_log: MagicMock, needle: str) -> Any:
-    """The single ``log.warning`` call whose message contains ``needle``.
+    """Return the single ``log.warning`` call whose message contains ``needle``.
 
     warning/error both append their message AND kwargs to the wide event's
     ``warnings[]``, so the whole call is the observable artefact — assert the
@@ -89,7 +89,7 @@ def _warning_call(mock_log: MagicMock, needle: str) -> Any:
 
 
 def _warning_kwargs(mock_log: MagicMock, needle: str) -> dict[str, Any]:
-    """The kwargs of the single ``log.warning`` whose message contains ``needle``."""
+    """Return the kwargs of the single ``log.warning`` whose message contains ``needle``."""
     return dict(_warning_call(mock_log, needle).kwargs)
 
 

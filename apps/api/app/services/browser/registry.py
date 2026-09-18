@@ -54,12 +54,12 @@ async def register_session(session_id: str, user_id: str, live_ws: str | None = 
 
 
 async def get_session_entry(session_id: str) -> SessionRegistryEntry | None:
-    """The full registry entry (owner + live-view WS URL), or ``None`` if unknown."""
+    """Return the full registry entry (owner + live-view WS URL), or ``None`` if unknown."""
     return await redis_cache.get(_key(session_id), model=SessionRegistryEntry)
 
 
 async def session_owner(session_id: str) -> str | None:
-    """The user id that owns ``session_id``, or ``None`` if it is not registered."""
+    """Return the user id that owns ``session_id``, or ``None`` if it is not registered."""
     entry = await get_session_entry(session_id)
     return entry.owner if entry else None
 
