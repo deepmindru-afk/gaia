@@ -65,9 +65,7 @@ async def _drive(graph: Any, world: JobWorld, prompt: str = "book me a table") -
     return run
 
 
-async def test_the_run_answers_the_question_and_the_executor_reports_that_answer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_the_run_answers_the_question_and_the_executor_reports_that_answer() -> None:
     """The tool call no longer carries the result, so the turn only has an answer if the join really collects one out of the worker's terminal state."""
     async with browser_job_world(STREAM, steps=TWO_STEPS) as world:
         async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
@@ -80,7 +78,7 @@ async def test_the_run_answers_the_question_and_the_executor_reports_that_answer
     assert len(world.enqueued) == 1
 
 
-async def test_the_join_is_bound_from_the_first_model_call(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_join_is_bound_from_the_first_model_call() -> None:
     """A started run with no reachable join is a run whose answer nobody can collect, so the join must never depend on a retrieval hit."""
     async with browser_job_world(STREAM, steps=TWO_STEPS) as world:
         async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
@@ -90,9 +88,7 @@ async def test_the_join_is_bound_from_the_first_model_call(monkeypatch: pytest.M
     assert "wait_for_browser_task" not in run.bound_tools()
 
 
-async def test_every_step_card_reaches_the_turns_stream_and_its_message(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_every_step_card_reaches_the_turns_stream_and_its_message() -> None:
     """The cards are produced in a worker with no stream of its own; without the relay the user watches nothing and reloads to nothing."""
     from app.agents.core.background.executor_capture import drain_executor_tool_data
 
@@ -113,9 +109,7 @@ async def test_every_step_card_reaches_the_turns_stream_and_its_message(
         ] == ["session", "step", "step", "result"]
 
 
-async def test_a_bot_conversation_gets_one_photo_per_step_and_the_result_line(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_bot_conversation_gets_one_photo_per_step_and_the_result_line() -> None:
     """Bots never see the SSE stream: a run the worker does not mirror to the platform is a run a Discord user watches in silence."""
     async with browser_job_world(STREAM, steps=TWO_STEPS) as world:
         async with executor_graph([RETRIEVE, START, JOIN, "Booked."]) as graph:
@@ -139,9 +133,7 @@ async def test_a_bot_conversation_gets_one_photo_per_step_and_the_result_line(
     assert world.bot_messages[-1].startswith("✅")
 
 
-async def test_a_turn_that_ends_without_joining_has_the_result_delivered_to_the_user(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_turn_that_ends_without_joining_has_the_result_delivered_to_the_user() -> None:
     """Nothing is holding the tool call open any more, so a run that outlives its turn has to speak for itself or the user is left with a started notice and no outcome."""
     async with browser_job_world(STREAM, steps=TWO_STEPS) as world:
         async with executor_graph([RETRIEVE, START, "I've started on it."]) as graph:
@@ -158,9 +150,7 @@ async def test_a_turn_that_ends_without_joining_has_the_result_delivered_to_the_
     ] == ["session", "step", "step", "result"]
 
 
-async def test_a_second_browser_task_in_one_turn_is_refused_by_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_second_browser_task_in_one_turn_is_refused_by_name() -> None:
     """One browser per conversation: a second run would fight the first for the same live view, and the model would narrate whichever finished last."""
     second = call("browser_task", {"task": "also check the menu"}, "b2")
     async with browser_job_world(STREAM, steps=TWO_STEPS) as world:
@@ -173,9 +163,7 @@ async def test_a_second_browser_task_in_one_turn_is_refused_by_name(
     assert any(world.enqueued[0].job_id in text for text in refusal)
 
 
-async def test_a_stop_reaches_the_browser_and_releases_the_conversation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_stop_reaches_the_browser_and_releases_the_conversation() -> None:
     """The run outlives the turn that started it, so a stop typed later has to reach the job itself rather than a stream nobody is on."""
     from app.agents.tools.executor_tool import cancel_executor
 
@@ -203,9 +191,7 @@ async def test_a_stop_reaches_the_browser_and_releases_the_conversation(
     assert await get_conversation_slot(CONVERSATION) is None
 
 
-async def test_a_worker_crash_still_reports_a_failure_and_frees_the_conversation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_worker_crash_still_reports_a_failure_and_frees_the_conversation() -> None:
     """A job that dies silently wedges the conversation's one browser slot and leaves the user watching a run that already stopped."""
     async with browser_job_world(
         STREAM, host_error=RuntimeError("the browser host fell over")
@@ -218,9 +204,7 @@ async def test_a_worker_crash_still_reports_a_failure_and_frees_the_conversation
     assert await get_conversation_slot(CONVERSATION) is None
 
 
-async def test_a_handoff_note_reaches_the_run_and_the_policy_deciding_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_handoff_note_reaches_the_run_and_the_policy_deciding_it() -> None:
     """The user takes over mid-run and leaves an instruction; a note that stopped at the tool result would leave the policy still working the goal the user just changed."""
     from app.constants.browser import HandoffDecision, HandoffStatus
     from app.services.browser.handoff import resolve_handoff

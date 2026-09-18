@@ -45,8 +45,6 @@ class ScriptedStep:
     url: str = "https://example.test/page"
     #: Per-action result text, matched positionally to actions.
     outputs: list[str] = field(default_factory=list)
-    #: (reason, category) the agent hands to the human before this step's actions.
-    takeover: tuple[str, str] | None = None
     #: Poll should_stop instead of stepping, so a stop arriving mid-run is observable.
     await_stop: bool = False
     #: Ask the bound Jev policy what to do instead of using this step's actions.
@@ -116,7 +114,6 @@ class BrowserDouble:
         #: What each takeover handed back to the agent — the user's note.
         self.takeover_notes: list[str | None] = []
         self.takeover: Callable[[str, str], Any] | None = None
-        self.steps_run = 0
 
     def agent(self, **kwargs: Any) -> _ScriptedAgent:
         return _ScriptedAgent(self, **kwargs)
@@ -151,11 +148,8 @@ class _ScriptedAgent:
                 step_actions = [decided]
             else:
                 step_actions = list(step.actions)
-            if step.takeover is not None:
-                await self._hand_over(*step.takeover)
             actions = [_Action(name, params) for name, params in step_actions]
             await self._on_step(_PageState(step.url), _AgentOutput(actions), index)
-            self._double.steps_run = index
             if on_step_end is not None:
                 self.state = _AgentState(step.outputs)
                 await on_step_end(self)
