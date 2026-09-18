@@ -232,10 +232,10 @@ class JevOperation(StrEnum):
 # target question in the same Jev request (see services/browser/jev/policy.py).
 JEV_TARGET_OPERATIONS = (JevOperation.CLICK, JevOperation.TYPE_TEXT, JevOperation.SELECT)
 
-# The decisions gateway rejects a question with more than 255 criteria, and a
-# page like Wikipedia offers ~1,700 elements, so choices are ranked and cut
-# here; headroom under 255 leaves room for a future per-question extra.
-JEV_MAX_TARGETS_PER_OPERATION = 240
+# One ranked table serves the state and every target head. Measured on Wikipedia
+# (1,747 elements): 200 rows is 64,483 bytes, the gateway 400s max_tokens_exceeded
+# from 86,133 bytes up, and refuses a question with over 255 choices.
+JEV_MAX_ELEMENTS = 200
 
 JEV_GATEWAY_TIMEOUT_SECONDS = 25.0
 JEV_GATEWAY_MAX_ATTEMPTS = 3

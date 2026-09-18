@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.constants.browser import JEV_MAX_TARGETS_PER_OPERATION, JevOperation
+from app.constants.browser import JEV_MAX_ELEMENTS, JevOperation
 from app.services.browser.jev.observation import observe
 
 from .conftest import (
@@ -235,7 +235,7 @@ def _big_page(count: int = 300, *, in_viewport_from: int = 0):
 def test_a_huge_page_is_capped_to_the_gateways_choice_limit() -> None:
     observation = observe(_big_page())
 
-    assert len(observation.targets(JevOperation.CLICK)) == JEV_MAX_TARGETS_PER_OPERATION
+    assert len(observation.targets(JevOperation.CLICK)) == JEV_MAX_ELEMENTS
 
 
 def test_an_in_viewport_element_outranks_an_earlier_one_below_the_fold() -> None:
@@ -243,11 +243,11 @@ def test_an_in_viewport_element_outranks_an_earlier_one_below_the_fold() -> None
     # above the fold, so the cap is decided by the viewport and not by position.
     observation = observe(_big_page(in_viewport_from=59))
 
-    targets = observation.targets(JevOperation.CLICK)
+    indexes = {e.index for e in observation.elements}
 
-    assert "299" in targets  # in the viewport, near the end of the document
-    assert "10" not in targets  # below the fold, near the start
-    assert len(targets) == JEV_MAX_TARGETS_PER_OPERATION
+    assert 59 + JEV_MAX_ELEMENTS in indexes  # in the viewport, past the cap position
+    assert 11 not in indexes  # below the fold, near the start
+    assert len(observation.elements) == JEV_MAX_ELEMENTS
 
 
 def test_the_options_of_one_select_are_capped_in_document_order() -> None:
@@ -266,10 +266,10 @@ def test_the_options_of_one_select_are_capped_in_document_order() -> None:
 
     targets = observe(state).targets(JevOperation.SELECT)
 
-    assert len(targets) == JEV_MAX_TARGETS_PER_OPERATION
+    assert len(targets) == JEV_MAX_ELEMENTS
     assert list(targets)[:2] == ["1:1", "1:2"]
-    assert f"1:{JEV_MAX_TARGETS_PER_OPERATION}" in targets
-    assert f"1:{JEV_MAX_TARGETS_PER_OPERATION + 1}" not in targets
+    assert f"1:{JEV_MAX_ELEMENTS}" in targets
+    assert f"1:{JEV_MAX_ELEMENTS + 1}" not in targets
 
 
 def test_a_cap_that_cuts_choices_is_never_silent(monkeypatch) -> None:
@@ -284,8 +284,8 @@ def test_a_cap_that_cuts_choices_is_never_silent(monkeypatch) -> None:
     observe(_big_page()).targets(JevOperation.CLICK)
 
     logger.warning.assert_called_once_with(
-        f"{LogTag.BROWSER} Jev targets capped",
-        browser={"operation": "CLICK", "dropped": 60, "url": "https://x"},
+        f"{LogTag.BROWSER} Jev element table capped",
+        browser={"dropped": 300 - JEV_MAX_ELEMENTS, "url": "https://x"},
     )
 
 

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from app.constants.browser import (
     JEV_ELEMENT_LABEL_MAX_CHARS,
-    JEV_MAX_TARGETS_PER_OPERATION,
+    JEV_MAX_ELEMENTS,
     JEV_PAGE_TEXT_MAX_CHARS,
     JevOperation,
 )
@@ -120,12 +120,12 @@ class JevObservation:
     ) -> dict[str, tuple[JevElement, JevSelectOption | None]]:
         """Return the target choices for one operation: element index, or index:option for SELECT.
 
-        Capped at JEV_MAX_TARGETS_PER_OPERATION; the gateway refuses a
-        question with more choices, kept in viewport-then-document order.
+        Drawn from elements, already ranked and capped, so every index offered
+        here is a row Jev can read; one select's options are capped too.
         """
         choices: dict[str, tuple[JevElement, JevSelectOption | None]] = {}
         dropped = 0
-        for element in sorted(self.elements, key=lambda e: not e.in_viewport):
+        for element in self.elements:
             if operation not in element.operations:
                 continue
             if operation is JevOperation.SELECT:
@@ -133,7 +133,7 @@ class JevObservation:
             else:
                 candidates = [(str(element.index), None)]
             for key, option in candidates:
-                if len(choices) < JEV_MAX_TARGETS_PER_OPERATION:
+                if len(choices) < JEV_MAX_ELEMENTS:
                     choices[key] = (element, option)
                 else:
                     dropped += 1
@@ -164,16 +164,33 @@ def observe(state: BrowserStateSummary, live: LiveValues | None = None) -> JevOb
         if element is not None:
             elements.append(element)
     text = _page_text(state)
+    url = getattr(state, "url", "") or ""
     observation = JevObservation(
-        url=getattr(state, "url", "") or "",
+        url=url,
         title=getattr(state, "title", "") or "",
         text=text,
-        elements=tuple(elements),
+        elements=_ranked(elements, url),
     )
     return JevObservation(
         **{k: v for k, v in observation.__dict__.items() if k != "fingerprint"},
         fingerprint=_fingerprint(observation),
     )
+
+
+def _ranked(elements: list[JevElement], url: str) -> tuple[JevElement, ...]:
+    """Rank the observed elements in viewport-then-document order and cap them.
+
+    One table serves the state and every target head, so the cap is what keeps
+    the request under the gateway's token limit.
+    """
+    ranked = sorted(elements, key=lambda e: not e.in_viewport)
+    dropped = len(ranked) - JEV_MAX_ELEMENTS
+    if dropped > 0:
+        log.warning(
+            f"{LogTag.BROWSER} Jev element table capped",
+            browser={"dropped": dropped, "url": url},
+        )
+    return tuple(ranked[:JEV_MAX_ELEMENTS])
 
 
 def _scroll_window(state: BrowserStateSummary) -> tuple[float, float, float, float] | None:

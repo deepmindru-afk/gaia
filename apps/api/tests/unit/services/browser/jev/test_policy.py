@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.constants.browser import JEV_MAX_TARGETS_PER_OPERATION, JevOperation
+from app.constants.browser import JEV_MAX_ELEMENTS, JevOperation
 from app.services.browser.jev.gateway import JevChoiceAnswer, JevEvaluation, JevUsage
 from app.services.browser.jev.observation import observe
 from app.services.browser.jev.policy import (
@@ -228,9 +228,8 @@ async def test_choose_posts_the_built_request_and_resolves_its_answer(flights_st
     assert decision.element is not None and decision.element.browser_index == 40
 
 
-def test_a_target_head_never_exceeds_the_gateways_choice_limit() -> None:
-    """The gateway 400s a question with more than 255 criteria, killing the run."""
-    state = make_state(
+def _three_hundred_clickables():
+    return make_state(
         {
             i: FakeNode(
                 "BUTTON",
@@ -243,6 +242,23 @@ def test_a_target_head_never_exceeds_the_gateways_choice_limit() -> None:
         page_info=make_page_info(),
     )
 
-    request = build_request(observe(state), "click something", [], ALL)
 
-    assert len(request.questions["click_target"].criteria) == JEV_MAX_TARGETS_PER_OPERATION
+def test_a_target_head_never_exceeds_the_gateways_choice_limit() -> None:
+    """The gateway 400s a question with more than 255 criteria, killing the run."""
+    request = build_request(observe(_three_hundred_clickables()), "click something", [], ALL)
+
+    assert len(request.questions["click_target"].criteria) == JEV_MAX_ELEMENTS
+
+
+def test_jev_sees_one_capped_element_table_that_every_target_head_draws_from() -> None:
+    """Regression: the whole page went as state.elements, so Wikipedia 400d on max_tokens_exceeded."""
+    request = build_request(observe(_three_hundred_clickables()), "click something", [], ALL)
+
+    indexes = {e["index"] for e in request.state["elements"]}
+
+    assert len(request.state["elements"]) == JEV_MAX_ELEMENTS
+    for name, question in request.questions.items():
+        if name == "operation":
+            continue
+        assert {key.split(":")[0] for key in question.criteria} <= indexes
+        assert question.criteria
