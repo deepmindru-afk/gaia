@@ -325,7 +325,7 @@ class TestMemoryNotFoundError:
         assert error.fix == (
             "Call search_memory to get the current id of the fact you mean, "
             "then retry the correction with that id. Do NOT tell the user "
-            "the memory was corrected — it was not."
+            "the memory was corrected. It was not."
         )
         assert error.status_code == 404
         assert error.meta == {"memory_id": "mem-42"}

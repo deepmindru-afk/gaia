@@ -422,7 +422,7 @@ class TestCustomInstructions:
             )
 
         assert rendered == (
-            "CUSTOM INSTRUCTIONS FOR GMAIL (set by the user — honor these):\n"
+            "CUSTOM INSTRUCTIONS FOR GMAIL (set by the user, honor these):\n"
             "Always archive newsletters."
         )
 

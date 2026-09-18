@@ -192,7 +192,7 @@ def compute_model() -> dict:
 def build_assumptions(ws: Worksheet) -> None:
     a = ASSUMPTIONS
     set_widths(ws, {"A": 30, "B": 18, "C": 44})
-    merge_title(ws, "A1:C1", f"{a['company']} — Model Assumptions")
+    merge_title(ws, "A1:C1", f"{a['company']}: Model Assumptions")
 
     style_header(ws["A3"], "Parameter")
     style_header(ws["B3"], "Value")

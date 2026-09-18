@@ -376,7 +376,7 @@ class TestNotifyAccountLinked:
         envelope = json.loads(publisher.publish_outbound.await_args.args[1])
         assert envelope["destination_id"] == "tg-123"
         # The friendly display name, not the raw enum value.
-        assert "Your Telegram account is now linked to GAIA." in envelope["text"]
+        assert "Your Telegram account is linked." in envelope["text"]
 
     async def test_the_confirmation_goes_to_the_user_who_linked_on_the_greeting_ttl(
         self,
@@ -421,7 +421,7 @@ class TestNotifyAccountLinked:
 
         assert result is od.OutboundResult.PUBLISHED
         envelope = json.loads(publisher.publish_outbound.await_args.args[1])
-        assert "Your WhatsApp account is now linked to GAIA." in envelope["text"]
+        assert "Your WhatsApp account is linked." in envelope["text"]
         assert "Your Whatsapp account" not in envelope["text"]
 
     async def test_imessage_is_spelled_the_way_apple_spells_it(self) -> None:
@@ -442,7 +442,7 @@ class TestNotifyAccountLinked:
 
         assert result is od.OutboundResult.PUBLISHED
         envelope = json.loads(publisher.publish_outbound.await_args.args[1])
-        assert "Your iMessage account is now linked to GAIA." in envelope["text"]
+        assert "Your iMessage account is linked." in envelope["text"]
         assert "Your Imessage account" not in envelope["text"]
 
     async def test_a_non_bot_platform_is_skipped(self) -> None:

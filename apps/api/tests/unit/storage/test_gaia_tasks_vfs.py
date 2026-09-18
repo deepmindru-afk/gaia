@@ -528,7 +528,7 @@ def test_a_completed_task_is_marked_done_and_an_open_one_is_not(tmp_path: Path) 
     by_title = {"Done one": "", "Open one": ""}
     for item in index_items(tmp_path):
         for title in by_title:
-            if item.endswith(f"{title}  _(updated —)_"):
+            if item.endswith(f"{title}  _(updated unknown)_"):
                 by_title[title] = item
     assert by_title["Done one"].startswith("- [DONE]")
     assert by_title["Open one"].startswith("- [OPEN]")

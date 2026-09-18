@@ -57,11 +57,11 @@ _PERIOD_TTL_SECONDS = {
 # abuse guards, so their copy stays neutral.
 DAILY_BUDGET_STOP_FREE = (
     "You've reached today's usage limit on the free plan. "
-    "Your limit resets tomorrow — or upgrade to Pro for much higher limits."
+    "Your limit resets tomorrow, or upgrade to Pro for much higher limits."
 )
 DAILY_BUDGET_STOP_PRO = (
-    "You've reached today's usage limit. It resets tomorrow — "
-    "contact support if you keep hitting this."
+    "You've reached today's usage limit. It resets tomorrow. "
+    "Contact support if you keep hitting this."
 )
 REQUEST_CEILING_STOP_FREE = (
     "I've hit the usage limit for this request, so I'm stopping here with what "

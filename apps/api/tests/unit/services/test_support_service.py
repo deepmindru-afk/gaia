@@ -1498,7 +1498,7 @@ class TestGetUserSupportRequests:
 
 _COMPENSATION_FAILED_DETAIL = (
     "Email sending failed and automatic cleanup of the support "
-    "request also failed. The request may still be stored — "
+    "request also failed. The request may still be stored, so "
     "please contact support instead of retrying."
 )
 

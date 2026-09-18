@@ -481,7 +481,7 @@ class TestBuildIntegrationHints:
         """Preferred is a soft hint, explicit a hard requirement — the two lines must read differently or the model treats them the same."""
         with _catalog(_FakeIntegration("notion", name="Notion")):
             assert _build_integration_hints(set(), {"notion"}, {}) == [
-                "Integrations the user explicitly named — MUST appear in the steps: "
+                "Integrations the user explicitly named, which MUST appear in the steps: "
                 "Notion (category: notion)"
             ]
 
@@ -493,7 +493,7 @@ class TestBuildIntegrationHints:
 
         assert hints == [
             "Preferred integrations (use where the workflow makes sense): Gmail (category: gmail)",
-            "Integrations the user explicitly named — MUST appear in the steps: "
+            "Integrations the user explicitly named, which MUST appear in the steps: "
             "Notion (category: notion)",
         ]
 
@@ -519,7 +519,7 @@ class TestBuildIntegrationHints:
             hints = _build_integration_hints(set(), {"notion", "gmail"}, {})
 
         assert hints == [
-            "Integrations the user explicitly named — MUST appear in the steps: "
+            "Integrations the user explicitly named, which MUST appear in the steps: "
             "Gmail (category: gmail), Notion (category: notion)"
         ]
 
@@ -797,7 +797,7 @@ class TestRunGenerationAttempt:
         assert steps is None
         assert isinstance(error, ValueError)
         assert str(error) == (
-            "LLM returned a workflow with no steps — the model may not have understood the request"
+            "LLM returned a workflow with no steps. The model may not have understood the request"
         )
 
     async def test_a_missing_draft_is_treated_the_same_as_an_empty_one(self):
@@ -1105,7 +1105,7 @@ class TestGenerateStepsWithLlm:
 
         prompt = mock_llm.await_args.args[1]
         assert (
-            "Integrations the user explicitly named — MUST appear in the steps: "
+            "Integrations the user explicitly named, which MUST appear in the steps: "
             "Notion (category: notion)" in prompt
         )
         assert "notion: search" in prompt
@@ -1233,7 +1233,7 @@ class TestGenerateStepsWithLlm:
         assert mock_llm.await_count == _MAX_GENERATION_ATTEMPTS
         assert caught.value.reason == (
             f"the model returned no usable steps after {_MAX_GENERATION_ATTEMPTS} attempts "
-            "(ValueError: LLM returned a workflow with no steps — the model may not have "
+            "(ValueError: LLM returned a workflow with no steps. The model may not have "
             "understood the request)"
         )
 

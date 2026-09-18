@@ -104,7 +104,7 @@ _VIEWER_TEMPLATE = """<!doctype html>
   // math uses THIS, never the bitmap size, or clicks land short of the target.
   var cssW = 1280, cssH = 800;
   var ws = new WebSocket(location.href.replace(/^http/, "ws"));
-  ws.onopen = function () { setStatus("live", "Live \u2014 you're in control"); canvas.focus(); };
+  ws.onopen = function () { setStatus("live", "Live, you're in control"); canvas.focus(); };
   ws.onclose = function () { setStatus("ended", "Session ended"); };
   ws.onerror = function () { setStatus("ended", "Connection error"); };
   var img = new Image();

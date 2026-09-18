@@ -567,8 +567,8 @@ async def test_the_repeat_block_spells_out_the_count_the_limit_and_the_way_out()
     assert blocked.content == (
         "[Loop guard] Blocked without executing: `search` has already been "
         f"called {LOOP_GUARD_STOP_REPEAT} times in a row with identical arguments (limit "
-        f"{LOOP_GUARD_STOP_REPEAT}). Re-running it will return the same result — "
-        "reuse the earlier result, or if the task is done, stop and report it."
+        f"{LOOP_GUARD_STOP_REPEAT}). Re-running it will return the same result. "
+        "Reuse the earlier result, or if the task is done, stop and report it."
     )
     assert blocked.name == "search"  # the frontend keys the tool card off this
 
@@ -595,7 +595,7 @@ async def test_the_repeat_warning_note_is_appended_verbatim() -> None:
     assert warned.content == (
         "ok"
         f"\n\n[Loop guard: `search` has now been called {LOOP_GUARD_WARN_REPEAT} times in a row "
-        "with identical arguments. The result won't change — reuse the earlier result "
+        "with identical arguments. The result won't change, so reuse the earlier result "
         "and move on instead of repeating this call.]"
     )
 
