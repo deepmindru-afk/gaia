@@ -150,19 +150,7 @@ class BrowserTaskRunner:
                 self._agent_run.execute(task), timeout=self._wall_clock_timeout
             )
         except (BrowserHandoffCancelled, InterruptedError):
-            if self._handoff_timed_out:
-                return await self._finish(
-                    BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT
-                )
-            if self._handed_off:
-                return await self._finish(
-                    BrowserSessionStatus.COMPLETED,
-                    True,
-                    "You completed the sensitive step in the live browser.",
-                )
-            return await self._finish(
-                BrowserSessionStatus.CANCELLED, False, "Browser task was stopped."
-            )
+            return await self._finish_from_handoff()
         except TimeoutError:
             self._agent_run.stop()
             return await self._finish(
@@ -192,9 +180,31 @@ class BrowserTaskRunner:
                 f"{BROWSER_TASK_FAILED_PREFIX}{exc}",
             )
 
-        # Browser-Use catches BrowserHandoffCancelled inside the registered action
-        # and turns it into an action error, so on a timeout the run returns
-        # normally and only the flag the takeover hook set still knows.
+        return await self._finish_after_execute(outcome)
+
+    async def _finish_from_handoff(self) -> BrowserResultSnapshot:
+        """Judge a run the handoff ended: expired, completed by the user, or stopped."""
+        if self._handoff_timed_out:
+            return await self._finish(
+                BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT
+            )
+        if self._handed_off:
+            return await self._finish(
+                BrowserSessionStatus.COMPLETED,
+                True,
+                "You completed the sensitive step in the live browser.",
+            )
+        return await self._finish(
+            BrowserSessionStatus.CANCELLED, False, "Browser task was stopped."
+        )
+
+    async def _finish_after_execute(self, outcome: RunOutcome) -> BrowserResultSnapshot:
+        """Judge a run whose agent loop returned, cancellation and handoff first.
+
+        Browser-Use catches BrowserHandoffCancelled inside the registered action
+        and turns it into an action error, so on a timeout the loop returns
+        normally and only the flag the takeover hook set still knows.
+        """
         if self._handoff_timed_out:
             return await self._finish(
                 BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT
