@@ -110,7 +110,7 @@ function OnboardingProgressImpl({
                   <li>
                     Connected integrations (Gmail, Calendar, Slack, and any
                     others) will be{" "}
-                    <span className="text-zinc-200">disconnected</span> — you'll
+                    <span className="text-zinc-200">disconnected</span>, so you'll
                     need to reconnect them.
                   </li>
                   <li>Suggested workflows and their schedules</li>

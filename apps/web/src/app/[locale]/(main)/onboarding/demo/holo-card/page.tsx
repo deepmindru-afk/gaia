@@ -28,7 +28,7 @@ const HOLO_CARD_VARIANTS: HoloCardDisplayData[] = [
     name: "Aryan",
     personality_phrase: "Verdant Builder",
     user_bio:
-      "Grows ideas like gardens — patient, deliberate, and quietly relentless until everything blooms.",
+      "Grows ideas like gardens: patient, deliberate, and quietly relentless until everything blooms.",
     account_number: 1247,
     member_since: "April 2025",
     overlay_color: "rgba(74, 222, 128, 0.15)",
@@ -50,7 +50,7 @@ const HOLO_CARD_VARIANTS: HoloCardDisplayData[] = [
     name: "Aryan",
     personality_phrase: "Midnight Architect",
     user_bio:
-      "Ships code like it owes him money — fast, opinionated, and somehow always elegant.",
+      "Ships code like it owes him money: fast, opinionated, and somehow always elegant.",
     account_number: 1247,
     member_since: "April 2025",
     overlay_color: "rgba(59, 130, 246, 0.15)",

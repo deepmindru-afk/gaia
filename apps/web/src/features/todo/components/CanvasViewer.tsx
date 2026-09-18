@@ -52,7 +52,7 @@ const CanvasViewer: React.FC<CanvasViewerProps> = ({ todoId, todoTitle }) => {
       <MarkdownViewerModal
         isOpen={isOpen}
         onClose={() => setIsOpen(false)}
-        title={`canvas.md — ${todoTitle}`}
+        title={`canvas.md: ${todoTitle}`}
         content={content}
         isLoading={isLoading}
         hasError={hasError}

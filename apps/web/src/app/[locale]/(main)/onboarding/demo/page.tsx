@@ -80,7 +80,7 @@ const DUMMY_TODOS = [
     title: "Research top 5 VCs active in AI infra and summarize thesis fit",
     source_email: {
       sender: "Michael Seibel <ms@ycombinator.com>",
-      subject: "Re: GAIA — office hours",
+      subject: "Re: GAIA office hours",
     },
   },
   {
@@ -446,7 +446,7 @@ function ClarifyDemo() {
           </button>
           <span className="text-xs text-zinc-500">
             {state.clarifySubmitted
-              ? "Submitted — answers locked"
+              ? "Submitted, answers locked"
               : `${countAnsweredClarify(state)}/${state.clarifyQuestions?.length ?? 0} answered`}
           </span>
         </div>
@@ -919,7 +919,7 @@ export default function OnboardingDemoPage() {
             />
             <ChatBubbleBot
               {...BOT_BUBBLE_DEFAULTS}
-              text="Got it — pulled the latest Crunchbase data plus your inbox threads. Top fits: Sequoia (Sonya Huang), Index (Mike Volpi), Greylock (Saam Motamedi), Conviction (Sarah Guo), Lightspeed (Guru Chahal). Drafted a short memo for each in your notes."
+              text="Got it. Pulled the latest Crunchbase data plus your inbox threads. Top fits: Sequoia (Sonya Huang), Index (Mike Volpi), Greylock (Saam Motamedi), Conviction (Sarah Guo), Lightspeed (Guru Chahal). Drafted a short memo for each in your notes."
               message_id="demo-run-now"
               loading={false}
               date={new Date().toISOString()}

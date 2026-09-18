@@ -189,7 +189,7 @@ export default function LinkPlatformClient({
         </h2>
         <p className="text-sm text-zinc-400">
           Your {config.name} account is linked. Head back to {config.name} and
-          say hi — GAIA&apos;s ready when you are.
+          say hi. GAIA&apos;s ready when you are.
         </p>
       </Card>
     );

@@ -139,7 +139,7 @@ export default function RateLimitCard({ data }: RateLimitCardProps) {
             <p className="text-xs leading-relaxed text-zinc-400">
               You&apos;ve used all your{" "}
               <span className="font-medium text-zinc-200">{featureName}</span>{" "}
-              calls for today. Your limit will automatically reset — no action
+              calls for today. Your limit will reset on its own, no action
               needed.
             </p>
 

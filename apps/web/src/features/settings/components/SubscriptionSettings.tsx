@@ -123,7 +123,7 @@ export function SubscriptionSettings() {
         <SettingsSection title="Upgrade to Pro">
           <div className="px-4 py-4 space-y-3">
             <p className="text-sm text-zinc-400">
-              Unlock unlimited usage and all features. Get 25–250× higher
+              Unlock unlimited usage and all features. Get 25 to 250× higher
               limits, priority support, and private Discord channels.
             </p>
             <Button
