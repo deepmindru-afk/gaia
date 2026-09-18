@@ -3904,7 +3904,7 @@ class _CaseSensitiveDir:
 
     macOS's default APFS is case-insensitive, so a real-file test cannot tell
     DevToolsActivePort from devtoolsactiveport, the exact name Chromium
-    writes, and would go unchecked outside the Linux container.
+    writes, and the mismatch would go unchecked outside the Linux container.
     """
 
     def __init__(self, root: str, name: str = "") -> None:
