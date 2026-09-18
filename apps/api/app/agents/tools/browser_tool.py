@@ -26,7 +26,6 @@ from app.config.settings import settings
 from app.constants.browser import (
     BROWSER_TASK_EVENT,
     BROWSER_TOOL_CATEGORY,
-    BrowserAgentLoop,
     BrowserSessionStatus,
     HandoffStatus,
     SensitiveCategory,
@@ -51,7 +50,7 @@ from app.services.browser.bot_delivery import BotProgressDelivery
 from app.services.browser.exceptions import BrowserConcurrencyLimit, BrowserUnavailableError
 from app.services.browser.fingerprint import reset_fingerprint_seed, set_fingerprint_seed
 from app.services.browser.handoff import await_handoff, create_pending_handoff
-from app.services.browser.llm import build_browser_llm, resolve_agent_loop, resolve_use_vision
+from app.services.browser.llm import build_browser_llm, resolve_use_vision
 from app.services.browser.runner import (
     BrowserRunConfig,
     BrowserRunnerCallbacks,
@@ -451,17 +450,11 @@ async def browser_task(
         """
         return bool(params.stream_id) and await stream_manager.is_cancelled(params.stream_id)
 
-    agent_loop = resolve_agent_loop()
-    log.set(browser={"agent_loop": agent_loop.value})
-    # The ultrafast loop has no chat model to build — Jev decides and its text
-    # helper writes the values, both on OPENROUTER_API_KEY.
-    llm = None
-    if agent_loop is BrowserAgentLoop.BROWSER_USE:
-        try:
-            llm = build_browser_llm()
-        except BrowserUnavailableError as exc:
-            log.warning(f"{LogTag.BROWSER} Browser LLM unavailable", error_type=type(exc).__name__)
-            return f"I can't use the browser right now: {exc}"
+    try:
+        llm = build_browser_llm()
+    except BrowserUnavailableError as exc:
+        log.warning(f"{LogTag.BROWSER} Browser LLM unavailable", error_type=type(exc).__name__)
+        return f"I can't use the browser right now: {exc}"
 
     # Pin this run's canvas/audio fingerprint to the user, so the same person
     # always presents the same device rather than a new one per task.
@@ -499,7 +492,6 @@ async def browser_task(
                     use_vision=use_vision,
                     solve_captcha=settings.BROWSER_USE_SOLVE_CAPTCHA,
                     flash_mode=settings.BROWSER_USE_FLASH_MODE,
-                    agent_loop=agent_loop,
                 ),
                 user_id=params.user_id or None,
                 root_request_id=params.root_request_id,

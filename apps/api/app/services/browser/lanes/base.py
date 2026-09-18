@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Protocol
 
-from app.constants.browser import BrowserAgentLoop
 from app.schemas.browser import BrowserAction, BrowserActionOutput
 
 # Per-action results, keyed to the step whose rows the thread mirror emitted.
@@ -39,7 +38,6 @@ class BrowserRunConfig:
     use_vision: bool
     solve_captcha: bool
     flash_mode: bool = True
-    agent_loop: BrowserAgentLoop = BrowserAgentLoop.BROWSER_USE
 
 
 @dataclass(frozen=True)

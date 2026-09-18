@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 
 from app.constants.browser import (
     MAX_HANDOFFS_PER_TASK,
-    BrowserAgentLoop,
     BrowserSessionStatus,
     HandoffStatus,
     SensitiveCategory,
@@ -54,7 +53,6 @@ from app.services.browser.lanes import (
     LaneOutcome,
     LaneUsage,
     StepFrame,
-    UltrafastLane,
 )
 from app.services.browser.replay import create_replay_link
 from app.services.browser.screenshots import upload_step_screenshot
@@ -139,13 +137,6 @@ class BrowserTaskRunner:
             should_stop=self._should_stop,
             action_results=self._action_results,
         )
-        if self._config.agent_loop is BrowserAgentLoop.JEV_ULTRAFAST:
-            return UltrafastLane(
-                session=self._session,
-                config=self._config,
-                hooks=hooks,
-                step_timeout=self._step_timeout,
-            )
         return BrowserUseLane(
             session=self._session,
             llm=self._llm,

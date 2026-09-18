@@ -1,9 +1,4 @@
-"""Lanes: the two implementations of "decide and execute this task's steps".
-
-The seam and its shared types live in ``base``; ``browser_use`` is the shipped
-Browser-Use agent and ``ultrafast`` the ported jev-ultrafast loop. The runner
-picks one from ``BrowserRunConfig.agent_loop`` and knows nothing else about them.
-"""
+"""The lane seam: how the runner drives Browser-Use's agent and hears back from it."""
 
 from app.services.browser.lanes.base import (
     ActionResultsFn,
@@ -16,7 +11,6 @@ from app.services.browser.lanes.base import (
     StepFrame,
 )
 from app.services.browser.lanes.browser_use import BrowserUseLane
-from app.services.browser.lanes.ultrafast import UltrafastLane
 
 __all__ = [
     "ActionResultsFn",
@@ -28,5 +22,4 @@ __all__ = [
     "LaneUsage",
     "StepClock",
     "StepFrame",
-    "UltrafastLane",
 ]

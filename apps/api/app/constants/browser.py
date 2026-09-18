@@ -22,17 +22,6 @@ BROWSER_TOOL_NAME = "browser_task"
 BROWSER_TOOL_CATEGORY = "browser"
 
 
-class BrowserAgentLoop(StrEnum):
-    """Which loop decides and executes a browser task's steps.
-
-    ``BROWSER_USE`` is Browser-Use's own agent (the shipped lane). ``JEV_ULTRAFAST``
-    is the ported jev-ultrafast loop (``services/browser/jev/ultrafast``), selected
-    by the ``BROWSER_USE_AGENT_LOOP`` setting."""
-
-    BROWSER_USE = "browser_use"
-    JEV_ULTRAFAST = "jev_ultrafast"
-
-
 class BrowserEngine(StrEnum):
     """Which browser binary ``gaia-browser-host`` launches behind its CDP plane.
 
@@ -261,27 +250,3 @@ JEV_TEXT_HELPER_RECENT_ACTIONS = 6
 JEV_TEXT_VALUE_MAX_CHARS = 2000
 # Probability mass across a choice question must sum to ~1; the gateway rounds.
 JEV_PROBABILITY_SUM_TOLERANCE = 0.02
-
-
-# ---------------------------------------------------------------------------
-# Jev ultrafast loop (services/browser/jev/ultrafast) — the port of
-# browser-use/jev-ultrafast that replaces Browser-Use's agent loop rather than
-# its chat model. Values are the reference implementation's, unchanged.
-# ---------------------------------------------------------------------------
-# Run bounds: 60 executed browser actions, 120 decision requests.
-JEV_ULTRAFAST_MAX_STEPS = 60
-# Reference viewport (jev_ultrafast/browser.py).
-JEV_ULTRAFAST_VIEWPORT_WIDTH = 1120
-JEV_ULTRAFAST_VIEWPORT_HEIGHT = 780
-# How long a navigation may take to reach readyState "complete", and the poll gap.
-JEV_ULTRAFAST_NAVIGATION_TIMEOUT_SECONDS = 15.0
-JEV_ULTRAFAST_POLL_SECONDS = 0.02
-# An explicit WAIT action sleeps this long; nothing else fast-forwards loading.
-JEV_ULTRAFAST_WAIT_SECONDS = 0.1
-# Every CDP round-trip is bounded so a wedged renderer fails one call, not the run.
-JEV_ULTRAFAST_CDP_TIMEOUT_SECONDS = 20.0
-# Three consecutive non-wait actions that changed nothing stop the run.
-JEV_ULTRAFAST_NO_PROGRESS_STEPS = 3
-# Text-helper budget (OpenAI-compatible chat completion).
-JEV_ULTRAFAST_TEXT_MAX_TOKENS = 1024
-JEV_ULTRAFAST_TEXT_TIMEOUT_SECONDS = 25.0

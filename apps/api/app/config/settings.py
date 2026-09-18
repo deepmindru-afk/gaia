@@ -24,7 +24,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.config.secrets import inject_infisical_secrets
 from app.config.settings_validator import settings_validator
-from app.constants.browser import BrowserAgentLoop, BrowserEngine
+from app.constants.browser import BrowserEngine
 from app.constants.log_tags import LogTag
 from app.constants.search import (
     CRAWL4AI_DEFAULT_MAX_BROWSERS,
@@ -297,16 +297,6 @@ class CommonSettings(BaseAppSettings):
     # endpoint, so the loop needs exactly one credential.
     BROWSER_USE_JEV_TEXT_URL: str = "https://openrouter.ai/api/v1/chat/completions"
     BROWSER_USE_JEV_TEXT_MODEL: str = "inception/mercury-2.5"
-
-    # Which loop decides and executes a task's steps. "browser_use" is the shipped
-    # lane (Browser-Use's agent, optionally with Jev as its chat model — see
-    # BROWSER_USE_JEV_ENABLED). "jev_ultrafast" hands the whole loop to the port of
-    # browser-use/jev-ultrafast (services/browser/jev/ultrafast): measured 1.65x
-    # faster and 23x cheaper on the same task. It needs OPENROUTER_API_KEY for both
-    # the decisions endpoint and the text helper; without it the run falls back to
-    # the Browser-Use lane, loudly (logged as a warning, see services/browser/llm.py).
-    # Defaults to the shipped lane so nothing changes until it is flipped.
-    BROWSER_USE_AGENT_LOOP: BrowserAgentLoop = BrowserAgentLoop.BROWSER_USE
 
     # Vision (screenshots to the model) is the biggest cost driver — keep it on
     # for reliability, but a deployment optimizing cost can disable it.

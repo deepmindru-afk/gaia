@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.constants.browser import BrowserAgentLoop
 from app.services.browser.exceptions import BrowserUnavailableError
 
 
@@ -620,60 +619,3 @@ class TestJevLane:
         self._jev(monkeypatch, enabled=True, openrouter_key=None)
 
         assert await resolve_use_vision() is True
-
-
-@pytest.mark.unit
-class TestAgentLoopSelection:
-    """Which loop really drives a run, and whether ``jev_active`` is honest about it."""
-
-    def _loop(self, monkeypatch, loop, openrouter_key):
-        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_AGENT_LOOP", loop)
-        monkeypatch.setattr("app.services.browser.llm.settings.OPENROUTER_API_KEY", openrouter_key)
-
-    def test_the_shipped_default_is_the_browser_use_lane(self):
-        from app.config.settings import settings
-
-        assert settings.BROWSER_USE_AGENT_LOOP is BrowserAgentLoop.BROWSER_USE
-
-    def test_the_ultrafast_loop_is_selected_when_it_is_configured(self, monkeypatch):
-        from app.services.browser.llm import resolve_agent_loop
-
-        self._loop(monkeypatch, BrowserAgentLoop.JEV_ULTRAFAST, "sk-or-x")
-
-        assert resolve_agent_loop() is BrowserAgentLoop.JEV_ULTRAFAST
-
-    def test_the_ultrafast_loop_falls_back_loudly_without_its_credential(self, monkeypatch):
-        """Both of its models ride OPENROUTER_API_KEY; silently running the other
-        lane would hide a misconfigured deployment behind a slower, costlier run."""
-        from app.services.browser import llm as llm_mod
-        from app.services.browser.llm import resolve_agent_loop
-
-        self._loop(monkeypatch, BrowserAgentLoop.JEV_ULTRAFAST, None)
-        logger = MagicMock()
-        monkeypatch.setattr(llm_mod, "log", logger)
-
-        assert resolve_agent_loop() is BrowserAgentLoop.BROWSER_USE
-        assert logger.warning.call_count == 1
-        assert "OPENROUTER_API_KEY" in logger.warning.call_args.args[0]
-
-    def test_jev_is_reported_active_on_the_ultrafast_loop_whatever_the_chat_flag_says(
-        self, monkeypatch
-    ):
-        """Jev *is* the loop there, so reporting it inactive because the chat-model
-        flag is off would be a lie."""
-        from app.services.browser.llm import jev_active
-
-        self._loop(monkeypatch, BrowserAgentLoop.JEV_ULTRAFAST, "sk-or-x")
-        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_JEV_ENABLED", False)
-
-        assert jev_active() is True
-
-    def test_jev_is_inactive_when_the_ultrafast_loop_fell_back_and_the_chat_flag_is_off(
-        self, monkeypatch
-    ):
-        from app.services.browser.llm import jev_active
-
-        self._loop(monkeypatch, BrowserAgentLoop.JEV_ULTRAFAST, None)
-        monkeypatch.setattr("app.services.browser.llm.settings.BROWSER_USE_JEV_ENABLED", False)
-
-        assert jev_active() is False

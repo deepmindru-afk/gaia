@@ -18,7 +18,6 @@ import browser_use
 import pytest
 
 from app.constants.browser import (
-    BrowserAgentLoop,
     BrowserEventKind,
     BrowserSessionStatus,
     HandoffStatus,
@@ -547,57 +546,10 @@ def test_init_derives_timeouts_and_starts_from_a_clean_slate() -> None:
     assert runner._emit_tasks == set()
 
 
-# ---------------------------------------------------------------------------
-# which lane drives the run
-# ---------------------------------------------------------------------------
-
-
-def test_the_default_lane_is_still_browser_use() -> None:
-    """The ultrafast loop ships switched off: an unset setting must not move
-    anybody onto it."""
-    from app.config.settings import settings
-    from app.services.browser.lanes import BrowserUseLane
-
-    _, emit = _collector()
-    assert settings.BROWSER_USE_AGENT_LOOP == BrowserAgentLoop.BROWSER_USE
-    assert isinstance(_make_runner(emit=emit)._lane, BrowserUseLane)
-
-
-def test_the_setting_selects_the_ultrafast_lane() -> None:
-    from app.services.browser.lanes import UltrafastLane
-
-    _, emit = _collector()
-    runner = BrowserTaskRunner(
-        session=_session(),
-        llm=None,
-        callbacks=BrowserRunnerCallbacks(
-            emit=emit,
-            request_handoff=AsyncMock(),
-            is_cancelled=AsyncMock(return_value=False),
-        ),
-        config=BrowserRunConfig(
-            max_steps=10,
-            max_actions_per_step=5,
-            task_timeout_seconds=30,
-            step_timeout_seconds=180,
-            handoff_timeout_seconds=60,
-            stream_screenshots=True,
-            use_vision=True,
-            solve_captcha=False,
-            agent_loop=BrowserAgentLoop.JEV_ULTRAFAST,
-        ),
-    )
-
-    assert isinstance(runner._lane, UltrafastLane)
-    # Both lanes are bounded by the same budgets the runner derived.
-    assert runner._lane._step_timeout == 240
-
-
 async def test_a_lane_with_no_chat_model_says_so_instead_of_crashing_deep_inside(
     patch_browser,
 ) -> None:
-    """The ultrafast lane needs no chat model, so the runner takes ``None`` — the
-    Browser-Use lane must then refuse loudly rather than hand None to an Agent."""
+    """A run built without a chat model refuses loudly rather than handing None to an Agent."""
     from app.services.browser.exceptions import BrowserUnavailableError
 
     _, emit = _collector()
