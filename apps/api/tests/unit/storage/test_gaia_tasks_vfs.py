@@ -487,6 +487,20 @@ def test_a_title_that_is_missing_entirely_is_projected_rather_than_skipped(
 # ── index.md ─────────────────────────────────────────────────────────
 
 
+def test_the_index_header_warns_the_agent_its_edits_would_be_regenerated_away(
+    tmp_path: Path,
+) -> None:
+    """The header is the only thing telling the agent this file is derived, so hand edits are lost on the next sync."""
+    materialize_gaia_tasks(tmp_path, [task(ID_A, "Anything")], GUIDE)
+
+    text = (tmp_path / gtv.GAIA_TASKS_DIRNAME / "index.md").read_text()
+    assert text.startswith(
+        "<!-- Generated index of active gaia-tasks. Sorted by "
+        "last-updated, newest first. Do not edit. Regenerated on every "
+        "sync. -->\n"
+    )
+
+
 def test_the_index_lists_the_most_recently_updated_task_first(tmp_path: Path) -> None:
     # This is the agent's entry point into the tree; wrong order buries the task
     # the user just touched under months of finished ones.

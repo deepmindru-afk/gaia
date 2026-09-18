@@ -215,7 +215,12 @@ class TestGmailComposeRequireSubjectSchemaModifier:
         result = gmail_compose_require_subject_schema_modifier("GMAIL_SEND_EMAIL", "gmail", schema)
         assert "subject" in result.input_parameters["required"]
         assert result.input_parameters["properties"]["subject"]["minLength"] == 1
-        assert "Required" in result.input_parameters["properties"]["subject"]["description"]
+        # The description is the model's only instruction on WHAT subject to write;
+        # minLength alone would be satisfied by a single character.
+        assert result.input_parameters["properties"]["subject"]["description"] == (
+            "Email subject line. Required, so write a clear, specific subject "
+            "that summarizes the email. Never leave it blank."
+        )
 
     def test_does_not_duplicate_required(self) -> None:
         from app.utils.composio_hooks.gmail_hooks import (

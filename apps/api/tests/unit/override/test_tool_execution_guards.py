@@ -74,8 +74,11 @@ class TestTimeoutGuard:
 
         result = await timeout_guarded_tool_call(_request("GMAIL_SEND_EMAIL"), never_returns)
 
-        assert "may or may not have" in result.content
-        assert "Verify its effect" in result.content
+        assert result.content == (
+            "Error: TimeoutError: 'GMAIL_SEND_EMAIL' timed out after "
+            "0.01s. The operation may or may not have "
+            "completed on the provider side. Verify its effect before retrying."
+        )
 
     async def test_a_tool_that_finishes_in_time_is_untouched(self):
         """Control: the guard must be invisible on the happy path."""

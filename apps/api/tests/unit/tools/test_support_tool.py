@@ -48,8 +48,10 @@ class TestCreateSupportTicket:
             title="App crashes on login",
             description="When I try to log in with Google, the app crashes immediately.",
         )
-        assert result.startswith("Drafted a support ticket for you."), result
-        assert "Submit Ticket" in result
+        assert result == (
+            "Drafted a support ticket for you. Check it over and hit "
+            "Submit Ticket when it looks right."
+        )
         # Verify writer was called with progress and data
         assert w.call_count == 2
         progress_call = w.call_args_list[0][0][0]

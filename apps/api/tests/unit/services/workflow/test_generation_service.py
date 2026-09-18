@@ -9,6 +9,7 @@ so every branch is provable without touching a model.
 """
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.exceptions import OutputParserException
@@ -34,7 +35,9 @@ from app.services.workflow.generation_service import (
     WorkflowGenerationService,
     WorkflowPromptRequest,
     WorkflowStepGenerationError,
+    _build_available_triggers,
     _build_integration_hints,
+    _build_trigger_hint,
     _collect_custom_integration_categories,
     _collect_registry_categories,
     _collect_subagent_categories,
@@ -455,6 +458,60 @@ class TestValidatedSteps:
 
     def test_a_draft_with_no_steps_is_absence_too(self):
         assert _validated_steps(GeneratedWorkflow(steps=[])) is None
+
+
+# ---------------------------------------------------------------------------
+# _build_trigger_hint / _build_available_triggers
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTriggerHint:
+    def test_with_no_trigger_chosen_the_model_is_told_to_pick_one_from_intent(self):
+        """A workflow with no trigger never fires, so the hint has to ask for a suggestion rather than stay silent."""
+        assert _build_trigger_hint(None) == (
+            "No trigger selected yet. Suggest the most appropriate trigger "
+            "type based on the user's intent."
+        )
+
+
+class TestBuildAvailableTriggers:
+    def test_a_triggers_description_is_appended_after_its_name(self):
+        """The slug and name alone do not say when a trigger fires; the description is what lets the model choose between two of them."""
+        integration = _FakeIntegration(
+            "gmail",
+            name="Gmail",
+            associated_triggers=(
+                SimpleNamespace(
+                    workflow_trigger_schema=SimpleNamespace(
+                        slug="gmail_new_message",
+                        name="New message",
+                        description="Fires on every new email",
+                    )
+                ),
+            ),
+        )
+
+        with _catalog(integration):
+            assert _build_available_triggers() == (
+                "Available integration triggers (use the slug for trigger_name):\n"
+                "- gmail_new_message: New message (Gmail): Fires on every new email"
+            )
+
+    def test_a_trigger_with_no_description_is_listed_without_a_dangling_separator(self):
+        integration = _FakeIntegration(
+            "gmail",
+            name="Gmail",
+            associated_triggers=(
+                SimpleNamespace(
+                    workflow_trigger_schema=SimpleNamespace(
+                        slug="gmail_new_message", name="New message", description=""
+                    )
+                ),
+            ),
+        )
+
+        with _catalog(integration):
+            assert _build_available_triggers().endswith("- gmail_new_message: New message (Gmail)")
 
 
 # ---------------------------------------------------------------------------
@@ -955,8 +1012,10 @@ class TestGenerateStepsWithLlm:
             await _generate_steps(prompt="p", title="t", user_id="user-1")
 
         prompt = mock_llm.await_args.args[1]
-        assert "gaia: GAIA reasoning" in prompt
-        assert "No external tool call." in prompt
+        assert (
+            "gaia: GAIA reasoning. Summarize content, draft text, classify items, "
+            "generate outlines, extract key points, write briefs. No external tool call."
+        ) in prompt
 
     async def test_the_registry_the_subagents_and_gaia_all_reach_the_prompt_in_order(self):
         """Categories are a comma-separated list the model picks from; a lost section is a whole class of steps it can never produce."""
@@ -1363,7 +1422,10 @@ class TestGenerateWorkflowPrompt:
 
         human = mock_llm.await_args.args[1][1].content
         assert "Existing instructions to improve:\nSummarize my mail." in human
-        assert "Improve these instructions" in human
+        assert (
+            "Improve these instructions. Keep the user's intent, add specificity, "
+            "edge case handling, and output details."
+        ) in human
         assert "from scratch" not in human
 
     async def test_with_no_existing_instructions_it_generates_from_scratch(self):

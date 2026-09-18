@@ -378,6 +378,29 @@ class TestNotifyAccountLinked:
         # The friendly display name, not the raw enum value.
         assert "Your Telegram account is linked." in envelope["text"]
 
+    async def test_the_confirmation_says_the_link_worked_and_points_at_help(self) -> None:
+        """Pin the post-link greeting verbatim: it confirms the account is linked and names /help as the way in."""
+        publisher = AsyncMock()
+        with (
+            patch.object(
+                od.PlatformLinkService,
+                "get_linked_platforms",
+                new_callable=AsyncMock,
+                return_value={"telegram": {"platformUserId": "tg-123"}},
+            ),
+            patch.object(
+                od, "get_rabbitmq_publisher", new_callable=AsyncMock, return_value=publisher
+            ),
+        ):
+            await od.notify_account_linked("telegram", "user-1")
+
+        envelope = json.loads(publisher.publish_outbound.await_args.args[1])
+        assert envelope["text"] == (
+            "\u2705 **You're connected**\n\n"
+            "Your Telegram account is linked. "
+            "Message me anytime, or send `/help` to see what I can do."
+        )
+
     async def test_the_confirmation_goes_to_the_user_who_linked_on_the_greeting_ttl(
         self,
     ) -> None:
