@@ -279,6 +279,16 @@ async def run_chain(
     if subagent is not None:
         register_subagent_providers([SUBAGENT_ID])
 
+    async def _resolve_registered_graph(subagent_id: str, user_id: str | None):
+        """Bypass the MCP-only resolve guard: this scenario proves the 3-tier
+        streaming plumbing, not resolution policy (pinned in unit tests)."""
+        """Bypass the MCP-only resolve guard: this scenario proves the 3-tier
+        streaming plumbing, not resolution policy (pinned in unit tests)."""
+        from app.core.lazy_loader import providers as _providers
+
+        graph = await _providers.aget(SUBAGENT_AGENT)
+        return graph, SUBAGENT_AGENT, SUBAGENT_ID, False
+
     patches = [
         patch.object(
             build_graph_module, "get_tools_store", AsyncMock(return_value=InMemoryStore())
@@ -319,6 +329,12 @@ async def run_chain(
             patch(
                 "app.agents.core.subagents.provider_subagents.init_llm",
                 return_value=streaming_model(subagent),
+            )
+        )
+        patches.append(
+            patch(
+                "app.agents.core.subagents.handoff_tools._resolve_subagent",
+                new=_resolve_registered_graph,
             )
         )
     if fetch_webpage is not None:
