@@ -300,14 +300,10 @@ class BrowserAgentRun:
         """Fire after the model picks actions, before they execute."""
         self._last_step = n_steps
         step_actions = _extract_actions(agent_output, browser_state_summary)
-        goal = (
-            getattr(agent_output, "next_goal", None)
-            or getattr(agent_output, "thinking", "")
-            # Flash mode strips the two above, so this is the caption on the
-            # cheap path — built from the resolved actions so it names the
-            # element ("Clicking \"Submit\""), not just the verb.
-            or caption_from_action_list(step_actions)
-        )
+        # Never the model's own next_goal/thinking: Jev fills both with its raw
+        # decision label ("CLICK [6] Log In"). The caption describes what the
+        # step does, named after the element it resolved.
+        goal = caption_from_action_list(step_actions)
         self._hooks.step(
             StepFrame(
                 index=n_steps,

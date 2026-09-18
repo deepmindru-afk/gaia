@@ -1328,22 +1328,11 @@ async def test_step_card_carries_the_goal_actions_and_page(patch_browser) -> Non
     step = events[-1]
     assert step.kind == BrowserEventKind.STEP
     assert step.index == 3
-    assert step.goal == "Check out"
+    assert step.goal == "Clicking"
     assert [(a.name, a.inputs) for a in step.actions] == [("click", {"index": 4})]
     assert step.url == "https://example.com/cart"
     assert step.title == "Your cart"
     assert runner._last_step == 3
-
-
-async def test_step_goal_falls_back_to_the_models_thinking(patch_browser) -> None:
-    events, emit = _collector()
-    runner = _make_runner(emit=emit)
-    output = _Output("", [_Action("click", {})])
-    output.thinking = "Deciding what to click"
-    await runner._agent_run._on_step(_State("https://x"), output, 1)
-    await _drain(runner)
-
-    assert events[-1].goal == "Deciding what to click"
 
 
 async def test_step_goal_falls_back_to_a_caption_from_the_actions(patch_browser) -> None:
@@ -1764,18 +1753,6 @@ class _BareState:
     """A browser state summary Browser-Use gave no url, title or screenshot."""
 
 
-async def test_the_models_next_goal_wins_over_its_thinking(patch_browser) -> None:
-    events, emit = _collector()
-    runner = _make_runner(emit=emit)
-    output = _GoalOutput(
-        next_goal="Check out", thinking="Deciding what to click", actions=[_Action("click", {})]
-    )
-    await runner._agent_run._on_step(_State("https://x"), output, 1)
-    await _drain(runner)
-
-    assert events[-1].goal == "Check out"
-
-
 async def test_a_step_with_no_thinking_attribute_captions_from_its_actions(patch_browser) -> None:
     events, emit = _collector()
     runner = _make_runner(emit=emit)
@@ -1794,19 +1771,18 @@ class _GoallessOutput:
         self.action = actions
 
 
-async def test_a_step_output_with_no_goal_attribute_captions_from_its_thinking(
+async def test_a_step_output_with_no_goal_attribute_still_captions_its_actions(
     patch_browser,
 ) -> None:
-    # Browser-Use's output shape varies by mode; a missing field is a fallback,
-    # never a failed step.
+    # Browser-Use's output shape varies by mode; a missing field is never a failed step.
     events, emit = _collector()
     runner = _make_runner(emit=emit)
     await runner._agent_run._on_step(
-        _State("https://x"), _GoallessOutput([_Action("click", {})]), 1
+        _State("https://x"), _GoallessOutput([_Action("navigate", {"url": "https://x.dev/a"})]), 1
     )
     await _drain(runner)
 
-    assert events[-1].goal == "Deciding what to click"
+    assert events[-1].goal == "Opening x.dev"
 
 
 async def test_a_step_names_and_locates_the_element_its_actions_target(patch_browser) -> None:
@@ -1857,7 +1833,7 @@ async def test_each_step_reports_the_wall_clock_since_the_previous_one(
         call(
             StepFrame(
                 index=1,
-                goal="Check out",
+                goal="Clicking",
                 actions=[BrowserAction(name="click", inputs={"index": 4})],
                 url="https://example.com/cart",
                 title="Page",
@@ -1868,7 +1844,7 @@ async def test_each_step_reports_the_wall_clock_since_the_previous_one(
         call(
             StepFrame(
                 index=2,
-                goal="Check out",
+                goal="Clicking",
                 actions=[BrowserAction(name="click", inputs={"index": 4})],
                 url="https://example.com/cart",
                 title="Page",
@@ -2011,3 +1987,36 @@ async def test_an_unreadable_history_is_logged_with_the_error_type(monkeypatch) 
         f"{LogTag.BROWSER} Could not read browser history result",
         error_type="RuntimeError",
     )
+
+
+async def test_the_step_caption_describes_the_step_not_the_models_label(patch_browser) -> None:
+    """JevChatModel fills next_goal with its raw decision label ("CLICK [6] Log In")."""
+    events, emit = _collector()
+    runner = _make_runner(emit=emit)
+    state = _targeted_state(4)
+    state.url, state.title, state.screenshot = "https://x", "Page", None
+    output = _GoalOutput(
+        next_goal="CLICK [4] Sign in",
+        thinking="CLICK [4] Sign in",
+        actions=[_Action("click", {"index": 4})],
+    )
+
+    await runner._agent_run._on_step(state, output, 1)
+    await _drain(runner)
+
+    assert events[-1].goal == 'Clicking "Sign in"'
+
+
+async def test_a_blocked_finish_reads_as_a_sentence(patch_browser) -> None:
+    events, emit = _collector()
+    runner = _make_runner(emit=emit)
+    output = _GoalOutput(
+        next_goal="BLOCKED",
+        thinking="BLOCKED",
+        actions=[_Action("done", {"text": "", "success": False})],
+    )
+
+    await runner._agent_run._on_step(_State("https://x"), output, 1)
+    await _drain(runner)
+
+    assert events[-1].goal == "Could not find a way forward on this page"

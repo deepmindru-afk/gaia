@@ -1,9 +1,9 @@
 """Turn a Browser-Use action into a human-readable caption.
 
-Used as the fallback caption when the model's own ``next_goal`` is absent —
-flash mode strips it, or a step produced no goal/thinking text at all — so
-the SSE step card (``runner.py``) and the bot's photo caption
-(``bot_delivery.py``) describe the same step the same way.
+This is the caption for every step: the SSE step card (``runner.py``) and the
+bot's photo caption (``bot_delivery.py``) both describe a step by what it did.
+The model's own ``next_goal`` is never used for it — Jev fills that field with
+its raw decision label ("CLICK [6] Log In"), which is not a caption.
 """
 
 from __future__ import annotations
@@ -57,6 +57,14 @@ def _select_dropdown_caption(params: dict[str, Any], target: str | None) -> str:
     return f'Choosing in "{_shorten(target)}"' if target else "Choosing an option"
 
 
+def _done_caption(params: dict[str, Any], _target: str | None) -> str:
+    # DoneAction.success defaults to True; Jev ends a run it cannot advance
+    # with success=False, and "BLOCKED" is not something to show a reader.
+    if params.get("success", True):
+        return "Finished"
+    return "Could not find a way forward on this page"
+
+
 def _click_caption(params: dict[str, Any], target: str | None) -> str:
     if target:
         return f'Clicking "{_shorten(target)}"'
@@ -77,6 +85,7 @@ _DYNAMIC_CAPTIONS: dict[str, Callable[[dict[str, Any], str | None], str]] = {
     "send_keys": _typing_caption,
     "select_dropdown": _select_dropdown_caption,
     "click": _click_caption,
+    "done": _done_caption,
 }
 
 # Actions whose caption is the same verb every time, regardless of params.
@@ -93,7 +102,6 @@ _STATIC_CAPTIONS: dict[str, str] = {
     "wait": "Waiting for the page",
     BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER: "Handing this step to you",
     BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: "Handing this step to you",
-    "done": "Wrapping up",
 }
 
 

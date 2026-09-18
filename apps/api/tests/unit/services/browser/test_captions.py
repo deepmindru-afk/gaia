@@ -182,8 +182,19 @@ class TestDescribeAction:
     def test_handover(self, name):
         assert describe_action(name, {}) == "Handing this step to you"
 
-    def test_done(self):
-        assert describe_action("done", {}) == "Wrapping up"
+    def test_done_reports_the_outcome_as_a_sentence(self):
+        assert describe_action("done", {"text": "The title is X", "success": True}) == "Finished"
+
+    def test_a_failed_done_says_what_happened_not_BLOCKED(self):
+        """Jev ends a stuck run with success=False; the card must not show a raw label."""
+        assert (
+            describe_action("done", {"text": "", "success": False})
+            == "Could not find a way forward on this page"
+        )
+
+    def test_done_without_an_explicit_success_reads_as_finished(self):
+        # Browser-Use's DoneAction defaults success to True.
+        assert describe_action("done", {}) == "Finished"
 
     def test_fallback_replaces_underscores(self):
         assert describe_action("my_custom_action", {}) == "my custom action"
