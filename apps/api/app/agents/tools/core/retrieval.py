@@ -808,7 +808,7 @@ def get_retrieve_tools_function(
             and the delegated-tool filter, so it sees its own toolkit.
         limit: Maximum number of tool results for semantic search
         bindable_tool_names: The set of tool names this agent's graph can actually
-            bind and execute. When set (scoped agents like provider subagents),
+            bind and execute. When set (scoped agents like MCP workers),
             binding validates against it instead of the global registry, so a tool
             the graph can't execute is never reported as a successful bind. None ->
             validate against the global registry (main executor/comms carry it).
@@ -904,9 +904,11 @@ def get_retrieve_tools_function(
             renamed_tools: dict[str, str] = {}
             for tool_name in exact_tool_names:
                 if tool_name.startswith("subagent:"):
-                    # Discovery never returns subagents, so a subagent: name
-                    # here is a model hallucination — report it as unknown
-                    # rather than teaching a handoff path discovery doesn't offer.
+                    # Discovery returns subagent: entries only for per-user MCP
+                    # integrations, so one here is either that (handled by the
+                    # model via handoff, never bound) or a hallucination —
+                    # either way it must not bind. Report unknown so the model
+                    # re-discovers instead of echoing it back as a fake bind.
                     unknown_tool_names.append(tool_name)
                 elif (
                     not desktop_enabled
@@ -1154,7 +1156,9 @@ def get_retrieve_tools_function(
         )
 
     # The LLM-facing docstring is a static constant (no subagent section:
-    # discovery never returns subagents, so nothing teaches handoff here).
+    # discovery surfaces subagent: entries only for per-user MCP integrations,
+    # which the handoff tool's own description covers, so nothing teaches
+    # provider handoff here).
     retrieve_tools.__doc__ = _RETRIEVE_TOOLS_BASE_DOC
 
     return retrieve_tools
