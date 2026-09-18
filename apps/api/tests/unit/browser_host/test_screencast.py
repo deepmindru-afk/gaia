@@ -38,11 +38,9 @@ async def test_run_live_view_removes_viewer_when_setup_fails() -> None:
     host.remove_viewer.assert_called_once_with("sess-1")
 
 
-# --- _register_frame_handler: per-frame CSS size --------------------------
-#
-# Regression: viewers mapped click coordinates in frame-bitmap space into a
-# larger CSS viewport, so takeover clicks landed short. Every queued frame must
-# now carry the page's CSS size straight from the screencast metadata.
+# _register_frame_handler: per-frame CSS size. Regression: viewers mapped click
+# coords in frame-bitmap space into a larger CSS viewport, so takeover clicks
+# landed short; every queued frame must carry the page's CSS size.
 
 
 def _register_and_capture(

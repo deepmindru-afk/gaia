@@ -228,13 +228,9 @@ async def test_create_context_skips_restore_when_no_local_storage(
     assert all(m != "Target.attachToTarget" for m, _, _ in cdp.calls)
 
 
-# ---------------------------------------------------------------------------
-# The exact script, and the exact page session it is registered on
-# ---------------------------------------------------------------------------
-# The tests above check the script's semantics by substring. These pin the whole
-# string: the restore runs as page JS, so a stray character anywhere in it is a
-# syntax error that silently restores nothing on every future navigation.
-# ---------------------------------------------------------------------------
+# The exact script, and the exact page session it is registered on: it pins
+# the whole string, since the restore runs as page JS and a stray character
+# anywhere in it is a syntax error that silently restores nothing.
 
 _EXPECTED_RESTORE_JS = (
     '(() => { if (location.origin !== "https://example.com") return;'

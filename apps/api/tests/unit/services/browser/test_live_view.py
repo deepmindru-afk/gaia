@@ -55,10 +55,9 @@ def test_live_view_base_strips_trailing_slash_from_configured_base_url(monkeypat
 
 @pytest.mark.unit
 def test_live_view_base_rstrip_only_strips_slash_not_other_trailing_chars(monkeypatch):
-    # Pins the exact character set passed to rstrip(): it must strip "/" only.
-    # A mutant padding that literal to "XX/XX" would strip "/" AND "X" — an
-    # unrelated character it should never touch — so a base URL ending in "X/"
-    # tells the two apart.
+    # Pins the exact char set passed to rstrip() to "/" only: a mutant padding
+    # that literal to "XX/XX" would also strip "X", so a base URL ending in
+    # "X/" distinguishes the two.
     monkeypatch.setattr(
         live_view.settings, "BROWSER_LIVE_VIEW_BASE_URL", "https://browser.heygaia.ioX/"
     )
@@ -177,10 +176,7 @@ def test_render_live_view_page_differs_by_session_id():
 
 @pytest.mark.unit
 def test_render_live_view_page_maps_pointer_input_via_per_frame_css_size():
-    # Regression: pointer math used to assume frame-bitmap pixels == CSS
-    # pixels, so takeover clicks landed short on a downscaled stream. The
-    # viewer must read the per-frame cssWidth/cssHeight and use a CDP
-    # modifiers bitmask for shift/ctrl/meta state.
+    """Regression: pointer math reads per-frame cssWidth/cssHeight, not bitmap pixels."""
     page = live_view.render_live_view_page("x")
 
     assert "cssWidth" in page

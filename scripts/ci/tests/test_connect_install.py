@@ -73,8 +73,10 @@ def _write_exec(path: Path, body: str) -> None:
 
 @pytest.fixture
 def release(tmp_path: Path) -> Path:
-    """A fake GitHub release: every asset, a real manifest, and a releases feed
-    whose newest entry is a desktop tag (so picking `latest` would be wrong)."""
+    """Build a fake GitHub release: every asset, a real manifest, and a feed.
+
+    The feed's newest entry is a desktop tag, so picking `latest` off it would be wrong.
+    """
     root = tmp_path / "release" / CLI_TAG
     root.mkdir(parents=True)
 

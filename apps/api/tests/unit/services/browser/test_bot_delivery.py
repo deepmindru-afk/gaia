@@ -310,10 +310,7 @@ class TestBotProgressDeliveryStep:
             assert mm.call_args[0][2][0] == "Step 1 · Open"
 
     async def test_empty_goal_uses_snapshot_actions_for_caption(self, delivery):
-        # goal="" forces the caption to fall back to the *snapshot's own*
-        # actions — an arg-drop mutant that passes [] instead of
-        # snapshot.actions here would silently lose the action entirely and
-        # caption to "Step 1" instead of "Step 1 · Clicking".
+        """goal="" must still caption from the snapshot's own actions, not an empty list."""
         snap = BrowserStepSnapshot(
             index=1,
             goal="",

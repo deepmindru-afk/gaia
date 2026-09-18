@@ -1539,14 +1539,9 @@ class TestRunChatStreamBackground:
         assert state.ttft_ms == 2000.0
         assert state.e2e_ack_ms == 2000.0
 
-    # ── chunk dispatch ────────────────────────────────────────────────
-    #
-    # Every frame the agent yields goes through ``_dispatch_stream_chunk``,
-    # which decides whether the client sees it verbatim and what the persisted
-    # turn keeps from it. The tests above drive the loop but only ever assert
-    # the happy text path, so a frame routed to the wrong branch — an error
-    # never recorded, thinking never persisted, a passthrough frame published
-    # to the wrong stream — reads as a pass.
+    # chunk dispatch: every frame goes through `_dispatch_stream_chunk`, which
+    # picks what the client sees and what the turn persists. The tests above
+    # only assert the happy path, so a wrong branch would still read as a pass.
 
     async def _drive(self, agent_chunks, sm, save, *, stream_id="stream_dispatch"):
         async def agent_stream():
@@ -1743,11 +1738,9 @@ class TestRunChatStreamBackground:
             "conversation_id": "conv_existing_123",
         }
 
-    # ── executor tool_data attach + finalize backstop ──────────────────
-    #
-    # The attach is the sole owner of the executor's cards on a live delegated
-    # turn, and ``_finalize_stream`` re-runs it as a backstop when the turn was
-    # cut short. Both paths persist user-visible cards, and both fail silently.
+    # executor tool_data attach + finalize backstop: attach is the sole owner of
+    # the executor's cards on a live delegated turn; `_finalize_stream` re-runs
+    # it as a backstop when the turn was cut short. Both paths fail silently.
 
     async def test_a_completed_attach_is_not_repeated_by_the_finally_backstop(
         self, test_user

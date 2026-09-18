@@ -391,15 +391,9 @@ class TestToolWrapper:
         assert tool.is_core is True
 
 
-# ---------------------------------------------------------------------------
-# _initialize_categories() — exercised for real (no stub)
-#
-# Every other test in this module patches _initialize_categories out (see
-# _patch_initialize_categories below) so the production wiring inside it is
-# never actually run. These tests call the real method so its category
-# metadata, integration flags, and HIL destructive-tool classification are
-# genuinely asserted.
-# ---------------------------------------------------------------------------
+# _initialize_categories() is exercised for real here (not stubbed like every
+# other test via _patch_initialize_categories below), so its category metadata,
+# integration flags, and HIL destructive-tool classification are actually asserted.
 
 # name -> (space, require_integration, integration_name, is_delegated, internal)
 _EXPECTED_CATEGORY_METADATA: dict[str, tuple[str, bool, str | None, bool, bool]] = {
@@ -516,17 +510,9 @@ class TestInitializeCategoriesReal:
         initialized_registry: ToolRegistry,
         expected_category_tool_names: dict[str, set[str]],
     ):
-        # `initialized_registry` is module-scoped, so `_initialize_categories()`
-        # actually runs exactly once, during whichever test in this class pytest
-        # collects first. Mutation testing ties a mutant's covering tests to
-        # the tests that were RUNNING when the mutated line executed, so a
-        # mutant inside _initialize_categories() is only ever checked against
-        # this one test, not the whole class, no matter how many other tests
-        # below also read `initialized_registry`. Every invariant that must
-        # hold for the real _add_category(...) call arguments therefore has to
-        # be asserted here too — the more specific tests below stay for
-        # readable failure messages on a full-suite run, but this is the test
-        # that actually catches a wrong tools=/destructive_tools= argument.
+        # `initialized_registry` is module-scoped: `_initialize_categories()` runs
+        # once, in whichever test runs first, and mutation testing only credits
+        # that test — so every `_add_category(...)` invariant is asserted here.
         assert set(initialized_registry._categories.keys()) == set(
             _EXPECTED_CATEGORY_METADATA.keys()
         )
