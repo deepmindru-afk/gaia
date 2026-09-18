@@ -92,7 +92,7 @@ async def build_executor_graph(
     chat_llm: LanguageModelLike | None = None,
     in_memory_checkpointer: bool = False,
 ) -> AsyncIterator[CompiledAgentGraph]:
-    """Construct and compile the executor agent graph with handoff tools."""
+    """Construct and compile the executor agent graph with handoff (per-user MCP only) + activation tools."""
     if chat_llm is None:
         chat_llm = init_llm()
 
