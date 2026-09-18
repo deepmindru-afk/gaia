@@ -42,6 +42,8 @@ from pydantic import BaseModel, Field
 
 from app.agents.llm.client import StructuredCallOptions, ainvoke_structured, silent_metered_config
 from app.constants.hil import (
+    HIL_ACK_APPROVED,
+    HIL_ACK_DENIED,
     HIL_CLASSIFIER_MAX_ARG_CHARS,
     HIL_CLASSIFIER_MAX_DETAIL_CHARS,
     HIL_LLM_TIMEOUT_SECONDS,
@@ -57,6 +59,7 @@ from app.services.hil.resolution import (
     abandon_conversation_approvals,
     resolve_approval,
 )
+from app.services.turn_telemetry import TurnSpec, begin_turn_all, end_turn_all
 from app.utils.general_utils import clip_text
 from shared.py.wide_events import log
 
@@ -95,6 +98,7 @@ async def resolve_pending_from_message(
     user_id: str,
     message: str,
     history: list[MessageDict] | None = None,
+    source: str | None = None,
     langfuse_trace_id: str | None = None,
 ) -> DecisionAction | None:
     """Resolve the conversation's pending approval(s) from ``message``.
@@ -103,17 +107,46 @@ async def resolve_pending_from_message(
     Returns the overall classified action ("approve" when anything was approved,
     "deny" when things were only declined, "unrelated" when the user moved on),
     or ``None`` when nothing was pending or the reply addressed none of it.
+
+    The classifier call is a real LLM turn on the most destructive path (a
+    free-text approve/deny with no button): it opens and closes its own
+    telemetry turn here — after the pending check, so messages with nothing
+    pending mint no phantom turns — or "why did it approve?" has no turn to
+    open. Never raises for classifier failures (fail toward pending); store
+    and resolve errors propagate to the caller, recorded as failed.
     """
     pending = await list_pending_for_conversation(conversation_id)
     if not pending:
         return None
-    if len(pending) == 1:
-        return await _resolve_single(
-            pending[0], conversation_id, user_id, message, history, langfuse_trace_id
+    telemetry = begin_turn_all(
+        TurnSpec(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_input=message,
+            source=source,
+            mode="interactive",
+            properties={"approval_flow": "hil_classifier"},
         )
-    return await _resolve_batch(
-        pending, conversation_id, user_id, message, history, langfuse_trace_id
     )
+    try:
+        if len(pending) == 1:
+            action = await _resolve_single(
+                pending[0], conversation_id, user_id, message, history, langfuse_trace_id
+            )
+        else:
+            action = await _resolve_batch(
+                pending, conversation_id, user_id, message, history, langfuse_trace_id
+            )
+    except Exception as e:
+        end_turn_all(telemetry, output=str(e), error=e)
+        raise
+    end_turn_all(
+        telemetry,
+        output=(HIL_ACK_APPROVED if action == "approve" else HIL_ACK_DENIED)
+        if action in ("approve", "deny")
+        else "",
+    )
+    return action
 
 
 async def _resolve_single(

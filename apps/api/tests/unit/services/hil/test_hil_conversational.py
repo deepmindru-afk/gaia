@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.llm.client import StructuredCallOptions
-from app.constants.hil import HIL_LLM_TIMEOUT_SECONDS
+from app.constants.hil import HIL_ACK_APPROVED, HIL_LLM_TIMEOUT_SECONDS
 from app.services.hil.conversational import (
     UNRELATED_FEEDBACK,
     BatchDecisionResult,
@@ -553,3 +553,74 @@ class TestBatchTraceLinkage:
         text = prompt_of(resolver["llm"])
         assert "yes please" in text
         assert "earlier question" in text
+
+
+class TestResolverTurnTelemetry:
+    """The classifier turn opens only when something is pending, and closes
+    with the resolution outcome — bot messages with nothing pending mint no
+    phantom turns."""
+
+    async def test_no_pending_opens_no_turn(self, resolver: dict) -> None:
+        with (
+            patch(
+                "app.services.hil.conversational.list_pending_for_conversation",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.hil.conversational.begin_turn_all") as mock_begin,
+        ):
+            assert (
+                await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes", None)
+                is None
+            )
+
+        mock_begin.assert_not_called()
+        resolver["llm"].assert_not_awaited()
+
+    async def test_approve_closes_turn_with_ack(self, resolver: dict) -> None:
+        resolver["llm"].return_value = DecisionResult(action="approve")
+        with (
+            pending("Send email"),
+            patch("app.services.agnost_service.end_turn") as mock_agnost_end,
+            patch("app.services.latitude_service.end_turn") as mock_lat_end,
+            patch("app.services.laminar_service.end_turn") as mock_lam_end,
+        ):
+            assert (
+                await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "yes", None)
+                == "approve"
+            )
+
+        assert mock_agnost_end.call_args.kwargs["output"] == HIL_ACK_APPROVED
+        assert mock_agnost_end.call_args.kwargs["success"] is True
+        assert mock_lat_end.call_args.kwargs["error"] is None
+        assert mock_lam_end.call_args.kwargs["error"] is None
+
+    async def test_unrelated_closes_turn_quietly(self, resolver: dict) -> None:
+        resolver["llm"].return_value = DecisionResult(action="unrelated")
+        with (
+            pending("Send email"),
+            patch("app.services.agnost_service.end_turn") as mock_agnost_end,
+        ):
+            assert (
+                await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "later", None)
+                == "unrelated"
+            )
+
+        assert mock_agnost_end.call_args.kwargs["output"] == ""
+        assert mock_agnost_end.call_args.kwargs["success"] is True
+
+    async def test_resolve_error_records_failed_and_raises(self, resolver: dict) -> None:
+        resolver["llm"].return_value = DecisionResult(action="unrelated")
+        with (
+            pending("Send email"),
+            patch(
+                "app.services.hil.conversational.abandon_conversation_approvals",
+                new=AsyncMock(side_effect=RuntimeError("db down")),
+            ),
+            patch("app.services.agnost_service.end_turn") as mock_agnost_end,
+            patch("app.services.latitude_service.end_turn") as mock_lat_end,
+            pytest.raises(RuntimeError, match="db down"),
+        ):
+            await resolve_pending_from_message(CONVERSATION_ID, USER_ID, "later", None)
+
+        assert mock_agnost_end.call_args.kwargs["success"] is False
+        assert mock_lat_end.call_args.kwargs["error"] is not None

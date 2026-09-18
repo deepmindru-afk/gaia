@@ -517,28 +517,19 @@ async def _resolve_pending_approval_turn(
     if not user_id or not message:
         return False
 
-    # The classifier call below is a real LLM turn on the most destructive
-    # path (a free-text approve/deny with no button): instrument it as one,
-    # or "why did it approve?" has no turn to open.
-    telemetry = begin_turn_all(
-        TurnSpec(
-            user_id=user_id,
-            conversation_id=conversation_id,
-            user_input=message,
-            source=source,
-            mode="interactive",
-            properties={"approval_flow": "hil_classifier"},
-        )
-    )
     try:
         history = _recent_history(body.messages)
         # Join the classifier's spans to this turn's Langfuse trace: without
-        # the seed they orphan despite firing mid-turn inside its scope.
+        # the seed they orphan despite firing mid-turn inside its scope. The
+        # resolver opens and closes the turn telemetry itself (only when
+        # something is actually pending), so every bot message doesn't mint
+        # a phantom turn.
         action = await resolve_pending_from_message(
             conversation_id,
             user_id,
             message,
             history,
+            source=source,
             langfuse_trace_id=trace_id_for_message(state.bot_message_id),
         )
     except Exception as e:  # see below: chat must survive this
@@ -554,11 +545,9 @@ async def _resolve_pending_approval_turn(
             error_type=type(e).__name__,
             conversation_id=conversation_id,
         )
-        end_turn_all(telemetry, output=str(e), error=e)
         return False
 
     if action not in ("approve", "deny"):
-        end_turn_all(telemetry, output="")
         return False
 
     ack = HIL_ACK_APPROVED if action == "approve" else HIL_ACK_DENIED
@@ -578,7 +567,6 @@ async def _resolve_pending_approval_turn(
     await _persist_turn(stream_id, body, user, conversation_id, state)
     await stream_manager.publish_chunk(stream_id, "data: [DONE]\n\n")
     await stream_manager.complete_stream(stream_id)
-    end_turn_all(telemetry, output=ack)
     return True
 
 

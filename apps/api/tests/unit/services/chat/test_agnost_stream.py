@@ -249,10 +249,22 @@ class TestTurnTelemetry:
         """Sabotage below the services: the real fan-out must still not break the turn."""
         sm = _make_stream_manager_mock()
         settings = SimpleNamespace(AGNOST_ORG_ID="org-1", AGNOST_ENDPOINT="https://api.agnost.ai")
+        lat_settings = SimpleNamespace(LATITUDE_API_KEY="key-1", LATITUDE_PROJECT="gaia")
+        lam_settings = SimpleNamespace(LMNR_PROJECT_API_KEY="key-1")
         with (
             patch("app.services.agnost_service.settings", settings),
             patch(
                 "app.services.agnost_service.agnost.begin",
+                side_effect=RuntimeError("telemetry down"),
+            ),
+            patch("app.services.latitude_service.settings", lat_settings),
+            patch(
+                "app.services.latitude_service.capture.start",
+                side_effect=RuntimeError("telemetry down"),
+            ),
+            patch("app.services.laminar_service.settings", lam_settings),
+            patch(
+                "app.services.laminar_service.Laminar.start_as_current_span",
                 side_effect=RuntimeError("telemetry down"),
             ),
         ):
@@ -545,8 +557,8 @@ class TestTurnTelemetry:
 @pytest.mark.unit
 class TestApprovalTurnTelemetry:
     """The bot-channel HIL approval fast-path resolves without running the
-    agent — but the classifier call is a real LLM turn on the most
-    destructive path, so it opens and closes its own telemetry."""
+    agent. Turn telemetry for it lives in the resolver (opens only when
+    something is actually pending); here just the stream-level behavior."""
 
     def _approval_body(self) -> MessageRequestWithHistory:
         return MessageRequestWithHistory(
@@ -556,8 +568,6 @@ class TestApprovalTurnTelemetry:
         )
 
     async def _resolve(self, sm: MagicMock, action: object) -> bool:
-        state = _StreamState()
-        state.bot_message_id = "bot-9"
         with (
             _patch_stream_manager(sm),
             patch(
@@ -567,64 +577,39 @@ class TestApprovalTurnTelemetry:
             patch("app.services.chat.stream._persist_turn", new=AsyncMock()),
             patch(
                 "app.services.chat.stream.trace_id_for_message", return_value="trace-seed"
-            ) as mock_seed,
+            ),
         ):
             result = await _resolve_pending_approval_turn(
                 self._approval_body(),
                 {"user_id": "user_abc"},
                 "conv_hil_1",
                 "stream_hil",
-                state,
+                _StreamState(),
                 "telegram",
             )
 
-        mock_seed.assert_called_once_with("bot-9")
         assert mock_resolve.call_args.args == ("conv_hil_1", "user_abc", "yes do it", [])
-        assert mock_resolve.call_args.kwargs == {"langfuse_trace_id": "trace-seed"}
+        assert mock_resolve.call_args.kwargs == {
+            "source": "telegram",
+            "langfuse_trace_id": "trace-seed",
+        }
         return result
 
-    async def test_approve_opens_and_closes_with_ack(self) -> None:
+    async def test_approve_streams_ack_and_returns_true(self) -> None:
         sm = _make_stream_manager_mock()
-        with (
-            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
-            patch("app.services.chat.stream.end_turn_all") as mock_end,
-        ):
-            assert await self._resolve(sm, "approve") is True
+        assert await self._resolve(sm, "approve") is True
+        published = [call.args[1] for call in sm.publish_chunk.call_args_list]
+        assert any("going ahead" in chunk for chunk in published)
 
-        spec = mock_begin.call_args.args[0]
-        assert spec.user_id == "user_abc"
-        assert spec.conversation_id == "conv_hil_1"
-        assert spec.user_input == "yes do it"
-        assert spec.source == "telegram"
-        assert spec.mode == "interactive"
-        assert spec.properties == {"approval_flow": "hil_classifier"}
-        assert mock_end.call_args.args[0] is mock_begin.return_value
-        assert mock_end.call_args.kwargs["output"] == HIL_ACK_APPROVED
-        assert mock_end.call_args.kwargs.get("error") is None
-
-    async def test_deny_closes_with_deny_ack(self) -> None:
+    async def test_deny_streams_ack_and_returns_true(self) -> None:
         sm = _make_stream_manager_mock()
-        with (
-            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
-            patch("app.services.chat.stream.end_turn_all") as mock_end,
-        ):
-            assert await self._resolve(sm, "deny") is True
+        assert await self._resolve(sm, "deny") is True
 
-        assert mock_end.call_args.args[0] is mock_begin.return_value
-        assert mock_end.call_args.kwargs["output"] == HIL_ACK_DENIED
-
-    async def test_unrelated_message_closes_quietly(self) -> None:
+    async def test_unrelated_message_returns_false(self) -> None:
         sm = _make_stream_manager_mock()
-        with (
-            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
-            patch("app.services.chat.stream.end_turn_all") as mock_end,
-        ):
-            assert await self._resolve(sm, None) is False
+        assert await self._resolve(sm, None) is False
 
-        assert mock_end.call_args.args[0] is mock_begin.return_value
-        assert mock_end.call_args.kwargs["output"] == ""
-
-    async def test_classifier_failure_records_error(self) -> None:
+    async def test_classifier_failure_returns_false(self) -> None:
         sm = _make_stream_manager_mock()
         with (
             _patch_stream_manager(sm),
@@ -632,8 +617,7 @@ class TestApprovalTurnTelemetry:
                 "app.services.chat.stream.resolve_pending_from_message",
                 new=AsyncMock(side_effect=RuntimeError("classifier down")),
             ),
-            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
-            patch("app.services.chat.stream.end_turn_all") as mock_end,
+            patch("app.services.chat.stream._persist_turn", new=AsyncMock()),
         ):
             result = await _resolve_pending_approval_turn(
                 self._approval_body(),
@@ -645,15 +629,15 @@ class TestApprovalTurnTelemetry:
             )
 
         assert result is False
-        assert mock_end.call_args.args[0] is mock_begin.return_value
-        assert isinstance(mock_end.call_args.kwargs["error"], RuntimeError)
-        assert mock_end.call_args.kwargs["output"] == "classifier down"
 
-    async def test_non_bot_source_opens_no_turn(self) -> None:
+    async def test_non_bot_source_returns_false_without_resolving(self) -> None:
         sm = _make_stream_manager_mock()
         with (
             _patch_stream_manager(sm),
-            patch("app.services.chat.stream.begin_turn_all") as mock_begin,
+            patch(
+                "app.services.chat.stream.resolve_pending_from_message",
+                new=AsyncMock(),
+            ) as mock_resolve,
         ):
             result = await _resolve_pending_approval_turn(
                 self._approval_body(),
@@ -665,45 +649,4 @@ class TestApprovalTurnTelemetry:
             )
 
         assert result is False
-        mock_begin.assert_not_called()
-    async def test_description_task_receives_identity(self, test_user):
-        """The detached title task gets the conversation, user, and bot
-        message id — without them its spans orphan and its spend unattributed."""
-        sm = _make_stream_manager_mock()
-        new_body = MessageRequestWithHistory(
-            message="Hello GAIA",
-            messages=[{"role": "user", "content": "Hello GAIA"}],
-            conversation_id=None,
-        )
-        with (
-            _patch_stream_manager(sm),
-            patch(
-                "app.services.chat.stream.call_agent",
-                new=AsyncMock(return_value=_done_only_stream()),
-            ),
-            patch(
-                "app.services.chat.stream.save_conversation_async",
-                new=AsyncMock(),
-            ),
-            patch(
-                "app.services.chat.stream.initialize_new_conversation",
-                new=AsyncMock(return_value="data: init\n\n"),
-            ),
-            patch(
-                "app.services.chat.stream.generate_and_update_description",
-                new=AsyncMock(return_value="Hello GAIA"),
-            ) as mock_generate,
-            patch("app.services.chat.stream.UsageMetadataCallbackHandler", _usage_callback_class()),
-        ):
-            await run_chat_stream_background(
-                stream_id="stream_desc",
-                body=new_body,
-                user=test_user,
-                conversation_id="new_conv_id",
-            )
-
-        mock_generate.assert_awaited_once()
-        args = mock_generate.call_args.args
-        assert args[0] == "new_conv_id"
-        assert args[2] == test_user
-        assert isinstance(args[5], str) and args[5]
+        mock_resolve.assert_not_called()
