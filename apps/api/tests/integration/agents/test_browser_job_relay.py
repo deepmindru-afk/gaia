@@ -23,6 +23,7 @@ from app.services.browser.job_events import JOB_TERMINAL_FRAME, publish_job_even
 from app.services.browser.job_relay import relay_job_events
 from app.services.browser.job_runner import publish_frame_to_job
 from app.utils import background_tasks
+from tests._harness.redis_fakes import FakeRedisClient
 
 pytestmark = pytest.mark.integration
 
@@ -30,52 +31,9 @@ JOB_ID = "job-1"
 STREAM_ID = "stream-1"
 
 
-class _FakeStreamClient:
-    """Enough Redis stream for one job's feed: monotonic ids, reads after a cursor."""
-
-    def __init__(self) -> None:
-        self.streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
-        self._seq = 0
-
-    async def xadd(
-        self,
-        name: str,
-        fields: dict[str, str],
-        *,
-        maxlen: int | None = None,
-        approximate: bool = True,
-    ) -> str:
-        self._seq += 1
-        entry_id = f"{self._seq}-0"
-        self.streams.setdefault(name, []).append((entry_id, dict(fields)))
-        return entry_id
-
-    async def expire(self, name: str, time: int) -> bool:
-        return True
-
-    async def xread(
-        self,
-        streams: dict[str, str],
-        *,
-        count: int | None = None,
-        block: int | None = None,
-    ) -> list[tuple[str, list[tuple[str, dict[str, str]]]]]:
-        results = []
-        for name, cursor in streams.items():
-            after = [e for e in self.streams.get(name, []) if _order(e[0]) > _order(cursor)]
-            if after:
-                results.append((name, after))
-        return results
-
-
-def _order(entry_id: str) -> tuple[int, int]:
-    ms, _, seq = entry_id.partition("-")
-    return int(ms), int(seq or 0)
-
-
 @pytest.fixture
-def feed(monkeypatch: pytest.MonkeyPatch) -> _FakeStreamClient:
-    client = _FakeStreamClient()
+def feed(monkeypatch: pytest.MonkeyPatch) -> FakeRedisClient:
+    client = FakeRedisClient()
     cache = MagicMock()
     cache.client = client
     monkeypatch.setattr(job_events_mod, "redis_cache", cache)
@@ -134,7 +92,7 @@ def _frames(chunks: list[str]) -> list[dict[str, Any]]:
 
 
 async def test_every_card_published_before_the_relay_started_still_reaches_the_turn(
-    feed: _FakeStreamClient, chunks: list[str]
+    feed: FakeRedisClient, chunks: list[str]
 ) -> None:
     """The relay reads from 0-0, so a turn that joins late (or after a restart) shows the run from step 1 rather than from wherever it happened to attach."""
     create_session(STREAM_ID, RunKind.LIVE)
@@ -150,7 +108,7 @@ async def test_every_card_published_before_the_relay_started_still_reaches_the_t
 
 
 async def test_the_relayed_cards_are_collected_onto_the_turns_message(
-    feed: _FakeStreamClient, chunks: list[str]
+    feed: FakeRedisClient, chunks: list[str]
 ) -> None:
     """The whole reason the worker does not publish to the stream itself: only a writer bound to the session collects the cards, so a reload still shows them."""
     create_session(STREAM_ID, RunKind.LIVE)
@@ -163,7 +121,7 @@ async def test_the_relayed_cards_are_collected_onto_the_turns_message(
 
 
 async def test_the_terminal_frame_ends_the_relay_and_is_never_shown(
-    feed: _FakeStreamClient, chunks: list[str]
+    feed: FakeRedisClient, chunks: list[str]
 ) -> None:
     """A sentinel on the wire would reach the frontend as an unknown tool event; it is the relay's stop signal, not a card."""
     create_session(STREAM_ID, RunKind.LIVE)
@@ -176,7 +134,7 @@ async def test_the_terminal_frame_ends_the_relay_and_is_never_shown(
 
 
 async def test_a_cancelled_turn_stops_the_relay(
-    feed: _FakeStreamClient, chunks: list[str], monkeypatch: pytest.MonkeyPatch
+    feed: FakeRedisClient, chunks: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The user stopped this turn; the worker's own cancel path ends the run, and nothing more belongs on a stream nobody is reading."""
     create_session(STREAM_ID, RunKind.LIVE)
@@ -190,7 +148,7 @@ async def test_a_cancelled_turn_stops_the_relay(
 
 
 async def test_a_feed_that_cannot_be_read_never_takes_the_turn_down_with_it(
-    feed: _FakeStreamClient, chunks: list[str], monkeypatch: pytest.MonkeyPatch
+    feed: FakeRedisClient, chunks: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The relay runs as fire-and-forget background work beside the turn; an unhandled error here would surface as a failed turn instead of a missing card."""
     create_session(STREAM_ID, RunKind.LIVE)

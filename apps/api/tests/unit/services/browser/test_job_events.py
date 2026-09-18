@@ -12,64 +12,12 @@ from app.constants.browser import (
     BROWSER_JOB_TTL_SECONDS,
 )
 from app.services.browser import job_events as job_events_mod
-
-
-class _FakeStreamClient:
-    """Minimal Redis stream: monotonic entry ids, XREAD returning only entries after the cursor."""
-
-    def __init__(self) -> None:
-        self.streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
-        self.xadd_calls: list[tuple[str, int | None, bool]] = []
-        self.expire_calls: list[tuple[str, int]] = []
-        self.xread_calls: list[tuple[dict[str, str], int | None]] = []
-        self._seq = 0
-
-    async def xadd(
-        self,
-        name: str,
-        fields: dict[str, str],
-        *,
-        maxlen: int | None = None,
-        approximate: bool = True,
-    ) -> str:
-        self.xadd_calls.append((name, maxlen, approximate))
-        self._seq += 1
-        entry_id = f"{self._seq}-0"
-        self.streams.setdefault(name, []).append((entry_id, dict(fields)))
-        return entry_id
-
-    async def expire(self, name: str, time: int) -> bool:
-        self.expire_calls.append((name, time))
-        return True
-
-    async def xread(
-        self,
-        streams: dict[str, str],
-        *,
-        count: int | None = None,
-        block: int | None = None,
-    ) -> list[tuple[str, list[tuple[str, dict[str, str]]]]]:
-        self.xread_calls.append((dict(streams), block))
-        results = []
-        for name, cursor in streams.items():
-            after = [
-                entry
-                for entry in self.streams.get(name, [])
-                if _entry_sort(entry[0]) > _entry_sort(cursor)
-            ]
-            if after:
-                results.append((name, after))
-        return results
-
-
-def _entry_sort(entry_id: str) -> tuple[int, int]:
-    ms, _, seq = entry_id.partition("-")
-    return int(ms), int(seq or 0)
+from tests._harness.redis_fakes import FakeRedisClient
 
 
 @pytest.fixture
-def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeStreamClient:
-    client = _FakeStreamClient()
+def fake_client(monkeypatch: pytest.MonkeyPatch) -> FakeRedisClient:
+    client = FakeRedisClient()
     fake_cache = MagicMock()
     fake_cache.client = client
     monkeypatch.setattr(job_events_mod, "redis_cache", fake_cache)
@@ -82,7 +30,7 @@ def _frame(step: int) -> dict[str, Any]:
 
 @pytest.mark.unit
 async def test_every_published_frame_replays_from_the_start_in_order(
-    fake_client: _FakeStreamClient,
+    fake_client: FakeRedisClient,
 ) -> None:
     for step in (1, 2, 3):
         await job_events_mod.publish_job_event("job-1", _frame(step))
@@ -94,7 +42,7 @@ async def test_every_published_frame_replays_from_the_start_in_order(
 
 @pytest.mark.unit
 async def test_reading_from_a_cursor_returns_only_what_came_after_it(
-    fake_client: _FakeStreamClient,
+    fake_client: FakeRedisClient,
 ) -> None:
     for step in (1, 2, 3):
         await job_events_mod.publish_job_event("job-1", _frame(step))
@@ -106,7 +54,7 @@ async def test_reading_from_a_cursor_returns_only_what_came_after_it(
 
 
 @pytest.mark.unit
-async def test_the_feed_is_capped_and_expires_with_the_job(fake_client: _FakeStreamClient) -> None:
+async def test_the_feed_is_capped_and_expires_with_the_job(fake_client: FakeRedisClient) -> None:
     await job_events_mod.publish_job_event("job-1", _frame(1))
 
     key = f"{BROWSER_JOB_EVENTS_PREFIX}job-1"
@@ -116,7 +64,7 @@ async def test_the_feed_is_capped_and_expires_with_the_job(fake_client: _FakeStr
 
 @pytest.mark.unit
 async def test_a_poisoned_frame_is_dropped_and_logged_not_raised(
-    fake_client: _FakeStreamClient, monkeypatch: pytest.MonkeyPatch
+    fake_client: FakeRedisClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One unreadable entry must not end the relay — every other card still has to reach the user."""
     await job_events_mod.publish_job_event("job-1", _frame(1))
@@ -135,7 +83,7 @@ async def test_a_poisoned_frame_is_dropped_and_logged_not_raised(
 
 @pytest.mark.unit
 async def test_a_blocking_read_passes_its_budget_to_redis_and_a_zero_does_not_block(
-    fake_client: _FakeStreamClient,
+    fake_client: FakeRedisClient,
 ) -> None:
     """block=0 must mean "whatever is there now": the worker drains the whole feed with it and can never hang on an empty stream."""
     await job_events_mod.read_job_events("job-1", "0-0", 1000)
@@ -146,6 +94,6 @@ async def test_a_blocking_read_passes_its_budget_to_redis_and_a_zero_does_not_bl
 
 @pytest.mark.unit
 async def test_reading_a_feed_that_has_no_frames_yet_is_empty(
-    fake_client: _FakeStreamClient,
+    fake_client: FakeRedisClient,
 ) -> None:
     assert await job_events_mod.read_job_events("job-unknown", "0-0", 0) == []
