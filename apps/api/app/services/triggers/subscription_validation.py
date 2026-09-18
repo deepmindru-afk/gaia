@@ -11,6 +11,7 @@ does not happen: a subscription that "nearly" matches executes todos on the wron
 event, which is worse than refusing to store it.
 """
 
+from collections.abc import Mapping
 from difflib import get_close_matches
 
 from pydantic import BaseModel, Field
@@ -24,6 +25,7 @@ from app.models.trigger_subscription_models import (
     SubscriptionCondition,
 )
 from app.services.triggers.matchable_fields import get_matchable_trigger
+from app.services.triggers.scope_catalog import scope_fields_for
 
 # Below this ratio a "close" name is a different field, and picking it would
 # silently rewrite what the user asked to watch.
@@ -182,6 +184,43 @@ def _validate_one(
 
     repaired = SubscriptionCondition(field_name=field.name, operator=operator, value=value)
     return repaired, [], "; ".join(reasons) if reasons else None
+
+
+def _unknown_scope_error(trigger_name: str, key: str, valid: set[str]) -> str:
+    return (
+        f"'{key}' is not a scope field on '{trigger_name}'. "
+        f"Scope fields: {', '.join(sorted(valid))}."
+    )
+
+
+def validate_scope(trigger_name: str, scope: Mapping[str, object] | None) -> list[str]:
+    """Check a subscription's registration scope against what the trigger accepts.
+
+    Catches three failures that otherwise surface late at registration: an unknown
+    key (Pydantic drops it, leaving the real field empty), scope on a trigger that
+    has none, and a missing required field. Presence only; type/range is the model's.
+    """
+    fields = scope_fields_for(trigger_name)
+    provided = scope or {}
+    if not fields:
+        if provided:
+            return [
+                f"'{trigger_name}' takes no scope configuration; "
+                f"remove {', '.join(sorted(provided))}."
+            ]
+        return []
+
+    valid = {field.name for field in fields}
+    errors = [
+        _unknown_scope_error(trigger_name, key, valid) for key in provided if key not in valid
+    ]
+    for field in fields:
+        if field.required and not provided.get(field.name):
+            errors.append(
+                f"'{trigger_name}' requires a '{field.name}' scope ({field.description}); "
+                "none was provided."
+            )
+    return errors
 
 
 def validate_conditions(
