@@ -209,27 +209,80 @@ class JevChatModel:
         self, decision: JevDecision, observation: JevObservation, goal: str, registered: set[str]
     ) -> tuple[dict[str, dict[str, object]], str | None]:
         """Return the Browser-Use action a decision executes as, plus any text the helper wrote."""
-        element = decision.element
-        input_action = "input" if "input" in registered else "input_text"
+        action: tuple[dict[str, dict[str, object]], str | None] | None = None
         match decision.operation:
-            case JevOperation.CLICK if element is not None:
+            case JevOperation.DONE | JevOperation.BLOCKED:
+                action = await self._terminal_action(decision, observation, goal)
+            case JevOperation.REQUEST_HUMAN | JevOperation.SOLVE_CAPTCHA:
+                action = await self._handoff_action(decision, observation, goal)
+            case JevOperation.CLICK | JevOperation.TYPE_TEXT | JevOperation.SELECT:
+                action = await self._element_action(decision, observation, goal, registered)
+            case (
+                JevOperation.SCROLL_UP
+                | JevOperation.SCROLL_DOWN
+                | JevOperation.WAIT
+                | JevOperation.GO_BACK
+                | JevOperation.NAVIGATE
+            ):
+                action = await self._control_action(decision, observation, goal)
+        if action is None:
+            raise JevDecisionError(f"Jev chose {decision.operation.value} without a usable target.")
+        return action
+
+    async def _terminal_action(
+        self, decision: JevDecision, observation: JevObservation, goal: str
+    ) -> tuple[dict[str, dict[str, object]], str | None]:
+        if decision.operation is JevOperation.BLOCKED:
+            return {"done": {"text": _BLOCKED_SUMMARY, "success": False}}, None
+        summary = await self._field_text(DONE_SUMMARY, goal, observation, None)
+        return {"done": {"text": summary or "Completed the task.", "success": True}}, summary
+
+    async def _handoff_action(
+        self, decision: JevDecision, observation: JevObservation, goal: str
+    ) -> tuple[dict[str, dict[str, object]], str | None]:
+        if decision.operation is JevOperation.SOLVE_CAPTCHA:
+            challenge = await self._field_text(CAPTCHA_CHALLENGE, goal, observation, None)
+            text = challenge or _DEFAULT_CAPTCHA_CHALLENGE
+            return {BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: {"challenge": text}}, text
+        reason = await self._structured(_TakeoverReason, TAKEOVER_REASON, goal, observation, None)
+        text = (reason.text if reason else None) or _DEFAULT_TAKEOVER_REASON
+        category = reason.category if reason else SensitiveCategory.IRREVERSIBLE.value
+        return _takeover(text, category), text
+
+    async def _element_action(
+        self, decision: JevDecision, observation: JevObservation, goal: str, registered: set[str]
+    ) -> tuple[dict[str, dict[str, object]], str | None] | None:
+        """None when the decision named no usable element, which the caller rejects."""
+        element = decision.element
+        if element is None:
+            return None
+        match decision.operation:
+            case JevOperation.CLICK:
                 return {"click": {"index": element.browser_index}}, None
-            case JevOperation.TYPE_TEXT if element is not None:
+            case JevOperation.TYPE_TEXT:
                 value = await self._field_text(TEXT_VALUE, goal, observation, element)
                 if value is None:
                     # A value the goal did not supply is never invented; the human
                     # supplies it instead, per the takeover policy.
                     return _takeover(f"Enter the {element.label}"[:80]), None
+                input_action = "input" if "input" in registered else "input_text"
                 return {
                     input_action: {"index": element.browser_index, "text": value, "clear": True}
                 }, value
-            case JevOperation.SELECT if element is not None and decision.option is not None:
+            case JevOperation.SELECT if decision.option is not None:
                 return {
                     "select_dropdown": {
                         "index": element.browser_index,
                         "text": decision.option.label,
                     }
                 }, decision.option.label
+        return None
+
+    async def _control_action(
+        self, decision: JevDecision, observation: JevObservation, goal: str
+    ) -> tuple[dict[str, dict[str, object]], str | None] | None:
+        """None when the operation is not one of the controls, which the caller rejects."""
+        match decision.operation:
             case JevOperation.SCROLL_UP:
                 return {"scroll": {"down": False, "pages": 1.0}}, None
             case JevOperation.SCROLL_DOWN:
@@ -245,25 +298,7 @@ class JevChatModel:
                         "wait": {"seconds": 1}
                     }, "NAVIGATE needs a URL the goal implies; none found"
                 return {"navigate": {"url": url, "new_tab": False}}, url
-            case JevOperation.REQUEST_HUMAN:
-                reason = await self._structured(
-                    _TakeoverReason, TAKEOVER_REASON, goal, observation, None
-                )
-                text = (reason.text if reason else None) or _DEFAULT_TAKEOVER_REASON
-                category = reason.category if reason else SensitiveCategory.IRREVERSIBLE.value
-                return _takeover(text, category), text
-            case JevOperation.SOLVE_CAPTCHA:
-                challenge = await self._field_text(CAPTCHA_CHALLENGE, goal, observation, None)
-                text = challenge or _DEFAULT_CAPTCHA_CHALLENGE
-                return {BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: {"challenge": text}}, text
-            case JevOperation.DONE:
-                summary = await self._field_text(DONE_SUMMARY, goal, observation, None)
-                return {
-                    "done": {"text": summary or "Completed the task.", "success": True}
-                }, summary
-            case JevOperation.BLOCKED:
-                return {"done": {"text": _BLOCKED_SUMMARY, "success": False}}, None
-        raise JevDecisionError(f"Jev chose {decision.operation.value} without a usable target.")
+        return None
 
     async def _field_text(
         self, instructions: str, goal: str, observation: JevObservation, field: JevElement | None
