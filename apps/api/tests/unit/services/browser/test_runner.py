@@ -930,6 +930,36 @@ async def test_handoff_cancellation_without_a_takeover_cancels_the_task(
     assert result.summary == "Browser task was stopped."
 
 
+async def test_a_timed_out_handoff_is_reported_even_when_browser_use_swallows_the_cancel(
+    patch_browser, monkeypatch
+) -> None:
+    """Browser-Use catches the cancel inside the registered action, so the run returns normally and only the recorded flag still says the handoff expired."""
+    import contextlib
+
+    from app.services.browser.exceptions import BrowserHandoffCancelled
+
+    holder: dict[str, BrowserTaskRunner] = {}
+
+    async def _swallowed(self, max_steps: int, on_step_end=None):
+        with contextlib.suppress(BrowserHandoffCancelled):
+            await holder["runner"]._handle_takeover("Log in", "credentials")
+        return _History()
+
+    monkeypatch.setattr(FakeAgent, "run", _swallowed)
+    _, emit = _collector()
+    runner = _make_runner(
+        emit=emit,
+        request_handoff=AsyncMock(return_value=HandoffOutcome(status=HandoffStatus.TIMEOUT)),
+    )
+    holder["runner"] = runner
+
+    result = await runner.run("x")
+
+    assert result.status == BrowserSessionStatus.FAILED
+    assert result.success is False
+    assert result.summary == BROWSER_RUN_HANDOFF_TIMED_OUT
+
+
 @pytest.mark.parametrize(
     ("second", "expected"),
     [

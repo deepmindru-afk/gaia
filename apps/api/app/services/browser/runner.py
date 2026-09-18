@@ -192,6 +192,13 @@ class BrowserTaskRunner:
                 f"{BROWSER_TASK_FAILED_PREFIX}{exc}",
             )
 
+        # Browser-Use catches BrowserHandoffCancelled inside the registered action
+        # and turns it into an action error, so on a timeout the run returns
+        # normally and only the flag the takeover hook set still knows.
+        if self._handoff_timed_out:
+            return await self._finish(
+                BrowserSessionStatus.FAILED, False, BROWSER_RUN_HANDOFF_TIMED_OUT
+            )
         if self._stopped:
             status = (
                 BrowserSessionStatus.COMPLETED
