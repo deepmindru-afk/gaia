@@ -101,10 +101,10 @@ async def test_happy_path_runs_and_returns_summary(
         ),
     )
     out = await browser_task.ainvoke({"task": "book a table"}, config=UI_CONFIG)
-    # The tool returns the runner's summary wrapped in outcome-specific guidance,
-    # so the assistant confirms a real result instead of narrating the mechanics.
-    assert "Booked the table." in out
-    assert "COMPLETED" in out
+    # The run's own answer leads, so the executor hears the result rather than
+    # a wrapper it can mistake for "nothing came back" and run the task again.
+    assert out.startswith("Booked the table.")
+    assert "The browser task finished" in out
     runner.run.assert_awaited_once()
 
 
@@ -194,7 +194,8 @@ NO_META = (
 
 def _completed_message(summary: str) -> str:
     return (
-        f"BROWSER TASK COMPLETED. What was accomplished: {summary}.\n\n"
+        f"{summary}\n\n"
+        "The browser task finished, and the text above is its own final answer. "
         f"Reply with a short, natural confirmation of what you found or did. {NO_META}"
     )
 
@@ -202,8 +203,9 @@ def _completed_message(summary: str) -> str:
 def _failed_message(summary: str) -> str:
     return (
         f"BROWSER TASK DID NOT COMPLETE. Last state: {summary}.\n\n"
-        f"Tell the user honestly and briefly that it couldn't be finished, and why if it's "
-        f"clear. Do not fabricate a result. {NO_META}"
+        "Do not run the browser again for this request; tell the user what happened. "
+        f"Tell the user honestly and briefly that it couldn't be finished, and why "
+        f"if it's clear. Do not fabricate a result. {NO_META}"
     )
 
 
@@ -219,6 +221,39 @@ def _result(
     status: BrowserSessionStatus, success: bool, summary: str, steps: int = 0
 ) -> BrowserResultSnapshot:
     return BrowserResultSnapshot(status=status, success=success, summary=summary, steps=steps)
+
+
+def test_a_done_runs_own_answer_is_what_the_executor_hears() -> None:
+    """The executor re-ran a finished task because the answer never reached it: the tool result must lead with the run's own final text, from Browser-Use's history to the tool's return."""
+    from app.services.browser.agent_run import outcome_from_history
+
+    answer = "The page title is Reddit - Dive into anything"
+
+    class _History:
+        def final_result(self):
+            return answer
+
+        def is_done(self):
+            return True
+
+        def is_successful(self):
+            return True
+
+        usage = None
+
+    outcome = outcome_from_history(_History())
+    out = tool_mod._agent_result_message(
+        _result(BrowserSessionStatus.COMPLETED, outcome.success, outcome.summary)
+    )
+
+    assert answer in out
+    assert out.startswith(answer)
+
+
+def test_a_failed_run_tells_the_executor_not_to_run_the_browser_again() -> None:
+    out = tool_mod._agent_result_message(_result(BrowserSessionStatus.FAILED, False, "Timed out"))
+
+    assert "Do not run the browser again for this request; tell the user what happened." in out
 
 
 def test_result_message_completed_success_is_exact() -> None:
@@ -243,7 +278,7 @@ def test_result_message_success_flag_alone_is_not_completion() -> None:
 
 def test_result_message_completed_with_blank_summary_uses_fallback() -> None:
     out = tool_mod._agent_result_message(_result(BrowserSessionStatus.COMPLETED, True, "   "))
-    assert out == _completed_message("the task finished")
+    assert out == _completed_message("The task finished.")
 
 
 def test_result_message_failure_with_blank_summary_uses_fallback() -> None:

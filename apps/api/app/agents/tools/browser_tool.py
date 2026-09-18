@@ -82,13 +82,20 @@ _NO_META = (
 )
 
 
+# The executor re-ran a finished task once because the tool result buried the
+# run's answer; the answer now leads, and a failure says not to try again.
+_FINISHED_LINE = "The browser task finished, and the text above is its own final answer."
+_NO_RETRY = "Do not run the browser again for this request; tell the user what happened."
+
+
 def _agent_result_message(result: BrowserResultSnapshot) -> str:
     """Tell the assistant how to reply: confirm a real result, own a stop, or report a failure."""
     summary = result.summary.strip()
     if result.status == BrowserSessionStatus.COMPLETED and result.success:
         return (
-            f"BROWSER TASK COMPLETED. What was accomplished: {summary or 'the task finished'}.\n\n"
-            f"Reply with a short, natural confirmation of what you found or did. {_NO_META}"
+            f"{summary or 'The task finished.'}\n\n"
+            f"{_FINISHED_LINE} Reply with a short, natural confirmation of what you found "
+            f"or did. {_NO_META}"
         )
     if result.status == BrowserSessionStatus.CANCELLED:
         return (
@@ -99,8 +106,8 @@ def _agent_result_message(result: BrowserResultSnapshot) -> str:
         )
     return (
         f"BROWSER TASK DID NOT COMPLETE. Last state: {summary or 'the task could not be finished'}.\n\n"
-        f"Tell the user honestly and briefly that it couldn't be finished, and why if it's clear. "
-        f"Do not fabricate a result. {_NO_META}"
+        f"{_NO_RETRY} Tell the user honestly and briefly that it couldn't be finished, and why "
+        f"if it's clear. Do not fabricate a result. {_NO_META}"
     )
 
 
