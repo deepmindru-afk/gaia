@@ -16,7 +16,8 @@ from time import perf_counter
 from app.schemas.browser import BrowserAction, BrowserActionOutput
 
 # Per-action results, keyed to the step whose rows the thread mirror emitted.
-ActionResultsFn = Callable[[int, list[BrowserActionOutput]], None]
+# Awaitable: the mirror publishes them, and a publish crosses a process boundary.
+ActionResultsFn = Callable[[int, list[BrowserActionOutput]], Awaitable[None]]
 
 
 @dataclass(frozen=True)

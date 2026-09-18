@@ -293,4 +293,4 @@ class BrowserAgentRun:
             if (text := _summarize_action_result(result))
         ]
         if outputs:
-            self._hooks.action_results(self._last_step, outputs)
+            await self._hooks.action_results(self._last_step, outputs)

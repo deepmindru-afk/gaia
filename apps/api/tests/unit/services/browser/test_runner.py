@@ -641,12 +641,21 @@ def test_element_label_warns_with_the_error_type_when_a_node_shape_is_unrecognis
     )
 
 
+def _recorder(calls: list[tuple[int, list]]) -> ActionResultsFn:
+    """Record the calls to an awaited sink — publishing a row crosses a process boundary."""
+
+    async def record(step: int, outputs: list) -> None:
+        calls.append((step, outputs))
+
+    return record
+
+
 async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> None:
     """Key the output to the step _on_step already emitted rows for; a silent success adds no row."""
     calls: list[tuple[int, list]] = []
     runner = _make_runner(
         emit=AsyncMock(),
-        overrides=_RunnerOverrides(action_results=lambda step, outs: calls.append((step, outs))),
+        overrides=_RunnerOverrides(action_results=_recorder(calls)),
     )
     runner._agent_run._last_step = 4
 
@@ -673,7 +682,7 @@ async def test_on_step_end_reports_nothing_for_an_agent_with_no_results_yet() ->
     calls: list[tuple[int, list]] = []
     runner = _make_runner(
         emit=AsyncMock(),
-        overrides=_RunnerOverrides(action_results=lambda step, outs: calls.append((step, outs))),
+        overrides=_RunnerOverrides(action_results=_recorder(calls)),
     )
 
     await runner._agent_run._on_step_end(SimpleNamespace())
@@ -746,7 +755,7 @@ async def test_run_mirrors_each_steps_action_results_into_the_thread(patch_brows
     _, emit = _collector()
     runner = _make_runner(
         emit=emit,
-        overrides=_RunnerOverrides(action_results=lambda step, outs: calls.append((step, outs))),
+        overrides=_RunnerOverrides(action_results=_recorder(calls)),
     )
     FakeAgent.script = [
         {"goal": "Sign in", "actions": [("click", {"index": 1})], "results": [{"error": "nope"}]}
