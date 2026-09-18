@@ -46,11 +46,9 @@ async def deliver_result_to_platforms(
 ) -> ConversationSource | None:
     """Deliver a proactive result to the user's ONE preferred messaging platform.
 
-    Sent as a real, persisted bot message split into natural bubbles, and
-    recorded in that platform conversation's langgraph thread. The platform
-    is the first in the user's chat-channel order that is linked and enabled;
-    exclude_source skips a platform that already received the result. Best-effort.
-    Returns the platform that received it, or None when nothing was sent.
+    The platform is the first in their chat-channel order that is linked and
+    enabled; exclude_source skips one that already received the result.
+    Best-effort: returns the platform that got it, or None when nothing was sent.
     """
     if not notification_text.strip():
         return None

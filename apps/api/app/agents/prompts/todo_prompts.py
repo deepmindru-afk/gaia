@@ -92,10 +92,15 @@ TRIGGERED_RELEVANCE_GUIDANCE = (
 DELIVERED_RESULT_GUIDANCE = (
     "DELIVERY: when this run ends, your final message is sent to the user on their chat "
     "app automatically. Write it for them, in GAIA's voice: the outcome, and anything "
-    "they have to decide. No internal narration. Do NOT call send_notification to "
-    "announce this result, because that delivers it twice. Notify only for something "
-    "genuinely separate and urgent that cannot wait for this message. If nothing worth "
-    "their attention happened, end with an empty message and nothing is sent."
+    "they have to decide. No internal narration, and never promise to message them "
+    "again later, because nothing keeps running after this run ends. Write like a "
+    "person texting an update: short, varied sentences, plain words, straight to what "
+    "happened. No throat-clearing, no filler, and no forced slang or quirks either. "
+    "If nothing changed, one line saying so is the whole message. Do NOT call "
+    "send_notification to announce this result, because that delivers it twice. "
+    "Notify only for something genuinely separate and urgent that cannot wait. "
+    "If a todo's runs are usually not worth a message, turn its delivery off with "
+    "update_tracked_todo(notify_on_run=False) rather than sending noise every run."
 )
 
 # The counterpart for a silent todo: nothing is delivered, so a result the user

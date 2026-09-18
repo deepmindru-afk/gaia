@@ -273,6 +273,11 @@ async def _execute_todo_with_retry(
         return f"retry:{todo_id} (attempt {new_retry_count})"
 
 
+def _trigger_type(origin: TriggerOrigin | None) -> TriggerType:
+    """Name what woke this run: its own schedule, or a watch that fired."""
+    return TriggerType.SCHEDULED_TODO if origin is None else TriggerType.TODO_TRIGGER
+
+
 def _execution_context(todo_id: str | None, origin: TriggerOrigin | None) -> dict[str, object]:
     """Build the trigger stamp both execution paths put on a run.
 
@@ -280,9 +285,9 @@ def _execution_context(todo_id: str | None, origin: TriggerOrigin | None) -> dic
     the same literal separately, so only one would have been updated.
     """
     if origin is None:
-        return {"trigger_type": TriggerType.SCHEDULED_TODO.value, "todo_id": todo_id}
+        return {"trigger_type": _trigger_type(origin).value, "todo_id": todo_id}
     return {
-        "trigger_type": TriggerType.TODO_TRIGGER.value,
+        "trigger_type": _trigger_type(origin).value,
         "todo_id": todo_id,
         "trigger_name": origin.trigger_name,
         "subscription_id": origin.subscription_id,
@@ -304,7 +309,13 @@ async def _run_execution(
             WorkflowQueueService,
         )
 
-        context = _execution_context(doc.id, origin)
+        # A todo that generated a workflow still runs under the todo's own opt-out:
+        # without this the workflow's notify_on_completion (default on) would
+        # message a user who turned this todo's delivery off.
+        context = {
+            **_execution_context(doc.id, origin),
+            "workflow_notify_on_completion": doc.notify_on_run,
+        }
         success = await WorkflowQueueService.queue_workflow_execution(
             doc.workflow_id, user_id, context
         )
@@ -345,25 +356,21 @@ async def _collect_reference_context(ref_ids: list[str], user_id: str) -> str:
 
 
 def _build_execution_prompt(
+    doc: TodoDocument,
     *,
-    title: str,
-    description: str,
     canvas_content: str | None,
     reference_context: str,
     activity_content: str | None = None,
     origin: TriggerOrigin | None = None,
-    notify_on_run: bool = True,
 ) -> str:
     """Assemble the run prompt from the todo's fields and context.
 
-    trigger_context only reaches the model via format_workflow_execution_message,
-    which the agent path never calls, so the payload goes in the prompt itself.
-    It is attacker-influenceable, so it is fenced with a random nonce and
-    labelled untrusted, as the HIL intent judge does.
-
-    notify_on_run states where the final message goes: a run that is not told
-    reaches for send_notification and the user gets the result twice.
+    The trigger payload goes in the prompt itself because the agent path never
+    calls format_workflow_execution_message, the only other way it would reach
+    the model. It is attacker-influenceable, so it is fenced and labelled
+    untrusted. doc.notify_on_run decides which delivery contract is stated.
     """
+    title = doc.title
     if origin is None:
         prompt_parts = [f"Execute the following scheduled task: {title}"]
     else:
@@ -378,8 +385,8 @@ def _build_execution_prompt(
             f"{fence}\n{payload_json}\n{fence}",
             TRIGGERED_RELEVANCE_GUIDANCE,
         ]
-    if description:
-        prompt_parts.append(f"Details: {description}")
+    if doc.description:
+        prompt_parts.append(f"Details: {doc.description}")
     if canvas_content:
         prompt_parts.append(f"Canvas (canvas.md):\n{canvas_content}")
     if activity_content:
@@ -391,7 +398,9 @@ def _build_execution_prompt(
         prompt_parts.append(f"{label}:\n{tail}")
     if reference_context:
         prompt_parts.append(reference_context)
-    prompt_parts.append(DELIVERED_RESULT_GUIDANCE if notify_on_run else SILENT_RUN_GUIDANCE)
+    prompt_parts.append(
+        DELIVERED_RESULT_GUIDANCE if doc.notify_on_run else SILENT_RUN_GUIDANCE
+    )
     return "\n\n".join(prompt_parts)
 
 
@@ -426,13 +435,11 @@ async def _execute_via_agent(
     # Build prompt
     title = doc.title
     prompt = _build_execution_prompt(
-        title=title,
-        description=doc.description or "",
+        doc,
         canvas_content=canvas_content,
         activity_content=activity_content,
         reference_context=reference_context,
         origin=origin,
-        notify_on_run=doc.notify_on_run,
     )
 
     # Generate a fresh conversation_id for each execution to prevent
@@ -533,7 +540,7 @@ async def _execute_via_agent(
             {
                 "delivered": delivered_to is not None,
                 "platform": delivered_to.value if delivered_to else None,
-                "trigger_type": _execution_context(todo_id, origin)["trigger_type"],
+                "trigger_type": _trigger_type(origin).value,
                 "recurring": bool(doc.recurrence),
             },
         )

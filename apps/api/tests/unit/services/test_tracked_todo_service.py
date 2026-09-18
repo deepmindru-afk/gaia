@@ -184,6 +184,23 @@ class TestCreateTrackedTodo:
         assert mock_repo.update.await_args.kwargs["update"].canvas_content == "custom canvas"
         assert mock_deps.store.call_args.kwargs["canvas_content"].startswith("custom canvas")
 
+    async def test_run_results_are_delivered_unless_the_caller_opts_out(self, mock_repo, mock_deps):
+        """The default decides whether a new tracked todo ever messages the user at all."""
+        mock_deps.create.return_value = _todo_response()
+
+        await TrackedTodoService.create_tracked_todo(USER_ID, "Prepare Q3 report")
+
+        assert mock_deps.create.call_args.args[0].notify_on_run is True
+
+    async def test_a_caller_can_create_a_silent_todo(self, mock_repo, mock_deps):
+        mock_deps.create.return_value = _todo_response()
+
+        await TrackedTodoService.create_tracked_todo(
+            USER_ID, "Prepare Q3 report", notify_on_run=False
+        )
+
+        assert mock_deps.create.call_args.args[0].notify_on_run is False
+
     async def test_preserves_caller_labels(self, mock_repo, mock_deps):
         mock_deps.create.return_value = _todo_response()
 

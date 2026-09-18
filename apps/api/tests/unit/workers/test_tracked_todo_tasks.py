@@ -314,7 +314,7 @@ class TestTriggeredExecutionPrompt:
 
     def test_a_scheduled_prompt_mentions_no_event(self):
         prompt = _build_execution_prompt(
-            title="Chase Acme", description="", canvas_content=None, reference_context=""
+            _doc(title="Chase Acme"), canvas_content=None, reference_context=""
         )
 
         assert prompt.startswith("Execute the following scheduled task: Chase Acme")
@@ -331,8 +331,7 @@ class TestTriggeredExecutionPrompt:
         )
 
         prompt = _build_execution_prompt(
-            title="Chase Acme",
-            description="",
+            _doc(title="Chase Acme"),
             canvas_content=None,
             reference_context="",
             origin=origin,
@@ -357,8 +356,7 @@ class TestTriggeredExecutionPrompt:
         )
 
         prompt = _build_execution_prompt(
-            title="Chase Acme",
-            description="",
+            _doc(title="Chase Acme"),
             canvas_content=None,
             reference_context="",
             origin=origin,
@@ -393,8 +391,7 @@ class TestTriggeredExecutionPrompt:
         )
 
         prompt = _build_execution_prompt(
-            title="Chase Acme",
-            description="",
+            _doc(title="Chase Acme"),
             canvas_content=None,
             reference_context="",
             origin=origin,
@@ -413,8 +410,7 @@ class TestTriggeredExecutionPrompt:
         )
 
         prompt = _build_execution_prompt(
-            title="Chase Acme",
-            description="",
+            _doc(title="Chase Acme"),
             canvas_content=None,
             reference_context="",
             origin=origin,
@@ -433,11 +429,9 @@ class TestDeliveryContractInThePrompt:
 
     def test_a_delivering_run_is_told_its_message_reaches_the_user(self):
         prompt = _build_execution_prompt(
-            title="Chase Acme",
-            description="",
+            _doc(title="Chase Acme", notify_on_run=True),
             canvas_content=None,
             reference_context="",
-            notify_on_run=True,
         )
 
         assert DELIVERED_RESULT_GUIDANCE in prompt
@@ -445,11 +439,9 @@ class TestDeliveryContractInThePrompt:
 
     def test_a_silent_run_is_told_its_message_reaches_nobody(self):
         prompt = _build_execution_prompt(
-            title="Chase Acme",
-            description="",
+            _doc(title="Chase Acme", notify_on_run=False),
             canvas_content=None,
             reference_context="",
-            notify_on_run=False,
         )
 
         assert SILENT_RUN_GUIDANCE in prompt
@@ -756,8 +748,31 @@ class TestRunExecution:
 
         via_agent.assert_not_awaited()
         queue.assert_awaited_once_with(
-            "wf-9", "user-1", {"trigger_type": "scheduled_todo", "todo_id": "todo-1"}
+            "wf-9",
+            "user-1",
+            {
+                "trigger_type": "scheduled_todo",
+                "todo_id": "todo-1",
+                "workflow_notify_on_completion": True,
+            },
         )
+
+    @pytest.mark.parametrize("notify_on_run", [True, False])
+    async def test_a_workflow_backed_todo_runs_under_the_todos_own_opt_out(self, notify_on_run):
+        """A generated workflow defaults to notifying, which would message a silent todo's owner."""
+        queue = AsyncMock(return_value=True)
+        with (
+            patch(
+                "app.services.workflow.queue_service.WorkflowQueueService.queue_workflow_execution",
+                queue,
+            ),
+            patch(f"{MODULE}._execute_via_agent", AsyncMock()),
+        ):
+            await _run_execution(
+                _doc(workflow_id="wf-9", notify_on_run=notify_on_run), "user-1", user_data={}
+            )
+
+        assert queue.await_args.args[2]["workflow_notify_on_completion"] is notify_on_run
 
     async def test_failed_workflow_queue_raises_so_the_retry_ladder_engages(self):
         with (
@@ -927,8 +942,7 @@ class TestBuildExecutionPrompt:
     def test_title_only(self):
         assert (
             _build_execution_prompt(
-                title="Ship it",
-                description="",
+                _doc(title="Ship it"),
                 canvas_content=None,
                 activity_content=None,
                 reference_context="",
@@ -938,8 +952,7 @@ class TestBuildExecutionPrompt:
 
     def test_all_sections_appear_in_order(self):
         prompt = _build_execution_prompt(
-            title="Ship it",
-            description="the release",
+            _doc(title="Ship it", description="the release"),
             canvas_content="## Current State\nblocked",
             activity_content="- 2026-09-01T09:00:00+00:00 started",
             reference_context="past stuff",
@@ -957,8 +970,7 @@ class TestBuildExecutionPrompt:
 
     def test_empty_bodies_are_omitted_not_rendered_as_empty_headers(self):
         prompt = _build_execution_prompt(
-            title="Ship it",
-            description="",
+            _doc(title="Ship it"),
             canvas_content="",
             activity_content="",
             reference_context="",
@@ -969,8 +981,7 @@ class TestBuildExecutionPrompt:
         """A recurring todo's activity grows forever; the prompt must not."""
         activity = "\n".join(f"- entry {i}" for i in range(2000))
         prompt = _build_execution_prompt(
-            title="Ship it",
-            description="",
+            _doc(title="Ship it"),
             canvas_content=None,
             activity_content=activity,
             reference_context="",
@@ -984,8 +995,7 @@ class TestBuildExecutionPrompt:
         """The marker is appended to the label, not substituted — a dropped or reworded marker hides the cut."""
         activity = "x" * (ACTIVITY_PROMPT_TAIL_CHARS + 1)
         prompt = _build_execution_prompt(
-            title="Ship it",
-            description="",
+            _doc(title="Ship it"),
             canvas_content=None,
             activity_content=activity,
             reference_context="",
@@ -999,8 +1009,7 @@ class TestBuildExecutionPrompt:
 
     def test_short_activity_is_not_flagged_as_truncated(self):
         prompt = _build_execution_prompt(
-            title="Ship it",
-            description="",
+            _doc(title="Ship it"),
             canvas_content=None,
             activity_content="- one line",
             reference_context="",
@@ -1349,6 +1358,24 @@ class TestExecuteViaAgentDelivery:
         assert props["delivered"] is True
         assert props["platform"] == "telegram"
         assert props["recurring"] is True
+        assert props["trigger_type"] == TriggerType.SCHEDULED_TODO.value
+
+    async def test_a_triggered_run_is_captured_as_triggered_not_scheduled(self):
+        """Both kinds of run deliver, so a wrong stamp makes the two indistinguishable."""
+        agent = AsyncMock(return_value=SilentRunResult(message="Deploy is green.", tool_data=[]))
+        deliver = AsyncMock(return_value=ConversationSource.TELEGRAM)
+        origin = TriggerOrigin(
+            subscription_id="sub-1", trigger_name="gmail_new_message", payload={"id": "1"}
+        )
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(agent=agent, deliver=deliver)
+        with p1, p2, p3, p4, p5, p6, p7:
+            await _execute_via_agent(
+                _doc(), "user-1", user_data=AuthenticatedUser(user_id="user-1"), origin=origin
+            )
+
+        props = self.capture.call_args.args[2]
+        assert props["trigger_type"] == TriggerType.TODO_TRIGGER.value
+        assert props["recurring"] is False
 
     async def test_a_result_that_reached_nobody_is_captured_as_undelivered(self):
         """Counting an unlinked user's skipped delivery as a success hides the failure entirely."""
