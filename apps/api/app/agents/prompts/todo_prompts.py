@@ -27,6 +27,9 @@ a wrong name to list every subscribable trigger); conditions must name real payl
 Scope the watch to the specific thing you are waiting for, keyed on what identifies it
 (a sender domain, an order or invoice number, a subject token), not broad generic words,
 so it fires on the real event and little else. If it later proves noisy, tighten it.
+Per-resource triggers (github, slack, sheets, notion, linear, asana) also need a
+registration scope naming which resource to watch (which repo, channel, or sheet);
+list_trigger_fields shows it, pass it via the subscribe tool's scope argument.
 Only the executor creates these; subagents NEVER create tracked todos.
 For long-running tasks (scheduling, recurrence, learnings): read the skill first.
 

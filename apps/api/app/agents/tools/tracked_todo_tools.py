@@ -31,12 +31,14 @@ from app.models.trigger_subscription_models import (
 from app.services.storage._vfs_common import folder_name
 from app.services.tracked_todo_service import tracked_todo_service
 from app.services.triggers.matchable_fields import MATCHABLE_TRIGGERS, get_matchable_trigger
+from app.services.triggers.scope_catalog import scope_fields_for
 from app.services.triggers.subscription_service import (
     DEFAULT_COOLDOWN_SECONDS,
     SubscriptionError,
     register_subscription,
     unregister_subscription,
 )
+from app.services.triggers.subscription_validation import validate_scope
 from app.services.user_service import get_user_by_id
 from app.utils.canvas_vector_utils import CanvasSearchMatch, search_canvas_context
 from app.utils.cron_utils import get_next_run_time
@@ -461,6 +463,13 @@ def _render_catalog(trigger_name: str) -> str:
     lines.extend(
         f"  {f.name} ({f.type}): {f.description}. Example: {f.example}" for f in entry.fields
     )
+    scope = scope_fields_for(trigger_name)
+    if scope:
+        lines.append("Scope this watch with (registration config, passed via the scope argument):")
+        lines.extend(
+            f"  {s.name} ({s.type}{', required' if s.required else ''}): {s.description}"
+            for s in scope
+        )
     if entry.excluded:
         lines.append("Not matchable:")
         lines.extend(f"  {name}: {reason}" for name, reason in sorted(entry.excluded.items()))
@@ -872,11 +881,14 @@ async def subscribe_todo_to_trigger(
     cooldown_seconds: Annotated[
         int, "Minimum gap between two fires of this subscription."
     ] = DEFAULT_COOLDOWN_SECONDS,
-    minutes_before_start: Annotated[
-        int | None,
-        "For 'calendar_event_starting_soon' only: how long before the event to "
-        "fire (1-1440). This is registration config, not a condition, so use one "
-        "subscription per reminder window.",
+    scope: Annotated[
+        dict[str, str | int | float | list[str]] | None,
+        "Registration config telling the trigger which resource to watch, e.g. "
+        "{'repos': ['owner/name']} for a github trigger, {'minutes_before_start': "
+        "60} for calendar_event_starting_soon. This is NOT a payload condition: "
+        "per-resource triggers (github, slack, sheets, notion, linear, asana) do "
+        "not fire without it. Call list_trigger_fields to see which scope a "
+        "trigger needs.",
     ] = None,
 ) -> str:
     """Make a tracked todo react to an integration event instead of only a schedule.
@@ -891,6 +903,11 @@ async def subscribe_todo_to_trigger(
     as text) are repaired automatically and reported back. Anything ambiguous is
     rejected with the fields that do exist, so you can correct it and call again;
     nothing is ever quietly widened to make it fit.
+
+    Per-resource triggers (github, slack, sheets, notion, linear, asana) need a
+    scope naming which resource to watch, e.g. scope={'repos': ['owner/name']}.
+    Without it the trigger registers against nothing and never fires;
+    list_trigger_fields shows the scope each trigger needs.
     """
     user_id = RunMetadata.model_validate(config.get("metadata", {})).user_id
     if not user_id:
@@ -910,9 +927,11 @@ async def subscribe_todo_to_trigger(
     if condition_error:
         return f"Error: {condition_error}\n\n{_render_catalog(trigger_name)}"
 
-    trigger_data = (
-        {"minutes_before_start": minutes_before_start} if minutes_before_start is not None else None
-    )
+    scope_errors = validate_scope(trigger_name, scope)
+    if scope_errors:
+        return f"Error: {' '.join(scope_errors)}\n\n{_render_catalog(trigger_name)}"
+
+    trigger_data = scope or None
 
     try:
         subscription, outcome = await register_subscription(

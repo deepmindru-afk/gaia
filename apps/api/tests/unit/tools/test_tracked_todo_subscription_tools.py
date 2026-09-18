@@ -109,6 +109,27 @@ class TestListTriggerFields:
         )
         assert expected in out.splitlines()
 
+    async def test_it_lists_the_registration_scope_a_per_resource_trigger_needs(self) -> None:
+        # Without the scope section the model cannot know a github trigger needs a
+        # repo, so it subscribes with none and the registration is rejected. Both
+        # lines are asserted verbatim: a garbled header or field line is useless.
+        out = await list_trigger_fields.coroutine(trigger_name="github_pr_event")
+        lines = out.splitlines()
+
+        assert (
+            "Scope this watch with (registration config, passed via the scope argument):" in lines
+        )
+        assert (
+            "  repos (list of text, required): List of repositories in owner/repo format" in lines
+        )
+
+    async def test_an_account_level_trigger_shows_no_scope_section(self) -> None:
+        # Gmail fires on the account itself; a scope section there would invite the
+        # model to pass config the trigger has no field for.
+        out = await list_trigger_fields.coroutine(trigger_name=GMAIL)
+
+        assert "Scope this watch with" not in out
+
     async def test_an_unknown_trigger_returns_the_available_ones(self) -> None:
         out = await list_trigger_fields.coroutine(trigger_name="nope")
 
@@ -172,10 +193,71 @@ class TestSubscribe:
                 todo_id=TODO_ID,
                 trigger_name="calendar_event_starting_soon",
                 action="notify",
-                minutes_before_start=60,
+                scope={"minutes_before_start": 60},
             )
 
         assert register.await_args.kwargs["trigger_data"] == {"minutes_before_start": 60}
+
+    async def test_a_github_repo_scope_is_passed_as_registration_config(self) -> None:
+        # A github PR trigger registers a webhook per repo, so the repo must reach
+        # registration as scope; without it the trigger matches nothing and the
+        # whole subscription is rejected (regression: scope had no way in).
+        register, _ = self._register()
+        with patch(f"{_MOD}.register_subscription", register):
+            await subscribe_todo_to_trigger.coroutine(
+                config=_config(),
+                todo_id=TODO_ID,
+                trigger_name="github_pr_event",
+                action="notify",
+                scope={"repos": ["theexperiencecompany/gaia"]},
+                conditions=[{"field_name": "number", "operator": "equals", "value": 1245}],
+            )
+
+        assert register.await_args.kwargs["trigger_data"] == {
+            "repos": ["theexperiencecompany/gaia"]
+        }
+
+    async def test_an_empty_scope_sends_no_registration_config(self) -> None:
+        # An empty scope dict must collapse to None so it is not stored as {} and
+        # the account-level path stays "no trigger_data" rather than "empty config".
+        register, _ = self._register()
+        with patch(f"{_MOD}.register_subscription", register):
+            await subscribe_todo_to_trigger.coroutine(
+                config=_config(),
+                todo_id=TODO_ID,
+                trigger_name=GMAIL,
+                action="execute",
+                scope={},
+            )
+
+        assert register.await_args.kwargs["trigger_data"] is None
+
+    async def test_a_missing_required_scope_is_rejected_before_registration(self) -> None:
+        # github needs repos; without it the tool refuses and never calls Composio,
+        # instead of registering a watch against no resource.
+        register = AsyncMock()
+        with patch(f"{_MOD}.register_subscription", register):
+            out = await subscribe_todo_to_trigger.coroutine(
+                config=_config(), todo_id=TODO_ID, trigger_name="github_pr_event", action="notify"
+            )
+
+        assert "requires a 'repos' scope" in out
+        assert "Matchable fields for github_pr_event" in out  # the catalog rides along
+        register.assert_not_awaited()
+
+    async def test_an_unknown_scope_key_is_rejected_before_registration(self) -> None:
+        register = AsyncMock()
+        with patch(f"{_MOD}.register_subscription", register):
+            out = await subscribe_todo_to_trigger.coroutine(
+                config=_config(),
+                todo_id=TODO_ID,
+                trigger_name="github_pr_event",
+                action="notify",
+                scope={"repos": ["o/n"], "branch": "main"},
+            )
+
+        assert "'branch' is not a scope field on 'github_pr_event'" in out
+        register.assert_not_awaited()
 
     async def test_no_calendar_window_sends_no_registration_config(self) -> None:
         register, _ = self._register()
