@@ -121,6 +121,10 @@ async def build_executor_graph(
                 "subscribe_todo_to_trigger",
                 "unsubscribe_todo_from_trigger",
                 "save_learned_skill",
+                # browser_task is retrieved on demand, but the join that collects
+                # its answer must not be: a retrieval miss here would strand a
+                # started run with nobody to report it.
+                "wait_for_browser_task",
                 # Bound statically, not left to retrieve_tools: the <playbook_check>
                 # and heal briefs name these directly, so semantic retrieval
                 # missing them would leave the instruction unactionable.
