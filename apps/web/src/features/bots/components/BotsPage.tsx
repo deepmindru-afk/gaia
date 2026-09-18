@@ -58,12 +58,7 @@ function BotCard({
             className="object-contain"
           />
         </div>
-        <div className="flex items-center gap-2 justify-between">
-          <h2 className="font-medium text-white text-xl">{name}</h2>
-          <Chip size="sm" variant="flat" color={badge.color}>
-            {badge.label}
-          </Chip>
-        </div>
+        <h2 className="font-medium text-white text-xl">{name}</h2>
         <p className="text-sm text-zinc-400">{description}</p>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2 w-full">
