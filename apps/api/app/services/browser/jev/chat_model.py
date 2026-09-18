@@ -151,7 +151,7 @@ class JevChatModel:
         state = await self._browser.get_browser_state_summary(cached=True, include_screenshot=False)
         observation = observe(state, await read_live_values(self._browser))
         self._settle_previous_step(observation)
-        goal = self._task or _goal_from_messages(messages)
+        goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
         offered = _offered_operations(registered)
         self._steps += 1
@@ -363,6 +363,16 @@ class JevChatModel:
                 page_changed=observation.fingerprint != self._last_fingerprint,
             )
         self._last_fingerprint = observation.fingerprint
+
+    def _effective_goal(self, messages: list[BaseMessage]) -> str:
+        """Return the task, plus the latest takeover note, which overrides it.
+
+        Jev classifies against this goal, so a note left only in recent_actions
+        never changed what DONE is measured against.
+        """
+        goal = self._task or _goal_from_messages(messages)
+        note = self._latest_note()
+        return f"{goal}\nThe user then said: {note}" if note else goal
 
     def _latest_note(self) -> str | None:
         return next((h.note for h in reversed(self._history) if h.note), None)

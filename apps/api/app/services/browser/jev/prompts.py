@@ -17,7 +17,8 @@ Recent WAIT actions are not evidence of loading. Prefer a useful visible control
 DONE requires visible evidence that ALL requirements are satisfied. If asked to open a result,
 a matching link is not enough. BLOCKED means no supported operation can make progress.
 A recent action that carries a note is an instruction the user gave when handing the browser back.
-Follow it before anything else."""
+Follow it before anything else. When the goal carries what the user then said, that later instruction
+wins over the original task, and DONE is right once it is satisfied."""
 
 # The human-in-the-loop rules this codebase's takeover flow relies on; NAVIGATE
 # is a separate rule because it is not part of handing the browser over.

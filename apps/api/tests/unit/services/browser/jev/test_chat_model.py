@@ -636,6 +636,27 @@ async def test_the_users_takeover_note_is_in_jevs_next_state(flights_state) -> N
     assert helper.context(1)["user_note"] == "skip the login, just grab the photo"
 
 
+async def test_a_takeover_note_amends_the_goal_jev_decides_against(flights_state) -> None:
+    """Regression: the note only sat in recent_actions, so Jev kept handing off on the login page."""
+    model, gateway, helper, _ = _model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("TYPE_TEXT", "2")],
+        [
+            {"text": "Enter your password and sign in", "category": "credentials"},
+            {"text": "London"},
+        ],
+    )
+    await model.ainvoke([], _agent_output())
+
+    model.note_from_user("skip the login, just tell me the page title")
+    await model.ainvoke([], _agent_output())
+
+    goal = gateway.requests[1].questions["operation"].instructions["goal"]
+    assert goal.startswith("Fly Zurich to London")
+    assert "The user then said: skip the login, just tell me the page title" in goal
+    assert "skip the login, just tell me the page title" in helper.context(1)["goal"]
+
+
 async def test_a_note_survives_the_page_change_settle(flights_state) -> None:
     model, _, _, _ = _model(
         flights_state, [("REQUEST_HUMAN", None)], [{"text": "Log in", "category": "credentials"}]
