@@ -103,6 +103,15 @@ class BrowserLoginSource(StrEnum):
     IMPORT = "import"
 
 
+# Defined here rather than beside JevOperation because BROWSER_TAKEOVER_PREAMBLE
+# below interpolates it at import time.
+class BrowserHandoffAction(StrEnum):
+    """The two actions GAIA registers with Browser-Use to hand a step to the human."""
+
+    REQUEST_HUMAN_TAKEOVER = "request_human_takeover"
+    SOLVE_CAPTCHA_WITH_HELP = "solve_captcha_with_help"
+
+
 # ---------------------------------------------------------------------------
 # Redis handoff bridge. A running browser task blocks on one of these keys; the
 # `/browser/handoffs/{id}/decision` endpoint writes the resolution from a
@@ -168,11 +177,11 @@ MAX_HANDOFFS_PER_TASK = 5
 BROWSER_TAKEOVER_PREAMBLE = (
     "\n\nIMPORTANT: For any payment, login/password/OTP/2FA, or irreversible or "
     "legally-binding confirmation, do NOT do it yourself. Call the "
-    "`request_human_takeover` action first so the user completes that step in the "
+    f"`{BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER}` action first so the user completes that step in the "
     "live browser, then continue toward the goal.\n"
     "If you encounter a CAPTCHA, reCAPTCHA, hCaptcha, or an 'I'm not a robot' / "
     "image-grid challenge, do NOT attempt to solve it yourself. Call the "
-    "`solve_captcha_with_help` action immediately on the FIRST challenge so the user "
+    f"`{BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP}` action immediately on the FIRST challenge so the user "
     "solves it in the live browser, then continue. Never keep clicking challenge tiles.\n"
     # The human's part of a login should be only the secret part. Filling the
     # username yourself first means they open the live view to just a password.
@@ -186,7 +195,7 @@ BROWSER_TAKEOVER_PREAMBLE = (
     "NEVER invent a value for a field the task did not give you. No made-up phone "
     "numbers, addresses, dates, amounts, countries or company details, and no "
     "plausible-looking placeholder. If a field you cannot leave empty has no value "
-    "in the task, call `request_human_takeover` and say which field is missing. "
+    f"in the task, call `{BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER}` and say which field is missing. "
     "The one exception is when the task itself says the run is a test or that dummy "
     "values are fine. Reporting a field as filled with a value you invented is a "
     "failure, not a completion.\n"

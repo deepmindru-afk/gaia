@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
+from app.constants.browser import BrowserHandoffAction
 from app.schemas.browser import BrowserAction
 
 # Actions whose whole meaning is the element they hit — a bare verb reads as
@@ -90,8 +91,8 @@ _STATIC_CAPTIONS: dict[str, str] = {
     "upload_file": "Uploading a file",
     "go_back": "Going back",
     "wait": "Waiting for the page",
-    "request_human_takeover": "Handing this step to you",
-    "solve_captcha_with_help": "Handing this step to you",
+    BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER: "Handing this step to you",
+    BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: "Handing this step to you",
     "done": "Wrapping up",
 }
 

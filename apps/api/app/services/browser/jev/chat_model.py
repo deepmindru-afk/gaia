@@ -24,6 +24,7 @@ from app.config.settings import settings
 from app.constants.browser import (
     JEV_TEXT_HELPER_RECENT_ACTIONS,
     JEV_TEXT_VALUE_MAX_CHARS,
+    BrowserHandoffAction,
     JevOperation,
     SensitiveCategory,
 )
@@ -66,8 +67,8 @@ _OPERATIONS_BY_ACTION: dict[str, tuple[JevOperation, ...]] = {
     "wait": (JevOperation.WAIT,),
     "navigate": (JevOperation.NAVIGATE,),
     "go_back": (JevOperation.GO_BACK,),
-    "request_human_takeover": (JevOperation.REQUEST_HUMAN,),
-    "solve_captcha_with_help": (JevOperation.SOLVE_CAPTCHA,),
+    BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER: (JevOperation.REQUEST_HUMAN,),
+    BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: (JevOperation.SOLVE_CAPTCHA,),
     "done": (JevOperation.DONE, JevOperation.BLOCKED),
 }
 _BLOCKED_SUMMARY = "Could not make progress: no supported action can advance the task on this page."
@@ -256,7 +257,7 @@ class JevChatModel:
             case JevOperation.SOLVE_CAPTCHA:
                 challenge = await self._field_text(CAPTCHA_CHALLENGE, goal, observation, None)
                 text = challenge or _DEFAULT_CAPTCHA_CHALLENGE
-                return {"solve_captcha_with_help": {"challenge": text}}, text
+                return {BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP: {"challenge": text}}, text
             case JevOperation.DONE:
                 summary = await self._field_text(DONE_SUMMARY, goal, observation, None)
                 return {
@@ -340,7 +341,7 @@ class JevChatModel:
 def _takeover(
     reason: str, category: str = SensitiveCategory.IRREVERSIBLE.value
 ) -> dict[str, dict[str, object]]:
-    return {"request_human_takeover": {"reason": reason, "category": category}}
+    return {BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER: {"reason": reason, "category": category}}
 
 
 def _idle_action(output_format: type[BaseModel]) -> dict[str, dict[str, object]]:

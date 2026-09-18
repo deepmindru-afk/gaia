@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.constants.browser import BrowserHandoffAction
 from app.schemas.browser import BrowserAction
 from app.services.browser.captions import (
     _TARGET_MAX_CHARS,
@@ -314,3 +315,12 @@ class TestShorten:
     def test_truncation_does_not_leave_a_dangling_space_before_the_ellipsis(self):
         text = "a" * (_TARGET_MAX_CHARS - 2) + " " + "b" * 20
         assert _shorten(text) == "a" * (_TARGET_MAX_CHARS - 2) + "…"
+
+
+@pytest.mark.unit
+def test_every_handoff_action_has_a_caption() -> None:
+    """A handoff with no caption entry falls through to the underscore fallback
+    ("request human takeover"), so the caption table has to cover the enum."""
+    for member in BrowserHandoffAction:
+        actions = [BrowserAction(name=member.value, inputs={}, target=None)]
+        assert caption_from_action_list(actions) == "Handing this step to you"

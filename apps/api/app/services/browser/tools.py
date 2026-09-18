@@ -40,6 +40,7 @@ def build_browser_tools(
 
     tools: Tools[None] = Tools()
 
+    # Registered by function name; BrowserHandoffAction.REQUEST_HUMAN_TAKEOVER must spell it the same.
     @tools.action(
         description=(
             "Hand control to the human for a step you must NOT do yourself: "
@@ -57,7 +58,7 @@ def build_browser_tools(
         return await handle_takeover(reason, category)
 
     if solve_captcha:
-
+        # Registered by function name; BrowserHandoffAction.SOLVE_CAPTCHA_WITH_HELP must spell it the same.
         @tools.action(
             description=(
                 "Hand a CAPTCHA to the human to solve in the live browser. Call this "
