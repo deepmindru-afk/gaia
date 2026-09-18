@@ -1,10 +1,7 @@
-"""Jev decision policy for the browser agent — a port of browser-use/jev-ultrafast.
-
-One Jev evaluation per step picks the operation and the target element from the
-page's indexed element table; a small chat model writes text only when needed.
-Built by ``services/browser/llm.py`` as the browser's only model; the
-runner binds the live browser session so the policy reads the same observation
-Browser-Use just took (``chat_model.py``).
+"""Jev decides every browser step as Browser-Use's chat model.
+observation.py indexes the page into an element table, policy.py picks the
+operation and target from it, and chat_model.py answers Browser-Use's calls.
+Policy and prompts derived from browser-use/jev-ultrafast (MIT).
 """
 
 from app.services.browser.jev.chat_model import JevChatModel, build_jev_chat_model

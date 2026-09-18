@@ -51,8 +51,8 @@ class JevChoiceAnswer(BaseModel):
     choice: str
     probabilities: dict[str, float] = Field(default_factory=dict)
     # Jev always returns a confidence; absent means the answer is malformed, which
-    # the ultrafast policy rejects rather than defaulting away (policy.py derives
-    # its own confidence from the distribution and ignores this field).
+    # policy.py rejects rather than defaulting away (it derives its own
+    # confidence from the distribution and ignores this field).
     confidence: float | None = None
 
 

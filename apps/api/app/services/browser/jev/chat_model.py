@@ -1,13 +1,11 @@
 """Jev as the Browser-Use agent's decision model.
 
-Browser-Use asks its chat model for an ``AgentOutput`` every step. This adapter
-answers that call with jev-ultrafast's loop instead of a completion: read the
-element table from the observation Browser-Use just took, ask Jev for the
-operation and target, have the text helper write a value only when the
-operation needs one, and hand back the matching Browser-Use action. Everything
-downstream — execution, step cards, live-view takeover, history, replay — is
-unchanged. Calls that are not a step decision (page extraction, structured
-output) are delegated to the text helper untouched.
+Browser-Use asks its chat model for an ``AgentOutput`` every step; this class
+answers by having Jev decide the operation and target from the current page
+state instead of returning a completion, and using the small text model only
+to write a typed value when the decision needs one. Everything downstream
+(execution, step cards, takeover, history, replay) is unchanged; calls that
+are not a step decision go straight to the text model.
 """
 
 from __future__ import annotations
@@ -219,8 +217,8 @@ class JevChatModel:
             case JevOperation.TYPE_TEXT if element is not None:
                 value = await self._field_text(TEXT_VALUE, goal, observation, element)
                 if value is None:
-                    # jev-ultrafast types nothing it cannot source; here the human
-                    # supplies the missing value instead, per the takeover policy.
+                    # A value the goal did not supply is never invented; the human
+                    # supplies it instead, per the takeover policy.
                     return _takeover(f"Enter the {element.label}"[:80]), None
                 return {
                     input_action: {"index": element.browser_index, "text": value, "clear": True}
@@ -284,7 +282,7 @@ class JevChatModel:
         observation: JevObservation,
         field: JevElement | None,
     ) -> T | None:
-        """jev-ultrafast's text helper: goal + field + page + recent actions in, one small JSON out."""
+        """Goal, field, page and recent actions in; one small JSON value out."""
         from browser_use.llm.messages import (  # noqa: PLC0415 -- heavy optional dep
             SystemMessage,
             UserMessage,
