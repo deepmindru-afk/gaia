@@ -232,15 +232,12 @@ async def _decide_ledger(
                 )
                 return None
         fingerprint = approval_fingerprint(call.name, call.args)
-        live = await approval_ledger_repository.find_live(
-            fingerprint, context.conversation_id
-        )
+        live = await approval_ledger_repository.find_live(fingerprint, context.conversation_id)
         if live is not None:
             return _tool_message(
                 call,
                 f"PENDING {live.approval_id}: {live.summary} already requested and "
-                "awaiting decision. DO NOT retry or re-request. Continue independent "
-                "work or exit.",
+                f"awaiting the user's decision. {_pending_guidance(live.approval_id)}",
                 "pending",
             )
         denied = await approval_ledger_repository.find_latest_denied(
@@ -297,10 +294,17 @@ async def _decide_ledger(
             summary=summary,
             integration_name=integration_name,
         )
+        # "allow" returned before this branch, so the only policies left are
+        # the two that explain WHY this call is gated — the model deserves
+        # that reason instead of a bare "do not retry".
+        why = (
+            "this tool needs the user's explicit approval"
+            if policy == "ask"
+            else "auto-approve did not cover this call, so it needs the user's decision"
+        )
         return _tool_message(
             call,
-            f"PENDING {ap_id}: {summary} queued. DO NOT retry. Continue independent "
-            f'work or exit. Revoke with revoke_tool("{ap_id}") if unneeded.{deny_note}',
+            f"PENDING {ap_id}: {summary} queued — {why}. {_pending_guidance(ap_id)}{deny_note}",
             "pending",
         )
     except GraphBubbleUp:
@@ -521,6 +525,23 @@ def _gate_error_message(call: GatedCall) -> ToolMessage:
 def _unpausable_denial_message(call: GatedCall) -> ToolMessage:
     """Tell the model a gated call was refused because this run cannot ask for approval."""
     return _tool_message(call, UNPAUSABLE_DENIAL_TEMPLATE.format(tool=call.name), "denied")
+
+
+def _pending_guidance(approval_id: str) -> str:
+    """What the model can and cannot do about a pending card.
+
+    Shared by the fresh-register and live-dedup branches so the two never
+    drift: the card's lifecycle is identical whichever branch produced it.
+    """
+    return (
+        "The approval card is already visible to the user in chat (web, mobile, "
+        "desktop) and they decide there; you cannot approve it yourself. "
+        f'If this step is not needed, revoke it with revoke_tool("{approval_id}") '
+        "and continue with other work. If it is genuinely needed, leave it and move "
+        "on to independent work or exit — you will be woken with the verdict. "
+        "Re-calling with the same arguments returns the same pending id: it never "
+        "runs the tool and never creates a new request."
+    )
 
 
 def _tool_message(call: GatedCall, content: str, status: HILToolMessageStatus) -> ToolMessage:

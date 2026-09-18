@@ -62,7 +62,8 @@ class TestLedgerBranch:
         intr.assert_not_called()
         assert result is not None
         assert "PENDING ap_abc1234567" in str(result.content)
-        assert "DO NOT retry" in str(result.content)
+        assert "needs the user's explicit approval" in str(result.content)
+        assert "never runs the tool" in str(result.content)
         assert "revoke_tool" in str(result.content)
         assert result.additional_kwargs[HIL_STATUS_KWARG] == "pending"
 
@@ -214,3 +215,4 @@ class TestLedgerAutoParity:
         intr.assert_not_called()
         assert result is not None
         assert "PENDING ap_abc1234567" in str(result.content)
+        assert "auto-approve did not cover" in str(result.content)
