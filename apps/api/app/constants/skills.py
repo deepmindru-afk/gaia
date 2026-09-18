@@ -18,14 +18,14 @@ SKILL_SOURCE_FILENAME = "SKILL.md"
 # so the path the agent is told to read always matches the file on disk.
 SKILL_BODY_FILENAME = "skill.md"
 
-# Bucket id for general builtin skills not owned by an integration subagent
+# Bucket id for general builtin skills not owned by an integration
 # (create-artifacts, task-management, …). It is NOT a registered subagent: it
 # maps to itself and its skills materialize under /workspace/skills/ rather than
 # /workspace/integrations/<id>/.
 EXECUTOR_SUBAGENT_ID = "executor"
 
 # User-facing label for the executor target in the skills UI. The executor is
-# the general assistant (not a registered integration subagent), so it needs an
+# the general assistant (not a registered integration), so it needs an
 # explicit display name where subagents get theirs from the subagent registry.
 EXECUTOR_TARGET_LABEL = "General assistant"
 

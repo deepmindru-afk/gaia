@@ -342,9 +342,9 @@ def create_subagent_middleware(
     subagent: SubagentStackOptions = SubagentStackOptions(),
 ) -> AgentMiddlewareStack:
     """
-    Create middleware stack for provider subagents.
+    Create middleware stack for worker subagents.
 
-    Provider subagents handle focused integration work and should have:
+    Worker subagents handle focused work and should have:
     - WorkspaceCompactionMiddleware: Persist oversized tool outputs to /workspace
     - Summarization: compaction bounds a single tool output, not the accumulated
       history. Without summarization a run grows unbounded up to
@@ -360,7 +360,7 @@ def create_subagent_middleware(
 
     Args:
         agent_name: The subagent's own name, used to attribute its ``llm_call``
-            events. Without it every one of the ~35 integration subagents meters
+            events. Without it every worker subagent meters
             under a single ``provider_subagent`` bucket, so per-subagent cost and
             cache behaviour cannot be told apart.
         subagent: The spawn wiring. ``llm`` is both the subagent's own model
@@ -371,7 +371,7 @@ def create_subagent_middleware(
             for authoring-only subagents that must not spawn or execute.
 
     Returns:
-        List of middleware for provider subagents
+        List of middleware for worker subagents
     """
     return create_middleware_stack(
         agent_name=agent_name,

@@ -803,7 +803,7 @@ def get_retrieve_tools_function(
 
     Args:
         tool_space: Namespace to search for tools
-        include_subagents: Scoped-agent toggle. False (a provider subagent
+        include_subagents: Scoped-agent toggle. False (a scoped worker
             searching its own space) skips the connected-integrations lookup
             and the delegated-tool filter, so it sees its own toolkit.
         limit: Maximum number of tool results for semantic search

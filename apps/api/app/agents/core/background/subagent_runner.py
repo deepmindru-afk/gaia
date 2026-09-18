@@ -61,7 +61,7 @@ async def run_subagent_background(
     stream_id: str,
     handoff: BackgroundHandoff | None = None,
 ) -> None:
-    """Run a provider subagent in the background and store its result.
+    """Run a worker subagent in the background and store its result.
 
     Designed for asyncio.create_task(). Never raises — all exceptions
     caught and stored as the subagent's result text.

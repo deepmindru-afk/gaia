@@ -121,7 +121,7 @@ async def _activation_context(integration_id: str, user_id: str | None) -> str:
                     f"## The user's standing instructions for {integration_id}\n{instructions}"
                 )
 
-            # Which account the caller is acting as. A provider subagent gets this
+            # Which account the caller is acting as. An MCP worker gets this
             # as its own context section; without it the executor operates an
             # integration without knowing whose inbox/repo/workspace it is in.
             identity = await build_provider_metadata_block(integration_id, user_id)

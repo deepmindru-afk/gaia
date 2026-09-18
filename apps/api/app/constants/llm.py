@@ -38,10 +38,10 @@ MESSAGES_SNAPSHOT_FREQUENCY = 50
 
 # Runaway loops are the main driver of long, expensive traces; capping tail
 # risk keeps p95 cost predictable. Legitimate tasks that need more steps
-# should split work across handoffs rather than chew through recursion budget.
-AGENT_RECURSION_LIMIT = 40  # Comms + provider subagents (routing / focused work)
+# should split work across spawns rather than chew through recursion budget.
+AGENT_RECURSION_LIMIT = 40  # Comms + workers (routing / focused work)
 # The executor legitimately runs long multi-step tool loops (retrieve_tools ->
-# handoff -> tool calls, frequently across several subagents), so 40 is too tight
+# activate -> execute tool calls, frequently across several integrations), so 40 is too tight
 # and truncates real work with GraphRecursionError. Both the graph's runtime
 # recursion_limit and the accounting middleware's high-water-mark denominator read
 # this, so enforcement and analytics stay in sync.

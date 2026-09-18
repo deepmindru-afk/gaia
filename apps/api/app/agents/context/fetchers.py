@@ -324,9 +324,9 @@ async def build_connected_integrations_manifest(user_id: str, header: str) -> st
 async def build_provider_metadata_block(integration_id: str | None, user_id: str | None) -> str:
     """Who the user is on this provider — GitHub login, Gmail address, etc.
 
-    Shared by the provider-subagent context section and ``activate_integration``:
+    Shared by the worker context sections and ``activate_integration``:
     an executor acting on an integration directly needs the same identity a
-    subagent got, or it does not know which account it is operating.
+    worker got, or it does not know which account it is operating.
     """
     if not (integration_id and user_id):
         return ""
