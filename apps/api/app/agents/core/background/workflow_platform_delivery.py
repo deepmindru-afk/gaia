@@ -43,26 +43,25 @@ async def deliver_result_to_platforms(
     notification_text: str,
     origin: str,
     exclude_source: ConversationSource | None = None,
-) -> None:
+) -> ConversationSource | None:
     """Deliver a proactive result to the user's ONE preferred messaging platform.
 
-    Sent as a real, persisted bot message split into natural bubbles, and
-    recorded in that platform conversation's langgraph thread. The platform
-    is the first in the user's chat-channel order that is linked and enabled;
-    exclude_source skips a platform that already received the result. Best-effort.
+    The platform is the first in their chat-channel order that is linked and
+    enabled; exclude_source skips one that already received the result.
+    Best-effort: returns the platform that got it, or None when nothing was sent.
     """
     if not notification_text.strip():
-        return
+        return None
 
     try:
         channel = await resolve_chat_channel(user_id)
     except Exception as e:  # proactive side channel, never fatal
         log.error(f"{LogTag.AGENT} workflow platform delivery: channel lookup failed", error=str(e))
-        return
+        return None
     if channel is None or channel.source == exclude_source:
-        return
+        return None
 
-    await _post_workflow_message(
+    return await _post_workflow_message(
         user=user,
         user_id=user_id,
         channel=channel,
@@ -78,11 +77,12 @@ async def _post_workflow_message(
     channel: ChatChannel,
     response: str,
     origin: str,
-) -> None:
+) -> ConversationSource | None:
     """Persist the result into the platform's session conversation and deliver it.
 
     Sent as ordered bubbles, then recorded in that conversation's langgraph
-    thread. Best-effort: logs and swallows a failure.
+    thread. Best-effort: logs and swallows a failure. Returns the platform that
+    received the message, or None when it was skipped or failed.
     """
     source, platform_user_id = channel.source, channel.platform_user_id
     # Comms splits its reply into bubbles with the break sentinel; the outbound
@@ -123,7 +123,7 @@ async def _post_workflow_message(
                 message_id=bot_message.message_id,
                 bubbles=len(bubbles),
             )
-            return
+            return None
         if result is OutboundResult.PUBLISHED:
             # The Mongo save above never reaches the langgraph thread; record
             # the nonblank bubbles (outbound path strips sentinel/blanks)
@@ -142,9 +142,11 @@ async def _post_workflow_message(
             bubbles=len(bubbles),
             result=result.value,
         )
+        return source if result is OutboundResult.PUBLISHED else None
     except Exception as e:  # best-effort per platform
         log.error(
             f"{LogTag.AGENT} workflow platform delivery failed",
             platform=source.value,
             error=str(e),
         )
+        return None

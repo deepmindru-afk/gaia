@@ -87,3 +87,36 @@ TRIGGERED_RELEVANCE_GUIDANCE = (
     "distinguishes the real thing (a specific sender domain, an order or invoice number, "
     "a subject token), then note what you tightened and why."
 )
+
+
+# Appended to a scheduled/triggered run whose todo has notify_on_run set. Without
+# it the run cannot tell whether anyone reads its answer, so it pings the user
+# with send_notification to be safe and the result arrives twice.
+DELIVERED_RESULT_GUIDANCE = (
+    "DELIVERY: when this run ends, your final message is sent to the user on their chat "
+    "app automatically. Write it for them, in GAIA's voice: the outcome, and anything "
+    "they have to decide. No internal narration, and never promise to message them "
+    "again later, because nothing keeps running after this run ends. Write like a "
+    "person texting an update: short, varied sentences, plain words, straight to what "
+    "happened. No throat-clearing, no filler, and no forced slang or quirks either. "
+    "If nothing changed, one line saying so is the whole message. Do NOT call "
+    "send_notification to announce this result, because that delivers it twice. "
+    "Notify only for something genuinely separate and urgent that cannot wait. "
+    "If a todo's runs are usually not worth a message, turn its delivery off with "
+    "update_tracked_todo(notify_on_run=False) rather than sending noise every run."
+)
+
+# The counterpart for a silent todo: nothing is delivered, so a result the user
+# needs has to be sent deliberately or it is lost in the canvas.
+SILENT_RUN_GUIDANCE = (
+    "DELIVERY: this todo is silent, so your final message is NOT sent to the user. "
+    "Record the outcome in the todo's files. If something genuinely needs them, "
+    "send_notification is the only way to reach them."
+)
+
+# The maintenance sweep asks for a verdict and sends the resulting message
+# itself; a run that also notifies makes the user's phone buzz twice for one todo.
+HEALTH_CHECK_VERDICT_ONLY = (
+    "Return the verdict only. Do not act on the todo and do not notify the user: "
+    "whoever asked for this check sends the message."
+)

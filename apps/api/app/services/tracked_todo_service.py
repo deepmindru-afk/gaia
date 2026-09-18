@@ -104,6 +104,7 @@ class TrackedTodoService:
         labels: list[str] | None = None,
         initial_canvas: str | None = None,
         source_conversation_id: str | None = None,
+        notify_on_run: bool = True,
     ) -> TodoResponse:
         """Create a todo with VFS canvas and ChromaDB indexing.
 
@@ -123,6 +124,7 @@ class TrackedTodoService:
             due_date=due_date,
             priority=priority,
             labels=all_labels,
+            notify_on_run=notify_on_run,
         )
         result = await TodoService.create_todo(todo, user_id)
         todo_id = result.id
