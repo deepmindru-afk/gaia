@@ -13,6 +13,7 @@ import { useMarkApprovalDecided } from "@/features/chat/hooks/useMarkApprovalDec
 import { toast } from "@/lib/toast";
 import ApprovalRequestSection from "./ApprovalRequestSection";
 import { useApprovalResolver } from "./ApprovalResolveContext";
+import ApprovalReviewSheet from "./ApprovalReviewSheet";
 
 /** A withdrawn approval stays visible just long enough to prove the agent
  * self-corrected — then collapses. Silent deletion reads as "did it send?". */
@@ -60,6 +61,7 @@ export default function ApprovalRequestGroup({
 
   const pending = items.filter((item) => item.status === "pending");
   const revoked = items.filter((item) => item.status === "revoked");
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const settle = (
     approvalId: string,
@@ -127,6 +129,16 @@ export default function ApprovalRequestGroup({
           >
             Decline all
           </Button>
+          {pending.length >= 3 && (
+            <Button
+              variant="bordered"
+              size="sm"
+              isDisabled={batchSubmitting !== null}
+              onPress={() => setSheetOpen(true)}
+            >
+              {`Review ${pending.length}`}
+            </Button>
+          )}
         </div>
       )}
       {pending.length > 0 && (
@@ -150,6 +162,12 @@ export default function ApprovalRequestGroup({
       {revoked.map((item) => (
         <RevokedTombstone key={item.approval_id} item={item} />
       ))}
+      <ApprovalReviewSheet
+        items={pending}
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        onSettled={settle}
+      />
     </div>
   );
 }
