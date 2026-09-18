@@ -4229,7 +4229,7 @@
                 "type": "null"
               }
             ],
-            "description": "Integration ids this workflow uses \u2014 picked by the user or identified from intent. Scopes the tool palette when generating steps.",
+            "description": "Integration ids this workflow uses, picked by the user or identified from intent. Scopes the tool palette when generating steps.",
             "title": "Integration Ids"
           },
           "is_system_workflow": {
@@ -10041,7 +10041,7 @@
             "type": "string"
           },
           "handoff_text": {
-            "description": "first_message with ' #<code>' appended \u2014 the exact text a WhatsApp or iMessage user sends. Used to build the iMessage sms: link, whose number is only known after the phone is registered on Photon's pool.",
+            "description": "first_message with ' #<code>' appended, the exact text a WhatsApp or iMessage user sends. Used to build the iMessage sms: link, whose number is only known after the phone is registered on Photon's pool.",
             "title": "Handoff Text",
             "type": "string"
           },
@@ -10049,7 +10049,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Deep link per platform that carries the code. iMessage is absent by construction \u2014 its number is assigned per user.",
+            "description": "Deep link per platform that carries the code. iMessage is absent by construction; its number is assigned per user.",
             "title": "Links",
             "type": "object"
           }
@@ -13315,7 +13315,7 @@
             "type": "boolean"
           },
           "first_contact": {
-            "description": "Ordered bubbles the bot must send itself because delivery failed. Empty whenever delivered is true \u2014 sending them then would say everything twice.",
+            "description": "Ordered bubbles the bot must send itself because delivery failed. Empty whenever delivered is true, because sending them then would say everything twice.",
             "items": {
               "type": "string"
             },
@@ -18365,7 +18365,7 @@
           },
           "has_ever_subscribed": {
             "default": false,
-            "description": "Whether the user has ever had a subscription, in any status \u2014 separates a lapsed subscriber from one who has never paid",
+            "description": "Whether the user has ever had a subscription, in any status; separates a lapsed subscriber from one who has never paid",
             "title": "Has Ever Subscribed",
             "type": "boolean"
           },
@@ -19301,7 +19301,7 @@
                 "type": "null"
               }
             ],
-            "description": "Why the workflow is not activated. None means the user turned it off themselves \u2014 only system-paused workflows may be resumed automatically."
+            "description": "Why the workflow is not activated. None means the user turned it off themselves; only system-paused workflows may be resumed automatically."
           },
           "description": {
             "default": "",
@@ -19361,7 +19361,7 @@
             "type": "string"
           },
           "integration_ids": {
-            "description": "Integration ids this workflow uses \u2014 picked by the user or identified from intent by the workflow assistant. Scopes the tool palette when generating steps. Connection state is never stored here: required/missing integrations are derived from the steps at read time.",
+            "description": "Integration ids this workflow uses, picked by the user or identified from intent by the workflow assistant. Scopes the tool palette when generating steps. Connection state is never stored here: required/missing integrations are derived from the steps at read time.",
             "items": {
               "type": "string"
             },

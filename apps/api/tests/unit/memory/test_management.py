@@ -22,30 +22,26 @@ def make_row(
     *,
     content: str = "sam works at acme",
     is_latest: bool = True,
-    is_forgotten: bool = False,
     version: int = 1,
-    root_id: uuid.UUID | None = None,
-    shelf_life: MemoryShelfLife = MemoryShelfLife.DURABLE,
-    forget_after: datetime | None = None,
     category_path: str = "work",
-    source_id: str | None = None,
 ) -> MemoryRecord:
+    """Build a durable, current memory row; set the rarer fields on the result you get back."""
     row = MemoryRecord(
         user_id=USER,
         kind=MemoryKind.FACT.value,
-        shelf_life=shelf_life.value,
+        shelf_life=MemoryShelfLife.DURABLE.value,
         content=content,
         category_path=category_path,
         source_type=MemorySourceType.CONVERSATION.value,
-        source_id=source_id,
+        source_id=None,
         importance=0.5,
-        forget_after=forget_after,
+        forget_after=None,
     )
     row.id = uuid.uuid4()
     row.version = version
     row.is_latest = is_latest
-    row.is_forgotten = is_forgotten
-    row.root_id = root_id
+    row.is_forgotten = False
+    row.root_id = None
     row.created_at = datetime.now(UTC)
     return row
 
@@ -90,7 +86,8 @@ class TestUpdateMemoryResolvesTheChainHead:
         self, boundaries: MagicMock
     ) -> None:
         head = make_row(content="sam is a staff engineer at acme", version=2)
-        stale = make_row(content="sam works at acme", is_latest=False, root_id=head.id)
+        stale = make_row(content="sam works at acme", is_latest=False)
+        stale.root_id = head.id
         boundaries.get_memory.return_value = stale
         boundaries.get_chain.return_value = [head, stale]
         boundaries.supersede_memory.return_value = make_row(content="corrected", version=3)
@@ -113,7 +110,9 @@ class TestUpdateMemoryResolvesTheChainHead:
         self, boundaries: MagicMock
     ) -> None:
         expiry = datetime(2026, 12, 1, tzinfo=UTC)
-        head = make_row(shelf_life=MemoryShelfLife.STATE, forget_after=expiry)
+        head = make_row()
+        head.shelf_life = MemoryShelfLife.STATE.value
+        head.forget_after = expiry
         boundaries.get_memory.return_value = head
         boundaries.supersede_memory.return_value = make_row(content="corrected", version=2)
 
@@ -158,7 +157,9 @@ class TestUpdateMemoryFailsLoud:
 
     async def test_a_forgotten_memory_raises(self, boundaries: MagicMock) -> None:
         memory_id = str(uuid.uuid4())
-        boundaries.get_memory.return_value = make_row(is_forgotten=True)
+        forgotten = make_row()
+        forgotten.is_forgotten = True
+        boundaries.get_memory.return_value = forgotten
 
         with pytest.raises(MemoryNotFoundError) as raised:
             await update_memory(USER, memory_id, "corrected")
@@ -259,7 +260,8 @@ class TestForgetAndUpdateReconsolidateCoreDocuments:
     ) -> None:
         # A state value never feeds a consolidated document, so forgetting it
         # must not trigger a rewrite.
-        row = make_row(shelf_life=MemoryShelfLife.STATE)
+        row = make_row()
+        row.shelf_life = MemoryShelfLife.STATE.value
         boundaries.get_memory.return_value = row
 
         assert await forget_memory(USER, str(row.id), "stale") is True
@@ -282,7 +284,8 @@ class TestForgetMemoryDeletesConversationChunks:
     async def test_forgetting_a_sourced_fact_deletes_that_conversations_chunks(
         self, boundaries: MagicMock
     ) -> None:
-        row = make_row(source_id="conv-42")
+        row = make_row()
+        row.source_id = "conv-42"
         boundaries.get_memory.return_value = row
 
         assert await forget_memory(USER, str(row.id), "user asked") is True
@@ -300,7 +303,9 @@ class TestForgetMemoryDeletesConversationChunks:
         management.chroma_store.delete_conversation_chunks.assert_not_awaited()
 
     async def test_a_failed_forget_deletes_no_chunks(self, boundaries: MagicMock) -> None:
-        boundaries.get_memory.return_value = make_row(source_id="conv-42")
+        sourced = make_row()
+        sourced.source_id = "conv-42"
+        boundaries.get_memory.return_value = sourced
         boundaries.mark_forgotten.return_value = False
 
         assert await forget_memory(USER, str(uuid.uuid4()), "user asked") is False

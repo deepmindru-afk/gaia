@@ -7494,7 +7494,7 @@ export interface components {
             icon_color?: string | null;
             /**
              * Integration Ids
-             * @description Integration ids this workflow uses — picked by the user or identified from intent. Scopes the tool palette when generating steps.
+             * @description Integration ids this workflow uses, picked by the user or identified from intent. Scopes the tool palette when generating steps.
              */
             integration_ids?: string[] | null;
             /**
@@ -10308,12 +10308,12 @@ export interface components {
             first_message: string;
             /**
              * Handoff Text
-             * @description first_message with ' #<code>' appended — the exact text a WhatsApp or iMessage user sends. Used to build the iMessage sms: link, whose number is only known after the phone is registered on Photon's pool.
+             * @description first_message with ' #<code>' appended, the exact text a WhatsApp or iMessage user sends. Used to build the iMessage sms: link, whose number is only known after the phone is registered on Photon's pool.
              */
             handoff_text: string;
             /**
              * Links
-             * @description Deep link per platform that carries the code. iMessage is absent by construction — its number is assigned per user.
+             * @description Deep link per platform that carries the code. iMessage is absent by construction; its number is assigned per user.
              */
             links: {
                 [key: string]: string;
@@ -11823,7 +11823,7 @@ export interface components {
             delivered: boolean;
             /**
              * First Contact
-             * @description Ordered bubbles the bot must send itself because delivery failed. Empty whenever delivered is true — sending them then would say everything twice.
+             * @description Ordered bubbles the bot must send itself because delivery failed. Empty whenever delivered is true, because sending them then would say everything twice.
              */
             first_contact?: string[];
             /**
@@ -14243,7 +14243,7 @@ export interface components {
             days_remaining: number | null;
             /**
              * Has Ever Subscribed
-             * @description Whether the user has ever had a subscription, in any status — separates a lapsed subscriber from one who has never paid
+             * @description Whether the user has ever had a subscription, in any status; separates a lapsed subscriber from one who has never paid
              * @default false
              */
             has_ever_subscribed: boolean;
@@ -14764,7 +14764,7 @@ export interface components {
              * @default 0
              */
             current_step_index: number;
-            /** @description Why the workflow is not activated. None means the user turned it off themselves — only system-paused workflows may be resumed automatically. */
+            /** @description Why the workflow is not activated. None means the user turned it off themselves; only system-paused workflows may be resumed automatically. */
             deactivated_reason: components["schemas"]["DeactivationReason"] | null;
             /**
              * Description
@@ -14799,7 +14799,7 @@ export interface components {
             id: string;
             /**
              * Integration Ids
-             * @description Integration ids this workflow uses — picked by the user or identified from intent by the workflow assistant. Scopes the tool palette when generating steps. Connection state is never stored here: required/missing integrations are derived from the steps at read time.
+             * @description Integration ids this workflow uses, picked by the user or identified from intent by the workflow assistant. Scopes the tool palette when generating steps. Connection state is never stored here: required/missing integrations are derived from the steps at read time.
              */
             integration_ids: string[];
             /**
