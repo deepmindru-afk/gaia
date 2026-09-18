@@ -21,6 +21,8 @@ from app.config.settings import settings
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
 from shared.py.wide_events import log
 
+_client: Langfuse | None = None
+
 # How long process start will wait for the reachability check below. A healthy
 # Langfuse answers in milliseconds, so this only bites when it is down or slow —
 # exactly when startup must not be held up. It cannot be expressed as an SDK
@@ -108,7 +110,23 @@ def init_langfuse() -> Langfuse:
             waited_seconds=LANGFUSE_AUTH_CHECK_WAIT_SECONDS,
             hint="Langfuse slow or unreachable; startup continued, traces likely dropped",
         )
+    global _client
+    _client = client
     return client
+
+
+async def flush_langfuse() -> None:
+    """Flush queued Langfuse traces on shutdown so a restart loses no turns."""
+    if _client is None:
+        return
+    try:
+        _client.flush()
+    except Exception as exc:
+        log.warning(
+            "langfuse_flush_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
 
 
 def _log_reachability(client: Langfuse) -> None:

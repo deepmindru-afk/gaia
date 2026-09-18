@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import app.services.latitude_service as latitude_module
 from app.services.latitude_service import TurnCapture, begin_turn, end_turn
 
 
@@ -67,6 +68,23 @@ class TestBeginTurn:
                 error_type="RuntimeError",
                 conversation_id="c1",
             )
+
+    def test_missing_key_logs_once_per_process(self) -> None:
+        latitude_module._disabled_logged = False
+        try:
+            with (
+                patch("app.services.latitude_service.settings", _settings(None)),
+                patch("app.services.latitude_service.log") as mock_log,
+            ):
+                assert begin_turn(user_id="u1", conversation_id="c1") is None
+                assert begin_turn(user_id="u1", conversation_id="c1") is None
+
+                mock_log.info.assert_called_once_with(
+                    "latitude_disabled",
+                    reason="LATITUDE_API_KEY unset; turns will not report",
+                )
+        finally:
+            latitude_module._disabled_logged = False
 
     def test_none_valued_properties_are_dropped(self) -> None:
         scope = MagicMock()
@@ -148,4 +166,20 @@ class TestEndTurn:
             end_turn(handle, error=RuntimeError("x"))
             mock_log.warning.assert_called_once_with(
                 "latitude_end_failed", error="boom", error_type="RuntimeError"
+            )
+
+    def test_tag_failure_still_closes(self) -> None:
+        scope, span = MagicMock(), MagicMock()
+        span.is_recording.return_value = True
+        span.set_attribute.side_effect = RuntimeError("otel down")
+        handle = TurnCapture(scope=scope, span=span)
+        with (
+            patch("app.services.latitude_service.capture") as mock_capture,
+            patch("app.services.latitude_service.log") as mock_log,
+        ):
+            end_turn(handle, cancelled=True)
+
+            mock_capture.end.assert_called_once_with(scope, None)
+            mock_log.warning.assert_called_once_with(
+                "latitude_tag_failed", error="otel down", error_type="RuntimeError"
             )

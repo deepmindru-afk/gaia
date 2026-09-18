@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import app.config.laminar as laminar_config
+import app.services.laminar_service as laminar_module
 from app.services.laminar_service import TurnScope, begin_turn, end_turn
 
 
@@ -66,6 +68,23 @@ class TestBeginTurn:
             mock_sdk.start_as_current_span.side_effect = RuntimeError("boom")
 
             assert begin_turn(user_id="u1", conversation_id="c1") is None
+
+    def test_missing_key_logs_once_per_process(self) -> None:
+        laminar_module._disabled_logged = False
+        try:
+            with (
+                patch("app.services.laminar_service.settings", _settings("  ")),
+                patch("app.services.laminar_service.log") as mock_log,
+            ):
+                assert begin_turn(user_id="u1", conversation_id="c1") is None
+                assert begin_turn(user_id="u1", conversation_id="c1") is None
+
+                mock_log.info.assert_called_once_with(
+                    "laminar_disabled",
+                    reason="LMNR_PROJECT_API_KEY unset; turns will not report",
+                )
+        finally:
+            laminar_module._disabled_logged = False
 
     def test_none_valued_properties_are_dropped(self) -> None:
         scope, _ = _entered_scope()
@@ -170,3 +189,28 @@ class TestEndTurn:
                 error_type="RuntimeError",
                 conversation_id="c1",
             )
+
+
+class TestFlushGate:
+    """Shutdown flushes only after a successful init — a failed init must
+    not attempt a flush against an uninitialized SDK."""
+
+    async def test_uninitialized_flush_is_noop(self) -> None:
+        laminar_config._initialized = False
+        try:
+            with patch("app.config.laminar.Laminar") as mock_sdk:
+                await laminar_config.flush_laminar()
+
+                mock_sdk.flush.assert_not_called()
+        finally:
+            laminar_config._initialized = False
+
+    async def test_initialized_flush_calls_sdk(self) -> None:
+        laminar_config._initialized = True
+        try:
+            with patch("app.config.laminar.Laminar") as mock_sdk:
+                await laminar_config.flush_laminar()
+
+                mock_sdk.flush.assert_called_once_with()
+        finally:
+            laminar_config._initialized = False

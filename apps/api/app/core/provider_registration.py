@@ -40,7 +40,7 @@ from app.agents.tools.core.store import init_embeddings
 from app.config.agnost import flush_agnost, init_agnost
 from app.config.cloudinary import init_cloudinary
 from app.config.laminar import flush_laminar, init_laminar
-from app.config.langfuse import init_langfuse
+from app.config.langfuse import flush_langfuse, init_langfuse
 from app.config.latitude import flush_latitude, init_latitude
 from app.config.posthog import init_posthog
 from app.config.settings import settings
@@ -381,6 +381,7 @@ async def unified_shutdown(context: Literal["main_app", "arq_worker"]) -> None:
         (flush_agnost, "agnost"),
         (flush_latitude, "latitude"),
         (flush_laminar, "laminar"),
+        (flush_langfuse, "langfuse"),
     ]
 
     # Context-specific cleanup: the WebSocket event consumer only runs in FastAPI.

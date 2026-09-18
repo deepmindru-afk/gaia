@@ -35,6 +35,16 @@ def _configured() -> bool:
     return bool((settings.LMNR_PROJECT_API_KEY or "").strip())
 
 
+_disabled_logged = False
+
+
+def _log_disabled_once() -> None:
+    global _disabled_logged
+    if not _disabled_logged:
+        _disabled_logged = True
+        log.info("laminar_disabled", reason="LMNR_PROJECT_API_KEY unset; turns will not report")
+
+
 def begin_turn(
     *,
     user_id: str,
@@ -44,7 +54,10 @@ def begin_turn(
     properties: dict[str, str | bool | None] | None = None,
 ) -> TurnScope | None:
     """Open a Laminar turn scope, or None when disabled/failing."""
-    if not user_id or not _configured():
+    if not user_id:
+        return None
+    if not _configured():
+        _log_disabled_once()
         return None
     try:
         # Filtered, not just annotated: the SDK's metadata type excludes None

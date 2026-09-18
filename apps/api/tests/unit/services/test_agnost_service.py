@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import app.services.agnost_service as agnost_module
 from app.services.agnost_service import begin_turn, end_turn
 
 
@@ -63,6 +64,29 @@ class TestBeginTurn:
             assert kwargs["input"] == "hello"
             assert kwargs["agent_name"] == "comms_agent"
             assert kwargs["properties"] == {"source": "web"}
+
+    def test_missing_key_logs_once_per_process(self) -> None:
+        agnost_module._disabled_logged = False
+        try:
+            with (
+                patch("app.services.agnost_service.settings", _settings(None)),
+                patch("app.services.agnost_service.log") as mock_log,
+            ):
+                assert (
+                    begin_turn(user_id="u1", conversation_id="c1", user_input="hello")
+                    is None
+                )
+                assert (
+                    begin_turn(user_id="u1", conversation_id="c1", user_input="hello")
+                    is None
+                )
+
+                mock_log.info.assert_called_once_with(
+                    "agnost_disabled",
+                    reason="AGNOST_ORG_ID unset; turns will not report",
+                )
+        finally:
+            agnost_module._disabled_logged = False
 
     def test_none_valued_properties_are_dropped(self) -> None:
         interaction = MagicMock()
@@ -163,6 +187,17 @@ class TestEndTurn:
 
             mock_log.warning.assert_called_once_with(
                 "agnost_end_failed", error="boom", error_type="RuntimeError"
+            )
+
+    def test_properties_failure_still_closes(self) -> None:
+        interaction = MagicMock()
+        interaction.set_properties.side_effect = RuntimeError("props down")
+        with patch("app.services.agnost_service.log") as mock_log:
+            end_turn(interaction, output="hi", success=True, properties={"a": "b"})
+
+            interaction.end.assert_called_once_with(output="hi", success=True)
+            mock_log.warning.assert_called_once_with(
+                "agnost_properties_failed", error="props down", error_type="RuntimeError"
             )
 
     def test_sdk_failure_does_not_raise(self) -> None:

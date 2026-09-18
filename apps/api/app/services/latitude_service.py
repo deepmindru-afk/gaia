@@ -32,6 +32,16 @@ def _configured() -> bool:
     return bool((settings.LATITUDE_API_KEY or "").strip())
 
 
+_disabled_logged = False
+
+
+def _log_disabled_once() -> None:
+    global _disabled_logged
+    if not _disabled_logged:
+        _disabled_logged = True
+        log.info("latitude_disabled", reason="LATITUDE_API_KEY unset; turns will not report")
+
+
 def begin_turn(
     *,
     user_id: str,
@@ -40,7 +50,10 @@ def begin_turn(
     properties: dict[str, str | bool | None] | None = None,
 ) -> TurnCapture | None:
     """Open a Latitude capture scope for this turn, or None when disabled/failing."""
-    if not user_id or not _configured():
+    if not user_id:
+        return None
+    if not _configured():
+        _log_disabled_once()
         return None
     try:
         metadata: dict[str, object] = {k: v for k, v in (properties or {}).items() if v is not None}
@@ -68,12 +81,21 @@ def end_turn(
     """Close a Latitude capture scope. No-op when scope is None. Never raises."""
     if scope is None:
         return
-    try:
-        # Cancelled is not a failure: end the span cleanly so it reads OK,
-        # with an attribute splitting user-stops from real successes. Set on
-        # the stored span (see TurnCapture), never the ambient current span.
-        if cancelled and error is None and scope.span.is_recording():
+    # Cancelled is not a failure: end the span cleanly so it reads OK, with
+    # an attribute splitting user-stops from real successes. Set on the
+    # stored span (see TurnCapture), never the ambient current span. A tag
+    # failure must not skip the close below: an un-ended scope leaks the turn
+    # (and its context token) from every dashboard.
+    if cancelled and error is None and scope.span.is_recording():
+        try:
             scope.span.set_attribute("cancelled", True)
+        except Exception as exc:
+            log.warning(
+                "latitude_tag_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+    try:
         capture.end(scope.scope, error)
     except Exception as exc:
         log.warning(

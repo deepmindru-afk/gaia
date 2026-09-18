@@ -4,6 +4,8 @@ from app.config.settings import settings
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
 from shared.py.wide_events import log
 
+_initialized = False
+
 
 @lazy_provider(
     name="laminar",
@@ -27,13 +29,15 @@ def init_laminar() -> bool:
         instruments={Instruments.LANGCHAIN, Instruments.LANGGRAPH},
         set_global_tracer_provider=False,
     )
+    global _initialized
+    _initialized = True
     log.info("laminar_ready")
     return True
 
 
 async def flush_laminar() -> None:
     """Flush queued Laminar spans on shutdown so a restart loses no traces."""
-    if not (settings.LMNR_PROJECT_API_KEY or "").strip():
+    if not _initialized:
         return
     try:
         Laminar.flush()

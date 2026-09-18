@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING, Union, cast
 
 from langchain_core.messages import BaseMessage
 
-from app.agents.llm.client import ainvoke_llm, get_helper_llm, metered_config, with_llm_retry
+from app.agents.llm.client import (
+    ainvoke_llm,
+    attributed_config,
+    get_helper_llm,
+    with_llm_retry,
+)
 from app.agents.llm.vision import describe_image
 from app.agents.prompts.image_prompts import DOCUMENT_IMAGE_SUMMARY_PROMPT
 from app.config.settings import settings
@@ -340,7 +345,7 @@ class DocumentProcessor:
                     },
                 ],
                 label="file_text_summary",
-                config=metered_config(self.user_id),
+                config=attributed_config(self.user_id),
             )
 
             # ainvoke_llm is typed -> Any (its return shape varies by call

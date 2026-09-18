@@ -8,12 +8,11 @@ everywhere, errors carry the same exception, properties match.
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from agnost import Interaction
 
 from app.config.settings import settings
-from app.constants.agents import COMMS_AGENT_NAME
 from app.services import agnost_service, laminar_service, latitude_service
 from app.services.laminar_service import TurnScope
 from app.services.latitude_service import TurnCapture
@@ -48,6 +47,14 @@ class TurnHandles(TypedDict):
 _disabled_logged = False
 
 
+# Closed value sets (repo-owned): a typo compiles nowhere. Keep the tier
+# members in sync with COMMS_AGENT_NAME / EXECUTOR_TIER_NAME /
+# NARRATOR_TIER_NAME in app/constants/agents.py (canonical spellings for
+# non-telemetry code); the Literals are what the fan-out enforces.
+TurnMode = Literal["interactive", "background"]
+TurnTier = Literal["comms_agent", "executor", "narrator"]
+
+
 @dataclass(frozen=True)
 class TurnSpec:
     """What identifies a turn across all three backends.
@@ -65,9 +72,9 @@ class TurnSpec:
     user_id: str
     conversation_id: str
     user_input: str
-    mode: str
+    mode: TurnMode
     source: str | None = None
-    tier: str = COMMS_AGENT_NAME
+    tier: TurnTier = "comms_agent"
     properties: dict[str, str | bool | None] | None = None
 
 
@@ -78,7 +85,7 @@ def begin_turn_all(spec: TurnSpec) -> TurnHandles:
     # env splits shared dashboards (one org/project across dev/staging/prod).
     props = {
         **(spec.properties or {}),
-        "source": spec.source or "background",
+        "source": spec.source or "unknown",
         "mode": spec.mode,
         "tier": spec.tier,
         "env": settings.ENV,
@@ -88,19 +95,19 @@ def begin_turn_all(spec: TurnSpec) -> TurnHandles:
             user_id=spec.user_id,
             conversation_id=spec.conversation_id,
             user_input=spec.user_input,
-            agent_name=COMMS_AGENT_NAME,
+            agent_name=spec.tier,
             properties=props,
         ),
         "latitude": latitude_service.begin_turn(
             user_id=spec.user_id,
             conversation_id=spec.conversation_id,
-            agent_name=COMMS_AGENT_NAME,
+            agent_name=spec.tier,
             properties=props,
         ),
         "laminar": laminar_service.begin_turn(
             user_id=spec.user_id,
             conversation_id=spec.conversation_id,
-            agent_name=COMMS_AGENT_NAME,
+            agent_name=spec.tier,
             user_input=spec.user_input,
             properties=props,
         ),

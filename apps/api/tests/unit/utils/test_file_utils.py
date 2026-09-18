@@ -751,3 +751,23 @@ class TestGenerateFileSummary:
         await generate_file_summary(b"b", "text/plain", "b.txt", user_id="u-test")
 
         assert mock_proc_cls.call_count == 2
+
+
+class TestTextSummaryAttribution:
+    """The per-text summary must bill to its user and join traces — a bare
+    config bills to nobody and orphans every trace backend."""
+
+    async def test_config_carries_user_and_langfuse_linkage(
+        self, processor: DocumentProcessor
+    ) -> None:
+        with patch(
+            "app.utils.file_utils.ainvoke_llm", new=AsyncMock(return_value="s")
+        ) as mock_invoke:
+            # Bypass the response-text handling; config capture is the point.
+            mock_invoke.return_value = MagicMock()
+            mock_invoke.return_value.text = "s"
+            await processor._generate_text_summary("text")
+
+        config = mock_invoke.call_args.kwargs["config"]
+        assert config["configurable"]["user_id"] == "u-test"
+        assert config["metadata"]["langfuse_user_id"] == "u-test"

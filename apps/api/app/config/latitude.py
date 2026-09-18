@@ -12,6 +12,21 @@ from shared.py.wide_events import log
 _client: Latitude | None = None
 
 
+def resolve_exporter_endpoint() -> str:
+    """Point the Latitude SDK at the settings-configured ingest.
+
+    Settings wins over process env, always: the SDK freezes EXPORTER_URL at
+    import time (latitude_telemetry.env builds Env on import, before this
+    runs), so assigning only when unset would silently keep pointing at
+    Latitude Cloud while settings names the self-hosted ingest. Rebind the
+    frozen value after assigning so both agree. Split out for direct tests —
+    this is the line that decides self-hosted vs Cloud.
+    """
+    os.environ["LATITUDE_TELEMETRY_URL"] = settings.LATITUDE_TELEMETRY_URL
+    latitude_env.EXPORTER_URL = get_exporter_url()
+    return os.environ["LATITUDE_TELEMETRY_URL"]
+
+
 @lazy_provider(
     name="latitude",
     required_keys=[settings.LATITUDE_API_KEY],
@@ -28,14 +43,8 @@ def init_latitude() -> bool:
     Latitude's own provider so spans ship to Latitude and nowhere else.
     No-op when LATITUDE_API_KEY is unset.
     """
-    # Settings wins over process env, always: the SDK freezes EXPORTER_URL at
-    # import time (latitude_telemetry.env builds Env on import, before this
-    # runs), so assigning only when unset would silently keep pointing at
-    # Latitude Cloud while settings names the self-hosted ingest. Rebind the
-    # frozen value after assigning so both agree.
-    os.environ["LATITUDE_TELEMETRY_URL"] = settings.LATITUDE_TELEMETRY_URL
-    latitude_env.EXPORTER_URL = get_exporter_url()
-    endpoint = os.environ["LATITUDE_TELEMETRY_URL"]
+    # Settings wins over process env, always: see resolve_exporter_endpoint.
+    endpoint = resolve_exporter_endpoint()
 
     latitude = Latitude(
         api_key=settings.LATITUDE_API_KEY or "",

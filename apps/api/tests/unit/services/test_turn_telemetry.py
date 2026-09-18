@@ -6,6 +6,7 @@ mocking the services here is the seam, not the thing under test.
 """
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -46,16 +47,21 @@ class TestOutcomeValues:
 @pytest.mark.unit
 class TestBeginFanOut:
     def test_carries_real_ids_input_and_uniform_properties(self, services: MagicMock) -> None:
-        handles = begin_turn_all(
-            TurnSpec(
-                user_id="u1",
-                conversation_id="c1",
-                user_input="hello",
-                source="web",
-                mode="interactive",
-                properties={"voice_mode": True},
+        # A staged env (not the live settings object) proves the value flows
+        # from settings rather than echoing the test's own expectation.
+        with patch(
+            "app.services.turn_telemetry.settings", SimpleNamespace(ENV="staging")
+        ):
+            handles = begin_turn_all(
+                TurnSpec(
+                    user_id="u1",
+                    conversation_id="c1",
+                    user_input="hello",
+                    source="web",
+                    mode="interactive",
+                    properties={"voice_mode": True},
+                )
             )
-        )
 
         assert set(handles) == {"agnost", "latitude", "laminar"}
         assert handles["laminar"] is services.laminar.begin_turn.return_value
@@ -64,7 +70,7 @@ class TestBeginFanOut:
             "source": "web",
             "mode": "interactive",
             "tier": "comms_agent",
-            "env": settings.ENV,
+            "env": "staging",
             "voice_mode": True,
         }
         agnost_kwargs = services.agnost.begin_turn.call_args.kwargs
@@ -109,23 +115,27 @@ class TestBeginFanOut:
             "tier": "narrator",
             "env": settings.ENV,
         }
+        # The turn is NAMED for its tier in every backend, not just tagged.
+        assert services.agnost.begin_turn.call_args.kwargs["agent_name"] == "narrator"
+        assert services.latitude.begin_turn.call_args.kwargs["agent_name"] == "narrator"
+        assert services.laminar.begin_turn.call_args.kwargs["agent_name"] == "narrator"
 
-    def test_missing_source_defaults_to_background(self, services: MagicMock) -> None:
+    def test_missing_source_defaults_to_unknown(self, services: MagicMock) -> None:
         begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", mode="interactive"))
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
         assert props == {
-            "source": "background",
+            "source": "unknown",
             "mode": "interactive",
             "tier": "comms_agent",
             "env": settings.ENV,
         }
 
-    def test_empty_source_defaults_to_background(self, services: MagicMock) -> None:
+    def test_empty_source_defaults_to_unknown(self, services: MagicMock) -> None:
         begin_turn_all(TurnSpec(user_id="u1", conversation_id="c1", user_input="hello", source="", mode="interactive"))
 
         props = services.agnost.begin_turn.call_args.kwargs["properties"]
-        assert props["source"] == "background"
+        assert props["source"] == "unknown"
 
     def test_no_properties_leaves_only_reserved_keys(self, services: MagicMock) -> None:
         begin_turn_all(

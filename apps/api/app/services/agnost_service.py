@@ -12,6 +12,16 @@ def _configured() -> bool:
     return bool((settings.AGNOST_ORG_ID or "").strip())
 
 
+_disabled_logged = False
+
+
+def _log_disabled_once() -> None:
+    global _disabled_logged
+    if not _disabled_logged:
+        _disabled_logged = True
+        log.info("agnost_disabled", reason="AGNOST_ORG_ID unset; turns will not report")
+
+
 def begin_turn(
     *,
     user_id: str,
@@ -21,7 +31,10 @@ def begin_turn(
     properties: dict[str, str | bool | None] | None = None,
 ) -> Interaction | None:
     """Open an Agnost interaction for this turn, or None when disabled/failing."""
-    if not user_id or not _configured():
+    if not user_id:
+        return None
+    if not _configured():
+        _log_disabled_once()
         return None
     try:
         props = {k: v for k, v in (properties or {}).items() if v is not None}
@@ -56,6 +69,15 @@ def end_turn(
         props = {k: v for k, v in (properties or {}).items() if v is not None}
         if props:
             interaction.set_properties(props)
+    except Exception as exc:
+        # A properties failure must not skip the close below: an un-ended
+        # interaction leaks the turn from every dashboard.
+        log.warning(
+            "agnost_properties_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+    try:
         interaction.end(output=output, success=success)
     except Exception as exc:
         log.warning(
