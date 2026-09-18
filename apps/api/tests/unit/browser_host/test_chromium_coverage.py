@@ -571,12 +571,50 @@ async def test_estimate_session_cost_is_measured_average_floored(
         f"s{i}": make_session(session_id=f"s{i}", context_id="c", target_id="t", last_activity_at=0)
         for i in range(3)
     }
-    # overhead 300 / 3 sessions = 100/session, above the floor
-    monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (400.0, 1000.0))
+    # engine tree grew 300 / 3 sessions = 100/session, above the floor
+    host._sampler = _sampler_reading(400.0)
     assert host._estimate_session_cost_mb() == 100.0
-    # overhead 60 / 3 = 20/session, below the floor -> floored
-    monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (160.0, 1000.0))
+    # engine tree grew 60 / 3 = 20/session, below the floor -> floored
+    host._sampler = _sampler_reading(160.0)
     assert host._estimate_session_cost_mb() == 50.0
+
+
+@pytest.mark.unit
+async def test_estimate_session_cost_ignores_memory_the_engine_did_not_take(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a long-lived host on a busy machine refused every create with a 429."""
+    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 50)
+    host = ChromiumHost()
+    host._base_memory_mb = 100.0
+    host._sessions = {
+        "s1": make_session(session_id="s1", context_id="c", target_id="t", last_activity_at=0)
+    }
+    host._sampler = _sampler_reading(130.0)
+    # the environment grew by 20 GB since launch; the engine tree by 30 MB
+    monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (20_100.0, 48_000.0))
+
+    assert host._estimate_session_cost_mb() == 50.0
+
+
+@pytest.mark.unit
+async def test_estimate_session_cost_falls_back_to_the_floor_without_a_sampler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 50)
+    host = ChromiumHost()
+    host._sessions = {
+        "s1": make_session(session_id="s1", context_id="c", target_id="t", last_activity_at=0)
+    }
+    host._sampler = None
+
+    assert host._estimate_session_cost_mb() == 50.0
+
+
+def _sampler_reading(rss_mb: float) -> ProcessSampler:
+    sampler = MagicMock(spec=ProcessSampler)
+    sampler.sample.return_value = (rss_mb, 0.0)
+    return sampler
 
 
 @pytest.mark.unit
@@ -3606,10 +3644,10 @@ async def test_reserve_slot_refuses_immediately_when_the_wait_budget_is_already_
 def test_a_new_host_has_no_memory_baseline_to_subtract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Before start() the baseline is zero, so the estimate is the raw usage."""
+    """Before start() the baseline is zero, so the estimate is the engine's whole RSS."""
     monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 1)
-    monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (100.0, 1000.0))
     host = ChromiumHost()
+    host._sampler = _sampler_reading(100.0)
     host._sessions = {"s1": make_session()}
 
     assert host._estimate_session_cost_mb() == 100.0
@@ -3619,20 +3657,24 @@ def test_a_new_host_has_no_memory_baseline_to_subtract(
 async def test_start_takes_the_baseline_from_used_memory_not_the_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The baseline is the engine+host floor, so the estimate measures only growth."""
+    """The baseline is the engine's RSS at launch, so the estimate measures only growth."""
     monkeypatch.setattr(settings, "BROWSER_HOST_SESSION_COST_FLOOR_MB", 1)
     monkeypatch.setattr(chromium.asyncio, "to_thread", AsyncMock(return_value="/tmp/chrome"))
-    monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (300.0, 4000.0))
     host = ChromiumHost()
-    host._launch = AsyncMock()
+    sampler = _sampler_reading(300.0)
+
+    async def launch() -> None:
+        host._sampler = sampler
+
+    host._launch = launch
     host._reaper_loop = AsyncMock()
     host._watch_loop = AsyncMock()
 
     await host.start()
 
     host._sessions = {"s1": make_session()}
-    monkeypatch.setattr(chromium, "memory_usage_mb", lambda: (400.0, 4000.0))
-    # 400 used - 300 baseline = 100 MB attributable to the one live session.
+    sampler.sample.return_value = (400.0, 0.0)
+    # 400 engine RSS - 300 at launch = 100 MB attributable to the one live session.
     assert host._estimate_session_cost_mb() == 100.0
 
 

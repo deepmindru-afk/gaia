@@ -243,7 +243,7 @@ class ChromiumHost:
         if settings.BROWSER_ENGINE is not BrowserEngine.OBSCURA:
             self._chromium_path = await asyncio.to_thread(_resolve_chromium_path)
         await self._launch()
-        self._base_memory_mb = memory_usage_mb()[0]
+        self._base_memory_mb = self._engine_rss_mb() or 0.0
         self._watcher_task = asyncio.create_task(self._watch_loop())
         self._reaper_task = asyncio.create_task(self._reaper_loop())
         log.info(f"{LogTag.BROWSER} browser host started")
@@ -491,19 +491,28 @@ class ChromiumHost:
             raise SessionNotFoundError(session_id)
         return session
 
+    def _engine_rss_mb(self) -> float | None:
+        """RSS of the engine's own process tree, or None when it cannot be sampled."""
+        if self._sampler is None:
+            return None
+        reading = self._sampler.sample()
+        return None if reading is None else reading[0]
+
     def _estimate_session_cost_mb(self) -> float:
         """Adaptive MB to reserve for the next session: measured average, floored.
 
-        (current_used - startup_baseline) / live_sessions learns the real
+        (engine_rss - engine_rss_at_launch) / live_sessions learns the real
         per-session cost as sessions run; the floor keeps a burst of concurrent
         creates from collectively overshooting before their memory materializes.
         """
         floor = float(settings.BROWSER_HOST_SESSION_COST_FLOOR_MB)
         sessions = len(self._sessions)
-        if sessions == 0:
+        # Only the engine tree is what sessions cost: charging them for everything
+        # else that grew since launch made a long-lived host 429 every create.
+        engine_rss = self._engine_rss_mb()
+        if sessions == 0 or engine_rss is None:
             return floor
-        overhead = memory_usage_mb()[0] - self._base_memory_mb
-        return max(floor, overhead / sessions)
+        return max(floor, (engine_rss - self._base_memory_mb) / sessions)
 
     async def _reserve_slot(self) -> None:
         """Admit one session when memory allows, else back off then 429.
