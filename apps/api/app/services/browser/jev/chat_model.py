@@ -44,6 +44,7 @@ from app.services.browser.jev.prompts import (
     TEXT_VALUE,
     URL_VALUE,
 )
+from app.services.browser.jev.viewport import ViewportBox, read_viewport
 from shared.py.wide_events import log
 
 if TYPE_CHECKING:
@@ -98,6 +99,15 @@ class JevChatModel:
         self._history: list[JevHistoryEntry] = []
         self._last_fingerprint: str | None = None
         self._steps = 0
+        self._viewport: dict[int, ViewportBox] = {}
+
+    def viewport_points(self) -> dict[int, tuple[float, float]]:
+        """Return the last observation's on-screen centres by Browser-Use index, for the UI pulse."""
+        return {
+            index: (round(box.cx, 4), round(box.cy, 4))
+            for index, box in self._viewport.items()
+            if box.on_screen
+        }
 
     @property
     def provider(self) -> str:
@@ -149,7 +159,9 @@ class JevChatModel:
         if self._browser is None:
             raise BrowserUnavailableError("Jev policy has no browser session bound.")
         state = await self._browser.get_browser_state_summary(cached=True, include_screenshot=False)
-        observation = observe(state, await read_live_values(self._browser))
+        selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
+        self._viewport = await read_viewport(self._browser, selector_map)
+        observation = observe(state, await read_live_values(self._browser), self._viewport)
         self._settle_previous_step(observation)
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)

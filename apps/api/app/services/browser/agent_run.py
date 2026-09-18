@@ -79,37 +79,10 @@ def _element_label(state: BrowserStateSummary, index: object) -> str | None:
         return None
 
 
-def _element_viewport_fraction(
-    state: BrowserStateSummary, index: object
-) -> tuple[float, float] | None:
-    """Return the element's centre as (x, y) fractions of the viewport, for the UI pulse.
-
-    Page coordinates minus the scroll offset give the viewport position; dividing
-    by the viewport size makes it resolution-independent, so the same fraction
-    lands correctly whatever size the screenshot is rendered at. Returns None when
-    the element has no box or its centre is off-screen (nothing to point at).
-    """
-    if not isinstance(index, int):
-        return None
-    selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
-    node = selector_map.get(index)
-    rect = getattr(node, "absolute_position", None)
-    page = getattr(state, "page_info", None)
-    if rect is None or page is None:
-        return None
-    viewport_w = getattr(page, "viewport_width", 0)
-    viewport_h = getattr(page, "viewport_height", 0)
-    if not viewport_w or not viewport_h:
-        return None
-    fx = (rect.x + rect.width / 2 - getattr(page, "scroll_x", 0)) / viewport_w
-    fy = (rect.y + rect.height / 2 - getattr(page, "scroll_y", 0)) / viewport_h
-    if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):
-        return None
-    return (round(fx, 4), round(fy, 4))
-
-
 def _extract_actions(
-    agent_output: AgentOutput, state: BrowserStateSummary | None = None
+    agent_output: AgentOutput,
+    state: BrowserStateSummary | None = None,
+    points: dict[int, tuple[float, float]] | None = None,
 ) -> list[BrowserAction]:
     """Return the step's actions as the agent's own tool calls — name, arguments, and the on-page text of whatever each one targets."""
     actions: list[BrowserAction] = []
@@ -117,12 +90,11 @@ def _extract_actions(
         dumped = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else {}
         for action_name, params in dumped.items():
             inputs = params if isinstance(params, dict) else {}
-            target = _element_label(state, inputs.get("index")) if state is not None else None
-            point = (
-                _element_viewport_fraction(state, inputs.get("index"))
-                if state is not None
-                else None
-            )
+            index = inputs.get("index")
+            target = _element_label(state, index) if state is not None else None
+            # The centre the page itself reported for this element this step; the
+            # snapshot's own boxes are fabricated on some engines (see jev/viewport.py).
+            point = (points or {}).get(index) if isinstance(index, int) else None
             actions.append(
                 BrowserAction(name=action_name, inputs=inputs, target=target, point=point)
             )
@@ -286,7 +258,8 @@ class BrowserAgentRun:
     ) -> None:
         """Fire after the model picks actions, before they execute."""
         self._last_step = n_steps
-        step_actions = _extract_actions(agent_output, browser_state_summary)
+        points = self._llm.viewport_points() if isinstance(self._llm, JevChatModel) else {}
+        step_actions = _extract_actions(agent_output, browser_state_summary, points)
         # Never the model's own next_goal/thinking: Jev fills both with its raw
         # decision label ("CLICK [6] Log In"). The caption describes what the
         # step does, named after the element it resolved.

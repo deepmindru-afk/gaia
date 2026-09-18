@@ -361,25 +361,23 @@ def test_extract_actions_ignores_actions_it_cannot_dump() -> None:
 
 
 def _targeted_state(index: int) -> SimpleNamespace:
-    """Build step state where element index is a named button with a known box."""
-    node = _LabelNode(
-        text="",
-        ax_node=SimpleNamespace(name="Sign in"),
-        attributes={},
-        absolute_position=_box(90.0, 90.0, 20.0, 20.0),
-    )
-    return SimpleNamespace(
-        dom_state=SimpleNamespace(selector_map={index: node}),
-        page_info=SimpleNamespace(viewport_width=100, viewport_height=100, scroll_x=0, scroll_y=0),
-    )
+    """Build step state where element index is a named button."""
+    node = _LabelNode(text="", ax_node=SimpleNamespace(name="Sign in"), attributes={})
+    return SimpleNamespace(dom_state=SimpleNamespace(selector_map={index: node}))
 
 
-def test_extract_actions_names_and_locates_the_element_the_action_targets() -> None:
-    """An index is meaningless to a reader: the step state the agent saw resolves it to the control's own name and to where it sits on screen."""
+def test_extract_actions_names_the_element_and_points_where_the_page_said_it_is() -> None:
+    """An index is meaningless to a reader: the step state names the control, and the centre comes from the page's own measurement, never from the snapshot's boxes."""
     output = _Output("goal", [_Action("click", {"index": 4})])
-    [action] = agent_run._extract_actions(output, _targeted_state(4))
+    [action] = agent_run._extract_actions(output, _targeted_state(4), {4: (0.25, 0.5)})
     assert action.target == "Sign in"
-    assert action.point == (1.0, 1.0)
+    assert action.point == (0.25, 0.5)
+
+
+def test_extract_actions_leaves_point_unset_when_the_page_did_not_measure_it() -> None:
+    output = _Output("goal", [_Action("click", {"index": 4})])
+    [action] = agent_run._extract_actions(output, _targeted_state(4), {9: (0.1, 0.1)})
+    assert action.point is None
 
 
 def test_extract_actions_leaves_target_and_point_unset_for_a_different_element() -> None:
@@ -536,167 +534,6 @@ async def test_an_agent_run_with_no_chat_model_says_so_instead_of_crashing_deep_
 # ---------------------------------------------------------------------------
 # run — how the agent and browser are configured
 # ---------------------------------------------------------------------------
-
-
-def test_element_viewport_fraction_maps_centre_minus_scroll_to_a_0_1_fraction() -> None:
-    """Normalise the element centre in viewport space to a 0..1 fraction so the UI needs no pixel size."""
-    node = SimpleNamespace(
-        absolute_position=SimpleNamespace(x=200.0, y=900.0, width=100.0, height=40.0)
-    )
-    state = SimpleNamespace(
-        dom_state=SimpleNamespace(selector_map={5: node}),
-        page_info=SimpleNamespace(
-            viewport_width=1280, viewport_height=800, scroll_x=0, scroll_y=800
-        ),
-    )
-    fx, fy = agent_run._element_viewport_fraction(state, 5)
-    assert fx == round((200 + 50) / 1280, 4)
-    assert fy == round((900 + 20 - 800) / 800, 4)
-
-
-def test_element_viewport_fraction_is_none_when_the_centre_is_off_screen() -> None:
-    # A target scrolled far above the viewport has nothing to point at.
-    node = SimpleNamespace(
-        absolute_position=SimpleNamespace(x=10.0, y=10.0, width=20.0, height=20.0)
-    )
-    state = SimpleNamespace(
-        dom_state=SimpleNamespace(selector_map={1: node}),
-        page_info=SimpleNamespace(
-            viewport_width=1280, viewport_height=800, scroll_x=0, scroll_y=5000
-        ),
-    )
-    assert agent_run._element_viewport_fraction(state, 1) is None
-
-
-def _box(x: float, y: float, width: float, height: float) -> SimpleNamespace:
-    return SimpleNamespace(x=x, y=y, width=width, height=height)
-
-
-def _fraction_state(box: object | None, **page: object) -> SimpleNamespace:
-    """Return a state whose element 1 has the given box, seen through the given viewport."""
-    return SimpleNamespace(
-        dom_state=SimpleNamespace(selector_map={1: SimpleNamespace(absolute_position=box)}),
-        page_info=SimpleNamespace(**page),
-    )
-
-
-def test_element_viewport_fraction_subtracts_the_scroll_offset_on_both_axes() -> None:
-    """Page coordinates are not viewport coordinates: a scrolled page moves the element towards the top-left, so the offset is subtracted, never added."""
-    state = _fraction_state(
-        _box(300.0, 1000.0, 100.0, 100.0),
-        viewport_width=1000,
-        viewport_height=1000,
-        scroll_x=100,
-        scroll_y=800,
-    )
-    assert agent_run._element_viewport_fraction(state, 1) == (0.25, 0.25)
-
-
-def test_element_viewport_fraction_is_none_when_only_the_box_is_missing() -> None:
-    # A node the DOM never gave a box to has no point, even though the page does.
-    state = _fraction_state(None, viewport_width=1000, viewport_height=1000, scroll_x=0, scroll_y=0)
-    assert agent_run._element_viewport_fraction(state, 1) is None
-
-
-def test_element_viewport_fraction_is_none_when_only_the_page_is_missing() -> None:
-    # Without page_info there is no viewport to normalise against.
-    state = _fraction_state(_box(0.0, 0.0, 10.0, 10.0), viewport_width=1000, viewport_height=1000)
-    state.page_info = None
-    assert agent_run._element_viewport_fraction(state, 1) is None
-
-
-def test_element_viewport_fraction_is_none_when_the_page_reports_no_viewport_size() -> None:
-    """A page whose size is unknown or zero on *either* axis cannot be normalised against — dividing by it would either explode or invent a position."""
-    # A 1x1 box so a substituted unit viewport would produce a plausible-looking
-    # in-range fraction rather than an obviously off-screen one.
-    missing_width = _fraction_state(
-        _box(0.0, 0.0, 1.0, 1.0), viewport_height=800, scroll_x=0, scroll_y=0
-    )
-    assert agent_run._element_viewport_fraction(missing_width, 1) is None
-
-    missing_height = _fraction_state(
-        _box(0.0, 0.0, 1.0, 1.0), viewport_width=1280, scroll_x=0, scroll_y=0
-    )
-    assert agent_run._element_viewport_fraction(missing_height, 1) is None
-
-    zero_width = _fraction_state(
-        _box(0.0, 0.0, 10.0, 10.0),
-        viewport_width=0,
-        viewport_height=800,
-        scroll_x=0,
-        scroll_y=0,
-    )
-    assert agent_run._element_viewport_fraction(zero_width, 1) is None
-
-    zero_height = _fraction_state(
-        _box(0.0, 0.0, 10.0, 10.0),
-        viewport_width=1280,
-        viewport_height=0,
-        scroll_x=0,
-        scroll_y=0,
-    )
-    assert agent_run._element_viewport_fraction(zero_height, 1) is None
-
-
-def test_element_viewport_fraction_keeps_a_centre_on_either_viewport_edge() -> None:
-    """The edges are on-screen: an element centred in the very corner is still something the UI can point at, so the range is inclusive at 0.0 and 1.0."""
-    top_left = _fraction_state(
-        _box(-10.0, -10.0, 20.0, 20.0),
-        viewport_width=100,
-        viewport_height=100,
-        scroll_x=0,
-        scroll_y=0,
-    )
-    assert agent_run._element_viewport_fraction(top_left, 1) == (0.0, 0.0)
-
-    bottom_right = _fraction_state(
-        _box(90.0, 90.0, 20.0, 20.0),
-        viewport_width=100,
-        viewport_height=100,
-        scroll_x=0,
-        scroll_y=0,
-    )
-    assert agent_run._element_viewport_fraction(bottom_right, 1) == (1.0, 1.0)
-
-
-def test_element_viewport_fraction_is_none_just_past_either_edge() -> None:
-    # Past 1.0 on either axis the centre is off-screen — there is nothing to pulse.
-    past_right = _fraction_state(
-        _box(140.0, 40.0, 20.0, 20.0),
-        viewport_width=100,
-        viewport_height=100,
-        scroll_x=0,
-        scroll_y=0,
-    )
-    assert agent_run._element_viewport_fraction(past_right, 1) is None
-
-    past_bottom = _fraction_state(
-        _box(40.0, 140.0, 20.0, 20.0),
-        viewport_width=100,
-        viewport_height=100,
-        scroll_x=0,
-        scroll_y=0,
-    )
-    assert agent_run._element_viewport_fraction(past_bottom, 1) is None
-
-
-def test_element_viewport_fraction_treats_an_unscrolled_page_as_offset_zero() -> None:
-    """A page that never scrolled may not report an offset at all — that is zero displacement, so the element sits where its page coordinates say."""
-    state = _fraction_state(_box(40.0, 40.0, 20.0, 20.0), viewport_width=100, viewport_height=100)
-    assert agent_run._element_viewport_fraction(state, 1) == (0.5, 0.5)
-
-
-def test_element_viewport_fraction_rounds_to_four_places() -> None:
-    # Four places is ~0.1px of a 1000px viewport — enough to place a pulse, and
-    # short enough that the fraction stays readable in the emitted event.
-    state = _fraction_state(
-        _box(0.5, 0.5, 1.0, 1.0),
-        viewport_width=3,
-        viewport_height=3,
-        scroll_x=0,
-        scroll_y=0,
-    )
-    assert agent_run._element_viewport_fraction(state, 1) == (0.3333, 0.3333)
 
 
 class _LabelNode:
@@ -1816,12 +1653,19 @@ async def test_a_step_names_and_locates_the_element_its_actions_target(patch_bro
     state = _targeted_state(4)
     state.url, state.title, state.screenshot = "https://x", "Page", None
 
+    from app.services.browser.jev.chat_model import JevChatModel
+    from app.services.browser.jev.viewport import ViewportBox
+
+    model = object.__new__(JevChatModel)
+    model._viewport = {4: ViewportBox(on_screen=True, cx=0.25, cy=0.5)}
+    runner._agent_run._llm = model
+
     await runner._agent_run._on_step(state, _Output("Sign in", [_Action("click", {"index": 4})]), 1)
     await _drain(runner)
 
     [action] = events[-1].actions
     assert action.target == "Sign in"
-    assert action.point == (1.0, 1.0)
+    assert action.point == (0.25, 0.5)
 
 
 async def test_a_state_without_url_title_or_screenshot_still_emits_a_step(patch_browser) -> None:

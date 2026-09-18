@@ -21,7 +21,7 @@ from app.services.browser.jev.prompts import (
     TARGET,
 )
 
-from .conftest import FakeAXNode, FakeNode, FakeRect, make_page_info, make_state
+from .conftest import FakeAXNode, FakeNode, make_state
 
 pytestmark = pytest.mark.unit
 
@@ -235,11 +235,9 @@ def _three_hundred_clickables():
                 "BUTTON",
                 text=f"Button {i}",
                 ax_node=FakeAXNode(role="button", name=f"Button {i}"),
-                absolute_position=FakeRect(y=10.0),
             )
             for i in range(300)
-        },
-        page_info=make_page_info(),
+        }
     )
 
 

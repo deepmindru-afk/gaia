@@ -6,15 +6,9 @@ import pytest
 
 from app.constants.browser import JEV_MAX_ELEMENTS, JevOperation
 from app.services.browser.jev.observation import observe
+from app.services.browser.jev.viewport import ViewportBox
 
-from .conftest import (
-    FakeAXNode,
-    FakeAXProperty,
-    FakeNode,
-    FakeRect,
-    make_page_info,
-    make_state,
-)
+from .conftest import FakeAXNode, FakeAXProperty, FakeNode, make_state
 
 pytestmark = pytest.mark.unit
 
@@ -216,20 +210,20 @@ def test_live_values_override_attributes_for_text_selects_and_checkboxes(flights
 # ---------------------------------------------------------------------------
 
 
-def _big_page(count: int = 300, *, in_viewport_from: int = 0):
-    """Build count buttons; those from in_viewport_from on sit inside the viewport."""
+def _big_page(count: int = 300):
+    """Build count buttons, all of them rows in the selector map."""
     return make_state(
         {
             i: FakeNode(
-                "BUTTON",
-                text=f"Button {i}",
-                ax_node=FakeAXNode(role="button", name=f"Button {i}"),
-                absolute_position=FakeRect(y=10.0 if i >= in_viewport_from else 5000.0),
+                "BUTTON", text=f"Button {i}", ax_node=FakeAXNode(role="button", name=f"Button {i}")
             )
             for i in range(count)
-        },
-        page_info=make_page_info(),
+        }
     )
+
+
+def _on_screen_from(first: int, count: int) -> dict[int, ViewportBox]:
+    return {i: ViewportBox(on_screen=i >= first, cx=0.5, cy=0.5) for i in range(count)}
 
 
 def test_a_screen_denser_than_the_gateway_allows_is_capped_in_document_order() -> None:
@@ -238,29 +232,34 @@ def test_a_screen_denser_than_the_gateway_allows_is_capped_in_document_order() -
     assert len(observation.targets(JevOperation.CLICK)) == JEV_MAX_ELEMENTS
 
 
-def test_jev_sees_only_the_elements_on_screen() -> None:
+def test_jev_sees_exactly_what_the_page_says_is_on_screen() -> None:
     """Off-screen elements are one SCROLL away, not part of this decision."""
-    observation = observe(_big_page(count=100, in_viewport_from=40))
+    observation = observe(_big_page(count=100), None, _on_screen_from(40, 100))
 
-    indexes = sorted(e.index for e in observation.elements)
-
-    assert indexes == list(range(41, 101))
+    assert sorted(e.index for e in observation.elements) == list(range(41, 101))
 
 
-def test_elements_without_geometry_are_kept_on_screen() -> None:
+def test_an_index_missing_from_the_viewport_map_is_kept() -> None:
+    """An xpath the page could not resolve is unknown, and unknown never hides a control."""
     state = make_state(
         {
-            1: FakeNode(
-                "BUTTON",
-                text="Go",
-                ax_node=FakeAXNode(role="button", name="Go"),
-                absolute_position=None,
-            )
-        },
-        page_info=make_page_info(),
+            1: FakeNode("BUTTON", text="Go", ax_node=FakeAXNode(role="button", name="Go")),
+            2: FakeNode("BUTTON", text="Stop", ax_node=FakeAXNode(role="button", name="Stop")),
+        }
     )
 
-    assert [e.index for e in observe(state).elements] == [1]
+    observation = observe(state, None, {2: ViewportBox(on_screen=False, cx=0.0, cy=0.0)})
+
+    assert [e.label for e in observation.elements] == ["Go"]
+
+
+def test_node_geometry_is_never_consulted() -> None:
+    """The snapshot's own boxes are fabricated on some engines; only the page decides."""
+    node = FakeNode("BUTTON", text="Go", ax_node=FakeAXNode(role="button", name="Go"))
+    node.is_visible = False
+    node.absolute_position = object()
+
+    assert len(observe(make_state({1: node})).elements) == 1
 
 
 def test_the_options_of_one_select_are_capped_in_document_order() -> None:
@@ -273,8 +272,7 @@ def test_the_options_of_one_select_are_capped_in_document_order() -> None:
                     FakeNode("OPTION", {"value": str(i)}, text=str(i)) for i in range(300)
                 ],
             )
-        },
-        page_info=make_page_info(),
+        }
     )
 
     targets = observe(state).targets(JevOperation.SELECT)

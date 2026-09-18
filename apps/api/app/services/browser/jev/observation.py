@@ -21,6 +21,7 @@ from app.constants.browser import (
 )
 from app.constants.log_tags import LogTag
 from app.services.browser.jev.live_values import LiveValues
+from app.services.browser.jev.viewport import ViewportBox
 from shared.py.wide_events import log
 
 if TYPE_CHECKING:
@@ -55,9 +56,8 @@ class JevElement:
     role: str
     operations: tuple[JevOperation, ...]
     value: str | None = None
-    #: Inside the scrolled-to region of the page. Browser-Use 0.11.13 has no
-    #: viewport flag on the node, so this is its ``absolute_position`` box
-    #: against ``page_info``'s scroll window; unknown geometry ranks as visible.
+    #: On screen according to the page itself (see viewport.py); an element the
+    #: page could not resolve is unknown, and unknown never hides a control.
     in_viewport: bool = True
     checked: bool | None = None
     expanded: bool | None = None
@@ -148,19 +148,25 @@ class JevObservation:
         return next((e for e in self.elements if e.index == index), None)
 
 
-def observe(state: BrowserStateSummary, live: LiveValues | None = None) -> JevObservation:
+def observe(
+    state: BrowserStateSummary,
+    live: LiveValues | None = None,
+    viewport: dict[int, ViewportBox] | None = None,
+) -> JevObservation:
     """Build the element table from the selector map Browser-Use just serialised.
 
-    live overlays current field values (see live_values.py); without it
-    values come from HTML attributes, which never reflect typing.
+    live overlays current field values (see live_values.py); viewport says which
+    rows the page itself shows, an index it omits counting as on screen.
     """
     selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
     live = live or LiveValues()
-    window = _scroll_window(state)
+    boxes = viewport or {}
     elements: list[JevElement] = []
     for browser_index in sorted(selector_map):
         node = selector_map[browser_index]
-        element = _element(len(elements) + 1, browser_index, node, live, _in_viewport(node, window))
+        box = boxes.get(browser_index)
+        on_screen = box.on_screen if box is not None else True
+        element = _element(len(elements) + 1, browser_index, node, live, on_screen)
         if element is not None:
             elements.append(element)
     text = _page_text(state)
@@ -191,51 +197,6 @@ def _on_screen(elements: list[JevElement], url: str) -> tuple[JevElement, ...]:
             browser={"dropped": dropped, "url": url},
         )
     return tuple(visible[:JEV_MAX_ELEMENTS])
-
-
-def _scroll_window(state: BrowserStateSummary) -> tuple[float, float, float, float] | None:
-    """Return the on-screen page region as (left, top, right, bottom).
-
-    Document coordinates; None when Browser-Use reported no page geometry.
-    """
-    page_info = getattr(state, "page_info", None)
-    if page_info is None:
-        return None
-    try:
-        left, top = float(page_info.scroll_x), float(page_info.scroll_y)
-        return (
-            left,
-            top,
-            left + float(page_info.viewport_width),
-            top + float(page_info.viewport_height),
-        )
-    except (AttributeError, TypeError, ValueError):
-        return None
-
-
-def _in_viewport(
-    node: EnhancedDOMTreeNode, window: tuple[float, float, float, float] | None
-) -> bool:
-    """Whether the node's box overlaps the on-screen region.
-
-    Unknown geometry counts as on-screen: without it the ranking falls back to
-    document order rather than demoting the whole page below the fold.
-    """
-    if getattr(node, "is_visible", None) is False:
-        return False
-    rect = getattr(node, "absolute_position", None)
-    if window is None or rect is None:
-        return True
-    left, top, right, bottom = window
-    try:
-        return bool(
-            rect.x <= right
-            and rect.x + rect.width >= left
-            and rect.y <= bottom
-            and rect.y + rect.height >= top
-        )
-    except (AttributeError, TypeError):
-        return True
 
 
 def _page_text(state: BrowserStateSummary) -> str:
