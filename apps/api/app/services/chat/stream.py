@@ -232,18 +232,13 @@ class _StreamState:
         # Whether the turn was persisted in the try block (early save). When
         # False, the finally block does a fallback save.
         self.saved: bool = False
-        # Client send id doubles as the user message id (no reload/sync
-        # reconciliation needed); clients that don't send one (bots) get a
-        # server-minted id.
-        # Whether the executor tool_data (browser cards etc.) was attached to
-        # the saved message. SEPARATE from `saved`: the early save sets saved=True
-        # before the executor wait, so a turn cut short DURING that wait would
-        # otherwise skip the attach backstop and lose every executor card.
+        # Whether executor tool_data (browser cards etc.) was attached to the
+        # saved message. Separate from saved: a turn cut short during the
+        # executor wait would otherwise skip the attach backstop and lose it.
         self.attached: bool = False
-        # The client's send id IS the user message id (single identity — the
-        # client's optimistic record and the persisted message share one key,
-        # so there is nothing to reconcile after a reload or sync). Clients
-        # that don't send one (bots) get a server-minted id.
+        # The client's send id IS the user message id: the client's optimistic
+        # record and the persisted message share one key, so there is nothing
+        # to reconcile after a reload. Bots get a server-minted id instead.
         self.user_message_id: str = turn_id or str(uuid4())
         self.bot_message_id: str = str(uuid4())
         # When comms finished — stamped before any voice-mode executor wait so
@@ -520,10 +515,9 @@ async def _resolve_pending_browser_handoff_turn(
 ) -> bool:
     """Resolve a paused browser task's handoff from the user's chat reply.
 
-    Returns ``True`` when the reply continued/cancelled the handoff — the turn is
-    fully handled here and the caller must not run the agent (the paused browser
-    task resumes on its original stream). ``False`` when nothing was pending or
-    the message was unrelated, so the normal turn runs.
+    Returns True when the reply continued or cancelled the handoff, so the
+    caller must not run the agent (the paused task resumes on its own stream).
+    False when nothing was pending, so the normal turn runs.
     """
     user_id = user.user_id
     message = user_message_content_from(body)
@@ -732,16 +726,15 @@ async def _dispatch_stream_chunk(
     turn: _TurnContext,
     state: _StreamState,
 ) -> None:
-    """Route one non-control chunk: parse a ``data:`` frame into tool_data, or pass any other frame straight through to the client."""
+    """Route one non-control chunk: parse a data frame into tool_data, or pass any other frame straight through to the client."""
     if not chunk.startswith("data: "):
         await stream_manager.publish_chunk(stream_id, chunk)
         return
 
     if '"error"' in chunk:
-        # Errors reach this loop two ways: raised exceptions (caught by the
-        # orchestrator, which sets state.error) and error frames YIELDED by
-        # call_agent's setup guard. Record the latter so the persisted bot
-        # message carries the failure instead of an empty bubble.
+        # Errors reach this loop two ways: raised exceptions (orchestrator sets
+        # state.error) and error frames yielded by call_agent's setup guard.
+        # Record the latter so the persisted bot message carries the failure.
         with contextlib.suppress(json.JSONDecodeError):
             payload = json.loads(chunk[len("data: ") :])
             if isinstance(payload, dict):
@@ -754,10 +747,9 @@ async def _dispatch_stream_chunk(
         # — this is first reply text, not first byte.
         state.ttft_perf = time.perf_counter()
 
-    # Comms' own thinking arrives as a plain `reasoning` frame (the executor's
-    # rides the tool-event collector, which absorbs it already). Fold it into
-    # tool_data with the SAME helper, so a reloaded turn keeps the thinking
-    # block and both agents produce one identical shape instead of two.
+    # Comms' own thinking arrives as a plain reasoning frame; fold it into
+    # tool_data with the same helper the executor uses, so a reloaded turn
+    # keeps the thinking block and both agents produce one identical shape.
     if '"reasoning"' in chunk:
         with contextlib.suppress(json.JSONDecodeError):
             reasoning_payload = json.loads(chunk[len("data: ") :])
@@ -1083,12 +1075,9 @@ async def _finalize_stream(
                 conversation_id=conversation_id,
             )
 
-    # Independent backstop for the executor cards. Gated on ``attached`` (NOT
-    # ``saved``): the early save sets saved=True before the executor wait, so a
-    # turn cut short during that wait leaves saved=True but attached=False — and
-    # the old ``not saved`` gate skipped the attach, dropping every executor card
-    # (browser task steps/recap) from the reloaded turn. ``attached`` is set once
-    # the attach passes its interruptible await, so this runs exactly once.
+    # Independent backstop for the executor cards. Gated on attached, not saved:
+    # the early save sets saved=True before the executor wait, so a turn cut
+    # short there leaves saved=True but attached=False. Runs exactly once.
     if not state.attached:
         try:
             await _attach_executor_tool_data(stream_id, body, user, conversation_id, state)

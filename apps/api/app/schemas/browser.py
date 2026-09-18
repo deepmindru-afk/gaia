@@ -45,15 +45,13 @@ class BrowserAction(BaseModel):
 
     name: str
     inputs: dict[str, Any] = Field(default_factory=dict)
-    # The element's own text, resolved from the DOM the agent was looking at —
-    # "Add to cart" rather than the bare index the action carries. Grounded in
-    # the page, so a caption states what was really touched, not what the model
-    # claimed it would touch.
+    # The element's own text, resolved from the DOM ("Add to cart" rather than
+    # the bare index), so a caption states what was really touched, not what
+    # the model claimed it would touch.
     target: str | None = None
-    # Where on the step's screenshot this action acted, as (x, y) fractions of the
-    # viewport in [0, 1] — so the UI can draw a pulse at the click/type point
-    # without knowing the frame's pixel size. None for actions with no on-screen
-    # target (navigate, scroll, wait) or a target scrolled out of view.
+    # Where on the step's screenshot this action acted, as (x, y) fractions of
+    # the viewport in [0, 1], so the UI can draw a pulse without knowing the
+    # frame's pixel size. None for actions with no on-screen target.
     point: tuple[float, float] | None = None
 
 

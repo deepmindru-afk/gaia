@@ -71,20 +71,15 @@ class Section:
 
 
 async def _platform_banner(ctx: SectionContext) -> str:
-    """Which messaging app comms is replying in.
+    """Build the banner naming which messaging app comms is replying in.
 
-    The model cannot read ``configurable``, so without this it knows only that it
-    is on "some" messaging platform, not which one — and replies drift toward the
-    web app's voice. Naming the app is what lets them read native to it.
-
-    Bot channels only: on web/mobile/desktop the rich UI is the point, so telling
-    those clients to write plain short text would be actively wrong.
+    The model cannot read configurable directly, so this is the only way it
+    learns the platform. Applies to bot channels only, not web/mobile/desktop.
     """
     source = ConversationSource.coerce(ctx.source)
-    # Desktop-only capability, stated only on desktop. Naming these tools in the
-    # STATIC prompt made every web/mobile/bot turn read them and reason about
-    # whether they applied — retrieval already gates them by source, so the
-    # sentence bought nothing off-desktop and cost tokens and confusion.
+    # Desktop tools are named only here, not in the static prompt: retrieval
+    # already gates them by source, so naming them for every channel cost
+    # tokens off-desktop for no benefit.
     if source is ConversationSource.DESKTOP:
         return (
             "You are on the user's desktop app, so desktop tools are available "

@@ -1,4 +1,4 @@
-"""Repository for the ``browser_tasks`` collection — one record per finished browser task.
+"""Provide the repository for the browser_tasks collection, one record per finished browser task.
 
 Written once when a browser task ends (any outcome) and read back for the user's
 browser history in settings. No cache: the history view is read on demand, not hot.

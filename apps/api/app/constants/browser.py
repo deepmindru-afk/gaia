@@ -232,10 +232,9 @@ class JevOperation(StrEnum):
 # target question in the same Jev request (see services/browser/jev/policy.py).
 JEV_TARGET_OPERATIONS = (JevOperation.CLICK, JevOperation.TYPE_TEXT, JevOperation.SELECT)
 
-# The decisions gateway rejects a question with more than 255 criteria
-# ("Too many choices"), and a page like Wikipedia offers ~1,700 elements, so the
-# choices are ranked and cut here instead. The headroom under 255 leaves room
-# for a future per-question extra without walking back into a 400.
+# The decisions gateway rejects a question with more than 255 criteria, and a
+# page like Wikipedia offers ~1,700 elements, so choices are ranked and cut
+# here; headroom under 255 leaves room for a future per-question extra.
 JEV_MAX_TARGETS_PER_OPERATION = 240
 
 JEV_GATEWAY_TIMEOUT_SECONDS = 25.0

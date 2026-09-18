@@ -1202,7 +1202,7 @@ async def create_browser_profiles_indexes() -> None:
     """Create indexes for the browser_profiles collection.
 
     One saved login per (user_id, domain): the unique index makes the upsert in
-    ``BrowserProfilesRepository.upsert_storage_state_blob`` a get-or-create, and
+    BrowserProfilesRepository.upsert_storage_state_blob a get-or-create, and
     serves the per-task lookup before a session is created.
     """
     browser_profiles_collection = get_async_collection("browser_profiles")

@@ -482,11 +482,8 @@ def get_default_llm(*, temperature: float = DEFAULT_LLM_TEMPERATURE) -> BaseChat
     if settings.GAIA_SIM_MODE:
         return _sim_llm(temperature)
     # A configured custom lane takes precedence over OpenRouter for auxiliary
-    # work too, not just the chat agent. Without this, pointing DEV_LLM_* at a
-    # cheap endpoint still billed OpenRouter for every title, classification and
-    # structured-output helper — and when OpenRouter was out of credits those
-    # helpers failed while the agent itself ran fine, which reads as a random
-    # partial outage. DEV_LLM_* is unset in production, so prod is unchanged.
+    # work too, not just the chat agent, so DEV_LLM_* also covers titles,
+    # classification and structured-output helpers. Unset in production.
     if _custom_lane_configured():
         return _build_custom_default_llm(temperature)
     if not settings.OPENROUTER_API_KEY:

@@ -71,7 +71,7 @@ class GatedApproval:
 
 
 class ApprovalCard(Protocol):
-    """What an approval card renders — the slice of ``GatedApproval`` the entry reads."""
+    """What an approval card renders, the slice of GatedApproval the entry reads."""
 
     @property
     def approval_id(self) -> str: ...

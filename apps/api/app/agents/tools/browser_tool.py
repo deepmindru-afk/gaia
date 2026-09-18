@@ -122,11 +122,9 @@ class _BrowserThreadMirror:
         # tool_call_ids of the action rows emitted, so an output only ever
         # lands on a row that exists (an errored step emits no rows).
         self._emitted_ids: set[str] = set()
-        # Outputs can arrive before their row: the runner emits step rows through
-        # a background task that first uploads the screenshot (~1s), while the
-        # action results arrive synchronously on the very next Browser-Use hook.
-        # Buffer an early output and flush it when its row lands, so ordering
-        # between the two paths never drops a result.
+        # Outputs can arrive before their row: step rows go through a background
+        # task that uploads the screenshot first (~1s), while action results
+        # arrive synchronously. Buffer early outputs and flush on row arrival.
         self._pending_outputs: dict[str, str] = {}
 
     def mirror(self, snapshot: BrowserCardSnapshot) -> None:
@@ -227,11 +225,9 @@ def _run_params(configurable: Mapping[str, Any]) -> _RunParams:
     conv_source = ConversationSource.coerce(configurable.get("conversation_source"))
     return _RunParams(
         user_id=configurable.get("user_id") or "",
-        # The USER-facing conversation, never the executor's derived `thread_id`
-        # (`executor_<conv>`). A handoff registered here is resolved by a chat
-        # reply ("done"/"stop") that arrives on the comms conversation id —
-        # keying it by the prefixed thread_id would make that lookup miss and
-        # the handoff never resume.
+        # The user-facing conversation id, never the executor's derived thread_id
+        # (executor_<conv>): a handoff reply arrives on the comms conversation id,
+        # so keying by the prefixed thread_id would make that lookup miss.
         conversation_id=(
             configurable.get("conversation_id") or configurable.get("thread_id") or ""
         ),

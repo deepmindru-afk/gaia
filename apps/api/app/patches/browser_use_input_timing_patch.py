@@ -1,31 +1,16 @@
-"""Give keystrokes human variance without making the agent slower in any way a user notices.
+"""Give keystrokes human variance without making the agent slower in any noticeable way.
 
-Browser-Use types character by character on two fixed timers: a 5ms hold between
-keyDown and keyUp, then a 1ms gap before the next character
-(``_input_text_element_node_impl``; the ``_type_to_page`` fallback uses a single
-10ms gap). Every keystroke is therefore identical to the microsecond.
+Browser-Use types character by character on two fixed timers: a 5ms hold
+between keyDown and keyUp, then a 1ms gap before the next character. Every
+keystroke is identical to the microsecond, and that zero-variance metronome
+is the tell behavioural checks read, not the speed.
 
-The uniformity is the tell, not the speed. Behavioural checks read
-``event.timeStamp`` deltas, and a zero-variance metronome is a pattern no human
-hand produces — a signal that survives every fingerprint defence we ship,
-because it is emitted by our own input, not by the browser's identity.
+Only the distribution changes, not the pace: each delay is scaled by a draw
+averaging ~1.9x, costing ~100ms on a 20-character field. The RNG is seeded
+per user so one person's typing rhythm stays consistent across tasks.
 
-Only the *distribution* changes, not the pace: each delay is scaled by a draw
-averaging ~1.9x, which costs a ~20-character field on the order of 100ms.
-Matching a real person's ~60ms/char would cost a full second per field, and that
-is not what defeats the check — the variance is. The residual tell (still faster
-than human hands) is accepted deliberately.
-
-The RNG is seeded per user, so one person's typing rhythm stays consistent
-across tasks — for the same reason the canvas fingerprint is seeded rather than
-random (see services/browser/fingerprint.py).
-
-Scope is deliberately narrow, in two ways. The shim is armed only while a typing
-method is on the stack, so the module's scroll-settle, navigation and readback
-waits — which use the same float literals — keep their load-bearing timing. And
-it is installed by rebinding *the watchdog module's* ``asyncio`` name to a proxy,
-never by assigning to ``asyncio.sleep``, which would patch every coroutine in the
-process.
+Scope is narrow: the shim is armed only while typing, and installed by
+rebinding the watchdog module's own asyncio name, never asyncio.sleep itself.
 
 Pinned to browser-use==0.11.13; the imports fail loudly if the methods move.
 """
@@ -46,11 +31,9 @@ from app.services.browser.fingerprint import current_fingerprint_seed
 # Only the per-keystroke timers are this short; every other wait in the module
 # is 50ms or longer, so this threshold separates rhythm from page timing.
 _KEYSTROKE_DELAY_CEILING_SECONDS = 0.010
-# Each delay is scaled by a log-normal draw, which is the shape human inter-key
-# intervals actually take: mostly clustered, with an occasional long pause where
-# the typist thinks. A uniform draw would need a bolt-on "sometimes pause" rule
-# to produce that tail, and would wrongly apply it to the key-hold as well.
-# mu/sigma give a mean scale of ~1.9x; the cap keeps a tail draw from stalling.
+# Log-normal draw: mostly clustered with an occasional long pause, the shape
+# human inter-key intervals actually take. mu/sigma give a mean scale of
+# ~1.9x; the cap keeps a tail draw from stalling.
 _SCALE_MU = 0.49
 _SCALE_SIGMA = 0.55
 _MAX_SCALE = 6.0
@@ -71,7 +54,7 @@ async def _sleep(delay: float, result: object = None) -> object:
 
 
 class _AsyncioProxy:
-    """The stdlib asyncio module with only ``sleep`` swapped, for one module's use."""
+    """The stdlib asyncio module with only sleep swapped, for one module's use."""
 
     sleep = staticmethod(_sleep)
 

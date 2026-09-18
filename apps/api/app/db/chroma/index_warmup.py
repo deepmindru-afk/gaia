@@ -1,11 +1,9 @@
-"""Shared batch execution + failure tolerance for ChromaDB catalog/index warmup.
+"""Provide shared batch execution and failure tolerance for ChromaDB catalog/index warmup.
 
 Tool and trigger indexing both run at startup as best-effort enrichment. A write
-failure — typically the embedding provider being unavailable (no key, sidecar
-down, quota) — must be surfaced loudly but must never abort boot: an unindexed
-catalog degrades retrieval, a server that won't start degrades everything. The
-low-level ``abatch`` stays fail-loud (it raises ``ChromaBatchWriteError``); this
-is the single place that decides indexing warmup tolerates that raise.
+failure, typically the embedding provider being unavailable, must be surfaced
+loudly but must never abort boot. The low-level abatch stays fail-loud (it
+raises ChromaBatchWriteError); this is the one place that tolerates that raise.
 """
 
 from __future__ import annotations

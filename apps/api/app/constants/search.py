@@ -14,24 +14,18 @@ MAX_HTTPX_REDIRECTS = 5
 CRAWL4AI_PAGE_TIMEOUT_MS = 30_000
 CRAWL4AI_WAIT_UNTIL = "domcontentloaded"
 
-# Process-wide cap on concurrent headless-browser instances.
-#
-# On Chromium each crawler is its own browser process (150–400 MB); on Obscura
-# they are contexts on one shared engine (far lighter). Either way, with the
-# worker running up to ``max_jobs`` crawl jobs — each opening a crawler per URL —
-# unbounded concurrency is the dominant worker memory spike, so this caps it.
-# Override via the ``CRAWL4AI_MAX_BROWSERS`` env var. Minimum 1; 0/negative would
-# deadlock all crawler access.
+# Process-wide cap on concurrent headless-browser instances (150-400 MB each
+# on Chromium, lighter contexts on Obscura). Override via CRAWL4AI_MAX_BROWSERS.
+# Minimum 1; 0/negative would deadlock all crawler access.
 CRAWL4AI_DEFAULT_MAX_BROWSERS = 2
 CRAWL4AI_MIN_MAX_BROWSERS = 1
 
 # Single-page crawl timeout (used by utility fallbacks)
 CRAWL4AI_SINGLE_TOTAL_TIMEOUT_SECONDS = 35.0
 
-# A per-URL wall budget is crawl4ai's ``page_timeout`` (which bounds navigation
-# only) plus this margin for the post-navigation work — markdown generation, BM25
-# filtering, full-page scroll. Without the margin a heavy page (large DOM -> large
-# markdown) is cut off mid-extraction the moment navigation finishes.
+# A per-URL wall budget is crawl4ai's page_timeout (bounds navigation only) plus
+# this margin for post-navigation work: markdown generation, BM25 filtering,
+# full-page scroll. Without it, a heavy page is cut off mid-extraction.
 CRAWL4AI_PROCESSING_MARGIN_SECONDS = 45.0
 
 # Deep research crawl batch settings

@@ -271,7 +271,7 @@ def _lifecycle_bucket(accumulated: MutableMapping[str, object], bucket: str) -> 
 
 
 def absorb_reasoning(reasoning: object, tool_data: list[ToolDataEntry]) -> None:
-    """Persist a raw comms ``reasoning`` payload into tool_data as a reasoning step.
+    """Persist a raw comms reasoning payload into tool_data as a reasoning step.
 
     The public entry point for the chat stream, which reads the frame off the wire as
     plain JSON; the collector path already holds a parsed event and calls _absorb_reasoning.
