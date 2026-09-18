@@ -18,6 +18,10 @@ from app.constants.log_tags import LogTag
 from app.db.redis import redis_cache
 from shared.py.wide_events import log
 
+#: Closes a job's feed. Not a card: the relay stops on it without having to
+#: re-read the job state on every frame, and the worker is the only publisher.
+JOB_TERMINAL_FRAME: dict[str, Any] = {"browser_job_done": True}
+
 
 def _key(job_id: str) -> str:
     return f"{BROWSER_JOB_EVENTS_PREFIX}{job_id}"
