@@ -73,7 +73,7 @@ _REPLAY_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
-<title>GAIA — Browser Recap</title>
+<title>GAIA: Browser Recap</title>
 <style>
   :root { --bg:#0b0b0d; --panel:#141417; --panel2:#1c1c21; --line:#26262c; --fg:#e7e7ea; --muted:#8a8a93; --accent:#00bbff; }
   * { box-sizing:border-box; }

@@ -603,7 +603,7 @@ async def test_the_repeat_warning_note_is_appended_verbatim() -> None:
     assert warned.content == (
         "ok"
         f"\n\n[Loop guard: `search` has now been called {LOOP_GUARD_WARN_REPEAT} times in a row "
-        "with identical arguments. The result won't change — reuse the earlier result "
+        "with identical arguments. The result won't change. Reuse the earlier result "
         "and move on instead of repeating this call.]"
     )
 

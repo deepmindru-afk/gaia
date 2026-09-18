@@ -54,7 +54,7 @@ export const BOTS: BotConfig[] = [
     icon: BOT_PLATFORM_ICONS.telegram,
     name: "Telegram",
     description:
-      "Just open a chat with @heygaia_bot and start talking. No setup, no group required — it's just you and GAIA.",
+      "Just open a chat with @heygaia_bot and start talking. No setup, no group required. It's just you and GAIA.",
     badge: { label: "Beta", color: "success" },
     primaryAction: {
       label: "Start Chatting",
@@ -72,7 +72,7 @@ export const BOTS: BotConfig[] = [
     icon: BOT_PLATFORM_ICONS.slack,
     name: "Slack",
     description:
-      "Bring GAIA into your workspace. Delegate tasks, run workflows, and get answers — all inside Slack.",
+      "Bring GAIA into your workspace. Delegate tasks, run workflows, and get answers, all inside Slack.",
     badge: { label: "Beta", color: "success" },
     primaryAction: {
       label: "Add to Workspace",
@@ -84,7 +84,7 @@ export const BOTS: BotConfig[] = [
     icon: BOT_PLATFORM_ICONS.whatsapp,
     name: "WhatsApp",
     description:
-      "Talk to GAIA on the app already on your phone. Ask questions, delegate tasks — no new accounts, no new habits.",
+      "Talk to GAIA on the app already on your phone. Ask questions, delegate tasks. No new accounts, no new habits.",
     badge: { label: "Beta", color: "success" },
     primaryAction: {
       label: "Start Chatting",

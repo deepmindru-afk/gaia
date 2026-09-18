@@ -57,7 +57,7 @@ DEFAULT_CHANNEL_PREFERENCES: dict[str, bool] = {
 # web user has no external chat and reaches the result through the button.
 WORKFLOW_DONE_COPY: tuple[tuple[str, str], ...] = (
     ("sorted {title} for you", "it's all ready whenever you are 🙌"),
-    ("{title} is done", "had a proper look — everything's ready for you"),
+    ("{title} is done", "had a proper look, everything's ready for you"),
     ("just wrapped up {title}", "pulled it all together, take a peek"),
     ("handled {title} for you", "all done end to end, give it a look"),
     ("finished {title}", "got everything ready for you to check out"),

@@ -32,11 +32,11 @@ _KINDS: tuple[ClarifyQuestionKind, ...] = ("scope", "blocker", "constraint")
 
 class _ClarifyQuestion(BaseModel):
     kind: ClarifyQuestionKind = Field(
-        description="One of scope, blocker, or constraint — see prompt for definitions"
+        description="One of scope, blocker, or constraint, see prompt for definitions"
     )
     question: str = Field(description="The question text, ending with a question mark")
     options: list[str] = Field(
-        description="Exactly 3 short, specific options — never generic placeholders"
+        description="Exactly 3 short, specific options, never generic placeholders"
     )
 
 
@@ -53,9 +53,9 @@ def _fallback_questions() -> list[ClarifyQuestion]:
             kind="scope",
             question="What needs to move forward this week?",
             options=[
-                "The main project — shipping the next milestone",
-                "External work — outreach, meetings, customers",
-                "Internal work — planning, hiring, ops",
+                "The main project, shipping the next milestone",
+                "External work, outreach, meetings, customers",
+                "Internal work, planning, hiring, ops",
             ],
         ),
         ClarifyQuestion(
@@ -75,7 +75,7 @@ def _fallback_questions() -> list[ClarifyQuestion]:
             options=[
                 "A few hours every day",
                 "One or two deep-work blocks total",
-                "Honestly, very little — I'm mostly in meetings",
+                "Honestly, very little, I'm mostly in meetings",
             ],
         ),
     ]

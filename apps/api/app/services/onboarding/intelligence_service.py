@@ -227,8 +227,8 @@ class OnboardingContext:
 
 
 class _TodoSpec(BaseModel):
-    title: str = Field(description="What GAIA will do — under 80 chars, starts with a verb")
-    description: str = Field(description="Context and what the output will be — 1-2 sentences")
+    title: str = Field(description="What GAIA will do, under 80 chars, starts with a verb")
+    description: str = Field(description="Context and what the output will be, 1-2 sentences")
     source_sender: str = Field(
         default="",
         description="The sender of the email this todo was created from. Empty string if not from a specific email.",
@@ -245,12 +245,12 @@ class _TodoListFromEmails(BaseModel):
 
 class _FocusTodoList(BaseModel):
     todos: list[str] = Field(
-        description="List of 3 GAIA-actionable todo titles — each under 60 characters, starts with a verb"
+        description="List of 3 GAIA-actionable todo titles, each under 60 characters, starts with a verb"
     )
 
 
 class _WorkflowSpec(BaseModel):
-    title: str = Field(description="Workflow title — under 60 chars, starts with a verb or noun")
+    title: str = Field(description="Workflow title, under 60 chars, starts with a verb or noun")
     description: str = Field(
         description=(
             "1-2 sentences: what it does and what output it produces, not when it runs "
@@ -272,7 +272,7 @@ class _WorkflowSpec(BaseModel):
 
 class _WorkflowList(BaseModel):
     workflows: list[_WorkflowSpec] = Field(
-        description="Exactly 4 workflow specs — no more, no fewer",
+        description="Exactly 4 workflow specs, no more, no fewer",
         min_length=4,
         max_length=4,
     )

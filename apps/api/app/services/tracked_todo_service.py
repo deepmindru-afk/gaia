@@ -38,13 +38,13 @@ from shared.py.wide_events import log
 CANVAS_TEMPLATE = """# {title}
 
 ## Key Details
-<!-- email addresses, thread IDs, calendar IDs, issue IDs — everything needed to take action -->
+<!-- email addresses, thread IDs, calendar IDs, issue IDs: everything needed to take action -->
 
 ## Current State
-<!-- what's true RIGHT NOW — updated after every action -->
+<!-- what's true RIGHT NOW, updated after every action -->
 
 ## Activity Log
-<!-- which agent did what, which tools it used, what the outcome was — add entries HERE, not in Learnings -->
+<!-- which agent did what, which tools it used, what the outcome was. Add entries HERE, not in Learnings -->
 
 ## Timeline
 <!-- chronological list of actions taken and results -->
@@ -91,7 +91,7 @@ def _format_tracked_todo_line(doc: TodoDocument, now: datetime, active_todo_id: 
     prefix = "⭐ ACTIVE " if doc.id == active_todo_id else ""
     return (
         f'  {prefix}"{doc.title}"{labels_str}{_format_due_string(doc.due_date, now)}'
-        f" — {age_days}d old, updated {last_update}d ago"
+        f" ({age_days}d old, updated {last_update}d ago)"
         f" | ID: {doc.id}"
     )
 

@@ -540,7 +540,9 @@ async def test_a_url_that_is_not_a_web_address_navigates_nowhere(page, content: 
 @pytest.mark.asyncio
 async def test_finishing_asks_the_helper_what_to_tell_the_user(page) -> None:
     """A task is usually a question, so the run has to come back with the answer."""
-    agent, _, _, text_calls = make_agent(page, text='{"text":"The top story is Bend 2, posted by liam."}')
+    agent, _, _, text_calls = make_agent(
+        page, text='{"text":"The top story is Bend 2, posted by liam."}'
+    )
     agent.decision = decide(choice="DONE", operation="DONE")
 
     await agent.act(page["fingerprint"])

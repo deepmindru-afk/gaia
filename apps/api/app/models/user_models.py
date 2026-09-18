@@ -110,7 +110,7 @@ class OnboardingPreferences(BaseModel):
 class ClarifyAnswer(BaseModel):
     """One answered no-Gmail clarify question, persisted on onboarding.clarify_answers."""
 
-    id: str = Field(..., description="Question id — one of scope, blocker, constraint")
+    id: str = Field(..., description="Question id: one of scope, blocker, constraint")
     kind: str = Field(..., description="scope / blocker / constraint")
     question: str = Field(..., description="Original question text")
     value: str | None = Field(

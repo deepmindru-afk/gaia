@@ -178,17 +178,17 @@ MAX_HANDOFFS_PER_TASK = 5
 # of doing sensitive steps itself.
 BROWSER_TAKEOVER_PREAMBLE = (
     "\n\nIMPORTANT: For any payment, login/password/OTP/2FA, or irreversible or "
-    "legally-binding confirmation, do NOT do it yourself — call the "
+    "legally-binding confirmation, do NOT do it yourself. Call the "
     "`request_human_takeover` action first so the user completes that step in the "
     "live browser, then continue toward the goal.\n"
     "If you encounter a CAPTCHA, reCAPTCHA, hCaptcha, or an 'I'm not a robot' / "
-    "image-grid challenge, do NOT attempt to solve it yourself — call the "
+    "image-grid challenge, do NOT attempt to solve it yourself. Call the "
     "`solve_captcha_with_help` action immediately on the FIRST challenge so the user "
     "solves it in the live browser, then continue. Never keep clicking challenge tiles.\n"
     # The human's part of a login should be only the secret part. Filling the
     # username yourself first means they open the live view to just a password.
     "Before you hand off a login, first fill every NON-secret field you can "
-    "yourself — username, email, the account identifier — so the takeover leaves "
+    "yourself: username, email, the account identifier, so the takeover leaves "
     "the user only the secret step (password, OTP, 2FA). Then hand off.\n"
     # Measured on a real investor-application form: given a name and an email and
     # nothing else, the agent typed a phone number it made up and a country it
@@ -206,7 +206,7 @@ BROWSER_TAKEOVER_PREAMBLE = (
     # actions read the option list and select in one step — it called them once.
     "For any dropdown, select, combobox or multiple-choice control, call "
     "`dropdown_options` to read the choices and `select_dropdown` to pick one. Do "
-    "not open it by clicking and choose by sight — that takes several steps and "
+    "not open it by clicking and choose by sight. That takes several steps and "
     "mis-selects."
 )
 

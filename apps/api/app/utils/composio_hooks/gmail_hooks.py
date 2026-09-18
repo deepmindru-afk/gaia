@@ -188,7 +188,7 @@ def gmail_compose_require_subject_schema_modifier(tool: str, toolkit: str, schem
         if isinstance(props, dict) and isinstance(props.get("subject"), dict):
             props["subject"]["minLength"] = 1
             props["subject"]["description"] = (
-                "Email subject line. Required — write a clear, specific subject "
+                "Email subject line. Required: write a clear, specific subject "
                 "that summarizes the email. Never leave it blank."
             )
     return schema
