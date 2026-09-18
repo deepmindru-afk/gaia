@@ -8,8 +8,18 @@ from typing import Any
 
 import pytest
 
+from app.constants.browser import JevOperation, SensitiveCategory
 from app.services.browser.jev.gateway import JevChoiceAnswer
-from app.services.browser.jev.prompts import NEXT_ACTION, TARGET, TEXT_VALUE
+from app.services.browser.jev.prompts import (
+    CAPTCHA_CHALLENGE,
+    HUMAN_RULES,
+    NEXT_ACTION,
+    REQUEST_HUMAN_CRITERION,
+    SOLVE_CAPTCHA_CRITERION,
+    TAKEOVER_REASON,
+    TARGET,
+    TEXT_VALUE,
+)
 from app.services.browser.jev.ultrafast.model import (
     JevTextHelperError,
     JevUltrafastDecisionError,
@@ -291,6 +301,86 @@ async def test_done_carries_no_target(page) -> None:
 
 
 # --------------------------------------------------------------------------
+# the human-in-the-loop operations
+# --------------------------------------------------------------------------
+
+_HANDOFFS = (JevOperation.REQUEST_HUMAN, JevOperation.SOLVE_CAPTCHA)
+
+
+def test_no_handler_means_neither_human_operation_is_offered(page) -> None:
+    request, operations, _, _ = build_request(page, "Sign in", [])
+
+    assert "REQUEST_HUMAN" not in operations
+    assert "SOLVE_CAPTCHA" not in operations
+    assert set(request.questions["operation"].criteria) == set(operations)
+    assert request.questions["operation"].instructions["rules"] == NEXT_ACTION
+
+
+@pytest.mark.parametrize(
+    ("handoffs", "offered", "absent"),
+    [
+        ((JevOperation.REQUEST_HUMAN,), "REQUEST_HUMAN", "SOLVE_CAPTCHA"),
+        ((JevOperation.SOLVE_CAPTCHA,), "SOLVE_CAPTCHA", "REQUEST_HUMAN"),
+    ],
+)
+def test_only_the_handed_operation_is_offered(page, handoffs, offered, absent) -> None:
+    _, operations, _, _ = build_request(page, "Sign in", [], handoffs)
+
+    assert offered in operations
+    assert absent not in operations
+
+
+def test_the_human_operations_are_controls_with_no_target_head(page) -> None:
+    request, operations, targets, controls = build_request(page, "Sign in", [], _HANDOFFS)
+
+    assert operations["REQUEST_HUMAN"] == REQUEST_HUMAN_CRITERION
+    assert operations["SOLVE_CAPTCHA"] == SOLVE_CAPTCHA_CRITERION
+    assert set(request.questions) == {"operation", "click_target", "type_text_target"}
+    assert set(targets) == {"CLICK", "TYPE_TEXT"}
+    assert set(controls) == {"WAIT"}
+
+
+def test_the_human_rules_ride_in_the_same_instruction_block(page) -> None:
+    request, _, _, _ = build_request(page, "Sign in", [], _HANDOFFS)
+
+    assert request.questions["operation"].instructions["rules"] == [NEXT_ACTION, HUMAN_RULES]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["REQUEST_HUMAN", "SOLVE_CAPTCHA"])
+async def test_a_chosen_human_operation_carries_no_target(page, operation: str) -> None:
+    def responder(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "answers": {
+                "operation": distribution(body["questions"]["operation"]["criteria"], operation)
+            }
+        }
+
+    client, _ = make_gateway(responder)
+
+    decision = await choose(client, page, "Sign in", [], _HANDOFFS)
+
+    assert decision.choice == operation
+    assert decision.operation == operation
+    assert decision.target is None
+    assert decision.probabilities == {operation: pytest.approx(0.9)}
+
+
+@pytest.mark.asyncio
+async def test_an_unoffered_human_operation_executes_nothing(page) -> None:
+    """Jev naming REQUEST_HUMAN when no handler exists is not an offered choice."""
+
+    def responder(body: dict[str, Any]) -> dict[str, Any]:
+        criteria = [*body["questions"]["operation"]["criteria"], "REQUEST_HUMAN"]
+        return {"answers": {"operation": distribution(criteria, "REQUEST_HUMAN")}}
+
+    client, _ = make_gateway(responder)
+
+    with pytest.raises(JevUltrafastDecisionError):
+        await choose(client, page, "Sign in", [])
+
+
+# --------------------------------------------------------------------------
 # the text helper
 # --------------------------------------------------------------------------
 
@@ -347,3 +437,48 @@ async def test_an_over_budget_value_types_nothing() -> None:
 
     with pytest.raises(JevTextHelperError, match="nothing typed"):
         await helper.field_text({"goal": "Find a flight"})
+
+
+@pytest.mark.asyncio
+async def test_the_takeover_reason_carries_its_category(page) -> None:
+    helper, calls = make_text_helper(
+        lambda _body: completion(
+            json.dumps({"text": "Enter your password", "category": "credentials"})
+        )
+    )
+
+    reason, category, call = await helper.takeover_reason(field_context("Sign in", None, page, []))
+
+    assert reason == "Enter your password"
+    assert category is SensitiveCategory.CREDENTIALS
+    assert call.model == "inception/mercury-2.5"
+    assert calls.bodies[0]["messages"][0]["content"] == TAKEOVER_REASON
+    assert json.loads(calls.bodies[0]["messages"][1]["content"])["field"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"text":"Enter your password"}',
+        '{"text":"Enter your password","category":"none"}',
+        '{"text":"Enter your password","category":"invented"}',
+        '{"text":"","category":"payment"}',
+        '{"text":"Enter your password","category":"payment","extra":1}',
+    ],
+)
+async def test_an_unusable_takeover_reason_hands_off_nothing(content: str) -> None:
+    helper, _ = make_text_helper(lambda _body: completion(content))
+
+    with pytest.raises(JevTextHelperError, match="nothing typed"):
+        await helper.takeover_reason({"goal": "Sign in"})
+
+
+@pytest.mark.asyncio
+async def test_the_captcha_challenge_uses_its_own_prompt_and_the_same_validation() -> None:
+    helper, calls = make_text_helper(lambda _body: completion('{"text":"Solve the CAPTCHA"}'))
+
+    challenge, _ = await helper.field_text({"goal": "Sign in"}, instructions=CAPTCHA_CHALLENGE)
+
+    assert challenge == "Solve the CAPTCHA"
+    assert calls.bodies[0]["messages"][0]["content"] == CAPTCHA_CHALLENGE

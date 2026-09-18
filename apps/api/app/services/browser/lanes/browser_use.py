@@ -1,0 +1,339 @@
+"""The shipped lane: Browser-Use's own agent decides and executes every step.
+
+Moved out of ``runner.py`` unchanged when the second lane landed — the runner
+kept progress, handoff, cancellation, budgets, metering and the replay link;
+this kept the Browser-Use ``Agent``, its two step callbacks, and the reading of
+its history into a :class:`LaneOutcome`.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from app.constants.browser import (
+    BROWSER_TAKEOVER_PREAMBLE,
+    BROWSER_VIEWPORT_HEIGHT,
+    BROWSER_VIEWPORT_WIDTH,
+)
+from app.constants.log_tags import LogTag
+from app.schemas.browser import BrowserAction, BrowserActionOutput
+from app.services.browser.captions import caption_from_action_list
+from app.services.browser.exceptions import BrowserUnavailableError
+from app.services.browser.jev import JevChatModel
+from app.services.browser.lanes.base import (
+    BrowserRunConfig,
+    LaneHooks,
+    LaneOutcome,
+    LaneUsage,
+    StepClock,
+    StepFrame,
+)
+from app.services.browser.session import BrowserHostSession
+from app.services.browser.tools import build_browser_tools
+from shared.py.wide_events import log
+
+if TYPE_CHECKING:
+    from browser_use.agent.views import AgentHistoryList, AgentOutput
+    from browser_use.browser.views import BrowserStateSummary
+    from browser_use.llm.base import BaseChatModel
+    from pydantic import BaseModel
+
+
+# Attributes worth naming an otherwise-unlabelled control by, in the order a
+# person would recognise it. `value` covers <input type="submit" value="Submit">.
+_LABEL_ATTRIBUTES = ("aria-label", "value", "title", "placeholder", "alt", "name", "id")
+
+_OUTPUT_MAX_CHARS = 200
+
+
+def _element_label(state: BrowserStateSummary, index: object) -> str | None:
+    """The on-page name of the element an action targets, by its DOM index.
+
+    Browser-Use addresses elements by index, which is meaningless to a reader.
+    The same step state the agent saw carries the DOM, so the index resolves to
+    something recognisable — that is what makes a caption say what was clicked.
+
+    Tries the accessibility name first: it is what a screen reader announces and
+    what a person would call the control, and it is populated for icon-only
+    buttons that carry no text at all. Falls back to the visible text, then to
+    the labelling attributes, then to the tag name — so a control is never
+    described as a bare verb when anything at all identifies it.
+    """
+    if not isinstance(index, int):
+        return None
+    selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
+    node = selector_map.get(index)
+    if node is None:
+        return None
+    try:
+        ax_node = getattr(node, "ax_node", None)
+        candidates = [getattr(ax_node, "name", None), node.get_meaningful_text_for_llm()]
+        attributes = getattr(node, "attributes", None) or {}
+        candidates += [attributes.get(attr) for attr in _LABEL_ATTRIBUTES]
+        for candidate in candidates:
+            text = (candidate or "").strip()
+            if text:
+                return text
+        # Last resort: the tag itself ("Clicking BUTTON" still beats "Clicking").
+        tag = (getattr(node, "node_name", "") or "").strip()
+        return tag.lower() or None
+    except Exception as exc:
+        # A DOM node shape we don't recognise must not kill the step — the caption
+        # just loses this element's name. Logged so a systematic shape change shows up.
+        log.warning(
+            f"{LogTag.BROWSER} Could not resolve element label from DOM node",
+            error_type=type(exc).__name__,
+        )
+        return None
+
+
+def _element_viewport_fraction(
+    state: BrowserStateSummary, index: object
+) -> tuple[float, float] | None:
+    """The element's centre as (x, y) fractions of the viewport, for the UI pulse.
+
+    Page coordinates minus the scroll offset give the viewport position; dividing
+    by the viewport size makes it resolution-independent, so the same fraction
+    lands correctly whatever size the screenshot is rendered at. Returns None when
+    the element has no box or its centre is off-screen (nothing to point at).
+    """
+    if not isinstance(index, int):
+        return None
+    selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
+    node = selector_map.get(index)
+    rect = getattr(node, "absolute_position", None)
+    page = getattr(state, "page_info", None)
+    if rect is None or page is None:
+        return None
+    viewport_w = getattr(page, "viewport_width", 0)
+    viewport_h = getattr(page, "viewport_height", 0)
+    if not viewport_w or not viewport_h:
+        return None
+    fx = (rect.x + rect.width / 2 - getattr(page, "scroll_x", 0)) / viewport_w
+    fy = (rect.y + rect.height / 2 - getattr(page, "scroll_y", 0)) / viewport_h
+    if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):
+        return None
+    return (round(fx, 4), round(fy, 4))
+
+
+def _extract_actions(
+    agent_output: AgentOutput, state: BrowserStateSummary | None = None
+) -> list[BrowserAction]:
+    """The step's actions as the agent's own tool calls — name, arguments, and
+    the on-page text of whatever each one targets."""
+    actions: list[BrowserAction] = []
+    for action in getattr(agent_output, "action", None) or []:
+        dumped = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else {}
+        for action_name, params in dumped.items():
+            inputs = params if isinstance(params, dict) else {}
+            target = _element_label(state, inputs.get("index")) if state is not None else None
+            point = (
+                _element_viewport_fraction(state, inputs.get("index"))
+                if state is not None
+                else None
+            )
+            actions.append(
+                BrowserAction(name=action_name, inputs=inputs, target=target, point=point)
+            )
+    return actions
+
+
+def _summarize_action_result(result: object) -> str | None:
+    """One action's outcome as short display text, or None when there is nothing
+    worth showing (a click that succeeded silently needs no output row)."""
+    error = getattr(result, "error", None)
+    if error:
+        text = str(error)
+    else:
+        text = str(
+            getattr(result, "extracted_content", None)
+            or getattr(result, "long_term_memory", None)
+            or ""
+        )
+    collapsed = " ".join(text.split())
+    if not collapsed:
+        return None
+    return (
+        collapsed
+        if len(collapsed) <= _OUTPUT_MAX_CHARS
+        else collapsed[: _OUTPUT_MAX_CHARS - 1].rstrip() + "…"
+    )
+
+
+def outcome_from_history(history: AgentHistoryList[BaseModel]) -> LaneOutcome:
+    """What the agent's history says the run achieved, and what it cost."""
+    # The three fallbacks the try leaves in place if reading history fails.
+    # pragma-exempt below: every consumer collapses falsy values to one answer
+    # (`final or ...`, `bool(is_done and ...)`, `is_successful is not False`),
+    # so swapping any of them for another falsy value cannot change the
+    # snapshot — verified against both the total-failure and partial-read
+    # paths. Restructuring to an early return WAS tried and rejected: it
+    # discards a final_result() that was read before the failure, which
+    # test_a_history_that_breaks_midway_still_reports_what_it_read catches.
+    final = None  # pragma: no mutate
+    is_done = False  # pragma: no mutate
+    is_successful: bool | None = None  # pragma: no mutate
+    try:
+        final = history.final_result()
+        is_done = history.is_done()
+        is_successful = history.is_successful()
+    except Exception as exc:
+        log.warning(
+            f"{LogTag.BROWSER} Could not read browser history result",
+            error_type=type(exc).__name__,
+        )
+
+    success = bool(is_done and is_successful is not False)
+    summary = final or (
+        "Completed the browser task." if success else "Could not complete the browser task."
+    )
+    return LaneOutcome(success=success, summary=str(summary), usage=_usage_from_history(history))
+
+
+def _usage_from_history(history: AgentHistoryList[BaseModel]) -> list[LaneUsage]:
+    """Browser-Use's own per-model token totals, under the names it billed them.
+
+    Populated whenever ``Agent.run`` returns normally — not on the
+    timeout/cancellation/CDP-failure paths, which never reach a history.
+    """
+    usage = history.usage
+    if usage is None:
+        return []
+    return [
+        LaneUsage(
+            model_name=model_name,
+            input_tokens=stats.prompt_tokens,
+            output_tokens=stats.completion_tokens,
+        )
+        for model_name, stats in usage.by_model.items()
+    ]
+
+
+class BrowserUseLane:
+    """Browser-Use's ``Agent`` over the session's CDP endpoint."""
+
+    def __init__(
+        self,
+        *,
+        session: BrowserHostSession,
+        llm: BaseChatModel | None,
+        config: BrowserRunConfig,
+        hooks: LaneHooks,
+        step_timeout: float,
+    ) -> None:
+        self._session = session
+        self._llm = llm
+        self._config = config
+        self._hooks = hooks
+        self._step_timeout = step_timeout
+        self._agent: Any = None
+        self._clock = StepClock()
+        self._last_step = 0
+
+    async def execute(self, task: str) -> LaneOutcome:
+        from browser_use import Agent, Browser  # noqa: PLC0415 -- heavy optional dep
+
+        if self._llm is None:
+            raise BrowserUnavailableError("The Browser-Use lane needs a chat model to drive it.")
+
+        browser = Browser(
+            cdp_url=self._session.cdp_url,
+            viewport={"width": BROWSER_VIEWPORT_WIDTH, "height": BROWSER_VIEWPORT_HEIGHT},
+            # The live-view surface DPR is set host-side (screencast.py); Browser-Use
+            # ignores device_scale_factor when connecting over CDP, so leave it at 1 here.
+            device_scale_factor=1,
+            no_viewport=False,
+        )
+        # Stealth fingerprinting is injected on every page by browser_use_stealth_patch
+        # (app/patches), which hooks Browser-Use's per-target CDP session accessor so
+        # new tabs are covered too — no per-run registration needed here.
+
+        agent_kwargs: dict[str, Any] = {
+            "task": task + BROWSER_TAKEOVER_PREAMBLE,
+            "llm": self._llm,
+            "browser": browser,
+            # Browser-Use's prompt suggests todo.md for long tasks, but small
+            # models write it even for 3-step forms — a measured ~7s and one
+            # whole step of pure bookkeeping. Steer it to act directly.
+            "extend_system_message": (
+                "Do NOT create or update todo.md (or any planning file) unless the task "
+                "genuinely needs more than 10 steps. For short tasks, act on the page "
+                "directly from the first step."
+            ),
+            "register_new_step_callback": self._on_step,
+            "register_should_stop_callback": self._hooks.should_stop,
+            "use_vision": self._config.use_vision,
+            "flash_mode": self._config.flash_mode,
+            "max_actions_per_step": self._config.max_actions_per_step,
+            "step_timeout": self._step_timeout,
+            "tools": build_browser_tools(
+                solve_captcha=self._config.solve_captcha,
+                handle_takeover=self._hooks.takeover,
+            ),
+        }
+        if isinstance(self._llm, JevChatModel):
+            # Browser-Use hands its model rendered text; the Jev policy needs the
+            # structured observation behind it, so it reads the session directly.
+            # The raw task is its goal — the takeover preamble is chat-model prose.
+            # Its text helper is registered as the extraction model so Browser-Use
+            # meters that model's tokens under its own name (see _usage_from_history).
+            self._llm.bind(browser, task)
+            agent_kwargs["page_extraction_llm"] = self._llm.text_model
+        self._agent = Agent(**agent_kwargs)
+
+        history = await self._agent.run(
+            max_steps=self._config.max_steps, on_step_end=self._on_step_end
+        )
+        return outcome_from_history(history)
+
+    def stop(self) -> None:
+        if self._agent is not None:
+            self._agent.stop()
+
+    async def _on_step(
+        self, browser_state_summary: BrowserStateSummary, agent_output: AgentOutput, n_steps: int
+    ) -> None:
+        """Fires after the model picks actions, before they execute."""
+        self._last_step = n_steps
+        step_actions = _extract_actions(agent_output, browser_state_summary)
+        goal = (
+            getattr(agent_output, "next_goal", None)
+            or getattr(agent_output, "thinking", "")
+            # Flash mode strips the two above, so this is the caption on the
+            # cheap path — built from the resolved actions so it names the
+            # element ("Clicking \"Submit\""), not just the verb.
+            or caption_from_action_list(step_actions)
+        )
+        self._hooks.step(
+            StepFrame(
+                index=n_steps,
+                goal=goal,
+                actions=step_actions,
+                url=getattr(browser_state_summary, "url", None),
+                title=getattr(browser_state_summary, "title", None),
+                raw_screenshot=getattr(browser_state_summary, "screenshot", None),
+                since_prev_ms=self._clock.tick(),
+            )
+        )
+
+    async def _on_step_end(self, agent: object) -> None:
+        """After a step's actions execute, mirror each one's result into the thread.
+
+        Runs where the results actually exist: ``register_new_step_callback``
+        fires before the actions execute (Browser-Use calls it inside
+        _get_next_action), so ``_on_step`` has no outputs to show. ``on_step_end``
+        fires after execution with ``state.last_result`` populated, one entry per
+        action in order. Keyed by ``self._last_step`` — the step ``_on_step`` just
+        emitted rows for — so an output lands on the row it belongs to.
+        """
+        if self._hooks.action_results is None:
+            return
+        state = getattr(agent, "state", None)
+        results = getattr(state, "last_result", None) or []
+        outputs = [
+            BrowserActionOutput(position=position, output=text)
+            for position, result in enumerate(results)
+            if (text := _summarize_action_result(result))
+        ]
+        if outputs:
+            self._hooks.action_results(self._last_step, outputs)

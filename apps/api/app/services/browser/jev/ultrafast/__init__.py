@@ -3,15 +3,15 @@
 A port of browser-use/jev-ultrafast (MIT). A step is one snapshot, one Jev
 decision request carrying every speculative target head, and a small text call
 only when the chosen operation is TYPE_TEXT — no screenshots, no per-step chat
-completion. ``run_jev_ultrafast`` is the whole surface: give it a session's CDP
-websocket and a goal, and it runs to a terminal status.
+completion. The runner drives it through ``lanes/ultrafast.py``; ``run_jev_ultrafast`` is
+the same loop without a runner, for probes and smoke tests.
 
 This lives beside the ``JevChatModel`` path (``jev/chat_model.py``) rather than
-replacing it, so the two can be benchmarked against each other; nothing here is
-wired into the runner or the browser tool yet.
+replacing it, so the two can be benchmarked against each other.
 """
 
 from app.services.browser.jev.ultrafast.agent import (
+    JevHandoffHandler,
     JevRunResult,
     JevRunStopped,
     JevUltrafastAgent,
@@ -22,6 +22,7 @@ from app.services.browser.jev.ultrafast.browser import (
     UltrafastBrowser,
     fingerprint,
 )
+from app.services.browser.jev.ultrafast.clients import build_jev_clients
 from app.services.browser.jev.ultrafast.model import (
     JevTextHelper,
     JevTextHelperError,
@@ -36,6 +37,7 @@ from app.services.browser.jev.ultrafast.run import run_jev_ultrafast
 
 __all__ = [
     "JevExecutionError",
+    "JevHandoffHandler",
     "JevRunResult",
     "JevRunStopped",
     "JevTextHelper",
@@ -46,6 +48,7 @@ __all__ = [
     "StalePage",
     "UltrafastBrowser",
     "action_space",
+    "build_jev_clients",
     "build_request",
     "choose",
     "fingerprint",

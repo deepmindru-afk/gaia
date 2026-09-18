@@ -27,7 +27,14 @@ from app.services.browser.jev.gateway import (
     JsonInput,
 )
 from app.services.browser.jev.observation import JevElement, JevObservation, JevSelectOption
-from app.services.browser.jev.prompts import HUMAN_RULES, NEXT_ACTION, TARGET
+from app.services.browser.jev.prompts import (
+    HUMAN_RULES,
+    NAVIGATE_RULE,
+    NEXT_ACTION,
+    REQUEST_HUMAN_CRITERION,
+    SOLVE_CAPTCHA_CRITERION,
+    TARGET,
+)
 
 
 class JevDecisionError(ValueError):
@@ -47,11 +54,8 @@ _OPERATION_LABELS: dict[JevOperation, str] = {
     JevOperation.WAIT: "Wait one second for the page to load or settle.",
     JevOperation.NAVIGATE: "Open a different URL that the goal names or implies.",
     JevOperation.GO_BACK: "Go back to the previous page.",
-    JevOperation.REQUEST_HUMAN: (
-        "Hand the live browser to the user for a payment, password / OTP / 2FA, an irreversible "
-        "confirmation, or a required value the goal did not give."
-    ),
-    JevOperation.SOLVE_CAPTCHA: "Hand a visible CAPTCHA / 'not a robot' challenge to the user.",
+    JevOperation.REQUEST_HUMAN: REQUEST_HUMAN_CRITERION,
+    JevOperation.SOLVE_CAPTCHA: SOLVE_CAPTCHA_CRITERION,
     JevOperation.DONE: "Every requirement is visibly satisfied.",
     JevOperation.BLOCKED: "No supported operation can progress.",
 }
@@ -108,7 +112,7 @@ def build_request(
         for op in JevOperation
         if op in offered and (op not in JEV_TARGET_OPERATIONS or targets.get(op))
     }
-    rules: JsonInput = [NEXT_ACTION, HUMAN_RULES]
+    rules: JsonInput = [NEXT_ACTION, HUMAN_RULES, NAVIGATE_RULE]
     questions: dict[str, JevChoiceQuestion] = {
         "operation": JevChoiceQuestion(
             instructions={"goal": goal, "rules": rules}, criteria=dict(operations)

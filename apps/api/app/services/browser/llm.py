@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.agents.llm.model_catalog import get_openrouter_catalog
 from app.config.settings import settings
+from app.constants.browser import BrowserAgentLoop
 from app.constants.llm import DEFAULT_MODEL_NAME
 from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserUnavailableError
@@ -95,8 +96,32 @@ def build_browser_llm() -> BaseChatModel:
         return chat_model
 
 
+def resolve_agent_loop() -> BrowserAgentLoop:
+    """Which loop will really decide and execute the steps.
+
+    ``BROWSER_USE_AGENT_LOOP`` is the operator's choice; the ultrafast loop needs
+    ``OPENROUTER_API_KEY`` for both the decisions endpoint and the text helper, so
+    without it this falls back to the Browser-Use lane — loudly, never silently.
+    """
+    chosen = BrowserAgentLoop(settings.BROWSER_USE_AGENT_LOOP)
+    if chosen is BrowserAgentLoop.JEV_ULTRAFAST and not settings.OPENROUTER_API_KEY:
+        log.warning(
+            f"{LogTag.BROWSER} The jev-ultrafast loop is selected but OPENROUTER_API_KEY "
+            "is unset; the Browser-Use lane drives this run instead",
+            browser={"agent_loop": BrowserAgentLoop.BROWSER_USE.value},
+        )
+        return BrowserAgentLoop.BROWSER_USE
+    return chosen
+
+
 def jev_active() -> bool:
-    """Whether Jev, not the chat model, will make the step decisions."""
+    """Whether Jev, not the chat model, will make the step decisions.
+
+    True on the ultrafast loop (Jev *is* the loop) and on the Browser-Use lane
+    whenever Jev is enabled and configured as its chat model.
+    """
+    if resolve_agent_loop() is BrowserAgentLoop.JEV_ULTRAFAST:
+        return True
     return bool(settings.BROWSER_USE_JEV_ENABLED and settings.OPENROUTER_API_KEY)
 
 

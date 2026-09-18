@@ -61,18 +61,32 @@ def _r2_client() -> _S3Putter:
     return cast(_S3Putter, client)
 
 
-def _put(png: bytes, key: str) -> None:
-    _r2_client().put_object(Bucket=settings.R2_BUCKET, Key=key, Body=png, ContentType="image/png")
+# The two formats the lanes capture: Browser-Use hands back PNG, the ultrafast
+# loop JPEG. A frame stored under the wrong type is also *served* under it.
+_EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg"}
 
 
-async def upload_step_screenshot(png: bytes, conversation_id: str, index: int) -> str | None:
+def _put(image: bytes, key: str, media_type: str) -> None:
+    _r2_client().put_object(Bucket=settings.R2_BUCKET, Key=key, Body=image, ContentType=media_type)
+
+
+async def upload_step_screenshot(
+    image: bytes, conversation_id: str, index: int, media_type: str = "image/png"
+) -> str | None:
     """Upload one step screenshot to R2; return its public URL or None."""
     if not _r2_configured():
         return None
-    key = f"browser_steps/{conversation_id}/step_{index}.png"
+    extension = _EXTENSIONS.get(media_type)
+    if extension is None:
+        log.warning(
+            f"{LogTag.BROWSER} Browser screenshot has an unsupported media type; skipping upload",
+            browser={"media_type": media_type},
+        )
+        return None
+    key = f"browser_steps/{conversation_id}/step_{index}.{extension}"
     try:
         # boto3 is blocking — run it off the event loop.
-        await asyncio.to_thread(_put, png, key)
+        await asyncio.to_thread(_put, image, key, media_type)
     except Exception as exc:  # a screenshot is non-essential progress
         log.warning(
             f"{LogTag.BROWSER} Browser screenshot upload failed; using inline fallback",

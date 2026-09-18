@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from app.config.settings import settings
 from app.constants.log_tags import LogTag
-from app.services.browser.exceptions import BrowserUnavailableError
-from app.services.browser.jev.gateway import JevGatewayClient
-from app.services.browser.jev.ultrafast.agent import JevRunResult, JevUltrafastAgent
-from app.services.browser.jev.ultrafast.model import JevTextHelper
+from app.services.browser.jev.ultrafast.agent import (
+    JevHandoffHandler,
+    JevRunResult,
+    JevUltrafastAgent,
+)
+from app.services.browser.jev.ultrafast.clients import build_jev_clients
 from shared.py.wide_events import log
 
 
@@ -17,28 +18,23 @@ async def run_jev_ultrafast(
     *,
     start_url: str | None = None,
     screenshots: bool = False,
+    on_takeover: JevHandoffHandler | None = None,
+    on_captcha: JevHandoffHandler | None = None,
 ) -> JevRunResult:
     """Run the loop on an existing browser session until it is done or blocked.
 
     ``cdp_url`` is the session's CDP websocket (``cdp_ws`` from the browser
     host). The page it attaches to is left open; disposing the session is the
     caller's job.
+
+    ``on_takeover(reason, category)`` and ``on_captcha(challenge, NONE)`` are the
+    handoffs to the human. Each is offered to Jev only when it is supplied, and
+    the handler owns the live-view link, the message to the user, keeping the
+    session alive and the wait; raising
+    :class:`~app.services.browser.exceptions.BrowserHandoffCancelled` from it (the
+    user cancelled, or the wait timed out) ends the run the way BLOCKED does.
     """
-    key = settings.OPENROUTER_API_KEY
-    if not key:
-        raise BrowserUnavailableError(
-            "OPENROUTER_API_KEY is not set; Jev decisions and the text helper both need it."
-        )
-    client = JevGatewayClient(
-        api_key=key,
-        model=settings.BROWSER_USE_JEV_MODEL,
-        url=settings.BROWSER_USE_JEV_DECISIONS_URL,
-    )
-    text_helper = JevTextHelper(
-        api_key=key,
-        model=settings.BROWSER_USE_JEV_TEXT_MODEL,
-        url=settings.BROWSER_USE_JEV_TEXT_URL,
-    )
+    client, text_helper = build_jev_clients()
     log.set(
         browser={
             "operation": "jev_ultrafast_run",
@@ -53,6 +49,8 @@ async def run_jev_ultrafast(
         text_helper=text_helper,
         start_url=start_url,
         screenshots=screenshots,
+        on_takeover=on_takeover,
+        on_captcha=on_captcha,
     )
     try:
         result = await agent.run()

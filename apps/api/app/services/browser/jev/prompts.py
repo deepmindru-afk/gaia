@@ -17,13 +17,23 @@ Recent WAIT actions are not evidence of loading. Prefer a useful visible control
 DONE requires visible evidence that ALL requirements are satisfied. If asked to open a result,
 a matching link is not enough. BLOCKED means no supported operation can make progress."""
 
-# The human-in-the-loop rules this codebase's takeover flow relies on.
+# The human-in-the-loop rules this codebase's takeover flow relies on. Both lanes
+# offer REQUEST_HUMAN / SOLVE_CAPTCHA, so the rules and their criteria live here;
+# only the chat-model lane offers NAVIGATE, so its rule is separate.
 HUMAN_RULES = """REQUEST_HUMAN hands the live browser to the user for a step you must NOT do: entering a
 payment, a password / OTP / 2FA, confirming an irreversible or legally-binding action, or a
 required field whose value the goal did not provide — never invent personal information.
 Fill every non-secret field you can before REQUEST_HUMAN. SOLVE_CAPTCHA hands a CAPTCHA /
-"I'm not a robot" challenge to the user on the FIRST challenge; never click challenge tiles.
-NAVIGATE only when the goal names a site or page the current page cannot reach by clicking."""
+"I'm not a robot" challenge to the user on the FIRST challenge; never click challenge tiles."""
+
+NAVIGATE_RULE = """NAVIGATE only when the goal names a site or page the current page cannot reach by clicking."""
+
+REQUEST_HUMAN_CRITERION = (
+    "Hand the live browser to the user for a payment, password / OTP / 2FA, an irreversible "
+    "confirmation, or a required value the goal did not give."
+)
+
+SOLVE_CAPTCHA_CRITERION = "Hand a visible CAPTCHA / 'not a robot' challenge to the user."
 
 TARGET = """Choose the best observed target if the next operation is the one specified in this question.
 Use the user's entire goal, field values, nearby text, and recent actions. This question chooses only

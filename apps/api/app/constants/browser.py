@@ -22,6 +22,17 @@ BROWSER_TOOL_NAME = "browser_task"
 BROWSER_TOOL_CATEGORY = "browser"
 
 
+class BrowserAgentLoop(StrEnum):
+    """Which loop decides and executes a browser task's steps.
+
+    ``BROWSER_USE`` is Browser-Use's own agent (the shipped lane). ``JEV_ULTRAFAST``
+    is the ported jev-ultrafast loop (``services/browser/jev/ultrafast``), selected
+    by the ``BROWSER_USE_AGENT_LOOP`` setting."""
+
+    BROWSER_USE = "browser_use"
+    JEV_ULTRAFAST = "jev_ultrafast"
+
+
 class BrowserEngine(StrEnum):
     """Which browser binary ``gaia-browser-host`` launches behind its CDP plane.
 

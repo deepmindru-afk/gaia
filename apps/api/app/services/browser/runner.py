@@ -1,16 +1,22 @@
-"""Browser-Use agent execution — the *agent* layer.
+"""Browser task orchestration — the *agent* layer.
 
-Drives a Browser-Use ``Agent`` against an already-created browser-host session and
-turns its lifecycle into injected, swappable seams:
+Runs one browser task against an already-created browser-host session and turns
+its lifecycle into injected, swappable seams:
 
   * ``emit`` — stream a card snapshot (session/step/handoff/result) to UI + bots
   * ``request_handoff`` — pause for the human at a sensitive step (live-view)
   * ``is_cancelled`` — cooperative cancellation (wired to the chat stream)
 
-The runner does NOT judge whether a step is sensitive. The agent decides for
+Which loop actually decides and executes the steps is a *lane*
+(``services/browser/lanes``): Browser-Use's own agent, or the ported
+jev-ultrafast loop. The runner owns everything else — progress, the handoff,
+cancellation, the budgets, metering, the replay link — so a lane never learns
+about SSE, Redis or bots, and neither does the runner.
+
+The runner does NOT judge whether a step is sensitive. The lane decides for
 itself when it cannot proceed — a CAPTCHA it can't solve, a login/2FA/payment it
-must not do — and calls its takeover action, which pauses for the human in
-live-view (``_handle_takeover``). The runner knows nothing about SSE, Redis, or bots.
+must not do — and calls the takeover hook, which pauses for the human in
+live-view (``_handle_takeover``).
 """
 
 from __future__ import annotations
@@ -23,18 +29,14 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from app.constants.browser import (
-    BROWSER_TAKEOVER_PREAMBLE,
-    BROWSER_VIEWPORT_HEIGHT,
-    BROWSER_VIEWPORT_WIDTH,
     MAX_HANDOFFS_PER_TASK,
+    BrowserAgentLoop,
     BrowserSessionStatus,
     HandoffStatus,
     SensitiveCategory,
 )
 from app.constants.log_tags import LogTag
 from app.schemas.browser import (
-    BrowserAction,
-    BrowserActionOutput,
     BrowserCardSnapshot,
     BrowserResultSnapshot,
     BrowserSessionSnapshot,
@@ -42,28 +44,38 @@ from app.schemas.browser import (
     HandoffOutcome,
     HandoffRequest,
 )
-from app.services.browser.captions import caption_from_action_list
 from app.services.browser.exceptions import BrowserHandoffCancelled, BrowserUnavailableError
-from app.services.browser.jev import JevChatModel
+from app.services.browser.lanes import (
+    ActionResultsFn,
+    BrowserLane,
+    BrowserRunConfig,
+    BrowserUseLane,
+    LaneHooks,
+    LaneOutcome,
+    LaneUsage,
+    StepFrame,
+    UltrafastLane,
+)
 from app.services.browser.replay import create_replay_link
 from app.services.browser.screenshots import upload_step_screenshot
 from app.services.browser.session import BrowserHostSession
-from app.services.browser.tools import build_browser_tools
 from app.services.llm_metering import LLMCallContext, TokenUsage, record_llm_call
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import log
 
 if TYPE_CHECKING:
-    from browser_use.agent.views import AgentHistoryList, AgentOutput
-    from browser_use.browser.views import BrowserStateSummary
     from browser_use.llm.base import BaseChatModel
-    from pydantic import BaseModel
 
 EmitFn = Callable[[BrowserCardSnapshot], Awaitable[None]]
 RequestHandoffFn = Callable[[HandoffRequest], Awaitable[HandoffOutcome]]
 IsCancelledFn = Callable[[], Awaitable[bool]]
-# Per-action results, keyed to the step whose rows the thread mirror emitted.
-ActionResultsFn = Callable[[int, list[BrowserActionOutput]], None]
+
+__all__ = [
+    "ActionResultsFn",
+    "BrowserRunConfig",
+    "BrowserRunnerCallbacks",
+    "BrowserTaskRunner",
+]
 
 
 @dataclass(frozen=True)
@@ -77,164 +89,14 @@ class BrowserRunnerCallbacks:
     action_results: ActionResultsFn | None = None
 
 
-@dataclass(frozen=True)
-class BrowserRunConfig:
-    """One browser run's tuning knobs — every field is a ``BROWSER_USE_*`` setting."""
-
-    max_steps: int
-    max_actions_per_step: int
-    task_timeout_seconds: int
-    step_timeout_seconds: int
-    handoff_timeout_seconds: int
-    stream_screenshots: bool
-    use_vision: bool
-    solve_captcha: bool
-    flash_mode: bool = True
-
-
-@dataclass(frozen=True)
-class _StepFrame:
-    """One step's data, captured off Browser-Use's callback for a deferred emit."""
-
-    index: int
-    goal: str
-    actions: list[BrowserAction]
-    url: str | None
-    title: str | None
-    raw_screenshot: str | None
-    since_prev_ms: int
-
-
-# Attributes worth naming an otherwise-unlabelled control by, in the order a
-# person would recognise it. `value` covers <input type="submit" value="Submit">.
-_LABEL_ATTRIBUTES = ("aria-label", "value", "title", "placeholder", "alt", "name", "id")
-
-
-def _element_label(state: BrowserStateSummary, index: object) -> str | None:
-    """The on-page name of the element an action targets, by its DOM index.
-
-    Browser-Use addresses elements by index, which is meaningless to a reader.
-    The same step state the agent saw carries the DOM, so the index resolves to
-    something recognisable — that is what makes a caption say what was clicked.
-
-    Tries the accessibility name first: it is what a screen reader announces and
-    what a person would call the control, and it is populated for icon-only
-    buttons that carry no text at all. Falls back to the visible text, then to
-    the labelling attributes, then to the tag name — so a control is never
-    described as a bare verb when anything at all identifies it.
-    """
-    if not isinstance(index, int):
-        return None
-    selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
-    node = selector_map.get(index)
-    if node is None:
-        return None
-    try:
-        ax_node = getattr(node, "ax_node", None)
-        candidates = [getattr(ax_node, "name", None), node.get_meaningful_text_for_llm()]
-        attributes = getattr(node, "attributes", None) or {}
-        candidates += [attributes.get(attr) for attr in _LABEL_ATTRIBUTES]
-        for candidate in candidates:
-            text = (candidate or "").strip()
-            if text:
-                return text
-        # Last resort: the tag itself ("Clicking BUTTON" still beats "Clicking").
-        tag = (getattr(node, "node_name", "") or "").strip()
-        return tag.lower() or None
-    except Exception as exc:
-        # A DOM node shape we don't recognise must not kill the step — the caption
-        # just loses this element's name. Logged so a systematic shape change shows up.
-        log.warning(
-            f"{LogTag.BROWSER} Could not resolve element label from DOM node",
-            error_type=type(exc).__name__,
-        )
-        return None
-
-
-def _element_viewport_fraction(
-    state: BrowserStateSummary, index: object
-) -> tuple[float, float] | None:
-    """The element's centre as (x, y) fractions of the viewport, for the UI pulse.
-
-    Page coordinates minus the scroll offset give the viewport position; dividing
-    by the viewport size makes it resolution-independent, so the same fraction
-    lands correctly whatever size the screenshot is rendered at. Returns None when
-    the element has no box or its centre is off-screen (nothing to point at).
-    """
-    if not isinstance(index, int):
-        return None
-    selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
-    node = selector_map.get(index)
-    rect = getattr(node, "absolute_position", None)
-    page = getattr(state, "page_info", None)
-    if rect is None or page is None:
-        return None
-    viewport_w = getattr(page, "viewport_width", 0)
-    viewport_h = getattr(page, "viewport_height", 0)
-    if not viewport_w or not viewport_h:
-        return None
-    fx = (rect.x + rect.width / 2 - getattr(page, "scroll_x", 0)) / viewport_w
-    fy = (rect.y + rect.height / 2 - getattr(page, "scroll_y", 0)) / viewport_h
-    if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):
-        return None
-    return (round(fx, 4), round(fy, 4))
-
-
-def _extract_actions(
-    agent_output: AgentOutput, state: BrowserStateSummary | None = None
-) -> list[BrowserAction]:
-    """The step's actions as the agent's own tool calls — name, arguments, and
-    the on-page text of whatever each one targets."""
-    actions: list[BrowserAction] = []
-    for action in getattr(agent_output, "action", None) or []:
-        dumped = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else {}
-        for action_name, params in dumped.items():
-            inputs = params if isinstance(params, dict) else {}
-            target = _element_label(state, inputs.get("index")) if state is not None else None
-            point = (
-                _element_viewport_fraction(state, inputs.get("index"))
-                if state is not None
-                else None
-            )
-            actions.append(
-                BrowserAction(name=action_name, inputs=inputs, target=target, point=point)
-            )
-    return actions
-
-
-_OUTPUT_MAX_CHARS = 200
-
-
-def _summarize_action_result(result: object) -> str | None:
-    """One action's outcome as short display text, or None when there is nothing
-    worth showing (a click that succeeded silently needs no output row)."""
-    error = getattr(result, "error", None)
-    if error:
-        text = str(error)
-    else:
-        text = str(
-            getattr(result, "extracted_content", None)
-            or getattr(result, "long_term_memory", None)
-            or ""
-        )
-    collapsed = " ".join(text.split())
-    if not collapsed:
-        return None
-    return (
-        collapsed
-        if len(collapsed) <= _OUTPUT_MAX_CHARS
-        else collapsed[: _OUTPUT_MAX_CHARS - 1].rstrip() + "…"
-    )
-
-
 class BrowserTaskRunner:
-    """Orchestrates one browser task: session, agent loop, handoffs, delivery."""
+    """Orchestrates one browser task: session, lane, handoffs, delivery."""
 
     def __init__(
         self,
         *,
         session: BrowserHostSession,
-        llm: BaseChatModel,
+        llm: BaseChatModel | None,
         callbacks: BrowserRunnerCallbacks,
         config: BrowserRunConfig,
         user_id: str | None = None,
@@ -246,8 +108,7 @@ class BrowserTaskRunner:
         self._request_handoff = callbacks.request_handoff
         self._is_cancelled = callbacks.is_cancelled
         self._action_results = callbacks.action_results
-        self._max_steps = config.max_steps
-        self._max_actions_per_step = config.max_actions_per_step
+        self._config = config
         self._task_timeout = config.task_timeout_seconds
         # A step that hands off waits on the human for up to the handoff timeout, so
         # its budget is active-work time PLUS a full handoff; the overall wall-clock
@@ -257,29 +118,44 @@ class BrowserTaskRunner:
         self._wall_clock_timeout = (
             config.task_timeout_seconds + MAX_HANDOFFS_PER_TASK * config.handoff_timeout_seconds
         )
-        self._stream_screenshots = config.stream_screenshots
-        self._use_vision = config.use_vision
-        self._solve_captcha = config.solve_captcha
-        self._flash_mode = config.flash_mode
         self._user_id = user_id
         self._root_request_id = root_request_id
-        self._agent: Any = None
         self._stopped = False
         self._handed_off = False
         self._handoffs = 0
         self._last_step = 0
         # CDN URLs that really uploaded, in step order — the recap's frames.
         self._shots: list[str] = []
-        self._last_step_at = 0.0
-        # Step emits run off Browser-Use's loop; the lock keeps them ordered and the
-        # set lets _finish() flush them before the result (see _on_step / _finish).
+        # Step emits run off the lane's loop; the lock keeps them ordered and the
+        # set lets _finish() flush them before the result (see _record_step / _finish).
         self._emit_lock = asyncio.Lock()
         self._emit_tasks: set[asyncio.Task[Any]] = set()
+        self._lane = self._build_lane()
+
+    def _build_lane(self) -> BrowserLane:
+        hooks = LaneHooks(
+            step=self._record_step,
+            takeover=self._handle_takeover,
+            should_stop=self._should_stop,
+            action_results=self._action_results,
+        )
+        if self._config.agent_loop is BrowserAgentLoop.JEV_ULTRAFAST:
+            return UltrafastLane(
+                session=self._session,
+                config=self._config,
+                hooks=hooks,
+                step_timeout=self._step_timeout,
+            )
+        return BrowserUseLane(
+            session=self._session,
+            llm=self._llm,
+            config=self._config,
+            hooks=hooks,
+            step_timeout=self._step_timeout,
+        )
 
     async def run(self, task: str) -> BrowserResultSnapshot:
         """Run the task to completion and return the final result snapshot."""
-        from browser_use import Agent, Browser  # noqa: PLC0415 -- heavy optional dep
-
         await self._emit(
             BrowserSessionSnapshot(
                 task=task,
@@ -289,55 +165,9 @@ class BrowserTaskRunner:
             )
         )
 
-        browser = Browser(
-            cdp_url=self._session.cdp_url,
-            viewport={"width": BROWSER_VIEWPORT_WIDTH, "height": BROWSER_VIEWPORT_HEIGHT},
-            # The live-view surface DPR is set host-side (screencast.py); Browser-Use
-            # ignores device_scale_factor when connecting over CDP, so leave it at 1 here.
-            device_scale_factor=1,
-            no_viewport=False,
-        )
-        # Stealth fingerprinting is injected on every page by browser_use_stealth_patch
-        # (app/patches), which hooks Browser-Use's per-target CDP session accessor so
-        # new tabs are covered too — no per-run registration needed here.
-
-        agent_kwargs: dict[str, Any] = {
-            "task": task + BROWSER_TAKEOVER_PREAMBLE,
-            "llm": self._llm,
-            "browser": browser,
-            # Browser-Use's prompt suggests todo.md for long tasks, but small
-            # models write it even for 3-step forms — a measured ~7s and one
-            # whole step of pure bookkeeping. Steer it to act directly.
-            "extend_system_message": (
-                "Do NOT create or update todo.md (or any planning file) unless the task "
-                "genuinely needs more than 10 steps. For short tasks, act on the page "
-                "directly from the first step."
-            ),
-            "register_new_step_callback": self._on_step,
-            "register_should_stop_callback": self._should_stop,
-            "use_vision": self._use_vision,
-            "flash_mode": self._flash_mode,
-            "max_actions_per_step": self._max_actions_per_step,
-            "step_timeout": self._step_timeout,
-            "tools": build_browser_tools(
-                solve_captcha=self._solve_captcha,
-                handle_takeover=self._handle_takeover,
-            ),
-        }
-        if isinstance(self._llm, JevChatModel):
-            # Browser-Use hands its model rendered text; the Jev policy needs the
-            # structured observation behind it, so it reads the session directly.
-            # The raw task is its goal — the takeover preamble is chat-model prose.
-            # Its text helper is registered as the extraction model so Browser-Use
-            # meters that model's tokens under its own name (see _record_usage).
-            self._llm.bind(browser, task)
-            agent_kwargs["page_extraction_llm"] = self._llm.text_model
-        self._agent = Agent(**agent_kwargs)
-
         try:
-            history = await asyncio.wait_for(
-                self._agent.run(max_steps=self._max_steps, on_step_end=self._on_step_end),
-                timeout=self._wall_clock_timeout,
+            outcome = await asyncio.wait_for(
+                self._lane.execute(task), timeout=self._wall_clock_timeout
             )
         except (BrowserHandoffCancelled, InterruptedError):
             if self._handed_off:
@@ -350,21 +180,21 @@ class BrowserTaskRunner:
                 BrowserSessionStatus.CANCELLED, False, "Browser task was stopped."
             )
         except TimeoutError:
-            self._agent.stop()
+            self._lane.stop()
             return await self._finish(
                 BrowserSessionStatus.FAILED,
                 False,
                 f"Browser task timed out after {self._task_timeout}s.",
             )
         except (ConnectionError, OSError) as exc:
-            # The host created the session but the agent couldn't attach over CDP —
+            # The host created the session but the lane couldn't attach over CDP —
             # almost always the host's CDP proxy websocket isn't reachable from here.
             raise BrowserUnavailableError(
                 f"Could not attach to the browser over CDP at {self._session.cdp_url}: {exc}. "
                 "Check that the browser host is reachable from the API at BROWSER_HOST_URL."
             ) from exc
         except Exception as exc:
-            # Any other unexpected agent/runtime failure (an LLM-provider error, a
+            # Any other unexpected lane/runtime failure (an LLM-provider error, a
             # browser_use internal crash, a malformed tool output, a failed handoff
             # persistence write) must not leave the card stuck in RUNNING — emit a
             # terminal FAILED result so the UI resolves and the user gets an honest
@@ -391,14 +221,14 @@ class BrowserTaskRunner:
             return await self._finish(
                 BrowserSessionStatus.CANCELLED, False, "Browser task was cancelled."
             )
-        return await self._finish_from_history(history)
+        return await self._finish_from_outcome(outcome)
 
     async def _should_stop(self) -> bool:
         return self._stopped or await self._is_cancelled()
 
     async def _handle_takeover(self, reason: str, category: str) -> str:
-        """The ``request_human_takeover`` action: pause for the human, then let the
-        agent resume natively with the returned result. Raises to stop on cancel."""
+        """The lane's takeover hook: pause for the human, then let the lane resume
+        with the returned result. Raises to stop the run on cancel."""
         self._handoffs += 1
         if self._handoffs > MAX_HANDOFFS_PER_TASK:
             self._stopped = True
@@ -433,79 +263,25 @@ class BrowserTaskRunner:
         log.info(f"{LogTag.BROWSER} Browser takeover ended", status=outcome.status.value)
         raise BrowserHandoffCancelled(outcome.status.value)
 
-    async def _on_step(
-        self, browser_state_summary: BrowserStateSummary, agent_output: AgentOutput, n_steps: int
-    ) -> None:
-        """Fires after the model picks actions, before they execute."""
-        self._last_step = n_steps
-        step_actions = _extract_actions(agent_output, browser_state_summary)
-        goal = (
-            getattr(agent_output, "next_goal", None)
-            or getattr(agent_output, "thinking", "")
-            # Flash mode strips the two above, so this is the caption on the
-            # cheap path — built from the resolved actions so it names the
-            # element ("Clicking \"Submit\""), not just the verb.
-            or caption_from_action_list(step_actions)
-        )
-        raw_screenshot = getattr(browser_state_summary, "screenshot", None)
+    def _record_step(self, frame: StepFrame) -> None:
+        """One executed step, straight off a lane's loop.
 
-        # Per-step profiling: `since_prev_ms` is the wall-clock the agent spent on the
-        # previous step's LLM think + action execution (the dominant per-step cost);
-        # `screenshot_ms` is how long the screenshot upload blocks this callback (and
-        # therefore Browser-Use's loop). Both are the levers when the run "feels slow".
-        now = perf_counter()
-        since_prev_ms = round((now - self._last_step_at) * 1000) if self._last_step_at else 0
-        self._last_step_at = now
-
-        # Emit OFF Browser-Use's critical path: the screenshot upload is a ~1s CDN
-        # round-trip and this callback is awaited *before the step's actions run*, so
-        # uploading inline taxed every step. Spawn it — the per-runner lock keeps the
-        # step emits ordered, and _finish() flushes them before the result so the SSE
-        # writer is still open. The runner does not judge sensitivity; the agent hands
-        # off for itself (see _handle_takeover). This callback only streams progress.
-        task = spawn_background_task(
-            self._emit_step(
-                _StepFrame(
-                    index=n_steps,
-                    goal=goal,
-                    actions=step_actions,
-                    url=getattr(browser_state_summary, "url", None),
-                    title=getattr(browser_state_summary, "title", None),
-                    raw_screenshot=raw_screenshot,
-                    since_prev_ms=since_prev_ms,
-                )
-            ),
-            name="browser_step_emit",
-        )
+        Emits OFF that loop's critical path: the screenshot upload is a ~1s CDN
+        round-trip, and Browser-Use awaits its callback *before the step's actions
+        run*, so uploading inline taxed every step. Spawn it — the per-runner lock
+        keeps the step emits ordered, and _finish() flushes them before the result
+        so the SSE writer is still open. The runner does not judge sensitivity; the
+        lane hands off for itself (see _handle_takeover).
+        """
+        self._last_step = frame.index
+        task = spawn_background_task(self._emit_step(frame), name="browser_step_emit")
         self._emit_tasks.add(task)
         task.add_done_callback(self._emit_tasks.discard)
 
-    async def _on_step_end(self, agent: object) -> None:
-        """After a step's actions execute, mirror each one's result into the thread.
-
-        Runs where the results actually exist: ``register_new_step_callback``
-        fires before the actions execute (Browser-Use calls it inside
-        _get_next_action), so ``_on_step`` has no outputs to show. ``on_step_end``
-        fires after execution with ``state.last_result`` populated, one entry per
-        action in order. Keyed by ``self._last_step`` — the step ``_on_step`` just
-        emitted rows for — so an output lands on the row it belongs to.
-        """
-        if self._action_results is None:
-            return
-        state = getattr(agent, "state", None)
-        results = getattr(state, "last_result", None) or []
-        outputs = [
-            BrowserActionOutput(position=position, output=text)
-            for position, result in enumerate(results)
-            if (text := _summarize_action_result(result))
-        ]
-        if outputs:
-            self._action_results(self._last_step, outputs)
-
-    async def _emit_step(self, frame: _StepFrame) -> None:
+    async def _emit_step(self, frame: StepFrame) -> None:
         async with self._emit_lock:
             shot_t0 = perf_counter()
-            screenshot = await self._render_screenshot(frame.raw_screenshot, frame.index)
+            screenshot = await self._render_screenshot(frame)
             if screenshot and screenshot.startswith("http"):
                 self._shots.append(screenshot)
             screenshot_ms = round((perf_counter() - shot_t0) * 1000)
@@ -529,18 +305,21 @@ class BrowserTaskRunner:
                 emit_ms=round((perf_counter() - emit_t0) * 1000),
             )
 
-    async def _render_screenshot(self, raw_b64: str | None, index: int) -> str | None:
+    async def _render_screenshot(self, frame: StepFrame) -> str | None:
         """A step frame as a signed CDN URL (persisted), or an inline data URL as
         a dev fallback when the CDN is unconfigured. ``None`` when off/absent."""
-        if not raw_b64 or not self._stream_screenshots:
+        raw_b64 = frame.raw_screenshot
+        if not raw_b64 or not self._config.stream_screenshots:
             return None
         try:
-            png = base64.b64decode(raw_b64)
+            image = base64.b64decode(raw_b64)
         except (ValueError, TypeError):
             return None
         # Keyed by session id (not conversation) so each run is its own replay folder.
-        url = await upload_step_screenshot(png, self._session.session_id, index)
-        return url or f"data:image/png;base64,{raw_b64}"
+        url = await upload_step_screenshot(
+            image, self._session.session_id, frame.index, frame.screenshot_media_type
+        )
+        return url or f"data:{frame.screenshot_media_type};base64,{raw_b64}"
 
     async def _finish(
         self, status: BrowserSessionStatus, success: bool, summary: str
@@ -561,61 +340,29 @@ class BrowserTaskRunner:
         await self._emit(result)
         return result
 
-    async def _finish_from_history(
-        self, history: AgentHistoryList[BaseModel]
-    ) -> BrowserResultSnapshot:
-        # The three fallbacks the try leaves in place if reading history fails.
-        # pragma-exempt below: every consumer collapses falsy values to one answer
-        # (`final or ...`, `bool(is_done and ...)`, `is_successful is not False`),
-        # so swapping any of them for another falsy value cannot change the
-        # snapshot — verified against both the total-failure and partial-read
-        # paths. Restructuring to an early return WAS tried and rejected: it
-        # discards a final_result() that was read before the failure, which
-        # test_a_history_that_breaks_midway_still_reports_what_it_read catches.
-        final = None  # pragma: no mutate
-        is_done = False  # pragma: no mutate
-        is_successful: bool | None = None  # pragma: no mutate
-        try:
-            final = history.final_result()
-            is_done = history.is_done()
-            is_successful = history.is_successful()
-        except Exception as exc:
-            log.warning(
-                f"{LogTag.BROWSER} Could not read browser history result",
-                error_type=type(exc).__name__,
-            )
+    async def _finish_from_outcome(self, outcome: LaneOutcome) -> BrowserResultSnapshot:
+        status = BrowserSessionStatus.COMPLETED if outcome.success else BrowserSessionStatus.FAILED
+        await self._record_usage(outcome.usage)
+        return await self._finish(status, outcome.success, outcome.summary)
 
-        success = bool(is_done and is_successful is not False)
-        status = BrowserSessionStatus.COMPLETED if success else BrowserSessionStatus.FAILED
-        summary = final or (
-            "Completed the browser task." if success else "Could not complete the browser task."
-        )
-        await self._record_usage(history)
-        return await self._finish(status, success, str(summary))
-
-    async def _record_usage(self, history: AgentHistoryList[BaseModel]) -> None:
+    async def _record_usage(self, usage: list[LaneUsage]) -> None:
         """Price and record the run's LLM spend into GAIA's usage pipeline.
 
-        Browser-Use tracks its own per-model token totals on
-        ``history.usage.by_model`` (populated whenever ``Agent.run`` returns
-        normally — not on the timeout/cancellation/CDP-failure paths above,
-        which return before a history exists). One :func:`record_llm_call`
-        per model matches how ``LLMAccountingMiddleware`` records the chat
-        graph's own multi-model runs; token counts are re-priced through
-        GAIA's own catalog rather than trusting Browser-Use's bundled pricing
-        data. This is agent-graph work the user asked for (the ``browser_task``
-        tool), so it charges the budget like any other tool-driven model call.
+        One :func:`record_llm_call` per model matches how ``LLMAccountingMiddleware``
+        records the chat graph's own multi-model runs; token counts are re-priced
+        through GAIA's own catalog rather than trusting the lane's pricing data.
+        Both of the ultrafast lane's models land here under their real names, so
+        the Jev spend is not silently lost. This is agent-graph work the user asked
+        for (the ``browser_task`` tool), so it charges the budget like any other
+        tool-driven model call.
         """
-        usage = history.usage
-        if usage is None:
-            return
-        for model_name, stats in usage.by_model.items():
+        for entry in usage:
             await record_llm_call(
                 user_id=self._user_id,
-                model_name=model_name,
+                model_name=entry.model_name,
                 usage=TokenUsage(
-                    input_tokens=stats.prompt_tokens,
-                    output_tokens=stats.completion_tokens,
+                    input_tokens=entry.input_tokens,
+                    output_tokens=entry.output_tokens,
                     cached_tokens=0,
                     reasoning_tokens=0,
                 ),

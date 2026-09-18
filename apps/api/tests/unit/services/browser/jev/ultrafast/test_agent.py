@@ -7,9 +7,12 @@ from typing import Any
 
 import pytest
 
+from app.constants.browser import SensitiveCategory
+from app.services.browser.exceptions import BrowserHandoffCancelled
+from app.services.browser.jev.prompts import CAPTCHA_CHALLENGE, TAKEOVER_REASON
 from app.services.browser.jev.ultrafast.agent import JevRunStopped, JevUltrafastAgent
 from app.services.browser.jev.ultrafast.browser import StalePage
-from app.services.browser.jev.ultrafast.model import JevUltrafastDecision
+from app.services.browser.jev.ultrafast.model import JevTextHelperError, JevUltrafastDecision
 from tests.unit.services.browser.jev.ultrafast.conftest import (
     FakeBrowser,
     completion,
@@ -33,17 +36,27 @@ def decide(choice: str = "e1", operation: str = "TYPE_TEXT") -> JevUltrafastDeci
     )
 
 
-def make_agent(page, *, decisions: Any = None, text: str = '{"text":"book"}'):
+def make_agent(
+    page,
+    *,
+    decisions: Any = None,
+    text: Any = '{"text":"book"}',
+    on_takeover: Any = None,
+    on_captcha: Any = None,
+):
     """An agent already past its first observation, with canned model answers."""
     browser = FakeBrowser(page)
     client, gateway_calls = make_gateway(decisions or (lambda _body: {"answers": {}}))
-    helper, text_calls = make_text_helper(lambda _body: completion(text))
+    responder = text if callable(text) else (lambda _body, content=text: completion(content))
+    helper, text_calls = make_text_helper(responder)
     agent = JevUltrafastAgent(
         browser,  # type: ignore[arg-type]
         page,
         goal="Find a book",
         client=client,
         text_helper=helper,
+        on_takeover=on_takeover,
+        on_captcha=on_captcha,
     )
     agent.started_at = perf_counter()
     agent.status = "predicted"
@@ -290,3 +303,202 @@ async def test_the_decision_budget_stops_the_run(page) -> None:
 
     with pytest.raises(JevRunStopped, match="model-call budget"):
         await agent.predict()
+
+
+# --------------------------------------------------------------------------
+# handing control to the human
+# --------------------------------------------------------------------------
+
+
+class RecordingHandoff:
+    """The caller's handler: it records the call and returns, or raises to end the run."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.calls: list[tuple[str, SensitiveCategory]] = []
+        self.error = error
+
+    async def __call__(self, reason: str, category: SensitiveCategory) -> str:
+        self.calls.append((reason, category))
+        if self.error is not None:
+            raise self.error
+        return "the user says they are done"
+
+
+def reason_texts(_body: dict[str, Any]) -> dict[str, Any]:
+    """The text helper's answer for whichever handoff prompt it was sent."""
+    instructions = _body["messages"][0]["content"]
+    if instructions == TAKEOVER_REASON:
+        return completion('{"text":"Enter your password and sign in","category":"credentials"}')
+    if instructions == CAPTCHA_CHALLENGE:
+        return completion('{"text":"Select all motorcycles, then Verify"}')
+    return completion('{"text":"book"}')
+
+
+@pytest.mark.asyncio
+async def test_a_human_operation_is_offered_only_when_its_handler_exists(page) -> None:
+    def responder(body: dict[str, Any]) -> dict[str, Any]:
+        criteria = body["questions"]["operation"]["criteria"]
+        return {"answers": {"operation": distribution(criteria, "DONE")}}
+
+    agent, _, gateway_calls, _ = make_agent(
+        page, decisions=responder, on_takeover=RecordingHandoff()
+    )
+    agent.status = "ready"
+
+    await agent.predict()
+
+    criteria = gateway_calls.bodies[0]["questions"]["operation"]["criteria"]
+    assert "REQUEST_HUMAN" in criteria
+    assert "SOLVE_CAPTCHA" not in criteria
+
+
+@pytest.mark.asyncio
+async def test_no_handlers_offers_neither_human_operation(page) -> None:
+    def responder(body: dict[str, Any]) -> dict[str, Any]:
+        criteria = body["questions"]["operation"]["criteria"]
+        return {"answers": {"operation": distribution(criteria, "DONE")}}
+
+    agent, _, gateway_calls, _ = make_agent(page, decisions=responder)
+    agent.status = "ready"
+
+    await agent.predict()
+
+    criteria = gateway_calls.bodies[0]["questions"]["operation"]["criteria"]
+    assert "REQUEST_HUMAN" not in criteria
+    assert "SOLVE_CAPTCHA" not in criteria
+    assert agent.handoffs == {}
+
+
+@pytest.mark.asyncio
+async def test_a_takeover_calls_the_handler_with_the_reason_the_helper_wrote(page) -> None:
+    takeover, captcha = RecordingHandoff(), RecordingHandoff()
+    agent, browser, _, _ = make_agent(
+        page, text=reason_texts, on_takeover=takeover, on_captcha=captcha
+    )
+    agent.decision = decide("REQUEST_HUMAN", "REQUEST_HUMAN")
+
+    await agent.act(page["fingerprint"])
+
+    assert takeover.calls == [("Enter your password and sign in", SensitiveCategory.CREDENTIALS)]
+    assert captcha.calls == []
+    assert browser.acted == []
+    assert [c["value"] for c in agent.text_calls] == ["Enter your password and sign in"]
+
+
+@pytest.mark.asyncio
+async def test_a_captcha_calls_its_own_handler(page) -> None:
+    takeover, captcha = RecordingHandoff(), RecordingHandoff()
+    agent, browser, _, _ = make_agent(
+        page, text=reason_texts, on_takeover=takeover, on_captcha=captcha
+    )
+    agent.decision = decide("SOLVE_CAPTCHA", "SOLVE_CAPTCHA")
+
+    await agent.act(page["fingerprint"])
+
+    assert captcha.calls == [("Select all motorcycles, then Verify", SensitiveCategory.NONE)]
+    assert takeover.calls == []
+    assert browser.acted == []
+
+
+@pytest.mark.asyncio
+async def test_the_loop_re_observes_and_continues_after_a_handoff(page) -> None:
+    agent, browser, _, _ = make_agent(page, text=reason_texts, on_takeover=RecordingHandoff())
+    agent.decision = decide("REQUEST_HUMAN", "REQUEST_HUMAN")
+
+    await agent.act(page["fingerprint"])
+
+    assert browser.observations == 1
+    assert agent.status == "ready"
+    entry = agent.history[-1]
+    assert entry["kind"] == "handoff"
+    assert entry["text"] == "Enter your password and sign in"
+    assert entry["page_changed"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error", [BrowserHandoffCancelled("cancelled"), BrowserHandoffCancelled("timeout")]
+)
+async def test_a_cancelled_or_timed_out_handoff_ends_the_run(page, error) -> None:
+    takeover = RecordingHandoff(error=error)
+    agent, browser, _, _ = make_agent(page, text=reason_texts, on_takeover=takeover)
+    agent.decision = decide("REQUEST_HUMAN", "REQUEST_HUMAN")
+
+    await agent.act(page["fingerprint"])
+
+    assert agent.status == "blocked"
+    assert agent.result().succeeded is False
+    assert browser.observations == 0
+    assert len(takeover.calls) == 1
+    assert agent.history[-1]["kind"] == "handoff"
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_moved_before_the_handoff_asks_nobody(page) -> None:
+    takeover = RecordingHandoff()
+    agent, browser, _, text_calls = make_agent(page, text=reason_texts, on_takeover=takeover)
+    agent.decision = decide("REQUEST_HUMAN", "REQUEST_HUMAN")
+    browser.is_fresh = False
+
+    with pytest.raises(StalePage, match="before the handoff"):
+        await agent.act(page["fingerprint"])
+
+    assert takeover.calls == []
+    assert text_calls.bodies == []
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_does_not_spend_the_action_budget(page) -> None:
+    agent, browser, _, _ = make_agent(page, text=reason_texts, on_takeover=RecordingHandoff())
+    agent.history = [{"step": i, "kind": "handoff", "page_changed": True} for i in range(60)]
+    agent.decision = decide("e3", "CLICK")
+
+    await agent.act(page["fingerprint"])
+
+    assert browser.acted == [("e3", None)]
+
+
+@pytest.mark.asyncio
+async def test_a_run_resumes_after_the_human_and_finishes(page) -> None:
+    answers = iter(["REQUEST_HUMAN", "CLICK", "DONE"])
+
+    def responder(body: dict[str, Any]) -> dict[str, Any]:
+        operation = next(answers)
+        result = {"operation": distribution(body["questions"]["operation"]["criteria"], operation)}
+        if operation == "CLICK":
+            result["click_target"] = distribution(
+                body["questions"]["click_target"]["criteria"], "2"
+            )
+        return {"answers": result}
+
+    takeover = RecordingHandoff()
+    agent, browser, gateway_calls, _ = make_agent(
+        page, decisions=responder, text=reason_texts, on_takeover=takeover
+    )
+    agent.status = "ready"
+
+    result = await agent.run()
+
+    assert result.status == "done"
+    assert len(takeover.calls) == 1
+    assert len(gateway_calls.bodies) == 3
+    assert browser.acted == [("e3", None)]
+    assert [h["kind"] for h in result.history] == ["handoff", "click"]
+    # The handoff is in recent_actions, so Jev does not ask for the same human twice.
+    assert gateway_calls.bodies[1]["state"]["recent_actions"][0]["kind"] == "handoff"
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_takeover_reason_asks_nobody(page) -> None:
+    takeover = RecordingHandoff()
+    agent, browser, _, _ = make_agent(
+        page, text='{"text":"Enter your password"}', on_takeover=takeover
+    )
+    agent.decision = decide("REQUEST_HUMAN", "REQUEST_HUMAN")
+
+    with pytest.raises(JevTextHelperError):
+        await agent.act(page["fingerprint"])
+
+    assert takeover.calls == []
+    assert agent.history == []
+    assert browser.observations == 0

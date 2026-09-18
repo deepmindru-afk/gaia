@@ -31,6 +31,8 @@ from app.constants.browser import (
     JEV_TEXT_VALUE_MAX_CHARS,
     JEV_ULTRAFAST_TEXT_MAX_TOKENS,
     JEV_ULTRAFAST_TEXT_TIMEOUT_SECONDS,
+    JevOperation,
+    SensitiveCategory,
 )
 from app.services.browser.exceptions import BrowserAutomationError
 from app.services.browser.jev.gateway import (
@@ -41,7 +43,15 @@ from app.services.browser.jev.gateway import (
     JevUsage,
     JsonInput,
 )
-from app.services.browser.jev.prompts import NEXT_ACTION, TARGET, TEXT_VALUE
+from app.services.browser.jev.prompts import (
+    HUMAN_RULES,
+    NEXT_ACTION,
+    REQUEST_HUMAN_CRITERION,
+    SOLVE_CAPTCHA_CRITERION,
+    TAKEOVER_REASON,
+    TARGET,
+    TEXT_VALUE,
+)
 
 # One row of snapshot.js's action table, or one page state it returns. The shape
 # is owned by the browser-side snapshot (see snapshot.js) and is deliberately
@@ -60,6 +70,13 @@ _OPERATION_LABELS = {
         "A small LLM will supply the value from the goal."
     ),
     "SELECT": "Select an observed dropdown value.",
+}
+
+# The two operations GAIA adds on top of the reference's action space: controls
+# with no target head, offered only when the caller supplied a handler for them.
+_HANDOFF_LABELS = {
+    JevOperation.REQUEST_HUMAN: REQUEST_HUMAN_CRITERION,
+    JevOperation.SOLVE_CAPTCHA: SOLVE_CAPTCHA_CRITERION,
 }
 
 # Element attributes snapshot.js reports, carried into the table and the criteria.
@@ -164,19 +181,29 @@ def action_space(
 
 
 def build_request(
-    state: PageState, goal: str, history: list[dict[str, Any]]
+    state: PageState,
+    goal: str,
+    history: list[dict[str, Any]],
+    handoffs: Collection[JevOperation] = (),
 ) -> tuple[JevEvaluationRequest, dict[str, str], dict[str, dict[str, Action]], dict[str, Action]]:
-    """The one request: the operation head plus a speculative head per operation."""
+    """The one request: the operation head plus a speculative head per operation.
+
+    ``handoffs`` are the human-in-the-loop operations the caller can actually
+    service; like DONE and BLOCKED they are controls with no target head, and an
+    operation with no handler is never offered.
+    """
     elements, targets, controls = action_space(state["actions"])
     operations = {key: _OPERATION_LABELS[key] for key in targets}
     operations.update({key: value["label"] for key, value in controls.items()})
+    operations.update({op.value: _HANDOFF_LABELS[op] for op in handoffs})
     operations.update(
         DONE="Every requirement is visibly satisfied.",
         BLOCKED="No supported operation can progress.",
     )
+    rules: JsonInput = [NEXT_ACTION, HUMAN_RULES] if handoffs else NEXT_ACTION
     questions: dict[str, JevChoiceQuestion] = {
         "operation": JevChoiceQuestion(
-            criteria=dict(operations), instructions={"goal": goal, "rules": NEXT_ACTION}
+            criteria=dict(operations), instructions={"goal": goal, "rules": rules}
         )
     }
     for operation, candidates in targets.items():
@@ -207,10 +234,14 @@ def build_request(
 
 
 async def choose(
-    client: JevGatewayClient, state: PageState, goal: str, history: list[dict[str, Any]]
+    client: JevGatewayClient,
+    state: PageState,
+    goal: str,
+    history: list[dict[str, Any]],
+    handoffs: Collection[JevOperation] = (),
 ) -> JevUltrafastDecision:
     """Ask for the operation and every compatible target in one round trip."""
-    request, operations, targets, controls = build_request(state, goal, history)
+    request, operations, targets, controls = build_request(state, goal, history, handoffs)
     evaluation = await client.evaluate(request)
     operation_answer = validate_choice(evaluation.answers.get("operation"), operations)
     operation = operation_answer.choice
@@ -246,13 +277,14 @@ async def choose(
 
 
 def field_context(
-    goal: str, action: Action, page: PageState, history: list[dict[str, Any]]
+    goal: str, action: Action | None, page: PageState, history: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Everything the text helper is allowed to see. Identity of this dict is what
-    makes a generated value reusable across a stale-page retry."""
+    makes a generated value reusable across a stale-page retry. ``action`` is None
+    for the answers that are about the page rather than one field (a handoff reason)."""
     return {
         "goal": goal,
-        "field": {k: action.get(k) for k in ("label", "role", "value")},
+        "field": {k: action.get(k) for k in ("label", "role", "value")} if action else None,
         "page": {"title": page["title"], "text": page["text"][:6000]},
         "recent_actions": [
             {k: h.get(k) for k in ("action", "text")}
@@ -277,8 +309,28 @@ class JevTextHelper:
         self._headers = {"Authorization": f"Bearer {api_key}"}
         self._client = client or httpx.AsyncClient(timeout=JEV_ULTRAFAST_TEXT_TIMEOUT_SECONDS)
 
-    async def field_text(self, context: dict[str, Any]) -> tuple[str, TextHelperCall]:
-        """The value to type, or a refusal — the executor never guesses one itself."""
+    async def field_text(
+        self, context: dict[str, Any], *, instructions: str = TEXT_VALUE
+    ) -> tuple[str, TextHelperCall]:
+        """The value to type, or a refusal — the executor never guesses one itself.
+
+        ``instructions`` swaps the prompt for the other single-``text`` answers
+        this helper writes (a CAPTCHA challenge); the validation is the same.
+        """
+        result, call = await self._complete(instructions, context)
+        return _parse_text_value(result), call
+
+    async def takeover_reason(
+        self, context: dict[str, Any]
+    ) -> tuple[str, SensitiveCategory, TextHelperCall]:
+        """The directive shown to the user, and why the step needs them."""
+        result, call = await self._complete(TAKEOVER_REASON, context)
+        text, category = _parse_takeover_reason(result)
+        return text, category, call
+
+    async def _complete(
+        self, instructions: str, context: dict[str, Any]
+    ) -> tuple[dict[str, Any], TextHelperCall]:
         started = perf_counter()
         result = await self._post(
             {
@@ -290,13 +342,12 @@ class JevTextHelper:
                 # one base URL we never point at.
                 "reasoning": {"enabled": False},
                 "messages": [
-                    {"role": "system", "content": TEXT_VALUE},
+                    {"role": "system", "content": instructions},
                     {"role": "user", "content": json.dumps(context)},
                 ],
             }
         )
-        value = _parse_text_value(result)
-        return value, TextHelperCall(
+        return result, TextHelperCall(
             model=self.model,
             latency_ms=round((perf_counter() - started) * 1000),
             usage=result.get("usage", {}),
@@ -327,6 +378,25 @@ class JevTextHelper:
 
 def _parse_text_value(result: dict[str, Any]) -> str:
     """Exactly one JSON key, ``text``, holding a non-empty in-budget string."""
+    return _answer(result, {"text"})[0]
+
+
+def _parse_takeover_reason(result: dict[str, Any]) -> tuple[str, SensitiveCategory]:
+    """``text`` under the same rules, plus the category saying why a human is needed."""
+    value, output = _answer(result, {"text", "category"})
+    try:
+        category = SensitiveCategory(output["category"])
+    except ValueError:
+        raise JevTextHelperError(
+            "Text helper returned no valid field value; nothing typed."
+        ) from None
+    if category is SensitiveCategory.NONE:
+        raise JevTextHelperError("Text helper returned no valid field value; nothing typed.")
+    return value, category
+
+
+def _answer(result: dict[str, Any], keys: set[str]) -> tuple[str, dict[str, Any]]:
+    """The answer carries exactly ``keys`` and a non-empty in-budget ``text``."""
     try:
         output = json.loads(result["choices"][0]["message"]["content"])
         value = output["text"]
@@ -335,10 +405,10 @@ def _parse_text_value(result: dict[str, Any]) -> str:
             "Text helper returned no valid field value; nothing typed."
         ) from None
     if (
-        set(output) != {"text"}
+        set(output) != keys
         or not isinstance(value, str)
         or not value.strip()
         or len(value) > JEV_TEXT_VALUE_MAX_CHARS
     ):
         raise JevTextHelperError("Text helper returned no valid field value; nothing typed.")
-    return value
+    return value, output

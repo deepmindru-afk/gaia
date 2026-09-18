@@ -14,7 +14,12 @@ from app.services.browser.jev.policy import (
     choose,
     resolve,
 )
-from app.services.browser.jev.prompts import HUMAN_RULES, NEXT_ACTION, TARGET
+from app.services.browser.jev.prompts import (
+    HUMAN_RULES,
+    NAVIGATE_RULE,
+    NEXT_ACTION,
+    TARGET,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -50,7 +55,10 @@ def test_the_request_shares_one_state_across_an_operation_head_and_one_target_he
         {"action": "CLICK [1] Zurich", "kind": "click", "text": None, "page_changed": True}
     ]
     operation = request.questions["operation"]
-    assert operation.instructions == {"goal": "Fly to London", "rules": [NEXT_ACTION, HUMAN_RULES]}
+    assert operation.instructions == {
+        "goal": "Fly to London",
+        "rules": [NEXT_ACTION, HUMAN_RULES, NAVIGATE_RULE],
+    }
     assert set(operation.criteria) == {op.value for op in JevOperation}
     target = request.questions["type_text_target"]
     assert target.instructions == {
