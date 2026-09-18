@@ -1,9 +1,8 @@
 """LLM factory for the Browser-Use agent.
 
-Jev makes every step decision (``services/browser/jev``) and a small OpenRouter
-chat model writes typed values for it. Both ride ``OPENROUTER_API_KEY``, so this
-builds exactly one thing. The ``browser_use`` import is local — the package is
-heavy and only a real browser task needs it.
+Jev makes every step decision and a small OpenRouter chat model writes typed
+values for it; both ride OPENROUTER_API_KEY. The browser_use import is local
+since the package is heavy and only a real browser task needs it.
 """
 
 from __future__ import annotations

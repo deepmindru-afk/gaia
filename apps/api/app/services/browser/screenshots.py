@@ -3,13 +3,13 @@
 Step frames are display-only progress artifacts that can show the user's
 logged-in pages, so they must never be persisted as base64 in the conversation
 document (Mongo bloat). Each frame is uploaded to a Cloudflare R2 bucket and
-referenced by its public r2.dev URL — the only thing persisted in ``tool_data``.
+referenced by its public r2.dev URL, the only thing persisted in tool_data.
 R2 is on Cloudflare's edge and free-tier (unlike Cloudflare Images, which needs a
 paid plan); the per-step upload was the browser loop's biggest tax on the old
-Cloudinary path, and it now runs off that critical path (see runner ``_emit_step``).
+Cloudinary path, and it now runs off that critical path (see runner _emit_step).
 Reused by web and bots alike (both just render the URL).
 
-Best-effort: if R2 is unconfigured or the upload fails, returns ``None`` so the
+Best-effort: if R2 is unconfigured or the upload fails, returns None so the
 caller degrades to an inline data URL (dev) rather than failing the run.
 """
 

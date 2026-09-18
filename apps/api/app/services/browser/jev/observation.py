@@ -1,7 +1,7 @@
 """Browser-Use's observed page as Jev's indexed element table.
 
 jev-ultrafast builds its table from its own DOM snapshot; here the source is the
-``BrowserStateSummary`` Browser-Use already took for the step, so the policy
+BrowserStateSummary Browser-Use already took for the step, so the policy
 adds no browser round-trip. Elements are renumbered 1..N for the model and
 mapped back to Browser-Use's own indices when a decision executes.
 """
@@ -76,7 +76,7 @@ class JevElement:
         }
 
     def state_entry(self) -> dict[str, object]:
-        """Return the row in ``state.elements`` — the table every question shares."""
+        """Return the row in state.elements, the table every question shares."""
         entry: dict[str, object] = {
             "index": str(self.index),
             "label": self.label,
@@ -118,12 +118,10 @@ class JevObservation:
     def targets(
         self, operation: JevOperation
     ) -> dict[str, tuple[JevElement, JevSelectOption | None]]:
-        """Return the target choices for one operation: element index (or ``index:option`` for SELECT).
+        """Return the target choices for one operation: element index, or index:option for SELECT.
 
-        Capped at ``JEV_MAX_TARGETS_PER_OPERATION`` — the gateway refuses a
-        question with more choices. What survives the cut is what the user can
-        see: elements inside the viewport first, document order within each
-        group (and, for a SELECT, its options in document order).
+        Capped at JEV_MAX_TARGETS_PER_OPERATION; the gateway refuses a
+        question with more choices, kept in viewport-then-document order.
         """
         choices: dict[str, tuple[JevElement, JevSelectOption | None]] = {}
         dropped = 0
@@ -153,7 +151,7 @@ class JevObservation:
 def observe(state: BrowserStateSummary, live: LiveValues | None = None) -> JevObservation:
     """Build the element table from the selector map Browser-Use just serialised.
 
-    ``live`` overlays current field values (see ``live_values.py``); without it
+    live overlays current field values (see live_values.py); without it
     values come from HTML attributes, which never reflect typing.
     """
     selector_map = getattr(getattr(state, "dom_state", None), "selector_map", None) or {}
@@ -179,7 +177,7 @@ def observe(state: BrowserStateSummary, live: LiveValues | None = None) -> JevOb
 
 
 def _scroll_window(state: BrowserStateSummary) -> tuple[float, float, float, float] | None:
-    """Return the on-screen page region as ``(left, top, right, bottom)``.
+    """Return the on-screen page region as (left, top, right, bottom).
 
     Document coordinates; None when Browser-Use reported no page geometry.
     """
@@ -346,7 +344,7 @@ def _accepts_text(
 def _select_options(
     index: int, node: EnhancedDOMTreeNode, live: LiveValues
 ) -> tuple[tuple[JevSelectOption, ...], JevSelectOption | None]:
-    """Return the enabled options, and the one currently selected (live, else ``selected`` attr)."""
+    """Return the enabled options, and the one currently selected (live, else the selected attr)."""
     options: list[JevSelectOption] = []
     selected: JevSelectOption | None = None
     selected_live = False

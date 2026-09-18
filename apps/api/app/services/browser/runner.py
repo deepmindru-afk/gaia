@@ -1,21 +1,11 @@
-"""Browser task orchestration — the *agent* layer.
+"""Browser task orchestration, the agent layer.
 
-Runs one browser task against an already-created browser-host session and turns
-its lifecycle into injected, swappable seams:
-
-  * ``emit`` — stream a card snapshot (session/step/handoff/result) to UI + bots
-  * ``request_handoff`` — pause for the human at a sensitive step (live-view)
-  * ``is_cancelled`` — cooperative cancellation (wired to the chat stream)
-
-Deciding and executing the steps is the Browser-Use agent run's job
-(``services/browser/agent_run``). The runner owns everything else — progress,
-the handoff, cancellation, the budgets, metering, the replay link — so the agent
-run never learns about SSE, Redis or bots, and neither does the runner.
-
-The runner does NOT judge whether a step is sensitive. The agent decides for
-itself when it cannot proceed — a CAPTCHA it can't solve, a login/2FA/payment it
-must not do — and calls the takeover hook, which pauses for the human in
-live-view (``_handle_takeover``).
+Run one browser task against an already-created browser-host session through
+injected seams: emit (card snapshots to UI and bots), request_handoff (pause
+for the human in live-view) and is_cancelled (cooperative cancellation).
+Deciding and executing steps is the agent run's job; the runner owns progress,
+handoff, cancellation, budgets, metering and the replay link, and never judges
+whether a step is sensitive: the agent calls the takeover hook itself.
 """
 
 from __future__ import annotations
@@ -105,10 +95,9 @@ class BrowserTaskRunner:
         self._action_results = callbacks.action_results
         self._config = config
         self._task_timeout = config.task_timeout_seconds
-        # A step that hands off waits on the human for up to the handoff timeout, so
-        # its budget is active-work time PLUS a full handoff; the overall wall-clock
-        # likewise allows every permitted handoff to run its full duration on top of
-        # the active-work budget, so live-view takeovers are never starved by a timeout.
+        # A step that hands off waits on the human, so its budget is active work
+        # plus one full handoff; the wall clock allows every permitted handoff on
+        # top of the active-work budget so takeovers are never starved by a timeout.
         self._step_timeout = config.step_timeout_seconds + config.handoff_timeout_seconds
         self._wall_clock_timeout = (
             config.task_timeout_seconds + MAX_HANDOFFS_PER_TASK * config.handoff_timeout_seconds
@@ -182,11 +171,9 @@ class BrowserTaskRunner:
                 "Check that the browser host is reachable from the API at BROWSER_HOST_URL."
             ) from exc
         except Exception as exc:
-            # Any other unexpected agent/runtime failure (an LLM-provider error, a
-            # browser_use internal crash, a malformed tool output, a failed handoff
-            # persistence write) must not leave the card stuck in RUNNING — emit a
-            # terminal FAILED result so the UI resolves and the user gets an honest
-            # reason. CancelledError is BaseException, so it is never caught here.
+            # Any unexpected agent/runtime failure must not leave the card stuck in
+            # RUNNING: emit a terminal FAILED result with an honest reason.
+            # CancelledError is BaseException, so it is never caught here.
             log.error(
                 f"{LogTag.BROWSER} Browser agent failed unexpectedly",
                 error_type=type(exc).__name__,
@@ -237,14 +224,11 @@ class BrowserTaskRunner:
         raise BrowserHandoffCancelled(outcome.status.value)
 
     def _record_step(self, frame: StepFrame) -> None:
-        """One executed step, straight off the agent's loop.
+        """Emit one executed step off the agent loop's critical path.
 
-        Emits OFF that loop's critical path: the screenshot upload is a ~1s CDN
-        round-trip, and Browser-Use awaits its callback *before the step's actions
-        run*, so uploading inline taxed every step. Spawn it — the per-runner lock
-        keeps the step emits ordered, and _finish() flushes them before the result
-        so the SSE writer is still open. The runner does not judge sensitivity; the
-        agent hands off for itself (see _handle_takeover).
+        The screenshot upload is a ~1s CDN round-trip that Browser-Use awaits
+        before the step's actions run, so it is spawned; the per-runner lock
+        keeps emits ordered and _finish() flushes them before the result.
         """
         self._last_step = frame.index
         task = spawn_background_task(self._emit_step(frame), name="browser_step_emit")
@@ -279,9 +263,10 @@ class BrowserTaskRunner:
             )
 
     async def _render_screenshot(self, frame: StepFrame) -> str | None:
-        """Return a step frame as a signed CDN URL (persisted), or an inline data URL as a dev fallback when the CDN is unconfigured.
+        """Return a step frame as a signed CDN URL, or an inline data URL when the CDN is unconfigured.
 
-        ``None`` when off/absent."""
+        Return None when screenshots are off or the frame has none.
+        """
         raw_b64 = frame.raw_screenshot
         if not raw_b64 or not self._config.stream_screenshots:
             return None
@@ -320,13 +305,9 @@ class BrowserTaskRunner:
     async def _record_usage(self, usage: list[RunUsage]) -> None:
         """Price and record the run's LLM spend into GAIA's usage pipeline.
 
-        One :func:`record_llm_call` per model matches how ``LLMAccountingMiddleware``
-        records the chat graph's own multi-model runs; token counts are re-priced
-        through GAIA's own catalog rather than trusting Browser-Use's pricing data.
-        Every model the run billed lands here under its real name, so the Jev
-        spend is not silently lost. This is agent-graph work the user asked
-        for (the ``browser_task`` tool), so it charges the budget like any other
-        tool-driven model call.
+        One record_llm_call per billed model, re-priced through GAIA's own
+        catalog rather than Browser-Use's pricing data, so the Jev spend is
+        charged to the budget like any other tool-driven model call.
         """
         for entry in usage:
             await record_llm_call(

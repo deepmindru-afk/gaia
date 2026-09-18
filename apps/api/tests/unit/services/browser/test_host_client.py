@@ -60,7 +60,7 @@ def _make_client_mock(response: MagicMock) -> MagicMock:
 
 
 def _patch_async_client(monkeypatch_or_patch, response: MagicMock, *, verb: str = "post"):
-    """Patch host_client.httpx.AsyncClient so `async with AsyncClient(...) as c: await c.<verb>(...)` returns *response*."""
+    """Patch host_client.httpx.AsyncClient so an async with block calling the given verb returns response."""
     inner = AsyncMock()
     getattr(inner, verb).return_value = response
     # For other verbs we still provide a default

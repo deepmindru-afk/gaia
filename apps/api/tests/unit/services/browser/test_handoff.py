@@ -18,7 +18,7 @@ from app.services.browser.exceptions import BrowserHandoffNotOwned, BrowserUnava
 
 
 class _FakeRedisCache:
-    """In-memory stand-in for ``redis_cache`` that also records every call so tests can assert on the exact key/ttl/model a seam was invoked with."""
+    """In-memory stand-in for redis_cache that also records every call so tests can assert on the exact key, ttl and model a seam was invoked with."""
 
     def __init__(self) -> None:
         self.store: dict[str, object] = {}
@@ -121,7 +121,7 @@ async def test_await_handoff_polls_then_picks_up_resolution(fake_redis, monkeypa
 
 
 async def test_await_handoff_stops_exactly_at_deadline(fake_redis, monkeypatch):
-    """At loop.time() == deadline the loop must stop (``<``, not ``<=``) — one extra iteration would race a resolution landing exactly on the deadline tick and turn a timeout into a false completion."""
+    """Stop the loop at loop.time() == deadline using a strict less-than; one extra iteration could turn a timeout into a false completion."""
     await handoff_mod.create_pending_handoff("h6d", "user-1", "conv-h6d")
     await handoff_mod.resolve_handoff("h6d", HandoffDecision.CONTINUE, "user-1")
 
@@ -251,7 +251,7 @@ async def test_resolve_handoff_blank_message_becomes_none(fake_redis):
 
 
 async def test_resolve_handoff_no_message_argument_becomes_none(fake_redis):
-    """The ``message`` default (None), not just a blank string, must fall through to no note — a wrong fallback constant would only show up when the caller omits the argument entirely."""
+    """Fall through to no note when message is omitted entirely (None), not just when it is blank."""
     await handoff_mod.create_pending_handoff("h14b", "user-1", "conv-h14b")
     await handoff_mod.resolve_handoff("h14b", HandoffDecision.CONTINUE, "user-1")
     record = await handoff_mod.get_handoff("h14b")
@@ -261,7 +261,7 @@ async def test_resolve_handoff_no_message_argument_becomes_none(fake_redis):
 
 @pytest.fixture
 def captured_events(monkeypatch):
-    """Record every ``capture_event`` call the module makes, with its exact args."""
+    """Record every capture_event call the module makes, with its exact args."""
     calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(handoff_mod, "capture_event", lambda *args: calls.append(args))
     return calls
@@ -378,7 +378,7 @@ async def test_persistence_failure_message_names_the_handoff(
 
 
 async def test_store_succeeds_when_redis_confirms_the_write(fake_redis) -> None:
-    """The inverse of the failure case: a truthy ``set()`` result must NOT raise."""
+    """Do not raise when set() returns a truthy result, the inverse of the failure case."""
     await handoff_mod.create_pending_handoff("h9c", "user-1", "conv-h9c")
     record = await handoff_mod.get_handoff("h9c")
     assert record is not None

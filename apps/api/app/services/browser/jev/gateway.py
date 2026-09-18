@@ -1,8 +1,8 @@
 """OpenRouter transport for Jev, a decisions model rather than a chat model.
 
 Jev answers structured questions instead of producing text, so it is refused by
-chat/completions and served by OpenRouter's decisions endpoint: ``{model, state,
-questions}`` in, ``{answers, usage}`` back. The body is the same one TypeSafe
+chat/completions and served by OpenRouter's decisions endpoint: {model, state,
+questions} in, {answers, usage} back. The body is the same one TypeSafe
 takes directly; only the envelope and the credential differ.
 """
 

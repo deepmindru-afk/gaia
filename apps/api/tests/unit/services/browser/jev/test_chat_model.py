@@ -56,7 +56,10 @@ class Wait(BaseModel):
 def _agent_output(
     *, captcha: bool = True, union: bool = False, input_name: str = "input_text"
 ) -> type[AgentOutput]:
-    """Return the flash-mode AgentOutput Browser-Use builds for this codebase's registered tools — one optional field per action, or (``union``) 0.11's RootModel over single-field models."""
+    """Return the flash-mode AgentOutput Browser-Use builds for this codebase's registered tools.
+
+    One optional field per action, or with union, 0.11's RootModel over single-field models.
+    """
     fields: dict[str, Any] = {
         "click": (ClickElementActionIndexOnly | None, None),
         input_name: (InputTextAction | None, None),
@@ -568,7 +571,7 @@ async def test_every_operation_has_a_mapping(flights_state) -> None:
 async def test_a_rejected_decision_on_the_done_only_last_step_fails_the_run_honestly(
     flights_state, monkeypatch
 ) -> None:
-    """Browser-Use narrows the schema to `done` on its final step; `wait` would be invalid."""
+    """Confirm the schema is narrowed to done on the final step, so wait is correctly rejected."""
     monkeypatch.setattr(chat_model_mod, "log", MagicMock())
 
     class BadGateway(ScriptedGateway):

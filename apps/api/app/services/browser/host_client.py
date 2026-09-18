@@ -1,11 +1,11 @@
-"""API-side client for the browser host — thin async wrapper over its JSON API.
+"""API-side client for the browser host, a thin async wrapper over its JSON API.
 
 The host owns the Chromium and enforces the concurrency cap; this client just
-speaks to it. ``create_session`` returns the two websocket URLs the runner hands
-to browser-use (``cdp_ws``) and to the live-view proxy (``live_ws``). A host that
-is at capacity surfaces as :class:`BrowserConcurrencyLimit`; any transport
-failure surfaces as :class:`BrowserUnavailableError` — the browser tool degrades
-to a clean "not available" message rather than a raw stack trace.
+speaks to it. create_session returns the two websocket URLs the runner hands
+to browser-use, cdp_ws and live_ws for the live-view proxy. A host at capacity
+raises BrowserConcurrencyLimit; any transport failure raises
+BrowserUnavailableError, so the browser tool degrades to a clean "not
+available" message rather than a raw stack trace.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def _host_headers() -> dict[str, str]:
 
 
 async def create_session(storage_state: StorageState | None) -> HostSession:
-    """Create an isolated browser session, seeding ``storage_state`` when given."""
+    """Create an isolated browser session, seeding storage_state when given."""
     try:
         async with httpx.AsyncClient(
             base_url=settings.BROWSER_HOST_URL,
@@ -85,7 +85,7 @@ async def create_session(storage_state: StorageState | None) -> HostSession:
 
 
 async def delete_session(session_id: str) -> StorageState:
-    """Dispose the session and return its ``storage_state`` for persistence."""
+    """Dispose the session and return its storage_state for persistence."""
     try:
         async with httpx.AsyncClient(
             base_url=settings.BROWSER_HOST_URL,

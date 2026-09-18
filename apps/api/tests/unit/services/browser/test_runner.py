@@ -1,10 +1,10 @@
-"""Tests for BrowserTaskRunner — progress, the agent-driven handoff, cancel, timeout.
+"""Tests for BrowserTaskRunner: progress, the agent-driven handoff, cancel, timeout.
 
 Browser-Use is faked so the tests exercise the runner's orchestration without a
 real browser: a scripted FakeAgent invokes the runner's step callback exactly as
 Browser-Use does (after the model picks actions, before they execute). The runner
-no longer judges sensitivity itself — the agent hands off for itself by calling
-``_handle_takeover`` (the ``request_human_takeover`` / ``solve_captcha_with_help``
+no longer judges sensitivity itself; the agent hands off for itself by calling
+_handle_takeover (the request_human_takeover and solve_captcha_with_help
 actions), which is what the takeover tests below exercise directly.
 """
 
@@ -297,11 +297,7 @@ async def test_timeout_marks_failed(patch_browser, monkeypatch):
 
 
 async def test_unexpected_agent_error_finishes_failed(patch_browser, monkeypatch):
-    """An unexpected runtime failure must not leave the card stuck in RUNNING.
-
-    A terminal FAILED result is emitted so the UI resolves and the user gets an
-    honest summary instead of a forever-spinning progress card.
-    """
+    """Emit a terminal FAILED result instead of leaving the card stuck in RUNNING."""
 
     async def _boom(self, max_steps: int, on_step_end=None):
         raise RuntimeError("LLM provider exploded")
@@ -335,7 +331,7 @@ class _RecordingAction:
 
 
 class _Opaque:
-    """An action object Browser-Use never gave a ``model_dump``."""
+    """An action object Browser-Use never gave a model_dump."""
 
 
 def test_extract_actions_keeps_every_action_with_its_params() -> None:
@@ -364,7 +360,7 @@ def test_extract_actions_ignores_actions_it_cannot_dump() -> None:
 
 
 def _targeted_state(index: int) -> SimpleNamespace:
-    """Step state where element ``index`` is a named button with a known box."""
+    """Build step state where element index is a named button with a known box."""
     node = _LabelNode(
         text="",
         ax_node=SimpleNamespace(name="Sign in"),
@@ -542,12 +538,7 @@ async def test_an_agent_run_with_no_chat_model_says_so_instead_of_crashing_deep_
 
 
 def test_element_viewport_fraction_maps_centre_minus_scroll_to_a_0_1_fraction() -> None:
-    """The pulse point is the element centre in viewport space, normalised.
-
-    A control at page-y 900 with the page scrolled 800 sits at viewport-y 100;
-    over an 800px viewport that is 0.125 down. Normalising means the UI needs no
-    pixel size to place the pulse.
-    """
+    """Normalise the element centre in viewport space to a 0..1 fraction so the UI needs no pixel size."""
     node = SimpleNamespace(
         absolute_position=SimpleNamespace(x=200.0, y=900.0, width=100.0, height=40.0)
     )
@@ -813,12 +804,7 @@ def test_element_label_warns_with_the_error_type_when_a_node_shape_is_unrecognis
 
 
 async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> None:
-    """Browser-Use runs on_step_end AFTER the actions, so results exist there.
-
-    The output must key to the step _on_step already emitted rows for
-    (self._last_step), and only actions with content or an error produce an
-    output — a silent success adds no row.
-    """
+    """Key the output to the step _on_step already emitted rows for; a silent success adds no row."""
     calls: list[tuple[int, list]] = []
     runner = _make_runner(
         emit=AsyncMock(),
@@ -845,7 +831,7 @@ async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> 
 
 
 async def test_on_step_end_reports_nothing_for_an_agent_with_no_results_yet() -> None:
-    """Browser-Use does not promise ``state``/``last_result`` on every call — a step that produced nothing reports nothing instead of failing the run."""
+    """Report nothing instead of failing the run when Browser-Use does not promise state or last_result on a call."""
     calls: list[tuple[int, list]] = []
     runner = _make_runner(
         emit=AsyncMock(),
@@ -867,14 +853,7 @@ async def test_on_step_end_is_a_noop_without_an_action_results_sink() -> None:
 
 
 def test_the_task_preamble_forbids_inventing_field_values() -> None:
-    """A missing value must become a handoff, never a plausible-looking guess.
-
-    Measured on a real investor-application form: given only a name and an email,
-    the agent typed a phone number and a country it made up, then reported the
-    form as correctly filled. On a form that submits, that is fabricated data
-    sent under the user's name — so the rule and its escape hatch are part of the
-    prompt contract, not advice.
-    """
+    """A missing value must become a handoff, never a plausible-looking guess."""
     from app.constants.browser import BROWSER_TAKEOVER_PREAMBLE
 
     assert "NEVER invent a value" in BROWSER_TAKEOVER_PREAMBLE
@@ -890,9 +869,7 @@ def test_the_task_preamble_routes_dropdowns_through_the_native_actions() -> None
 
 
 def test_the_tool_docs_say_each_call_is_a_fresh_browser() -> None:
-    """The executor re-ran a whole form fill believing the previous session's values were still on the page.
-
-    The docs must not let it believe that."""
+    """Regression: the executor re-ran a whole form fill believing prior values were still on the page."""
     from app.templates.docstrings.browser_tool_docs import BROWSER_TASK
 
     assert "Each call is a fresh browser" in BROWSER_TASK
@@ -1490,7 +1467,7 @@ class _HalfReadableHistory(_History):
 
 
 async def test_unreadable_history_reports_an_honest_failure() -> None:
-    """A history that cannot be read falls back to a complete, honest FAILED snapshot — every field of it, so the fallbacks the ``try`` leaves in place stay pinned."""
+    """Fall back to a complete, honest FAILED snapshot, every field of it, when a history cannot be read."""
     events, emit = _collector()
     result = await _make_runner(emit=emit)._finish_from_outcome(
         outcome_from_history(_BrokenHistory())
@@ -1508,7 +1485,7 @@ async def test_unreadable_history_reports_an_honest_failure() -> None:
 
 
 async def test_a_history_that_breaks_midway_still_reports_what_it_read() -> None:
-    """``is_done`` succeeded and ``is_successful`` raised: the run is judged done and the final result it did read becomes the summary."""
+    """Judge the run done when is_done succeeded even though is_successful raised, using the final result it did read as the summary."""
     events, emit = _collector()
     result = await _make_runner(emit=emit)._finish_from_outcome(
         outcome_from_history(_HalfReadableHistory(result="Booked seat 14C."))
@@ -1558,7 +1535,7 @@ async def test_an_unfinished_history_fails_even_when_not_marked_unsuccessful() -
 
 
 async def test_an_unknown_success_flag_still_counts_as_done() -> None:
-    """Browser-Use reports ``None`` when it cannot judge — only an explicit ``False`` is a failure."""
+    """Treat only an explicit False as a failure; Browser-Use reports None when it cannot judge."""
     _, emit = _collector()
     result = await _make_runner(emit=emit)._finish_from_outcome(
         outcome_from_history(_History(done=True, successful=None, result="Booked."))
@@ -1733,7 +1710,7 @@ async def test_an_unexpected_failure_is_logged_with_its_type_and_session(
 
 
 class _GoalOutput:
-    """A step output whose goal fields are set independently, unlike ``_Output``."""
+    """A step output whose goal fields are set independently, unlike _Output."""
 
     def __init__(self, *, next_goal: str, thinking: str, actions: list[_Action]):
         self.next_goal = next_goal
@@ -1764,7 +1741,7 @@ async def test_a_step_with_no_thinking_attribute_captions_from_its_actions(patch
 
 
 class _GoallessOutput:
-    """A step output Browser-Use gave no ``next_goal`` attribute at all."""
+    """A step output Browser-Use gave no next_goal attribute at all."""
 
     def __init__(self, actions: list[_Action]):
         self.thinking = "Deciding what to click"

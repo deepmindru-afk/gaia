@@ -1,7 +1,7 @@
 """Instructions for the operation/target policy and the text helper.
 
-``NEXT_ACTION``, ``TARGET`` and ``TEXT_VALUE`` are browser-use/jev-ultrafast's
-(MIT) verbatim; the rest cover the operations this codebase adds on top.
+NEXT_ACTION, TARGET and TEXT_VALUE are browser-use/jev-ultrafast's (MIT)
+verbatim; the rest cover the operations this codebase adds on top.
 """
 
 NEXT_ACTION = """Advance the user's entire goal from the CURRENT page using one operation.

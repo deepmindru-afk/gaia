@@ -13,7 +13,7 @@ DEFAULT_REDIS_TTL_SECONDS = 3600
 
 
 class _FakeRedis:
-    """Mirrors ``RedisCache``'s contract, including its 1-hour default TTL."""
+    """Mirrors RedisCache's contract, including its 1-hour default TTL."""
 
     def __init__(self) -> None:
         self.store: dict[str, object] = {}

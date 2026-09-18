@@ -1,10 +1,10 @@
-"""Mirror browser progress to messaging bots (Telegram/WhatsApp/…).
+"""Mirror browser progress to messaging bots (Telegram/WhatsApp/etc).
 
 Bots consume backend-pushed messages over RabbitMQ, not the SSE stream. Step
 screenshots are already uploaded to the CDN as signed URLs (see
-``screenshots.py``), so a bot step is delivered as a real photo — the same
-artifact the web card renders, sent through the platform's native image
-message instead of a pasted link.
+screenshots.py), so a bot step is delivered as a real photo, the same
+artifact the web card renders, through the platform's native image message
+instead of a pasted link.
 """
 
 from app.constants.browser import (
@@ -89,10 +89,9 @@ class BotProgressDelivery:
         await self._text(caption)
 
     async def handoff(self, snapshot: BrowserHandoffSnapshot) -> None:
-        # Only the PENDING snapshot needs a message (the takeover request itself).
-        # Resolution is already acked in-chat ("Got it, continuing." / "Okay, I've
-        # stopped."), and the final result line closes the task — a separate
-        # "Browser task handoff completed." here is just noise.
+        # Only PENDING needs a message: resolution is already acked in-chat and
+        # the final result line closes the task, so a "handoff completed"
+        # message here would be redundant noise.
         """Emit a live-view handoff event to the conversation."""
         if snapshot.status != HandoffStatus.PENDING:
             return

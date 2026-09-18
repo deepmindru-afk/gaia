@@ -1,17 +1,13 @@
 """Custom Browser-Use actions the agent can call mid-run.
 
-Two seams the agent reaches for itself:
+Two seams the agent reaches for itself: request_human_takeover is the agent's
+own way to pause for the human at a sensitive step (payment, credentials,
+irreversible); because it is a normal action that blocks and returns a result
+string, Browser-Use resumes its loop natively afterwards with full task
+memory, no dispose or recreate. solve_captcha_with_help hands a CAPTCHA to a
+human takeover since there is no automatic solver.
 
-* ``request_human_takeover`` — the agent's *own* way to pause for the human at a
-  sensitive step (payment / credentials / irreversible). Because it is a normal
-  action that blocks and returns a result string, Browser-Use resumes its loop
-  natively afterwards with full task memory — no dispose/recreate. The per-step
-  classifier in the runner remains as a safety net for a model that acts without
-  asking.
-* ``solve_captcha_with_help`` — there is no automatic solver, so a CAPTCHA is a
-  human takeover: the user solves it in live-view and the agent then continues.
-
-Imports of ``browser_use`` are local so the module loads without the package.
+Imports of browser_use are local so the module loads without the package.
 """
 
 from __future__ import annotations
@@ -30,11 +26,11 @@ def build_browser_tools(
     solve_captcha: bool,
     handle_takeover: TakeoverFn,
 ) -> Tools[None]:
-    """Build the Browser-Use ``Tools`` the agent can call during a run.
+    """Build the Browser-Use Tools the agent can call during a run.
 
-    ``handle_takeover(reason, category)`` performs the live-view handoff and
-    returns a result string to feed back to the agent (or raises to stop the run
-    when the user cancels).
+    handle_takeover(reason, category) performs the live-view handoff and
+    returns a result string to feed back to the agent, or raises to stop the
+    run when the user cancels.
     """
     from browser_use import Tools  # noqa: PLC0415 -- heavy optional dep
 

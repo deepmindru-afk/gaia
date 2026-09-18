@@ -1,15 +1,10 @@
 """Per-user encrypted browser login persistence.
 
-A browser session's storage_state (Playwright format: ``{cookies, origins}``,
-covering cookies + localStorage) is Fernet-encrypted and saved per (user_id,
-domain) when a session ends, and loaded back to seed the next session on that
-domain — so a user doesn't have to log in again on every task.
-
-Encryption follows the same lazy-cipher, Infisical-key pattern as
-``app/services/mcp/mcp_token_store.py``: a Fernet key from
-``settings.BROWSER_STATE_ENCRYPTION_KEY``, a clear error if it's missing or
-invalid. storage_state contents (cookies, tokens, localStorage values) are
-never logged — only counts and the domain.
+A session's Playwright storage_state (cookies plus localStorage) is
+Fernet-encrypted with settings.BROWSER_STATE_ENCRYPTION_KEY and saved per
+(user_id, domain) when a session ends, then loaded to seed the next session
+on that domain. Cookie, token and localStorage values are never logged, only
+counts and the domain.
 """
 
 from collections.abc import Mapping
@@ -68,11 +63,10 @@ def _decrypt_state(blob: str) -> StorageState:
 
 
 async def load_storage_state(user_id: str, domain: str | None) -> StorageState | None:
-    """Load and decrypt the saved storage_state for ``user_id``+``domain``.
+    """Load and decrypt the saved storage_state for user_id plus domain.
 
-    Returns ``None`` when there's nothing to seed with (no user, no domain, or
-    no saved record) rather than an empty dict, so callers can distinguish
-    "seed with this" from "start fresh".
+    Return None, not an empty dict, when there is nothing to seed with (no
+    user, no domain, or no saved record).
     """
     if not user_id or not domain:
         return None
@@ -95,11 +89,11 @@ async def save_storage_state(
     state: StorageState,
     provenance: BrowserLoginProvenance | None = None,
 ) -> None:
-    """Encrypt and persist ``state`` for ``user_id``+``domain`` (upsert).
+    """Encrypt and upsert state for user_id plus domain.
 
-    No-op when there's no user/domain to key on, or when the user has opted
-    out of login persistence (``settings.BROWSER_PERSIST_LOGINS``). ``provenance``
-    is recorded only on the import path; the task-end save leaves it ``None``.
+    No-op without a user and domain to key on, or when
+    settings.BROWSER_PERSIST_LOGINS is off. Only the import path records a
+    provenance; the task-end save leaves it None.
     """
     if not user_id or not domain:
         return
@@ -117,12 +111,10 @@ async def save_storage_state(
 
 
 async def forget_browser_logins(user_id: str, domain: str | None = None) -> int:
-    """Delete saved logins for ``user_id``, optionally scoped to one ``domain``.
+    """Delete saved logins for user_id, optionally scoped to one domain.
 
-    Returns the number of records deleted. This is the storage-layer primitive
-    exercised by the contract test; the settings-UI path
-    (``profiles.forget_saved_login``) delegates here so there is one canonical
-    implementation.
+    Return the number of records deleted. The settings-UI path
+    (profiles.forget_saved_login) delegates here, the one canonical implementation.
     """
     if not user_id:
         return 0
@@ -132,7 +124,7 @@ async def forget_browser_logins(user_id: str, domain: str | None = None) -> int:
 
 
 def _cookie_applies_to_host(cookie_domain: str, host: str) -> bool:
-    """Playwright/browser cookie-domain semantics: a leading-dot domain (``.google.com``) applies to that registrable host and every subdomain; a host-only domain applies only to the exact host."""
+    """Apply browser cookie-domain semantics: a leading-dot domain covers the registrable host and every subdomain, a host-only domain covers only the exact host."""
     cookie_domain = cookie_domain.lower()
     host = host.lower()
     if cookie_domain.startswith("."):
@@ -169,13 +161,10 @@ def _cookie_scopes_to(cookie: Mapping[str, object], host: str) -> bool:
 def split_storage_state_by_host(state: StorageState) -> dict[str, StorageState]:
     """Split one browser export into per-host slices keyed the way reuse loads them.
 
-    The store keys on the exact hostname a task starts at (``domain_of``), so an
-    export that mixes many sites' cookies must be split to that grain. Each host
-    that appears — as an origin, a host-only cookie, or a leading-dot cookie's
-    registrable host — gets a slice carrying every cookie that applies to it
-    (shared ``.example.com`` cookies land in each of ``example.com`` and its
-    subdomains) plus its own localStorage. A host with no cookies or origins is
-    dropped rather than saved empty.
+    The store keys on the exact hostname a task starts at (domain_of), so each
+    host gets every cookie that applies to it (a leading-dot cookie lands in
+    the registrable host and each subdomain) plus its own localStorage. A host
+    with no cookies or origins is dropped rather than saved empty.
     """
     cookies = state.get("cookies", [])
     origins = state.get("origins", [])
@@ -205,10 +194,10 @@ async def import_browser_profile(
 ) -> list[tuple[str, int]]:
     """Split an uploaded profile per host and persist each slice as a saved login.
 
-    Returns ``(host, cookie_count)`` for every host actually stored, so the caller
-    can report what landed. Records provenance (source "import" plus the browser
-    and client IP) on each per-host doc. Honours the same ``BROWSER_PERSIST_LOGINS``
-    opt-out as ``save_storage_state`` (each call no-ops when it is off)."""
+    Return (host, cookie_count) for every host stored, with import provenance
+    (browser and client IP) on each per-host doc. Honour the same
+    BROWSER_PERSIST_LOGINS opt-out as save_storage_state.
+    """
     provenance = BrowserLoginProvenance(
         source=BrowserLoginSource.IMPORT,
         source_browser=source_browser,

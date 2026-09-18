@@ -98,7 +98,7 @@ async def test_registration_failure_message_is_exact(
 async def test_domain_derived_from_start_url_feeds_storage_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``domain_of(start_url)`` — not ``start_url`` itself — is what gets looked up."""
+    """Look up with domain_of(start_url), not start_url itself."""
     _make_session_fakes(monkeypatch)
 
     async with session_mod.browser_session(user_id="u42", start_url="https://Example.com/page"):
@@ -135,7 +135,7 @@ async def test_create_session_receives_the_loaded_storage_state(
 async def test_session_fields_are_mapped_from_the_host_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each ``BrowserHostSession`` field must come from the matching host attribute — not a swapped one — and the live-view URL is derived from the session id."""
+    """Map each BrowserHostSession field from the matching host attribute, not a swapped one, and derive the live-view URL from the session id."""
     _make_session_fakes(monkeypatch)
     host = MagicMock(
         session_id="sid-x",
@@ -348,7 +348,7 @@ def _info(url: str | None) -> MagicMock:
 
 
 def _serve_urls(monkeypatch: pytest.MonkeyPatch, *urls: str) -> list[str]:
-    """Serve ``urls`` in order from ``get_session``, recording the session id asked for."""
+    """Serve urls in order from get_session, recording the session id asked for."""
     asked: list[str] = []
     remaining = list(urls)
 
@@ -377,10 +377,7 @@ class TestNavigatedAway:
         ],
     )
     def test_false_while_still_inside_the_auth_flow(self, current: str) -> None:
-        """A login walks /login -> /two-factor -> /verify.
-
-        Treating each hop as 'signed in' woke the agent mid-2FA, which then handed off again — the
-        user got interrupted twice and a model call was burned each time."""
+        """Regression: treating each hop of /login -> /two-factor -> /verify as signed in woke the agent mid-2FA."""
         assert not session_mod._navigated_away("https://x.com/login", current)
 
     def test_false_for_same_page_ignoring_query(self) -> None:
@@ -496,10 +493,7 @@ class TestAutoResolveHandoffOnNavigation:
     async def test_a_slow_sign_in_is_still_detected_after_idling_on_the_login_page(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Typing a password takes longer than one poll.
-
-        Giving up on the first still-on-login read would leave every real login to the manual
-        button."""
+        """Keep polling past the first still-on-login read; typing a password takes longer than one poll."""
         monkeypatch.setattr(session_mod.asyncio, "sleep", AsyncMock())
         _serve_urls(monkeypatch, "https://x/login", "https://x/login", "https://x/", "https://x/")
         resolve = AsyncMock()

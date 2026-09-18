@@ -371,9 +371,7 @@ class TestImportBrowserSessions:
         assert imp.await_args.kwargs["source_ip"] == "203.0.113.7"
 
     async def test_uploaded_cookies_and_origins_reach_the_store(self, monkeypatch):
-        """The payload is rebuilt into Playwright's ``{cookies, origins}`` shape — the only shape the storage layer can split by host.
-
-        A wrong key silently imports nothing."""
+        """Drop a wrong-keyed payload silently, importing nothing."""
         monkeypatch.setattr(browser_ep, "consume_import_token", self._consume("tok"))
         monkeypatch.setattr(browser_ep.settings, "BROWSER_PERSIST_LOGINS", True)
         imp = AsyncMock(return_value=[("github.com", 1)])

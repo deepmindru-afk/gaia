@@ -1,8 +1,8 @@
 """Regression: the recap slideshow derived image URLs it never checked existed.
 
-`render_replay_page` built `{R2}/browser_steps/{session}/step_{i}.png` for every
-step from a count, so any step whose screenshot upload failed showed a broken
-image in the shared recap link. Same root cause as the task-history thumbnails.
+render_replay_page built a step image URL for every step from a count, so any
+step whose screenshot upload failed showed a broken image in the shared recap
+link. Same root cause as the task-history thumbnails.
 """
 
 from __future__ import annotations

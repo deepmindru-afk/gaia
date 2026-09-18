@@ -1,8 +1,8 @@
 """The step decision: one Jev request, operation + speculative target heads.
 
-Port of jev-ultrafast's ``model.choose`` / ``validate_choice``. Every operation
-Jev may pick is offered as a criterion of the ``operation`` question; each
-element-bound operation gets its own ``<op>_target`` question over only the
+Port of jev-ultrafast's model.choose / validate_choice. Every operation
+Jev may pick is offered as a criterion of the operation question; each
+element-bound operation gets its own op_target question over only the
 elements that support it. The heads answer in one round trip and only the
 target head matching the chosen operation is read.
 """

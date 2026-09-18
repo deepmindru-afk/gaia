@@ -1,9 +1,9 @@
-"""The ``origins`` entry of Playwright's storage_state shape.
+"""The origins entry of Playwright's storage_state shape.
 
-``playwright.sync_api`` publicly re-exports ``StorageState``/``StorageStateCookie`` but not the
-nested per-origin localStorage shape (only available via its private ``_impl._api_structures``
+playwright.sync_api publicly re-exports StorageState/StorageStateCookie but not the
+nested per-origin localStorage shape (only available via its private _impl._api_structures
 module), so it's mirrored here rather than imported from a private path. Structurally identical
-to Playwright's own (unexported) ``OriginState``/``LocalStorageEntry``.
+to Playwright's own (unexported) OriginState/LocalStorageEntry.
 """
 
 from typing import TypedDict

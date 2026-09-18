@@ -1,12 +1,11 @@
-"""``_live_view_base`` resolution, the ``create_live_view_link`` code-minting flow, the raw ``live_view_url`` builder, and the tokened ``render_live_view_page`` HTML.
+"""Tests for _live_view_base resolution, the create_live_view_link code-minting flow, the raw live_view_url builder, and the tokened render_live_view_page HTML.
 
-``test_live_code.py`` already covers the vhost-vs-plain-host branch of
-``create_live_view_link`` with an exact-match assertion on the returned URL; this
-file targets what that leaves open: the base-URL fallback/precedence logic in
-``_live_view_base`` itself, that ``mint_live_code`` is called with the right
-arguments in the right order (an ``AsyncMock`` return value alone can't catch an
-argument swap), and ``live_view_url``/``render_live_view_page`` — neither of
-which any existing test in the suite calls at all.
+test_live_code.py already covers the vhost-vs-plain-host branch of
+create_live_view_link with an exact-match assertion on the returned URL; this
+file targets what that leaves open: the base-URL fallback and precedence logic
+in _live_view_base, that mint_live_code is called with the right arguments in
+the right order, and live_view_url/render_live_view_page, none of which any
+existing test in the suite calls at all.
 """
 
 from unittest.mock import AsyncMock

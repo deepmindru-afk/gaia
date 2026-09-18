@@ -23,7 +23,7 @@ class FakeAXNode:
 
 @dataclass
 class FakeRect:
-    """``DOMRect`` in document coordinates, as ``absolute_position`` carries it."""
+    """DOMRect in document coordinates, as absolute_position carries it."""
 
     x: float = 0.0
     y: float = 0.0
@@ -33,7 +33,7 @@ class FakeRect:
 
 @dataclass
 class FakeNode:
-    """The slice of ``EnhancedDOMTreeNode`` the observation reads."""
+    """The slice of EnhancedDOMTreeNode the observation reads."""
 
     node_name: str
     attributes: dict[str, str] = field(default_factory=dict)

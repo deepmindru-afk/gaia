@@ -1,11 +1,10 @@
-"""Browser-host session lifecycle — create, live-view URL, guaranteed release.
+"""Browser-host session lifecycle: create, live-view URL, guaranteed release.
 
-The *infrastructure* layer: it talks to gaia-browser-host (via ``host_client``)
-and knows nothing about Browser-Use or the agent. The session is always released
-on exit — success, error, or cancellation — so no browser context is ever
-orphaned. It seeds the user's saved login for the target domain before handing
-the session to the agent, persists the returned login back when the session
-ends, and exposes a live-view URL served from our own authenticated API.
+The infrastructure layer: it talks to gaia-browser-host through host_client
+and knows nothing about the agent. The session is always released on exit
+(success, error or cancellation) so no browser context is orphaned; the user's
+saved login for the target domain is seeded before the agent gets the session
+and persisted back when it ends.
 """
 
 from __future__ import annotations
@@ -49,12 +48,10 @@ class BrowserHostSession:
 async def keep_session_alive(session_id: str) -> None:
     """Periodically reset the host's idle clock while a handoff is pending.
 
-    A paused session has no CDP or live-view traffic — and if the user hasn't
-    opened the live view yet, no viewer either — so without this the idle
-    reaper disposes the very browser the user was asked to come back to
-    (idle TTL is shorter than the handoff timeout). Best-effort: a failed
-    touch is logged, and the resume itself fails loud if the session is gone.
-    Run under ``spawn_background_task`` and cancel when the handoff resolves.
+    A paused session has no CDP or live-view traffic and the idle TTL is
+    shorter than the handoff timeout, so without this the reaper disposes the
+    browser. Best-effort: a failed touch is only logged. Run under
+    spawn_background_task and cancel when the handoff resolves.
     """
     while True:
         await asyncio.sleep(BROWSER_HANDOFF_KEEPALIVE_SECONDS)
@@ -68,11 +65,9 @@ async def keep_session_alive(session_id: str) -> None:
             )
 
 
-# Path fragments that mean "still inside the auth flow". A login commonly walks
-# /login -> /sessions/two-factor -> /verify before it is actually done, and each
-# hop is a real navigation — so navigation alone must not end the handoff, or the
-# agent wakes up mid-2FA, sees another auth screen, and hands off again (burning
-# a step and interrupting the user twice).
+# Path fragments that mean "still inside the auth flow": a login walks
+# /login -> /two-factor -> /verify, each a real navigation, so navigation alone
+# must not end the handoff or the agent wakes mid-2FA and hands off again.
 _AUTH_PATH_MARKERS = (
     "login",
     "signin",
@@ -102,11 +97,10 @@ def _is_auth_url(url: str | None) -> bool:
 
 
 def _navigated_away(start: str | None, current: str | None) -> bool:
-    """Whether the sign-in is visibly finished: the page moved to a different page AND that page is no longer part of the auth flow.
+    """Return whether the page moved to a different page that is no longer part of the auth flow.
 
-    Compared by scheme+host+path (query/fragment ignored, so a login adding
-    ``?return_to=`` is not a navigation). Staying inside auth (2FA, OTP,
-    verification) is NOT done — see ``_AUTH_PATH_MARKERS``.
+    Compare scheme, host and path only, so a login adding a return_to query is
+    not a navigation. Staying inside auth (2FA, OTP, verification) is not done.
     """
     if not start or not current:
         return False
@@ -121,12 +115,10 @@ async def auto_resolve_handoff_on_navigation(
 ) -> None:
     """Auto-complete a login handoff once the page navigates off the sign-in URL.
 
-    Best-effort convenience only: the manual "I'm done" always races this through
-    the same ``resolve_handoff`` (first write wins), so a missed detection just
-    means the user taps the button. Debounced so a transient mid-login redirect
-    doesn't resolve it early; if the login lands on a further step (2FA), the
-    agent re-evaluates on resume and hands off again. Run under
-    ``spawn_background_task`` and cancel when the handoff resolves.
+    Best-effort: the manual "I'm done" races this through the same
+    resolve_handoff (first write wins), so a missed detection only means the
+    user taps the button. Debounced so a transient redirect does not resolve
+    early. Run under spawn_background_task and cancel when the handoff resolves.
     """
     try:
         start = (await host_client.get_session(session_id)).url
@@ -161,11 +153,10 @@ async def browser_session(
 ) -> AsyncIterator[BrowserHostSession]:
     """Create a browser-host session, yield it, and always release it.
 
-    Seeds the user's saved ``storage_state`` for ``start_url``'s domain, registers
-    session ownership for live-view auth, and on exit persists the returned
-    ``storage_state`` and unregisters the session. Raises
-    :class:`BrowserUnavailableError` when the host cannot create the session and
-    :class:`BrowserConcurrencyLimit` when the host is at capacity.
+    Seed the user's saved storage_state for the start_url domain, register
+    ownership for live-view auth, and on exit persist the returned state and
+    unregister. Raise BrowserUnavailableError when the host cannot create the
+    session and BrowserConcurrencyLimit when it is at capacity.
     """
     domain = domain_of(start_url)
     storage_state = await load_storage_state(user_id, domain)

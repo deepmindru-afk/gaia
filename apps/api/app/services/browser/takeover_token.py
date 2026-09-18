@@ -1,10 +1,10 @@
 """Short-lived signed tokens that let a bot user open a browser live view.
 
 A takeover token authorizes one user to watch (and, during a handoff, drive) one
-browser session over the live-view WebSocket without a web login — it is embedded
+browser session over the live-view WebSocket without a web login; it is embedded
 in the link a bot delivers to that user's own channel. Same JWT shape as
-``bot_token_service`` (jose HS256, dedicated secret, ``role`` claim, 15-min exp);
-the secret never overlaps with the bot-session secret so a leak is contained.
+bot_token_service (jose HS256, dedicated secret, role claim, 15-min exp); the
+secret never overlaps with the bot-session secret so a leak is contained.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class TakeoverTokenClaims(TypedDict):
 
 
 def create_takeover_token(session_id: str, user_id: str) -> str:
-    """Mint a 15-minute token binding ``user_id`` to one browser ``session_id``."""
+    """Mint a 15-minute token binding user_id to one browser session_id."""
     secret = _get_takeover_secret()
     now = datetime.now(UTC)
     payload = {
@@ -48,12 +48,11 @@ def create_takeover_token(session_id: str, user_id: str) -> str:
 
 
 def verify_takeover_token(token: str) -> TakeoverTokenClaims:
-    """Decode and validate a takeover token, returning ``{session_id, user_id, exp}``.
+    """Decode and validate a takeover token, returning session_id, user_id and exp.
 
-    ``exp`` is the verified expiry timestamp (seconds since epoch) so the caller
-    can bound a connection's lifetime without ever reading an *unverified* claim.
-    Raises :class:`jose.JWTError` if the signature, role, expiry, or required
-    claims are invalid — the caller rejects the connection on any failure.
+    exp is the verified expiry timestamp (seconds since epoch) so the caller
+    never bounds a connection on an unverified claim. Raise jose.JWTError when
+    the signature, role, expiry or required claims are invalid.
     """
     secret = _get_takeover_secret()
     try:
@@ -81,12 +80,10 @@ def verify_takeover_token(token: str) -> TakeoverTokenClaims:
 
 
 def takeover_token_ttl_seconds(claims: TakeoverTokenClaims) -> float:
-    """Seconds until an already-verified token expires (``<= 0`` once past).
+    """Return seconds until an already-verified token expires (0 or less once past).
 
-    Used to bound the live-view WebSocket to the token's lifetime — the socket
-    closes when the token expires. ``claims`` MUST come from
-    :func:`verify_takeover_token` (verified first); only its validated ``exp`` is
-    read here — no unverified claim is ever trusted.
+    Bounds the live-view WebSocket to the token's lifetime. claims must come
+    from verify_takeover_token; no unverified claim is ever trusted here.
     """
     return claims["exp"] - datetime.now(UTC).timestamp()
 

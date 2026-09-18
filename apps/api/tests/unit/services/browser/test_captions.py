@@ -277,10 +277,7 @@ class TestCaptionFromActionList:
         )
 
     def test_click_names_the_element_it_hit(self):
-        """A bare "Clicking" tells a reader nothing.
-
-        The element's own name is what makes the step readable — and it is grounded in the page,
-        not in the model's claim about its intent."""
+        """Ground the element name in the page, not in the model's claim about its intent."""
         actions = [BrowserAction(name="click", inputs={"index": 9}, target="Add to cart")]
         assert caption_from_action_list(actions) == 'Clicking "Add to cart"'
 

@@ -1,10 +1,10 @@
 """The types the runner and the Browser-Use agent run exchange.
 
-``BrowserTaskRunner`` owns everything about a run that is not the stepping
+BrowserTaskRunner owns everything about a run that is not the stepping
 itself: the progress card, the human handoff, cancellation, the budgets, the
-metering, the replay link. The agent run owns only "decide and execute the
-steps", and never learns about SSE, Redis, bots or live-view links: it reaches
-back through :class:`RunHooks` and returns a :class:`RunOutcome`.
+metering, the replay link. The agent run owns only deciding and executing the
+steps, and never learns about SSE, Redis, bots or live-view links: it reaches
+back through RunHooks and returns a RunOutcome.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ ActionResultsFn = Callable[[int, list[BrowserActionOutput]], None]
 
 @dataclass(frozen=True)
 class BrowserRunConfig:
-    """One browser run's tuning knobs — every field is a ``BROWSER_USE_*`` setting."""
+    """One browser run's tuning knobs; every field is a BROWSER_USE_* setting."""
 
     max_steps: int
     max_actions_per_step: int
@@ -68,7 +68,7 @@ class RunOutcome:
 class RunHooks:
     """The runner's side of the contract, as the agent run sees it.
 
-    ``step`` is deliberately synchronous: the runner schedules the emit (the
+    step is deliberately synchronous: the runner schedules the emit (the
     screenshot upload is a CDN round-trip) so recording a step never taxes the
     agent's loop.
     """

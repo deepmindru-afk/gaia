@@ -1,9 +1,7 @@
 """Coverage for the browser-task history service's persistence functions.
 
-`record_browser_task`, `delete_browser_task`, and `list_browser_tasks` had no
-tests at all — every mutation on their lines survived silently because
-nothing ever exercised the module. `_frames`/`_caption` regression coverage
-lives in ``test_tasks_frames.py``.
+record_browser_task, delete_browser_task and list_browser_tasks had no tests
+at all. Frames and caption regression coverage lives in test_tasks_frames.py.
 """
 
 from __future__ import annotations
@@ -25,12 +23,7 @@ from app.services.browser.tasks import (
 
 
 def _result(**kw: object) -> BrowserResultSnapshot:
-    """Return a valid result snapshot, with any field overridden by ``kw``.
-
-    Constructed field-by-field rather than by unpacking a ``dict[str, object]``:
-    the literal keywords are type-checked against the model, and overrides ride
-    ``model_copy`` instead of needing an ``arg-type`` ignore.
-    """
+    """Return a valid result snapshot, with any field overridden by kw."""
     return BrowserResultSnapshot(
         status=BrowserSessionStatus.COMPLETED,
         success=True,
@@ -41,7 +34,7 @@ def _result(**kw: object) -> BrowserResultSnapshot:
 
 
 def _doc(**kw: object) -> BrowserTaskDocument:
-    """Return a valid task document, with any field overridden by ``kw``."""
+    """Return a valid task document, with any field overridden by kw."""
     return BrowserTaskDocument(
         user_id="u1",
         conversation_id="c1",
@@ -96,7 +89,7 @@ async def test_record_browser_task_persists_every_field(monkeypatch: pytest.Monk
 async def test_record_browser_task_defaults_goals_screenshots_and_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`step_goals`/`step_screenshots` default to `[]`, not `None`, and `source` to `""`."""
+    """step_goals and step_screenshots default to an empty list, not None, and source to an empty string."""
     mock_create = AsyncMock(return_value=_doc())
     monkeypatch.setattr("app.services.browser.tasks.browser_task_repository.create", mock_create)
 
@@ -218,7 +211,7 @@ async def test_list_browser_tasks_preserves_the_document_created_at(
 async def test_frames_derived_url_strips_only_a_trailing_slash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`root.rstrip("/")` must strip exactly `/`, not any trailing `X` character too."""
+    """Strip exactly a trailing slash from the root, not any other trailing character."""
     monkeypatch.setattr("app.services.browser.tasks.settings.R2_PUBLIC_BASE_URL", "https://cdnX")
     mock_list = AsyncMock(
         return_value=[_doc(session_id="sess9", steps=1, step_goals=[], step_screenshots=[])]

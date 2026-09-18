@@ -601,9 +601,8 @@ class TestRouter:
 
 
 # ---------------------------------------------------------------------------
-# Exact log calls, exception details, and seam call arguments — closes the
-# remaining surviving mutants (string literals, dict keys, argument order).
-# ---------------------------------------------------------------------------
+# Exact log calls, exception details, and seam arguments: string literals,
+# dict keys, argument order.
 
 
 class TestReplayPageDetails:
@@ -672,10 +671,9 @@ class TestLiveViewPageDetails:
             )
 
     async def test_owner_none_and_user_id_none_still_forbidden(self) -> None:
-        # `owner is None` must short-circuit the `or` before `owner != user_id` is even
-        # reached — pins the boundary against an `is None` -> `is not None` mutation,
-        # which only differs from the original when owner and user_id are BOTH None
-        # (otherwise `owner != user_id` alone still yields the same 403).
+        # owner is None must short-circuit the or before owner != user_id runs.
+        # That ordering only matters when owner and user_id are both None;
+        # otherwise owner != user_id alone still yields the same 403.
         with (
             patch.object(blv, "_resolve_target_page", new=AsyncMock(return_value=("sess1", None))),
             patch.object(blv.registry, "session_owner", new=AsyncMock(return_value=None)),

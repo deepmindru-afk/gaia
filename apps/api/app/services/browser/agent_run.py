@@ -1,7 +1,7 @@
-"""Drives one Browser-Use ``Agent`` over the session's CDP endpoint.
+"""Drive one Browser-Use Agent over the session's CDP endpoint.
 
 Jev is its model; every executed step is reported back to the runner through
-:class:`RunHooks`, and the agent's history is read into a :class:`RunOutcome`.
+RunHooks, and the agent's history is read into a RunOutcome.
 """
 
 from __future__ import annotations
@@ -47,15 +47,9 @@ _OUTPUT_MAX_CHARS = 200
 def _element_label(state: BrowserStateSummary, index: object) -> str | None:
     """Return the on-page name of the element an action targets, by its DOM index.
 
-    Browser-Use addresses elements by index, which is meaningless to a reader.
-    The same step state the agent saw carries the DOM, so the index resolves to
-    something recognisable — that is what makes a caption say what was clicked.
-
-    Tries the accessibility name first: it is what a screen reader announces and
-    what a person would call the control, and it is populated for icon-only
-    buttons that carry no text at all. Falls back to the visible text, then to
-    the labelling attributes, then to the tag name — so a control is never
-    described as a bare verb when anything at all identifies it.
+    Prefer the accessibility name (populated even for icon-only buttons), then
+    visible text, then labelling attributes, then the tag name, so a control is
+    never described as a bare verb when anything identifies it.
     """
     if not isinstance(index, int):
         return None
@@ -158,14 +152,9 @@ def _summarize_action_result(result: object) -> str | None:
 
 def outcome_from_history(history: AgentHistoryList[BaseModel]) -> RunOutcome:
     """Return what the agent's history says the run achieved, and what it cost."""
-    # The three fallbacks the try leaves in place if reading history fails.
-    # pragma-exempt below: every consumer collapses falsy values to one answer
-    # (`final or ...`, `bool(is_done and ...)`, `is_successful is not False`),
-    # so swapping any of them for another falsy value cannot change the
-    # snapshot — verified against both the total-failure and partial-read
-    # paths. Restructuring to an early return WAS tried and rejected: it
-    # discards a final_result() that was read before the failure, which
-    # test_a_history_that_breaks_midway_still_reports_what_it_read catches.
+    # Fallbacks kept in place, not an early return: an early return discards a
+    # final_result() read before a later failure. Mutation-exempt because every
+    # consumer collapses falsy values to one answer, so no other falsy value differs.
     final = None  # pragma: no mutate
     is_done = False  # pragma: no mutate
     is_successful: bool | None = None  # pragma: no mutate
@@ -187,10 +176,10 @@ def outcome_from_history(history: AgentHistoryList[BaseModel]) -> RunOutcome:
 
 
 def _usage_from_history(history: AgentHistoryList[BaseModel]) -> list[RunUsage]:
-    """Browser-Use's own per-model token totals, under the names it billed them.
+    """Return Browser-Use's per-model token totals under the names it billed them.
 
-    Populated whenever ``Agent.run`` returns normally — not on the
-    timeout/cancellation/CDP-failure paths, which never reach a history.
+    Populated only when Agent.run returns normally; timeout, cancellation and
+    CDP failure never reach a history.
     """
     usage = history.usage
     if usage is None:
@@ -206,7 +195,7 @@ def _usage_from_history(history: AgentHistoryList[BaseModel]) -> list[RunUsage]:
 
 
 class BrowserAgentRun:
-    """One Browser-Use ``Agent`` run: decides and executes this task's steps."""
+    """Run one Browser-Use Agent that decides and executes this task's steps."""
 
     def __init__(
         self,
@@ -269,11 +258,9 @@ class BrowserAgentRun:
             ),
         }
         if isinstance(self._llm, JevChatModel):
-            # Browser-Use hands its model rendered text; the Jev policy needs the
-            # structured observation behind it, so it reads the session directly.
-            # The raw task is its goal — the takeover preamble is chat-model prose.
-            # Its text helper is registered as the extraction model so Browser-Use
-            # meters that model's tokens under its own name (see _usage_from_history).
+            # Jev reads the structured observation from the session itself, with the
+            # raw task (not the takeover preamble) as its goal. Its text helper is the
+            # extraction model so Browser-Use meters those tokens under their own name.
             self._llm.bind(browser, task)
             agent_kwargs["page_extraction_llm"] = self._llm.text_model
         self._agent = Agent(**agent_kwargs)
@@ -317,14 +304,11 @@ class BrowserAgentRun:
         )
 
     async def _on_step_end(self, agent: object) -> None:
-        """After a step's actions execute, mirror each one's result into the thread.
+        """Mirror each executed action's result into the thread after a step ends.
 
-        Runs where the results actually exist: ``register_new_step_callback``
-        fires before the actions execute (Browser-Use calls it inside
-        _get_next_action), so ``_on_step`` has no outputs to show. ``on_step_end``
-        fires after execution with ``state.last_result`` populated, one entry per
-        action in order. Keyed by ``self._last_step`` — the step ``_on_step`` just
-        emitted rows for — so an output lands on the row it belongs to.
+        register_new_step_callback fires before the actions execute, so only
+        on_step_end sees state.last_result (one entry per action, in order).
+        Keyed by self._last_step so each output lands on the row _on_step emitted.
         """
         if self._hooks.action_results is None:
             return

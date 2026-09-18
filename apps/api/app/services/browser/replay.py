@@ -1,9 +1,9 @@
 """Short replay codes + the recap slideshow page.
 
 When a browser task finishes (success or failure), its step screenshots already
-live in R2. A short code maps to that session + its step count, so the delivered
-recap link (``browser.heygaia.io/replays/{code}``) opens a self-contained
-slideshow that plays every step back — a scrubber, a filmstrip of thumbnails, and
+live in R2. A short code maps to that session plus its step count, so the
+delivered recap link (browser.heygaia.io/replays/{code}) opens a self-contained
+slideshow that plays every step back: a scrubber, a filmstrip of thumbnails, and
 arrow-key navigation. The code is the secret; the images are public R2 URLs.
 """
 
@@ -39,12 +39,12 @@ async def mint_replay_code(session_id: str, steps: int, shots: list[str] | None 
 
 
 async def resolve_replay_code(code: str) -> ReplayRecord | None:
-    """Return the finished session a replay code opens, or ``None`` if unknown/expired."""
+    """Return the finished session a replay code opens, or None if unknown or expired."""
     return await redis_cache.get(_key(code), model=ReplayRecord)
 
 
 async def create_replay_link(session_id: str, shots: list[str]) -> str | None:
-    """Return a recap slideshow link, or ``None`` when no screenshot was actually uploaded.
+    """Return a recap slideshow link, or None when no screenshot was actually uploaded.
 
     Takes the URLs the run really produced rather than a step count: an upload is
     best-effort, so a count would promise frames the slideshow cannot show.

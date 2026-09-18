@@ -217,7 +217,7 @@ def test_live_values_override_attributes_for_text_selects_and_checkboxes(flights
 
 
 def _big_page(count: int = 300, *, in_viewport_from: int = 0):
-    """``count`` buttons; those from ``in_viewport_from`` on sit inside the viewport."""
+    """Build count buttons; those from in_viewport_from on sit inside the viewport."""
     return make_state(
         {
             i: FakeNode(

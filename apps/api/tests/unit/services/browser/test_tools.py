@@ -124,7 +124,7 @@ def test_takeover_action_description_mentions_all_three_categories() -> None:
 
 
 def test_the_registered_handoff_actions_are_exactly_the_enum() -> None:
-    """The enum is only a single source of truth if it still spells the `def` names Browser-Use registers — this is what makes the two impossible to drift."""
+    """Keep the enum spelling the same def names Browser-Use registers so the two cannot drift."""
     takeover: Callable[[str, str], Awaitable[str]] = _FakeTakeover()
 
     both = build_browser_tools(solve_captcha=True, handle_takeover=takeover)

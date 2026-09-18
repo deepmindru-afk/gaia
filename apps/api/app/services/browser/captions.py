@@ -1,9 +1,8 @@
 """Turn a Browser-Use action into a human-readable caption.
 
-This is the caption for every step: the SSE step card (``runner.py``) and the
-bot's photo caption (``bot_delivery.py``) both describe a step by what it did.
-The model's own ``next_goal`` is never used for it — Jev fills that field with
-its raw decision label ("CLICK [6] Log In"), which is not a caption.
+Used by both the SSE step card (runner.py) and the bot's photo caption
+(bot_delivery.py). The model's own next_goal is never used for it: Jev fills
+that field with its raw decision label ("CLICK [6] Log In"), not a caption.
 """
 
 from __future__ import annotations

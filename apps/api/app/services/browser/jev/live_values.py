@@ -1,11 +1,11 @@
-"""Live form state — what a field holds *now*, not what its HTML said at load.
+"""Live form state: what a field holds now, not what its HTML said at load.
 
-Browser-Use's DOM model keeps the ``value`` attribute and the accessible name,
+Browser-Use's DOM model keeps the value attribute and the accessible name,
 so text the agent typed a step ago is invisible to the next observation and a
 policy would type it again. jev-ultrafast reads current values in its atomic
-snapshot; the one-call equivalent here is ``DOMSnapshot.captureSnapshot``,
-which reports every input's value, checked state and selected options keyed
-by backend node id — the same ids Browser-Use's selector map carries.
+snapshot; the one-call equivalent here is DOMSnapshot.captureSnapshot, which
+reports every input's value, checked state and selected options keyed by
+backend node id, the same ids Browser-Use's selector map carries.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ async def read_live_values(browser: BrowserSession) -> LiveValues:
 
 
 def parse_snapshot(snapshot: dict[str, Any]) -> LiveValues:
-    """Decode ``DOMSnapshot.captureSnapshot``'s rare-data columns into per-node facts."""
+    """Decode DOMSnapshot.captureSnapshot's rare-data columns into per-node facts."""
     strings: list[str] = snapshot.get("strings", [])
     values: dict[int, str] = {}
     checked: set[int] = set()

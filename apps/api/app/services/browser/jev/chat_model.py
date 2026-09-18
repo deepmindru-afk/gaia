@@ -1,6 +1,6 @@
 """Jev as the Browser-Use agent's decision model.
 
-Browser-Use asks its chat model for an ``AgentOutput`` every step; this class
+Browser-Use asks its chat model for an AgentOutput every step; this class
 answers by having Jev decide the operation and target from the current page
 state instead of returning a completion, and using the small text model only
 to write a typed value when the decision needs one. Everything downstream
@@ -85,7 +85,7 @@ class _TakeoverReason(BaseModel):
 
 
 class JevChatModel:
-    """Browser-Use ``BaseChatModel`` whose step decisions come from Jev."""
+    """Browser-Use BaseChatModel whose step decisions come from Jev."""
 
     _verified_api_keys = True
 
@@ -348,8 +348,8 @@ class JevChatModel:
     def note_from_user(self, note: str | None) -> None:
         """Attach what the user said when handing the browser back to the step that asked.
 
-        The takeover step is the last history entry: ``_remember`` runs inside
-        ``_decide``, before Browser-Use executes the action that blocks on the human.
+        The takeover step is the last history entry: _remember runs inside
+        _decide, before Browser-Use executes the action that blocks on the human.
         """
         if not self._history:
             raise RuntimeError("No step to attach a note to")
@@ -396,10 +396,10 @@ def _offered_operations(registered: set[str]) -> frozenset[JevOperation]:
 
 
 def _registered_actions(output_format: type[BaseModel]) -> set[str]:
-    """Return the action names in ``AgentOutput.action``'s element model.
+    """Return the action names in AgentOutput.action's element model.
 
     Browser-Use builds that model two ways: one model with an optional field per
-    action, or (0.11+) a ``RootModel`` over a union of single-field models.
+    action, or (0.11+) a RootModel over a union of single-field models.
     """
     action_model = get_args(output_format.model_fields["action"].annotation)[0]
     fields = getattr(action_model, "model_fields", {})
@@ -428,9 +428,9 @@ def _goal_from_messages(messages: list[BaseMessage]) -> str:
 
 
 def build_jev_chat_model(*, text_model: BaseChatModel) -> JevChatModel:
-    """Return the Jev policy over OpenRouter, with ``text_model`` as its text helper.
+    """Return the Jev policy over OpenRouter, with text_model as its text helper.
 
-    Raises :class:`BrowserUnavailableError` when no OpenRouter key is configured.
+    Raises BrowserUnavailableError when no OpenRouter key is configured.
     """
     api_key = settings.OPENROUTER_API_KEY
     if not api_key:
