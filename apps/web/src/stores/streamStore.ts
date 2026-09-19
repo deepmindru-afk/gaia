@@ -52,6 +52,16 @@ interface AuxLoadingState {
   toolInfo?: ToolInfo;
 }
 
+/** A detached background executor run streaming into the active conversation.
+ *  Turn sessions belong to the chat SSE, which is long closed by the time a
+ *  ticket redeem runs — so background runs track their own indicator state
+ *  instead of borrowing (and clobbering) the turn's. */
+interface BackgroundRunState {
+  loadingText: string;
+  loadingTextKey: number;
+  toolInfo?: ToolInfo;
+}
+
 interface StreamState {
   /** Active turn sessions keyed by conversation id (or a pending key for a
    *  brand-new conversation until the backend assigns the real id). */
@@ -62,6 +72,8 @@ interface StreamState {
   auxLoading: AuxLoadingState | null;
   /** Abort persistence in flight — background sync must not race it. */
   pendingSaveCount: number;
+  /** Detached executor runs currently streaming, keyed by conversation id. */
+  backgroundRuns: Record<string, BackgroundRunState>;
 }
 
 interface StreamActions {
@@ -78,6 +90,12 @@ interface StreamActions {
   /** The user decided this conversation's open approval gate. */
   clearAwaitingApproval: (key: string) => void;
   setAuxLoading: (active: boolean, text?: string, toolInfo?: ToolInfo) => void;
+  setBackgroundLoading: (
+    key: string,
+    text: string,
+    toolInfo?: ToolInfo,
+  ) => void;
+  clearBackgroundLoading: (key: string) => void;
   /** Overwrite a session from an external snapshot (desktop popup mirror). */
   mirrorSession: (key: string, session: TurnUiState | null) => void;
   beginPendingSave: () => void;
@@ -92,6 +110,7 @@ export const useStreamStore = create<StreamStore>()(
       sessions: {},
       pendingNewConversationKey: null,
       auxLoading: null,
+      backgroundRuns: {},
       pendingSaveCount: 0,
 
       startSession: (key, userMessage) =>
@@ -252,6 +271,34 @@ export const useStreamStore = create<StreamStore>()(
           "setAuxLoading",
         ),
 
+      setBackgroundLoading: (key, text, toolInfo) =>
+        set(
+          (state) => ({
+            backgroundRuns: {
+              ...state.backgroundRuns,
+              [key]: {
+                loadingText: text,
+                loadingTextKey:
+                  (state.backgroundRuns[key]?.loadingTextKey ?? 0) + 1,
+                toolInfo,
+              },
+            },
+          }),
+          false,
+          "setBackgroundLoading",
+        ),
+
+      clearBackgroundLoading: (key) =>
+        set(
+          (state) => {
+            if (!state.backgroundRuns[key]) return state;
+            const { [key]: _removed, ...rest } = state.backgroundRuns;
+            return { backgroundRuns: rest };
+          },
+          false,
+          "clearBackgroundLoading",
+        ),
+
       mirrorSession: (key, session) =>
         set(
           (state) => {
@@ -344,7 +391,8 @@ const useActiveTurn = (): TurnUiState | null => {
 };
 
 /** Loading indicator state for the active conversation: turn spinner, the
- *  executor-await bridge, or auxiliary (voice/upload) loading. */
+ *  executor-await bridge, a detached background run, or auxiliary
+ *  (voice/upload) loading. */
 export const useActiveLoading = (): {
   isLoading: boolean;
   loadingText: string;
@@ -353,6 +401,14 @@ export const useActiveLoading = (): {
   awaitingApproval: boolean;
 } => {
   const turn = useActiveTurn();
+  const activeConversationId = useChatStore(
+    (state) => state.activeConversationId,
+  );
+  const backgroundRun = useStreamStore((state) =>
+    activeConversationId
+      ? (state.backgroundRuns[activeConversationId] ?? null)
+      : null,
+  );
   const aux = useStreamStore((state) => state.auxLoading);
 
   if (
@@ -369,6 +425,15 @@ export const useActiveLoading = (): {
       loadingTextKey: turn.loadingTextKey,
       toolInfo: turn.awaitingApproval ? undefined : turn.toolInfo,
       awaitingApproval: turn.awaitingApproval,
+    };
+  }
+  if (backgroundRun) {
+    return {
+      isLoading: true,
+      loadingText: backgroundRun.loadingText,
+      loadingTextKey: backgroundRun.loadingTextKey,
+      toolInfo: backgroundRun.toolInfo,
+      awaitingApproval: false,
     };
   }
   if (aux?.active) {

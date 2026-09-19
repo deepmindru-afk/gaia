@@ -22,6 +22,10 @@ import type { ImageData, MemoryData } from "@/types/features/toolDataTypes";
 // run emitting many tool events doesn't trigger one full-message write per chunk.
 const DB_WRITE_THROTTLE_MS = 500;
 
+// Upper bound for the background-run indicator. The stream close always clears
+// it; this only guards a half-open connection that never closes.
+const BACKGROUND_RUN_TIMEOUT_MS = 10 * 60 * 1000;
+
 // Shown when a background executor's stream dies before it delivered a result.
 const EXECUTOR_STREAM_FAILED =
   "This background task stopped before it finished.";
@@ -86,6 +90,15 @@ export const createExecutorStreamHandler =
       conversationId: conversation_id,
       detail: { stream_id, task_id },
     });
+
+    // A detached run has no turn session driving the loading indicator (the
+    // chat SSE is long closed) — track it separately so the thin "working"
+    // row below the bubble reflects this stream's tool activity. Scoped to
+    // this conversation; cleared on close, error, or timeout below.
+    useStreamStore.getState().setBackgroundLoading(conversation_id, "");
+    const backgroundTimeout = setTimeout(() => {
+      useStreamStore.getState().clearBackgroundLoading(conversation_id);
+    }, BACKGROUND_RUN_TIMEOUT_MS);
 
     // A HIL resume continues the original turn's message: stream into THAT
     // record so the turn keeps one tool accordion. Only a run with no message
@@ -174,7 +187,9 @@ export const createExecutorStreamHandler =
         clearTimeout(writeTimer);
         writeTimer = null;
       }
+      clearTimeout(backgroundTimeout);
       pendingWrite = null;
+      useStreamStore.getState().clearBackgroundLoading(conversation_id);
       const state = useChatStore.getState();
       const msgs = state.messagesByConversation[conversation_id] ?? [];
       const current = msgs.find((m) => m.id === targetId);
@@ -233,6 +248,13 @@ export const createExecutorStreamHandler =
               useStreamStore
                 .getState()
                 .setSessionLoadingText(
+                  conversation_id,
+                  label.text,
+                  label.toolInfo,
+                );
+              useStreamStore
+                .getState()
+                .setBackgroundLoading(
                   conversation_id,
                   label.text,
                   label.toolInfo,
