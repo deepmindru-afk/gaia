@@ -527,3 +527,28 @@ class TestAutoResolveHandoffOnNavigation:
 
         await session_mod.auto_resolve_handoff_on_navigation("h1", "sess-1", "user-1")
         resolve.assert_not_awaited()
+
+
+class TestAutoResolveDoesNotMistakeTheMiddleOfAFlowForItsEnd:
+    """Greptile: any changed URL without an auth marker completed a credential handoff."""
+
+    def test_an_identity_provider_on_another_host_is_not_done(self) -> None:
+        assert not session_mod._navigated_away(
+            "https://app.example.com/login", "https://accounts.google.com/"
+        )
+
+    @pytest.mark.parametrize(
+        "current",
+        [
+            "https://x.com/register",
+            "https://x.com/signup",
+            "https://x.com/account/forgot",
+            "https://x.com/password/reset",
+            "https://x.com/sso/start",
+        ],
+    )
+    def test_registering_or_recovering_an_account_is_still_signing_in(self, current: str) -> None:
+        assert not session_mod._navigated_away("https://x.com/login", current)
+
+    def test_back_on_the_site_off_its_auth_paths_is_done(self) -> None:
+        assert session_mod._navigated_away("https://x.com/login", "https://x.com/dashboard")

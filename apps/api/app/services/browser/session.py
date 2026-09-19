@@ -93,6 +93,13 @@ _AUTH_PATH_MARKERS = (
     "password",
     "consent",
     "oauth",
+    "sso",
+    "register",
+    "signup",
+    "sign-up",
+    "forgot",
+    "reset",
+    "recover",
 )
 
 
@@ -114,6 +121,10 @@ def _navigated_away(start: str | None, current: str | None) -> bool:
         return False
     a, b = urlsplit(start), urlsplit(current)
     if (a.scheme, a.netloc, a.path) == (b.scheme, b.netloc, b.path):
+        return False
+    # An identity provider on another host is the middle of the flow, not its end;
+    # the flow is done when the page is back on the site that asked, off its auth paths.
+    if b.netloc != a.netloc:
         return False
     return not _is_auth_url(current)
 
