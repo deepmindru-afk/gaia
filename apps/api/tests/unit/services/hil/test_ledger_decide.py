@@ -692,3 +692,117 @@ class TestTicketCarriesAge:
 
         assert outcome.committed is True
         assert outcome.state == LedgerState.DENIED
+
+
+@pytest.mark.unit
+class TestRevokeSettlesSessionFrame:
+    async def test_revoke_flips_pending_frame_in_proposing_session(self) -> None:
+        # BUG: revoke settled mongo + broadcast but never touched the proposing
+        # session's in-memory frame; the drain later persisted the stale PENDING
+        # frame back over it (production ap_d455 stuck pending post-revoke).
+        from app.agents.core.background.session import (
+            RunKind,
+            create_session,
+            get_session,
+            teardown_session,
+        )
+        from app.models.hil_models import HILApprovalStatus
+        from app.services.hil import ledger_decide
+        from app.services.hil.bridge import _approval_entry, _publish_entry
+        from app.services.hil.utils import GatedCall
+
+        stream_id = "stream-settle-test"
+        create_session(stream_id, RunKind.LIVE)
+        try:
+            with patch(
+                "app.services.hil.bridge.stream_manager.publish_chunk",
+                new=AsyncMock(),
+            ):
+                await _publish_entry(
+                    stream_id,
+                    _approval_entry(
+                        "ap_abc",
+                        GatedCall(name="GMAIL_SEND_EMAIL", id="c1", args={"to": "b@x"}),
+                        HILApprovalStatus.PENDING,
+                        "Send it",
+                        None,
+                    ),
+                )
+            row = _row(proposing_run_id=stream_id, state=LedgerState.REVOKED)
+            with (
+                patch.object(ledger_decide, "_persist_decision_status", new=AsyncMock()),
+                patch.object(ledger_decide, "_broadcast_decision", new=AsyncMock()),
+            ):
+                await ledger_decide.publish_ledger_revocation(row)
+            frames = get_session(stream_id).tool_events
+            assert len(frames) == 1
+            assert frames[0]["tool_data"]["data"]["status"] == "revoked"
+        finally:
+            teardown_session(stream_id)
+
+
+@pytest.mark.unit
+class TestRedeemSettlesTerminalFrame:
+    async def test_executed_settles_card_as_executed(self) -> None:
+        # Production ap_38b3/d74bc/1454/a16e: ledger UNKNOWN while cards stayed
+        # approved — redeem settled nothing. Terminal states must settle the
+        # frame (persist + broadcast + session) so the card collapses to the
+        # outcome chip instead of lingering as approved forever.
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import redeem_approved
+
+        repo = _repo(_row(state=LedgerState.APPROVED))
+        repo.claim_executing = AsyncMock(return_value=True)
+        repo.transition = AsyncMock(return_value=True)
+        ok_result = MagicMock(ok=True, output="sent", error=None)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "dispatch_tool", new=AsyncMock(return_value=ok_result)),
+            patch.object(ledger_decide, "_persist_decision_status", new=AsyncMock()) as persist,
+            patch.object(ledger_decide, "_broadcast_decision", new=AsyncMock()) as broadcast,
+        ):
+            result = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
+
+        assert result.ok is True
+        assert result.state == LedgerState.EXECUTED
+        persist.assert_awaited_once()
+        assert persist.await_args.args[1] == "executed"
+        broadcast.assert_awaited_once()
+        assert broadcast.await_args.args[1] == "executed"
+
+    async def test_failed_settles_card_as_failed(self) -> None:
+        from app.agents.tools.execute.dispatch import DispatchError, DispatchErrorKind
+        from app.services.hil import ledger_decide
+        from app.services.hil.ledger_decide import redeem_approved
+
+        failed = MagicMock(
+            ok=False,
+            output=None,
+            error=DispatchError(kind=DispatchErrorKind.INVALID_ARGS, detail="bad", hint="x"),
+        )
+        repo = _repo(_row(state=LedgerState.APPROVED))
+        repo.claim_executing = AsyncMock(return_value=True)
+        repo.transition = AsyncMock(return_value=True)
+        with (
+            patch.object(ledger_decide, "approval_ledger_repository", new=repo),
+            patch.object(ledger_decide, "dispatch_tool", new=AsyncMock(return_value=failed)),
+            patch.object(ledger_decide, "_persist_decision_status", new=AsyncMock()) as persist,
+            patch.object(ledger_decide, "_broadcast_decision", new=AsyncMock()) as broadcast,
+        ):
+            result = await redeem_approved(
+                "ap_abc",
+                user_id="u1",
+                conversation_id="conv-1",
+                caller="executor_conv-1",
+            )
+
+        assert result.ok is False
+        persist.assert_awaited_once()
+        assert persist.await_args.args[1] == "failed"
+        broadcast.assert_awaited_once()
+        assert broadcast.await_args.args[1] == "failed"

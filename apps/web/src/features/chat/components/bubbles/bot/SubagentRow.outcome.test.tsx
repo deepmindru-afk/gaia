@@ -50,4 +50,24 @@ describe("StepRow approval outcome", () => {
     );
     expect(screen.getByText("Denied")).toBeDefined();
   });
+
+  it.each([
+    ["executed", "Executed"],
+    ["failed", "Failed"],
+    ["unknown", "Unknown"],
+  ] as const)("collapses a %s outcome to the small chip", (status, label) => {
+    render(
+      <StepRow
+        call={call()}
+        isLast
+        getIconUrl={noop}
+        getIntegrationName={noop}
+        pendingApprovalToolCallIds={new Set()}
+        approvalOutcomeByToolCallId={
+          new Map([["call-1", { status, feedback: null }]])
+        }
+      />,
+    );
+    expect(screen.getByText(label)).toBeDefined();
+  });
 });

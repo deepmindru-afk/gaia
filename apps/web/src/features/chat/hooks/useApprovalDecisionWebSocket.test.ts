@@ -77,7 +77,14 @@ describe("useApprovalDecisionWebSocket", () => {
     vi.clearAllMocks();
     useChatStore.setState({
       messagesByConversation: {
-        "conv-1": [message("m1", [card("ap_1"), card("ap_2")])],
+        "conv-1": [
+          message("m1", [
+            card("ap_1"),
+            card("ap_2"),
+            card("ap_3"),
+            card("ap_4"),
+          ]),
+        ],
       },
     });
     // Mount the subscription (hook body runs on import in test via direct call is
@@ -135,6 +142,22 @@ describe("useApprovalDecisionWebSocket", () => {
       feedback: null,
       version: 1,
     });
+    await h({
+      type: "hil_approval_decided",
+      conversation_id: "conv-1",
+      approval_id: "ap_3",
+      status: "executed",
+      feedback: null,
+      version: 2,
+    });
+    await h({
+      type: "hil_approval_decided",
+      conversation_id: "conv-1",
+      approval_id: "ap_4",
+      status: "unknown",
+      feedback: null,
+      version: 3,
+    });
     const msgs = useChatStore.getState().messagesByConversation["conv-1"] ?? [];
     const entries = (msgs[0]?.tool_data ?? []) as {
       data: { approval_id: string; status: string };
@@ -145,5 +168,11 @@ describe("useApprovalDecisionWebSocket", () => {
     expect(
       entries.find((e) => e.data.approval_id === "ap_1")?.data.status,
     ).toBe("pending");
+    expect(
+      entries.find((e) => e.data.approval_id === "ap_3")?.data.status,
+    ).toBe("executed");
+    expect(
+      entries.find((e) => e.data.approval_id === "ap_4")?.data.status,
+    ).toBe("unknown");
   });
 });

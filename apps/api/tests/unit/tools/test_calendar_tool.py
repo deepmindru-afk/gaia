@@ -96,7 +96,7 @@ def _no_captured_server_loop() -> Iterator[None]:
 def writer():
     """Capture everything the tool pushes to the LangGraph stream."""
     sink = MagicMock()
-    with patch(f"{MODULE}.get_stream_writer", return_value=sink):
+    with patch("app.utils.stream_publishers.get_stream_writer", return_value=sink):
         yield sink
 
 
@@ -1549,6 +1549,32 @@ class TestCreateEvent:
         assert out["created"] is False
         assert out["calendar_options"] == []
         assert out["errors"] == []
+
+    # -- outside a graph run -------------------------------------------------
+
+    def test_confirm_immediately_returns_result_without_stream_runtime(self, tools) -> None:
+        # BUG: ticket redeem invokes the tool via dispatch outside any graph
+        # run (bare runnable config, no Pregel runtime). The unconditional
+        # get_stream_writer() raised KeyError AFTER the Google POST, so the
+        # event was created, the redeem marked UNKNOWN, and every retry
+        # duplicated it. Deliberately no `writer` fixture: this test runs
+        # with the real writer lookup and a dispatch-shaped config.
+        from langchain_core.runnables.config import var_child_runnable_config
+
+        token = var_child_runnable_config.set({"configurable": {"user_id": "user-42"}})
+        try:
+            out, proxy = self._run(
+                tools,
+                CreateEventInput(
+                    events=[SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")],
+                    confirm_immediately=True,
+                ),
+            )
+        finally:
+            var_child_runnable_config.reset(token)
+        assert proxy.call_count == 1
+        assert out["created"] is True
+        assert out["created_events"][0]["event_id"] == "evt-1"
 
 
 # ---------------------------------------------------------------------------

@@ -32,7 +32,10 @@ export type ApprovalStatus =
   | "timeout"
   | "abandoned"
   | "auto_approved"
-  | "revoked";
+  | "revoked"
+  | "executed"
+  | "failed"
+  | "unknown";
 
 export type ApprovalDecision = "approve" | "deny";
 export type ApprovalScope = "once" | "always_tool";

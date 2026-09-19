@@ -52,7 +52,7 @@ from app.models.hil_models import (
     HILApprovalStatus,
     LedgerState,
 )
-from app.services.hil.bridge import _approval_entry, _publish_entry
+from app.services.hil.bridge import _approval_entry, _publish_entry, settle_session_approval_frame
 from app.services.hil.resolution import (
     ApprovalRequestForbiddenError,
     ApprovalRequestNotFoundError,
@@ -263,6 +263,7 @@ async def redeem_approved(
             approval_id=approval_id,
             error_type=type(e).__name__,
         )
+        await _settle_terminal(row, LedgerState.UNKNOWN)
         return RedeemResult(
             ok=False, approval_id=approval_id, state=LedgerState.UNKNOWN, detail=cause
         )
@@ -304,7 +305,23 @@ async def redeem_approved(
             state=live.state,
             detail=f"Already {actual}; report that instead of retrying.",
         )
+    await _settle_terminal(row, state)
     return RedeemResult(ok=result.ok, approval_id=approval_id, state=state, detail=detail)
+
+
+async def _settle_terminal(row: ApprovalLedgerDocument, state: LedgerState) -> None:
+    """Settle the card to the redeem outcome (executed/failed/unknown).
+
+    Without this the card lingers as approved forever while the ledger has
+    moved on — the user never sees what their approval did. Same triple as
+    every other settle here (persisted frame, broadcast, in-memory session
+    flip); feedback stays None by design, so the card collapses to the
+    outcome chip instead of growing a receipt block.
+    """
+    if row.proposing_run_id:
+        settle_session_approval_frame(row.proposing_run_id, row.approval_id, state.value)
+    await _persist_decision_status(row, state.value)
+    await _broadcast_decision(row, state.value, None)
 
 
 async def revoke_ticket(approval_id: str, *, conversation_id: str, caller: str) -> str:
@@ -363,6 +380,7 @@ async def reconcile_conversation_ledger(conversation_id: str) -> None:
                 f"{LogTag.HIL} Ledger execution stalled; reconciled as UNKNOWN, never retried",
                 approval_id=stalled.approval_id,
             )
+            await _settle_terminal(stalled, LedgerState.UNKNOWN)
             await _wake_agent(stalled, "UNKNOWN", "stalled execution reconciled; never retried")
 
 
@@ -399,6 +417,15 @@ async def publish_ledger_decision(
                 approval_id=row.approval_id,
                 error_type=type(e).__name__,
             )
+        # Flip the in-memory PENDING frame too: the drain persists whatever
+        # the session holds, and without this a later drain resurrects the
+        # unsettled card over the persisted decision.
+        settle_session_approval_frame(
+            row.proposing_run_id,
+            row.approval_id,
+            mapped.value,
+            feedback if feedback is not None else row.feedback,
+        )
     await _persist_decision_status(row, mapped.value)
     await _broadcast_decision(row, mapped.value, feedback if feedback is not None else row.feedback)
 
@@ -410,6 +437,11 @@ async def publish_ledger_revocation(row: ApprovalLedgerDocument) -> None:
     forever — the tombstone UI would be unreachable. Best-effort like every
     other delivery here: the row is the truth, frames are hints.
     """
+    if row.proposing_run_id:
+        # Same in-memory flip: revoke typically lands mid-run, before the
+        # message exists in mongo, so the persist below would miss while the
+        # drain resurrects PENDING afterwards.
+        settle_session_approval_frame(row.proposing_run_id, row.approval_id, "revoked")
     await _persist_decision_status(row, "revoked")
     await _broadcast_decision(row, "revoked", None)
 

@@ -22,7 +22,14 @@ interface ApprovalDecidedEvent {
   version?: number | null;
 }
 
-const TERMINAL_STATUSES: ApprovalStatus[] = ["approved", "denied", "revoked"];
+const TERMINAL_STATUSES: ApprovalStatus[] = [
+  "approved",
+  "denied",
+  "revoked",
+  "executed",
+  "failed",
+  "unknown",
+];
 
 /**
  * Subscribe to `hil_approval_decided` and settle the matching open card.

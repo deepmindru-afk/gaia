@@ -16,7 +16,7 @@ from typing import Any, TypeVar
 
 from composio import Composio
 from composio.types import ExecuteRequestFn
-from langgraph.config import get_config, get_stream_writer
+from langgraph.config import get_config
 
 from app.constants.calendar import DEFAULT_CALENDAR_COLOR
 from app.constants.log_tags import LogTag
@@ -52,6 +52,7 @@ from app.utils.calendar_utils import calendar_events_endpoint
 from app.utils.concurrency import run_on_captured_loop
 from app.utils.context_utils import execute_tool
 from app.utils.errors import AppError
+from app.utils.stream_publishers import optional_stream_writer
 from app.utils.timezone import Timezone, home_timezone_from_config
 from shared.py.wide_events import log
 
@@ -170,8 +171,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             else [entry.model_dump() for entry in calendar_list.items]
         )
 
-        writer = get_stream_writer()
-        if summaries:
+        writer = optional_stream_writer()
+        if writer is not None and summaries:
             writer(
                 {
                     "calendar_list_fetch_data": [
@@ -284,8 +285,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             "busy_hours": round(busy_minutes / 60, 1),
         }
 
-        writer = get_stream_writer()
-        if formatted_events:
+        writer = optional_stream_writer()
+        if writer is not None and formatted_events:
             writer({"calendar_fetch_data": formatted_events})
 
         return result_data
@@ -324,8 +325,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         except Exception:
             calendar_fetch_data = [event.model_dump() for event in events]
 
-        writer = get_stream_writer()
-        if calendar_fetch_data:
+        writer = optional_stream_writer()
+        if writer is not None and calendar_fetch_data:
             writer({"calendar_fetch_data": calendar_fetch_data})
 
         return {
@@ -364,8 +365,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
         except Exception:
             calendar_search_data = events
 
-        writer = get_stream_writer()
-        if calendar_search_data:
+        writer = optional_stream_writer()
+        if writer is not None and calendar_search_data:
             writer({"calendar_fetch_data": calendar_search_data})
 
         return {
@@ -669,8 +670,8 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             raise ValueError(f"All events failed validation: {errors}")
 
         if request.confirm_immediately:
-            writer = get_stream_writer()
-            if created_events:
+            writer = optional_stream_writer()
+            if writer is not None and created_events:
                 writer(
                     {
                         "calendar_fetch_data": [
@@ -695,16 +696,17 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                 "errors": errors,
             }
 
-        writer = get_stream_writer()
-        writer(
-            {
-                "calendar_options": [
-                    _format_calendar_option_for_stream(opt)
-                    for opt in calendar_options
-                    if isinstance(opt, dict)
-                ]
-            }
-        )
+        writer = optional_stream_writer()
+        if writer is not None:
+            writer(
+                {
+                    "calendar_options": [
+                        _format_calendar_option_for_stream(opt)
+                        for opt in calendar_options
+                        if isinstance(opt, dict)
+                    ]
+                }
+            )
 
         return {
             "created": False,

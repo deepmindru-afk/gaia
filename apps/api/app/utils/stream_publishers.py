@@ -6,11 +6,33 @@ the same set of side-effecting publishes. These helpers are the single source of
 truth for that behavior so the two call sites cannot drift.
 """
 
+from collections.abc import Callable
 import json
 from typing import Any
 
+from langgraph.config import get_stream_writer
+from langgraph.types import StreamWriter
+
 from app.core.stream_manager import stream_manager
 from app.models.stream_events import FollowUpActionsFrame
+
+
+def optional_stream_writer() -> Callable[[dict[str, Any]], None] | None:
+    """The graph stream writer, or None outside a graph run.
+
+    Tools run in two contexts: inside a LangGraph run (model-invoked, writer
+    present) and via backend dispatch (ticket redeem, sandbox, workflows —
+    no Pregel runtime). ``get_stream_writer()`` raises outside a run
+    (``KeyError: __pregel_runtime`` under a bare runnable config,
+    ``RuntimeError`` with no config at all), so call sites that treat the
+    writer as a best-effort UI hint must use this and skip when it returns
+    None. The tool's return value — not the writer — carries the result.
+    """
+    try:
+        writer: StreamWriter = get_stream_writer()
+    except (KeyError, RuntimeError):
+        return None
+    return writer
 
 
 def accumulate_todo_progress(

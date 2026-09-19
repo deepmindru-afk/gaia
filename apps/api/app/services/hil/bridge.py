@@ -306,6 +306,41 @@ async def _publish_entry(stream_id: str, entry: ApprovalRequestEntry) -> None:
         session.tool_events.append(frame)
 
 
+def settle_session_approval_frame(
+    stream_id: str, approval_id: str, status: str, feedback: str | None = None
+) -> bool:
+    """Flip an already-recorded card frame to its terminal status, in place.
+
+    Revoke and late decisions otherwise miss the persisted message (it is
+    created at drain time, after the run ends) while the stale PENDING frame
+    drains back onto it — resurrecting a settled card. Mutating in place
+    means the drain upsert is a no-op safety net, not a resurrection path.
+    Best-effort like every other delivery here: returns whether a frame was
+    settled, never raises.
+    """
+    try:
+        session = get_session(stream_id)
+        if session is None:
+            return False
+        settled = False
+        for event in session.tool_events:
+            tool_data = event.get("tool_data") if isinstance(event, dict) else None
+            if not isinstance(tool_data, dict):
+                continue
+            if tool_data.get("tool_name") != APPROVAL_REQUEST_TOOL_NAME:
+                continue
+            data = tool_data.get("data")
+            if not isinstance(data, dict) or data.get("approval_id") != approval_id:
+                continue
+            data["status"] = status
+            if feedback is not None:
+                data["feedback"] = feedback
+            settled = True
+        return settled
+    except Exception:
+        return False
+
+
 def _approval_entry(
     approval_id: str,
     tool_call: GatedCall,

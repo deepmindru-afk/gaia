@@ -54,6 +54,9 @@ const APPROVAL_CHIP: Record<
   denied: { label: "Denied", color: "danger" },
   timeout: { label: "Expired", color: "warning" },
   abandoned: { label: "Expired", color: "warning" },
+  executed: { label: "Executed", color: "success" },
+  failed: { label: "Failed", color: "danger" },
+  unknown: { label: "Unknown", color: "warning" },
 };
 
 function ApprovalOutcomeChip({
