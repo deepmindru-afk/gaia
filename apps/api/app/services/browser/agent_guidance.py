@@ -52,9 +52,10 @@ def guidance_message(request: AgentGuidanceRequest) -> str:
             '  guide_browser_task("<one concrete instruction>") -- what to click, what to '
             "type, where to navigate, or the fact to use. One step, not a plan. Use only "
             "facts from this conversation, the user's request and your memory; never invent "
-            "one. Prefer a different route over repeating what already failed.\n"
-            '  guide_browser_task(give_up=True, reason="<why it cannot be done>") -- when '
-            "there is no honest way forward."
+            "one. Prefer a different route over repeating what already failed: a wall on "
+            "one page rarely blocks the site's direct address for the same content.\n"
+            '  guide_browser_task(give_up=True, reason="<why it cannot be done>") -- only '
+            "when no route is left, never because a step the user already declined is blocked."
         ),
     ]
     return "\n\n".join(section for section in sections if section)

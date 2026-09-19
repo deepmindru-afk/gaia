@@ -96,7 +96,8 @@ _NO_RETRY = "Do not run the browser again for this request; tell the user what h
 # upvote closed with "signed you into Reddit ... and upvoted the top post".
 _ONLY_THE_SUMMARY = (
     "Report only what the summary states. Never claim an action it does not explicitly "
-    "report: a login, a purchase, a vote, a message sent, a form submitted."
+    "report: a login, a purchase, a vote, a message sent, a form submitted, a box ticked. "
+    "That the task asked for a step is not evidence the step happened."
 )
 
 

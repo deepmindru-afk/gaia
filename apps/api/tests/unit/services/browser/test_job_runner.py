@@ -96,10 +96,7 @@ NO_META = (
 )
 
 
-ONLY_THE_SUMMARY = (
-    "Report only what the summary states. Never claim an action it does not explicitly "
-    "report: a login, a purchase, a vote, a message sent, a form submitted."
-)
+ONLY_THE_SUMMARY = jr._ONLY_THE_SUMMARY
 
 
 def _completed_message(summary: str) -> str:

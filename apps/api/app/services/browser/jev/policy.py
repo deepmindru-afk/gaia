@@ -64,7 +64,9 @@ _OPERATION_LABELS: dict[JevOperation, str] = {
         "for the cheapest, the most, the best, the first, the last, the newest, a count, a total, "
         "or every item of a list, that whole list must already have been seen: scrolled down until "
         "nothing new appeared, and paged through to its last page. One screenful of a list is a "
-        "sample, not the list."
+        "sample, not the list. Every step the goal lists was carried out by an action in this run; "
+        "a control the goal names by a label the screen does not show is the one in that position "
+        "or with the closest wording, never a step to skip."
     ),
     JevOperation.BLOCKED: "No supported operation can progress.",
 }

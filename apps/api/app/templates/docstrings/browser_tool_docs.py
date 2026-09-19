@@ -52,6 +52,9 @@ Args:
         in every value the page will ask for that you know (names, email, address,
         dates, quantities, the exact item), and if a value it cannot do without is
         unknown, ask the user before starting; the browser never invents one.
+        Describe a control the way the user did (its position, the words they used);
+        never invent a label for it, a wrong label sends the browser to the wrong
+        control and it skips the step.
     start_url (str, optional): A URL to open first, if the user named a site.
 
 Returns:

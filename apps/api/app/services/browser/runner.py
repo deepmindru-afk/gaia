@@ -296,7 +296,9 @@ class BrowserTaskRunner:
             log.info(f"{LogTag.BROWSER} Browser run guided by the agent that started it")
             return instruction
         self._stopped = True
-        self._blocked_summary = instruction or BROWSER_RUN_BLOCKED_SUMMARY
+        # The executor that gave up writes the closing reply itself; its reason is
+        # model prose, and clipped onto the card it once read as internal reasoning.
+        self._blocked_summary = BROWSER_RUN_BLOCKED_SUMMARY
         log.info(f"{LogTag.BROWSER} Browser guidance ended the run", status=outcome.status.value)
         raise BrowserHandoffCancelled(outcome.status.value)
 

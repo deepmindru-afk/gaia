@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from app.constants.browser import BrowserSessionStatus
+from app.constants.browser import BROWSER_RUN_BLOCKED_SUMMARY, BrowserSessionStatus
 from app.constants.chat import SourceCategory
 from app.models.chat_models import ConversationSource
 from app.services.browser.jobs import get_conversation_slot
@@ -524,6 +524,9 @@ async def test_giving_up_ends_the_run_failed_and_frees_the_conversation() -> Non
 
     results = [card for card in world.cards() if card["kind"] == "result"]
     assert [card["status"] for card in results] == [BrowserSessionStatus.FAILED.value]
-    assert "the site needs an account the user does not have" in results[0]["summary"]
+    # The executor that gave up writes the closing reply itself; its reason is model
+    # prose and never reaches the card.
+    assert results[0]["summary"] == BROWSER_RUN_BLOCKED_SUMMARY
+    assert "the site needs an account" not in results[0]["summary"]
     assert "DID NOT COMPLETE" in ((run.results_from("tools") or [])[-1])
     assert await get_conversation_slot(CONVERSATION) is None
