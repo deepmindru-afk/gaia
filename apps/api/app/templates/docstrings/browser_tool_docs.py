@@ -48,6 +48,10 @@ Args:
         sentences; do not write step-by-step instructions, and do not invent
         requirements the user did not ask for (saving files, reporting byte sizes,
         etc.). Screenshots are shown to the user automatically. Do not include secrets.
+        The browser sees ONLY this text: not the conversation, not your memory. Put
+        in every value the page will ask for that you know (names, email, address,
+        dates, quantities, the exact item), and if a value it cannot do without is
+        unknown, ask the user before starting; the browser never invents one.
     start_url (str, optional): A URL to open first, if the user named a site.
 
 Returns:
