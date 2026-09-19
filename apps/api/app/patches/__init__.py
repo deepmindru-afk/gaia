@@ -2,6 +2,7 @@
 
 from . import (
     browser_use_click_patch,
+    browser_use_event_budget_patch,
     browser_use_input_timing_patch,
     browser_use_page_ready_patch,
     browser_use_scroll_patch,
