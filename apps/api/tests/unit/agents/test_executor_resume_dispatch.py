@@ -35,7 +35,7 @@ async def _run(resume: Command | None) -> _Ctx:
         patch(f"{RUNNER}.make_redis_stream_writer", lambda _stream_id: None),
         patch(f"{RUNNER}.execute_subagent_stream", execute),
     ):
-        await _execute_executor("task", {"user_id": "u1"}, "stream-1", resume=resume)
+        await _execute_executor("task", {"user_id": "u1"}, "stream-1", "conv-1", resume=resume)
     assert execute.await_count == 1
     assert execute.await_args.kwargs["ctx"] is ctx
     return ctx
@@ -59,7 +59,7 @@ async def test_a_paused_run_reports_the_approval_it_is_parked_on() -> None:
         patch(f"{RUNNER}.make_redis_stream_writer", lambda _stream_id: None),
         patch(f"{RUNNER}.execute_subagent_stream", execute),
     ):
-        result = await _execute_executor("task", {"user_id": "u1"}, "stream-1")
+        result = await _execute_executor("task", {"user_id": "u1"}, "stream-1", "conv-1")
 
     assert result == _ExecutorResult("", EXECUTOR_PAUSED, ("ap-1",))
 
@@ -77,7 +77,7 @@ async def test_a_batch_pause_reports_every_approval_not_the_single_id() -> None:
         patch(f"{RUNNER}.make_redis_stream_writer", lambda _stream_id: None),
         patch(f"{RUNNER}.execute_subagent_stream", execute),
     ):
-        result = await _execute_executor("task", {"user_id": "u1"}, "stream-1")
+        result = await _execute_executor("task", {"user_id": "u1"}, "stream-1", "conv-1")
 
     assert result == _ExecutorResult("", EXECUTOR_PAUSED, ("ap-1", "ap-2"))
 
@@ -113,7 +113,7 @@ class TestExecuteExecutorWiring:
             patch(f"{RUNNER}.log", log_mock),
             patch(f"{RUNNER}.time.perf_counter", side_effect=[1000.0, 1000.123456]),
         ):
-            result = await _execute_executor("the task", {"user_id": "u1"}, "stream-1")
+            result = await _execute_executor("the task", {"user_id": "u1"}, "stream-1", "conv-1")
 
         prepare.assert_awaited_once_with(
             task="the task",

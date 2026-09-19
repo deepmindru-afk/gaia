@@ -14,16 +14,27 @@ import pytest
 
 from app.agents.core.background import executor_runner as er
 from app.constants.executor import EXECUTOR_STEP_LIMIT_MESSAGE
+from app.services.browser import jobs as jobs_mod
+from tests._harness.redis_fakes import FakeRedisCache
 
 
-async def _run_with(side_effect: BaseException) -> er._ExecutorResult:
+async def _run_with(
+    side_effect: BaseException, conversation_id: str = "conv-1"
+) -> er._ExecutorResult:
     """Run _execute_executor with the graph execution raising side_effect."""
     with (
         patch.object(er, "prepare_executor_execution", AsyncMock(return_value=(object(), None))),
         patch.object(er, "make_redis_stream_writer", lambda _sid: None),
         patch.object(er, "execute_subagent_stream", AsyncMock(side_effect=side_effect)),
     ):
-        return await er._execute_executor("do the thing", {}, "stream-1")
+        return await er._execute_executor("do the thing", {}, "stream-1", conversation_id)
+
+
+@pytest.fixture
+def fake_cache(monkeypatch: pytest.MonkeyPatch) -> FakeRedisCache:
+    fake = FakeRedisCache()
+    monkeypatch.setattr(jobs_mod, "redis_cache", fake)
+    return fake
 
 
 @pytest.mark.unit
@@ -59,4 +70,53 @@ class TestExecutorCrashText:
     async def test_the_recursion_limit_keeps_its_own_actionable_message(self) -> None:
         result = await _run_with(GraphRecursionError("limit"))
 
+        assert result.text == EXECUTOR_STEP_LIMIT_MESSAGE
+
+
+@pytest.mark.unit
+class TestOrphanedBrowserJob:
+    """A failed run's message is the turn's only ending, so the job it left running must not speak.
+
+    Measured: the executor spun on retrieve_tools and hit the step limit one
+    second after enqueueing a browser job. Comms said nothing was done; the
+    orphaned job ran three more minutes and delivered its own conclusion.
+    """
+
+    async def test_a_step_limit_cancels_the_job_left_in_flight(
+        self, fake_cache: FakeRedisCache
+    ) -> None:
+        await jobs_mod.claim_conversation_slot("conv-1", "job-1")
+
+        result = await _run_with(GraphRecursionError("limit"))
+
+        assert result.text == EXECUTOR_STEP_LIMIT_MESSAGE
+        assert await jobs_mod.job_cancel_requested("job-1") is True
+
+    async def test_a_crash_cancels_the_job_left_in_flight(self, fake_cache: FakeRedisCache) -> None:
+        await jobs_mod.claim_conversation_slot("conv-1", "job-1")
+
+        result = await _run_with(RuntimeError("boom"))
+
+        assert result.text == er.EXECUTOR_CRASH_MESSAGE
+        assert await jobs_mod.job_cancel_requested("job-1") is True
+
+    async def test_another_conversations_job_is_left_alone(
+        self, fake_cache: FakeRedisCache
+    ) -> None:
+        await jobs_mod.claim_conversation_slot("conv-2", "job-2")
+
+        await _run_with(GraphRecursionError("limit"))
+
+        assert await jobs_mod.job_cancel_requested("job-2") is False
+
+    async def test_a_redis_failure_still_hands_comms_the_runs_own_ending(
+        self, fake_cache: FakeRedisCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            er, "cancel_conversation_browser_job", AsyncMock(side_effect=ConnectionError("down"))
+        )
+
+        result = await _run_with(GraphRecursionError("limit"))
+
+        assert result.type == "error"
         assert result.text == EXECUTOR_STEP_LIMIT_MESSAGE

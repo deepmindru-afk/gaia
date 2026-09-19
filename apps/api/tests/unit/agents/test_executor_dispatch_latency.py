@@ -560,7 +560,7 @@ class TestBackgroundRunExactWiring:
         with self._env(run, perf_values=[1000.0, 1000.0, 1000.5]) as env:
             await run_executor_background(run=run, task="the task", configurable=configurable)
 
-        env.execute.assert_awaited_once_with("the task", configurable, "exec-args", None)
+        env.execute.assert_awaited_once_with("the task", configurable, "exec-args", "conv-1", None)
 
     async def test_ttft_helper_receives_the_run_and_its_start(self) -> None:
         run = _run("exec-ttft-args")
@@ -723,4 +723,4 @@ class TestResumeForwarding:
                 resume=sentinel,  # type: ignore[arg-type] -- sentinel object proves forwarding by identity; intentionally not a Command
             )
 
-        assert execute.await_args.args[3] is sentinel
+        assert execute.await_args.args[4] is sentinel
