@@ -283,6 +283,7 @@ class BrowserAgentRun:
         goal: str,
         actions: list[BrowserAction],
         state: BrowserStateSummary | None = None,
+        raw_screenshot: str | None = None,
     ) -> None:
         """Emit one frame under the next number the user sees.
 
@@ -298,7 +299,7 @@ class BrowserAgentRun:
                 actions=actions,
                 url=getattr(state, "url", None),
                 title=getattr(state, "title", None),
-                raw_screenshot=getattr(state, "screenshot", None),
+                raw_screenshot=raw_screenshot or getattr(state, "screenshot", None),
                 since_prev_ms=self._clock.tick(),
             )
         )
@@ -311,6 +312,11 @@ class BrowserAgentRun:
         self._framed = True
         points = self._llm.viewport_points() if isinstance(self._llm, JevChatModel) else {}
         step_actions = _extract_actions(agent_output, browser_state_summary, points)
+        raw_screenshot = (
+            await self._llm.take_step_screenshot()
+            if isinstance(self._llm, JevChatModel)
+            else getattr(browser_state_summary, "screenshot", None)
+        )
         # Never the model's own next_goal/thinking: Jev fills both with its raw
         # decision label ("CLICK [6] Log In"). The caption describes what the
         # step does, named after the element it resolved.
@@ -318,6 +324,7 @@ class BrowserAgentRun:
             goal=caption_from_action_list(step_actions),
             actions=step_actions,
             state=browser_state_summary,
+            raw_screenshot=raw_screenshot,
         )
 
     async def _on_step_end(self, agent: object) -> None:

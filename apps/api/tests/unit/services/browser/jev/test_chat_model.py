@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Union, get_args
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from browser_use.agent.views import ActionModel, AgentOutput
 from browser_use.llm.messages import SystemMessage, UserMessage
@@ -1020,3 +1021,26 @@ async def test_a_guidance_request_on_a_run_nobody_redirected_carries_no_notes(
     await model.ainvoke([], _guidance_output())
 
     assert model.guidance_request("stuck").user_notes == []
+
+
+async def test_the_step_photo_is_rendered_while_the_decision_is_made(flights_state) -> None:
+    """Inside the state read the render queued ahead of the DOM on Obscura, 4 s on a long page."""
+    model, _, _, session = _model(flights_state, [("CLICK", "4")])
+    session.take_screenshot = AsyncMock(return_value=b"png-bytes")
+
+    await model.ainvoke([], _agent_output())
+    photo = await model.take_step_screenshot()
+
+    assert photo == base64.b64encode(b"png-bytes").decode()
+    assert session.take_screenshot.await_count == 1
+    assert await model.take_step_screenshot() is None
+
+
+async def test_a_failed_step_photo_costs_the_step_nothing(flights_state) -> None:
+    model, _, _, session = _model(flights_state, [("CLICK", "4")])
+    session.take_screenshot = AsyncMock(side_effect=RuntimeError("engine busy"))
+
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion) == {"click": {"index": 40}}
+    assert await model.take_step_screenshot() is None

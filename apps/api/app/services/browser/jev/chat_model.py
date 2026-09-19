@@ -10,6 +10,8 @@ are not a step decision go straight to the text model.
 
 from __future__ import annotations
 
+import asyncio
+import base64
 from dataclasses import replace
 import json
 import re
@@ -34,6 +36,7 @@ from app.constants.browser import (
     SensitiveCategory,
 )
 from app.constants.log_tags import LogTag
+from app.patches.browser_use_deferred_screenshot_patch import defer_screenshots_for
 from app.schemas.browser import AgentGuidanceRequest, GuidanceAction, GuidanceElement
 from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev.gateway import JevGatewayClient, JevGatewayError
@@ -105,6 +108,10 @@ class JevChatModel:
 
     _verified_api_keys = True
 
+    #: The step photo in flight, rendered while the decision is; class-level so a
+    #: model built without __init__ (the runner tests do) still answers None.
+    _shot: asyncio.Task[str | None] | None = None
+
     def __init__(self, *, client: JevGatewayClient, text_model: BaseChatModel) -> None:
         self.model = client.model
         self.text_model = text_model
@@ -120,6 +127,7 @@ class JevChatModel:
         self._observation: JevObservation | None = None
         self._seen_text = SeenText()
         self._handles = NodeHandles()
+        self._shot = None
         #: One-shot: guidance just arrived, so this next step may not give up on it.
         self._blocked_suppressed = False
 
@@ -155,6 +163,7 @@ class JevChatModel:
         self._browser = browser
         self._task = task
         self._guidance_allowed = guidance_allowed
+        defer_screenshots_for(browser)
 
     @overload
     async def ainvoke(
@@ -188,6 +197,9 @@ class JevChatModel:
         self._handles.on_page(getattr(state, "url", None))
         screen = await read_viewport(self._browser, selector_map, self._handles)
         self._viewport = screen.boxes
+        # The engine idles while Jev and the text helper think; render the step's
+        # photo then, not inside the state read where it queued ahead of the DOM.
+        self._shot = asyncio.create_task(self._capture_screenshot())
         observation = observe(state, await read_live_values(self._browser), screen)
         self._observation = observation
         self._seen_text.record(observation.url, observation.text)
@@ -470,6 +482,24 @@ class JevChatModel:
         self._history[-1] = replace(
             self._history[-1], note=note, note_source=source if note else None
         )
+
+    async def take_step_screenshot(self) -> str | None:
+        """Return the photo captured for the step being decided, base64 PNG, or None."""
+        if self._shot is None:
+            return None
+        shot, self._shot = self._shot, None
+        return await shot
+
+    async def _capture_screenshot(self) -> str | None:
+        if self._browser is None:
+            return None
+        try:
+            return base64.b64encode(await self._browser.take_screenshot()).decode()
+        except Exception as exc:  # a missing photo must never cost the step
+            log.warning(
+                f"{LogTag.BROWSER} Jev step screenshot failed", error_type=type(exc).__name__
+            )
+            return None
 
     def guidance_request(self, reason: str) -> AgentGuidanceRequest:
         """Return what the blocked step shows the agent: the page it is on, what it can see, and what it just tried."""
