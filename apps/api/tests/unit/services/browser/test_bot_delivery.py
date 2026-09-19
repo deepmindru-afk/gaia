@@ -249,7 +249,7 @@ class TestBotProgressDeliveryStep:
             mock_photo.assert_awaited_once()
             mock_text.assert_awaited_once()
             text_msg = mock_text.call_args[0][2][0]
-            assert text_msg == "Step 2 · Clicking"
+            assert text_msg == "Step 1 · Clicking"
 
     async def test_inline_data_url_falls_back_to_text(self, delivery):
         snap = BrowserStepSnapshot(

@@ -235,3 +235,20 @@ def test_jev_sees_one_capped_element_table_that_every_target_head_draws_from() -
             continue
         assert {key.split(":")[0] for key in question.criteria} <= indexes
         assert question.criteria
+
+
+def test_a_screen_too_dense_to_list_tells_jev_how_many_it_left_out_and_how_to_reach_them() -> None:
+    """A silent cut made a control lower on a dense screen impossible to choose, with no way to know."""
+    request = build_request(observe(_three_hundred_clickables()), "click something", [], ALL)
+
+    page = request.state["page"]
+
+    assert page["elements_listed"] == JEV_MAX_ELEMENTS
+    assert page["elements_on_screen"] == 300
+    assert page["elements_note"]
+
+
+def test_a_screen_that_fits_carries_no_note_about_missing_elements(flights_state) -> None:
+    request = build_request(observe(flights_state), "book a flight", [], ALL)
+
+    assert "elements_note" not in request.state["page"]

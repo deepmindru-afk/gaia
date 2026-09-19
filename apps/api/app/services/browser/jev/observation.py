@@ -22,6 +22,7 @@ from app.constants.browser import (
 )
 from app.constants.log_tags import LogTag
 from app.services.browser.jev.live_values import LiveValues
+from app.services.browser.jev.prompts import ELEMENTS_NOT_ALL_LISTED
 from app.services.browser.jev.viewport import ViewportRead, normalize_page_text
 from shared.py.wide_events import log
 
@@ -111,10 +112,18 @@ class JevObservation:
     title: str
     text: str
     elements: tuple[JevElement, ...]
+    #: Controls on this screen that did not fit in the table Jev is shown.
+    unlisted: int = 0
     fingerprint: str = field(default="")
 
     def page_state(self) -> dict[str, object]:
-        return {"url": self.url, "title": self.title, "text": self.text}
+        state: dict[str, object] = {"url": self.url, "title": self.title, "text": self.text}
+        if self.unlisted:
+            # A silent cut hid the control Jev needed with no way to know it existed.
+            state["elements_listed"] = len(self.elements)
+            state["elements_on_screen"] = len(self.elements) + self.unlisted
+            state["elements_note"] = ELEMENTS_NOT_ALL_LISTED
+        return state
 
     def targets(
         self, operation: JevOperation
@@ -176,11 +185,13 @@ def observe(
     # The page's own answer over the state summary's: a cross-origin click whose
     # watchdog timed out leaves that url pre-navigation while the title is not.
     url = screen.url or getattr(state, "url", "") or ""
+    listed, unlisted = _on_screen(elements, url)
     observation = JevObservation(
         url=url,
         title=screen.title or getattr(state, "title", "") or "",
         text=text,
-        elements=_on_screen(elements, url),
+        elements=listed,
+        unlisted=unlisted,
     )
     return JevObservation(
         **{k: v for k, v in observation.__dict__.items() if k != "fingerprint"},
@@ -188,20 +199,21 @@ def observe(
     )
 
 
-def _on_screen(elements: list[JevElement], url: str) -> tuple[JevElement, ...]:
-    """Keep the elements inside the viewport, in document order, under the gateway cap.
+def _on_screen(elements: list[JevElement], url: str) -> tuple[tuple[JevElement, ...], int]:
+    """Keep the elements inside the viewport, in document order, and count what did not fit.
 
     Jev decides on what a person sees; anything below the fold is one SCROLL away.
-    The cap only bites on a screen denser than one decision can carry, and says so.
+    The cap only bites on a screen denser than one decision can carry; document
+    order is top to bottom, so the ones left out are what a scroll down lists next.
     """
     visible = [e for e in elements if e.in_viewport]
-    dropped = len(visible) - JEV_MAX_ELEMENTS
-    if dropped > 0:
+    dropped = max(len(visible) - JEV_MAX_ELEMENTS, 0)
+    if dropped:
         log.warning(
             f"{LogTag.BROWSER} Jev screen has more elements than one decision can carry",
             browser={"dropped": dropped, "url": url},
         )
-    return tuple(visible[:JEV_MAX_ELEMENTS])
+    return tuple(visible[:JEV_MAX_ELEMENTS]), dropped
 
 
 def _page_text(state: BrowserStateSummary) -> str:
