@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from app.constants.chat import ARTIFACT_REF_RE, WORKSPACE_ARTIFACT_RE
-from app.models.chat_models import MessageModel, UpdateMessagesRequest
+from app.models.chat_models import MessageKind, MessageModel, UpdateMessagesRequest
 from app.models.message_models import MessageRequestWithHistory
 from app.models.stream_events import ConversationInitializedFrame
 from app.models.user_models import AuthenticatedUser
@@ -114,6 +114,8 @@ async def save_conversation_async(
     bot_timestamp: datetime | None = None,
     error: str | None = None,
     follow_up_actions: list[str] | None = None,
+    kind: MessageKind = MessageKind.TEXT,
+    reacts_to_message_id: str | None = None,
 ) -> None:
     """Persist the finished turn to Mongo and bill token usage.
 
@@ -124,6 +126,11 @@ async def save_conversation_async(
     rather than now() — needed in voice mode, where finalize is deferred until a
     delegated executor finishes, so the user/comms messages must still sort ahead
     of the executor's answer (saved mid-wait).
+
+    ``kind``/``reacts_to_message_id`` stamp a comms ``REACT: <emoji>`` turn as a
+    one-emoji acknowledgment of the user's message (the web renders it as a
+    reaction badge rather than a bubble); the caller has already reduced
+    ``complete_message`` to the bare emoji.
     """
     bot_timestamp = bot_timestamp or datetime.now(UTC)
     user_timestamp = bot_timestamp - timedelta(milliseconds=100)
@@ -157,6 +164,8 @@ async def save_conversation_async(
         # of the turn the user saw, so a reload, a sync, or a second device must
         # rebuild them from the saved message alone.
         follow_up_actions=follow_up_actions,
+        kind=kind,
+        reacts_to_message_id=reacts_to_message_id,
     )
     bot_message.message_id = bot_message_id
 

@@ -15,6 +15,7 @@ text) rather than silently dropping a real message.
 import re
 
 from app.constants.comms import REACT_KEYWORD, SILENCE_KEYWORD, CommsDirectiveKind
+from app.constants.general import NEW_MESSAGE_BREAKER
 from app.models.agent_models import CommsDirective
 
 # Single logical line only (no DOTALL/MULTILINE): a real directive is one line,
@@ -30,7 +31,11 @@ def interpret_comms_output(text: str) -> CommsDirective:
         if keyword == SILENCE_KEYWORD:
             return CommsDirective(CommsDirectiveKind.SILENCE, payload)
         # A REACT with no emoji is meaningless — fall back to a normal reply so the
-        # user still gets something rather than an empty reaction.
+        # user still gets something rather than an empty reaction. The model has
+        # been observed trailing the directive with the bubble-separator token
+        # ("REACT: 😎<NEW_MESSAGE_BREAK>"); strip it so the badge renders the clean
+        # emoji, and a break-only payload still falls through to REPLY.
+        payload = payload.replace(NEW_MESSAGE_BREAKER, "").strip()
         if payload:
             return CommsDirective(CommsDirectiveKind.REACT, payload)
     return CommsDirective(CommsDirectiveKind.REPLY, text)

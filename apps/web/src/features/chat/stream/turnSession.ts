@@ -27,6 +27,7 @@ import { hasExecutorDelegation } from "./executorDelegation";
 import {
   buildTurnMessageRecord,
   buildUserMessageRecord,
+  type EmojiAckStamp,
   resolveTurnOutcome,
   type TurnMessageMeta,
 } from "./messageRecord";
@@ -89,6 +90,10 @@ export class TurnSession {
   private flushHandle: number | null = null;
   private lastPartialPersistAt = 0;
   private closeHandled = false;
+  /** The turn's reply resolved to a comms `REACT: <emoji>` ack — see
+   *  handleEmojiAck. Stamped on the record so the fold badges the emoji onto
+   *  the user's message instead of leaving the streamed directive as a bubble. */
+  private reactionAck: EmojiAckStamp | null = null;
   /** Approval ids currently pending a user decision. The turn is "awaiting
    *  approval" while non-empty; a set (not a bool) so multiple gated tools
    *  resolve independently without prematurely clearing the state. */
@@ -351,6 +356,10 @@ export class TurnSession {
 
       case "main_response_complete":
         this.handleMainResponseComplete();
+        return undefined;
+
+      case "emoji_ack":
+        this.handleEmojiAck(event.emoji, event.reactsToMessageId);
         return undefined;
 
       case "progress": {
@@ -622,6 +631,25 @@ export class TurnSession {
     this.scheduleFlush();
   }
 
+  /**
+   * The server ruled this turn a comms `REACT: <emoji>` ack: the streamed
+   * directive ("REACT: 😎") was bubble text, the emoji is a reaction on the
+   * user's message. Re-stamp the record (bare emoji + kind + target) in the
+   * store and IndexedDB right away, so `foldReactionAcks` hides the ack bubble
+   * and renders the badge without waiting for a reload. The record's final
+   * write at close carries the same stamp, and the server-message sync agrees
+   * on reload.
+   */
+  private handleEmojiAck(emoji: string, reactsToMessageId: string): void {
+    this.reactionAck = { kind: "emoji_ack", emoji, reactsToMessageId };
+    const record = this.buildRecord("sending");
+    if (!record) return;
+    useChatStore.getState().updateMessageInPlace(record);
+    db.putMessage(record).catch((error) => {
+      console.error("Failed to persist reaction ack:", error);
+    });
+  }
+
   private setSpinner(active: boolean): void {
     if (this.steering) return;
     const store = useStreamStore.getState();
@@ -690,7 +718,13 @@ export class TurnSession {
       createdAt: this.botCreatedAt ?? new Date(),
       options: this.args.options,
     };
-    return buildTurnMessageRecord(meta, this.acc, status, error);
+    return buildTurnMessageRecord(
+      meta,
+      this.acc,
+      status,
+      error,
+      this.reactionAck,
+    );
   }
 
   /** Batch accumulator flushes to one store write per animation frame. */

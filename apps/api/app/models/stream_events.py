@@ -222,6 +222,27 @@ class MainResponseCompleteFrame(BaseModel):
     usage: dict[str, Any] | None = None
 
 
+class EmojiAckPayload(BaseModel):
+    """What the reaction badge needs: the emoji and the message it reacts to."""
+
+    emoji: str
+    reacts_to_message_id: str
+
+
+class EmojiAckFrame(BaseModel):
+    """The turn resolved to comms' ``REACT: <emoji>`` control line.
+
+    The model streams the directive as ordinary text, so by the time the full
+    reply is known the client has already shown it as a bubble. This frame tells
+    the client to take that back: the emoji is a reaction badge attached to the
+    ``reacts_to_message_id`` message, never a bubble of its own. Only emitted on
+    the interactive path (background executor results announce the same outcome
+    over the WebSocket notification instead).
+    """
+
+    emoji_ack: EmojiAckPayload
+
+
 class TodoProgressFrame(BaseModel):
     """Envelope for a todo-progress snapshot."""
 

@@ -127,6 +127,7 @@ interface SseFrame {
   notice?: { text: string };
   text?: string;
   message_boundary?: MessageBoundary;
+  emoji_ack?: { emoji: string; reacts_to_message_id?: string };
   done?: boolean;
   conversation_id?: string;
 }
@@ -263,6 +264,14 @@ async function streamChatOnce(
         if (frame.text) {
           pendingText += frame.text;
           await onChunk(frame.text);
+        }
+        if (frame.emoji_ack) {
+          // comms answered the turn with a `REACT: <emoji>` ack — the streamed
+          // text was the raw directive; the delivered message is the bare emoji
+          // (platforms with native reactions attach it, everyone else sends it
+          // as text). Replace both buffers so onDone reports the emoji.
+          pendingText = "";
+          fullText = frame.emoji_ack.emoji;
         }
         if (frame.message_boundary) {
           const { discarded } = frame.message_boundary;

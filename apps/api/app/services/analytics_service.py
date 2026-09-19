@@ -68,6 +68,10 @@ class AnalyticsEvents(StrEnum):
     # message saying how the ack reached the user). Outcome + emoji only, never
     # the text.
     CHAT_BACKGROUND_UPDATE_RESOLVED = "chat:background_update_resolved"
+    # An interactive (non-executor) turn whose comms reply resolved to a
+    # one-emoji ``REACT`` ack instead of a message. Property `emoji` only,
+    # never the surrounding text.
+    CHAT_TURN_REACTED = "chat:turn_reacted"
     # A comms reply scored dirty against the AI-ism detectors and was
     # rewritten before delivery. Counts only — never the text.
     CHAT_STYLE_GUARD_REGENERATED = "chat:style_guard_regenerated"

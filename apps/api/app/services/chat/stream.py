@@ -28,17 +28,22 @@ from app.agents.core.background.executor_capture import (
     register_executor_capture,
     teardown_executor_capture,
 )
+from app.agents.core.comms_directive import interpret_comms_output
 from app.constants.artifacts import ARTIFACT_FORWARDER_SUBSCRIBE_TIMEOUT
 from app.constants.cache import EXECUTOR_WAIT_TIMEOUT, VOICE_EXECUTOR_RESULT_TIMEOUT_S
 from app.constants.chat import GENERIC_TURN_ERROR, RECURSION_LIMIT_MESSAGE
+from app.constants.comms import CommsDirectiveKind
 from app.constants.hil import HIL_ACK_APPROVED, HIL_ACK_DENIED, HIL_CLASSIFIER_HISTORY_TURNS
 from app.constants.log_tags import LogTag
 from app.core.stream_manager import stream_manager
 from app.db.repositories.conversations import conversation_repository
+from app.models.chat_models import MessageKind
 from app.models.message_models import MessageDict, MessageRequestWithHistory
 from app.models.stream_events import (
     ConversationDescriptionFrame,
     ConversationInitializedFrame,
+    EmojiAckFrame,
+    EmojiAckPayload,
     ErrorFrame,
     MainResponseCompleteFrame,
 )
@@ -128,6 +133,8 @@ class _StreamState:
         "error",
         "follow_up_actions",
         "is_cancelled",
+        "message_kind",
+        "reacts_to_message_id",
         "saved",
         "todo_progress_accumulated",
         "tool_data",
@@ -157,6 +164,11 @@ class _StreamState:
         # that don't send one (bots) get a server-minted id.
         self.user_message_id: str = turn_id or str(uuid4())
         self.bot_message_id: str = str(uuid4())
+        # When comms resolved the turn to a ``REACT: <emoji>`` ack (see
+        # resolve_turn_emoji_ack), the stamp the saved bot message carries so
+        # every surface renders it as a reaction badge, never a bubble.
+        self.message_kind: MessageKind = MessageKind.TEXT
+        self.reacts_to_message_id: str | None = None
         # When comms finished — stamped before any voice-mode executor wait so
         # the saved user/comms messages keep timestamps EARLIER than a delegated
         # executor's answer (saved mid-wait). The frontend sorts by createdAt.
@@ -265,6 +277,22 @@ async def _run_chat_stream(
         await _attach_executor_tool_data(stream_id, body, user, conversation_id, state)
 
         await _finalize_description(description_task, stream_id)
+        if state.message_kind is MessageKind.EMOJI_ACK and state.reacts_to_message_id:
+            # The client streamed the raw directive as text; the frame tells it
+            # to take that back and attach the emoji to the user's message as a
+            # reaction badge (mirrors the WebSocket notification the background
+            # path sends for the same outcome).
+            await stream_manager.publish_chunk(
+                stream_id,
+                format_sse_data(
+                    EmojiAckFrame(
+                        emoji_ack=EmojiAckPayload(
+                            emoji=state.complete_message,
+                            reacts_to_message_id=state.reacts_to_message_id,
+                        )
+                    ).model_dump()
+                ),
+            )
         await stream_manager.publish_chunk(
             stream_id,
             format_sse_data(
@@ -692,6 +720,28 @@ async def _handle_stream_error(
     return user_error
 
 
+def resolve_turn_emoji_ack(
+    complete_message: str, user_message_id: str
+) -> tuple[str, MessageKind, str | None]:
+    """Reduce comms' final message to the stamp the saved turn should carry.
+
+    When comms' entire reply is a ``REACT: <emoji>`` control line, the turn is a
+    one-emoji acknowledgment of the user's message: the bubble text becomes the
+    bare emoji (already stripped of ``<NEW_MESSAGE_BREAK>`` tokens by the
+    parser) and the bot message is stamped ``emoji_ack`` with the target, so
+    every surface renders it as a reaction badge instead of a "REACT: 😎" bubble.
+
+    ``SILENCE`` is deliberately NOT applied here: a live conversational turn
+    must never silently vanish, and the standing prompt only authorizes the
+    control line for background narration (``SILENCE_NOTE``), which routes
+    through ``deliver_result``. Anything else passes through unchanged.
+    """
+    directive = interpret_comms_output(complete_message)
+    if directive.kind is CommsDirectiveKind.REACT:
+        return directive.payload, MessageKind.EMOJI_ACK, user_message_id
+    return complete_message, MessageKind.TEXT, None
+
+
 async def _persist_turn(
     stream_id: str,
     body: MessageRequestWithHistory,
@@ -708,6 +758,12 @@ async def _persist_turn(
     state.complete_message, state.tool_data = await recover_stream_state(
         stream_id, state.complete_message, state.tool_data
     )
+    # A comms REACT directive resolves this turn to a one-emoji ack of the
+    # user's message; stamp the saved message so reload/sync fold it into a
+    # reaction badge (the live client learns the same from the emoji_ack frame).
+    state.complete_message, state.message_kind, state.reacts_to_message_id = (
+        resolve_turn_emoji_ack(state.complete_message, state.user_message_id)
+    )
     merge_tool_outputs(state.tool_data, state.tool_outputs)
     inject_todo_progress(state.tool_data, state.todo_progress_accumulated)
     reconstruct_subagent_groups(state.tool_data)
@@ -723,7 +779,15 @@ async def _persist_turn(
         bot_timestamp=state.turn_completed_at,
         error=state.error or None,
         follow_up_actions=state.follow_up_actions or None,
+        kind=state.message_kind,
+        reacts_to_message_id=state.reacts_to_message_id,
     )
+    if state.message_kind is MessageKind.EMOJI_ACK:
+        capture_event(
+            user.get("user_id", ""),
+            AnalyticsEvents.CHAT_TURN_REACTED,
+            {"emoji": state.complete_message},
+        )
     state.saved = True
 
 

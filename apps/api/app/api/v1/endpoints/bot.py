@@ -498,6 +498,16 @@ async def bot_chat_stream(request: Request, body: BotChatRequest) -> StreamingRe
                             yield f"data: {payload}\n\n"
                             continue
 
+                        # A turn resolved to a comms `REACT: <emoji>` ack — the
+                        # streamed text was the raw directive, and the bot must
+                        # take it back and deliver the bare emoji (a native
+                        # reaction where the platform supports one, plain text
+                        # elsewhere).
+                        if "emoji_ack" in data:
+                            payload = json.dumps({"emoji_ack": data["emoji_ack"]})
+                            yield f"data: {payload}\n\n"
+                            continue
+
                         # Skip web-only fields
                         if any(
                             key in data

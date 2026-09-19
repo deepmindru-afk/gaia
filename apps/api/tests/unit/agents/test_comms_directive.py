@@ -40,3 +40,13 @@ class TestInterpretCommsOutput:
     def test_react_without_emoji_falls_back_to_reply(self) -> None:
         d = interpret_comms_output("REACT:")
         assert d.kind == CommsDirectiveKind.REPLY
+
+    def test_react_payload_is_freed_of_message_breaks(self) -> None:
+        # The model sometimes trails the directive with the bubble-separator token.
+        d = interpret_comms_output("REACT: 😎<NEW_MESSAGE_BREAK>")
+        assert d.kind == CommsDirectiveKind.REACT
+        assert d.payload == "😎"
+
+    def test_react_with_only_a_message_break_falls_back_to_reply(self) -> None:
+        d = interpret_comms_output("REACT: <NEW_MESSAGE_BREAK>")
+        assert d.kind == CommsDirectiveKind.REPLY
