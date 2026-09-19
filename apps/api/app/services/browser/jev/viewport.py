@@ -106,7 +106,9 @@ _SCREEN_JS = r"""(limit) => {
     total += shown.length + 1;
     if (total >= limit) break;
   }
-  return {text: lines.join('\n'), url: location.href, title: document.title};
+  const doc = document.documentElement;
+  const atBottom = window.scrollY + h >= Math.max(doc.scrollHeight, document.body.scrollHeight) - 2;
+  return {text: lines.join('\n'), url: location.href, title: document.title, at_bottom: atBottom};
 }"""
 
 
@@ -151,6 +153,8 @@ class ViewportRead:
     text: str | None = None
     url: str | None = None
     title: str | None = None
+    #: True when the end of the page is on screen; None when the page could not say.
+    at_bottom: bool | None = None
 
 
 async def read_viewport(
@@ -214,6 +218,7 @@ async def _screen(session: CDPSession) -> ViewportRead:
         text=normalize_page_text(text)[:JEV_PAGE_TEXT_MAX_CHARS] if isinstance(text, str) else None,
         url=_field(value, "url"),
         title=_field(value, "title"),
+        at_bottom=bottom if isinstance(bottom := value.get("at_bottom"), bool) else None,
     )
 
 

@@ -142,7 +142,8 @@ def agent_result_message(result: BrowserResultSnapshot) -> str:
         f"{redirect}"
         f"BROWSER TASK DID NOT COMPLETE. Last state: {summary or 'the task could not be finished'}.\n\n"
         f"{_NO_RETRY} Tell the user honestly and briefly that it couldn't be finished, and why "
-        f"if it's clear. Do not fabricate a result. {_ONLY_THE_SUMMARY} {_NO_META}"
+        f"if it's clear. Do not fabricate a result, and offer no figure or answer from memory or from "
+        f"an earlier run: a run that confirmed nothing gives nothing. {_ONLY_THE_SUMMARY} {_NO_META}"
     )
 
 

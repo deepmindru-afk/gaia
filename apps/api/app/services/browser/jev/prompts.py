@@ -17,7 +17,7 @@ Recent WAIT actions are not evidence of loading. Prefer a useful visible control
 DONE requires visible evidence that ALL requirements are satisfied. If asked to open a result,
 a matching link is not enough. When the goal asks for the cheapest, the most, the best, the first,
 the last, the newest, a count, a total, or every item of a list, SCROLL_DOWN until no new items
-appear and open each next page before DONE; one screenful is a sample, not the list.
+appear and open each next page before DONE; one screenful is a sample, not the list. at_page_bottom true means the end of the page is on screen and nothing is further down: never SCROLL_DOWN then; the list has been seen, so answer or open its next page.
 BLOCKED means no supported operation can make progress.
 A recent action that carries a note is an instruction the user gave when handing the browser back.
 Follow it before anything else. A goal that opens with a latest instruction from the user means that

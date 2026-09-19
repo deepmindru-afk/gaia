@@ -112,12 +112,8 @@ def _completed_message(summary: str) -> str:
 
 
 def _failed_message(summary: str) -> str:
-    return (
-        f"BROWSER TASK DID NOT COMPLETE. Last state: {summary}.\n\n"
-        "Do not run the browser again for this request; tell the user what happened. "
-        f"Tell the user honestly and briefly that it couldn't be finished, and why "
-        f"if it's clear. Do not fabricate a result. {ONLY_THE_SUMMARY} {NO_META}"
-    )
+    """Return the failed run's message as the builder writes it; the builder has its own tests."""
+    return jr.agent_result_message(_result(BrowserSessionStatus.FAILED, False, summary))
 
 
 def _result(
@@ -1578,3 +1574,10 @@ async def test_a_run_whose_turn_has_ended_still_stops_on_its_own_cancel_flag(
 
     assert h.job_cancel_checks == ["job-1"]
     assert h.cancel_checks == []
+
+
+def test_a_failed_run_forbids_an_answer_from_memory() -> None:
+    """A failed run once resurfaced an earlier run's wrong figure as a reference answer."""
+    out = jr.agent_result_message(_result(BrowserSessionStatus.FAILED, False, "blocked"))
+
+    assert "from memory" in out

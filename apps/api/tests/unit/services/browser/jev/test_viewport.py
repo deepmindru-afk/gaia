@@ -224,10 +224,12 @@ class _ScreenClient:
         text: object = "Visible line\nSecond line",
         url: str = "https://de.wikipedia.org/wiki/Berlin",
         title: str = "Berlin - Wikipedia",
+        at_bottom: bool | None = None,
     ) -> None:
         self.text = text
         self.url = url
         self.title = title
+        self.at_bottom = at_bottom
         self.expressions: list[str] = []
 
         class _Runtime:
@@ -238,6 +240,8 @@ class _ScreenClient:
                     if isinstance(self.text, Exception):
                         raise self.text
                     value = {"text": self.text, "url": self.url, "title": self.title}
+                    if self.at_bottom is not None:
+                        value["at_bottom"] = self.at_bottom
                     return {"result": {"value": value}}
                 return {"result": {"value": {"7": {"on_screen": True, "cx": 0.5, "cy": 0.5}}}}
 
@@ -300,3 +304,11 @@ async def test_the_screens_text_is_stripped_of_zero_width_and_doubled_spaces() -
     screen = await read_viewport(_screen_browser(client), {7: _node("html/body/a")})
 
     assert screen.text == "January 1, 1992\nNext line here"
+
+
+async def test_the_page_end_being_on_screen_comes_back_with_the_text() -> None:
+    client = _ScreenClient(at_bottom=True)
+
+    screen = await read_viewport(_screen_browser(client), {7: _node("html/body/a")})
+
+    assert screen.at_bottom is True

@@ -252,3 +252,16 @@ def test_a_screen_that_fits_carries_no_note_about_missing_elements(flights_state
     request = build_request(observe(flights_state), "book a flight", [], ALL)
 
     assert "elements_note" not in request.state["page"]
+
+
+def test_jev_is_told_when_the_end_of_the_page_is_on_screen(flights_state) -> None:
+    """Twenty scrolls past the end of a list spent the whole step budget; the page's own answer stops that."""
+    from app.services.browser.jev.viewport import ViewportRead
+
+    at_end = build_request(
+        observe(flights_state, screen=ViewportRead(at_bottom=True)), "g", [], ALL
+    )
+    unknown = build_request(observe(flights_state), "g", [], ALL)
+
+    assert at_end.state["page"]["at_page_bottom"] is True
+    assert "at_page_bottom" not in unknown.state["page"]

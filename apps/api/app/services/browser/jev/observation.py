@@ -114,10 +114,15 @@ class JevObservation:
     elements: tuple[JevElement, ...]
     #: Controls on this screen that did not fit in the table Jev is shown.
     unlisted: int = 0
+    #: True when the end of the page is on screen, so nothing is further down.
+    at_bottom: bool | None = None
     fingerprint: str = field(default="")
 
     def page_state(self) -> dict[str, object]:
         state: dict[str, object] = {"url": self.url, "title": self.title, "text": self.text}
+        if self.at_bottom is not None:
+            # Twenty scrolls past the end of a list once spent the whole step budget.
+            state["at_page_bottom"] = self.at_bottom
         if self.unlisted:
             # A silent cut hid the control Jev needed with no way to know it existed.
             state["elements_listed"] = len(self.elements)
@@ -192,6 +197,7 @@ def observe(
         text=text,
         elements=listed,
         unlisted=unlisted,
+        at_bottom=screen.at_bottom,
     )
     return JevObservation(
         **{k: v for k, v in observation.__dict__.items() if k != "fingerprint"},
