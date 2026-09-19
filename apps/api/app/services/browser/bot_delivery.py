@@ -51,6 +51,7 @@ class BotProgressDelivery:
         self._conversation_id = conversation_id
         self._stream_screenshots = stream_screenshots
         self._links: dict[str, str] = {}
+        self._steps_shown = 0
 
     async def session(self, snapshot: BrowserSessionSnapshot) -> None:
         """Emit a session lifecycle event to the conversation."""
@@ -73,9 +74,10 @@ class BotProgressDelivery:
         # page and "Empty Tab" tells the user nothing.
         if _is_blank_tab(snapshot.url):
             return
-        # Caption with what the agent is DOING this step (its goal), not the page
-        # URL — a raw link reads as noise and invites a mis-click.
-        caption = _step_caption(snapshot.index, snapshot.goal, snapshot.actions)
+        # Captioned with the step's goal, never a raw URL, and numbered by what this
+        # user was shown: the run's index counts the blank tab skipped above.
+        self._steps_shown += 1
+        caption = _step_caption(self._steps_shown, snapshot.goal, snapshot.actions)
         # Only a real (http) CDN URL is worth sending as a photo; the dev-only
         # inline data URL fallback is not something to upload to a platform.
         if (
@@ -87,7 +89,7 @@ class BotProgressDelivery:
                 self._platform,
                 self._user_id,
                 snapshot.screenshot,
-                filename=f"browser-step-{snapshot.index}.png",
+                filename=f"browser-step-{self._steps_shown}.png",
                 caption=caption,
             )
             if sent:

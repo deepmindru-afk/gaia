@@ -15,6 +15,7 @@ from app.schemas.browser import (
     BrowserSessionSnapshot,
     BrowserStepSnapshot,
 )
+from app.services.browser import bot_delivery as bot_delivery_mod
 from app.services.browser.bot_delivery import (
     _FAILURE_REASON_MAX_CHARS,
     BotProgressDelivery,
@@ -226,8 +227,8 @@ class TestBotProgressDeliveryStep:
                 ConversationSource.TELEGRAM,
                 "user-1",
                 "https://cdn.example.com/shot.png",
-                filename="browser-step-2.png",
-                caption="Step 2 · Clicking",
+                filename="browser-step-1.png",
+                caption="Step 1 · Clicking",
             )
             mock_text.assert_not_awaited()
 
@@ -678,3 +679,21 @@ class TestOneLinkPerRun:
         sent = [call[0][2][0] for call in mock_pub.await_args_list]
         assert all("https://live.example.com/first" in message for message in sent)
         assert not any("second" in message for message in sent)
+
+
+async def test_the_first_step_the_user_sees_is_step_one(delivery, monkeypatch) -> None:
+    """The blank-tab navigate is never shown, so numbering from the run's own index opened every run at Step 2."""
+    sent: list[str] = []
+
+    async def _message(platform, user_id, blocks) -> bool:
+        sent.extend(blocks)
+        return True
+
+    monkeypatch.setattr(bot_delivery_mod, "publish_outbound_message", _message)
+    monkeypatch.setattr(bot_delivery_mod, "publish_outbound_photo", AsyncMock(return_value=False))
+
+    await delivery.step(BrowserStepSnapshot(index=1, goal="Opening the site", url="about:blank"))
+    await delivery.step(BrowserStepSnapshot(index=2, goal="Searching", url="https://example.com"))
+    await delivery.step(BrowserStepSnapshot(index=3, goal="Reading", url="https://example.com/a"))
+
+    assert [line.split(" · ")[0] for line in sent] == ["Step 1", "Step 2"]
