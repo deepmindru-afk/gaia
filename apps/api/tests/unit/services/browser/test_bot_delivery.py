@@ -379,10 +379,36 @@ class TestBotProgressDeliveryHandoff:
             mock_link.assert_awaited_once_with("sess-1", "user-1")
             msg = mock_pub.call_args[0][2][0]
             assert msg == (
-                "I need you to take over for this step:\nPayment needed\n\n"
+                "I need you to take over for this step: Payment needed\n"
+                "Open the live browser: https://live.example.com/link\n"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
-                "\n\nOpen the live browser: https://live.example.com/link"
             )
+
+    async def test_handoff_is_one_delivery_call_with_no_blank_line_breaks(self, delivery):
+        """The bot's outbound splitter breaks a message at every blank line; a handoff with a credentials note and a link must stay one paragraph or it arrives as four separate messages."""
+        from app.constants.browser import SensitiveCategory
+
+        snap = BrowserHandoffSnapshot(
+            handoff_id="h1",
+            reason="Sign in to your Reddit account to continue.",
+            session_id="sess-1",
+            status=HandoffStatus.PENDING,
+            category=SensitiveCategory.CREDENTIALS,
+        )
+        with (
+            patch(
+                "app.services.browser.bot_delivery.create_live_view_link",
+                new=AsyncMock(return_value="https://live/x"),
+            ),
+            patch(
+                "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+            ) as mp,
+        ):
+            await delivery.handoff(snap)
+            mp.assert_awaited_once()
+            text_parts = mp.call_args[0][2]
+            assert len(text_parts) == 1
+            assert "\n\n" not in text_parts[0]
 
     async def test_credentials_handoff_reassures_the_login_is_saved(self, delivery):
         """A sign-in handoff tells the user the session will be saved encrypted — it is true (storage_persistence.py) and it is what makes a login worth doing once."""
@@ -429,11 +455,11 @@ class TestBotProgressDeliveryHandoff:
         ):
             await delivery.handoff(snap)
             assert mp.call_args[0][2][0] == (
-                "I need you to take over for this step:\n"
-                "Enter your password and click Sign in.\n\n"
+                "I need you to take over for this step: "
+                "Enter your password and click Sign in.\n"
+                f"{BROWSER_CREDENTIALS_SAVED_NOTE}\n"
+                "Open the live browser: https://live/x\n"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
-                f"\n\n{BROWSER_CREDENTIALS_SAVED_NOTE}"
-                "\n\nOpen the live browser: https://live/x"
             )
 
     async def test_non_credentials_handoff_omits_the_saved_note(self, delivery):
@@ -473,7 +499,7 @@ class TestBotProgressDeliveryHandoff:
             ml.assert_not_awaited()
             msg = mp.call_args[0][2][0]
             assert msg == (
-                "I need you to take over for this step:\nNeed creds\n\n"
+                "I need you to take over for this step: Need creds\n"
                 'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )
 

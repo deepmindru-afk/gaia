@@ -108,15 +108,16 @@ class BotProgressDelivery:
         if snapshot.status != HandoffStatus.PENDING:
             return
 
-        msg = (
-            f"I need you to take over for this step:\n{snapshot.reason}\n\n"
-            'Reply "done" when you\'ve finished, or "stop" to cancel.'
-        )
+        # One paragraph, single newlines only: the bot's outbound splitter breaks
+        # a message into separate sends at every blank line, and four sends for
+        # one takeover request buried the actual ask in a burst of bubbles.
+        lines = [f"I need you to take over for this step: {snapshot.reason}"]
         if snapshot.category == SensitiveCategory.CREDENTIALS:
-            msg += f"\n\n{BROWSER_CREDENTIALS_SAVED_NOTE}"
+            lines.append(BROWSER_CREDENTIALS_SAVED_NOTE)
         if snapshot.session_id:
-            msg += f"\n\nOpen the live browser: {await self._link(snapshot.session_id)}"
-        await self._text(msg)
+            lines.append(f"Open the live browser: {await self._link(snapshot.session_id)}")
+        lines.append('Reply "done" when you\'ve finished, or "stop" to cancel.')
+        await self._text("\n".join(lines))
 
     async def result(self, snapshot: BrowserResultSnapshot) -> None:
         """Emit the final task result to the conversation."""
