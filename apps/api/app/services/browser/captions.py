@@ -20,12 +20,17 @@ _TARGETED_ACTIONS = {"click", "select_dropdown", "upload_file"}
 
 _TARGET_MAX_CHARS = 40
 
+# A "Finished" caption on the terminal step says nothing the reader didn't
+# already know from seeing the photo -- the done action's own summary is what
+# was actually found. TODO(browser-constants): move to app/constants/browser.py.
+_DONE_SUMMARY_MAX_CHARS = 80
 
-def _shorten(text: str) -> str:
+
+def _shorten(text: str, max_chars: int = _TARGET_MAX_CHARS) -> str:
     collapsed = " ".join(text.split())
-    if len(collapsed) <= _TARGET_MAX_CHARS:
+    if len(collapsed) <= max_chars:
         return collapsed
-    return collapsed[: _TARGET_MAX_CHARS - 1].rstrip() + "…"
+    return collapsed[: max_chars - 1].rstrip() + "…"
 
 
 def _navigate_caption(params: dict[str, Any], _target: str | None) -> str:
@@ -59,9 +64,12 @@ def _select_dropdown_caption(params: dict[str, Any], target: str | None) -> str:
 def _done_caption(params: dict[str, Any], _target: str | None) -> str:
     # DoneAction.success defaults to True; Jev ends a run it cannot advance
     # with success=False, and "BLOCKED" is not something to show a reader.
-    if params.get("success", True):
-        return "Finished"
-    return "Could not find a way forward on this page"
+    if not params.get("success", True):
+        return "Could not find a way forward on this page"
+    text = str(params.get("text") or "").strip()
+    # The verb ("Finished") says nothing a reader can't already see in the
+    # photo; the done action's own summary says what was actually found.
+    return _shorten(text, _DONE_SUMMARY_MAX_CHARS) if text else "Finished"
 
 
 def _click_caption(params: dict[str, Any], target: str | None) -> str:

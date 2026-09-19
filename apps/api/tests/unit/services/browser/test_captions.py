@@ -85,6 +85,28 @@ class TestDescribeAction:
         # Browser-Use's DoneAction defaults success to True.
         assert describe_action("done", {}) == "Finished"
 
+    def test_done_with_an_empty_text_reads_as_finished(self):
+        assert describe_action("done", {"text": "  ", "success": True}) == "Finished"
+
+    def test_a_finished_done_captions_with_its_own_summary(self):
+        """The terminal step photo should say what was found, not the DONE verb."""
+        assert (
+            describe_action("done", {"text": "Top HN post: 227 points.", "success": True})
+            == "Top HN post: 227 points."
+        )
+
+    def test_done_summary_collapses_internal_whitespace(self):
+        assert (
+            describe_action("done", {"text": "line one\nline two", "success": True})
+            == "line one line two"
+        )
+
+    def test_done_summary_longer_than_80_chars_is_truncated(self):
+        text = "x" * 90
+        result = describe_action("done", {"text": text, "success": True})
+        assert result.endswith("…")
+        assert len(result) == 80
+
     def test_fallback_replaces_underscores(self):
         assert describe_action("my_custom_action", {}) == "my custom action"
 
