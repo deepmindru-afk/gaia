@@ -109,6 +109,64 @@ class TestDeliverWorkflowResultToPlatforms:
         # read the user document again to recompute it.
         assert publish.await_args.kwargs == {"destination_override": "tg-123"}
 
+    async def test_it_reports_which_platform_received_the_result(self) -> None:
+        """A wrong verdict makes a skipped delivery look delivered in the metrics."""
+        with (
+            _channel(TELEGRAM),
+            patch(f"{MODULE}.BotService.get_or_create_session", AsyncMock(return_value="tg-conv")),
+            patch(f"{MODULE}.update_messages", AsyncMock()),
+            patch(
+                f"{MODULE}.publish_outbound_message",
+                AsyncMock(return_value=OutboundResult.PUBLISHED),
+            ),
+            patch(f"{MODULE}.record_platform_delivery", AsyncMock()),
+        ):
+            delivered = await deliver_result_to_platforms(
+                user=USER, user_id=USER_ID, notification_text=TEXT, origin=self.ORIGIN
+            )
+
+        assert delivered is ConversationSource.TELEGRAM
+
+    async def test_a_skipped_publish_reports_nobody_was_reached(self) -> None:
+        with (
+            _channel(TELEGRAM),
+            patch(f"{MODULE}.BotService.get_or_create_session", AsyncMock(return_value="tg-conv")),
+            patch(f"{MODULE}.update_messages", AsyncMock()),
+            patch(
+                f"{MODULE}.publish_outbound_message",
+                AsyncMock(return_value=OutboundResult.SKIPPED),
+            ),
+        ):
+            delivered = await deliver_result_to_platforms(
+                user=USER, user_id=USER_ID, notification_text=TEXT, origin=self.ORIGIN
+            )
+
+        assert delivered is None
+
+    async def test_a_failed_publish_reports_nobody_was_reached(self) -> None:
+        with (
+            _channel(TELEGRAM),
+            patch(f"{MODULE}.BotService.get_or_create_session", AsyncMock(return_value="tg-conv")),
+            patch(f"{MODULE}.update_messages", AsyncMock()),
+            patch(
+                f"{MODULE}.publish_outbound_message",
+                AsyncMock(return_value=OutboundResult.FAILED),
+            ),
+        ):
+            delivered = await deliver_result_to_platforms(
+                user=USER, user_id=USER_ID, notification_text=TEXT, origin=self.ORIGIN
+            )
+
+        assert delivered is None
+
+    async def test_blank_text_reports_nobody_was_reached(self) -> None:
+        assert (
+            await deliver_result_to_platforms(
+                user=USER, user_id=USER_ID, notification_text="   ", origin=self.ORIGIN
+            )
+            is None
+        )
+
     async def test_failed_publish_is_logged_not_raised(self) -> None:
         """A failed publish is swallowed but observable: log.error lands in the wide event's errors[]."""
         with (

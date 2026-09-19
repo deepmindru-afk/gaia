@@ -192,6 +192,18 @@ ALWAYS evaluated in the user's stored timezone. Pass cron in user-local wall-clo
 - After 3 failures: `failed` label added, user notified
 - Success with recurrence: `scheduled_at` advances, new job enqueued
 
+### Where a run's result goes
+
+- The run's **final message is delivered to the user's chat app** automatically
+  when it finishes (WhatsApp/Telegram/Discord/Slack), as a normal GAIA message.
+- So the answer IS the user-facing message: write it for them, and do NOT also
+  call `send_notification` to announce it — that sends it twice.
+- Nothing worth saying? End with an empty message and nothing is sent.
+- `notify_on_run` (default `True`, settable on create/update) turns delivery off
+  for a todo whose runs the user should not hear about, e.g. a frequent poll
+  that usually finds nothing. A silent todo reaches the user only via a
+  deliberate `send_notification`.
+
 ## Institutional Memory
 
 ### References

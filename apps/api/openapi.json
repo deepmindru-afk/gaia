@@ -16012,6 +16012,12 @@
             "title": "Labels",
             "type": "array"
           },
+          "notify_on_run": {
+            "default": true,
+            "description": "Deliver this tracked todo's run result to the user's chat platform when a scheduled or triggered run finishes. The tracked-todo equivalent of a workflow's notify_on_completion; unrelated to the todo being marked completed.",
+            "title": "Notify On Run",
+            "type": "boolean"
+          },
           "priority": {
             "$ref": "#/components/schemas/Priority",
             "default": "none",
@@ -16213,6 +16219,12 @@
             "title": "Labels",
             "type": "array"
           },
+          "notify_on_run": {
+            "default": true,
+            "description": "Deliver this tracked todo's run result to the user's chat platform when a scheduled or triggered run finishes. The tracked-todo equivalent of a workflow's notify_on_completion; unrelated to the todo being marked completed.",
+            "title": "Notify On Run",
+            "type": "boolean"
+          },
           "priority": {
             "$ref": "#/components/schemas/Priority",
             "default": "none",
@@ -16348,6 +16360,7 @@
           "gaia_retry_count",
           "expires_at",
           "references",
+          "notify_on_run",
           "id",
           "user_id",
           "created_at",
@@ -16492,6 +16505,17 @@
               }
             ],
             "title": "Labels"
+          },
+          "notify_on_run": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify On Run"
           },
           "priority": {
             "anyOf": [

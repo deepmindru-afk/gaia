@@ -11,6 +11,7 @@ from uuid import uuid4
 from arq.connections import ArqRedis
 
 from app.agents.core.agent import AgentRunOptions, call_agent_silent
+from app.agents.prompts.todo_prompts import HEALTH_CHECK_VERDICT_ONLY
 from app.constants.chat import MAX_MESSAGE_LENGTH
 from app.constants.todos import BLOCKING_LABELS
 from app.db.repositories.todos import todo_repository
@@ -377,7 +378,7 @@ async def _health_check_expired(todo: TodoDocument, pool: ArqRedis) -> ExpiredOu
         f"Title: {title}\n"
         f"Canvas:\n{canvas}\n\n"
         "Did this expire cleanly (i.e. no further action is needed)? "
-        "Respond with exactly one of:\n"
+        f"{HEALTH_CHECK_VERDICT_ONLY} Respond with exactly one of:\n"
         "ARCHIVE: <brief reason>\n"
         "NOTIFY: <message to send to the user>"
     )
@@ -432,7 +433,7 @@ async def _health_check_dormant(todo: TodoDocument, pool: ArqRedis) -> DormantOu
         f"Title: {title}\n"
         f"Canvas:\n{canvas}\n\n"
         "Is there a clear, concrete next action that can be taken right now? "
-        "Respond with exactly one of:\n"
+        f"{HEALTH_CHECK_VERDICT_ONLY} Respond with exactly one of:\n"
         "EXECUTE: <specific action to perform immediately>\n"
         "NEEDS_ATTENTION: <brief summary of why this needs human review>"
     )

@@ -6,9 +6,11 @@ from uuid import UUID
 
 import pytest
 
+from app.constants.analytics import POSTHOG_PROVIDER_KEY
 from app.services.analytics_service import (
     AnalyticsEvents,
     SubscriptionPlan,
+    _get_posthog_client,
     capture_context_event,
     capture_event,
     identify_user,
@@ -56,6 +58,37 @@ class TestAnalyticsEvents:
         assert AnalyticsEvents.SUBSCRIPTION_RENEWED == "subscription:renewed"
         assert AnalyticsEvents.SUBSCRIPTION_CANCELLED == "subscription:cancelled"
         assert AnalyticsEvents.SUBSCRIPTION_EXPIRED == "subscription:expired"
+
+
+# ---------------------------------------------------------------------------
+# _get_posthog_client
+# ---------------------------------------------------------------------------
+
+
+class TestGetPosthogClient:
+    """Every other test patches this away, so nothing else notices analytics going dead."""
+
+    def test_it_returns_the_registered_client(self):
+        client = MagicMock()
+        with patch("app.services.analytics_service.providers.get", return_value=client) as registry:
+            assert _get_posthog_client() is client
+
+        # The key must match the one the provider is registered under; a different
+        # string resolves to nothing and every capture becomes a no-op.
+        registry.assert_called_once_with(POSTHOG_PROVIDER_KEY)
+
+    def test_an_unregistered_provider_is_reported_as_absent(self):
+        with patch("app.services.analytics_service.providers.get", return_value=None):
+            assert _get_posthog_client() is None
+
+    def test_a_captured_event_reaches_the_real_client_through_the_registry(self):
+        """Proves capture_event is wired to the registry, not merely to a patched helper."""
+        client = MagicMock()
+        with patch("app.services.analytics_service.providers.get", return_value=client):
+            capture_event("user-1", AnalyticsEvents.USER_SIGNED_UP, {"plan": "pro"})
+
+        client.capture.assert_called_once()
+        assert client.capture.call_args.kwargs["distinct_id"] == "user-1"
 
 
 # ---------------------------------------------------------------------------
