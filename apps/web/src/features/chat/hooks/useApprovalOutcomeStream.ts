@@ -62,12 +62,22 @@ export function useApprovalOutcomeStream() {
             } catch {
               return;
             }
-            if (status === null || status === "running") return;
+            if (
+              status === null ||
+              status === "running" ||
+              status === "executing"
+            )
+              return;
             if (TERMINAL_OUTCOMES.has(status)) {
               setOutcome(status as ApprovalStatus);
               setPhase("done");
               aborter.abort();
             }
+          },
+          onclose() {
+            // Server closed without an outcome (timeout/race): end the row.
+            // The websocket broadcast and reload truth still settle the card.
+            setPhase("done");
           },
           onerror() {
             setPhase("done");

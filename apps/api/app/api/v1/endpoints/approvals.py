@@ -135,7 +135,9 @@ async def approval_outcome_events(
         raise ApprovalRequestForbiddenError()
 
     async def _frames() -> AsyncGenerator[str, None]:
-        if row.state not in LIVE_LEDGER_STATES:
+        # Only terminal states close the stream: EXECUTING is a claim, not an
+        # outcome — closing on it would strand the client on a running row.
+        if row.state not in LIVE_LEDGER_STATES and row.state != LedgerState.EXECUTING:
             yield f"data: {json.dumps({'status': str(row.state), 'approval_id': approval_id})}\n\n"
             return
         yield f"data: {json.dumps({'status': 'running', 'approval_id': approval_id})}\n\n"
@@ -144,7 +146,11 @@ async def approval_outcome_events(
             await asyncio.sleep(APPROVAL_EVENTS_POLL_SECONDS)
             waited += APPROVAL_EVENTS_POLL_SECONDS
             current = await approval_ledger_repository.get_by_approval_id(approval_id)
-            if current is None or current.state not in LIVE_LEDGER_STATES:
+            if (
+                current is None
+                or current.state not in LIVE_LEDGER_STATES
+                and current.state != LedgerState.EXECUTING
+            ):
                 state = str(current.state) if current is not None else "gone"
                 yield f"data: {json.dumps({'status': state, 'approval_id': approval_id})}\n\n"
                 return

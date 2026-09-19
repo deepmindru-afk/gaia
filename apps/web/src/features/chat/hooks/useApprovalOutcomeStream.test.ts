@@ -59,6 +59,31 @@ describe("useApprovalOutcomeStream", () => {
     expect(result.current.outcome).toBeNull();
   });
 
+  it("ignores executing claims and ends cleanly on server close", async () => {
+    let onmessage: ((event: { data: string }) => void) | null = null;
+    let onclose: (() => void) | null = null;
+    listeners.impl = (_url, opts) => {
+      onmessage = opts.onmessage as (event: { data: string }) => void;
+      onclose = opts.onclose as () => void;
+    };
+    const { result } = renderHook(() => useApprovalOutcomeStream());
+    act(() => {
+      result.current.start("ap_1");
+    });
+    act(() => {
+      onmessage?.({
+        data: JSON.stringify({ status: "executing", approval_id: "ap_1" }),
+      });
+    });
+    expect(result.current.phase).toBe("running");
+    expect(result.current.outcome).toBeNull();
+    act(() => {
+      onclose?.();
+    });
+    await waitFor(() => expect(result.current.phase).toBe("done"));
+    expect(result.current.outcome).toBeNull();
+  });
+
   it("ignores malformed frames", async () => {
     let onmessage: ((event: { data: string }) => void) | null = null;
     listeners.impl = (_url, opts) => {

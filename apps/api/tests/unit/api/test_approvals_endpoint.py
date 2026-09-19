@@ -497,6 +497,26 @@ class TestApprovalEventsStream:
         assert resp.status_code == 200
         assert _sse_statuses(resp.text) == ["executed"]
 
+    async def test_executing_claim_keeps_stream_open_until_terminal(self, client: AsyncClient):
+        from unittest.mock import AsyncMock, patch
+
+        with (
+            patch(
+                "app.api.v1.endpoints.approvals.approval_ledger_repository",
+            ) as repo,
+            patch("app.api.v1.endpoints.approvals.APPROVAL_EVENTS_POLL_SECONDS", 0),
+        ):
+            repo.get_by_approval_id = AsyncMock(
+                side_effect=[
+                    _ledger_row("approved"),
+                    _ledger_row("executing"),
+                    _ledger_row("executed"),
+                ]
+            )
+            resp = await client.get(f"{APPROVALS_BASE}/ap_1/events")
+        assert resp.status_code == 200
+        assert _sse_statuses(resp.text) == ["running", "executed"]
+
     async def test_pending_streams_running_then_outcome(self, client: AsyncClient):
         from unittest.mock import AsyncMock, patch
 
