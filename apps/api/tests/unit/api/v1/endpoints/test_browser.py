@@ -25,7 +25,13 @@ from tests.helpers import captured_wide_event
 
 from app.api.v1.dependencies.oauth_dependencies import get_user_id
 from app.api.v1.endpoints import browser as browser_ep
-from app.constants.browser import BrowserSessionStatus, HandoffDecision, HandoffStatus
+from app.constants.browser import (
+    BROWSER_HANDOFF_ACK_CONTINUE,
+    BrowserSessionStatus,
+    HandoffDecision,
+    HandoffKind,
+    HandoffStatus,
+)
 from app.constants.log_tags import LogTag
 from app.schemas.browser import (
     BrowserLoginResponse,
@@ -655,3 +661,42 @@ class TestAuthenticatedUserThroughTheApp:
         """A route resolving its own id from request.state is how the 500s got in."""
         route = next(r for r in browser_ep.router.routes if r.path == path and method in r.methods)
         assert [d.call for d in route.dependant.dependencies] == [get_user_id]
+
+
+class TestACardDecisionReachesTheAgentsThread:
+    """The reply the agent later voiced called the user's own "skip the upvote" a mistake."""
+
+    async def _decide(
+        self, monkeypatch: pytest.MonkeyPatch, kind: HandoffKind, message: str | None
+    ):
+        from app.schemas.browser import HandoffRecord
+
+        record = HandoffRecord(
+            status=HandoffStatus.PENDING, user_id="u1", conversation_id="conv-1", kind=kind
+        )
+        monkeypatch.setattr(browser_ep, "get_handoff", AsyncMock(return_value=record))
+        monkeypatch.setattr(
+            browser_ep, "resolve_handoff", AsyncMock(return_value=HandoffStatus.COMPLETED)
+        )
+        recorded = AsyncMock()
+        monkeypatch.setattr(browser_ep, "record_exchange_in_thread", recorded)
+        payload = HandoffDecisionRequest(decision=HandoffDecision.CONTINUE, message=message)
+        await browser_ep.decide_browser_handoff("h1", payload, "u1")
+        return recorded
+
+    async def test_the_users_note_and_the_ack_are_written_to_the_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = await self._decide(monkeypatch, HandoffKind.USER, "skip the upvote")
+
+        conversation_id, words, reply = recorded.await_args.args
+        assert conversation_id == "conv-1"
+        assert "skip the upvote" in words
+        assert reply == BROWSER_HANDOFF_ACK_CONTINUE
+
+    async def test_an_agents_own_handoff_is_not_written_as_the_users_words(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = await self._decide(monkeypatch, HandoffKind.AGENT, "navigate to r/python")
+
+        recorded.assert_not_awaited()

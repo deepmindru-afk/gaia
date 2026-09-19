@@ -19,9 +19,17 @@ from typing import Annotated, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from playwright.sync_api import StorageState
 
+from app.agents.core.background.comms_narrator import record_exchange_in_thread
 from app.api.v1.dependencies.oauth_dependencies import get_user_id
 from app.config.settings import settings
-from app.constants.browser import BROWSER_IMPORT_TOKEN_TTL_SECONDS
+from app.constants.browser import (
+    BROWSER_HANDOFF_ACK_CANCEL,
+    BROWSER_HANDOFF_ACK_CONTINUE,
+    BROWSER_HANDOFF_CARD_DECISION,
+    BROWSER_IMPORT_TOKEN_TTL_SECONDS,
+    HandoffDecision,
+    HandoffKind,
+)
 from app.constants.log_tags import LogTag
 from app.schemas.browser import (
     BrowserImportRequest,
@@ -76,6 +84,7 @@ async def decide_browser_handoff(
         user={"id": user_id}, browser={"handoff_id": handoff_id, "decision": payload.decision.value}
     )
 
+    pending = await get_handoff(handoff_id)
     try:
         resolved = await resolve_handoff(handoff_id, payload.decision, user_id, payload.message)
     except BrowserHandoffNotOwned as exc:
@@ -89,7 +98,26 @@ async def decide_browser_handoff(
     log.info(
         f"{LogTag.BROWSER} Browser handoff decided", handoff_id=handoff_id, status=resolved.value
     )
+    if pending is not None and pending.kind is HandoffKind.USER and pending.conversation_id:
+        # The agent's thread never saw this decision, so the reply it later voiced
+        # called the user's own "skip the upvote" a mistake.
+        await record_exchange_in_thread(
+            pending.conversation_id,
+            BROWSER_HANDOFF_CARD_DECISION.format(decision=_card_words(payload)),
+            _BROWSER_HANDOFF_ACKS[payload.decision],
+        )
     return HandoffDecisionResponse(handoff_id=handoff_id, status=resolved)
+
+
+def _card_words(payload: HandoffDecisionRequest) -> str:
+    note = (payload.message or "").strip()
+    return f"{payload.decision.value}: {note}" if note else payload.decision.value
+
+
+_BROWSER_HANDOFF_ACKS = {
+    HandoffDecision.CONTINUE: BROWSER_HANDOFF_ACK_CONTINUE,
+    HandoffDecision.CANCEL: BROWSER_HANDOFF_ACK_CANCEL,
+}
 
 
 @router.get("/sessions/{session_id}/live-view-token", response_model=LiveViewTokenResponse)
