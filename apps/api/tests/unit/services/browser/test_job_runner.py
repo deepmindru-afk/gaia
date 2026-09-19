@@ -374,7 +374,7 @@ def _install(
         h.cancel_checks.append(stream_id)
         return True
 
-    monkeypatch.setattr(jr.stream_manager, "is_cancelled", _is_cancelled)
+    monkeypatch.setattr(type(jr.stream_manager), "is_cancelled", staticmethod(_is_cancelled))
     return h
 
 
