@@ -36,8 +36,14 @@ from app.constants.hil import (
 from app.constants.log_tags import LogTag
 from app.core.stream_manager import stream_manager
 from app.db.redis import redis_cache
+from app.db.repositories.approval_ledger import approval_ledger_repository
 from app.db.repositories.conversations import conversation_repository
-from app.models.hil_models import DeclinedCallRecord, HILApprovalRecord, HILApprovalStatus
+from app.models.hil_models import (
+    DeclinedCallRecord,
+    HILApprovalRecord,
+    HILApprovalStatus,
+    LedgerState,
+)
 from app.models.stream_events import ApprovalRequestEntry, ApprovalRequestEntryData
 from app.services.hil.approvals_store import record_auto_approval, upsert_pending_approval
 from app.services.hil.notify import notify_approval_pending
@@ -134,11 +140,7 @@ async def publish_ledger_request(
     entry.data.age_seconds = 0
     entry.data.ledger_version = 0
     session = get_session(stream_id)
-    held = (
-        live
-        and session is not None
-        and session.kind is RunKind.LIVE
-    )
+    held = live and session is not None and session.kind is RunKind.LIVE
     if not held:
         # Background runs, detached queued runs, and runs with no session at
         # all publish immediately: nobody is watching this stream (or there is
@@ -379,6 +381,69 @@ def settle_session_approval_frame(
         return settled
     except Exception:
         return False
+
+
+async def flush_held_approval_cards(stream_id: str) -> int:
+    """Publish held PENDING cards at run end — the open client never renders
+    them otherwise until a full refresh re-fetches messages.
+
+    Only rows still PENDING go live; anything decided or revoked meanwhile is
+    dropped unseen (a card the user never saw needs no tombstone). Each frame
+    clears its held marker as it publishes, so a second flush is a no-op and
+    live frames can never duplicate. Best-effort: returns the flushed count,
+    never raises.
+    """
+    try:
+        session = get_session(stream_id)
+        if session is None:
+            return 0
+        flushed = 0
+        kept: list[dict[str, Any]] = []
+        for event in session.tool_events:
+            if not isinstance(event, dict) or event.get("_held_approval") is not True:
+                kept.append(event)
+                continue
+            tool_data = event.get("tool_data")
+            data = tool_data.get("data") if isinstance(tool_data, dict) else None
+            approval_id = data.get("approval_id") if isinstance(data, dict) else None
+            try:
+                row = (
+                    await approval_ledger_repository.get_by_approval_id(approval_id)
+                    if isinstance(approval_id, str)
+                    else None
+                )
+            except Exception:
+                row = None
+            if row is None or row.state not in (
+                LedgerState.PENDING,
+                LedgerState.APPROVED,
+            ):
+                # Decided, revoked, or gone: a card the user never saw needs
+                # no tombstone — drop it so the drain cannot resurrect it.
+                continue
+            try:
+                frame = {"tool_data": tool_data}
+                await stream_manager.publish_chunk(stream_id, f"data: {json.dumps(frame)}\n\n")
+                _schedule_pending_notification(
+                    row.user_id, row.conversation_id, row.approval_id, row.summary
+                )
+            except Exception as e:
+                log.warning(
+                    f"{LogTag.HIL} Held card flush missed its stream",
+                    approval_id=row.approval_id,
+                    error_type=type(e).__name__,
+                )
+                kept.append(event)
+                continue
+            # Marker stripped, frame kept: the end-of-run drain still persists
+            # it (reload-safe), while a second flush sees no marker and stays
+            # a no-op — live frames can never duplicate.
+            kept.append(frame)
+            flushed += 1
+        session.tool_events[:] = kept
+        return flushed
+    except Exception:
+        return 0
 
 
 def _approval_entry(

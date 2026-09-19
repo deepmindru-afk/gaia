@@ -862,3 +862,36 @@ class TestBuildRunItem:
         )
 
         assert item["bot_message_id"] is None
+
+
+class TestHeldCardsFlushedAtFinalize:
+    async def test_finalize_flushes_held_cards_before_done_signal(self, boundaries) -> None:
+        """Held PENDING cards must go live at run end — otherwise the open
+        client never renders them until a full refresh re-fetches messages."""
+        from app.services.hil import bridge
+
+        boundaries.stream_manager.is_cancelled.return_value = False
+        session = create_session("s1", RunKind.LIVE)
+
+        with patch.object(
+            bridge, "flush_held_approval_cards", new=AsyncMock(return_value=1)
+        ) as flush:
+            await er._finalize_executor_run(_run(RunKind.LIVE), TASK, "txt", "final")
+
+        flush.assert_awaited_once_with("s1")
+        assert session.done_event.is_set()
+
+    async def test_flush_failure_never_breaks_finalize(self, boundaries) -> None:
+        from app.services.hil import bridge
+
+        boundaries.stream_manager.is_cancelled.return_value = False
+        session = create_session("s1", RunKind.LIVE)
+
+        with patch.object(
+            bridge,
+            "flush_held_approval_cards",
+            new=AsyncMock(side_effect=RuntimeError("redis down")),
+        ):
+            await er._finalize_executor_run(_run(RunKind.LIVE), TASK, "txt", "final")
+
+        assert session.done_event.is_set()

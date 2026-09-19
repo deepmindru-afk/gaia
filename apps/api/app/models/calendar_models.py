@@ -811,8 +811,12 @@ class CreateEventInput(BaseModel):
         description="List of events to create",
     )
     confirm_immediately: bool = Field(
-        default=False,
-        description="If True, create events immediately. If False (default), send to frontend for confirmation.",
+        ...,
+        description=(
+            "REQUIRED, no default: True creates the events immediately, "
+            "False returns them as drafts for review. Always pass explicitly — "
+            "omitting it rejects the call instead of guessing."
+        ),
     )
 
 

@@ -1234,21 +1234,28 @@ class TestCreateEvent:
         assert body["start"] == {"dateTime": "2026-01-15T10:00:00+05:30"}
         assert body["end"] == {"dateTime": "2026-01-15T10:30:00+05:30"}
 
-    def test_naive_start_stays_naive_without_a_configured_timezone(self, tools, writer) -> None:
-        # Deliberate: Google then interprets the wall time in the calendar's own
-        # zone, which beats silently forcing UTC.
+    def test_naive_start_without_a_configured_timezone_is_rejected(self, tools, writer) -> None:
+        # BUG (production ap_8ded): Deliberate reversal of the old
+        # always-send-naive behavior: Google 400s a naked wall time, so
+        # posting it can only fail after approval. Reject with a clear
+        # error; the model adds an explicit offset.
         with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
-            _, proxy = self._run(
-                tools,
-                CreateEventInput(
-                    events=[SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")],
-                    confirm_immediately=True,
-                ),
-            )
-        assert proxy.call_args.kwargs["body"]["start"] == {"dateTime": "2026-01-15T10:00:00"}
+            with pytest.raises(ValueError, match="no UTC offset"):
+                self._run(
+                    tools,
+                    CreateEventInput(
+                        events=[
+                            SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")
+                        ],
+                        confirm_immediately=True,
+                    ),
+                )
 
     def test_duration_is_added_to_the_start(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             _, proxy = self._run(
                 tools,
                 CreateEventInput(
@@ -1263,12 +1270,15 @@ class TestCreateEvent:
                     confirm_immediately=True,
                 ),
             )
-        assert proxy.call_args.kwargs["body"]["end"] == {"dateTime": "2026-01-16T01:30:00"}
+        assert proxy.call_args.kwargs["body"]["end"] == {"dateTime": "2026-01-16T01:30:00+05:30"}
 
     # -- optional fields ---------------------------------------------------
 
     def test_optional_fields_are_only_sent_when_set(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             _, proxy = self._run(
                 tools,
                 CreateEventInput(
@@ -1280,7 +1290,10 @@ class TestCreateEvent:
 
     def test_meeting_room_requests_a_conference(self, tools, writer) -> None:
         with (
-            patch(f"{MODULE}.get_config", return_value={"configurable": {}}),
+            patch(
+                f"{MODULE}.get_config",
+                return_value={"configurable": {"user_timezone": "+05:30"}},
+            ),
             patch(f"{MODULE}.datetime", _FrozenDatetime),
         ):
             _, proxy = self._run(
@@ -1312,7 +1325,10 @@ class TestCreateEvent:
         }
 
     def test_no_conference_version_without_a_meeting_room(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             _, proxy = self._run(
                 tools,
                 CreateEventInput(
@@ -1325,7 +1341,10 @@ class TestCreateEvent:
     # -- confirm_immediately path ------------------------------------------
 
     def test_created_events_are_summarised_and_streamed(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             out, proxy = self._run(
                 tools,
                 CreateEventInput(
@@ -1349,16 +1368,16 @@ class TestCreateEvent:
                 "event_id": "evt-1",
                 "calendar_id": "cal-1",
                 "link": "https://cal/evt-1",
-                "start": {"dateTime": "2026-01-15T10:00:00"},
-                "end": {"dateTime": "2026-01-15T10:30:00"},
+                "start": {"dateTime": "2026-01-15T10:00:00+05:30"},
+                "end": {"dateTime": "2026-01-15T10:30:00+05:30"},
             }
         ]
         assert writer.call_args[0][0] == {
             "calendar_fetch_data": [
                 {
                     "summary": "Sync",
-                    "start_time": "2026-01-15T10:00:00",
-                    "end_time": "2026-01-15T10:30:00",
+                    "start_time": "2026-01-15T10:00:00+05:30",
+                    "end_time": "2026-01-15T10:30:00+05:30",
                     "calendar_name": "Team",
                     "background_color": "#ff0000",
                 }
@@ -1366,7 +1385,10 @@ class TestCreateEvent:
         }
 
     def test_percent_encodes_calendar_id_with_reserved_chars(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             _, proxy = self._run(
                 tools,
                 CreateEventInput(
@@ -1388,11 +1410,17 @@ class TestCreateEvent:
     # -- draft path --------------------------------------------------------
 
     def test_draft_path_does_not_touch_google(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             out, proxy = self._run(
                 tools,
                 CreateEventInput(
-                    events=[SingleEventInput(summary="Draft", start_datetime="2026-01-15T10:00:00")]
+                    events=[
+                        SingleEventInput(summary="Draft", start_datetime="2026-01-15T10:00:00")
+                    ],
+                    confirm_immediately=False,
                 ),
             )
         proxy.assert_not_called()
@@ -1405,7 +1433,10 @@ class TestCreateEvent:
         # DEFAULT_CALENDAR_COLOR, which calendar_service and the frontend both
         # use — an unmapped calendar drafted a card in a different colour than
         # the same event shown after confirmation.
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             out, _ = self._run(
                 tools,
                 CreateEventInput(
@@ -1415,7 +1446,8 @@ class TestCreateEvent:
                             start_datetime="2026-01-15T10:00:00",
                             calendar_id="unmapped",
                         )
-                    ]
+                    ],
+                    confirm_immediately=False,
                 ),
             )
         # A minimal event drafts with defaults and no optional keys — pinned whole
@@ -1425,8 +1457,8 @@ class TestCreateEvent:
             "summary": "Draft",
             "description": "",
             "is_all_day": False,
-            "start": {"dateTime": "2026-01-15T10:00:00"},
-            "end": {"dateTime": "2026-01-15T10:30:00"},
+            "start": {"dateTime": "2026-01-15T10:00:00+05:30"},
+            "end": {"dateTime": "2026-01-15T10:30:00+05:30"},
             "calendar_id": "unmapped",
             "color": DEFAULT_CALENDAR_COLOR,
             "calendar_name": "Calendar",
@@ -1436,7 +1468,10 @@ class TestCreateEvent:
         )
 
     def test_immediate_path_falls_back_to_the_shared_default_color(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             self._run(
                 tools,
                 CreateEventInput(
@@ -1454,7 +1489,10 @@ class TestCreateEvent:
         assert streamed["background_color"] == DEFAULT_CALENDAR_COLOR
 
     def test_draft_uses_calendar_metadata_when_available(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             out, _ = self._run(
                 tools,
                 CreateEventInput(
@@ -1467,7 +1505,8 @@ class TestCreateEvent:
                             attendees=["a@b.com"],
                             create_meeting_room=True,
                         )
-                    ]
+                    ],
+                    confirm_immediately=False,
                 ),
                 metadata=({"cal-1": "#abcdef"}, {"cal-1": "Team"}),
             )
@@ -1477,8 +1516,8 @@ class TestCreateEvent:
             "summary": "Draft",
             "description": "",
             "is_all_day": False,
-            "start": {"dateTime": "2026-01-15T10:00:00"},
-            "end": {"dateTime": "2026-01-15T10:30:00"},
+            "start": {"dateTime": "2026-01-15T10:00:00+05:30"},
+            "end": {"dateTime": "2026-01-15T10:30:00+05:30"},
             "calendar_id": "cal-1",
             "color": "#abcdef",
             "calendar_name": "Team",
@@ -1488,11 +1527,17 @@ class TestCreateEvent:
         }
 
     def test_metadata_failure_still_drafts(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             out, _ = self._run(
                 tools,
                 CreateEventInput(
-                    events=[SingleEventInput(summary="Draft", start_datetime="2026-01-15T10:00:00")]
+                    events=[
+                        SingleEventInput(summary="Draft", start_datetime="2026-01-15T10:00:00")
+                    ],
+                    confirm_immediately=False,
                 ),
                 raises_metadata=True,
             )
@@ -1505,7 +1550,8 @@ class TestCreateEvent:
             self._run(
                 tools,
                 CreateEventInput(
-                    events=[SingleEventInput(summary="Bad", start_datetime="next tuesday")]
+                    events=[SingleEventInput(summary="Bad", start_datetime="next tuesday")],
+                    confirm_immediately=False,
                 ),
             )
 
@@ -1513,14 +1559,18 @@ class TestCreateEvent:
         # BUG: `errors` was discarded whenever at least one event survived, so a
         # batch where 1 of 2 events had an unparseable start time was reported to
         # the user as a clean success.
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             out, _ = self._run(
                 tools,
                 CreateEventInput(
                     events=[
                         SingleEventInput(summary="Good", start_datetime="2026-01-15T10:00:00"),
                         SingleEventInput(summary="Bad", start_datetime="next tuesday"),
-                    ]
+                    ],
+                    confirm_immediately=False,
                 ),
             )
         assert len(out["calendar_options"]) == 1
@@ -1530,7 +1580,10 @@ class TestCreateEvent:
         assert "Invalid start_datetime" in out["errors"][0]["error"]
 
     def test_partial_failure_is_reported_on_the_immediate_path_too(self, tools, writer) -> None:
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with patch(
+            f"{MODULE}.get_config",
+            return_value={"configurable": {"user_timezone": "+05:30"}},
+        ):
             out, _ = self._run(
                 tools,
                 CreateEventInput(
@@ -1545,7 +1598,7 @@ class TestCreateEvent:
         assert [e["summary"] for e in out["errors"]] == ["Bad"]
 
     def test_no_events_is_not_reported_as_created(self, tools, writer) -> None:
-        out, _ = self._run(tools, CreateEventInput(events=[]))
+        out, _ = self._run(tools, CreateEventInput(events=[], confirm_immediately=False))
         assert out["created"] is False
         assert out["calendar_options"] == []
         assert out["errors"] == []
@@ -1561,7 +1614,9 @@ class TestCreateEvent:
         # with the real writer lookup and a dispatch-shaped config.
         from langchain_core.runnables.config import var_child_runnable_config
 
-        token = var_child_runnable_config.set({"configurable": {"user_id": "user-42"}})
+        token = var_child_runnable_config.set(
+            {"configurable": {"user_id": "user-42", "user_timezone": "+05:30"}}
+        )
         try:
             out, proxy = self._run(
                 tools,

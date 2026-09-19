@@ -518,9 +518,7 @@ async def reconcile_conversation_ledger(conversation_id: str) -> None:
     racing here converge instead of duplicating.
     """
     cutoff = datetime.now(UTC) - timedelta(minutes=STALLED_EXECUTING_MINUTES)
-    for stalled in await approval_ledger_repository.list_stalled_executing(
-        cutoff, conversation_id
-    ):
+    for stalled in await approval_ledger_repository.list_stalled_executing(cutoff, conversation_id):
         if await approval_ledger_repository.transition(
             stalled.approval_id, LedgerState.EXECUTING, LedgerState.UNKNOWN
         ):

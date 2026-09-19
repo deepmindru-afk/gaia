@@ -107,9 +107,7 @@ class TestLedgerPublishHold:
                     "app.services.hil.bridge.stream_manager.publish_chunk",
                     new=AsyncMock(),
                 ) as chunk,
-                patch(
-                    "app.services.hil.bridge._schedule_pending_notification"
-                ) as notify,
+                patch("app.services.hil.bridge._schedule_pending_notification") as notify,
             ):
                 await publish_ledger_request(
                     approval_id="ap_hold",
@@ -142,9 +140,7 @@ class TestLedgerPublishHold:
                 "app.services.hil.bridge.stream_manager.publish_chunk",
                 new=AsyncMock(),
             ) as chunk,
-            patch(
-                "app.services.hil.bridge._schedule_pending_notification"
-            ) as notify,
+            patch("app.services.hil.bridge._schedule_pending_notification") as notify,
         ):
             await publish_ledger_request(
                 approval_id="ap_nosession",
@@ -173,9 +169,7 @@ class TestLedgerPublishHold:
                     "app.services.hil.bridge.stream_manager.publish_chunk",
                     new=AsyncMock(),
                 ) as chunk,
-                patch(
-                    "app.services.hil.bridge._schedule_pending_notification"
-                ) as notify,
+                patch("app.services.hil.bridge._schedule_pending_notification") as notify,
             ):
                 await publish_ledger_request(
                     approval_id="ap_queued",
@@ -203,9 +197,7 @@ class TestLedgerPublishHold:
                     "app.services.hil.bridge.stream_manager.publish_chunk",
                     new=AsyncMock(),
                 ) as chunk,
-                patch(
-                    "app.services.hil.bridge._schedule_pending_notification"
-                ) as notify,
+                patch("app.services.hil.bridge._schedule_pending_notification") as notify,
             ):
                 await publish_ledger_request(
                     approval_id="ap_bg",
@@ -261,3 +253,81 @@ class TestLedgerPublishHold:
             assert get_session(stream_id).tool_events == []
         finally:
             self._teardown(stream_id)
+
+
+@pytest.mark.unit
+class TestFlushHeldCards:
+    """Run end pushes held PENDING cards live — without this the open client
+    never renders them until a full refresh re-fetches messages."""
+
+    def _held_frame(self, approval_id: str = "ap_hold") -> dict[str, object]:
+        return {
+            "tool_data": {
+                "tool_name": "approval_request",
+                "data": {"approval_id": approval_id, "status": "pending"},
+            },
+            "_held_approval": True,
+        }
+
+    def _session_with_held(self, stream_id: str, approval_id: str = "ap_hold"):
+        from app.agents.core.background.session import RunKind, create_session
+
+        session = create_session(stream_id, RunKind.LIVE)
+        session.tool_events.append(self._held_frame(approval_id))
+        return session
+
+    def _teardown(self, stream_id: str) -> None:
+        from app.agents.core.background.session import teardown_session
+
+        teardown_session(stream_id)
+
+    async def test_pending_held_frame_publishes_once_then_clears_marker(self) -> None:
+        from app.services.hil import bridge
+
+        stream_id = "stream-flush-test"
+        self._session_with_held(stream_id)
+        row = MagicMock()
+        row.approval_id = "ap_hold"
+        row.user_id = "u1"
+        row.conversation_id = "conv-1"
+        row.summary = "Send it"
+        row.state = "pending"
+        try:
+            with (
+                patch.object(bridge, "approval_ledger_repository") as repo,
+                patch.object(bridge.stream_manager, "publish_chunk", new=AsyncMock()) as chunk,
+                patch.object(bridge, "_schedule_pending_notification") as notify,
+            ):
+                repo.get_by_approval_id = AsyncMock(return_value=row)
+                assert await bridge.flush_held_approval_cards(stream_id) == 1
+                assert await bridge.flush_held_approval_cards(stream_id) == 0
+            chunk.assert_awaited_once()
+            notify.assert_called_once_with("u1", "conv-1", "ap_hold", "Send it")
+        finally:
+            self._teardown(stream_id)
+
+    async def test_non_pending_held_frame_dropped_unseen(self) -> None:
+        from app.services.hil import bridge
+
+        stream_id = "stream-flush-drop-test"
+        session = self._session_with_held(stream_id)
+        row = MagicMock()
+        row.state = "revoked"
+        try:
+            with (
+                patch.object(bridge, "approval_ledger_repository") as repo,
+                patch.object(bridge.stream_manager, "publish_chunk", new=AsyncMock()) as chunk,
+                patch.object(bridge, "_schedule_pending_notification") as notify,
+            ):
+                repo.get_by_approval_id = AsyncMock(return_value=row)
+                assert await bridge.flush_held_approval_cards(stream_id) == 0
+            chunk.assert_not_awaited()
+            notify.assert_not_called()
+            assert session.tool_events == []
+        finally:
+            self._teardown(stream_id)
+
+    async def test_no_session_is_zero(self) -> None:
+        from app.services.hil import bridge
+
+        assert await bridge.flush_held_approval_cards("stream-missing") == 0

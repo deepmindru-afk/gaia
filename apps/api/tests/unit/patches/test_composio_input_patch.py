@@ -25,7 +25,10 @@ def _lookalike_of(model: type) -> type:
 
 
 def _event_dict() -> dict[str, Any]:
-    return {"events": [{"summary": "s", "start_datetime": "2026-09-26T11:00:00"}]}
+    return {
+        "confirm_immediately": True,
+        "events": [{"summary": "s", "start_datetime": "2026-09-26T11:00:00"}],
+    }
 
 
 @pytest.mark.unit
@@ -65,7 +68,7 @@ class TestLookalikeCollision:
                         "create_meeting_room": False,
                     }
                 ],
-                "confirm_immediately": False,
+                "confirm_immediately": True,
             },
             "flag": True,
         }
@@ -118,9 +121,7 @@ class TestInvokeTrustedWrapper:
             fake_original,
         )
         try:
-            bound = patch_mod._coercing_invoke_trusted.__get__(
-                self._stub_tool(), object
-            )
+            bound = patch_mod._coercing_invoke_trusted.__get__(self._stub_tool(), object)
             result = bound("u1", kwargs)
         finally:
             patch_mod._original_invoke_trusted = previous

@@ -603,9 +603,24 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                 body["end"] = {"dateTime": end_dt.isoformat()}
             else:
                 user_tz = _get_user_timezone()
-                if user_tz is not None:
-                    start_dt = start_dt.replace(tzinfo=user_tz)
-                    end_dt = end_dt.replace(tzinfo=user_tz)
+                if user_tz is None:
+                    # Google rejects a naked wall time (HTTP 400), and that
+                    # failure used to land after the user approved. Fail fast
+                    # with a clear error so the model adds an explicit offset.
+                    errors.append(
+                        {
+                            "index": index,
+                            "summary": event.summary,
+                            "error": (
+                                "start_datetime has no UTC offset and no home "
+                                "timezone is configured: pass an explicit offset "
+                                "(e.g. 2026-09-21T11:00:00+05:30)."
+                            ),
+                        }
+                    )
+                    continue
+                start_dt = start_dt.replace(tzinfo=user_tz)
+                end_dt = end_dt.replace(tzinfo=user_tz)
                 body["start"] = {"dateTime": start_dt.isoformat()}
                 body["end"] = {"dateTime": end_dt.isoformat()}
             if event.description:

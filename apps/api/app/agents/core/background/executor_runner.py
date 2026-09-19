@@ -328,6 +328,23 @@ async def _finalize_executor_run(
     # the comms stream owns and attaches to its own message.
     tool_data = drain_executor_tool_data(run.stream_id) if run.executor_owns_tool_data else None
 
+    # Held approval cards go live here, not mid-run: the open client never
+    # renders them until a full refresh otherwise. Before the done signal so
+    # the session is still alive; failure only skips the live push, never
+    # finalize — the drain above already persisted the frames.
+    try:
+        from app.services.hil.bridge import (  # noqa: PLC0415 -- runner is imported too broadly for a top-level hil import
+            flush_held_approval_cards,
+        )
+
+        await flush_held_approval_cards(run.stream_id)
+    except Exception as e:
+        log.error(
+            f"{LogTag.AGENT} Held card flush failed",
+            stream_id=run.stream_id,
+            error_type=type(e).__name__,
+        )
+
     # Signal SSE consumer that tool events are done so it can drain the session
     # into the comms ack and publish [DONE]. Comms re-narration runs in parallel.
     signal_executor_done(run.stream_id)
