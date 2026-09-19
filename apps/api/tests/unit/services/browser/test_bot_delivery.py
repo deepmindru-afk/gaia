@@ -554,6 +554,23 @@ class TestBotProgressDeliveryResult:
             await delivery.result(snap)
             assert mp.call_args[0][2][0] == f"⚠️ Couldn't finish that: {head}…"
 
+    async def test_a_handoff_timeout_summary_does_not_stack_two_stop_words(self, delivery):
+        """BROWSER_RUN_HANDOFF_TIMED_OUT already starts with its own "Stopped:" label; the failure prefix must not stack a second one on top of it."""
+        snap = BrowserResultSnapshot(
+            status="failed",
+            success=False,
+            summary="Stopped: nobody finished the step in the live browser in time.",
+            steps=3,
+        )
+        with patch(
+            "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+        ) as mp:
+            await delivery.result(snap)
+            msg = mp.call_args[0][2][0]
+            assert msg == (
+                "⚠️ Couldn't finish that: nobody finished the step in the live browser in time."
+            )
+
     async def test_failure_message_clips_long_multiline_summary(self, delivery):
         summary = "Browser task failed: " + "\n".join(["line " + str(i) * 20 for i in range(20)])
         snap = BrowserResultSnapshot(status="failed", success=False, summary=summary, steps=2)

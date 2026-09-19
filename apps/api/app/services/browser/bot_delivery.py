@@ -33,6 +33,11 @@ _CAPTION_MAX_CHARS = 90
 # error dump never floods the conversation.
 _FAILURE_REASON_MAX_CHARS = 160
 
+# BROWSER_RUN_HANDOFF_TIMED_OUT (constants/browser.py) already carries this
+# label; stripped so "Couldn't finish that:" never stacks a second one on top.
+# TODO(browser-constants): move to app/constants/browser.py.
+_STOP_LABEL_PREFIX = "Stopped: "
+
 
 class BotProgressDelivery:
     """Delivers browser card snapshots to a bot conversation."""
@@ -137,6 +142,7 @@ class BotProgressDelivery:
 def _failure_reason(summary: str) -> str:
     """Collapse a runner failure summary to one clipped line, or "" when it carried none."""
     reason = " ".join(summary.removeprefix(BROWSER_TASK_FAILED_PREFIX).split())
+    reason = reason.removeprefix(_STOP_LABEL_PREFIX)
     if len(reason) > _FAILURE_REASON_MAX_CHARS:
         reason = reason[: _FAILURE_REASON_MAX_CHARS - 1].rstrip() + "…"
     return reason
