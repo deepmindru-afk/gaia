@@ -30,8 +30,6 @@ import {
   type CalendarEditOption,
   CalendarFetchCard,
   type CalendarFetchItem,
-  type CalendarOption,
-  CalendarOptionsCard,
   CodeExecutionCard,
   ConnectionStatusCard,
   type ConnectionStatusData,
@@ -148,13 +146,6 @@ const TOOL_RENDERERS: Record<
   email_fetch_data: (data, baseKey) => {
     const emails = Array.isArray(data) ? data : [data];
     return <EmailFetchCard key={baseKey} data={emails as EmailFetchItem[]} />;
-  },
-
-  calendar_options: (data, baseKey) => {
-    const events = Array.isArray(data) ? data : [data];
-    return (
-      <CalendarOptionsCard key={baseKey} data={events as CalendarOption[]} />
-    );
   },
 
   calendar_fetch_data: (data, baseKey) => {

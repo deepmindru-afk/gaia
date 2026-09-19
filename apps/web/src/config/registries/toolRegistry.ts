@@ -18,7 +18,6 @@ import type {
   CalendarEditOptions,
   CalendarFetchData,
   CalendarListFetchData,
-  CalendarOptions,
 } from "@/types/features/calendarTypes";
 import type { ScreenshotData } from "@/types/features/desktopToolTypes";
 import type {
@@ -163,7 +162,6 @@ const TOOL_REGISTRY = {
   email_sent_data: null as unknown as EmailSentData[],
   contacts_data: null as unknown as ContactData[],
   people_search_data: null as unknown as PeopleSearchData[],
-  calendar_options: null as unknown as CalendarOptions[],
   calendar_delete_options: null as unknown as CalendarDeleteOptions[],
   calendar_edit_options: null as unknown as CalendarEditOptions[],
   calendar_fetch_data: null as unknown as CalendarFetchData[],

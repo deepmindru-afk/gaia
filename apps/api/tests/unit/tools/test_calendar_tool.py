@@ -1536,7 +1536,7 @@ class TestCreateEvent:
 
     # -- outside a graph run -------------------------------------------------
 
-    def test_confirm_immediately_returns_result_without_stream_runtime(self, tools) -> None:
+    def test_returns_result_without_stream_runtime(self, tools) -> None:
         # BUG: ticket redeem invokes the tool via dispatch outside any graph
         # run (bare runnable config, no Pregel runtime). The unconditional
         # get_stream_writer() raised KeyError AFTER the Google POST, so the

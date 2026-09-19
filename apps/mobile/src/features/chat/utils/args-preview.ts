@@ -3,11 +3,10 @@
  *
  * Same algorithm as web's `apps/web/src/features/chat/utils/argsPreview.ts`:
  * the old card filtered to top-level scalars, so a calendar create
- * (`{confirm_immediately, events: [...]}`) showed a single boolean and
- * dropped the events. This walks one level into objects and arrays of
- * objects, grouping array items (Event 1, Event 2) so the card shows what
- * will happen, not the schema shape. Reimplemented here for React Native —
- * do not import web code.
+ * (`{events: [...]}` plus metadata) showed one row and dropped the events.
+ * This walks one level into objects and arrays of objects, grouping array
+ * items (Event 1, Event 2) so the card shows what will happen, not the
+ * schema shape. Reimplemented here for React Native — do not import web code.
  */
 
 export interface ArgsPreviewRow {

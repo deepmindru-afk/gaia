@@ -54,7 +54,6 @@ export type {
   CalendarEventDateTime,
   CalendarFetchData,
   CalendarListFetchData,
-  CalendarOptions,
   CodeChartData,
   CodeData,
   CodeOutput,

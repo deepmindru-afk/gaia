@@ -4,7 +4,6 @@ import { flattenArgsPreview } from "./args-preview";
 describe("flattenArgsPreview (RN port of web argsPreview)", () => {
   it("flattens nested event arrays into grouped rows (calendar create)", () => {
     const { rows } = flattenArgsPreview({
-      confirm_immediately: false,
       events: [
         { title: "Dentist", start: "2026-09-21T10:00:00", location: "Clinic" },
         { title: "Lunch", start: "2026-09-21T12:30:00" },

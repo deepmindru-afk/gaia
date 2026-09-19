@@ -723,28 +723,32 @@ class TestCalendarGetEvent:
 
 
 class TestCalendarCreateEvent:
-    def test_an_unconfirmed_event_is_drafted_and_never_reaches_google(self, tools):
-        """The human-in-the-loop contract. ``confirm_immediately=False`` must
-        draft only: one stray write here puts a real event on someone's
-        calendar (and mails every attendee) before they agreed to it."""
+    def test_an_event_is_created_immediately_with_no_draft_step(self, tools):
+        """Creation is immediate: the approval card is the confirmation, so
+        there is no draft mode. One stray miss here puts a real event on
+        someone's calendar (and mails every attendee) — or silently drafts
+        what the user approved as a create."""
         tool = tools["GOOGLECALENDAR_CUSTOM_CREATE_EVENT"]
-        client = fake_composio(
-            lambda **kwargs: pytest.fail("a draft must not call Google Calendar")
-        )
+        posted: list[dict[str, Any]] = []
+
+        def proxy(**kwargs: Any) -> FakeProxyResponse:
+            posted.append(kwargs)
+            return FakeProxyResponse(
+                {"id": "created-1", "htmlLink": "https://calendar.google.com/e/created-1"}
+            )
 
         async def fake_metadata(user_id: str) -> tuple[dict[str, str], dict[str, str]]:
             return {"primary": "#ff0000"}, {"primary": "Work"}
 
         with (
             stub_auth(tool),
-            patch(PROXY_SEAM, return_value=client),
+            patch(PROXY_SEAM, return_value=fake_composio(proxy)),
             patch("app.services.calendar_service.get_calendar_metadata_map", fake_metadata),
         ):
             result, streamed = run_in_graph(
                 lambda: tool.invoke_trusted(
                     user_id=USER,
                     request_kwargs={
-                        "confirm_immediately": False,
                         "events": [
                             {
                                 "summary": "Dentist",
@@ -759,29 +763,23 @@ class TestCalendarCreateEvent:
                 {"user_timezone": HOME_TZ},
             )
 
-        assert client.tools.proxy.call_count == 0
-        assert result["created"] is False
-        assert "NOT been added" in result["message"]
-        option = result["calendar_options"][0]
-        assert option["start"] == {"dateTime": "2026-08-10T09:00:00+05:30"}
-        assert option["end"] == {"dateTime": "2026-08-10T10:30:00+05:30"}
-        assert option["calendar_name"] == "Work"
+        assert posted[0]["method"] == "POST"
+        assert posted[0]["endpoint"].endswith("/calendars/primary/events")
+        assert result["created"] is True
+        assert result["created_events"][0]["event_id"] == "created-1"
         assert streamed == [
             {
-                "calendar_options": [
+                "calendar_fetch_data": [
                     {
                         "summary": "Dentist",
-                        "description": "",
-                        "is_all_day": False,
-                        "calendar_id": "primary",
+                        "start_time": "2026-08-10T09:00:00+05:30",
+                        "end_time": "2026-08-10T10:30:00+05:30",
                         "calendar_name": "Work",
                         "background_color": "#ff0000",
-                        "start": "2026-08-10T09:00:00+05:30",
-                        "end": "2026-08-10T10:30:00+05:30",
                     }
                 ]
             }
-        ], "the confirmation card never reached the chat, so nothing can be confirmed"
+        ], "the created-event card never reached the chat"
 
     def test_a_confirmed_event_is_written_with_the_duration_the_user_asked_for(self, tools):
         """The end time is derived, not given. Getting it wrong books the wrong
@@ -807,7 +805,6 @@ class TestCalendarCreateEvent:
                 lambda: tool.invoke_trusted(
                     user_id=USER,
                     request_kwargs={
-                        "confirm_immediately": True,
                         "events": [
                             {
                                 "summary": "Dentist",

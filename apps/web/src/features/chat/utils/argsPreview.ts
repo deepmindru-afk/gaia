@@ -2,10 +2,10 @@
  * Flatten tool args into preview rows for approval cards.
  *
  * The old card filtered to top-level scalars, so a calendar create
- * (`{confirm_immediately, events: [...]}`) showed a single boolean and
- * dropped the events — the actual content. This walks one level into
- * objects and arrays of objects, grouping array items (Event 1, Event 2)
- * so the card shows what will happen, not the schema shape.
+ * showed one row and dropped the events — the actual content. This walks
+ * one level into objects and arrays of objects, grouping array items
+ * (Event 1, Event 2) so the card shows what will happen, not the schema
+ * shape.
  */
 
 export interface ArgsPreviewRow {

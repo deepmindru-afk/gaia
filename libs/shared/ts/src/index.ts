@@ -103,7 +103,6 @@ export type {
   CalendarEventDateTime,
   CalendarFetchData,
   CalendarListFetchData,
-  CalendarOptions,
   ChatStreamEvent,
   CodeChartData,
   CodeData,

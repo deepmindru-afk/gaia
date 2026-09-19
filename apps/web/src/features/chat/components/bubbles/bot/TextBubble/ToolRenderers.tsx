@@ -40,7 +40,6 @@ import type { SearchResults } from "@/types/features/searchTypes";
 import ApprovalRequestGroup from "../ApprovalRequestGroup";
 import { CalendarDeleteSection } from "../CalendarDeleteSection";
 import { CalendarEditSection } from "../CalendarEditSection";
-import CalendarEventSection from "../CalendarEventSection";
 import CodeExecutionSection from "../CodeExecutionSection";
 import ContactListSection from "../ContactListSection";
 import EmailComposeSection from "../EmailComposeSection";
@@ -162,7 +161,6 @@ const TOOL_RENDERERS: Partial<RendererMap> = {
   ),
 
   // Calendar
-  calendar_options: (data) => <CalendarEventSection calendar_options={data} />,
   calendar_delete_options: (data) => (
     <CalendarDeleteSection calendar_delete_options={data} />
   ),

@@ -8,7 +8,6 @@ export const calendarCard: ApprovalRequestData = {
   integration_name: "Google Calendar",
   summary: "Create 2 events (Google Calendar)",
   args_preview: {
-    confirm_immediately: true,
     events: [
       {
         calendar_id: "primary",

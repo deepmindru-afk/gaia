@@ -26,7 +26,6 @@ def _lookalike_of(model: type) -> type:
 
 def _event_dict() -> dict[str, Any]:
     return {
-        "confirm_immediately": True,
         "events": [{"summary": "s", "start_datetime": "2026-09-26T11:00:00"}],
     }
 
@@ -68,7 +67,6 @@ class TestLookalikeCollision:
                         "create_meeting_room": False,
                     }
                 ],
-                "confirm_immediately": True,
             },
             "flag": True,
         }
@@ -106,7 +104,7 @@ class TestInvokeTrustedWrapper:
         nested = lookalike_item.model_validate(
             {"summary": "s", "start_datetime": "2026-09-26T11:00:00"}
         )
-        kwargs = {"events": [nested], "confirm_immediately": True}
+        kwargs = {"events": [nested]}
 
         def fake_original(self: Any, user_id: str, request_kwargs: Any) -> Any:
             validated = CreateEventInput.model_validate(request_kwargs)

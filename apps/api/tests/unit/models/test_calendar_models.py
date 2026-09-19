@@ -640,21 +640,8 @@ class TestSingleEventInput:
 class TestCreateEventInput:
     def test_valid(self):
         event = SingleEventInput(summary="A", start_datetime="2025-06-01T10:00:00")
-        m = CreateEventInput(events=[event], confirm_immediately=False)
+        m = CreateEventInput(events=[event])
         assert len(m.events) == 1
-        assert m.confirm_immediately is False
-
-    def test_confirm_immediately_true(self):
-        event = SingleEventInput(summary="A", start_datetime="2025-06-01T10:00:00")
-        m = CreateEventInput(events=[event], confirm_immediately=True)
-        assert m.confirm_immediately is True
-
-    def test_missing_confirm_immediately_rejected(self):
-        # Omission used to silently mean draft, so an approval could execute a
-        # draft while the user approved a create. The flag is required now.
-        event = SingleEventInput(summary="A", start_datetime="2025-06-01T10:00:00")
-        with pytest.raises(ValidationError):
-            CreateEventInput(events=[event])
 
     def test_missing_events(self):
         with pytest.raises(ValidationError):

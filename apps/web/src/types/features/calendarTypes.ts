@@ -147,21 +147,6 @@ export interface EventCreatePayload {
 }
 
 // Calendar types for conversation messages
-export type CalendarOptions = {
-  summary: string;
-  description?: string;
-  start?: string;
-  end?: string;
-  calendar_id?: string;
-  calendar_name?: string;
-  background_color?: string;
-  is_all_day?: boolean;
-  recurrence?: RecurrenceData;
-  attendees?: string[];
-  create_meeting_room?: boolean;
-  same_day_events?: SameDayEvent[]; // Context: existing events on the same day
-};
-
 // Calendar event date/time structure from Google Calendar API
 export type CalendarEventDateTime = {
   date?: string; // For all-day events (YYYY-MM-DD format)

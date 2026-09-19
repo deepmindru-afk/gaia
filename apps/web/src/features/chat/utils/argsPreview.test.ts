@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { flattenArgsPreview } from "@/features/chat/utils/argsPreview";
 
 const calendarArgs = {
-  confirm_immediately: true,
   events: [
     {
       calendar_id: "primary",
@@ -36,7 +35,6 @@ describe("flattenArgsPreview", () => {
   it("shows nested event content instead of one top-level scalar", () => {
     const { rows, omitted } = flattenArgsPreview(calendarArgs);
     const keys = rows.map((row) => `${row.group ?? ""}:${row.key}`);
-    expect(keys).toContain(":confirm immediately");
     expect(keys).toContain("Event 1:summary");
     expect(keys).toContain("Event 1:start datetime");
     expect(keys).toContain("Event 1:attendees");
@@ -54,7 +52,6 @@ describe("flattenArgsPreview", () => {
       rows.map((row) => [`${row.group ?? ""}:${row.key}`, row.value]),
     );
     expect(byKey.get("Event 1:start datetime")).toMatch(/Sep 21, 10:00 AM/);
-    expect(byKey.get(":confirm immediately")).toBe("Yes");
     expect(byKey.get("Event 1:attendees")).toBe("a@x.com, b@x.com");
   });
 
