@@ -112,14 +112,6 @@ def _failed_message(summary: str) -> str:
     )
 
 
-CANCELLED_MESSAGE = (
-    "BROWSER TASK STOPPED BY THE USER before it finished. It did NOT complete, so "
-    "there is no result and you must not claim one.\n\n"
-    "Briefly acknowledge you've stopped and ask if they'd like you to try again or "
-    f"do something else. {NO_META}"
-)
-
-
 def _result(
     status: BrowserSessionStatus, success: bool, summary: str, steps: int = 0
 ) -> BrowserResultSnapshot:
@@ -174,14 +166,15 @@ def test_result_message_failure_with_blank_summary_uses_fallback() -> None:
     assert out == _failed_message("the task could not be finished")
 
 
-def test_result_message_cancelled_is_exact_and_ignores_summary() -> None:
-    out = jr.agent_result_message(_result(BrowserSessionStatus.CANCELLED, False, "half done"))
-    assert out == CANCELLED_MESSAGE
+def test_a_cancelled_run_reports_no_result_whatever_the_run_left_behind() -> None:
+    stopped = jr.agent_result_message(_result(BrowserSessionStatus.CANCELLED, False, "half done"))
+    claimed_success = jr.agent_result_message(_result(BrowserSessionStatus.CANCELLED, True, "x"))
 
-
-def test_result_message_cancelled_wins_over_success_flag() -> None:
-    out = jr.agent_result_message(_result(BrowserSessionStatus.CANCELLED, True, "x"))
-    assert out == CANCELLED_MESSAGE
+    assert "half done" not in stopped
+    assert claimed_success == stopped.replace("half done", "x")
+    assert stopped != jr.agent_result_message(
+        _result(BrowserSessionStatus.FAILED, False, "half done")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +452,7 @@ async def test_a_crash_inside_the_run_is_one_failed_card_on_the_feed(
 
     out = await _run(h, _request(task="x"))
 
-    summary = jr._JOB_CRASHED_SUMMARY
+    summary = jr.BROWSER_JOB_CRASHED_SUMMARY
     assert [c for c in h.cards if c["kind"] == "result"] == [_failed_card(summary)]
     assert out == _failed_message(summary)
     assert not summary.endswith(":")
@@ -490,7 +483,7 @@ async def test_a_crash_with_an_empty_str_exception_still_reads_as_a_sentence(
 
     out = await _run(h, _request(task="x"))
 
-    summary = jr._JOB_CRASHED_SUMMARY
+    summary = jr.BROWSER_JOB_CRASHED_SUMMARY
     assert [c for c in h.cards if c["kind"] == "result"] == [_failed_card(summary)]
     assert out == _failed_message(summary)
     assert not summary.rstrip().endswith(":")
@@ -899,7 +892,7 @@ async def test_handoff_keepalive_is_cancelled_when_await_handoff_raises(
     out = await _run(h, _request())
     await asyncio.sleep(0)
 
-    assert out == _failed_message(jr._JOB_CRASHED_SUMMARY)
+    assert out == _failed_message(jr.BROWSER_JOB_CRASHED_SUMMARY)
     assert len(tasks) == 1
     assert tasks[0].cancelled()
 

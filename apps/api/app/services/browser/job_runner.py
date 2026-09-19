@@ -15,6 +15,7 @@ import uuid
 
 from app.config.settings import settings
 from app.constants.browser import (
+    BROWSER_JOB_CRASHED_SUMMARY,
     BROWSER_TASK_EVENT,
     BROWSER_TOOL_CATEGORY,
     BrowserSessionStatus,
@@ -70,12 +71,6 @@ from shared.py.wide_events import log
 #: Where one already-shaped stream frame goes: the job's own replayable feed.
 FramePublisher = Callable[[dict[str, Any]], Awaitable[None]]
 
-# Many exceptions stringify to "", which left "...unexpectedly:" dangling.
-# Fixed copy, no exception text. TODO(browser-constants): move to constants/browser.py.
-_JOB_CRASHED_SUMMARY = (
-    "the browser task stopped unexpectedly, and nothing else changed; you can ask me to try again"
-)
-
 # Screenshots stream into the chat live, so the reply must never narrate them.
 _NO_META = (
     "The step-by-step screenshots were already shown to the user in this chat, so do "
@@ -100,10 +95,12 @@ def agent_result_message(result: BrowserResultSnapshot) -> str:
         )
     if result.status == BrowserSessionStatus.CANCELLED:
         return (
-            "BROWSER TASK STOPPED BY THE USER before it finished. It did NOT complete, so "
-            "there is no result and you must not claim one.\n\n"
-            f"Briefly acknowledge you've stopped and ask if they'd like you to try again or "
-            f"do something else. {_NO_META}"
+            "BROWSER TASK WAS STOPPED before it finished. It did NOT complete, so there is no "
+            "result and you must not claim one. It was stopped either because the user asked, "
+            "or because the request that started it ended early; never say the user stopped it "
+            "unless the conversation shows they did.\n\n"
+            f"Briefly say the browser task was stopped and ask if they'd like you to try again "
+            f"or do something else. {_NO_META}"
         )
     return (
         f"BROWSER TASK DID NOT COMPLETE. Last state: {summary or 'the task could not be finished'}.\n\n"
@@ -529,6 +526,6 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
             browser={"job_id": request.job_id},
             exc_info=True,
         )
-        return await _terminal_failure(emitter, _JOB_CRASHED_SUMMARY, session_id)
+        return await _terminal_failure(emitter, BROWSER_JOB_CRASHED_SUMMARY, session_id)
     finally:
         reset_fingerprint_seed(seed_token)

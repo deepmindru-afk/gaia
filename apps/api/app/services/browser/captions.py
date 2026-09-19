@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
-from app.constants.browser import BrowserHandoffAction
+from app.constants.browser import BROWSER_DONE_CAPTION_MAX_CHARS, BrowserHandoffAction
 from app.schemas.browser import BrowserAction
 
 # Actions whose whole meaning is the element they hit — a bare verb reads as
@@ -19,11 +19,6 @@ from app.schemas.browser import BrowserAction
 _TARGETED_ACTIONS = {"click", "select_dropdown", "upload_file"}
 
 _TARGET_MAX_CHARS = 40
-
-# A "Finished" caption on the terminal step says nothing the reader didn't
-# already know from seeing the photo -- the done action's own summary is what
-# was actually found. TODO(browser-constants): move to app/constants/browser.py.
-_DONE_SUMMARY_MAX_CHARS = 80
 
 
 def _shorten(text: str, max_chars: int = _TARGET_MAX_CHARS) -> str:
@@ -69,7 +64,7 @@ def _done_caption(params: dict[str, Any], _target: str | None) -> str:
     text = str(params.get("text") or "").strip()
     # The verb ("Finished") says nothing a reader can't already see in the
     # photo; the done action's own summary says what was actually found.
-    return _shorten(text, _DONE_SUMMARY_MAX_CHARS) if text else "Finished"
+    return _shorten(text, BROWSER_DONE_CAPTION_MAX_CHARS) if text else "Finished"
 
 
 def _click_caption(params: dict[str, Any], target: str | None) -> str:

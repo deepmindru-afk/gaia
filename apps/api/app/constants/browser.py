@@ -172,10 +172,23 @@ BROWSER_HANDOFF_ACK_CONTINUE = "Got it, continuing the browser task."
 BROWSER_HANDOFF_ACK_CANCEL = "Okay, I've stopped the browser task."
 BROWSER_HANDOFF_ACK_REDIRECT = "Got it, continuing with that instead."
 
-# The run's own summary when nobody finished the step in the live browser: a
-# handoff that expired is a failed run, not the completed one an earlier
-# takeover made it look like.
-BROWSER_RUN_HANDOFF_TIMED_OUT = "Stopped: nobody finished the step in the live browser in time."
+# A run summary that was stopped on purpose leads with this label; the bot strips
+# it so "Couldn't finish that:" never stacks a second stop-word on top.
+BROWSER_RUN_STOPPED_LABEL = "Stopped: "
+
+# An expired handoff is a failed run, not the completed one a takeover made it look like.
+BROWSER_RUN_HANDOFF_TIMED_OUT = (
+    f"{BROWSER_RUN_STOPPED_LABEL}nobody finished the step in the live browser in time."
+)
+
+# Fixed copy, no exception text: many exceptions stringify to "", which left
+# "...stopped unexpectedly:" dangling in front of the user.
+BROWSER_JOB_CRASHED_SUMMARY = (
+    "the browser task stopped unexpectedly, and nothing else changed; you can ask me to try again"
+)
+
+# The final step photo is captioned with what was found, clipped to this length.
+BROWSER_DONE_CAPTION_MAX_CHARS = 80
 
 # Upper bound on how many times one task may hand off to the human, so a
 # misbehaving agent can't loop the user forever.

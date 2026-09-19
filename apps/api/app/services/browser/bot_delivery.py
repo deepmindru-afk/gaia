@@ -9,6 +9,7 @@ instead of a pasted link.
 
 from app.constants.browser import (
     BROWSER_CREDENTIALS_SAVED_NOTE,
+    BROWSER_RUN_STOPPED_LABEL,
     BROWSER_TASK_FAILED_PREFIX,
     BrowserSessionStatus,
     HandoffStatus,
@@ -32,11 +33,6 @@ _CAPTION_MAX_CHARS = 90
 # The runner's failure summary is written for logs, not chat — clip it so a raw
 # error dump never floods the conversation.
 _FAILURE_REASON_MAX_CHARS = 160
-
-# BROWSER_RUN_HANDOFF_TIMED_OUT (constants/browser.py) already carries this
-# label; stripped so "Couldn't finish that:" never stacks a second one on top.
-# TODO(browser-constants): move to app/constants/browser.py.
-_STOP_LABEL_PREFIX = "Stopped: "
 
 
 class BotProgressDelivery:
@@ -143,7 +139,7 @@ class BotProgressDelivery:
 def _failure_reason(summary: str) -> str:
     """Collapse a runner failure summary to one clipped line, or "" when it carried none."""
     reason = " ".join(summary.removeprefix(BROWSER_TASK_FAILED_PREFIX).split())
-    reason = reason.removeprefix(_STOP_LABEL_PREFIX)
+    reason = reason.removeprefix(BROWSER_RUN_STOPPED_LABEL)
     if len(reason) > _FAILURE_REASON_MAX_CHARS:
         reason = reason[: _FAILURE_REASON_MAX_CHARS - 1].rstrip() + "…"
     return reason
