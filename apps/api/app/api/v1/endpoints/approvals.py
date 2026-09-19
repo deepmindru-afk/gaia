@@ -1,8 +1,9 @@
 """HIL approval endpoints: decision relay + per-user preferences."""
 
 import asyncio
+from collections.abc import AsyncGenerator
 import json
-from typing import Annotated, AsyncGenerator
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -67,7 +68,11 @@ async def post_approval_decision(
             feedback=payload.feedback,
             v=payload.v,
         )
-        if payload.scope == "always_tool" and outcome.committed and outcome.state is LedgerState.APPROVED:
+        if (
+            payload.scope == "always_tool"
+            and outcome.committed
+            and outcome.state is LedgerState.APPROVED
+        ):
             row = await approval_ledger_repository.get_by_approval_id(approval_id)
             if row is not None:
                 await set_tool_override(user_id, row.tool_name, False)

@@ -1239,7 +1239,13 @@ class TestCreateEvent:
         # always-send-naive behavior: Google 400s a naked wall time, so
         # posting it can only fail after approval. Reject with a clear
         # error; the model adds an explicit offset.
-        with patch(f"{MODULE}.get_config", return_value={"configurable": {}}):
+        with (
+            patch(f"{MODULE}.get_config", return_value={"configurable": {}}),
+            patch(
+                "app.services.user_service.get_user_by_id",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
             with pytest.raises(ValueError, match="no UTC offset"):
                 self._run(
                     tools,
@@ -1250,6 +1256,28 @@ class TestCreateEvent:
                         confirm_immediately=True,
                     ),
                 )
+
+    def test_naive_start_uses_stored_timezone_when_config_has_none(self, tools, writer) -> None:
+        # Backend dispatch (ticket redeem) synthesizes a config carrying only
+        # the user id — the stored profile zone must fill the gap, or every
+        # naive approve fails despite the user having a zone.
+        with (
+            patch(f"{MODULE}.get_config", return_value={"configurable": {}}),
+            patch(
+                "app.services.user_service.get_user_by_id",
+                new=AsyncMock(return_value={"timezone": "Asia/Calcutta"}),
+            ),
+        ):
+            _, proxy = self._run(
+                tools,
+                CreateEventInput(
+                    events=[
+                        SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")
+                    ],
+                    confirm_immediately=True,
+                ),
+            )
+        assert proxy.call_args.kwargs["body"]["start"]["dateTime"].endswith("+05:30")
 
     def test_duration_is_added_to_the_start(self, tools, writer) -> None:
         with patch(

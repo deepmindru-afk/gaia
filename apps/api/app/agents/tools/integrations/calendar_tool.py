@@ -150,6 +150,30 @@ def _get_user_timezone() -> tzinfo | None:
     return None
 
 
+async def get_effective_timezone(user_id: str) -> tzinfo | None:
+    """Home zone for naive datetimes: run config first, stored profile second.
+
+    Backend dispatch (ticket redeem, sandbox) synthesizes a config carrying
+    only the user id, so the config lookup alone wrongly reports "unknown"
+    for users with a stored zone — and naive datetimes then fail after
+    approval instead of stamping like they do in-graph.
+    """
+    tz = _get_user_timezone()
+    if tz is not None:
+        return tz
+    try:
+        user = await user_service.get_user_by_id(user_id)
+    except Exception:
+        return None
+    raw = user.get("timezone") if user else None
+    if not raw:
+        return None
+    try:
+        return Timezone.parse(raw).tzinfo
+    except Exception:
+        return None
+
+
 def register_calendar_custom_tools(composio: Composio) -> list[str]:
     """Register calendar tools as Composio custom tools."""
 
@@ -602,7 +626,7 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                 body["start"] = {"dateTime": start_dt.isoformat()}
                 body["end"] = {"dateTime": end_dt.isoformat()}
             else:
-                user_tz = _get_user_timezone()
+                user_tz = _run_sync(get_effective_timezone(user_id))
                 if user_tz is None:
                     # Google rejects a naked wall time (HTTP 400), and that
                     # failure used to land after the user approved. Fail fast
