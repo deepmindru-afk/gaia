@@ -697,3 +697,29 @@ async def test_the_first_step_the_user_sees_is_step_one(delivery, monkeypatch) -
     await delivery.step(BrowserStepSnapshot(index=3, goal="Reading", url="https://example.com/a"))
 
     assert [line.split(" · ")[0] for line in sent] == ["Step 1", "Step 2"]
+
+
+async def test_a_run_of_identical_steps_reaches_the_user_once(delivery, monkeypatch) -> None:
+    """Reading a long list sent 24 photos in a row captioned "Scrolling", one a second."""
+    sent: list[str] = []
+
+    async def _message(platform, user_id, blocks) -> bool:
+        sent.extend(blocks)
+        return True
+
+    monkeypatch.setattr(bot_delivery_mod, "publish_outbound_message", _message)
+    monkeypatch.setattr(bot_delivery_mod, "publish_outbound_photo", AsyncMock(return_value=False))
+    url = "https://example.com/list"
+
+    await delivery.step(BrowserStepSnapshot(index=1, goal="Opening the list", url=url))
+    for index in range(2, 6):
+        await delivery.step(BrowserStepSnapshot(index=index, goal="Scrolling", url=url))
+    await delivery.step(BrowserStepSnapshot(index=6, goal="Reading the last row", url=url))
+    await delivery.step(BrowserStepSnapshot(index=7, goal="Scrolling", url=url))
+
+    assert sent == [
+        "Step 1 · Opening the list",
+        "Step 2 · Scrolling",
+        "Step 3 · Reading the last row",
+        "Step 4 · Scrolling",
+    ]

@@ -52,6 +52,7 @@ class BotProgressDelivery:
         self._stream_screenshots = stream_screenshots
         self._links: dict[str, str] = {}
         self._steps_shown = 0
+        self._last_label = ""
 
     async def session(self, snapshot: BrowserSessionSnapshot) -> None:
         """Emit a session lifecycle event to the conversation."""
@@ -74,8 +75,14 @@ class BotProgressDelivery:
         # page and "Empty Tab" tells the user nothing.
         if _is_blank_tab(snapshot.url):
             return
-        # Captioned with the step's goal, never a raw URL, and numbered by what this
-        # user was shown: the run's index counts the blank tab skipped above.
+        # A run of identical steps (scrolling a long list) is one update, not a
+        # photo a second; the first of the run already told the user what is going on.
+        label = _step_label(snapshot.goal, snapshot.actions)
+        if label and label == self._last_label:
+            return
+        self._last_label = label
+        # Numbered by what this user was shown: the run's index counts the blank
+        # tab and the repeats skipped above.
         self._steps_shown += 1
         caption = _step_caption(self._steps_shown, snapshot.goal, snapshot.actions)
         # Only a real (http) CDN URL is worth sending as a photo; the dev-only
@@ -152,9 +159,15 @@ def _is_blank_tab(url: str | None) -> bool:
     return not url or url.startswith("about:") or url == "chrome://newtab/"
 
 
-def _step_caption(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
-    """Return a short, human caption for a step photo — what the agent is doing, in plain language (its goal), falling back to a clean action label; never a raw URL or an action's parameter dump."""
+def _step_label(goal: str | None, actions: list[BrowserAction]) -> str:
+    """Say what the agent is doing this step in plain language: its goal, else a clean action label; never a raw URL or a parameter dump."""
     label = (goal or "").strip().rstrip(".") or caption_from_action_list(actions)
     if len(label) > _CAPTION_MAX_CHARS:
         label = label[: _CAPTION_MAX_CHARS - 1].rstrip() + "…"
+    return label
+
+
+def _step_caption(index: int, goal: str | None, actions: list[BrowserAction]) -> str:
+    """Return the numbered caption a step photo carries."""
+    label = _step_label(goal, actions)
     return f"Step {index} · {label}" if label else f"Step {index}"
