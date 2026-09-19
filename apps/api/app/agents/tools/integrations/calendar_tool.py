@@ -96,27 +96,6 @@ def _extract_datetime(dt: dict[str, Any] | str | None) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _format_calendar_option_for_stream(opt: dict[str, Any]) -> dict[str, Any]:
-    """Format a calendar draft option into CalendarOptions schema for frontend streaming."""
-    formatted: dict[str, Any] = {
-        "summary": opt.get("summary", ""),
-        "description": opt.get("description", ""),
-        "is_all_day": opt.get("is_all_day", False),
-        "calendar_id": opt.get("calendar_id", ""),
-        "calendar_name": opt.get("calendar_name", ""),
-        "background_color": opt.get("color", DEFAULT_CALENDAR_COLOR),
-        "start": _extract_datetime(opt.get("start")),
-        "end": _extract_datetime(opt.get("end")),
-    }
-    if opt.get("location"):
-        formatted["location"] = opt["location"]
-    if opt.get("attendees"):
-        formatted["attendees"] = opt["attendees"]
-    if opt.get("create_meeting_room"):
-        formatted["create_meeting_room"] = True
-    return formatted
-
-
 def _format_calendar_for_stream(cal: CalendarSummary) -> dict[str, str | None]:
     """Format a calendar entry into CalendarListFetchData schema for frontend streaming."""
     return {
@@ -595,7 +574,6 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
             color_map, name_map = {}, {}
 
         created_events = []
-        calendar_options = []
         errors = []
 
         for index, event in enumerate(request.events):
@@ -661,101 +639,57 @@ def register_calendar_custom_tools(composio: Composio) -> list[str]:
                     }
                 }
 
-            if request.confirm_immediately:
-                query: dict[str, Any] = {"sendUpdates": "all"}
-                if event.create_meeting_room:
-                    query["conferenceDataVersion"] = "1"
+            query: dict[str, Any] = {"sendUpdates": "all"}
+            if event.create_meeting_room:
+                query["conferenceDataVersion"] = "1"
 
-                created_event = proxy_request_sync(
-                    user_id=user_id,
-                    toolkit=CALENDAR_TOOLKIT,
-                    endpoint=calendar_events_endpoint(event.calendar_id),
-                    method="POST",
-                    body=body,
-                    query=query,
-                )
-                created_events.append(
-                    {
-                        "index": index,
-                        "summary": event.summary,
-                        "event_id": created_event.get("id"),
-                        "calendar_id": event.calendar_id,
-                        "link": created_event.get("htmlLink"),
-                        "start": body["start"],
-                        "end": body["end"],
-                    }
-                )
-            else:
-                calendar_option = {
+            created_event = proxy_request_sync(
+                user_id=user_id,
+                toolkit=CALENDAR_TOOLKIT,
+                endpoint=calendar_events_endpoint(event.calendar_id),
+                method="POST",
+                body=body,
+                query=query,
+            )
+            created_events.append(
+                {
                     "index": index,
                     "summary": event.summary,
-                    "description": event.description or "",
-                    "is_all_day": event.is_all_day,
+                    "event_id": created_event.get("id"),
+                    "calendar_id": event.calendar_id,
+                    "link": created_event.get("htmlLink"),
                     "start": body["start"],
                     "end": body["end"],
-                    "calendar_id": event.calendar_id,
-                    "color": color_map.get(event.calendar_id, DEFAULT_CALENDAR_COLOR),
-                    "calendar_name": name_map.get(event.calendar_id, "Calendar"),
                 }
-                if event.location:
-                    calendar_option["location"] = event.location
-                if event.attendees:
-                    calendar_option["attendees"] = event.attendees
-                if event.create_meeting_room:
-                    calendar_option["create_meeting_room"] = True
-                calendar_options.append(calendar_option)
+            )
 
-        if errors and not created_events and not calendar_options:
+        if errors and not created_events:
             raise ValueError(f"All events failed validation: {errors}")
 
-        if request.confirm_immediately:
-            writer = optional_stream_writer()
-            if writer is not None and created_events:
-                writer(
-                    {
-                        "calendar_fetch_data": [
-                            {
-                                "summary": e.get("summary", ""),
-                                "start_time": _extract_datetime(e.get("start")),
-                                "end_time": _extract_datetime(e.get("end")),
-                                "calendar_name": name_map.get(e.get("calendar_id", ""), ""),
-                                "background_color": color_map.get(
-                                    e.get("calendar_id", ""), DEFAULT_CALENDAR_COLOR
-                                ),
-                            }
-                            for e in created_events
-                            if isinstance(e, dict)
-                        ]
-                    }
-                )
-
-            return {
-                "created": len(created_events) > 0,
-                "created_events": created_events,
-                "errors": errors,
-            }
-
         writer = optional_stream_writer()
-        if writer is not None:
+        if writer is not None and created_events:
             writer(
                 {
-                    "calendar_options": [
-                        _format_calendar_option_for_stream(opt)
-                        for opt in calendar_options
-                        if isinstance(opt, dict)
+                    "calendar_fetch_data": [
+                        {
+                            "summary": e.get("summary", ""),
+                            "start_time": _extract_datetime(e.get("start")),
+                            "end_time": _extract_datetime(e.get("end")),
+                            "calendar_name": name_map.get(e.get("calendar_id", ""), ""),
+                            "background_color": color_map.get(
+                                e.get("calendar_id", ""), DEFAULT_CALENDAR_COLOR
+                            ),
+                        }
+                        for e in created_events
+                        if isinstance(e, dict)
                     ]
                 }
             )
 
         return {
-            "created": False,
-            "calendar_options": calendar_options,
+            "created": len(created_events) > 0,
+            "created_events": created_events,
             "errors": errors,
-            "message": (
-                f"{len(calendar_options)} event(s) have been drafted for review. "
-                "They have NOT been added to your calendar yet. "
-                "Inform the user to confirm or cancel using the event card."
-            ),
         }
 
     @composio.tools.custom_tool(toolkit="GOOGLECALENDAR")

@@ -21,7 +21,6 @@ import pytest
 from app.agents.tools.integrations.calendar_tool import (
     _extract_datetime,
     _format_calendar_for_stream,
-    _format_calendar_option_for_stream,
     _get_user_id,
     _get_user_timezone,
     _run_sync,
@@ -162,57 +161,8 @@ class TestExtractDatetime:
 
 
 # ---------------------------------------------------------------------------
-# _format_calendar_option_for_stream
+# _format_calendar_for_stream
 # ---------------------------------------------------------------------------
-
-
-class TestFormatCalendarOptionForStream:
-    def test_minimal_option_uses_shared_default_color(self) -> None:
-        out = _format_calendar_option_for_stream({})
-        assert out == {
-            "summary": "",
-            "description": "",
-            "is_all_day": False,
-            "calendar_id": "",
-            "calendar_name": "",
-            "background_color": DEFAULT_CALENDAR_COLOR,
-            "start": "",
-            "end": "",
-        }
-
-    def test_start_end_dicts_are_flattened(self) -> None:
-        out = _format_calendar_option_for_stream(
-            {
-                "summary": "Standup",
-                "start": {"dateTime": "2026-01-15T10:00:00+00:00"},
-                "end": {"dateTime": "2026-01-15T10:30:00+00:00"},
-                "color": "#123456",
-            }
-        )
-        assert out["start"] == "2026-01-15T10:00:00+00:00"
-        assert out["end"] == "2026-01-15T10:30:00+00:00"
-        assert out["background_color"] == "#123456"
-
-    def test_optional_keys_are_omitted_when_absent(self) -> None:
-        out = _format_calendar_option_for_stream({"summary": "X"})
-        assert "location" not in out
-        assert "attendees" not in out
-        assert "create_meeting_room" not in out
-
-    def test_optional_keys_are_included_when_present(self) -> None:
-        out = _format_calendar_option_for_stream(
-            {
-                "location": "Room 3",
-                "attendees": ["a@b.com"],
-                "create_meeting_room": True,
-            }
-        )
-        assert out["location"] == "Room 3"
-        assert out["attendees"] == ["a@b.com"]
-        assert out["create_meeting_room"] is True
-
-    def test_empty_attendee_list_is_not_streamed(self) -> None:
-        assert "attendees" not in _format_calendar_option_for_stream({"attendees": []})
 
 
 # ---------------------------------------------------------------------------
@@ -1174,7 +1124,6 @@ class TestCreateEvent:
                         summary="Holiday", start_datetime="2026-01-15T00:00:00", is_all_day=True
                     )
                 ],
-                confirm_immediately=True,
             ),
         )
         body = proxy.call_args.kwargs["body"]
@@ -1190,7 +1139,6 @@ class TestCreateEvent:
                         summary="NYE", start_datetime="2026-12-31T00:00:00", is_all_day=True
                     )
                 ],
-                confirm_immediately=True,
             ),
         )
         assert proxy.call_args.kwargs["body"]["end"] == {"date": "2027-01-01"}
@@ -1212,7 +1160,6 @@ class TestCreateEvent:
                             duration_minutes=0,
                         )
                     ],
-                    confirm_immediately=True,
                 ),
             )
         body = proxy.call_args.kwargs["body"]
@@ -1227,7 +1174,6 @@ class TestCreateEvent:
                 tools,
                 CreateEventInput(
                     events=[SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")],
-                    confirm_immediately=True,
                 ),
             )
         body = proxy.call_args.kwargs["body"]
@@ -1253,7 +1199,6 @@ class TestCreateEvent:
                         events=[
                             SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")
                         ],
-                        confirm_immediately=True,
                     ),
                 )
 
@@ -1274,7 +1219,6 @@ class TestCreateEvent:
                     events=[
                         SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")
                     ],
-                    confirm_immediately=True,
                 ),
             )
         assert proxy.call_args.kwargs["body"]["start"]["dateTime"].endswith("+05:30")
@@ -1295,7 +1239,6 @@ class TestCreateEvent:
                             duration_minutes=30,
                         )
                     ],
-                    confirm_immediately=True,
                 ),
             )
         assert proxy.call_args.kwargs["body"]["end"] == {"dateTime": "2026-01-16T01:30:00+05:30"}
@@ -1311,7 +1254,6 @@ class TestCreateEvent:
                 tools,
                 CreateEventInput(
                     events=[SingleEventInput(summary="Bare", start_datetime="2026-01-15T10:00:00")],
-                    confirm_immediately=True,
                 ),
             )
         assert set(proxy.call_args.kwargs["body"]) == {"summary", "start", "end"}
@@ -1337,7 +1279,6 @@ class TestCreateEvent:
                             create_meeting_room=True,
                         )
                     ],
-                    confirm_immediately=True,
                 ),
             )
         body = proxy.call_args.kwargs["body"]
@@ -1361,12 +1302,11 @@ class TestCreateEvent:
                 tools,
                 CreateEventInput(
                     events=[SingleEventInput(summary="X", start_datetime="2026-01-15T10:00:00")],
-                    confirm_immediately=True,
                 ),
             )
         assert proxy.call_args.kwargs["query"] == {"sendUpdates": "all"}
 
-    # -- confirm_immediately path ------------------------------------------
+    # -- immediate creation ------------------------------------------
 
     def test_created_events_are_summarised_and_streamed(self, tools, writer) -> None:
         with patch(
@@ -1383,7 +1323,6 @@ class TestCreateEvent:
                             calendar_id="cal-1",
                         )
                     ],
-                    confirm_immediately=True,
                 ),
                 metadata=({"cal-1": "#ff0000"}, {"cal-1": "Team"}),
             )
@@ -1427,7 +1366,6 @@ class TestCreateEvent:
                             calendar_id="user@group.calendar.google.com",
                         )
                     ],
-                    confirm_immediately=True,
                 ),
                 metadata=({"user@group.calendar.google.com": "#ff0000"}, {}),
             )
@@ -1437,30 +1375,13 @@ class TestCreateEvent:
 
     # -- draft path --------------------------------------------------------
 
-    def test_draft_path_does_not_touch_google(self, tools, writer) -> None:
-        with patch(
-            f"{MODULE}.get_config",
-            return_value={"configurable": {"user_timezone": "+05:30"}},
-        ):
-            out, proxy = self._run(
-                tools,
-                CreateEventInput(
-                    events=[
-                        SingleEventInput(summary="Draft", start_datetime="2026-01-15T10:00:00")
-                    ],
-                    confirm_immediately=False,
-                ),
-            )
-        proxy.assert_not_called()
-        assert out["created"] is False
-        assert "NOT been added" in out["message"]
-        assert out["message"].startswith("1 event(s)")
+    # -- draft path removed: creation is immediate, the approval card is the
+    # confirmation. These tests pin the immediate path's metadata handling. --
 
-    def test_draft_falls_back_to_the_shared_default_color(self, tools, writer) -> None:
-        # BUG: this path hardcoded "#4285f4", disagreeing with
-        # DEFAULT_CALENDAR_COLOR, which calendar_service and the frontend both
-        # use — an unmapped calendar drafted a card in a different colour than
-        # the same event shown after confirmation.
+    def test_immediate_path_uses_shared_default_color(self, tools, writer) -> None:
+        # BUG (kept pinned through the draft removal): this path hardcoded
+        # "#4285f4", disagreeing with DEFAULT_CALENDAR_COLOR, which
+        # calendar_service and the frontend both use.
         with patch(
             f"{MODULE}.get_config",
             return_value={"configurable": {"user_timezone": "+05:30"}},
@@ -1470,28 +1391,17 @@ class TestCreateEvent:
                 CreateEventInput(
                     events=[
                         SingleEventInput(
-                            summary="Draft",
+                            summary="Sync",
                             start_datetime="2026-01-15T10:00:00",
                             calendar_id="unmapped",
                         )
                     ],
-                    confirm_immediately=False,
                 ),
             )
-        # A minimal event drafts with defaults and no optional keys — pinned whole
-        # so the fallback color/name and the "omit when falsy" guards are all caught.
-        assert out["calendar_options"][0] == {
-            "index": 0,
-            "summary": "Draft",
-            "description": "",
-            "is_all_day": False,
-            "start": {"dateTime": "2026-01-15T10:00:00+05:30"},
-            "end": {"dateTime": "2026-01-15T10:30:00+05:30"},
-            "calendar_id": "unmapped",
-            "color": DEFAULT_CALENDAR_COLOR,
-            "calendar_name": "Calendar",
-        }
-        assert writer.call_args[0][0]["calendar_options"][0]["background_color"] == (
+        # A minimal event creates with defaults and no optional keys — pinned
+        # whole so the fallback color/name are both caught.
+        assert out["created_events"][0]["calendar_id"] == "unmapped"
+        assert writer.call_args[0][0]["calendar_fetch_data"][0]["background_color"] == (
             DEFAULT_CALENDAR_COLOR
         )
 
@@ -1510,13 +1420,12 @@ class TestCreateEvent:
                             calendar_id="unmapped",
                         )
                     ],
-                    confirm_immediately=True,
                 ),
             )
         streamed = writer.call_args[0][0]["calendar_fetch_data"][0]
         assert streamed["background_color"] == DEFAULT_CALENDAR_COLOR
 
-    def test_draft_uses_calendar_metadata_when_available(self, tools, writer) -> None:
+    def test_immediate_uses_calendar_metadata_when_available(self, tools, writer) -> None:
         with patch(
             f"{MODULE}.get_config",
             return_value={"configurable": {"user_timezone": "+05:30"}},
@@ -1526,7 +1435,7 @@ class TestCreateEvent:
                 CreateEventInput(
                     events=[
                         SingleEventInput(
-                            summary="Draft",
+                            summary="Sync",
                             start_datetime="2026-01-15T10:00:00",
                             calendar_id="cal-1",
                             location="Room 3",
@@ -1534,27 +1443,24 @@ class TestCreateEvent:
                             create_meeting_room=True,
                         )
                     ],
-                    confirm_immediately=False,
                 ),
                 metadata=({"cal-1": "#abcdef"}, {"cal-1": "Team"}),
             )
-        # Pin the whole draft option so a wrong key, default, or dropped field is caught.
-        assert out["calendar_options"][0] == {
+        # Pin the whole created event so a wrong key, default, or dropped field is caught.
+        assert out["created_events"][0] == {
             "index": 0,
-            "summary": "Draft",
-            "description": "",
-            "is_all_day": False,
+            "summary": "Sync",
+            "event_id": "evt-1",
+            "calendar_id": "cal-1",
+            "link": "https://cal/evt-1",
             "start": {"dateTime": "2026-01-15T10:00:00+05:30"},
             "end": {"dateTime": "2026-01-15T10:30:00+05:30"},
-            "calendar_id": "cal-1",
-            "color": "#abcdef",
-            "calendar_name": "Team",
-            "location": "Room 3",
-            "attendees": ["a@b.com"],
-            "create_meeting_room": True,
         }
+        streamed = writer.call_args[0][0]["calendar_fetch_data"][0]
+        assert streamed["calendar_name"] == "Team"
+        assert streamed["background_color"] == "#abcdef"
 
-    def test_metadata_failure_still_drafts(self, tools, writer) -> None:
+    def test_metadata_failure_still_creates_with_defaults(self, tools, writer) -> None:
         with patch(
             f"{MODULE}.get_config",
             return_value={"configurable": {"user_timezone": "+05:30"}},
@@ -1563,13 +1469,13 @@ class TestCreateEvent:
                 tools,
                 CreateEventInput(
                     events=[
-                        SingleEventInput(summary="Draft", start_datetime="2026-01-15T10:00:00")
+                        SingleEventInput(summary="Sync", start_datetime="2026-01-15T10:00:00")
                     ],
-                    confirm_immediately=False,
                 ),
                 raises_metadata=True,
             )
-        assert out["calendar_options"][0]["color"] == DEFAULT_CALENDAR_COLOR
+        assert out["created"] is True
+        assert out["created_events"][0]["event_id"] == "evt-1"
 
     # -- validation --------------------------------------------------------
 
@@ -1579,7 +1485,6 @@ class TestCreateEvent:
                 tools,
                 CreateEventInput(
                     events=[SingleEventInput(summary="Bad", start_datetime="next tuesday")],
-                    confirm_immediately=False,
                 ),
             )
 
@@ -1598,10 +1503,10 @@ class TestCreateEvent:
                         SingleEventInput(summary="Good", start_datetime="2026-01-15T10:00:00"),
                         SingleEventInput(summary="Bad", start_datetime="next tuesday"),
                     ],
-                    confirm_immediately=False,
                 ),
             )
-        assert len(out["calendar_options"]) == 1
+        assert len(out["created_events"]) == 1
+        assert out["created_events"][0]["summary"] == "Good"
         assert len(out["errors"]) == 1
         assert out["errors"][0]["index"] == 1
         assert out["errors"][0]["summary"] == "Bad"
@@ -1619,16 +1524,14 @@ class TestCreateEvent:
                         SingleEventInput(summary="Good", start_datetime="2026-01-15T10:00:00"),
                         SingleEventInput(summary="Bad", start_datetime="whenever"),
                     ],
-                    confirm_immediately=True,
                 ),
             )
         assert out["created"] is True
         assert [e["summary"] for e in out["errors"]] == ["Bad"]
 
     def test_no_events_is_not_reported_as_created(self, tools, writer) -> None:
-        out, _ = self._run(tools, CreateEventInput(events=[], confirm_immediately=False))
+        out, _ = self._run(tools, CreateEventInput(events=[]))
         assert out["created"] is False
-        assert out["calendar_options"] == []
         assert out["errors"] == []
 
     # -- outside a graph run -------------------------------------------------
@@ -1650,7 +1553,6 @@ class TestCreateEvent:
                 tools,
                 CreateEventInput(
                     events=[SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")],
-                    confirm_immediately=True,
                 ),
             )
         finally:

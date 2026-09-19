@@ -15,15 +15,14 @@ Args:
         - calendar_id (str): Calendar ID, default "primary".
         - description, location, attendees: Optional.
         - is_all_day (bool): Default False.
-    confirm_immediately (bool, REQUIRED): True creates immediately; False returns
-    drafts for review. Always pass explicitly — omitting it rejects the call.
 
-Returns (when confirm_immediately=True):
+Returns:
     {
         "created": true,
         "created_events": [{"index": 0, "summary": "...", "event_id": "abc123", ...}],
         "errors": [{"index": 1, "summary": "...", "error": "..."}]
     }
+    Creation is immediate; under approval gating the approval card confirms.
     Use event_id with ADD_RECURRENCE to make events recurring.
     A non-empty "errors" means only some events were created: tell the user which failed.
 """

@@ -804,19 +804,16 @@ class SingleEventInput(BaseModel):
 
 
 class CreateEventInput(BaseModel):
-    """Input for creating one or more calendar events."""
+    """Input for creating one or more calendar events.
+
+    Creation is immediate: under HIL the approval card is the confirmation,
+    so there is no draft mode (removed — it split approval from execution
+    across two ungated surfaces and confused models into double-confirming).
+    """
 
     events: list[SingleEventInput] = Field(
         ...,
         description="List of events to create",
-    )
-    confirm_immediately: bool = Field(
-        ...,
-        description=(
-            "REQUIRED, no default: True creates the events immediately, "
-            "False returns them as drafts for review. Always pass explicitly — "
-            "omitting it rejects the call instead of guessing."
-        ),
     )
 
 
