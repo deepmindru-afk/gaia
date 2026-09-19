@@ -110,7 +110,7 @@ class BotProgressDelivery:
 
         msg = (
             f"I need you to take over for this step:\n{snapshot.reason}\n\n"
-            "Reply *done* when you've finished, or *stop* to cancel."
+            'Reply "done" when you\'ve finished, or "stop" to cancel.'
         )
         if snapshot.category == SensitiveCategory.CREDENTIALS:
             msg += f"\n\n{BROWSER_CREDENTIALS_SAVED_NOTE}"

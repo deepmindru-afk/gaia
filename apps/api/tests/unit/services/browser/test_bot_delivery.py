@@ -340,6 +340,25 @@ class TestBotProgressDeliveryStep:
 
 
 class TestBotProgressDeliveryHandoff:
+    async def test_reply_hint_uses_plain_quotes_not_markdown_emphasis(self, delivery):
+        """*done*/*stop* rendered as literal <i>done</i> text on Telegram (no markdown parse mode on this send) -- plain quotes read correctly on every platform."""
+        snap = BrowserHandoffSnapshot(
+            handoff_id="h1", reason="Need creds", session_id=None, status=HandoffStatus.PENDING
+        )
+        with (
+            patch("app.services.browser.bot_delivery.create_live_view_link", new=AsyncMock()),
+            patch(
+                "app.services.browser.bot_delivery.publish_outbound_message", new=AsyncMock()
+            ) as mp,
+        ):
+            await delivery.handoff(snap)
+            msg = mp.call_args[0][2][0]
+            assert "*done*" not in msg
+            assert "*stop*" not in msg
+            assert "<i>" not in msg
+            assert '"done"' in msg
+            assert '"stop"' in msg
+
     async def test_pending_with_session_includes_link(self, delivery):
         snap = BrowserHandoffSnapshot(
             handoff_id="h1",
@@ -361,7 +380,7 @@ class TestBotProgressDeliveryHandoff:
             msg = mock_pub.call_args[0][2][0]
             assert msg == (
                 "I need you to take over for this step:\nPayment needed\n\n"
-                "Reply *done* when you've finished, or *stop* to cancel."
+                'Reply "done" when you\'ve finished, or "stop" to cancel.'
                 "\n\nOpen the live browser: https://live.example.com/link"
             )
 
@@ -412,7 +431,7 @@ class TestBotProgressDeliveryHandoff:
             assert mp.call_args[0][2][0] == (
                 "I need you to take over for this step:\n"
                 "Enter your password and click Sign in.\n\n"
-                "Reply *done* when you've finished, or *stop* to cancel."
+                'Reply "done" when you\'ve finished, or "stop" to cancel.'
                 f"\n\n{BROWSER_CREDENTIALS_SAVED_NOTE}"
                 "\n\nOpen the live browser: https://live/x"
             )
@@ -455,7 +474,7 @@ class TestBotProgressDeliveryHandoff:
             msg = mp.call_args[0][2][0]
             assert msg == (
                 "I need you to take over for this step:\nNeed creds\n\n"
-                "Reply *done* when you've finished, or *stop* to cancel."
+                'Reply "done" when you\'ve finished, or "stop" to cancel.'
             )
 
     async def test_non_pending_does_nothing(self, delivery):
