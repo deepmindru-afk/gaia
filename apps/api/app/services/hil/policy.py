@@ -2,13 +2,13 @@
 
 This module answers two questions and nothing else, so the gate can stay about acting:
 
-1. **Is this tool gated?** ``is_gated`` — the user's per-tool override, else the
+1. **Is this tool gated?** is_gated — the user's per-tool override, else the
    destructive classification. This set is identical in both gating modes.
-2. **What happens to the gated set?** ``resolve_policy`` — ``ask`` (confirm with the
-   user) or ``auto`` (let the intent judge decide). ``always_allow`` gates nothing.
+2. **What happens to the gated set?** resolve_policy — ask (confirm with the
+   user) or auto (let the intent judge decide). always_allow gates nothing.
 
 Plus one guard that belongs with the policy because it *suppresses* auto-approval:
-``has_pausing_sibling`` — see its docstring for the double-execution it prevents.
+has_pausing_sibling — see its docstring for the double-execution it prevents.
 """
 
 from collections.abc import Mapping
@@ -28,10 +28,8 @@ from app.services.hil.preferences import get_hil_preferences
 from app.services.hil.utils import current_tool_calls, tool_of, unpack_tool_call
 from shared.py.wide_events import log
 
-# What the gate does with one call:
-#   allow — run it without asking
-#   ask   — pause and put it to the user
-#   auto  — let the intent judge choose between the two
+# What the gate does with one call: allow it, ask (pause for the user), or auto
+# (let the intent judge choose between the two).
 GatingPolicy = Literal["allow", "ask", "auto"]
 
 # Tools whose gate depends on an argument value, not just the name: a hit on
@@ -43,18 +41,12 @@ ARGUMENT_GATED_TOOLS: dict[str, dict[str, object]] = {
 
 
 async def _stamp_registry() -> ToolRegistry | None:
-    """The registry the forced-ask stamp is read from, or ``None`` when unreachable.
+    """Return the registry the forced-ask stamp is read from, or None when unreachable.
 
-    The stamp is an ESCALATION, like an MCP ``destructiveHint``: its presence adds a
-    reason to ask, its absence never clears a call. So an unreachable registry means
-    "no stamp read", and the rest of the policy — the user's override, then
-    ``is_tool_destructive``, which already fails closed to gated — still decides.
-
-    Raising instead took the whole gate down with it: ``decide_tool_call`` fails
-    closed on ANY exception by DENYING the call outright, so a process where the
-    ``tool_registry`` provider was never registered (a bare xdist worker, a worker
-    that never ran app startup) silently refused every gated tool instead of asking
-    the user — no approval card, no record, no way to say yes.
+    The stamp only escalates, never clears, so an unreachable registry just means
+    "no stamp read" — the rest of the policy still decides. Raising instead took
+    the whole gate down: decide_tool_call fails closed on ANY exception, so an
+    unregistered provider silently refused every gated tool instead of asking.
     """
     try:
         return await get_tool_registry()
@@ -68,7 +60,7 @@ async def _stamp_registry() -> ToolRegistry | None:
 
 
 async def _is_always_gated(tool_name: str) -> bool:
-    """The registry's forced-ask stamp — checked before any preference lookup."""
+    """Read the registry's forced-ask stamp, checked before any preference lookup."""
     registry = await _stamp_registry()
     if registry is None:
         return False
@@ -132,7 +124,7 @@ async def _real_tool(user_id: str, tool_name: str) -> BaseTool | None:
 
 
 async def resolve_policy(request: ToolCallRequest, user_id: str, tool_name: str) -> GatingPolicy:
-    """The user's mode plus the gated set, resolved into one decision.
+    """Resolve the user's mode plus the gated set into one decision.
 
     Forced-ask tools short-circuit BEFORE the preferences read, so they pause
     even when the preference store itself is unreachable (fail closed for the
@@ -158,10 +150,9 @@ async def is_gated(
 ) -> bool:
     """Whether this tool needs approval — the set both gating modes act on.
 
-    The forced-ask stamp and the argument gate outrank everything, including a
-    user's explicit per-tool override: those mark product invariants ("changes
-    to the user's own account confirm first"), not classifier opinions.
-    Otherwise a user's per-tool choice wins in both directions — even over an
+    The forced-ask stamp and argument gate outrank everything, including a user's
+    per-tool override, since they mark product invariants, not classifier opinions.
+    Otherwise the user's per-tool choice wins in both directions — even over an
     MCP destructiveHint — since it is a deliberate setting on their own account.
     """
     if await _is_always_gated(tool_name):
@@ -179,7 +170,7 @@ async def is_gated(
 
 
 async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_id: str) -> bool:
-    """Whether another call in this same AI message can pause the run.
+    """Return whether another call in this AI message can pause the run.
 
     If one can, this call cannot simply run and be done with it. The sibling will
     ``interrupt()``, and LangGraph discards the writes of every task in that step and
@@ -221,9 +212,8 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
     if any(name in HIL_PAUSING_TOOLS for name, _ in siblings):
         return True
 
-    # Forced-ask siblings pause even when HIL is otherwise off — checked before
-    # the always_allow fast path below, because that fast path exists to skip
-    # preference-driven gating, and the stamp is not preference-driven.
+    # Forced-ask siblings pause even when HIL is off, since the stamp isn't
+    # preference-driven — checked before the always_allow fast path below.
     registry = await _stamp_registry()
     for name, args in siblings:
         meta = registry.get_tool_meta(name) if registry else None
@@ -232,10 +222,8 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
 
     prefs = await get_hil_preferences(user_id)
     if prefs.mode == "always_allow":
-        # HIL is off for this user, so no preference-driven gate can pause. Answered
-        # after the forced-gate scan because account mutations ask regardless of this
-        # mode (and before the per-sibling classification below because every ungated
-        # call now asks this — see gate._run_once_across_replays).
+        # HIL is off, so no preference-driven gate can pause; account mutations
+        # already asked in the forced-gate scan above regardless of this mode.
         return False
     for name, args in siblings:
         if name in HIL_EXEMPT_TOOLS:
@@ -246,7 +234,7 @@ async def has_pausing_sibling(request: ToolCallRequest, user_id: str, tool_call_
 
 
 async def _preferences(user_id: str) -> HILPreferences:
-    """The user's HIL preferences, or the default when the store is unreachable.
+    """Return the user's HIL preferences, or the default when the store is unreachable.
 
     Failing open here is safe only because HIL is opt-in and unlaunched: a Redis/Mongo
     blip must not gate every tool call for the overwhelmingly common HIL-off user. The

@@ -1,13 +1,9 @@
 """Resolve pending HIL approvals from a bot user's next chat reply.
 
-BUTTON-LESS CHANNELS ONLY. The caller (``app/services/chat/stream.py``,
-``_resolve_pending_approval_turn``) invokes this EXCLUSIVELY for messaging-platform
-bots — WhatsApp, Telegram, Slack, Discord. Web/mobile/desktop render real
-Approve/Deny buttons and resolve deterministically via ``POST
-/approvals/{id}/decision``; they never run this classifier, because asking an LLM
-to guess intent when an unambiguous button already exists is needless risk. A
-typed reply is the ONLY approval surface a text-only bot has, so here — and only
-here — one fast LLM call classifies it.
+BUTTON-LESS CHANNELS ONLY: the caller, _resolve_pending_approval_turn in
+app/services/chat/stream.py, invokes this for messaging-platform bots alone (WhatsApp,
+Telegram, Slack, Discord). Web/mobile/desktop resolve via POST /approvals/{id}/decision
+and never run this classifier — a typed reply is a text-only bot's only approval surface.
 
 Single pending approval → approve / deny / unrelated:
   - approve resolves it and resumes the paused run (runs the tool AS PROPOSED);
@@ -116,12 +112,12 @@ async def resolve_pending_from_message(
     message: str,
     history: list[MessageDict] | None = None,
 ) -> DecisionAction | None:
-    """Resolve the conversation's pending approval(s) from ``message``.
+    """Resolve the conversation's pending approval(s) from message.
 
-    ``history`` is a recent window of prior turns (context for the classifier).
+    history is a recent window of prior turns (context for the classifier).
     Returns the overall classified action ("approve" when anything was approved,
     "deny" when things were only declined, "unrelated" when the user moved on),
-    or ``None`` when nothing was pending or the reply addressed none of it.
+    or None when nothing was pending or the reply addressed none of it.
     """
     pending = await list_pending_for_conversation(conversation_id)
     if pending:
@@ -175,7 +171,7 @@ async def _resolve_batch(
     message: str,
     history: list[MessageDict] | None,
 ) -> DecisionAction | None:
-    """Apply a per-item classification of ``message`` to the pending batch.
+    """Apply a per-item classification of message to the pending batch.
 
     Decisions dispatch through ``resolve_approval`` (barrier) or ``decide_ledger``
     (ledger) one by one; the per-conversation resume slot ensures only the first
@@ -252,9 +248,9 @@ async def interpret_decision_message(
 ) -> DecisionResult | None:
     """Classify a chat reply against pending approvals.
 
-    ``None`` on an LLM error, so the caller leaves the approval pending — never toward
+    None on an LLM error, so the caller leaves the approval pending — never toward
     silently executing an action, and never toward abandoning a legitimate one on a
-    transient hiccup (an error is not the same signal as a genuine ``unrelated``)."""
+    transient hiccup (an error is not the same signal as a genuine unrelated)."""
     try:
         return await ainvoke_structured(
             DecisionResult,
@@ -278,11 +274,12 @@ async def interpret_decision_message(
 def _no_arg_edit(
     action: Literal["approve", "deny"], feedback: str | None
 ) -> tuple[Literal["approve", "deny"], str | None]:
-    """An approval can't carry an instruction — the gate runs the tool with its
-    ORIGINAL args, there is no arg-editing. So an 'approve' that arrived with
-    feedback is a modification we would silently drop (send the email without the
-    'cc finance' the user asked for). Treat it as a decline carrying that feedback
-    so the agent re-proposes with the change instead of running the wrong action."""
+    """Turn an 'approve' carrying feedback into a deny, since there is no arg-editing.
+
+    The gate runs the tool with its ORIGINAL args, so an 'approve' with feedback
+    (e.g. "cc finance") would silently drop it. Declining with that feedback makes
+    the agent re-propose with the change instead of running the wrong action.
+    """
     if action == "approve" and (feedback or "").strip():
         return "deny", feedback
     return action, feedback
@@ -346,7 +343,7 @@ async def _abandon_ledger_approvals(conversation_id: str, user_id: str) -> list[
 
 
 def _history_block(history: list[MessageDict] | None) -> str:
-    """Recent turns as ``role: content`` lines, per-turn and total bounded."""
+    """Recent turns as role: content lines, per-turn and total bounded."""
     if not history:
         return ""
     lines = [

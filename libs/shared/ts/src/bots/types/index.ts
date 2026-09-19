@@ -98,7 +98,6 @@ export interface BotConfig {
 export interface AuthStatus {
   /** Whether the user is authenticated/linked. */
   authenticated: boolean;
-  /** The platform name. */
   platform: string;
   /**
    * The user ID on the platform.
@@ -116,6 +115,22 @@ export interface AuthStatus {
    * web and API events.
    */
   user_id?: string;
+}
+
+/**
+ * What `POST /bot/redeem-link-code` answers (`RedeemLinkCodeResponse` in
+ * `apps/api/app/models/bot_models.py`, which must change with this).
+ */
+export interface RedeemedLinkCode {
+  /** Whether the platform account is now linked. */
+  linked: boolean;
+  /**
+   * Whether GAIA's first contact is on its way on the outbound queue. When
+   * false the bot owes the user `firstContact` — nothing retries that publish.
+   */
+  delivered: boolean;
+  /** Ordered bubbles to send when `delivered` is false; empty otherwise. */
+  firstContact: string[];
 }
 
 export interface BotWorkflow {
@@ -198,7 +213,7 @@ export type CommandContext = BotUserContext & {
 /**
  * Integration information for settings.
  */
-export interface IntegrationInfo {
+export interface BotIntegrationInfo {
   name: string;
   logoUrl: string | null;
   status: "created" | "connected";
@@ -219,7 +234,7 @@ export interface AuthenticatedSettingsResponse {
   userName: string | null;
   accountCreatedAt: string | null;
   profileImageUrl: string | null;
-  connectedIntegrations: IntegrationInfo[];
+  connectedIntegrations: BotIntegrationInfo[];
 }
 
 /**

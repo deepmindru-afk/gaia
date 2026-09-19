@@ -21,29 +21,38 @@ interface TodoSectionProps {
   message?: string;
 }
 
-// Adapt the streamed chat task payload to the canonical task model the shared
-// TodoItem component (used on the todos page) expects, so chat and page render
-// identically and can never drift. Missing optional fields (scheduled_at,
-// vfs_path, etc.) are simply absent — TodoItem renders them conditionally.
+// Adapt the streamed chat task payload to the canonical Todo model (same
+// as the todos page's TodoItem) so chat and page render identically.
+// Missing optional fields are simply absent; TodoItem renders them conditionally.
 function toCanonicalTodo(t: ChatTodoItem): Todo {
   return {
     id: t.id,
     user_id: "",
     title: t.title,
-    description: t.description,
+    description: t.description ?? null,
     labels: t.labels ?? [],
-    due_date: t.due_date,
-    due_date_timezone: t.due_date_timezone,
+    due_date: t.due_date ?? null,
+    due_date_timezone: t.due_date_timezone ?? null,
     priority: t.priority,
     project_id: t.project_id ?? "",
     completed: t.completed,
+    notify_on_run: true,
     subtasks: (t.subtasks ?? []).map((s) => ({
       id: s.id,
       title: s.title,
       completed: s.completed,
       created_at: t.created_at,
     })),
-    workflow_id: t.workflow?.id,
+    workflow_id: t.workflow?.id ?? null,
+    completed_at: null,
+    vfs_path: null,
+    scheduled_at: null,
+    recurrence: null,
+    expires_at: null,
+    references: [],
+    workflow_categories: [],
+    trigger_subscriptions: [],
+    gaia_retry_count: 0,
     created_at: t.created_at,
     updated_at: t.updated_at,
   };

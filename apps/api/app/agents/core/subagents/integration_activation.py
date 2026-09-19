@@ -22,6 +22,7 @@ from langgraph.types import Command
 from app.agents.context.fetchers import build_provider_metadata_block
 from app.agents.core.subagents.active_integrations import mark_active
 from app.agents.core.subagents.handoff_tools import (
+    CustomMcpSubagent,
     _get_subagent_by_id,
     check_integration_connection,
 )
@@ -202,11 +203,11 @@ async def activate_integration(
         log.warning(f"{LogTag.AGENT} Activation requested for unknown integration")
         return _reply(tool_call_id, f"Unknown integration '{integration_id}'.")
 
-    # Custom MCP (a dict, not a registry Subagent) and auth-required MCP both
-    # issue their tools per user, so they never enter the global registry and
-    # cannot be bound in-context. handoff builds their per-user graph — route
+    # Custom MCP (a CustomMcpSubagent, not a registry Subagent) and auth-required
+    # MCP both issue their tools per user, so they never enter the global registry
+    # and cannot be bound in-context. handoff builds their per-user graph — route
     # there instead of dead-ending.
-    if isinstance(resolved, dict) or _requires_per_user_tokens(resolved):
+    if isinstance(resolved, CustomMcpSubagent) or _requires_per_user_tokens(resolved):
         log.set(activation={"integration": integration_id, "routed_to_handoff": True})
         return _reply(tool_call_id, _handoff_redirect(integration_id))
 

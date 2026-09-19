@@ -4,11 +4,14 @@ Tracked todo service — Mongo-backed lifecycle for GAIA's working memory todos.
 A tracked todo is a regular todo with:
 - vfs_path (display label) set to /workspace/gaia-tasks/{todo_id}
 - 'gaia-tracked' label
-- canvas_content field (agent-written brain) indexed in ChromaDB
-- log_content field (system-written audit trail)
+- canvas_content field (agent-written recall doc: canvas.md)
+- activity_content field (chronological log: activity.md; agent + run markers)
+- log_content field (system-written audit trail: log.md)
+
+Canvas and activity are indexed together in ChromaDB by the storage layer.
 
 Canvas and log content live on the todo document itself — see
-``app/services/todo_canvas_storage.py`` for the storage primitives. No
+app/services/todo_canvas_storage.py for the storage primitives. No
 JuiceFS / FUSE mount is required, so tracked todos work in every dev mode.
 """
 
@@ -17,20 +20,18 @@ from datetime import UTC, datetime
 from app.constants.todos import GAIA_TRACKED_LABEL
 from app.db.repositories.todos import todo_repository
 from app.models.todo_models import Priority, TodoDocument, TodoModel, TodoResponse, TodoUpdate
+from app.services.canvas_markdown import split_legacy_canvas
 from app.services.gaia_tasks_fs import schedule_gaia_tasks_sync
+from app.services.storage._vfs_common import folder_name
 from app.services.todo_canvas_storage import (
+    append_activity,
     append_log,
     build_vfs_label,
-    read_canvas,
-    write_canvas,
+    write_canvas_and_activity,
 )
 from app.services.todos.todo_service import TodoService
 from app.services.triggers.subscription_service import teardown_subscriptions
-from app.utils.canvas_vector_utils import (
-    mark_canvas_completed,
-    store_canvas_embedding,
-    update_canvas_embedding,
-)
+from app.utils.canvas_vector_utils import mark_canvas_completed, store_canvas_embedding
 from app.utils.redis_utils import RedisPoolManager
 from app.workers.queue import enqueue_worker_job
 from shared.py.wide_events import log
@@ -38,27 +39,21 @@ from shared.py.wide_events import log
 CANVAS_TEMPLATE = """# {title}
 
 ## Key Details
-<!-- email addresses, thread IDs, calendar IDs, issue IDs — everything needed to take action -->
+<!-- email addresses, thread IDs, calendar IDs, issue IDs: everything needed to take action -->
 
 ## Current State
-<!-- what's true RIGHT NOW — updated after every action -->
-
-## Activity Log
-<!-- which agent did what, which tools it used, what the outcome was — add entries HERE, not in Learnings -->
-
-## Timeline
-<!-- chronological list of actions taken and results -->
+<!-- what is true RIGHT NOW; rewrite after every action -->
 
 ## Context
-<!-- accumulated context from signals, related information, decisions made -->
+<!-- accumulated context from signals, related information, decisions made, open questions -->
 
 ## Learnings
-<!-- written on completion: what worked, what didn't, key decisions, timing insights, optimizations for next time -->
+<!-- written on completion: what worked, what did not, timing insights, reusable patterns -->
 """
 
 
 def _pin_active_todo(docs: list[TodoDocument], active_todo_id: str | None) -> None:
-    """Move the matching todo to the front of `docs` in-place (no-op if not found)."""
+    """Move the matching todo to the front of docs in-place (no-op if not found)."""
     if not active_todo_id:
         return
     for i, d in enumerate(docs):
@@ -68,18 +63,13 @@ def _pin_active_todo(docs: list[TodoDocument], active_todo_id: str | None) -> No
 
 
 def _format_due_string(due_date: datetime | None, now: datetime) -> str:
-    """Render the due-date suffix: ` due(Nd)`, ` OVERDUE(Nd)`, or empty."""
+    """Render the due-date suffix:  due(Nd),  OVERDUE(Nd), or empty."""
     if not due_date:
         return ""
     days_until = (due_date - now).days
     if days_until < 0:
         return f" OVERDUE({-days_until}d)"
     return f" due({days_until}d)"
-
-
-# Capture everything under the "## Key Details" heading up to the next "## "
-# heading (or end of text). A tempered greedy token — "any char that does not
-# begin a new section" — avoids a reluctant quantifier entirely.
 
 
 def _format_tracked_todo_line(doc: TodoDocument, now: datetime, active_todo_id: str | None) -> str:
@@ -92,7 +82,7 @@ def _format_tracked_todo_line(doc: TodoDocument, now: datetime, active_todo_id: 
     return (
         f'  {prefix}"{doc.title}"{labels_str}{_format_due_string(doc.due_date, now)}'
         f" — {age_days}d old, updated {last_update}d ago"
-        f" | ID: {doc.id}"
+        f" | ID: {doc.id} | files: /workspace/gaia-tasks/{folder_name(doc.id, doc.title)}/"
     )
 
 
@@ -100,7 +90,7 @@ class TrackedTodoService:
     """Manages VFS lifecycle for tracked (GAIA working memory) todos.
 
     All methods are static — the service holds no instance state. The
-    ``tracked_todo_service`` singleton is kept for call-site compatibility.
+    tracked_todo_service singleton is kept for call-site compatibility.
     """
 
     @staticmethod
@@ -114,6 +104,7 @@ class TrackedTodoService:
         labels: list[str] | None = None,
         initial_canvas: str | None = None,
         source_conversation_id: str | None = None,
+        notify_on_run: bool = True,
     ) -> TodoResponse:
         """Create a todo with VFS canvas and ChromaDB indexing.
 
@@ -133,13 +124,23 @@ class TrackedTodoService:
             due_date=due_date,
             priority=priority,
             labels=all_labels,
+            notify_on_run=notify_on_run,
         )
         result = await TodoService.create_todo(todo, user_id)
         todo_id = result.id
 
         vfs_path = build_vfs_label(todo_id)
         canvas_content = initial_canvas or CANVAS_TEMPLATE.format(title=title)
+        # Models still compose an "## Activity Log" inside initial_canvas; keep
+        # canvas.md a recall doc from the first write by splitting it here.
+        canvas_content, moved_activity = split_legacy_canvas(canvas_content)
         now = datetime.now(UTC)
+        # Moved legacy entries come first (oldest-first, like the migration); the
+        # creation marker stays last so an edit-append has a line to anchor on,
+        # and models reach for edit before write.
+        activity_content = "\n\n".join(
+            p for p in (moved_activity, f"- {now.isoformat()} ▶ tracked todo created") if p
+        )
         log_content = (
             f"# System Log: {title}\n\n"
             f"## {now.isoformat()} [CREATED]\n"
@@ -153,6 +154,7 @@ class TrackedTodoService:
             update=TodoUpdate(
                 vfs_path=vfs_path,
                 canvas_content=canvas_content,
+                activity_content=activity_content,
                 log_content=log_content,
                 source_conversation_id=source_conversation_id,
             ),
@@ -160,7 +162,7 @@ class TrackedTodoService:
 
         await store_canvas_embedding(
             todo_id=todo_id,
-            canvas_content=canvas_content,
+            canvas_content="\n\n".join(p for p in (canvas_content, activity_content) if p),
             user_id=user_id,
             title=title,
             labels=all_labels,
@@ -221,11 +223,10 @@ class TrackedTodoService:
 
     @staticmethod
     async def get_active_tracked_summary(user_id: str, active_todo_id: str | None = None) -> str:
-        """Formatted summary of active tracked todos for context injection.
+        """Format active tracked todos for context injection.
 
-        When active_todo_id is provided, that todo is pinned at the top with
-        an ⭐ ACTIVE marker so the agent can quickly identify the run's
-        bound canvas.
+        When active_todo_id is provided, that todo is pinned at the top with an
+        ⭐ ACTIVE marker so the agent can identify the run's bound canvas.
         """
         docs = await todo_repository.list_active_tracked(user_id, limit=15)
         if not docs:
@@ -239,40 +240,18 @@ class TrackedTodoService:
         return "\n".join(lines)
 
     @staticmethod
-    async def append_canvas_timeline(todo_id: str, user_id: str, entry: str) -> bool:
-        """Append a line to the canvas Timeline section.
+    async def append_activity_entry(todo_id: str, user_id: str, entry: str) -> bool:
+        """Append one dated line to activity.md.
 
-        Called by code (not agent) to guarantee a paper trail for scheduled runs
-        regardless of what the LLM writes. If the canvas has a "## Timeline"
-        section, the line is inserted at the top of its body; otherwise a new
-        section is appended at the end of the canvas.
+        Called by code (not the agent) so scheduled runs leave a paper trail
+        regardless of what the LLM writes.
         """
-        try:
-            current = await read_canvas(todo_id, user_id) or ""
-        except Exception as e:
-            log.warning(
-                "tracked_todo.canvas_read_for_timeline_failed", todo_id=todo_id, error=str(e)
-            )
-            return False
-        if not current:
-            return False
-
         line = entry if entry.startswith("- ") else f"- {entry}"
-        heading = "## Timeline"
-        heading_pos = current.find(f"\n{heading}")
-
-        if heading_pos == -1:
-            new_canvas = current.rstrip() + f"\n\n{heading}\n{line}\n"
-        else:
-            insert_pos = heading_pos + len(f"\n{heading}")
-            new_canvas = current[:insert_pos] + f"\n{line}" + current[insert_pos:]
-
         try:
-            await write_canvas(todo_id, user_id, new_canvas)
+            return await append_activity(todo_id, user_id, line)
         except Exception as e:
-            log.warning("tracked_todo.canvas_timeline_write_failed", todo_id=todo_id, error=str(e))
+            log.warning("tracked_todo.activity_append_failed", todo_id=todo_id, error=str(e))
             return False
-        return True
 
     @staticmethod
     async def system_log(todo_id: str, user_id: str, event_type: str, details: str) -> None:
@@ -288,22 +267,44 @@ class TrackedTodoService:
         )
 
     @staticmethod
-    async def reindex_canvas(todo_id: str, user_id: str) -> bool:
-        """Re-index a todo's canvas in ChromaDB after the agent writes to it."""
-        doc = await todo_repository.get(todo_id, user_id=user_id)
-        if not doc:
-            return False
+    async def migrate_legacy_canvas(doc: TodoDocument) -> bool:
+        """One-shot split of a pre-activity.md canvas. Returns True when it wrote.
 
-        canvas_content = doc.canvas_content
-        if not canvas_content:
+        Legacy canvases carried an Activity Log / Timeline section inside the
+        canvas (and append mode stranded dated entries under Learnings). Those
+        move to activity_content; moved legacy entries come first because they
+        predate anything written to activity.md post-deploy.
+        """
+        if not doc.canvas_content:
             return False
-
-        return await update_canvas_embedding(
-            todo_id=todo_id,
-            canvas_content=canvas_content,
-            user_id=user_id,
-            title=doc.title,
-            labels=doc.labels,
+        canvas, moved = split_legacy_canvas(doc.canvas_content)
+        if canvas == doc.canvas_content:
+            return False
+        parts = [p for p in (moved, doc.activity_content) if p]
+        if await write_canvas_and_activity(
+            doc.id,
+            doc.user_id,
+            canvas=canvas,
+            activity="\n\n".join(parts),
+            expected_updated_at=doc.updated_at,
+        ):
+            return True
+        # Lost a revision race (or the snapshot went stale): re-read once and
+        # retry against fresh content. A concurrent agent write wins over the
+        # migration, so a second mismatch just skips until the next sweep.
+        fresh = await todo_repository.get(doc.id, user_id=doc.user_id)
+        if fresh is None or not fresh.canvas_content:
+            return False
+        canvas, moved = split_legacy_canvas(fresh.canvas_content)
+        if canvas == fresh.canvas_content:
+            return False
+        parts = [p for p in (moved, fresh.activity_content) if p]
+        return await write_canvas_and_activity(
+            fresh.id,
+            fresh.user_id,
+            canvas=canvas,
+            activity="\n\n".join(parts),
+            expected_updated_at=fresh.updated_at,
         )
 
     @staticmethod

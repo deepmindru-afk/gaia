@@ -90,6 +90,35 @@ def _body(name: str) -> list[str]:
     return []
 
 
+def _first_argument_end(text: str, i: int) -> int:
+    """Index just past the first call argument starting at ``i``.
+
+    That is the comma that ends it, or the closing bracket of a one-argument call.
+    Bracket/quote balanced: a type arg like ``dict[str, object] | None`` (or a
+    quoted forward ref) holds commas a regex stops at, and a half-blanked cast
+    then reads as a real change.
+    """
+    depth = 0
+    quote: str | None = None
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote and text[i - 1] != "\\":
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif ch == "," and depth == 0:
+            break
+        i += 1
+    return i
+
+
 def _normalized(lines: list[str]) -> list[str]:
     """Blank the TYPE argument of every ``cast()``.
 
@@ -108,29 +137,7 @@ def _normalized(lines: list[str]) -> list[str]:
     out: list[str] = []
     pos = 0
     while (start := joined.find("cast(", pos)) != -1:
-        # Scan the FIRST argument with bracket/quote balancing: a type arg
-        # like ``dict[str, object] | None`` (or a quoted forward ref) holds
-        # commas a regex stops at, and a half-blanked cast then reads as a
-        # real change.
-        i = start + len("cast(")
-        depth = 0
-        quote: str | None = None
-        while i < len(joined):
-            ch = joined[i]
-            if quote:
-                if ch == quote and joined[i - 1] != "\\":
-                    quote = None
-            elif ch in "\"'":
-                quote = ch
-            elif ch in "([{":
-                depth += 1
-            elif ch in ")]}":
-                if depth == 0:
-                    break  # cast with one argument — not ours to touch
-                depth -= 1
-            elif ch == "," and depth == 0:
-                break
-            i += 1
+        i = _first_argument_end(joined, start + len("cast("))
         if i < len(joined) and joined[i] == ",":
             arg = joined[start + len("cast(") : i]
             out.append(joined[pos:start] + "cast(" + "\n" * arg.count("\n") + "_")
@@ -141,10 +148,42 @@ def _normalized(lines: list[str]) -> list[str]:
     return "".join(out).split("\n")
 
 
+def _blank_call_next_arg(lines: list[str]) -> list[str]:
+    """Blank the sole argument of every ``call_next(...)``.
+
+    Starlette's ``BaseHTTPMiddleware`` builds ``call_next`` as a closure over the
+    request's own ``scope``/``receive``/``send`` and calls
+    ``self.app(scope, receive_or_disconnect, send_no_error)`` — it never reads
+    its ``request`` parameter (starlette/middleware/base.py, ``async def
+    call_next(request: Request)``). So ``call_next(request)`` and
+    ``call_next(None)`` are the same program, and mutmut's argument-to-None
+    mutation of that one call is unkillable by any test rather than a gap in
+    one. Same class of provable no-op as the ``cast()`` type argument above.
+
+    Narrow on purpose: only a call spelled ``call_next``, and only its first
+    argument. Every ``call_next`` in this codebase is that closure — a helper
+    of that name which DID read its argument would be mis-blanked here.
+
+    Line COUNT is preserved so the caller's index arithmetic still maps a
+    differing line back to the real file.
+    """
+    joined = "\n".join(lines)
+    out: list[str] = []
+    pos = 0
+    needle = "call_next("
+    while (start := joined.find(needle, pos)) != -1:
+        i = _first_argument_end(joined, start + len(needle))
+        arg = joined[start + len(needle) : i]
+        out.append(joined[pos:start] + needle + "\n" * arg.count("\n") + "_")
+        pos = i
+    out.append(joined[pos:])
+    return "".join(out).split("\n")
+
+
 orig_raw = _body(orig_name)
 mut_raw = _body(mutant_name)
-orig_lines = _normalized(orig_raw)
-mut_lines = _normalized(mut_raw)
+orig_lines = _blank_call_next_arg(_normalized(orig_raw))
+mut_lines = _blank_call_next_arg(_normalized(mut_raw))
 if orig_lines == mut_lines:
     print("EQUIV")
     sys.exit(0)
@@ -189,7 +228,7 @@ def _excluded_span(path: str, line_no: int):
 
 
 def _falsy_literal(node) -> bool:
-    """True for a literal that is falsy — None/False/0/"" and empty containers."""
+    """Return True for a literal that is falsy — None/False/0/"" and empty containers."""
     if isinstance(node, ast.Constant):
         return not node.value
     if isinstance(node, ast.List | ast.Tuple | ast.Set):
@@ -200,7 +239,7 @@ def _falsy_literal(node) -> bool:
 
 
 def _mutated_token(span, line_no: int, orig_line: str, mut_line: str) -> str | None:
-    """The text the mutation put where the literal at ``span`` was, or None.
+    """Return the text the mutation put where the literal at ``span`` was, or None.
 
     Column-exact rather than a common-prefix/suffix diff. mutmut changes ONE
     construct per mutant, so everything left of the literal is untouched and
@@ -218,7 +257,7 @@ def _mutated_token(span, line_no: int, orig_line: str, mut_line: str) -> str | N
 
 
 def _falsy_replacement(replacement: str | None, *, removal_stays_falsy: bool) -> bool:
-    """True when the mutation put another falsy literal where the original was.
+    """Return True when the mutation put another falsy literal where the original was.
 
     ``removal_stays_falsy`` answers the one case the text cannot: mutmut also
     DELETES the argument, and what the call then does is the callee's business.
@@ -238,7 +277,7 @@ def _falsy_replacement(replacement: str | None, *, removal_stays_falsy: bool) ->
 
 
 def _boolean_consumer(node) -> bool:
-    """True when node's own value reaches only a test every falsy value answers alike."""
+    """Return True when node's own value reaches only a test every falsy value answers alike."""
     parent = getattr(node, "parent", None)
     if isinstance(parent, ast.BoolOp) and isinstance(parent.op, ast.Or):
         # `x or y` evaluates to y for EVERY falsy x, so which falsy x it was is lost.
@@ -269,7 +308,7 @@ def _boolean_consumer(node) -> bool:
 
 
 def _early_exit_on_falsy(stmt, name: str) -> bool:
-    """True for ``if not name: <exit>`` — everything after runs only on truthy."""
+    """Return True for ``if not name: <exit>`` — everything after runs only on truthy."""
     return (
         isinstance(stmt, ast.If)
         and not stmt.orelse
@@ -282,7 +321,7 @@ def _early_exit_on_falsy(stmt, name: str) -> bool:
 
 
 def _tests_truthy(test, name: str) -> bool:
-    """True when reaching a body past ``test`` requires ``name`` to be truthy.
+    """Return True when reaching a body past ``test`` requires ``name`` to be truthy.
 
     Either the test IS the name, or it is an ``and`` chain containing it: ``and``
     short-circuits, so `if x and y:` reaches its body only on a truthy x, exactly
@@ -297,7 +336,7 @@ def _tests_truthy(test, name: str) -> bool:
 
 
 def _guarded_by(node, name: str) -> bool:
-    """True when node sits in code that runs only while `name` is truthy."""
+    """Return True when node sits in code that runs only while `name` is truthy."""
     child = node
     parent = getattr(node, "parent", None)
     while parent is not None:
@@ -333,7 +372,7 @@ def _through_casts(node):
 
 
 def _only_boolean_uses(call) -> bool:
-    """True when nothing downstream of `call` can tell one falsy value from another."""
+    """Return True when nothing downstream of `call` can tell one falsy value from another."""
     call = _through_casts(call)
     if _boolean_consumer(call):
         return True
@@ -363,7 +402,7 @@ def _only_boolean_uses(call) -> bool:
 
 
 def _lookup_with_default(node) -> bool:
-    """True for ``x.get(k, d)``, ``x.pop(k, d)`` or ``getattr(o, n, d)``.
+    """Return True for ``x.get(k, d)``, ``x.pop(k, d)`` or ``getattr(o, n, d)``.
 
     Each hands back ``d`` only when the lookup misses, so the same reasoning
     about which falsy fallback was written applies to every spelling — pop's
@@ -397,7 +436,7 @@ def _outermost_lookup(node):
 def _unobservable_get_default(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
-    """True when the mutation only changed a .get() default nothing can observe.
+    """Return True when the mutation only changed a .get() default nothing can observe.
 
     A falsy default is unobservable when every consumer of the value collapses
     all falsy values to one answer — `x or y`, `if x:`, `x if x else y`, and
@@ -447,10 +486,88 @@ def _unobservable_get_default(
     return False
 
 
+def _reads_only_as_boolean(assign: ast.Assign) -> bool:
+    """Return True when every LOAD of the assigned name collapses all falsy values.
+
+    Unlike ``_only_boolean_uses`` this does not bail when the name is rebound:
+    the mutation only changed the initial literal, and if every read of the name
+    is a truthiness test then no read can tell one falsy value from another —
+    whatever later assignment overwrote it first. Store reads are the rebinds
+    themselves and carry no value to observe — EXCEPT an ``AugAssign`` target
+    (``x += 1``): augmented assignment reads the previous value first, so
+    ``x = False`` vs ``x = None`` diverges there (``False + 1`` is 1,
+    ``None + 1`` raises) even though both are falsy.
+    """
+    target = assign.targets[0]
+    if not isinstance(target, ast.Name):
+        return False
+    scope = assign
+    while scope is not None and not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+        scope = scope.parent
+    if scope is None:
+        return False
+    for node in ast.walk(scope):
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == target.id:
+                return False
+        if (
+            isinstance(node, ast.Name)
+            and node.id == target.id
+            and node is not target
+            and isinstance(node.ctx, ast.Load)
+            and not (_boolean_consumer(node) or _guarded_by(node, target.id))
+        ):
+            return False
+    return True
+
+
+def _unobservable_falsy_assignment(
+    path: str, line_no: int, col: int, orig_line: str, mut_line: str
+) -> bool:
+    """Return True when a falsy-to-falsy literal swap is unobservable.
+
+    The mutation only changed the initial literal of an assignment whose name
+    nothing can tell apart. The canonical case is ``cancelled = False`` mutated to ``cancelled = None``:
+    the name is read only by a truthiness test (``elif cancelled:``), and every
+    falsy value answers that test identically, so no test can distinguish them —
+    the same CONSUMER-based reasoning as the .get()-default rule, applied to a
+    plain assignment instead of a lookup. A TRUTHY original or replacement stays
+    observable (``cancelled = True`` really does select another branch), so both
+    the original literal and its replacement must be falsy; anything unparseable
+    fails closed.
+    """
+    try:
+        tree = ast.parse(Path(path).read_text())
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        value = node.value
+        if not _falsy_literal(value):
+            continue
+        span = (
+            value.lineno,
+            value.col_offset,
+            value.end_lineno or value.lineno,
+            value.end_col_offset,
+        )
+        if not _within(span, line_no, col):
+            continue
+        return _falsy_replacement(
+            _mutated_token(span, line_no, orig_line, mut_line),
+            removal_stays_falsy=False,
+        ) and _reads_only_as_boolean(node)
+    return False
+
+
 def _unobservable_header_case(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
-    """True when the mutation only re-cased an HTTP header name in a lookup.
+    """Return True when the mutation only re-cased an HTTP header name in a lookup.
 
     HTTP header field names are case-insensitive (RFC 9110 §5.1), and every
     ``.headers`` mapping in this stack implements that: Starlette's
@@ -508,10 +625,76 @@ def _unobservable_header_case(
     return False
 
 
+def _unobservable_response_header_case(
+    path: str, line_no: int, col: int, orig_line: str, mut_line: str
+) -> bool:
+    """Return True when the mutation only re-cased a header name a Response is SENDING.
+
+    The sibling rule above covers header LOOKUPS and is deliberately narrow
+    about outgoing dicts, because a dict built for an outgoing REQUEST does
+    preserve case. A Response is the one outgoing case where it does not:
+    Starlette's ``Response.init_headers`` lowercases every key on the way to
+    ``raw_headers`` (verified on the installed starlette 1.3.1 —
+    ``JSONResponse(headers={"Retry-After": "30"})``,
+    ``{"retry-after": ...}`` and ``{"RETRY-AFTER": ...}`` all emit the identical
+    ``(b"retry-after", b"30")``). No client can tell them apart because no
+    client is ever sent anything different, so no test can either.
+
+    Narrow on the same two axes as the lookup rule:
+
+    - The dict must be the ``headers=`` keyword of a call whose name ends in
+      ``Response``. A bare ``headers={...}`` handed to an HTTP client is an
+      outgoing request, where case IS preserved on the wire.
+    - The change must be case-ONLY. mutmut also rewrites the key to
+      ``"XXRetry-AfterXX"``, which sends a different header entirely and is as
+      observable as any other wrong key.
+    """
+    try:
+        tree = ast.parse(Path(path).read_text())
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(getattr(node.func, "id", None) or getattr(node.func, "attr", ""), str)
+            and (getattr(node.func, "id", None) or getattr(node.func, "attr", "")).endswith(
+                "Response"
+            )
+        ):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "headers" or not isinstance(keyword.value, ast.Dict):
+                continue
+            for key in keyword.value.keys:
+                if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                    continue
+                span = (
+                    key.lineno,
+                    key.col_offset,
+                    key.end_lineno or key.lineno,
+                    key.end_col_offset,
+                )
+                if not _within(span, line_no, col):
+                    continue
+                replacement = _mutated_token(span, line_no, orig_line, mut_line)
+                if replacement is None:
+                    return False
+                try:
+                    mutated = ast.literal_eval(replacement.strip())
+                except (ValueError, SyntaxError):
+                    return False
+                return (
+                    isinstance(mutated, str)
+                    and mutated != key.value
+                    and mutated.lower() == key.value.lower()
+                )
+    return False
+
+
 def _unobservable_ensure_ascii(
     path: str, line_no: int, col: int, orig_line: str, mut_line: str
 ) -> bool:
-    """True when the mutation only swapped json.dumps' ensure_ascii for another falsy value.
+    """Return True when the mutation only swapped json.dumps' ensure_ascii for another falsy value.
 
     A ONE-OFF, not a rule. A keyword argument's truthiness semantics belong to
     the callee and the AST cannot know them in general — substituting None for
@@ -557,6 +740,43 @@ def _unobservable_ensure_ascii(
     return False
 
 
+def _unreachable_match_arm(path: str, line_no: int) -> bool:
+    """Return True when line_no sits in a ``case _: assert_never(...)`` arm.
+
+    That arm exists for mypy, which uses it to prove the match exhaustive over
+    the enum or union it switches on; at runtime no input reaches it. Deleting
+    the arm, or its argument, changes no execution, so no test can kill the
+    mutant — and the arm must stay, since it is what turns a new enum member
+    into a type error instead of a silent fall-through. Seven of these survived
+    as "real" on the playbook lifecycle's three match statements.
+    """
+    try:
+        tree = ast.parse(Path(path).read_text())
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Match):
+            continue
+        for case in node.cases:
+            wildcard = (
+                isinstance(case.pattern, ast.MatchAs)
+                and case.pattern.pattern is None
+                and case.pattern.name is None
+            )
+            if not wildcard or len(case.body) != 1 or not isinstance(case.body[0], ast.Expr):
+                continue
+            call = case.body[0].value
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "assert_never"
+            ):
+                continue
+            if case.pattern.lineno <= line_no <= (case.body[0].end_lineno or line_no):
+                return True
+    return False
+
+
 def _within(span, line_no: int, col: int) -> bool:
     start_line, start_col, end_line, end_col = span
     if line_no < start_line or line_no > end_line:
@@ -592,8 +812,11 @@ for i, (a, b) in enumerate(zip(orig_lines, mut_lines)):
         real_path = f"{workdir}/{module_path}"
         if (
             _unobservable_get_default(real_path, line_no, col, orig_raw[i], mut_raw[i])
+            or _unobservable_falsy_assignment(real_path, line_no, col, orig_raw[i], mut_raw[i])
             or _unobservable_ensure_ascii(real_path, line_no, col, orig_raw[i], mut_raw[i])
             or _unobservable_header_case(real_path, line_no, col, orig_raw[i], mut_raw[i])
+            or _unobservable_response_header_case(real_path, line_no, col, orig_raw[i], mut_raw[i])
+            or _unreachable_match_arm(real_path, line_no)
         ):
             print("EQUIV")
             sys.exit(0)

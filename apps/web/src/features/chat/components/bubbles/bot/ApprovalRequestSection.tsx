@@ -86,10 +86,9 @@ export default function ApprovalRequestSection({
   ) => {
     setSubmitting(decision);
     setPhase("submitting");
-    // Feedback rides deny only (sheet parity): an approve-with-note would run
-    // the unmodified envelope while showing "approved", i.e. execute beyond
-    // the granted permission. The server converts it to deny, but the card
-    // should say what it means from the start.
+    // Feedback rides deny only (sheet parity): an approve-with-note would
+    // execute beyond the granted permission, so the server converts it to
+    // deny — the card says so from the start.
     const attachedFeedback =
       decision === "deny" ? feedback.trim() || null : null;
     try {
@@ -117,11 +116,9 @@ export default function ApprovalRequestSection({
         }
         return;
       }
-      // Settle locally: the resolved frame arrives over the websocket
-      // broadcast (or reload truth), which flips the card to the real
-      // outcome — executed, failed, unknown. A 410 surfaces as not_found
-      // and takes the refresh path above; reaching the catch means the
-      // submit genuinely failed.
+      // Settle locally: the resolved frame (websocket broadcast or reload) flips
+      // the card to the real outcome — executed, failed, unknown. A 410 refreshes
+      // via not_found above; reaching the catch means the submit genuinely failed.
       markApprovalDecided();
       onDecided(
         decision === "approve" ? "approved" : "denied",

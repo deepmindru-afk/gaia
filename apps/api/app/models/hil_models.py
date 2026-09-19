@@ -133,10 +133,9 @@ class HILApprovalUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Typed on the write side only. set_resume_item is the sole writer and takes
-    # an ExecutorRunItem, so every write is controlled. HILApprovalRecord keeps
-    # `dict[str, Any]` on the read side deliberately — narrowing a persisted
-    # field would start rejecting rows written before this type existed.
+    # Typed on the write side only — set_resume_item is the sole writer, taking
+    # an ExecutorRunItem. The read side (HILApprovalRecord) stays dict[str, Any]
+    # deliberately: narrowing it would reject rows written before this type existed.
     resume_item: ExecutorRunItem | None = None
     resumed_at: datetime | None = None
     subagent_thread_id: str | None = None

@@ -347,10 +347,9 @@ class ScoredToolHit(TypedDict):
     score: float | None
 
 
-# What one entry of the gathered search fan-out yields: Chroma's typed
-# ``SearchItem``s from the tool namespaces, or the public-integration store's
-# raw dicts. Kept as a union because the two backends genuinely differ; the
-# consumer discriminates on the first element and narrows with ``cast``.
+# What one search-fan-out entry yields: Chroma's typed SearchItems, or the
+# public-integration store's raw dicts. Kept as a union since the backends
+# differ; the consumer discriminates on the first element and narrows with cast.
 SearchTaskResult: TypeAlias = Union[list[SearchItem], list[dict[str, Any]]]
 
 
@@ -394,13 +393,9 @@ async def _get_user_context(
         Tuple of (user_namespaces, connected_integrations) where
         connected_integrations maps canonical integration id -> display name.
     """
-    # Seed namespaces:
-    # - "general" is always available (core tools).
-    # - tool_space is seeded ONLY when it belongs to a platform integration
-    #   (hardcoded in OAUTH_INTEGRATIONS). For custom MCPs / user-owned
-    #   integrations the namespace is user-scoped, so it must come from
-    #   user_namespaces and not be implicitly granted by the seed —
-    #   otherwise one user could search another user's MCP tools.
+    # "general" is always available; tool_space is seeded only for platform
+    # integrations (OAUTH_INTEGRATIONS) — a custom MCP's namespace is user-scoped
+    # and must come from user_namespaces, or one user could search another's tools.
     user_namespaces: set[str] = {"general"}
     if _is_platform_tool_space(tool_space):
         user_namespaces.add(tool_space)
@@ -541,7 +536,11 @@ def _process_public_integration_result(
         integration_id = item.get("integration_id")
         if integration_id:
             name = item.get("name")
-            key = f"integration:{integration_id} ({name})" if name else f"integration:{integration_id}"
+            key = (
+                f"integration:{integration_id} ({name})"
+                if name
+                else f"integration:{integration_id}"
+            )
             processed.append(ScoredToolHit(id=key, score=item.get("relevance_score", 0)))
     return processed
 
@@ -595,9 +594,7 @@ def _process_chroma_search_result(
         # promises is retrievable. Without the exemption the activated search
         # fan-out matches docs only to drop every one of them here.
         if include_subagents:
-            namespace_key = (
-                "::".join(item.namespace) if getattr(item, "namespace", None) else ""
-            )
+            namespace_key = "::".join(item.namespace) if getattr(item, "namespace", None) else ""
             if namespace_key not in (active_namespaces or ()):
                 tool_category_name = tool_registry.get_category_of_tool(tool_key)
                 if tool_category_name:
@@ -769,7 +766,7 @@ def _render_discovery_response(
         if mcp:
             steps.append(
                 "subagent: entries are per-user MCP integrations, the ONLY "
-                "subagents: delegate with handoff(subagent_id=\"<id>\", task=\"...\")."
+                'subagents: delegate with handoff(subagent_id="<id>", task="...").'
             )
         if new:
             steps.append(
@@ -821,11 +818,9 @@ def get_retrieve_tools_function(
         store: Annotated[BaseStore, InjectedStore],
         config: RunnableConfig,
         query: str | None = None,
-        # Non-nullable array on purpose. A `list[str] | None` annotation emits an
-        # `anyOf: [{array}, {null}]` JSON schema, and MiniMax M3 cannot populate an
-        # array wrapped in that nullable union: it sends `exact_tool_names: []`
-        # however many names it intends to bind. A plain array schema fixes it, and
-        # "no exact tools" is an empty list, not null, so nothing is lost.
+        # Non-nullable on purpose: a `list[str] | None` emits an anyOf JSON schema
+        # that MiniMax M3 can't populate — it sends exact_tool_names: [] regardless
+        # of how many names it means to bind. A plain array schema fixes it.
         exact_tool_names: list[str] = Field(default_factory=list),
     ) -> RetrieveToolsResult:
         log.info(
@@ -838,10 +833,9 @@ def get_retrieve_tools_function(
             or config.get("metadata", {}).get("user_id"),
         )
         if not query and not exact_tool_names:
-            # A no-usable-argument call (commonly retrieve_tools(exact_tool_names=[]),
-            # an empty list) must NOT crash the run — that aborts the whole executor
-            # turn over a recoverable model slip. Return a corrective hint so the
-            # caller self-corrects on its next step instead.
+            # A no-usable-argument call (e.g. exact_tool_names=[]) must NOT crash
+            # the run — that aborts the whole turn over a recoverable model slip.
+            # Return a corrective hint so the caller self-corrects next step.
             return RetrieveToolsResult(
                 tools_to_bind=[],
                 response=[
@@ -1052,10 +1046,9 @@ def get_retrieve_tools_function(
 
         results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
-        # Surface search failures instead of treating them as empty namespaces.
-        # A partial outage degrades to the namespaces that answered; a total
-        # outage must raise so the select_tools retry policy (and ultimately
-        # the caller) sees a failure, not a silent "no tools found".
+        # Surface search failures instead of treating them as empty namespaces:
+        # a partial outage degrades to the namespaces that answered, but a total
+        # outage must raise so the retry policy sees a failure, not silent emptiness.
         failures = [r for r in results if isinstance(r, BaseException)]
         for failure in failures:
             log.error(
@@ -1067,9 +1060,8 @@ def get_retrieve_tools_function(
             raise failures[0]
 
         # MCP tool names don't live in the global registry anymore (resilience
-        # rewrite removed the per-user mcp_{iid}_{user_id} categories). Union
-        # the registry names with the user's live MCPClient tool names so the
-        # discovery-mode filter doesn't drop every PostHog/Notion/etc. hit.
+        # rewrite removed the per-user categories) — union with the live MCPClient
+        # names so the discovery filter doesn't drop every PostHog/Notion/etc. hit.
         available_tool_names_set = set(available_tool_names) | await _user_mcp_tool_names(user_id)
 
         chroma_hits = 0
@@ -1106,7 +1098,6 @@ def get_retrieve_tools_function(
             if len(chroma_preview) >= 10:
                 break
 
-        # Process results
         all_results = await _process_search_results(
             results,
             available_tool_names_set,

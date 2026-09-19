@@ -31,6 +31,7 @@ from app.agents.tools.core.store import get_tools_store
 from app.agents.tools.core.tool_runtime_config import (
     build_executor_child_tool_runtime_config,
 )
+from app.agents.tools.discovery_tools import find_integration, search_public_workflows
 from app.agents.tools.executor_tool import call_executor, cancel_executor
 from app.agents.tools.subagent_control_tool import (
     cancel_subagent,
@@ -38,6 +39,7 @@ from app.agents.tools.subagent_control_tool import (
     message_subagent,
 )
 from app.agents.tools.todo_tools import create_todo_pre_model_hook, create_todo_tools
+from app.agents.tools.webpage_tool import fetch_webpages, web_search_tool
 from app.constants.log_tags import LogTag
 from app.core.lazy_loader import MissingKeyStrategy, lazy_provider
 from app.override.langgraph_bigtool.agent_config import (
@@ -83,6 +85,13 @@ EXECUTOR_INITIAL_TOOL_IDS = [
     "decline_playbook",
     "read_playbook",
     "disable_playbook",
+    # Same rule as playbook tools: not in the retrieval index, so
+    # retrieve_tools once improvised a nonexistent `gaia bridge approve`.
+    # approve_device_pairing stays gated regardless of binding.
+    "add_device",
+    "approve_device_pairing",
+    "list_devices",
+    "run_on_device",
 ]
 
 
@@ -226,9 +235,16 @@ async def build_comms_graph(
     if chat_llm is None:
         chat_llm = init_llm()
 
+    # The discovery pair are read-only catalogue lookups, so they do not breach
+    # "delegate every real ask". Connecting an integration is a real ask and
+    # goes to the executor.
     tool_registry = {
         "call_executor": call_executor,
         "cancel_executor": cancel_executor,
+        "find_integration": find_integration,
+        "search_public_workflows": search_public_workflows,
+        web_search_tool.name: web_search_tool,
+        fetch_webpages.name: fetch_webpages,
         **{memory_tool.name: memory_tool for memory_tool in memory_tools.tools},
     }
     store = await get_tools_store()
@@ -245,6 +261,10 @@ async def build_comms_graph(
             initial_tool_ids=[
                 "call_executor",
                 "cancel_executor",
+                "find_integration",
+                "search_public_workflows",
+                web_search_tool.name,
+                fetch_webpages.name,
                 *[memory_tool.name for memory_tool in memory_tools.tools],
             ],
         ),

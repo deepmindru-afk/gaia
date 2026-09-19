@@ -1,10 +1,10 @@
 """The current user's personalized integration catalog.
 
-`get_my_integrations` is the single server-side merge of the platform catalog,
+get_my_integrations is the single server-side merge of the platform catalog,
 the user's custom integrations, and their connection status — the work the web
 client used to do across three calls (/config + /status + /users/me/integrations).
-It returns lightweight items (status + `tool_count`, no per-tool schemas); full
-tools are fetched on demand via `get_integration_tools`.
+It returns lightweight items (status + tool_count, no per-tool schemas); full
+tools are fetched on demand via get_integration_tools.
 """
 
 import asyncio
@@ -19,11 +19,11 @@ from app.schemas.integrations.responses import (
 )
 from app.services.integrations.integration_connection_service import build_integrations_config
 from app.services.integrations.integration_resolver import IntegrationResolver
+from app.services.integrations.integration_status import get_all_integrations_status
 from app.services.integrations.user_integrations import (
     check_user_has_integration,
     get_user_integrations,
 )
-from app.services.oauth.oauth_service import get_all_integrations_status
 from app.services.tools.tools_service import get_integration_tool_list, get_tool_categories
 from app.utils.errors import create_error
 from shared.py.wide_events import log
@@ -31,9 +31,10 @@ from shared.py.wide_events import log
 
 @Cacheable(key_pattern="tools:user:{user_id}:my", ttl=ONE_DAY_TTL, model=MyIntegrationsResponse)
 async def get_my_integrations(user_id: str) -> MyIntegrationsResponse:
-    """All integrations visible to the user — every platform integration plus
-    their own custom ones — each tagged with connection status and `tool_count`.
-    Cached under `tools:user:{user_id}:*`, so the integration mutators bust it."""
+    """Return every platform and custom integration tagged with connection status and tool_count.
+
+    Cached under tools:user:{user_id}:*, so the integration mutators bust it.
+    """
     log.set(component="my_integrations", operation="get_my_integrations", user={"id": user_id})
 
     config = build_integrations_config()

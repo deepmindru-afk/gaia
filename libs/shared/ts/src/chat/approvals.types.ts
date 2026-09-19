@@ -11,6 +11,14 @@
  * - `auto` — an intent judge runs actions that match what the user asked for,
  *   and pauses for approval on anything that deviates or is unclear.
  */
+import type { BatchDecisionItem } from "../api/generated";
+
+export type {
+  BatchApprovalDecisionResponse,
+  BatchDecisionItem,
+  BatchDecisionOutcome,
+} from "../api/generated";
+
 export type HilMode = "always_allow" | "always_ask" | "auto";
 
 /**
@@ -73,9 +81,6 @@ export interface BatchDecisionOutcome {
 }
 
 /** Response of POST /approvals/batch-decision. */
-export interface BatchApprovalDecisionResponse {
-  outcomes: BatchDecisionOutcome[];
-}
 
 /** One approval card, as streamed to the client. */
 export interface ApprovalRequestData {

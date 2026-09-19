@@ -1,6 +1,6 @@
 """A direct dev run that parks on a HIL approval must fail loud, not answer empty.
 
-When a run pauses, ``SubagentOutcome.text`` is ``""`` — returning it would present
+When a run pauses, SubagentOutcome.text is "" — returning it would present
 an empty string as the agent's answer. A direct run has no approval channel to
 resume on, so the only honest outcome is an error naming that.
 """
@@ -12,6 +12,7 @@ import pytest
 from app.agents.core.subagents.subagent_runner import SubagentOutcome
 from app.agents.llm.lane import AgentRole, dev_option_for
 from app.helpers.agent_helpers import AgentIdentity, AgentLane, AgentTurn
+from app.models.user_models import OnboardingPreferences, OnboardingSubdocument
 from app.services.dev_agent_service import _dev_base_configurable, _reject_pause
 from app.utils.errors import AppError
 
@@ -94,20 +95,17 @@ class TestTheParentConfigurableADirectRunBuilds:
 
 
 async def test_the_dev_users_onboarding_data_reaches_the_configurable() -> None:
-    """``_dev_base_configurable`` is the root of both direct-run paths
-    (``run_executor_direct`` / ``run_subagent_direct``) — it already has the
-    full ``UserDocument`` from ``require_dev_user`` in hand, so it must thread
-    ``onboarding`` into ``build_agent_config`` the same way comms does, not
-    leave a direct run blind to preferences a real chat turn would carry."""
+    """_dev_base_configurable must thread onboarding into build_agent_config like comms does, not leave a direct run blind to it."""
+    # name is MagicMock's own constructor argument, so it is set afterwards.
     user_doc = MagicMock(
         id="dev-user-1",
         email="dev@gaia.local",
-        name="Dev User",
-        onboarding={
-            "preferences": {"profession": "engineer"},
-            "writing_style": {"summary": "terse"},
-        },
+        onboarding=OnboardingSubdocument(
+            preferences=OnboardingPreferences(profession="engineer"),
+            writing_style={"summary": "terse"},
+        ),
     )
+    user_doc.name = "Dev User"
     with patch(f"{MODULE}.require_dev_user", AsyncMock(return_value=user_doc)):
         configurable, user_id, _ = await _dev_base_configurable("dev@gaia.local", None, "executor")
 

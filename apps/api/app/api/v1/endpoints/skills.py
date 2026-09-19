@@ -50,11 +50,11 @@ from app.services.analytics_service import AnalyticsEvents, capture_context_even
 from app.services.integrations.user_integrations import get_connected_integration_ids
 from shared.py.wide_events import log
 
-router = APIRouter(prefix="/skills", tags=["skills"])
+router = APIRouter(prefix="/skills")
 
 
 def _get_user_id(user: AuthenticatedUser = Depends(get_current_user)) -> str:
-    user_id = user.get("user_id")
+    user_id = user.user_id
     if not user_id:
         raise HTTPException(
             status_code=http_status.HTTP_401_UNAUTHORIZED,
@@ -356,6 +356,7 @@ async def update_skill_endpoint(
                 detail=f"Skill {skill_id} not found",
             )
         log.set(skill_name=updated.name, outcome="success")
+        capture_context_event(AnalyticsEvents.SKILL_UPDATED)
         return updated
     except HTTPException:
         raise
@@ -453,6 +454,8 @@ async def enable_skill_endpoint(
     try:
         success = await enable_skill(user_id, skill_id)
         log.set(outcome="success")
+        if success:
+            capture_context_event(AnalyticsEvents.SKILL_ENABLED)
         return SkillToggleResponse(success=success, skill_id=skill_id, enabled=True)
     except Exception as e:
         log.error(
@@ -478,6 +481,8 @@ async def disable_skill_endpoint(
     try:
         success = await disable_skill(user_id, skill_id)
         log.set(outcome="success")
+        if success:
+            capture_context_event(AnalyticsEvents.SKILL_DISABLED)
         return SkillToggleResponse(success=success, skill_id=skill_id, enabled=False)
     except Exception as e:
         log.error(

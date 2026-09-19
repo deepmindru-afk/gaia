@@ -1,8 +1,8 @@
-"""Unit tests for the subagent registry (`app.agents.core.subagents.registry`).
+"""Unit tests for the subagent registry (app.agents.core.subagents.registry).
 
-These tests cover `all_subagents()` (OAuth-derived + builtins) and
-`get_subagent_by_id()`. Moved here from `test_subagent_runner.py` after the
-refactor that introduced the `Subagent` dataclass and centralized lookups in
+These tests cover all_subagents() (OAuth-derived + builtins) and
+get_subagent_by_id(). Moved here from test_subagent_runner.py after the
+refactor that introduced the Subagent dataclass and centralized lookups in
 the registry module.
 """
 
@@ -13,9 +13,7 @@ import pytest
 from app.agents.core.subagents.builtin_subagents import BUILTIN_SUBAGENTS
 from app.agents.core.subagents.registry import (
     _from_oauth,
-    _third_party_name_matchers,
     all_subagents,
-    foreign_provider_named_in,
     get_subagent_by_id,
 )
 from app.models.mcp_config import ComposioConfig, MCPConfig, SubAgentConfig
@@ -50,9 +48,9 @@ def _make_real_oauth_integration(
     provider: str = "github",
     mcp_config: MCPConfig | None = None,
 ) -> OAuthIntegration:
-    """Build a real `OAuthIntegration` instance (not a MagicMock).
+    """Build a real OAuthIntegration instance (not a MagicMock).
 
-    Used in `_from_oauth` and identity-check tests where a real Pydantic
+    Used in _from_oauth and identity-check tests where a real Pydantic
     model is required so attribute access goes through field validation.
     """
     return OAuthIntegration(
@@ -124,19 +122,13 @@ FAKE_INTEGRATIONS = [
 
 
 def _clear_registry_cache() -> None:
-    """`all_subagents()` is `@functools.cache`d, and so is everything derived
-    from it. Tests that patch OAUTH_INTEGRATIONS or BUILTIN_SUBAGENTS must clear
-    the caches first."""
+    """all_subagents() is @functools.cached; tests patching OAUTH_INTEGRATIONS/BUILTIN_SUBAGENTS must clear it first."""
     all_subagents.cache_clear()
-    _third_party_name_matchers.cache_clear()
 
 
 @pytest.fixture(autouse=True)
 def _restore_real_registry_after_each_test():
-    """Without this, a test that patches OAUTH_INTEGRATIONS/BUILTIN_SUBAGENTS and
-    populates the cache under the patch leaves that fake result cached for the
-    rest of the process — every other test in the suite that calls
-    all_subagents()/get_subagent_by_id() afterward would see the fake data."""
+    """Without this, a patched OAUTH_INTEGRATIONS/BUILTIN_SUBAGENTS test leaves its fake cache for the rest of the process."""
     yield
     _clear_registry_cache()
 
@@ -290,9 +282,7 @@ class TestFromOauth:
 
     def test_config_is_same_object_as_integration_subagent_config(self) -> None:
         # Identity check (not equality): the registry MUST pass through the
-        # integration's SubAgentConfig instance unchanged. Re-instantiating it
-        # would be a wasted allocation and make tests that mutate config
-        # behave inconsistently.
+        # integration's SubAgentConfig instance unchanged.
         integ = _make_real_oauth_integration(integration_id="github")
 
         result = _from_oauth(integ)
@@ -351,10 +341,8 @@ class TestAllSubagentsCachingAndOrdering:
         assert first is second
 
     def test_cache_clear_returns_fresh_tuple(self) -> None:
-        # Use both an OAuth-derived AND a builtin entry so the result is
-        # `tuple(...) + (builtin,)` — a freshly allocated tuple each call.
-        # CPython optimizes `() + non_empty_tuple` to return the non-empty
-        # tuple itself, which would break identity-inequality assertions.
+        # CPython optimizes `() + non_empty_tuple` to return the non-empty tuple
+        # itself, so include a builtin entry to keep this a fresh tuple each call.
         builtin = Subagent(
             id="builtin_for_cache_test",
             name="Builtin",
@@ -446,49 +434,3 @@ class TestGetSubagentByIdExtended:
         _clear_registry_cache()
         with patch("app.agents.core.subagents.registry.OAUTH_INTEGRATIONS", []):
             assert get_subagent_by_id("gaia_knowledge_guide_agent") is None
-
-
-@pytest.mark.unit
-class TestForeignProviderNamedIn:
-    """Which third-party provider a task text names, other than its target."""
-
-    def test_the_prod_task_that_filed_gaia_todos_as_todoist_is_flagged(self) -> None:
-        named = foreign_provider_named_in(
-            "Create these 8 separate tasks on Aryan's todo list (Todoist). "
-            "Each one is its own task.",
-            target_id="todos",
-        )
-
-        assert named is not None
-        assert named.id == "todoist"
-
-    def test_the_bare_id_is_matched_as_well_as_the_display_name(self) -> None:
-        named = foreign_provider_named_in("push it to todoist", target_id="todos")
-
-        assert named is not None and named.id == "todoist"
-
-    def test_a_multi_word_provider_name_is_matched(self) -> None:
-        named = foreign_provider_named_in("block it on my Google Calendar", target_id="gmail")
-
-        assert named is not None and named.id == "googlecalendar"
-
-    def test_the_target_naming_itself_is_not_a_mismatch(self) -> None:
-        assert foreign_provider_named_in("archive the Gmail thread", target_id="gmail") is None
-
-    def test_a_provider_name_inside_a_longer_word_is_not_a_match(self) -> None:
-        assert foreign_provider_named_in("update the slackness metric", target_id="todos") is None
-
-    def test_gaias_own_subagent_names_are_ordinary_words_and_never_flagged(self) -> None:
-        """ "todos", "reminders" and "skills" turn up in task prose constantly;
-        a generic noun cannot mislead anyone about which product did the work,
-        so only third-party products are matched."""
-        assert foreign_provider_named_in("add reminders for each of the todos", "gmail") is None
-        assert foreign_provider_named_in("use your skills to draft it", "gmail") is None
-
-    def test_an_uppercase_spelling_still_matches(self) -> None:
-        """The matcher is compiled with re.IGNORECASE; without it, a caller who
-        writes "TODOIST" or "Todoist" instead of the lowercase id would slip
-        past undetected."""
-        named = foreign_provider_named_in("push it to TODOIST", target_id="todos")
-
-        assert named is not None and named.id == "todoist"

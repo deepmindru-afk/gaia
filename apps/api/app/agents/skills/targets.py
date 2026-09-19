@@ -15,7 +15,7 @@ from app.services.integrations.user_integrations import get_connected_integratio
 async def get_skill_targets(user_id: str) -> list[SkillTarget]:
     """Return the skill targets available to a user.
 
-    Always includes the executor (the general assistant). Adds one entry per
+        Always includes the executor (the general assistant). Adds one entry per
     connected integration that exposes an agent, using the subagent registry
     as the single source of truth for its ``agent_name`` and display name.
     """

@@ -7,7 +7,7 @@ import {
   getRelevantThinkingMessage,
 } from "@/utils/playfulThinking";
 
-export interface ToolInfo {
+export interface ActiveToolInfo {
   toolName?: string;
   toolCategory?: string;
   integrationName?: string;
@@ -16,14 +16,13 @@ export interface ToolInfo {
 }
 
 /**
- * Turn lifecycle phases. A session entry exists only while a turn is active —
- * absence means idle. Terminal states (done/error/aborted) remove the entry.
+ * Turn lifecycle phases. A session entry exists only while a turn is active — absence means
+ * idle; terminal states (done/error/aborted) remove the entry.
  *
  * - connecting: send fired, SSE not yet delivering events
- * - streaming: SSE open (covers the background-executor tail that streams over
- *   the same connection after `main_response_complete`)
- * - awaiting_executor: SSE closed but a delegated background executor still owes
- *   its result message (delivered via the `conversation.new_message` WebSocket)
+ * - streaming: SSE open (covers the background-executor tail after `main_response_complete`)
+ * - awaiting_executor: SSE closed, a delegated background executor still owes its result
+ *   (delivered via the `conversation.new_message` WebSocket)
  */
 export type TurnPhase = "connecting" | "streaming" | "awaiting_executor";
 
@@ -41,7 +40,7 @@ export interface TurnUiState {
   composerLocked: boolean;
   loadingText: string;
   loadingTextKey: number;
-  toolInfo?: ToolInfo;
+  toolInfo?: ActiveToolInfo;
 }
 
 /** Loading UI owned by non-turn flows (voice agent, file upload). */
@@ -49,7 +48,7 @@ interface AuxLoadingState {
   active: boolean;
   text: string;
   key: number;
-  toolInfo?: ToolInfo;
+  toolInfo?: ActiveToolInfo;
 }
 
 /** A detached background executor run streaming into the active conversation.
@@ -59,7 +58,7 @@ interface AuxLoadingState {
 interface BackgroundRunState {
   loadingText: string;
   loadingTextKey: number;
-  toolInfo?: ToolInfo;
+  toolInfo?: ActiveToolInfo;
 }
 
 interface StreamState {
@@ -84,16 +83,20 @@ interface StreamActions {
   setSessionLoadingText: (
     key: string,
     text: string,
-    toolInfo?: ToolInfo,
+    toolInfo?: ActiveToolInfo,
   ) => void;
   resetSessionLoadingText: (key: string) => void;
   /** The user decided this conversation's open approval gate. */
   clearAwaitingApproval: (key: string) => void;
-  setAuxLoading: (active: boolean, text?: string, toolInfo?: ToolInfo) => void;
+  setAuxLoading: (
+    active: boolean,
+    text?: string,
+    toolInfo?: ActiveToolInfo,
+  ) => void;
   setBackgroundLoading: (
     key: string,
     text: string,
-    toolInfo?: ToolInfo,
+    toolInfo?: ActiveToolInfo,
   ) => void;
   clearBackgroundLoading: (key: string) => void;
   /** Overwrite a session from an external snapshot (desktop popup mirror). */
@@ -397,7 +400,7 @@ export const useActiveLoading = (): {
   isLoading: boolean;
   loadingText: string;
   loadingTextKey: number;
-  toolInfo?: ToolInfo;
+  toolInfo?: ActiveToolInfo;
   awaitingApproval: boolean;
 } => {
   const turn = useActiveTurn();

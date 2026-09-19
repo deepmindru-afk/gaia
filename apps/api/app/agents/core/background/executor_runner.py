@@ -1,28 +1,27 @@
 """Background executor lifecycle: execute → finalize → hand off the queue.
 
-Spawned by the call_executor tool (live runs) or by the previous run's
-finalize step (queued runs) via asyncio.create_task(). Runs the executor
-agent graph with a Redis stream writer for tool events, then finalizes:
-
-  1. Signal the executor-done event so any waiting chat stream can close
-     its SSE.
-  2. Route the terminal outcome through exactly one delivery entry point
-     (``deliver_result`` for finished runs, ``persist_cancelled_run`` for
-     cancelled runs that self-own their tool_data — see result_delivery).
-  3. For queued runs, tear down the session and close the stream.
-  4. Hand the busy lock to the next queued task, or release it.
+Spawned by the call_executor tool (live runs) or the previous run's finalize
+step (queued runs) via asyncio.create_task(). Runs the executor agent graph
+with a Redis stream writer for tool events, then finalizes: signals
+executor-done so a waiting chat stream can close its SSE; routes the terminal
+outcome through exactly one delivery entry point (deliver_result, or
+persist_cancelled_run for self-owned tool_data — see result_delivery); for
+queued runs tears down the session and closes the stream; then hands the busy
+lock to the next queued task, or releases it.
 
 The executor:busy Redis key prevents concurrent executor spawns per
 conversation. TTL of 30 minutes is a safety net — released explicitly.
 """
 
-from dataclasses import dataclass
-from typing import Any, NamedTuple
+from dataclasses import dataclass, replace
+import time
+from typing import NamedTuple
 from uuid import uuid4
 
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from langsmith import traceable
+from pydantic import BaseModel, ConfigDict
 
 from app.agents.core.background.comms_narrator import record_executor_cancellation
 from app.agents.core.background.executor_capture import (
@@ -45,6 +44,7 @@ from app.agents.core.background.result_delivery import deliver_result, persist_c
 from app.agents.core.background.session import (
     ExecutorRun,
     RunIdentity,
+    executor_abandoned,
     get_session,
     signal_executor_done,
 )
@@ -65,11 +65,19 @@ from app.constants.executor import (
 from app.constants.hil import HIL_PAUSED_LOCK_TTL_SECONDS, HIL_RESUME_CONFIG_KEY
 from app.constants.log_tags import LogTag
 from app.core.stream_manager import StreamManager
-from app.models.agent_models import AgentConfigurable
+from app.models.agent_models import AgentConfigurable, AgentConfigurableView
 from app.models.chat_models import ToolDataEntry
 from app.services.analytics_service import AnalyticsEvents, capture_event
 from app.services.hil.approvals_store import set_resume_item
 from app.services.hil.resume_slot import release_resume_dispatch
+from app.services.latency_metrics import (
+    observe_executor_active,
+    observe_executor_e2e,
+    observe_executor_queue_wait,
+    observe_executor_run_total,
+    observe_executor_ttft,
+    span,
+)
 from app.utils.agent_utils import format_sse_data
 from app.utils.background_tasks import spawn_background_task
 from shared.py.wide_events import WorkflowContext, get_trace_id, log, wide_task
@@ -88,43 +96,30 @@ async def run_executor_background(
 ) -> None:
     """Run (or resume) the executor agent in background and hand its result to delivery.
 
-    Designed for asyncio.create_task(). Never raises — all exceptions
-    caught and routed through comms as an ``<executor_error>`` message.
-
-    Tool events stream live to the SSE consumer during execution. When
-    execution finishes, _finalize_executor_run signals completion, delivers
-    the result, and hands off the queue lock.
-
-    ``resume`` continues a thread paused on a HIL approval. A run that pauses
-    ends with ``result_type == "paused"``: it has no result to deliver and it
-    keeps the busy lock, because the thread has pending work and no other task
-    may run on it until the approval resolves.
-
-    Inherits `langfuse_trace_id` from the parent's `configurable` so this run's
-    LLM/tool spans land on the same Langfuse trace as comms.
+    Never raises — exceptions route through comms as an <executor_error> message.
+    A paused run (resume continuing a HIL approval) keeps the busy lock instead of
+    delivering, since the thread has pending work until the approval resolves.
     """
-    # This task outlives the spawning request/turn (queued, resumed and
-    # post-timeout runs), so it needs its own wide-event boundary or every
-    # log.set() in the run (LLM accounting included) is silently discarded.
-    # get_trace_id() reads the spawner's trace_id from the task's copied
-    # context, correlating this event with the request that dispatched it.
+    # This task outlives the spawning request/turn, so it needs its own
+    # wide-event boundary or every log.set() (LLM accounting included) is
+    # silently discarded. get_trace_id() correlates it back to the dispatcher.
+    run_start = time.perf_counter()
+    # The busy-lock queue origin, not ``kind``: a HIL resume is RunKind.QUEUED
+    # but never waited on the lock, so it must not label as queued.
+    queued = run.queued
     async with wide_task(
         "executor_run",
         trace_id=get_trace_id() or None,
         conversation_id=run.conversation_id,
         stream_id=run.stream_id,
         task_id=run.task_id,
-        # The surface the turn came from, carried on the boundary so auxiliary
-        # calls made INSIDE this run can still name it. They are handed a bare
-        # config, so without this a user's web turn is metered as ``system`` —
-        # and executor turns are the expensive ones, so the under-count lands
-        # exactly where COGS-by-channel matters most.
-        conversation_source=configurable.get("conversation_source"),
-        # The workflow run this executor is part of. The workflow task stamped
-        # it on ITS boundary; this one is fresh, so without carrying it over
-        # every model call the executor makes lands in the ledger with the
-        # workflow but no execution — and "what did this run cost" reads only
-        # the comms shell, a few percent of the real figure.
+        # Surface the turn came from, carried so auxiliary calls inside this run
+        # (handed a bare config) can still name it — without it a web turn is
+        # metered as "system", undercounting COGS exactly where it matters most.
+        conversation_source=AgentConfigurableView.model_validate(configurable).conversation_source,
+        # The workflow run this executor is part of; the workflow task stamped it
+        # on ITS boundary, this one is fresh. Without it every model call lands in
+        # the ledger with no execution, so "what did this run cost" reads only comms.
         **(
             {
                 "workflow": WorkflowContext(
@@ -138,42 +133,53 @@ async def run_executor_background(
         result_text = ""
         result_type = "final"
         run_ctx: SubagentExecutionContext | None = None
+        queue_wait_ms = _queue_wait_ms(run, run_start, configurable, queued=queued)
+        ttft_ms: float | None = None
+        active_ms: float | None = None
 
         # One lifecycle event per run segment; a resumed run re-enters here.
-        executor_user_id = run.user.get("user_id", "")
-        run_props = {
-            "agent": "executor",
-            "mode": "background",
-            "conversation_id": run.conversation_id,
-        }
-        if run.task_id:
-            run_props["task_id"] = run.task_id
+        executor_user_id = run.user.user_id
+        run_props = _run_props(run)
         if executor_user_id:
             capture_event(executor_user_id, AnalyticsEvents.AGENT_RUN_STARTED, run_props)
 
         try:
-            result = await _execute_executor(task, configurable, run.stream_id, resume)
+            with span() as elapsed_active:
+                result = await _execute_executor(task, configurable, run.stream_id, resume)
+            active_ms = round(elapsed_active() * 1000.0, 2)
             result_text, result_type, run_ctx = result.text, result.type, result.ctx
+            ttft_ms = _executor_ttft_ms(run, run_start)
+            if ttft_ms is not None:
+                observe_executor_ttft(ttft_ms / 1000.0, queued=queued)
+            timing_fields = _timing_fields(queue_wait_ms, ttft_ms, active_ms)
+            log.set(executor={"queued": queued, **timing_fields})
             if result.paused_on and not await _record_pause(
                 run, task, configurable, result.paused_on
             ):
-                # The pause is checkpointed but we could not record how to restart it, so no
-                # decision can ever resume this thread. Finalizing it as paused would hold the
-                # conversation's busy lock for its full TTL waiting for a resume that cannot
-                # come. Fail the run instead: the lock is released, queued work drains, and the
-                # sweep closes the orphaned approval.
+                # Recording failed, so no decision can ever resume this thread; finalizing
+                # as paused would hold the busy lock for its full TTL waiting for a resume
+                # that can't come. Fail instead: the lock releases and the sweep closes it.
                 result_text, result_type = EXECUTOR_APPROVAL_LOST_MESSAGE, "error"
+            # Cancellation and the pause-record outcome are only known here, so
+            # read both after the pause decision: the span must carry the same
+            # status finalize records, not the pre-pause guess.
+            run_cancelled = bool(run.stream_id) and await StreamManager.is_cancelled(run.stream_id)
+            observe_executor_active(
+                active_ms / 1000.0, status=_active_status(result_type, run_cancelled)
+            )
             log.info(
                 f"{LogTag.AGENT} Background executor finished",
                 result_type=result_type,
                 task_id=run.task_id,
                 stream_id=run.stream_id,
             )
-            if executor_user_id:
-                if result_type == "final":
-                    capture_event(executor_user_id, AnalyticsEvents.AGENT_RUN_COMPLETED, run_props)
-                elif result_type == "error":
-                    capture_event(executor_user_id, AnalyticsEvents.AGENT_RUN_FAILED, run_props)
+            _capture_executor_terminal(
+                run,
+                run_props=run_props,
+                queued=queued,
+                timing_fields=timing_fields,
+                result_type=result_type,
+            )
         finally:
             await _finalize_executor_run(run, task, result_text, result_type, run_ctx)
             if resume is not None:
@@ -181,6 +187,87 @@ async def run_executor_background(
                 # Freeing it AFTER finalize means the next decision can dispatch only
                 # once this run's pause/completion bookkeeping is fully written.
                 await release_resume_dispatch(run.conversation_id)
+
+
+def _run_props(run: ExecutorRun) -> dict[str, str]:
+    """Build the lifecycle props shared by the start and terminal events."""
+    props: dict[str, str] = {
+        "agent": "executor",
+        "mode": "background",
+        "conversation_id": run.conversation_id,
+    }
+    if run.task_id:
+        props["task_id"] = run.task_id
+    return props
+
+
+def _timing_fields(
+    queue_wait_ms: float | None, ttft_ms: float | None, active_ms: float | None
+) -> dict[str, float]:
+    """Collect the measured executor timings, omitting spans that never happened."""
+    fields: dict[str, float] = {}
+    if queue_wait_ms is not None:
+        fields["queue_wait_ms"] = queue_wait_ms
+    if ttft_ms is not None:
+        fields["executor_ttft_ms"] = ttft_ms
+    if active_ms is not None:
+        fields["executor_active_ms"] = active_ms
+    return fields
+
+
+def _queue_wait_ms(
+    run: ExecutorRun, run_start: float, configurable: AgentConfigurable, *, queued: bool
+) -> float | None:
+    """Observe dispatch-to-start queue wait, or None without a usable stamp.
+
+    A queued run can survive a restart inside its 1h TTL, mixing monotonic
+    epochs — a negative delta is garbage, not a measurement.
+    """
+    if run.t_dispatch_perf is None:
+        return None
+    queue_wait_s = run_start - run.t_dispatch_perf
+    if queue_wait_s < 0.0:
+        return None
+    observe_executor_queue_wait(
+        queue_wait_s,
+        source=str(configurable.get("conversation_source") or "unknown"),
+        queued=queued,
+    )
+    return round(queue_wait_s * 1000.0, 2)
+
+
+def _active_status(result_type: str, cancelled: bool) -> str:
+    """Label the active span with the same statuses finalize records."""
+    if result_type == "error":
+        return "error"
+    if result_type == EXECUTOR_PAUSED:
+        return "paused"
+    return "cancelled" if cancelled else "success"
+
+
+def _capture_executor_terminal(
+    run: ExecutorRun,
+    *,
+    run_props: dict[str, str],
+    queued: bool,
+    timing_fields: dict[str, float],
+    result_type: str,
+) -> None:
+    """Emit the run's terminal lifecycle event with its measured timings."""
+    user_id = run.user.user_id
+    if not user_id or result_type not in ("final", "error"):
+        return
+    event = (
+        AnalyticsEvents.AGENT_RUN_COMPLETED
+        if result_type == "final"
+        else AnalyticsEvents.AGENT_RUN_FAILED
+    )
+    capture_event(
+        user_id,
+        event,
+        {**run_props, "queued": queued, **timing_fields},
+        dedupe_key=run.task_id or run.stream_id,
+    )
 
 
 async def _record_pause(
@@ -197,7 +284,10 @@ async def _record_pause(
         item = build_run_item(
             task=task,
             configurable=configurable,
-            identity=run.identity,
+            # A pause re-dispatch is a new incarnation: drop the original stamp
+            # so the resumed run measures no queue wait for user decision time,
+            # and clear the queue origin — it did not wait on the busy lock.
+            identity=replace(run.identity, t_dispatch_perf=None, queued=False),
             workflow_execution_id=run.workflow_execution_id,
         )
         for approval_id in approval_ids:
@@ -214,10 +304,27 @@ async def _record_pause(
         return False
 
 
+def _executor_ttft_ms(run: ExecutorRun, run_start: float) -> float | None:
+    """First executor frame minus dispatch (or run start without a stamp).
+
+    None when no frame was written, or the delta is negative (mixed
+    monotonic epochs across a restart) — missing beats zero-filled.
+    """
+    session = get_session(run.stream_id)
+    first_frame = session.executor_first_frame_perf if session is not None else None
+    if first_frame is None:
+        return None
+    base = run.t_dispatch_perf if run.t_dispatch_perf is not None else run_start
+    ttft_ms = round((first_frame - base) * 1000.0, 2)
+    return ttft_ms if ttft_ms >= 0.0 else None
+
+
 class _ExecutorResult(NamedTuple):
-    """One executor run's terminal shape; ``paused_on`` holds the approval id(s)
-    when the run stopped on a HIL interrupt instead of finishing — one for a
-    gate pause (batch pauses arrive with the HIL rework).
+    """One executor run's terminal shape.
+
+    ``paused_on`` holds the approval id(s) when the run stopped on a HIL
+    interrupt instead of finishing — one for a gate pause (batch pauses arrive
+    with the HIL rework).
 
     ``ctx`` is the prepared execution context, kept so finalize can read the
     thread this run actually wrote; ``None`` when preparation itself failed, in
@@ -229,14 +336,28 @@ class _ExecutorResult(NamedTuple):
     ctx: SubagentExecutionContext | None = None
 
 
-def _paused_approval_ids(payload: dict[str, Any]) -> tuple[str, ...]:
+class _PauseInterrupt(BaseModel):
+    """The approval ids a subagent's interrupt payload carries.
+
+    Both are ``object``: the payload is the gate's raw interrupt value, and the
+    reader below keeps its own guards (a non-list batch is ignored, a single id
+    is stringified) rather than letting validation reject a pause outright.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    approval_ids: object = None
+    approval_id: object = ""
+
+
+def _paused_approval_ids(interrupt: _PauseInterrupt) -> tuple[str, ...]:
     """Approval ids from an interrupt payload — batch shape first, then single."""
-    batch = payload.get("approval_ids")
+    batch = interrupt.approval_ids
     if isinstance(batch, list):
         ids = tuple(str(a) for a in batch if a)
         if ids:
             return ids
-    single = str(payload.get("approval_id", ""))
+    single = str(interrupt.approval_id)
     return (single,) if single else ()
 
 
@@ -246,22 +367,21 @@ async def _execute_executor(
     stream_id: str,
     resume: Command | None = None,
 ) -> _ExecutorResult:
-    """Run the executor agent graph once. Never raises — errors come back as
-    ``_ExecutorResult(text, "error")``.
+    """Run the executor agent graph once. Never raises on error.
 
-    Tool events stream to the session's collector via make_redis_stream_writer
-    so the terminal path can persist the executor's tool_data.
-
-    The executor inherits the comms agent's model/provider/reasoning from
-    ``configurable`` (free -> Gemini, paid -> MiniMax M3), so no override here.
+    Errors return as _ExecutorResult(text, "error"). Tool events stream to the
+    session's collector via make_redis_stream_writer. The executor inherits comms'
+    model/provider/reasoning from configurable (free -> Gemini, paid -> MiniMax M3).
     """
     ctx: SubagentExecutionContext | None = None
     try:
-        ctx, error = await prepare_executor_execution(
-            task=task,
-            configurable=configurable,
-            stream_id=stream_id,
-        )
+        with span() as elapsed_prep:
+            ctx, error = await prepare_executor_execution(
+                task=task,
+                configurable=configurable,
+                stream_id=stream_id,
+            )
+        log.set(executor={"prep_ms": round(elapsed_prep() * 1000.0, 2)})
         if error or ctx is None:
             log.error(f"{LogTag.AGENT} Executor prep failed", error=error)
             return _ExecutorResult(error or "Executor agent not available", "error")
@@ -274,7 +394,9 @@ async def _execute_executor(
         writer = make_redis_stream_writer(stream_id)
         outcome = await execute_subagent_stream(ctx=ctx, stream_writer=writer, resume=resume)
         if outcome.paused:
-            approval_ids = _paused_approval_ids(outcome.interrupt or {})
+            approval_ids = _paused_approval_ids(
+                _PauseInterrupt.model_validate(outcome.interrupt or {})
+            )
             if not approval_ids:
                 # Unresumable: nothing can ever re-dispatch this thread. Fail the
                 # run loudly rather than leave the conversation's lock held.
@@ -311,21 +433,15 @@ async def _finalize_executor_run(
 
     was_cancelled = bool(run.stream_id) and await StreamManager.is_cancelled(run.stream_id)
 
-    # Snapshot which native cards were returned to the frontend BEFORE signalling
-    # done — for live streams the chat path drains + tears down the session in
-    # parallel once done_event fires, so reading it after would race teardown.
-    # Only where cards actually render: on a bot or a workflow delivery the note
-    # would tell comms to withhold data that has no card to fall back on.
+    # Snapshot returned-cards BEFORE signalling done: live streams tear down the
+    # session in parallel once done_event fires, so reading after would race it.
+    # Only meaningful where cards render — a bot/workflow delivery has no card to fall back on.
     build_note = not was_cancelled and run.renders_native_cards
     returned_note = build_returned_to_frontend_note(run.stream_id) if build_note else ""
 
-    # Snapshot the cards delivery will persist, for the same reason and BEFORE
-    # the same signal: every comms consumer — the chat stream and the silent
-    # workflow path alike — drains the session and tears it down the moment
-    # done_event fires, so a read from inside delivery comes back empty. That is
-    # how a scheduled workflow saved a bot message with no tool cards while its
-    # execution record listed every call. ``None`` means a live run, whose cards
-    # the comms stream owns and attaches to its own message.
+    # Snapshot cards delivery will persist, same reason: every comms consumer
+    # tears the session down the moment done_event fires, so a read from inside
+    # delivery comes back empty. None means a live run — comms owns those cards.
     tool_data = drain_executor_tool_data(run.stream_id) if run.executor_owns_tool_data else None
 
     # Held approval cards go live here, not mid-run: the open client never
@@ -347,23 +463,40 @@ async def _finalize_executor_run(
 
     # Signal SSE consumer that tool events are done so it can drain the session
     # into the comms ack and publish [DONE]. Comms re-narration runs in parallel.
-    signal_executor_done(run.stream_id)
+    signal_executor_done(
+        run.stream_id,
+        failed=result_type == "error",
+        reason=result_text if result_type == "error" else None,
+    )
+
+    # The waiter gave up on this executor and closed its run as failed. A result
+    # delivered now would answer a turn that is over, and a collection queued
+    # now would start work on it; only the lock release below is still owed.
+    abandoned = executor_abandoned(run.stream_id)
+    if abandoned:
+        log.warning(
+            f"{LogTag.AGENT} Executor finished after its waiter gave up; result not delivered",
+            stream_id=run.stream_id,
+            task_id=run.task_id,
+            result_type=result_type,
+        )
 
     # Delivery is best-effort: a failure here must NOT skip the lock release and
     # queue handoff below, or queued tasks strand and the busy lock leaks until
     # its TTL. The lock lifecycle is the load-bearing step — always run it.
     try:
-        await _deliver_terminal_outcome(
-            run,
-            task,
-            TerminalOutcome(
-                result_text=result_text,
-                result_type=result_type,
-                was_cancelled=was_cancelled,
-                returned_note=returned_note,
-                tool_data=tool_data,
-            ),
-        )
+        if not abandoned:
+            await _deliver_terminal_outcome(
+                run,
+                task,
+                TerminalOutcome(
+                    result_text=result_text,
+                    result_type=result_type,
+                    was_cancelled=was_cancelled,
+                    returned_note=returned_note,
+                    tool_data=tool_data,
+                ),
+            )
     except Exception as e:  # never let delivery failure strand the queue
         log.error(
             f"{LogTag.AGENT} Executor finalize delivery failed",
@@ -372,13 +505,9 @@ async def _finalize_executor_run(
             error=str(e),
         )
 
-    # The run is over the moment its outcome is delivered, so the busy lock goes
-    # now rather than at the end of finalize. Held any longer it outlives the
-    # result the user is already reading: comms' executor_status hook keeps
-    # reading "a background task is STILL RUNNING" off it, and anything that
-    # raises in between (a stream close, a Redis blip in the queue handoff) left
-    # it held for the whole 30-minute TTL with no run behind it.
-    # Ownership-checked, so a stale finalize never frees a newer run's lock.
+    # Release the busy lock now, not at end of finalize: held longer, comms'
+    # executor_status hook keeps reading "still running," and a mid-finalize
+    # exception would strand it for the full 30-min TTL. Ownership-checked.
     try:
         await release_lock_if_owned(run.conversation_id, run.stream_id, run.task_id)
         await _close_queued_stream(run, was_cancelled)
@@ -389,6 +518,16 @@ async def _finalize_executor_run(
             task_id=run.task_id,
             error=str(e),
         )
+
+    end_status = (
+        "error" if result_type == "error" else ("cancelled" if was_cancelled else "success")
+    )
+    queued = run.queued
+    if run.t_dispatch_perf is not None:
+        e2e_s = time.perf_counter() - run.t_dispatch_perf
+        if e2e_s >= 0.0:  # mixed-epoch guard, same as queue wait above
+            observe_executor_e2e(e2e_s, status=end_status, queued=queued)
+    observe_executor_run_total(status=end_status, queued=queued)
 
     # Work handed over mid-run is normally absorbed by the run itself. The one
     # case it cannot be is a hand-off that lands after this run's LAST model
@@ -402,19 +541,9 @@ async def _finalize_executor_run(
 async def _finalize_paused_run(run: ExecutorRun) -> None:
     """Close out a run parked on a HIL approval without ending its turn.
 
-    Deliberately does NOT deliver a result, drain the queue, or release the busy
-    lock. The executor thread is checkpointed with pending work, so no other task
-    may run on it — the lock stays held until ``resolve_approval`` resumes this
-    thread and that run's normal finalize drains the queue. Redis outlives the
-    process, so the lock survives a restart exactly as the checkpoint does.
-
-    Holding the lock is not enough on its own: its TTL has been counting down
-    since this run started, and a user has hours to answer. Re-arm it to cover the
-    approval window, or it lapses mid-pause and the next run takes the thread and
-    discards the interrupt.
-
-    The SSE consumer is still signalled: the turn's stream must close so the user
-    sees the approval card instead of a spinner that never resolves.
+    Doesn't deliver a result, drain the queue, or release the busy lock — it stays
+    held until resolve_approval resumes this thread. Re-arms the lock's TTL to
+    cover the approval window, and still signals SSE so the user sees the approval card.
     """
     if not await extend_lock_if_owned(
         run.conversation_id, run.stream_id, run.task_id, HIL_PAUSED_LOCK_TTL_SECONDS
@@ -430,6 +559,7 @@ async def _finalize_paused_run(run: ExecutorRun) -> None:
         )
     signal_executor_done(run.stream_id)
     await _close_queued_stream(run, was_cancelled=False)
+    observe_executor_run_total(status="paused", queued=run.queued)
     log.info(
         f"{LogTag.HIL} Executor paused on approval; busy lock retained",
         task_id=run.task_id,
@@ -440,9 +570,9 @@ async def _finalize_paused_run(run: ExecutorRun) -> None:
 
 @dataclass(frozen=True)
 class TerminalOutcome:
-    """The terminal facts of one executor run, as ``_finalize_run`` snapshotted them.
+    """The terminal facts of one executor run, as _finalize_run snapshotted them.
 
-    ``tool_data`` is ``None`` for a live run, whose cards the comms stream owns.
+    tool_data is None for a live run, whose cards the comms stream owns.
     """
 
     result_text: str
@@ -460,10 +590,8 @@ async def _deliver_terminal_outcome(
     """Route the run's terminal outcome to exactly one delivery entry point.
 
     A cancelled run's already-streamed cards must not vanish: self-owning runs
-    (queued / background workflow) persist them here, while live runs defer to
-    the comms path's attach step (persisting here too would duplicate cards) —
-    which is what a ``None`` snapshot means. A completed run with text narrates
-    and delivers.
+    persist them here, live runs defer to comms' attach step (None means that) —
+    persisting here too would duplicate cards. A completed run with text narrates and delivers.
     """
     if outcome.was_cancelled:
         # Regardless of who owns the tool_data, comms' context must record the
@@ -492,16 +620,11 @@ async def _deliver_terminal_outcome(
 async def _publish_voice_tts(
     stream_id: str, notification_text: str | None, message_id: str | None
 ) -> None:
-    """Push the narrated answer on a voice-mode stream so the agent can speak it
-    AND bubble it.
+    """Push the narrated answer on a voice-mode stream so the agent speaks AND bubbles it.
 
-    The frame carries the saved message's ``message_id`` so the voice agent can
-    forward it as a display frame keyed by that id: the bubble then renders
-    immediately off the data channel instead of waiting on the separate
-    WebSocket push from ``deliver_result``, and that same WebSocket message
-    (identical id) reconciles in place rather than duplicating. Only live
-    streams are ever marked voice mode, so queued/workflow runs never reach here
-    with ``session.voice_mode`` set.
+    The frame carries the message_id so the voice agent forwards it as a display
+    frame, rendering off the data channel immediately; the later WebSocket push
+    (same id) then reconciles in place instead of duplicating. Only live streams are ever voice mode.
     """
     if not notification_text:
         return
@@ -517,7 +640,7 @@ async def _close_queued_stream(run: ExecutorRun, was_cancelled: bool) -> None:
     """Tear down a queued run's session and close the SSE stream it owns.
 
     Only queued runs own a stream the frontend subscribed to via
-    ``executor.stream_started``; live sessions are torn down by the chat path. A
+    executor.stream_started; live sessions are torn down by the chat path. A
     cancelled queued stream closes silently — the cancel already told the client
     — so no [DONE] / complete_stream.
     """
@@ -658,10 +781,10 @@ async def _carry_pending_into_new_run(
         prepared = await _prepare_executor_run(
             run.conversation_id,
             {
-                "user_id": run.user.get("user_id", ""),
-                "email": run.user.get("email", ""),
-                "user_name": run.user.get("name", ""),
-                "user_timezone": run.user.get("timezone"),
+                "user_id": run.user.user_id,
+                "email": run.user.email or "",
+                "user_name": run.user.name or "",
+                "user_timezone": run.user.timezone,
             },
             "".join(wrap_agent_payload(entry.tag, entry.text) for entry in carry),
             workflow_execution_id=run.workflow_execution_id,

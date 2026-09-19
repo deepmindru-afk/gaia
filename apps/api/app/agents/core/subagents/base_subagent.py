@@ -54,7 +54,7 @@ def resolve_declared_tools(
     provider: str,
     kind: str,
 ) -> list[str]:
-    """The declared tools that actually resolved, warning about any that did not.
+    """Return the declared tools that actually resolved, warning about any that did not.
 
     A subagent's ``auto_bind_tools`` / ``extra_initial_tools`` are a promise that
     those tools are available before its first model call — bound, or preloaded
@@ -92,13 +92,10 @@ def build_scoped_tool_dict(
 ) -> tuple[dict[str, BaseTool], list[str]]:
     """Assemble the scoped tool dict + initial tool IDs for a subagent.
 
-    Split out of `create_provider_subagent` to keep that function's cognitive
-    complexity below SonarQube's threshold.
-
-    ``authoring_only`` builds a pure draft-authoring agent (e.g. the workflow
-    assistant): only its tool_space tools, none of the always-available
-    execution tools (coding/FS, web, research, memory), so it cannot try to
-    *do* the work instead of describe it.
+    Split out of create_provider_subagent to keep its cognitive complexity
+    below SonarQube's threshold. authoring_only builds a pure draft-authoring
+    agent (e.g. the workflow assistant): only its tool_space tools, none of
+    the always-available execution tools.
     """
     scoped_tool_dict: dict[str, BaseTool] = {}
     initial_tool_ids: list[str] = []
@@ -189,8 +186,7 @@ class SubAgentFactory:
         llm: LanguageModelLike,
         config: SubAgentToolConfig | None = None,
     ) -> CompiledStateGraph:
-        """
-        Creates a specialized sub-agent graph for a specific provider with tool registry.
+        """Create a specialized sub-agent graph for a specific provider with tool registry.
 
         Args:
             provider: Provider name (gmail, notion, twitter, linkedin, calendar)
@@ -260,11 +256,8 @@ class SubAgentFactory:
             "llm": llm,
             "tool_registry": scoped_tool_dict,  # Use scoped dict instead of global
             "agent_config": AgentConfig(agent_name=name, middleware=middleware),
-            # No memory hook. Extraction runs once per comms turn: a subagent
-            # sees the same thread the comms agent already ingested, so hooking
-            # it here re-extracted one conversation once per subagent per turn,
-            # and it is the tier whose transcripts are raw provider payloads
-            # rather than anything the user said.
+            # No memory hook: extraction runs once per comms turn, and a
+            # subagent sees the same thread comms already ingested.
             "hooks_config": HookConfig(
                 pre_model_hooks=worker_pre_model_hooks(todo_hook, drains_subagent_inbox=True),
                 end_graph_hooks=[],

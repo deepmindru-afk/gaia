@@ -33,7 +33,7 @@ def _prefs(
 
 
 class TestPostApprovalDecision:
-    """POST /api/v1/approvals/{id}/decision"""
+    """POST /api/v1/approvals/{id}/decision."""
 
     @patch("app.api.v1.endpoints.approvals.resolve_approval", new_callable=AsyncMock)
     async def test_decision_success(self, mock_resolve: AsyncMock, client: AsyncClient):
@@ -109,7 +109,7 @@ class TestPostApprovalDecision:
 
 
 class TestPostBatchDecision:
-    """POST /api/v1/approvals/batch-decision"""
+    """POST /api/v1/approvals/batch-decision."""
 
     @patch("app.api.v1.endpoints.approvals.resolve_approvals_batch", new_callable=AsyncMock)
     async def test_batch_success(self, mock_batch: AsyncMock, client: AsyncClient):
@@ -198,12 +198,14 @@ class TestPostBatchDecision:
 
 
 class TestGetPreferences:
-    """GET /api/v1/approvals/preferences"""
+    """GET /api/v1/approvals/preferences."""
 
     @patch("app.api.v1.endpoints.approvals.get_hil_preferences", new_callable=AsyncMock)
     async def test_default_preferences(self, mock_get: AsyncMock, client: AsyncClient):
         mock_get.return_value = _prefs()
-        resp = await client.get(f"{APPROVALS_BASE}/preferences")
+        with patch("app.api.v1.endpoints.approvals.log") as log:
+            resp = await client.get(f"{APPROVALS_BASE}/preferences")
+        log.set.assert_called_once_with(user={"id": USER_ID}, hil={"operation": "get_preferences"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "always_allow"
@@ -236,12 +238,16 @@ class TestGetPreferences:
 
 
 class TestPutPreferences:
-    """PUT /api/v1/approvals/preferences"""
+    """PUT /api/v1/approvals/preferences."""
 
     @patch("app.api.v1.endpoints.approvals.update_hil_preferences", new_callable=AsyncMock)
     async def test_partial_update(self, mock_update: AsyncMock, client: AsyncClient):
         mock_update.return_value = _prefs(mode="always_ask")
-        resp = await client.put(f"{APPROVALS_BASE}/preferences", json={"mode": "always_ask"})
+        with patch("app.api.v1.endpoints.approvals.log") as log:
+            resp = await client.put(f"{APPROVALS_BASE}/preferences", json={"mode": "always_ask"})
+        log.set.assert_called_once_with(
+            user={"id": USER_ID}, hil={"operation": "update_preferences"}
+        )
         assert resp.status_code == 200
         assert resp.json()["mode"] == "always_ask"
         mock_update.assert_awaited_once_with(USER_ID, mode="always_ask", tool_overrides=None)
@@ -280,12 +286,17 @@ class TestPutPreferences:
 
 
 class TestSetToolOverride:
-    """PUT /api/v1/approvals/tools/{tool_name}"""
+    """PUT /api/v1/approvals/tools/{tool_name}."""
 
     @patch("app.api.v1.endpoints.approvals.set_tool_override", new_callable=AsyncMock)
     async def test_force_ask(self, mock_set: AsyncMock, client: AsyncClient):
         mock_set.return_value = _prefs(mode="auto", tool_overrides={"email_send": True})
-        resp = await client.put(f"{APPROVALS_BASE}/tools/email_send", json={"ask": True})
+        with patch("app.api.v1.endpoints.approvals.log") as log:
+            resp = await client.put(f"{APPROVALS_BASE}/tools/email_send", json={"ask": True})
+        log.set.assert_called_once_with(
+            user={"id": USER_ID},
+            hil={"operation": "set_tool_override", "tool": "email_send", "ask": True},
+        )
         assert resp.status_code == 200
         assert resp.json()["tool_overrides"] == {"email_send": True}
         mock_set.assert_awaited_once_with(USER_ID, "email_send", True)

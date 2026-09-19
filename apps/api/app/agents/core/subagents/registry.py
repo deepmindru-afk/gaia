@@ -41,9 +41,9 @@ def _from_oauth(integ: OAuthIntegration) -> Subagent:
 def all_subagents() -> tuple[Subagent, ...]:
     """All subagents — OAuth-derived + builtins. Process-lifetime cached.
 
-    Cache is safe because `OAUTH_INTEGRATIONS` and `BUILTIN_SUBAGENTS` are
+    Cache is safe because OAUTH_INTEGRATIONS and BUILTIN_SUBAGENTS are
     module-level constants that are never mutated at runtime. If a test
-    needs to inject a fake subagent, call `all_subagents.cache_clear()`.
+    needs to inject a fake subagent, call all_subagents.cache_clear().
     """
     oauth_subagents = tuple(
         _from_oauth(i)
@@ -54,10 +54,10 @@ def all_subagents() -> tuple[Subagent, ...]:
 
 
 def get_subagent_by_id(subagent_id: str) -> Subagent | None:
-    """Look up a subagent by `id` or `short_name` (case-insensitive).
+    """Look up a subagent by id or short_name (case-insensitive).
 
     Not cached — takes an arbitrary string and we don't want unbounded
-    growth from caller-controlled input. The underlying `all_subagents()`
+    growth from caller-controlled input. The underlying all_subagents()
     is cached, so this is O(n) over a small fixed set.
     """
     s = subagent_id.lower().strip()
@@ -73,8 +73,9 @@ def _third_party_name_matchers() -> tuple[tuple[Subagent, re.Pattern[str]], ...]
 
     Internal subagents are deliberately absent as *matches*: "todos" and
     "skills" are ordinary words that appear in task prose constantly, and a
-    generic noun cannot mislead anyone about which product holds their data. `short_name` is excluded for the same reason — Google
-    Tasks' short name is literally "tasks".
+    generic noun cannot mislead anyone about which product holds their data.
+    ``short_name`` is excluded for the same reason — Google Tasks' short name
+    is literally "tasks".
 
     Cached with `all_subagents()`; call `_third_party_name_matchers.cache_clear()`
     alongside it if a test injects a fake subagent.
@@ -108,23 +109,19 @@ def foreign_provider_named_in(text: str, target_id: str) -> Subagent | None:
 
 @cache
 def _subagent_id_by_agent_name() -> dict[str, str]:
-    """Map each subagent's `agent_name` to its canonical `id`.
+    """Map each subagent's agent_name to its canonical id.
 
-    `agent_name` is the one handle the skill catalog is keyed on: a skill's
-    frontmatter `target` is the owning subagent's `agent_name`, and the handoff
-    path passes that same `agent_name` when surfacing a subagent's skills. Built
-    from `all_subagents()`, so it is the authoritative `agent_name -> id` table
-    covering OAuth-derived AND builtin subagents. (`agent_name` is also the
-    LangGraph graph-registration key, so it is unique by construction.)
+    agent_name is the one handle the skill catalog is keyed on. Built from
+    all_subagents(), covering OAuth-derived AND builtin subagents; it is
+    also the LangGraph graph-registration key, so it is unique by construction.
     """
     return {sa.config.agent_name: sa.id for sa in all_subagents()}
 
 
 def resolve_subagent_id(agent_name: str) -> str | None:
-    """Resolve a subagent `agent_name` to its canonical `id`, or `None` if no
-    registered subagent uses that `agent_name`.
+    """Resolve a subagent agent_name to its canonical id, or None if unregistered.
 
-    `None` is the correct answer for the general `executor` bucket and for
+    None is the correct answer for the general executor bucket and for
     custom/public MCP subagents that aren't in the registry.
     """
     return _subagent_id_by_agent_name().get(agent_name.strip())

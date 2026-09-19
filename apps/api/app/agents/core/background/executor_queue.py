@@ -27,8 +27,6 @@ from app.agents.core.background.session import (
 )
 from app.constants.cache import EXECUTOR_BUSY_PREFIX, EXECUTOR_BUSY_TTL
 from app.constants.executor import (
-    CONFIGURABLE_OWNED_KEYS,
-    CONFIGURABLE_RUN_SCOPED_KEYS,
     EXECUTOR_COLLECT_MARKER_PREFIX,
     EXECUTOR_COLLECT_MARKER_TTL,
 )
@@ -36,7 +34,11 @@ from app.constants.log_tags import LogTag
 from app.core.stream_manager import StreamManager
 from app.core.websocket_manager import websocket_manager
 from app.db.redis import redis_cache
-from app.models.agent_models import AgentConfigurable
+from app.models.agent_models import (
+    CONFIGURABLE_OWNED_KEYS,
+    CONFIGURABLE_RUN_SCOPED_KEYS,
+    AgentConfigurable,
+)
 from app.utils.general_utils import is_json_safe
 from shared.py.wide_events import current_workflow_execution_id, log
 
@@ -219,7 +221,7 @@ async def get_lock_state(conversation_id: str, stream_id: str, task_id: str | No
 
 
 async def get_lock_holder(conversation_id: str) -> str | None:
-    """The busy lock's current value, or None when no run holds it (or Redis is down)."""
+    """Return the busy lock's current value, or None when no run holds it (or Redis is down)."""
     if not redis_cache.client:
         return None
     raw = await redis_cache.client.get(f"{EXECUTOR_BUSY_PREFIX}{conversation_id}")
@@ -285,7 +287,6 @@ async def claim_collection_wake(conversation_id: str) -> bool:
     return bool(await redis_cache.client.set(marker, "1", nx=True, ex=EXECUTOR_COLLECT_MARKER_TTL))
 
 
-
 def decode_raw_item(raw: bytes | memoryview | str) -> str:
     """Decode a raw Redis list item to a string."""
     if isinstance(raw, str):
@@ -303,9 +304,10 @@ def build_run_item(
     identity: RunIdentity,
     workflow_execution_id: str | None = None,
 ) -> ExecutorRunItem:
-    """The one serialized run-context shape: written by the queue and the HIL
-    resume store, read back by ``prepare_run_from_item``. Add fields here, not
-    at the write sites, or a resumed run silently drops what a queued run keeps.
+    """Build the one serialized run-context shape the queue and HIL resume store write.
+
+    Read back by ``prepare_run_from_item``. Add fields here, not at the write
+    sites, or a resumed run silently drops what a queued run keeps.
 
     ``workflow_execution_id`` defaults to the execution in flight on the caller's
     wide event — a run that already knows its own passes it explicitly, since a
@@ -322,9 +324,9 @@ def build_run_item(
 
 
 def safe_configurable(configurable: AgentConfigurable) -> AgentConfigurable:
-    """The serializable subset of a ``configurable``, safe to persist and rebuild
-    a run from — the GAIA-owned keys minus the run-scoped ones.
+    """Return the serializable subset of a ``configurable``, safe to persist and rebuild a run from.
 
+    The GAIA-owned keys minus the run-scoped ones.
     Every surviving key is an ``AgentConfigurable`` key by construction (Type
     Safety item 12). A declared key holding an unserializable value is dropped
     with a WARNING rather than in silence: silent dropping is how a queued run

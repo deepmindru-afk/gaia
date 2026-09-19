@@ -37,6 +37,7 @@ from app.models.message_models import (
     SelectedCalendarEventData,
     SelectedWorkflowData,
 )
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 
 # ---------------------------------------------------------------------------
@@ -60,14 +61,14 @@ def _make_request(**overrides) -> MessageRequestWithHistory:
     return MessageRequestWithHistory(**defaults)  # type: ignore[arg-type]  # fixture spreads an untyped defaults dict into the model
 
 
-def _make_user(**overrides) -> dict:
-    defaults = {
+def _make_user(**overrides) -> AuthenticatedUser:
+    defaults: dict[str, object] = {
         "user_id": "user-123",
         "email": "test@example.com",
         "name": "Test User",
     }
     defaults.update(overrides)
-    return defaults
+    return AuthenticatedUser(**defaults)
 
 
 FAKE_HISTORY = [

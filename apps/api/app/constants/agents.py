@@ -1,21 +1,16 @@
 """Internal agent-to-agent channel tags.
 
-The tiers hand work to each other asynchronously — executor results reach comms,
-subagent results reach the executor — and the handoff is plain text landing in
-the next tier's context. These XML-style tags frame that text: they say where an
-internal payload starts, where it ends, and that it is addressed to the agent and
-never to the user.
+Tiers hand work to each other asynchronously as plain text landing in the next
+tier's context; these XML-style tags frame that text as addressed to the
+agent, never the user.
 
-XML tags rather than the bare ``[MARKER]`` prefixes they replace, for two
-reasons. A prefix only marks a start, so the model has to infer where the
-internal payload stops and its own reply begins; an open/close pair states it.
-And models are trained on tagged context blocks, so a tag reads as machine
-framing while a bracketed word reads as text worth copying — which is exactly how
-``[EXECUTOR_RESULT]`` kept surfacing at the top of user-facing replies.
+XML tags replace bare [MARKER] prefixes: a prefix only marks a start, so the
+model must infer where the payload ends, while an open/close pair states it —
+and a tag reads as machine framing rather than text worth copying, which is
+exactly how [EXECUTOR_RESULT] kept surfacing in user-facing replies.
 
 This module owns the vocabulary AND the framing, so the site that writes a tag
-and the site that strips one (``strip_internal_agent_tags``) can never disagree
-about the syntax.
+and the site that strips one (strip_internal_agent_tags) can never disagree.
 """
 
 from enum import StrEnum
@@ -33,7 +28,6 @@ class AgentTag(StrEnum):
     DELIVERY_INSTRUCTIONS = "delivery_instructions"
     SUBAGENT_RESULT = "subagent_result"
     SUBAGENT_CALL_RECORD = "subagent_call_record"
-    STYLE_CORRECTION = "style_correction"
     LAST_RUN = "last_run"
     PLAYBOOK_FALLBACK = "playbook_fallback"
     #: The user speaking to an executor run that is already in flight.
@@ -51,12 +45,8 @@ class AgentTag(StrEnum):
 def wrap_agent_payload(tag: AgentTag, body: str, agent: str | None = None) -> str:
     """Frame an internal payload in its channel tag.
 
-    ``agent`` names the tier that produced the payload, which only a
-    ``<subagent_result>`` carries — several land in one collection and the
-    executor has to tell whose report is whose.
-
-    Trailing newline included so consecutive blocks concatenate into one
-    readable document without the caller managing separators.
+    agent (only carried by <subagent_result>) lets the executor tell whose
+    report is whose when several land in one collection.
     """
     attribution = f' agent="{agent}"' if agent else ""
     return f"<{tag}{attribution}>\n{body.strip()}\n</{tag}>\n"
@@ -72,10 +62,13 @@ INTERNAL_AGENT_TAG_PATTERN = re.compile(
 
 
 # The trigger-context key carrying a stopped playbook replay's report into the
-# agent run that takes over from it. Written by the workflow worker, read by
-# ``format_workflow_execution_message`` — named once here because a drift
-# between those two sites is silent and the agent would re-run a side effect.
+# agent run that takes over. Named once here because a drift between the
+# writer (workflow worker) and reader (format_workflow_execution_message) is silent.
 PLAYBOOK_FALLBACK_CONTEXT_KEY = "playbook_fallback"
+#: The calls a replay made before it stopped, so a rewrite may freeze them —
+#: without this the write validator refused every rewrite that kept one
+#: ("did not run in this run").
+PLAYBOOK_REPLAYED_CALLS_KEY = "playbook_replayed_calls"
 
 # The trigger-context key carrying the busy-lock value a workflow fire reserved
 # its conversation with. Written by the workflow worker, read by ``call_executor``
@@ -95,6 +88,16 @@ PLAYBOOK_DECLINE_LIMIT = 3
 # that lapses, declines, or has its rewrite refused still counts; past the limit
 # the worker deletes the playbook rather than briefing every later fire to heal it.
 PLAYBOOK_HEAL_ATTEMPT_LIMIT = 2
+
+#: What separates a tool's result from a note a middleware appends to it in
+#: band for the model (the loop guard's repeat warning). The record reads the
+#: result as the JSON document before this separator; the note is not data.
+TOOL_RESULT_NOTE_SEPARATOR = "\n\n"
+
+#: How many recent executions a replay searches for the last replay of a tool
+#: that returned data, when judging an empty result. Reaches past every heal
+#: run (which replays nothing) for every suspect the streak allows.
+PLAYBOOK_SUSPECT_BASELINE_WINDOW = PLAYBOOK_SUSPECT_STREAK_LIMIT * (1 + PLAYBOOK_HEAL_ATTEMPT_LIMIT)
 
 #: The tag both playbook briefs open with. The executor's graph loop reads it
 #: off the task turn to know the run owes a decision, so the briefs and the

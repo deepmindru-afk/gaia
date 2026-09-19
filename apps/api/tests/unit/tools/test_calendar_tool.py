@@ -2,11 +2,11 @@
 
 The pure helpers are exercised with no mocking at all; the Composio-registered
 tool bodies are exercised for real with only the true I/O boundaries faked
-(`proxy_request_sync`, the async `calendar_service` / `user_service` functions,
+(proxy_request_sync, the async calendar_service / user_repository reads,
 the LangGraph stream writer and config).
 
 Five production bugs were found while writing these tests and fixed at the root
-in `calendar_tool.py` / `calendar_models.py`; the tests that pin them down are
+in calendar_tool.py / calendar_models.py; the tests that pin them down are
 marked with a "BUG:" comment.
 """
 
@@ -16,12 +16,12 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
 import pytest
 
 from app.agents.tools.integrations.calendar_tool import (
     _extract_datetime,
     _format_calendar_for_stream,
-    _get_user_id,
     _get_user_timezone,
     _run_sync,
     register_calendar_custom_tools,
@@ -40,14 +40,18 @@ from app.models.calendar_models import (
     FindEventInput,
     GetDaySummaryInput,
     GetEventInput,
+    GoogleCalendarEventDateTime,
     GoogleCalendarEventResource,
     ListCalendarsInput,
     PatchEventInput,
     SingleEventInput,
 )
 from app.models.common_models import GatherContextInput
+from app.models.integrations.composio import CustomToolAuthCredentials
+from app.models.user_models import UserDocument
+from app.services.composio.proxy_client import ProxyRequest
 from app.utils.calendar_utils import CALENDAR_API_BASE
-from app.utils.concurrency import reset_captured_loop
+from app.utils.concurrency import reset_captured_loop, run_on_captured_loop
 from app.utils.errors import AppError
 
 MODULE = "app.agents.tools.integrations.calendar_tool"
@@ -81,9 +85,9 @@ def tools() -> dict[str, Any]:
 def _no_captured_server_loop() -> Iterator[None]:
     """Run the tool bodies in a loop-less sync context, like the e2e graph harness.
 
-    With no captured server loop, `_run_sync` runs the (mocked, loop-agnostic)
+    With no captured server loop, _run_sync runs the (mocked, loop-agnostic)
     services on a fresh loop. Clearing the global guards against a captured loop
-    leaking in from another test, which would make `_run_sync` dispatch onto a
+    leaking in from another test, which would make _run_sync dispatch onto a
     closed loop.
     """
     reset_captured_loop()
@@ -129,35 +133,35 @@ def _events_response(
 # ---------------------------------------------------------------------------
 
 
+def _when(**payload: object) -> GoogleCalendarEventDateTime:
+    return GoogleCalendarEventDateTime.model_validate(payload)
+
+
 class TestExtractDatetime:
-    def test_none_yields_empty_string(self) -> None:
-        assert _extract_datetime(None) == ""
-
-    def test_empty_dict_yields_empty_string(self) -> None:
-        assert _extract_datetime({}) == ""
-
-    def test_plain_string_passes_through(self) -> None:
-        assert _extract_datetime("2026-01-15T10:00:00Z") == "2026-01-15T10:00:00Z"
+    def test_empty_bounds_yield_empty_string(self) -> None:
+        assert _extract_datetime(_when()) == ""
 
     def test_datetime_key_wins_over_date(self) -> None:
         assert (
-            _extract_datetime({"dateTime": "2026-01-15T10:00:00Z", "date": "2026-01-15"})
+            _extract_datetime(_when(dateTime="2026-01-15T10:00:00Z", date="2026-01-15"))
             == "2026-01-15T10:00:00Z"
         )
 
     def test_falls_back_to_date_for_all_day(self) -> None:
-        assert _extract_datetime({"date": "2026-01-15"}) == "2026-01-15"
+        assert _extract_datetime(_when(date="2026-01-15")) == "2026-01-15"
 
     def test_blank_datetime_falls_back_to_date(self) -> None:
-        assert _extract_datetime({"dateTime": "", "date": "2026-01-15"}) == "2026-01-15"
+        assert _extract_datetime(_when(dateTime="", date="2026-01-15")) == "2026-01-15"
 
-    def test_dict_without_time_keys_yields_empty_string(self) -> None:
-        assert _extract_datetime({"timeZone": "UTC"}) == ""
+    def test_bounds_without_time_keys_yield_empty_string(self) -> None:
+        assert _extract_datetime(_when(timeZone="UTC")) == ""
 
-    def test_non_string_value_is_rejected(self) -> None:
+    def test_non_string_value_is_rejected_at_the_boundary(self) -> None:
         # Google never returns this, but a malformed payload must not leak an int
-        # into a schema the frontend types as a string.
-        assert _extract_datetime({"dateTime": 1737000000}) == ""
+        # into a schema the frontend types as a string — it fails validation
+        # where the payload is parsed instead of reaching the stream.
+        with pytest.raises(ValidationError):
+            _when(dateTime=1737000000)
 
 
 # ---------------------------------------------------------------------------
@@ -194,13 +198,13 @@ class TestFormatCalendarForStream:
 
 
 # ---------------------------------------------------------------------------
-# _get_user_id
+# auth credentials
 # ---------------------------------------------------------------------------
 
 
-class TestGetUserId:
+class TestAuthCredentials:
     def test_returns_user_id(self) -> None:
-        assert _get_user_id({"user_id": "abc"}) == "abc"
+        assert CustomToolAuthCredentials.parse({"user_id": "abc"}).user_id == "abc"
 
     @pytest.mark.parametrize(
         "creds",
@@ -209,7 +213,20 @@ class TestGetUserId:
     )
     def test_rejects_unusable_credentials(self, creds: dict[str, Any]) -> None:
         with pytest.raises(ValueError, match="Missing user_id"):
-            _get_user_id(creds)
+            CustomToolAuthCredentials.parse(creds)
+
+    @pytest.mark.parametrize(
+        "creds",
+        [{}, {"user_id": ""}, {"user_id": None}, {"user_id": 123}, {"userId": "abc"}],
+        ids=["missing", "blank", "none", "int", "wrong-key"],
+    )
+    def test_tool_bodies_reject_unusable_credentials(self, tools, creds: dict[str, Any]) -> None:
+        with patch(f"{MODULE}.proxy_request_sync") as proxy:
+            with pytest.raises(ValueError, match="Missing user_id"):
+                tools["CUSTOM_GET_EVENT"](
+                    GetEventInput(events=[EventReference(event_id="e1")]), EXECUTE_REQUEST, creds
+                )
+        proxy.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +364,7 @@ class TestListCalendars:
 
 
 class _FrozenDatetime(datetime):
-    """`datetime` with a pinned `now()` — everything else is the real thing."""
+    """datetime with a pinned now() — everything else is the real thing."""
 
     _instant = datetime(2026, 3, 14, 20, 30, tzinfo=UTC)
 
@@ -384,8 +401,9 @@ class TestGetDaySummary:
             if raises_metadata
             else AsyncMock(return_value=metadata or ({}, {}))
         )
+        user_doc = UserDocument.model_validate(user) if user is not None else None
         with (
-            patch("app.services.user_service.get_user_by_id", new=AsyncMock(return_value=user)),
+            patch(f"{MODULE}.user_repository.get", new=AsyncMock(return_value=user_doc)),
             patch(
                 "app.services.calendar_service.get_calendar_events",
                 new=AsyncMock(return_value=_events_response(events)),
@@ -410,6 +428,26 @@ class TestGetDaySummary:
         assert out["date"] == "2026-03-15"
         assert out["timezone"] == "Asia/Kolkata"
 
+    def test_user_lookup_is_for_the_caller_and_bounded_to_five_seconds(self, tools, writer) -> None:
+        user_lookup = AsyncMock(return_value=UserDocument.model_validate({"timezone": "UTC"}))
+        with (
+            patch(f"{MODULE}.user_repository.get", new=user_lookup),
+            patch(
+                "app.services.calendar_service.get_calendar_events",
+                new=AsyncMock(return_value=_events_response([])),
+            ),
+            patch(
+                "app.services.calendar_service.get_calendar_metadata_map",
+                new=AsyncMock(return_value=({}, {})),
+            ),
+            patch(f"{MODULE}.run_on_captured_loop", wraps=run_on_captured_loop) as dispatch,
+        ):
+            tools["CUSTOM_GET_DAY_SUMMARY"](
+                GetDaySummaryInput(date="2026-03-15"), EXECUTE_REQUEST, AUTH
+            )
+        user_lookup.assert_awaited_once_with("user-42")
+        assert 5 in [c.kwargs.get("timeout") for c in dispatch.call_args_list]
+
     def test_fixed_offset_timezone_is_supported(self, tools, writer) -> None:
         # A stored "+05:30" home zone makes zoneinfo.ZoneInfo raise; Timezone.parse
         # must absorb it rather than blowing up the whole tool.
@@ -432,7 +470,7 @@ class TestGetDaySummary:
     def test_user_lookup_failure_falls_back_to_utc(self, tools, writer) -> None:
         with (
             patch(
-                "app.services.user_service.get_user_by_id",
+                f"{MODULE}.user_repository.get",
                 new=AsyncMock(side_effect=RuntimeError("mongo down")),
             ),
             patch(
@@ -559,11 +597,9 @@ class TestGetDaySummary:
         writer.assert_not_called()
 
     def test_today_is_resolved_in_the_users_timezone(self, tools, writer) -> None:
-        # BUG: GetDaySummaryInput.date defaulted to the *server's* local date via
-        # default_factory, so a user in Asia/Kolkata asking "what's on today?"
-        # between 00:00 and 05:30 local got yesterday's schedule from a UTC
-        # server. The date must be resolved from the user's own zone, which is
-        # only known inside the tool.
+        # BUG: GetDaySummaryInput.date defaulted to the server's local date via default_factory,
+        # so a user in Asia/Kolkata asking "what's on today?" between 00:00-05:30 local got
+        # yesterday's schedule from a UTC server; the date must be resolved from the user's own zone.
         with patch(f"{MODULE}.datetime", _FrozenDatetime):
             out, mock_events = self._run(
                 tools, GetDaySummaryInput(), events=[], user={"timezone": "Asia/Kolkata"}
@@ -742,20 +778,20 @@ class TestGetEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        assert proxy.call_args.kwargs == {
-            "user_id": "user-42",
-            "toolkit": "GOOGLECALENDAR",
-            "endpoint": f"{CALENDAR_API_BASE}/calendars/cal-1/events/e1",
-            "method": "GET",
-        }
+        assert proxy.call_args.args[0] == ProxyRequest(
+            user_id="user-42",
+            toolkit="GOOGLECALENDAR",
+            endpoint=f"{CALENDAR_API_BASE}/calendars/cal-1/events/e1",
+            method="GET",
+        )
         assert out["events"] == [{"event_id": "e1", "calendar_id": "cal-1", "event": {"id": "e1"}}]
 
     def test_partial_failure_reports_the_failed_events(self, tools) -> None:
         # BUG: the `errors` list was built with full detail and then dropped from
         # the response whenever at least one event succeeded, so the agent told
         # the user every event was fetched.
-        def side_effect(**kwargs: Any) -> dict[str, Any]:
-            if kwargs["endpoint"].endswith("missing"):
+        def side_effect(request: ProxyRequest) -> dict[str, Any]:
+            if request.endpoint.endswith("missing"):
                 raise AppError(message="Not Found", why="deleted", status_code=404)
             return {"id": "ok"}
 
@@ -808,11 +844,9 @@ class TestGetEvent:
         assert out["events"] == []
 
     def test_percent_encodes_calendar_id_with_reserved_chars(self, tools) -> None:
-        # Google calendar IDs like "user@group.calendar.google.com" or
-        # "#contacts@group.v.calendar.google.com" contain '@'/'#'. Unencoded,
-        # those characters break the URL path (same bug as calendar_service.py,
-        # fixed at the root by routing every endpoint through
-        # calendar_events_endpoint()).
+        # Google calendar IDs like "user@group.calendar.google.com" contain '@'/'#', which break
+        # the URL path unencoded (same bug as calendar_service.py, fixed at the root by routing
+        # every endpoint through calendar_events_endpoint()).
         with patch(f"{MODULE}.proxy_request_sync", return_value={"id": "e1"}) as proxy:
             tools["CUSTOM_GET_EVENT"](
                 GetEventInput(
@@ -826,7 +860,7 @@ class TestGetEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        endpoint = proxy.call_args.kwargs["endpoint"]
+        endpoint = proxy.call_args.args[0].endpoint
         assert "user@group.calendar.google.com" not in endpoint
         assert endpoint.endswith("/calendars/user%40group.calendar.google.com/events/e1")
 
@@ -844,9 +878,12 @@ class TestDeleteEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        assert proxy.call_args.kwargs["method"] == "DELETE"
-        assert (
-            proxy.call_args.kwargs["endpoint"] == f"{CALENDAR_API_BASE}/calendars/cal-1/events/e1"
+        assert proxy.call_args.args[0] == ProxyRequest(
+            user_id="user-42",
+            toolkit="GOOGLECALENDAR",
+            endpoint=f"{CALENDAR_API_BASE}/calendars/cal-1/events/e1",
+            method="DELETE",
+            query={"sendUpdates": "all"},
         )
         assert out["deleted"] == [{"event_id": "e1", "calendar_id": "cal-1"}]
 
@@ -861,14 +898,14 @@ class TestDeleteEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        assert proxy.call_args.kwargs["query"] == {"sendUpdates": send_updates}
+        assert proxy.call_args.args[0].query == {"sendUpdates": send_updates}
 
     def test_partial_failure_reports_the_failed_deletes(self, tools) -> None:
         # BUG: same swallowed-`errors` defect as CUSTOM_GET_EVENT. Reporting a
         # delete as successful when it failed is the worse half of the bug: the
         # user believes the event is gone.
-        def side_effect(**kwargs: Any) -> None:
-            if kwargs["endpoint"].endswith("locked"):
+        def side_effect(request: ProxyRequest) -> None:
+            if request.endpoint.endswith("locked"):
                 raise AppError(message="Forbidden", why="read-only calendar", status_code=403)
 
         with patch(f"{MODULE}.proxy_request_sync", side_effect=side_effect):
@@ -913,7 +950,7 @@ class TestDeleteEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        endpoint = proxy.call_args.kwargs["endpoint"]
+        endpoint = proxy.call_args.args[0].endpoint
         assert "#contacts@group.v.calendar.google.com" not in endpoint
         assert endpoint.endswith("/calendars/%23contacts%40group.v.calendar.google.com/events/e1")
 
@@ -931,12 +968,14 @@ class TestPatchEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        assert proxy.call_args.kwargs["body"] == {"summary": "New title"}
-        assert proxy.call_args.kwargs["method"] == "PATCH"
-        assert (
-            proxy.call_args.kwargs["endpoint"] == f"{CALENDAR_API_BASE}/calendars/cal-1/events/e1"
+        assert proxy.call_args.args[0] == ProxyRequest(
+            user_id="user-42",
+            toolkit="GOOGLECALENDAR",
+            endpoint=f"{CALENDAR_API_BASE}/calendars/cal-1/events/e1",
+            method="PATCH",
+            body={"summary": "New title"},
+            query={"sendUpdates": "all"},
         )
-        assert proxy.call_args.kwargs["query"] == {"sendUpdates": "all"}
         assert out == {"event": {"id": "e1"}}
 
     def test_all_fields_are_mapped_to_the_google_shape(self, tools) -> None:
@@ -955,7 +994,7 @@ class TestPatchEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        assert proxy.call_args.kwargs["body"] == {
+        assert proxy.call_args.args[0].body == {
             "summary": "S",
             "description": "D",
             "location": "L",
@@ -963,7 +1002,7 @@ class TestPatchEvent:
             "end": {"dateTime": "2026-01-15T11:00:00Z"},
             "attendees": [{"email": "a@b.com"}, {"email": "c@d.com"}],
         }
-        assert proxy.call_args.kwargs["query"] == {"sendUpdates": "none"}
+        assert proxy.call_args.args[0].query == {"sendUpdates": "none"}
 
     def test_explicit_empty_values_are_still_patched(self, tools) -> None:
         # "" is a deliberate clear, not "unset" — only None means "leave alone".
@@ -973,7 +1012,7 @@ class TestPatchEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        assert proxy.call_args.kwargs["body"] == {
+        assert proxy.call_args.args[0].body == {
             "description": "",
             "location": "",
             "attendees": [],
@@ -1000,7 +1039,7 @@ class TestPatchEvent:
                 EXECUTE_REQUEST,
                 AUTH,
             )
-        endpoint = proxy.call_args.kwargs["endpoint"]
+        endpoint = proxy.call_args.args[0].endpoint
         assert "user@group.calendar.google.com" not in endpoint
         assert endpoint.endswith("/calendars/user%40group.calendar.google.com/events/e1")
 
@@ -1024,10 +1063,18 @@ class TestAddRecurrence:
             tools, AddRecurrenceInput(event_id="e1", calendar_id="cal-1", frequency="DAILY")
         )
         endpoint = f"{CALENDAR_API_BASE}/calendars/cal-1/events/e1"
-        assert [c.kwargs["method"] for c in proxy.call_args_list] == ["GET", "PUT"]
-        assert {c.kwargs["endpoint"] for c in proxy.call_args_list} == {endpoint}
-        assert proxy.call_args_list[1].kwargs["body"]["recurrence"] == ["RRULE:FREQ=DAILY"]
-        assert proxy.call_args_list[1].kwargs["body"]["summary"] == "Standup"
+        assert [c.args[0] for c in proxy.call_args_list] == [
+            ProxyRequest(
+                user_id="user-42", toolkit="GOOGLECALENDAR", endpoint=endpoint, method="GET"
+            ),
+            ProxyRequest(
+                user_id="user-42",
+                toolkit="GOOGLECALENDAR",
+                endpoint=endpoint,
+                method="PUT",
+                body={"id": "e1", "summary": "Standup", "recurrence": ["RRULE:FREQ=DAILY"]},
+            ),
+        ]
         assert out["event"] == {"id": "e1", "updated": True}
         assert out["recurrence_rule"] == "RRULE:FREQ=DAILY"
 
@@ -1080,7 +1127,7 @@ class TestAddRecurrence:
                 frequency="DAILY",
             ),
         )
-        endpoint = proxy.call_args_list[0].kwargs["endpoint"]
+        endpoint = proxy.call_args_list[0].args[0].endpoint
         assert "#contacts@group.v.calendar.google.com" not in endpoint
         assert endpoint.endswith("/calendars/%23contacts%40group.v.calendar.google.com/events/e1")
         assert out["event"] == {"id": "e1", "updated": True}
@@ -1111,11 +1158,9 @@ class TestCreateEvent:
     # -- all-day ----------------------------------------------------------
 
     def test_all_day_end_date_is_exclusive(self, tools, writer) -> None:
-        # BUG: `end.date` was the same day as `start.date`. Google Calendar
-        # treats all-day `end.date` as exclusive and rejects an empty range with
-        # HTTP 400, so every all-day event the agent created failed. The rest of
-        # the codebase (calendar_service.create_calendar_event) already uses
-        # start + 1 day.
+        # BUG: end.date was the same day as start.date. Google Calendar treats all-day end.date as
+        # exclusive and rejects an empty range with HTTP 400, so every all-day event the agent
+        # created failed. The rest of the codebase (calendar_service.create_calendar_event) already uses start + 1 day.
         _, proxy = self._run(
             tools,
             CreateEventInput(
@@ -1126,7 +1171,7 @@ class TestCreateEvent:
                 ],
             ),
         )
-        body = proxy.call_args.kwargs["body"]
+        body = proxy.call_args.args[0].body
         assert body["start"] == {"date": "2026-01-15"}
         assert body["end"] == {"date": "2026-01-16"}
 
@@ -1141,7 +1186,7 @@ class TestCreateEvent:
                 ],
             ),
         )
-        assert proxy.call_args.kwargs["body"]["end"] == {"date": "2027-01-01"}
+        assert proxy.call_args.args[0].body["end"] == {"date": "2027-01-01"}
 
     # -- timezone handling -------------------------------------------------
 
@@ -1162,7 +1207,7 @@ class TestCreateEvent:
                     ],
                 ),
             )
-        body = proxy.call_args.kwargs["body"]
+        body = proxy.call_args.args[0].body
         assert body["start"] == {"dateTime": "2026-01-15T10:00:00+05:30"}
         assert body["end"] == {"dateTime": "2026-01-15T11:00:00+05:30"}
 
@@ -1176,7 +1221,7 @@ class TestCreateEvent:
                     events=[SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")],
                 ),
             )
-        body = proxy.call_args.kwargs["body"]
+        body = proxy.call_args.args[0].body
         assert body["start"] == {"dateTime": "2026-01-15T10:00:00+05:30"}
         assert body["end"] == {"dateTime": "2026-01-15T10:30:00+05:30"}
 
@@ -1188,7 +1233,7 @@ class TestCreateEvent:
         with (
             patch(f"{MODULE}.get_config", return_value={"configurable": {}}),
             patch(
-                "app.services.user_service.get_user_by_id",
+                f"{MODULE}.user_repository.get",
                 new=AsyncMock(return_value=None),
             ),
         ):
@@ -1209,19 +1254,19 @@ class TestCreateEvent:
         with (
             patch(f"{MODULE}.get_config", return_value={"configurable": {}}),
             patch(
-                "app.services.user_service.get_user_by_id",
-                new=AsyncMock(return_value={"timezone": "Asia/Calcutta"}),
+                f"{MODULE}.user_repository.get",
+                new=AsyncMock(
+                    return_value=UserDocument.model_validate({"timezone": "Asia/Calcutta"})
+                ),
             ),
         ):
             _, proxy = self._run(
                 tools,
                 CreateEventInput(
-                    events=[
-                        SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")
-                    ],
+                    events=[SingleEventInput(summary="Call", start_datetime="2026-01-15T10:00:00")],
                 ),
             )
-        assert proxy.call_args.kwargs["body"]["start"]["dateTime"].endswith("+05:30")
+        assert proxy.call_args.args[0].body["start"]["dateTime"].endswith("+05:30")
 
     def test_duration_is_added_to_the_start(self, tools, writer) -> None:
         with patch(
@@ -1241,7 +1286,7 @@ class TestCreateEvent:
                     ],
                 ),
             )
-        assert proxy.call_args.kwargs["body"]["end"] == {"dateTime": "2026-01-16T01:30:00+05:30"}
+        assert proxy.call_args.args[0].body["end"] == {"dateTime": "2026-01-16T01:30:00+05:30"}
 
     # -- optional fields ---------------------------------------------------
 
@@ -1256,7 +1301,7 @@ class TestCreateEvent:
                     events=[SingleEventInput(summary="Bare", start_datetime="2026-01-15T10:00:00")],
                 ),
             )
-        assert set(proxy.call_args.kwargs["body"]) == {"summary", "start", "end"}
+        assert set(proxy.call_args.args[0].body) == {"summary", "start", "end"}
 
     def test_meeting_room_requests_a_conference(self, tools, writer) -> None:
         with (
@@ -1281,14 +1326,14 @@ class TestCreateEvent:
                     ],
                 ),
             )
-        body = proxy.call_args.kwargs["body"]
+        body = proxy.call_args.args[0].body
         assert body["description"] == "notes"
         assert body["location"] == "Room 3"
         assert body["attendees"] == [{"email": "a@b.com"}]
         assert body["conferenceData"]["createRequest"]["conferenceSolutionKey"] == {
             "type": "hangoutsMeet"
         }
-        assert proxy.call_args.kwargs["query"] == {
+        assert proxy.call_args.args[0].query == {
             "sendUpdates": "all",
             "conferenceDataVersion": "1",
         }
@@ -1304,7 +1349,18 @@ class TestCreateEvent:
                     events=[SingleEventInput(summary="X", start_datetime="2026-01-15T10:00:00")],
                 ),
             )
-        assert proxy.call_args.kwargs["query"] == {"sendUpdates": "all"}
+        assert proxy.call_args.args[0] == ProxyRequest(
+            user_id="user-42",
+            toolkit="GOOGLECALENDAR",
+            endpoint=f"{CALENDAR_API_BASE}/calendars/primary/events",
+            method="POST",
+            body={
+                "summary": "X",
+                "start": {"dateTime": "2026-01-15T10:00:00+05:30"},
+                "end": {"dateTime": "2026-01-15T10:30:00+05:30"},
+            },
+            query={"sendUpdates": "all"},
+        )
 
     # -- immediate creation ------------------------------------------
 
@@ -1326,7 +1382,7 @@ class TestCreateEvent:
                 ),
                 metadata=({"cal-1": "#ff0000"}, {"cal-1": "Team"}),
             )
-        assert proxy.call_args.kwargs["endpoint"] == f"{CALENDAR_API_BASE}/calendars/cal-1/events"
+        assert proxy.call_args.args[0].endpoint == f"{CALENDAR_API_BASE}/calendars/cal-1/events"
         assert out["created"] is True
         assert out["created_events"] == [
             {
@@ -1369,7 +1425,7 @@ class TestCreateEvent:
                 ),
                 metadata=({"user@group.calendar.google.com": "#ff0000"}, {}),
             )
-        endpoint = proxy.call_args.kwargs["endpoint"]
+        endpoint = proxy.call_args.args[0].endpoint
         assert "user@group.calendar.google.com" not in endpoint
         assert endpoint.endswith("/calendars/user%40group.calendar.google.com/events")
 
@@ -1424,6 +1480,7 @@ class TestCreateEvent:
             )
         streamed = writer.call_args[0][0]["calendar_fetch_data"][0]
         assert streamed["background_color"] == DEFAULT_CALENDAR_COLOR
+        assert streamed["calendar_name"] == ""
 
     def test_immediate_uses_calendar_metadata_when_available(self, tools, writer) -> None:
         with patch(
@@ -1468,9 +1525,7 @@ class TestCreateEvent:
             out, _ = self._run(
                 tools,
                 CreateEventInput(
-                    events=[
-                        SingleEventInput(summary="Sync", start_datetime="2026-01-15T10:00:00")
-                    ],
+                    events=[SingleEventInput(summary="Sync", start_datetime="2026-01-15T10:00:00")],
                 ),
                 raises_metadata=True,
             )

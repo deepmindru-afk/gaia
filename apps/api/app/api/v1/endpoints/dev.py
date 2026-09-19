@@ -9,6 +9,7 @@ is mounted by ``create_app`` only when ``ENV == development`` and
 from fastapi import APIRouter, File, Form, Header, UploadFile, status
 from langgraph.errors import GraphRecursionError
 
+from app.constants.vfs import SAFE_PATH_ID_PATTERN
 from app.models.files_models import FileDocument
 from app.models.user_models import UserDocument
 from app.schemas.dev_schemas import (
@@ -31,7 +32,6 @@ from app.services.dev_service import (
     mint_dev_user,
     seed_dev_data,
 )
-from app.services.storage import SAFE_PATH_ID_PATTERN
 from shared.py.wide_events import log
 
 router = APIRouter(prefix="/dev", tags=["Dev"])
@@ -112,10 +112,9 @@ async def run_executor(payload: RunDevAgentRequest) -> DevAgentRunResponse:
             payload.email, payload.task, payload.conversation_id, payload.model
         )
     except GraphRecursionError as e:
-        # The agent looped without converging. That is a result about the agent,
-        # not a server fault: raising 500 made callers classify it as
-        # infrastructure and drop it from their accuracy, which flatters the
-        # agent by hiding its worst outcome.
+        # The agent looped without converging — a result about the agent, not
+        # a server fault. Raising 500 let callers classify it as infrastructure
+        # and drop it from accuracy, flattering the agent's worst outcome.
         log.set(dev={"converged": False, "reason": str(e)[:200]})
         return DevAgentRunResponse(
             user_id="",

@@ -1,9 +1,9 @@
 import Dexie, { type IndexableType, type Table } from "dexie";
 import { EventEmitter } from "events";
 import type { MessageReaction } from "@/config/registries/baseMessageRegistry";
-import type { ToolDataEntry } from "@/config/registries/toolRegistry";
+import type { TypedToolDataEntry } from "@/config/registries/toolRegistry";
 import type { SystemPurpose } from "@/features/chat/api/chatApi";
-import type { SelectedCalendarEventData } from "@/stores/calendarEventSelectionStore";
+import type { SelectedCalendarEventData } from "@/stores/composerStore.types";
 import type { TodoProgressData } from "@/types/features/todoProgressTypes";
 import type {
   ArtifactData,
@@ -20,7 +20,6 @@ export interface IConversation {
   userId?: string;
   starred?: boolean;
   isSystemGenerated?: boolean;
-  isOnboardingConversation?: boolean;
   systemPurpose?: SystemPurpose | null;
   isUnread?: boolean;
   source?: string; // ConversationSource from backend (web, telegram, discord, etc.)
@@ -54,7 +53,7 @@ export interface IMessage {
   selectedCalendarEvent?: SelectedCalendarEventData | null;
 
   // Rich content data from BaseMessageData
-  tool_data?: ToolDataEntry[] | null;
+  tool_data?: TypedToolDataEntry[] | null;
   follow_up_actions?: string[] | null;
   image_data?: ImageData | null;
   memory_data?: MemoryData | null;
@@ -145,14 +144,11 @@ class ChatDexie extends Dexie {
   public messages!: Table<IMessage, string>;
 
   /**
-   * Resolves to whether IndexedDB persistence is usable for this session.
-   * iOS Safari refuses to open the database entirely under private browsing,
-   * storage pressure, or the long-standing WebKit bug — the open throws
-   * `DOMException: UnknownError: Unable to open database file on disk`.
-   * Probed once and cached; see `run`. Also flips to `false` when a later
-   * operation rejects (a transaction can fail after a successful open, e.g.
-   * under storage pressure), so one failure degrades the whole session
-   * instead of leaking uncaught rejections.
+   * Whether IndexedDB persistence is usable this session — iOS Safari refuses
+   * to open it under private browsing, storage pressure, or a long-standing
+   * WebKit bug (`UnknownError: Unable to open database file on disk`). Probed
+   * once and cached (see `run`); also flips to `false` when a later operation
+   * rejects, so one failure degrades the whole session instead of leaking uncaught rejections.
    */
   private usable: Promise<boolean> | null = null;
 
@@ -190,14 +186,11 @@ class ChatDexie extends Dexie {
   }
 
   /**
-   * Run a Dexie operation, degrading to `fallback` when IndexedDB persistence
-   * is unavailable. This is the single guard for the whole store: callers keep
-   * awaiting a resolved promise instead of every write becoming an uncaught
-   * rejection on iOS Safari. A rejection from the operation itself (open
-   * succeeded but the write/transaction failed) degrades the same way — the
-   * session latches to unavailable and the fallback is returned. Event
-   * emissions live outside this gate, so the in-memory store still updates
-   * live and only cross-reload persistence is lost.
+   * Run a Dexie operation, degrading to `fallback` when IndexedDB is
+   * unavailable — the single guard so callers await a resolved promise
+   * instead of an uncaught rejection on iOS Safari. A write/transaction
+   * failure after a successful open degrades the same way, latching the
+   * session unavailable. Event emissions live outside this gate, so the in-memory store still updates live.
    */
   private async run<T>(fallback: T, operation: () => Promise<T>): Promise<T> {
     if (!(await this.isUsable())) return fallback;

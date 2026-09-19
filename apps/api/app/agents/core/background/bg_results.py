@@ -15,7 +15,7 @@ async def try_claim_bg_dispatch(conversation_id: str, tool_call_id: str) -> bool
     A ``handoff`` sharing its node run with a pause re-runs when the pause resumes;
     ``tool_call_id`` lives in the checkpointed AI message,
     so this SETNX makes the side effect (spawning the subagent) idempotent as the
-    pre-interrupt code must be. ``True`` = first dispatch, proceed.
+    pre-interrupt code must be. True = first dispatch, proceed.
     """
     key = f"{HIL_BG_RESULTS_KEY_PREFIX}dispatch:{conversation_id}:{tool_call_id}"
     return bool(await redis_cache.client.set(key, "1", nx=True, ex=HIL_BG_RESULTS_TTL_SECONDS))

@@ -70,6 +70,13 @@ class DCRClientRegistration(TypedDict, total=False):
     client_secret: str
 
 
+class OAuthPendingState(BaseModel):
+    """The CSRF state and PKCE verifier an MCP OAuth flow parks in Redis until its callback."""
+
+    state: str
+    code_verifier: str | None = None
+
+
 class MCPUseServerConfig(TypedDict, total=False):
     """One entry under ``mcpServers`` in the config handed to ``mcp_use``.
 
@@ -133,6 +140,10 @@ class MCPConfig(BaseModel):
     """Configuration for MCP (Model Context Protocol) integration."""
 
     server_url: str
+    # Canonical dedup key (helpers.dedup_server_url_key): scheme/host lowercased, fragment
+    # dropped, trailing slash stripped, while server_url keeps the exact path (servers differ
+    # on /mcp vs /mcp/). Unique per creator (partial index, custom source only); absent on legacy docs until backfilled.
+    server_url_normalized: str | None = None
     requires_auth: bool = False
     auth_type: Literal["none", "oauth", "bearer"] | None = None
     transport: str | None = None
@@ -181,21 +192,14 @@ class SubAgentConfig(BaseModel):
     # integration (ALLCAPS) names preload as schema docs in context and run
     # via execute — they are never bound.
     auto_bind_tools: list[str] | None = None
-    # Local/general tools (by name) to bind into this subagent's initial set AND
-    # its spawned chunk-reader children — e.g. query_json/grep for a subagent
-    # that offloads large results and must mine them sandbox-free. Unlike
-    # auto_bind_tools (provider tools, parent-only; children get the hardcoded
-    # read/bash/finish set), these propagate to spawned readers so a fan-out
-    # child can use them too. Declare per-integration here instead of branching
-    # on the provider name in the subagent factory.
+    # Local/general tools to bind into this subagent's initial set AND its
+    # spawned chunk-reader children (e.g. query_json/grep for an offloading
+    # subagent) — unlike auto_bind_tools, which is provider tools, parent-only.
     extra_initial_tools: list[str] | None = None
     memory_prompt: str | None = None
-    # When False, finish_task is omitted from the subagent's tool set. The
-    # subagent must terminate naturally with an AIMessage. The streaming
-    # layer's complete_message accumulator captures that text directly —
-    # no special-case extraction needed. Use False for read-only / answer-
-    # only subagents (e.g. doc fetchers). Default True preserves the
-    # explicit-completion contract for action subagents.
+    # When False, finish_task is omitted and the subagent must terminate
+    # naturally with an AIMessage, which complete_message captures directly.
+    # Use False for read-only/answer-only subagents (e.g. doc fetchers).
     include_finish_task: bool = True
 
 

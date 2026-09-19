@@ -2,7 +2,7 @@
 
 Declared here rather than inline at each graph builder so there is one answer to
 "what rewrites the message array before the model sees it" — the ordering is
-load-bearing (``manage_system_prompts_node`` must run last so it slots whatever
+load-bearing (manage_system_prompts_node must run last so it slots whatever
 the earlier hooks appended into the leading system block) and it was previously
 spelled out at three separate call sites.
 """
@@ -19,9 +19,11 @@ from app.override.langgraph_bigtool.hooks import HookType
 
 
 def comms_pre_model_hooks() -> list[HookType]:
-    """Comms: no media adaptation (it holds no media-producing tools), plus the
-    live-executor status frame — which must precede ``manage_system_prompts_node``
-    so the frame lands inside the system block rather than trailing it."""
+    """Comms: no media adaptation, plus the live-executor status frame.
+
+    Must precede manage_system_prompts_node so the frame lands inside the
+    system block rather than trailing it.
+    """
     return [
         cast(HookType, filter_messages_node),
         executor_status_hook,
