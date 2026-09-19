@@ -43,6 +43,11 @@ _LABEL_ATTRIBUTES = ("aria-label", "value", "title", "placeholder", "alt", "name
 
 _OUTPUT_MAX_CHARS = 200
 
+#: Caption for a step that produced no action to describe — one whose actions
+#: errored or whose observation stalled. It lives here rather than in
+#: captions.py, which only ever names an action the agent actually chose.
+STEP_ERROR_CAPTION = "That didn't respond, trying again"
+
 
 def _element_label(state: BrowserStateSummary, index: object) -> str | None:
     """Return the on-page name of the element an action targets, by its DOM index.
@@ -186,6 +191,8 @@ class BrowserAgentRun:
         self._agent: Any = None
         self._clock = StepClock()
         self._last_step = 0
+        self._frames = 0
+        self._framed = False
 
     async def execute(self, task: str) -> RunOutcome:
         from browser_use import Agent, Browser  # noqa: PLC0415 -- heavy optional dep
@@ -253,27 +260,47 @@ class BrowserAgentRun:
             self._llm.note_from_user(note)
         return note or "The user finished that step in the live browser."
 
+    def _emit_frame(
+        self,
+        *,
+        goal: str,
+        actions: list[BrowserAction],
+        state: BrowserStateSummary | None = None,
+    ) -> None:
+        """Emit one frame under the next number the user sees.
+
+        Numbered by frames emitted, never by Browser-Use's step counter: that one
+        advances for steps that never reach a frame, so the user saw 2, 3, 4, 7.
+        """
+        self._frames += 1
+        self._last_step = self._frames
+        self._hooks.step(
+            StepFrame(
+                index=self._frames,
+                goal=goal,
+                actions=actions,
+                url=getattr(state, "url", None),
+                title=getattr(state, "title", None),
+                raw_screenshot=getattr(state, "screenshot", None),
+                since_prev_ms=self._clock.tick(),
+            )
+        )
+
     async def _on_step(
         self, browser_state_summary: BrowserStateSummary, agent_output: AgentOutput, n_steps: int
     ) -> None:
         """Fire after the model picks actions, before they execute."""
-        self._last_step = n_steps
+        del n_steps  # Browser-Use's counter; the frame's own number is what the user reads
+        self._framed = True
         points = self._llm.viewport_points() if isinstance(self._llm, JevChatModel) else {}
         step_actions = _extract_actions(agent_output, browser_state_summary, points)
         # Never the model's own next_goal/thinking: Jev fills both with its raw
         # decision label ("CLICK [6] Log In"). The caption describes what the
         # step does, named after the element it resolved.
-        goal = caption_from_action_list(step_actions)
-        self._hooks.step(
-            StepFrame(
-                index=n_steps,
-                goal=goal,
-                actions=step_actions,
-                url=getattr(browser_state_summary, "url", None),
-                title=getattr(browser_state_summary, "title", None),
-                raw_screenshot=getattr(browser_state_summary, "screenshot", None),
-                since_prev_ms=self._clock.tick(),
-            )
+        self._emit_frame(
+            goal=caption_from_action_list(step_actions),
+            actions=step_actions,
+            state=browser_state_summary,
         )
 
     async def _on_step_end(self, agent: object) -> None:
@@ -283,10 +310,16 @@ class BrowserAgentRun:
         on_step_end sees state.last_result (one entry per action, in order).
         Keyed by self._last_step so each output lands on the row _on_step emitted.
         """
-        if self._hooks.action_results is None:
-            return
         state = getattr(agent, "state", None)
         results = getattr(state, "last_result", None) or []
+        framed, self._framed = self._framed, False
+        if not framed and any(getattr(result, "error", None) for result in results):
+            # The step died before the model picked anything (an action error, a
+            # watchdog timeout on the observation), so nothing else will ever
+            # speak for it and the user just watches the card sit there.
+            self._emit_frame(goal=STEP_ERROR_CAPTION, actions=[])
+        if self._hooks.action_results is None:
+            return
         outputs = [
             BrowserActionOutput(position=position, output=text)
             for position, result in enumerate(results)

@@ -632,7 +632,9 @@ async def test_on_step_end_reports_outputs_keyed_to_the_step_just_executed() -> 
         emit=AsyncMock(),
         overrides=_RunnerOverrides(action_results=_recorder(calls)),
     )
+    # A step that already emitted frame 4, so its outputs key to that frame.
     runner._agent_run._last_step = 4
+    runner._agent_run._framed = True
 
     agent = SimpleNamespace(
         state=SimpleNamespace(
@@ -1188,12 +1190,13 @@ async def test_step_card_carries_the_goal_actions_and_page(patch_browser) -> Non
 
     step = events[-1]
     assert step.kind == BrowserEventKind.STEP
-    assert step.index == 3
+    # The first frame of the run, whatever Browser-Use's own counter reads.
+    assert step.index == 1
     assert step.goal == "Clicking"
     assert [(a.name, a.inputs) for a in step.actions] == [("click", {"index": 4})]
     assert step.url == "https://example.com/cart"
     assert step.title == "Your cart"
-    assert runner._last_step == 3
+    assert runner._last_step == 1
 
 
 async def test_step_goal_falls_back_to_a_caption_from_the_actions(patch_browser) -> None:
