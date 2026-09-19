@@ -1,16 +1,15 @@
 """Click through the element itself: a dispatched press is slow and aims blind.
 
-Re-measured on Obscura 2026-09-19, correcting an earlier reading taken against
-occluded elements. Input.dispatchMouseEvent does work: the event lands on the
-exact x/y given (slope 1.0000, intercept 0 over 28 points), isTrusted is true,
-and in 32 of 32 probes it hit the page's own elementFromPoint. It is still the
-wrong tool: a pressed button costs 450ms to 5.6s, against 0.4ms for a move, and
-aiming at a rect centre needs occlusion data Browser-Use takes from the DOM
-snapshot, whose geometry this engine fabricates (see jev/viewport.py).
+Measured on Obscura 2026-09-19. Input.dispatchMouseEvent lands exactly and is
+trusted, but a pressed button costs 450ms to 5.6s, and aiming at a rect centre
+needs occlusion data from the DOM snapshot, whose geometry this engine
+fabricates (see jev/viewport.py). So scroll-into-view and the click go in one
+Runtime.callFunctionOn on the element handle, reporting the measured centre.
+The cost is isTrusted, which a page gating on it will refuse.
 
-So scroll-into-view and the click go in one Runtime.callFunctionOn on the
-element handle, reporting the measured centre as the click point. The cost is
-isTrusted, which a page gating on it will refuse.
+The click is deferred by a zero-delay timer: Obscura loads the page a click
+navigates to INSIDE the command that clicked (4.5s for a cross-origin link,
+20ms deferred), so a slow page outlived Browser-Use's 15s click budget.
 
 Pinned to browser-use==0.11.13; the import fails loudly if the method moves.
 """
@@ -32,13 +31,14 @@ if TYPE_CHECKING:
 _CLICK_JS = """function() {
   const rect = this.getBoundingClientRect();
   if (!rect.width && !rect.height) return null;
-  this.click();
+  const element = this;
+  setTimeout(() => element.click(), 0);
   return {click_x: rect.left + rect.width / 2, click_y: rect.top + rect.height / 2};
 }"""
 
-# Browser-Use's own wait after its JavaScript click, for a dialog or a
-# navigation the click starts to reach its watchdogs.
-_SETTLE_SECONDS = 0.05
+# The deferred click fires within 50ms (measured); wait past that so the next
+# command sees its effect, and a navigation it starts reaches the watchdogs.
+_SETTLE_SECONDS = 0.15
 
 _original_click_element_node_impl = DefaultActionWatchdog._click_element_node_impl
 

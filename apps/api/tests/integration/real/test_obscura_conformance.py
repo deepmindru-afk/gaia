@@ -34,6 +34,8 @@ _REFUSED = -32000
 # Obscura charges hundreds of ms for a button press and microseconds for a move;
 # well under the smallest press measured (0.45 s) and far above any move (0.4 ms).
 _SLOW_PRESS_SECONDS = 0.05
+# A navigating click measured 4.5s inline and 0.02s deferred; this sits between them.
+_BLOCKING_CLICK_SECONDS = 0.5
 
 
 def _host_answers() -> bool:
@@ -809,6 +811,43 @@ async def test_an_element_click_in_javascript_follows_the_link(
     )
     await asyncio.sleep(3)
 
+    assert await evaluate("location.href") == "https://en.wikipedia.org/wiki/Dog"
+
+
+_PROBE_LINK = (
+    "const a = document.createElement('a');"
+    "a.href = 'https://en.wikipedia.org/wiki/Dog'; a.id = 'probe';"
+    "document.body.appendChild(a);"
+)
+
+
+async def test_a_click_that_navigates_holds_its_command_for_the_whole_page_load(
+    at_wiki: tuple[Cdp, str, Evaluate],
+) -> None:
+    # Why the click patch defers: Browser-Use gives a click 15s, and a slow page outlives it.
+    client, session_id, _ = at_wiki
+    _, error, elapsed = await client.call(
+        "Runtime.evaluate", {"expression": _PROBE_LINK + "a.click(); 'clicked'"}, session_id
+    )
+
+    assert error is None
+    assert elapsed > _BLOCKING_CLICK_SECONDS
+
+
+async def test_a_deferred_click_returns_at_once_and_still_navigates(
+    at_wiki: tuple[Cdp, str, Evaluate],
+) -> None:
+    # The shape app/patches/browser_use_click_patch.py sends.
+    client, session_id, evaluate = at_wiki
+    _, error, elapsed = await client.call(
+        "Runtime.evaluate",
+        {"expression": _PROBE_LINK + "setTimeout(() => a.click(), 0); 'scheduled'"},
+        session_id,
+    )
+    await asyncio.sleep(3)
+
+    assert error is None
+    assert elapsed < _BLOCKING_CLICK_SECONDS
     assert await evaluate("location.href") == "https://en.wikipedia.org/wiki/Dog"
 
 
