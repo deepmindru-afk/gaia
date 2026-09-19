@@ -671,6 +671,47 @@ async def test_the_closing_answer_is_written_against_the_latest_instruction(flig
     assert set(helper.context(1)["page"]) == {"title", "url", "text"}
 
 
+async def test_a_takeover_the_user_answered_takes_the_handoffs_off_the_table(
+    flights_state,
+) -> None:
+    """Regression: Jev re-requested the same login wall 3s after the user answered it."""
+    model, gateway, _, _ = _model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("CLICK", "4"), ("SCROLL_DOWN", None)],
+        [{"text": "Sign in to your Reddit account", "category": "credentials"}],
+    )
+    await model.ainvoke([], _agent_output())
+
+    model.note_from_user("skip the upvote, just tell me the title of the top post")
+    await model.ainvoke([], _agent_output())
+    await model.ainvoke([], _agent_output())
+
+    for request in gateway.requests[1:]:
+        offered = set(request.questions["operation"].criteria)
+        assert "REQUEST_HUMAN" not in offered
+        assert "SOLVE_CAPTCHA" not in offered
+        assert "CLICK" in offered
+
+
+@pytest.mark.parametrize("note", [None, ""])
+async def test_a_takeover_resolved_without_an_instruction_keeps_the_handoffs(
+    flights_state, note
+) -> None:
+    """The user just signed in and pressed Continue; a later, different wall may still need them."""
+    model, gateway, _, _ = _model(
+        flights_state,
+        [("REQUEST_HUMAN", None), ("CLICK", "4")],
+        [{"text": "Sign in to your Reddit account", "category": "credentials"}],
+    )
+    await model.ainvoke([], _agent_output())
+
+    model.note_from_user(note)
+    await model.ainvoke([], _agent_output())
+
+    offered = set(gateway.requests[1].questions["operation"].criteria)
+    assert {"REQUEST_HUMAN", "SOLVE_CAPTCHA"} <= offered
+
+
 async def test_a_note_with_no_step_to_carry_it_is_a_wiring_error(flights_state) -> None:
     model, _, _, _ = _model(flights_state, [])
 

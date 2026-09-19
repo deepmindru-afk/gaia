@@ -32,7 +32,8 @@ NAVIGATE_RULE = """NAVIGATE only when the goal names a site or page the current 
 
 REQUEST_HUMAN_CRITERION = (
     "Hand the live browser to the user for a payment, password / OTP / 2FA, an irreversible "
-    "confirmation, or a required value the goal did not give."
+    "confirmation, or a required value the goal did not give. Never hand off again for "
+    "something the user has already answered with an instruction; follow that instruction instead."
 )
 
 SOLVE_CAPTCHA_CRITERION = "Hand a visible CAPTCHA / 'not a robot' challenge to the user."

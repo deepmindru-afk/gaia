@@ -79,6 +79,7 @@ _USER_REQUEST = re.compile(r"<user_request>\s*(.*?)\s*</user_request>", re.DOTAL
 # Neither ends the run on a real next action, so neither counts as an alternative
 # to an unconfident DONE.
 _TERMINAL_OPERATIONS = frozenset({JevOperation.DONE, JevOperation.BLOCKED})
+_HANDOFF_OPERATIONS = frozenset({JevOperation.REQUEST_HUMAN, JevOperation.SOLVE_CAPTCHA})
 
 
 class _TextValue(BaseModel):
@@ -173,6 +174,10 @@ class JevChatModel:
         goal = self._effective_goal(messages)
         registered = _registered_actions(output_format)
         offered = _offered_operations(registered)
+        if self._latest_note():
+            # The user answered a takeover with an instruction; handing the same step
+            # back ignores what they said, then blames them when it times out.
+            offered -= _HANDOFF_OPERATIONS
         self._steps += 1
 
         try:
