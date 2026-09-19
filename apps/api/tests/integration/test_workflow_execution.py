@@ -1,7 +1,7 @@
 """
 Integration tests for Workflow Execution End-to-End.
 
-Sibling: ``tests/e2e/test_workflow_execution.py`` drives the real compiled
+Sibling: tests/e2e/test_workflow_execution.py drives the real compiled
 agent graphs end to end; this file pins the workflow service layer itself
 (mocked I/O boundaries only).
 
@@ -41,6 +41,7 @@ from app.services.workflow.execution_service import (
 )
 from app.services.workflow.generation_service import (
     WorkflowGenerationService,
+    WorkflowStepGenerationError,
     enrich_steps,
 )
 from app.services.workflow.queue_service import WorkflowQueueService
@@ -128,8 +129,7 @@ def _make_workflow(
 
 
 def _make_workflow_doc(**overrides) -> WorkflowDocument:
-    """Build a WorkflowDocument (the repository's return type) from the Workflow
-    factory — repository methods return typed models, not raw dicts."""
+    """Build a WorkflowDocument (the repository's return type) from the Workflow factory."""
     return WorkflowDocument(**_make_workflow(**overrides).model_dump())
 
 
@@ -790,13 +790,7 @@ class TestQueueService:
     """Enqueue workflow -> verify it appears in queue with correct params."""
 
     async def test_queue_workflow_generation(self):
-        """queue_workflow_generation enqueues with correct function name and args.
-
-        Production always enqueues from inside a wide-event boundary, so the run
-        happens in one here: enqueue_worker_job stamps the caller's trace id onto
-        the payload only when a trace is in scope. Asserting the exact call
-        outside a boundary would silently depend on whatever ran before it.
-        """
+        """Enqueue with correct function name and args, run inside a wide-event boundary so enqueue_worker_job stamps the trace id."""
         mock_pool = AsyncMock()
         mock_job = MagicMock()
         mock_job.job_id = "job_gen_123"
@@ -846,8 +840,7 @@ class TestQueueService:
         assert kwargs["_job_id"].startswith("execute_workflow_by_id:")
 
     async def test_queue_workflow_execution_deduped_enqueue_returns_true(self):
-        """A None from enqueue_job means the same _job_id is already queued — the
-        duplicate was deduped, which is success, not failure."""
+        """A None from enqueue_job means the same _job_id is already queued — deduped, which is success, not failure."""
         mock_pool = AsyncMock()
         mock_pool.enqueue_job = AsyncMock(return_value=None)
 
@@ -886,7 +879,7 @@ class TestGenerationServiceRetries:
     """Test the generation service regeneration logic."""
 
     async def test_generate_steps_raises_after_retries(self):
-        """generate_steps_with_llm raises RuntimeError after max retries."""
+        """generate_steps_with_llm raises a typed generation error after max retries."""
         mock_registry = MagicMock()
         mock_registry.get_all_category_objects = MagicMock(return_value={})
         mock_registry.get_core_tools = MagicMock(return_value=[])
@@ -894,7 +887,7 @@ class TestGenerationServiceRetries:
         with (
             # Schema-invalid output on every attempt exhausts the regeneration loop.
             patch(
-                "app.services.workflow.generation_service.ainvoke_structured",
+                "app.services.workflow.generation_service._structured_one_shot",
                 new_callable=AsyncMock,
                 side_effect=OutputParserException("bad json"),
             ),
@@ -915,7 +908,9 @@ class TestGenerationServiceRetries:
                 [],
             ),
         ):
-            with pytest.raises(RuntimeError, match="failed"):
+            with pytest.raises(
+                WorkflowStepGenerationError, match=r"no usable steps after 2 attempts"
+            ):
                 await WorkflowGenerationService.generate_steps_with_llm(
                     prompt="Test prompt",
                     title="Test Workflow",

@@ -1,3 +1,4 @@
+import type { SubscriptionRequiredDetail } from "@gaia/shared";
 import type {
   ChatStreamEvent,
   StreamToolOutput,
@@ -51,6 +52,12 @@ export interface StreamCallbacks {
   onDone: () => void;
   onError?: (error: Error) => void;
   /**
+   * GAIA is paid-only and this user is not subscribed — the backend refused
+   * the turn with 402. Terminal, and distinct from `onError`: there is nothing
+   * to retry, and the offer carries the checkout link to send the user to.
+   */
+  onSubscriptionRequired?: (detail: SubscriptionRequiredDetail) => void;
+  /**
    * The SSE transport closed before the backend sent its done event — the
    * response is truncated. Consumers should keep the partial text but mark
    * the turn as failed (retryable), never as complete.
@@ -90,16 +97,12 @@ function emitImageData(
   if (typeof source.image_data !== "object" || source.image_data === null) {
     return;
   }
-  const imageData = source.image_data as {
-    url?: string;
-    prompt?: string;
-    improvedPrompt?: string;
-  };
-  if (typeof imageData.url === "string" && imageData.url) {
+  const imageData = source.image_data as Partial<ImageData> | undefined;
+  if (typeof imageData?.url === "string" && imageData.url) {
     callbacks.onImageData?.({
       url: imageData.url,
       prompt: imageData.prompt ?? "",
-      improvedPrompt: imageData.improvedPrompt,
+      improved_prompt: imageData.improved_prompt ?? null,
     });
   }
 }
@@ -174,10 +177,9 @@ function handleParsedStreamEvent(
       handleToolCallsData(parsed.entry, callbacks);
       return false;
     case "tool_output":
-      // Web parity — the backend emits tool execution results on a
-      // separate event keyed by tool_call_id. Hand it to the caller so
-      // it can merge `output` into the matching tool_data entry
-      // (mergeToolOutputIntoToolData from @gaia/shared/chat).
+      // Web parity — backend emits tool execution results on a separate event
+      // keyed by tool_call_id; hand to the caller to merge `output` into the
+      // matching tool_data entry (mergeToolOutputIntoToolData from @gaia/shared/chat).
       callbacks.onToolOutput?.(parsed.output);
       return false;
     case "follow_up_actions":
@@ -194,10 +196,9 @@ function handleParsedStreamEvent(
       emitImageData(parsed.payload, callbacks);
       return false;
     default:
-      // keepalive, token_usage, main_response_complete,
-      // conversation_description — intentionally ignored. reasoning,
-      // subagent_start, subagent_end and todo_progress are forwarded via
-      // onStreamEvent above; the turn accumulator owns their state.
+      // keepalive/token_usage/main_response_complete/conversation_description are
+      // intentionally ignored; reasoning/subagent_start/subagent_end/todo_progress
+      // are forwarded via onStreamEvent above (the turn accumulator owns their state).
       return false;
   }
 }
@@ -266,6 +267,9 @@ export async function fetchChatStream(
       },
       onError: (error) => {
         callbacks.onError?.(error);
+      },
+      onSubscriptionRequired: (detail) => {
+        callbacks.onSubscriptionRequired?.(detail);
       },
       onClose: () => {
         if (sawBackendDone) return; // already settled via onDone

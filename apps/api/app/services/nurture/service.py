@@ -1,8 +1,8 @@
 """Nurture email engine: one declarative sequence, one send per user per run.
 
 Driven hourly by the ARQ cron so each user is evaluated at 9am in their own
-timezone. Per-user state lives on the user document under ``nurture``:
-``completed_steps`` guarantees a step sends at most once ever, ``history``
+timezone. Per-user state lives on the user document under nurture:
+completed_steps guarantees a step sends at most once ever, history
 enforces the frequency caps.
 """
 
@@ -107,7 +107,7 @@ async def _select_step(
     user: UserDocument, days_since_signup: int, completed: set[str], now: datetime
 ) -> NurtureStep | None:
     """First pending step whose skip predicate doesn't fire; predicate hits are recorded as skipped."""
-    onboarded = bool((user.onboarding or {}).get("completed"))
+    onboarded = bool(user.onboarding and user.onboarding.completed)
     for step in NURTURE_STEPS:
         if not _step_pending(step, days_since_signup, completed, onboarded):
             continue

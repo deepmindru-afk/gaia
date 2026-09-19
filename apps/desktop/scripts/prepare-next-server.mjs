@@ -1,19 +1,9 @@
 #!/usr/bin/env node
 /**
- * Cross-platform Next.js standalone preparation for electron-builder.
- *
- * THE single prepare script for every platform (mac/win/linux) — there is no
- * shell variant, by design: two scripts doing the same job in two languages
- * drift apart silently (Windows once shipped without the prune + wake-word
- * canary). One code path = no platform divergence.
- *
- * Steps:
- *   1. Locate the standalone app root (handles both the primary checkout
- *      layout and the deeper-nested layout produced by git worktree builds).
- *   2. Copy it — with the real (dereferenced) traced node_modules — into
- *      apps/desktop/.next-server-prepared, overlaying static + public assets.
- *   3. Prune the dead weight the desktop runtime never loads, and assert the
- *      wake-word runtime survived (the canary).
+ * Cross-platform Next.js standalone preparation for electron-builder — the one
+ * prepare script for every platform (a shell variant once drifted and shipped
+ * Windows without the prune + wake-word canary). Locates the standalone app root
+ * (handles git worktree's nested layout), copies it, prunes dead weight, and asserts the canary.
  */
 
 import { spawn } from "node:child_process";
@@ -40,23 +30,9 @@ const preparedNextDir = resolve(preparedWebDir, ".next");
 const preparedStaticDir = resolve(preparedNextDir, "static");
 const preparedPublicDir = resolve(preparedWebDir, "public");
 
-// Preserve symlinks VERBATIM (dereference: false + verbatimSymlinks: true).
-// Next's standalone output is a self-contained pnpm tree whose module resolution
-// depends on relative symlinks (apps/web/node_modules/next ->
-// ../../../node_modules/.pnpm/next@…/node_modules/next, and each package's
-// sibling deps inside .pnpm). Two footguns to avoid, both of which ship an app
-// whose embedded server dies on boot with MODULE_NOT_FOUND (blank window after
-// the splash timeout):
-//   1. dereference: true flattens the tree, severing `next` from its own
-//      dependencies (@next/env, postcss, styled-jsx, @swc/helpers, …). This was
-//      harmless under pnpm's old hoisted linker (flat tree) and broke when
-//      hoisting was dropped.
-//   2. dereference: false alone still rewrites RELATIVE links to ABSOLUTE ones
-//      pointing back into the build dir (fs.cp defaults verbatimSymlinks: false),
-//      which dangle on the user's machine. verbatimSymlinks: true copies the
-//      link target string as-is, keeping the tree relative and self-contained.
-// The boot canary below starts the real server and fails the build if resolution
-// is broken.
+// The standalone pnpm tree resolves modules through relative symlinks, so both
+// flags are required: dereference:true flattens it, and dereference:false alone
+// still rewrites relative links to absolute build-dir paths that dangle.
 const copyOpts = {
   recursive: true,
   dereference: false,
@@ -151,13 +127,9 @@ async function deleteByExtension(dir, ext) {
   }
 }
 
-// The onnxruntime-web artifacts the wake-word engine actually fetches at
-// runtime. `libs/wake-word/src/web/runtime.ts` imports `onnxruntime-web/wasm`
-// and runs the plain "wasm" execution provider, which loads the CPU wasm binary
-// plus its Emscripten glue. The JSEP/WebGPU, asyncify, and JSPI flavors are
-// never loaded — and the JSEP binary alone (25 MiB) exceeds Cloudflare Workers'
-// per-asset cap, so it is deliberately kept out of the synced runtime. Keep this
-// in lockstep with RUNTIME_FILES in apps/web/scripts/sync-wake-word-runtime.mjs.
+// onnxruntime-web files the wake-word engine actually loads: the CPU "wasm"
+// provider only (JSEP alone is 25 MiB, over Cloudflare Workers' per-asset cap).
+// Keep in lockstep with RUNTIME_FILES in apps/web/scripts/sync-wake-word-runtime.mjs.
 const ORT_RUNTIME_FILES = new Set([
   "ort-wasm-simd-threaded.wasm",
   "ort-wasm-simd-threaded.mjs",
@@ -282,15 +254,10 @@ function getFreePort() {
 }
 
 /**
- * Boot the prepared standalone server the way the desktop runtime does and
- * assert it reaches "Ready". A green `next build` does NOT prove the standalone
- * server can start: Next's file tracer has silently dropped a runtime
- * dependency of `next` before (`@swc/helpers` under pnpm's isolated linker),
- * shipping an app whose embedded server died on boot with MODULE_NOT_FOUND —
- * the user saw only a blank window after the splash timeout. This canary starts
- * the real server and fails the packaging build loudly if it cannot, so a
- * broken bundle can never ship again. Readiness detection mirrors the runtime
- * (`src/main/server.ts`).
+ * Boot the prepared standalone server and fail the build unless it reaches "Ready".
+ *
+ * A green `next build` does not prove it: the file tracer has dropped a runtime
+ * dependency of `next` before. Readiness detection mirrors src/main/server.ts.
  */
 async function assertServerBoots() {
   const serverPath = resolve(preparedDir, SERVER_ENTRY);

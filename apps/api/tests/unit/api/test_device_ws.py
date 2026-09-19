@@ -11,6 +11,7 @@ import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import WebSocketDisconnect
+from fastapi.exceptions import WebSocketException
 import pytest
 
 from app.api.v1.endpoints import device_ws as ws_module
@@ -42,6 +43,8 @@ async def _run_handler(ws, relay, enqueue, receive=None):
             ws_module, "verify_device_token", return_value={"device_id": "d1", "user_id": "u1"}
         ),
         patch.object(ws_module, "get_active_device", AsyncMock(return_value=object())),
+        # The connect-time paywall is covered by its own tests; these pin ordering for a Pro user.
+        patch.object(ws_module, "is_paid", AsyncMock(return_value=True)),
         patch.object(ws_module, "mark_online", AsyncMock()),
         patch.object(ws_module, "mark_offline", AsyncMock()),
         patch.object(ws_module, "device_connection_manager", _manager()),
@@ -56,8 +59,7 @@ async def _run_handler(ws, relay, enqueue, receive=None):
 
 @pytest.mark.asyncio
 async def test_warmup_enqueued_only_after_relay_subscribes():
-    """The relay task is created first and the enqueue waits for its
-    subscribe-ready signal — reversing that order drops the open frame."""
+    """The relay task starts first and the enqueue waits for its subscribe-ready signal — reversing the order drops the open frame."""
     order: list[str] = []
     seen: dict[str, object] = {}
     ws = _socket()
@@ -76,10 +78,9 @@ async def test_warmup_enqueued_only_after_relay_subscribes():
     receive = await _run_handler(ws, fake_relay, fake_enqueue)
 
     assert order.index("relay-subscribed") < order.index("enqueue")
-    # The relay serves THIS socket/device with a real readiness event, the
-    # warmup targets THIS device with no scope filter, and the reader loop
-    # gets the same socket, ids, and liveness state — a blanked or swapped
-    # arg anywhere silently misroutes the connection.
+    # relay/warmup/reader must all get the same socket, device id, and
+    # readiness event — a blanked or swapped arg here would silently
+    # misroute the connection without failing any assertion by itself.
     relay_ws, relay_device, relay_ready = seen["relay"]
     assert relay_ws is ws
     assert relay_device == "d1"
@@ -92,8 +93,7 @@ async def test_warmup_enqueued_only_after_relay_subscribes():
 
 @pytest.mark.asyncio
 async def test_stalled_relay_does_not_block_the_socket():
-    """A subscribe that never lands still lets the socket connect: the wait is
-    bounded and the enqueue proceeds (a socket must never fail on warmup)."""
+    """A subscribe that never lands still lets the socket connect: the wait is bounded and the enqueue proceeds."""
     enqueued = asyncio.Event()
 
     async def stalled_relay(websocket, device_id, ready=None):
@@ -116,9 +116,7 @@ async def test_stalled_relay_does_not_block_the_socket():
 
 @pytest.mark.asyncio
 async def test_enqueue_failure_is_logged_with_its_cause_and_not_fatal():
-    """A Redis outage on the enqueue must not fail the socket — but the failure
-    and its cause have to reach the wide event, or a device whose tools never
-    get indexed looks healthy."""
+    """A Redis outage on the enqueue must not fail the socket, but the failure and its cause must still reach the wide event."""
     enqueued = asyncio.Event()
 
     async def fake_relay(websocket, device_id, ready=None):
@@ -178,9 +176,33 @@ async def test_relay_signals_only_after_subscribe_returns():
 
 @pytest.mark.asyncio
 async def test_relay_without_redis_still_signals_ready():
-    """No Redis means no subscription is possible — signal anyway so the
-    handler's bounded wait never stalls on the early return."""
+    """No Redis means no subscription is possible — signal anyway so the handler's bounded wait never stalls."""
     ready = asyncio.Event()
     with patch.object(ws_module.redis_cache, "redis", None):
         await ws_module._down_relay(_socket(), "d1", ready)
     assert ready.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token_info", "active_device", "expected_reason"),
+    [
+        (None, object(), "device token missing or invalid"),
+        ({"device_id": "d1", "user_id": "u1"}, None, "device revoked"),
+    ],
+)
+async def test_a_refused_dial_raises_with_the_reason_the_daemon_is_told(
+    token_info, active_device, expected_reason
+):
+    """The close reason is the only clue the daemon's own log gets about why it was cut off."""
+    ws = _socket()
+    with (
+        patch.object(ws_module, "verify_device_token", return_value=token_info),
+        patch.object(ws_module, "get_active_device", AsyncMock(return_value=active_device)),
+    ):
+        with pytest.raises(WebSocketException) as exc:
+            await ws_module.device_ws(ws)
+
+    assert exc.value.code == 1008
+    assert exc.value.reason == expected_reason
+    ws.accept.assert_not_awaited()

@@ -1,24 +1,25 @@
 """Surface an approval request to the user's clients, and remember declines.
 
-The gate pauses its run with LangGraph's ``interrupt()``; nothing here waits. This
+The gate pauses its run with LangGraph's interrupt(); nothing here waits. This
 module only *publishes*: it records the pending approval durably, pushes the
-``approval_request`` tool_data card onto the turn's SSE stream, and wakes clients
+approval_request tool_data card onto the turn's SSE stream, and wakes clients
 that aren't watching it. The decision arrives out-of-band and is applied by
-``app/services/hil/resolution.py``, which resumes the paused thread.
+app/services/hil/resolution.py, which resumes the paused thread.
 
-Frame delivery mirrors ``make_redis_stream_writer``: every frame is both published
+Frame delivery mirrors make_redis_stream_writer: every frame is both published
 to the replayable stream event log (live + reload) AND appended to the stream
 session's tool-event collector so the executor drain path persists it. The gate
 only fires inside the detached executor/subagent (comms holds no gated tools),
-where ``get_stream_writer`` is unavailable — so this dual write, keyed purely by
-``stream_id``, is what makes the card work at every nesting depth.
+where get_stream_writer is unavailable — so this dual write, keyed purely by
+stream_id, is what makes the card work at every nesting depth.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
-from typing import Any, cast
+from typing import cast
 
 from app.agents.core.background.session import get_session
 from app.constants.cache import HIL_DECLINED_PREFIX
@@ -105,9 +106,9 @@ async def publish_decision(
 ) -> None:
     """Settle this approval's card, on the stream the user is watching NOW.
 
-    Never ``record.stream_id``: that is the stream the request was raised on, and a run
-    that paused resumes on a fresh one (``prepare_run_from_item``), leaving the original
-    closed. The client follows the new stream via ``executor.stream_started``, so a card
+    Never record.stream_id: that is the stream the request was raised on, and a run
+    that paused resumes on a fresh one (prepare_run_from_item), leaving the original
+    closed. The client follows the new stream via executor.stream_started, so a card
     settled on the old one resolves where nobody is looking.
     """
     await _publish_entry(
@@ -121,12 +122,9 @@ async def publish_decision(
             feedback,
         ),
     )
-    # Also settle the PERSISTED frame right now. Final delivery reconciles too,
-    # but the run may pause again on a later gate first — a revisit in that
-    # window would otherwise render a dead pending card for a decided approval.
-    # Isolated on purpose: this is a redraw of an already-decided card, and the
-    # caller is the gate, which fails CLOSED. Letting a write error escape here
-    # would turn a cosmetic failure into a denial of the user's own decision.
+    # Settle the PERSISTED frame now too, since a later pause before final delivery
+    # reconciles would otherwise show a dead pending card. Isolated: the caller
+    # (the gate) fails CLOSED, so a write error here must not become a denial.
     try:
         await conversation_repository.set_message_approval_status(
             record.conversation_id,
@@ -186,7 +184,7 @@ async def publish_auto_approval(
 
 
 async def remember_declined_call(
-    stream_id: str, tool_name: str, args: dict[str, Any], feedback: str | None
+    stream_id: str, tool_name: str, args: Mapping[str, object], feedback: str | None
 ) -> None:
     """Record that the user declined this exact call for the rest of the turn."""
     if not redis_cache.redis:
@@ -200,21 +198,23 @@ async def remember_declined_call(
 
 
 async def recall_declined_call(
-    stream_id: str, tool_name: str, args: dict[str, Any]
+    stream_id: str, tool_name: str, args: Mapping[str, object]
 ) -> ApprovalOutcome | None:
-    """The prior decline for this exact call in this turn, if any — so the gate
-    can auto-deny a retry with the user's original feedback and never re-prompt."""
+    """Return the prior decline for this exact call in this turn, if any.
+
+    Lets the gate auto-deny a retry with the user's original feedback and never re-prompt.
+    """
     if not redis_cache.redis:
         return None
     raw = await redis_cache.get(_declined_key(stream_id, tool_name, args))
     if not raw:
         return None
     # Correct by construction: the only writer is ``remember_declined_call`` above.
-    record = cast(DeclinedCallRecord, raw)
+    record: DeclinedCallRecord = cast(DeclinedCallRecord, raw)
     return ApprovalOutcome(status=HILApprovalStatus.DENIED, feedback=record.get("feedback"))
 
 
-def build_summary(tool_name: str, args: dict[str, Any], integration_name: str | None) -> str:
+def build_summary(tool_name: str, args: Mapping[str, object], integration_name: str | None) -> str:
     """Deterministic one-line summary of a gated call (no LLM in the hot path)."""
     label = tool_name.replace("_", " ").strip().capitalize()
     if integration_name:
@@ -223,15 +223,14 @@ def build_summary(tool_name: str, args: dict[str, Any], integration_name: str | 
     return f"{label} — {', '.join(parts)}" if parts else label
 
 
-def build_action_detail(summary: str, args: dict[str, Any]) -> str:
+def build_action_detail(summary: str, args: Mapping[str, object]) -> str:
     """Richer rendering of a gated call for the conversational classifier.
 
-    The card's one-line ``summary`` (tool + integration identity, truncated args)
-    as the label, plus every argument up to a bound with non-scalar values as
-    compact JSON — so the classifier sees the full content (recipient, subject,
-    body, ...) the summary omits. The total is capped by
-    ``HIL_CLASSIFIER_MAX_DETAIL_CHARS``; the per-value clip only stops one
-    pathological arg from eating the whole budget. No LLM here."""
+    Adds every argument up to a bound (non-scalars as compact JSON) so the
+    classifier sees content the one-line summary omits. Capped by
+    HIL_CLASSIFIER_MAX_DETAIL_CHARS; the per-value clip stops one pathological
+    arg from eating the whole budget. No LLM here.
+    """
     lines = [summary]
     arg_lines = []
     for key, value in list((args or {}).items())[:HIL_CLASSIFIER_MAX_ARGS]:
@@ -251,8 +250,10 @@ def build_action_detail(summary: str, args: dict[str, Any]) -> str:
 def _schedule_pending_notification(
     user_id: str, conversation_id: str, approval_id: str, summary: str
 ) -> None:
-    """Wake clients not watching the stream. Detached — a notify failure must
-    never block the gate."""
+    """Wake clients not watching the stream.
+
+    Detached, since a notify failure must never block the gate.
+    """
     spawn_logged_task(
         "approval_pending_notification",
         notify_approval_pending(user_id, conversation_id, approval_id, summary),
@@ -265,10 +266,10 @@ def _schedule_pending_notification(
 async def _publish_entry(stream_id: str, entry: ApprovalRequestEntry) -> None:
     """Deliver a frame live (replayable event log) AND record it for persistence.
 
-    The session append mirrors ``make_redis_stream_writer`` so the executor
+    The session append mirrors make_redis_stream_writer so the executor
     drain path persists the card; the SSE publish reaches live/reloaded clients.
     Both carry the same plain-dict frame the rest of the tool_data pipeline
-    (``stream_utils``, the bot bridge, the frontend parser) reads.
+    (stream_utils, the bot bridge, the frontend parser) reads.
     """
     frame = {"tool_data": entry.model_dump()}
     await stream_manager.publish_chunk(stream_id, f"data: {json.dumps(frame)}\n\n")
@@ -305,8 +306,8 @@ def _approval_entry(
     )
 
 
-def _summary_arg_parts(args: dict[str, Any]) -> list[str]:
-    """A few short ``key: value`` scalars for the card's one-line summary."""
+def _summary_arg_parts(args: Mapping[str, object]) -> list[str]:
+    """Build a few short key: value scalars for the card's one-line summary."""
     parts: list[str] = []
     for key, value in (args or {}).items():
         if len(parts) >= HIL_SUMMARY_MAX_ARGS:
@@ -316,11 +317,11 @@ def _summary_arg_parts(args: dict[str, Any]) -> list[str]:
     return parts
 
 
-def _declined_key(stream_id: str, tool_name: str, args: dict[str, Any]) -> str:
+def _declined_key(stream_id: str, tool_name: str, args: Mapping[str, object]) -> str:
     return f"{HIL_DECLINED_PREFIX}{stream_id}:{tool_name}:{_args_hash(args)}"
 
 
-def _args_hash(args: dict[str, Any]) -> str:
+def _args_hash(args: Mapping[str, object]) -> str:
     # md5 over the canonical args — a cache key, not a security boundary.
     payload = json.dumps(args or {}, sort_keys=True, default=str)
     return hashlib.md5(payload.encode(), usedforsecurity=False).hexdigest()  # nosec B324

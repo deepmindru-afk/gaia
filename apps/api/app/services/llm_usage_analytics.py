@@ -1,10 +1,10 @@
 """The attribution dimensions PostHog's LLM analytics cannot derive itself.
 
-``posthog.ai.langchain.CallbackHandler`` already emits ``$ai_generation`` with
-tokens and cost for every agent-graph call, but not what the spend was for, and
-it never sees the one-shots that run outside a graph. This module adds
-properties to that existing event and emits a separate one for those one-shots.
-Graph calls deliberately get no second event, which would double-count cost.
+PostHog's LangChain callback handler already emits $ai_generation with tokens
+and cost for every agent-graph call, but not what the spend was for, and it
+never sees the one-shots that run outside a graph. This module adds properties
+to that existing event and emits a separate one for those one-shots. Graph
+calls deliberately get no second event, which would double-count cost.
 """
 
 from app.config.model_pricing import has_rate_card
@@ -21,10 +21,10 @@ _MEMORY_LABEL_PREFIX = "memory:"
 
 
 def llm_feature(agent_name: str, workflow_id: str | None) -> AIFeature:
-    """Which capability an agent-graph call served.
+    """Return which capability an agent-graph call served.
 
-    ``workflow_id`` outranks the subagent check: a subagent running inside a
-    workflow is workflow spend, and ``agent_name`` still carries which one.
+    workflow_id outranks the subagent check: a subagent running inside a
+    workflow is workflow spend, and agent_name still carries which one.
     """
     if workflow_id:
         return AIFeature.WORKFLOW
@@ -34,7 +34,7 @@ def llm_feature(agent_name: str, workflow_id: str | None) -> AIFeature:
 
 
 def feature_for_label(label: str) -> AIFeature:
-    """Which capability an auxiliary call served, from the label it already carries."""
+    """Return which capability an auxiliary call served, from the label it carries."""
     if label.startswith(_MEMORY_LABEL_PREFIX):
         return AIFeature.MEMORY
     return AIFeature.for_label(label)
@@ -45,7 +45,7 @@ def graph_call_properties(
     source: str | None,
     workflow_id: str | None,
 ) -> dict[str, str]:
-    """The feature/surface/workflow properties to stamp onto ``$ai_generation``."""
+    """Build the feature/surface/workflow properties stamped onto $ai_generation."""
     properties = {
         "feature": str(llm_feature(agent_name, workflow_id)),
         "surface": SourceCategory.from_source(source).value,
@@ -62,10 +62,10 @@ def capture_auxiliary_llm_call(
     usage: TokenUsage,
     cost_usd: float,
 ) -> None:
-    """Emit ``ai:llm_call_completed`` for one call made outside an agent graph.
+    """Emit ai:llm_call_completed for one call made outside an agent graph.
 
-    ``user_id`` is passed explicitly because these run with no request context
-    for the contextvar identity to read; a call without one is skipped.
+    user_id is passed explicitly because these run with no request context for
+    the contextvar identity to read; a call without one is skipped.
     """
     if user_id is None:
         log.warning("llm_call_unattributed", label=label, model=model_name)

@@ -1,42 +1,25 @@
 """GAIA's operating manual: the single source of truth for self-knowledge.
 
-This module consolidates what used to be smeared across the static prompts,
-the per-directory ``GUIDE.md`` files, and the ``gaia-*`` built-in skills into
-ONE canonical place, structured as:
+Consolidates what used to be spread across static prompts, per-directory
+GUIDE.md files, and the gaia-* built-in skills: GAIA_CORE is the always-on
+operating core in the static prompt prefix (rides the provider's prompt
+cache); MANUAL_DOCS is one self-contained doc per concern, surfaced via
+read_manual or signal-gated injection.
 
-- ``GAIA_CORE``: the always-on operating core (the "solid start"). It is
-  user-independent, so it lives in the *static* prompt prefix and rides the
-  provider's prompt cache. It orients the agent and routes to the topic docs.
-- ``MANUAL_DOCS``: one self-contained doc per concern (integrations, tracked
-  todos, user todos, sessions/artifacts, notifications). Each doc is the single
-  unit that gets surfaced, today on demand via the ``read_manual`` tool or
-  signal-gated injection, later auto-injected on semantic similarity. One file
-  per concern == one clean embedding unit.
+These are app-owned constants held in process memory — reading them must
+never spin up the E2B sandbox. system_docs.py re-exports the per-directory
+guide bodies from here.
 
-Crucially these are *app-owned constants loaded in the API process*. Reading
-them must NOT spin up the E2B sandbox: the sandbox is for the user's real
-files and code execution, not for the agent reading its own manual. So the
-agent gets this content by injection or via ``read_manual`` (process memory),
-never by ``cat``-ing a file inside the sandbox.
-
-``system_docs.py`` re-exports the per-directory guide bodies from here so the
-on-disk projections stay a thin, non-duplicated view of this source.
-
-Scale note: these docs are app-authored constants held in process memory (one
-copy per replica). At the current scale (a handful of docs, a few KB) that is
-negligible and the fastest possible read, faster than a Mongo/Redis round-trip.
-If this corpus ever grows to thousands of docs, move to a Redis(TTL) ->
-Mongo/JuiceFS read-through cache instead of holding everything in RAM.
+Scale note: fine in RAM at the current scale (a handful of docs, a few KB);
+move to a Redis/Mongo read-through cache if this ever grows to thousands.
 """
 
 from __future__ import annotations
 
 from typing import Final, Literal, NamedTuple, get_args
 
-# ---------------------------------------------------------------------------
-# Topic docs: one self-contained file per concern.
-# Bodies are faithful merges of the prior GUIDE.md + gaia-* skill content.
-# ---------------------------------------------------------------------------
+# Topic docs: one self-contained file per concern, faithfully merged from
+# the prior GUIDE.md + gaia-* skill content.
 
 INTEGRATIONS_DOC: Final[str] = """# Integrations: connecting and configuring services
 
@@ -205,6 +188,23 @@ outcome). Never write learnings here, and never write activity into canvas.md.
   after 3 failures a `failed` label is added and the user notified; success
   with recurrence advances `scheduled_at` and re-enqueues.
 
+## Results & notifications
+
+When a scheduled or triggered run finishes, its final message is delivered
+automatically to the user's chat app (WhatsApp/Telegram/Discord/Slack), as a
+normal GAIA message. So the run's answer IS the user-facing message: write it
+for them, and do NOT also call `send_notification` to announce it, which sends
+it twice. A run with nothing worth saying should end with an empty message, and
+nothing is sent.
+
+`notify_on_run` (on `create_tracked_todo` / `update_tracked_todo`, default on)
+turns that delivery off for a todo whose runs the user should not hear about,
+typically a frequent poll that usually finds nothing. A silent todo reaches the
+user only if the run deliberately calls `send_notification`.
+
+Unrelated to the todo being marked completed, and separate from the failure
+notification above, which always fires.
+
 ## Anti-patterns
 
 - Not creating one when GAIA touched an external system (even "just" an email).
@@ -345,12 +345,19 @@ OAuth integration, so `connect_integration("whatsapp")` will fail with "not
 found". Linking a platform and toggling which channels are enabled are done by
 the user in their app settings; there is no agent tool for that yet.
 
-## Workflow result delivery
+## Automatic result delivery
 
-When a workflow finishes it delivers its result automatically to the user's
-linked platforms + in-app (unless the workflow is silent). Do NOT also call
-`send_notification` to announce a result that completion delivery already
-sends; that double-notifies. See the `workflows` doc.
+Two things already deliver their own results, and calling `send_notification`
+to announce one of them sends it to the user twice:
+
+- A finished **workflow** run delivers its result to the user's linked platforms
+  plus in-app, unless the workflow is silent. See the `workflows` doc.
+- A finished **tracked todo** run delivers its final message to the user's chat
+  app, unless that todo has `notify_on_run` off. See the `tracked-todos` doc.
+
+In both cases the run's own final message is what the user reads, so write it
+for them and let it be delivered. Notify only for something genuinely separate
+and urgent.
 """
 
 
@@ -829,8 +836,8 @@ context. It is cheap and keeps you from guessing how your own machinery works.
 class ManualDoc(NamedTuple):
     """One self-contained operating-manual topic.
 
-    ``name`` is the stable handle passed to ``read_manual`` and used as the
-    embedding key for future similarity routing. ``description`` is the
+    name is the stable handle passed to read_manual and used as the
+    embedding key for future similarity routing. description is the
     one-line trigger shown in indexes.
     """
 

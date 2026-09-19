@@ -20,6 +20,7 @@ from app.config.rate_limits import (
 from app.decorators import tiered_rate_limit
 from app.models.payment_models import PlanType
 from app.models.usage_models import FeatureUsage, UsagePeriod
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 from app.services.limit_upsell import LimitHitOrigin
 
@@ -41,7 +42,7 @@ class TestRateLimitExceededException:
     def test_basic_exception(self) -> None:
         exc = RateLimitExceededException("file_upload")
         assert exc.status_code == 429
-        assert exc.detail["error"] == "rate_limit_exceeded"  # type: ignore[index]  # HTTPException.detail is typed str upstream but carries a dict here
+        assert exc.detail["code"] == "rate_limit_exceeded"  # type: ignore[index]  # HTTPException.detail is typed str upstream but carries a dict here
         assert exc.detail["feature"] == "file_upload"  # type: ignore[index]  # HTTPException.detail is typed str upstream but carries a dict here
         assert "plan_required" not in exc.detail
         assert "reset_time" not in exc.detail
@@ -78,7 +79,7 @@ MODULE = "app.api.v1.middleware.tiered_rate_limiter"
 class TestPlanRequired:
     """The whole-feature gate: is "pro" the answer to a fully-zeroed plan?
 
-    `plan_required` is what turns a 429 into an upgrade prompt in the UI, so a
+    plan_required is what turns a 429 into an upgrade prompt in the UI, so a
     wrong answer either hides the paywall or shows it to someone who already paid.
     """
 
@@ -227,9 +228,7 @@ class TestCheckAndIncrement:
         mock_limits: MagicMock,
         mock_reset: MagicMock,
     ) -> None:
-        """The Redis key IS the scope. Drop the user, the feature or the period
-        from it and one bucket is shared across users or across windows — a
-        limiter that silently over- or under-counts and never errors."""
+        """The Redis key is the scope; dropping the user, feature, or period from it shares one bucket across users or windows silently."""
         mock_limits.return_value = RateLimitConfig(day=10, month=100)
         mock_reset.return_value = datetime(2026, 4, 1, tzinfo=UTC)
         self.limiter.redis.get = AsyncMock(return_value="10")
@@ -258,9 +257,7 @@ class TestCheckAndIncrement:
         mock_reset: MagicMock,
         period: str,
     ) -> None:
-        """The whole-feature gate is `no allowance at all`, not `a small one`. A
-        1-per-window allowance must reach the counter and be spendable once —
-        in EITHER window, since the gate ands the two together."""
+        """A 1-per-window allowance must reach the counter and be spendable once in either window, since the gate ANDs the two together."""
         mock_limits.return_value = RateLimitConfig(**{period: 1})
         mock_reset.return_value = datetime(2026, 4, 1, tzinfo=UTC)
         self.limiter.redis.get = AsyncMock(return_value=None)
@@ -293,8 +290,7 @@ class TestCheckAndIncrement:
     async def test_a_fully_zeroed_plan_is_blocked_with_an_upgrade_prompt(
         self, mock_limits: MagicMock, mock_feature_limits: MagicMock
     ) -> None:
-        """day and month both 0 means no access at all — and because Pro does have
-        access, the 429 carries the upsell the paywall UI keys off."""
+        """Day and month both 0 means no access; since Pro does have access, the 429 carries the upsell the paywall UI keys off."""
         mock_limits.return_value = RateLimitConfig(day=0, month=0)
         mock_feature_limits.return_value = _tiered(
             RateLimitConfig(day=0, month=0), RateLimitConfig(day=10, month=100)
@@ -322,8 +318,7 @@ class TestCheckAndIncrement:
         mock_limits: MagicMock,
         mock_reset: MagicMock,
     ) -> None:
-        """A zero-limit period is still COUNTED (plain INCR, so usage charts have
-        data) but never enforced — it must not appear in the returned usage info."""
+        """A zero-limit period is still counted (plain INCR, for usage charts) but never enforced, and must not appear in the returned usage info."""
         from app.config.rate_limits import RateLimitConfig
 
         # day=0 is counted-only; month=1000 is enforced.
@@ -670,10 +665,10 @@ class TestTieredRateLimitDecorator:
         mock_limiter.check_and_increment = AsyncMock(return_value={})
 
         @tiered_rate_limit("file_upload")
-        async def my_endpoint(user: dict = None) -> str:
+        async def my_endpoint(user: AuthenticatedUser | None = None) -> str:
             return "ok"
 
-        result = await my_endpoint(user={"user_id": "u1"})
+        result = await my_endpoint(user=AuthenticatedUser(user_id="u1"))
         assert result == "ok"
         mock_limiter.check_and_increment.assert_called_once()
 
@@ -688,10 +683,10 @@ class TestTieredRateLimitDecorator:
         mock_limiter.check_and_increment = AsyncMock(return_value={})
 
         @tiered_rate_limit("file_upload")
-        async def my_endpoint(user: dict) -> str:
+        async def my_endpoint(user: AuthenticatedUser) -> str:
             return "ok"
 
-        result = await my_endpoint({"user_id": "u1"})
+        result = await my_endpoint(AuthenticatedUser(user_id="u1"))
         assert result == "ok"
 
     async def test_decorator_skips_when_no_user(self) -> None:
@@ -707,11 +702,11 @@ class TestTieredRateLimitDecorator:
         from fastapi import HTTPException
 
         @tiered_rate_limit("file_upload")
-        async def my_endpoint(user: dict = None) -> str:
+        async def my_endpoint(user: AuthenticatedUser | None = None) -> str:
             return "ok"
 
         with pytest.raises(HTTPException) as exc_info:
-            await my_endpoint(user={"email": "no_id"})
+            await my_endpoint(user=AuthenticatedUser(user_id="", email="no_id"))
         assert exc_info.value.status_code == 401
 
     @patch("app.decorators.rate_limiting.tiered_limiter")
@@ -725,10 +720,10 @@ class TestTieredRateLimitDecorator:
         mock_limiter.check_and_increment = AsyncMock(return_value={})
 
         @tiered_rate_limit("file_upload")
-        async def my_endpoint(user: dict = None) -> str:
+        async def my_endpoint(user: AuthenticatedUser | None = None) -> str:
             return "ok"
 
-        await my_endpoint(user={"user_id": "u1"})
+        await my_endpoint(user=AuthenticatedUser(user_id="u1"))
         call_args = mock_limiter.check_and_increment.call_args
         assert call_args.kwargs["user_plan"] == PlanType.FREE
 

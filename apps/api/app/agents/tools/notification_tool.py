@@ -5,7 +5,7 @@ from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
 
 from app.constants.log_tags import LogTag
-from app.constants.notifications import ALL_AUTO_INJECTED_CHANNELS, CHANNEL_TYPE_INAPP
+from app.constants.notifications import CHANNEL_TYPE_INAPP, NOTIFICATION_CHANNEL_TYPES
 from app.decorators import with_doc, with_rate_limiting
 from app.models.notification.notification_models import (
     BulkActions,
@@ -31,20 +31,14 @@ from app.utils.chat_utils import get_user_id_from_config
 from app.utils.notification.channel_preferences import fetch_channel_preferences
 from shared.py.wide_events import log
 
-# A NotificationView serialized with ``model_dump(mode="json")`` — the stream/tool
-# payload must stay JSON-shaped (see ToolData.data), so views are dumped, not
-# passed on as models. json mode matters: the default python mode leaves enum
-# *members* in the dict, which LangChain then stringifies into the ToolMessage as
+# NotificationView.model_dump(mode="json") — json mode matters: python mode
+# leaves enum members in the dict, which LangChain then stringifies as
 # ``<NotificationStatus.DELIVERED: 'delivered'>`` instead of ``'delivered'``.
 SerializedNotification: TypeAlias = dict[str, Any]
 
 
-# ---------------------------------------------------------------------------
-# Tool return shapes. Plain TypedDicts, not models: LangChain stringifies the
-# returned object into the ToolMessage the LLM reads, so the runtime value must
-# stay the exact dict it is today. ``error`` is ``NotRequired`` because the
-# success paths omit it entirely.
-# ---------------------------------------------------------------------------
+# Tool return shapes are plain TypedDicts, not models: LangChain stringifies
+# the returned object into the ToolMessage the LLM reads.
 
 
 class NotificationListResult(TypedDict):
@@ -302,7 +296,7 @@ async def send_notification(
             return {
                 "error": (
                     "channels is required: specify which channel(s) to notify "
-                    f"({', '.join(ALL_AUTO_INJECTED_CHANNELS)}). If the user did not name a "
+                    f"({', '.join(NOTIFICATION_CHANNEL_TYPES)}). If the user did not name a "
                     "channel, ask them which one(s) they want before sending."
                 ),
                 "success": False,
@@ -311,12 +305,12 @@ async def send_notification(
         # Unknown channel names would otherwise be accepted and silently skipped
         # at delivery, so reject them here where the LLM can read the error and
         # self-correct.
-        unknown_channels = [ch for ch in channels if ch not in ALL_AUTO_INJECTED_CHANNELS]
+        unknown_channels = [ch for ch in channels if ch not in NOTIFICATION_CHANNEL_TYPES]
         if unknown_channels:
             return {
                 "error": (
                     f"Unknown channel(s): {', '.join(unknown_channels)}. "
-                    f"Valid channels: {', '.join(ALL_AUTO_INJECTED_CHANNELS)}."
+                    f"Valid channels: {', '.join(NOTIFICATION_CHANNEL_TYPES)}."
                 ),
                 "success": False,
             }

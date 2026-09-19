@@ -1,12 +1,12 @@
 """Brutal unit tests for event-driven workspace materialization.
 
 Covers the pieces that moved per-user workspace work off the chat turn:
-- ``workspace_sync.sync_stale_user_workspaces`` (the startup/CLI bulk sync)
-- ``workspace_sync.init_system_subtree`` / ``resync_stale_user_workspaces``
-- ``integrations_fs.sync_user_integrations`` (connect/disconnect VFS sync)
-- ``user_integrations.get_connected_integration_ids`` (the shared filter)
-- the connect-path wiring in ``update_user_integration_status``
-- the registration-path wiring in ``oauth_service.store_user_info``
+- workspace_sync.sync_stale_user_workspaces (the startup/CLI bulk sync)
+- workspace_sync.init_system_subtree / resync_stale_user_workspaces
+- integrations_fs.sync_user_integrations (connect/disconnect VFS sync)
+- user_integrations.get_connected_integration_ids (the shared filter)
+- the connect-path wiring in update_user_integration_status
+- the registration-path wiring in oauth_service.store_user_info
 
 The JuiceFS + Mongo boundaries are mocked; these test decision logic to its
 limits (no mount, empty sets, stale vs current markers, force, partial
@@ -29,11 +29,9 @@ OAUTH = "app.services.oauth.oauth_service"
 JFS = "app.services.storage.juicefs"
 
 
-# ---------------------------------------------------------------------------
-# _is_mounted — must require a REAL mountpoint, not just an existing dir.
-# Guards the gap where a never-converged mount over a pre-created /mnt/jfs dir
-# would silently route writes to the container's local disk.
-# ---------------------------------------------------------------------------
+# _is_mounted must require a REAL mountpoint, not just an existing dir — a
+# never-converged mount over a pre-created /mnt/jfs would silently route
+# writes to local disk.
 
 
 def test_is_mounted_rejects_plain_existing_dir(tmp_path):
@@ -313,8 +311,9 @@ def _oauth_patches(repo, sched):
         patch(f"{OAUTH}.schedule_user_provision", sched),
         patch(f"{OAUTH}.track_login", MagicMock()),
         patch(f"{OAUTH}.track_signup", MagicMock()),
-        patch(f"{OAUTH}.send_welcome_email", new_callable=AsyncMock),
-        patch(f"{OAUTH}.add_marketing_contact", new_callable=AsyncMock),
+        # Signup queues its ESP deliveries on the worker rather than sending
+        # them here; stub the pool so the enqueue never reaches a real Redis.
+        patch(f"{OAUTH}.RedisPoolManager.get_pool", new_callable=AsyncMock),
     )
 
 
@@ -324,7 +323,7 @@ async def test_new_user_provisions_workspace():
     repo.create = AsyncMock(return_value=UserDocument(id="NEW123", name="Ada", email="ada@x.com"))
     sched = MagicMock()
     p = _oauth_patches(repo, sched)
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4]:
         from app.services.oauth.oauth_service import store_user_info
 
         user_id, is_new = await store_user_info("Ada", "ada@x.com", None)
@@ -340,7 +339,7 @@ async def test_existing_user_does_not_provision():
     repo.update = AsyncMock()
     sched = MagicMock()
     p = _oauth_patches(repo, sched)
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4]:
         from app.services.oauth.oauth_service import store_user_info
 
         user_id, is_new = await store_user_info("Ada", "ada@x.com", None)

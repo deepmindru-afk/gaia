@@ -27,6 +27,9 @@ a wrong name to list every subscribable trigger); conditions must name real payl
 Scope the watch to the specific thing you are waiting for, keyed on what identifies it
 (a sender domain, an order or invoice number, a subject token), not broad generic words,
 so it fires on the real event and little else. If it later proves noisy, tighten it.
+Per-resource triggers (github, slack, sheets, notion, linear, asana) also need a
+registration scope naming which resource to watch (which repo, channel, or sheet);
+list_trigger_fields shows it, pass it via the subscribe tool's scope argument.
 Only the executor creates these; subagents NEVER create tracked todos.
 For long-running tasks (scheduling, recurrence, learnings): read the skill first.
 
@@ -70,10 +73,9 @@ NOTE: These update execution plan steps, not user-facing todos.
 To create/update persistent tasks, use create_tracked_todo / update_tracked_todo."""
 
 
-# Guidance shown to a tracked todo woken by a trigger it subscribed to. The watch was
-# meant to be well scoped, but reality is the test: judge each fire, and if the same
-# watch keeps waking the run on things that do not qualify, it is too loose and should
-# be tightened rather than paying for an agent run on every false positive.
+# Guidance shown to a tracked todo woken by a trigger it subscribed to. Judge
+# each fire: a watch that keeps waking the run on non-qualifying events is too
+# loose and should be tightened, not paid for on every false positive.
 TRIGGERED_RELEVANCE_GUIDANCE = (
     "Before you act, decide whether this event is actually the thing this todo is "
     "watching for. Treat a fire as a candidate to verify, not proof. If it is not "
@@ -84,4 +86,37 @@ TRIGGERED_RELEVANCE_GUIDANCE = (
     "current watch and re-subscribe with narrower conditions keyed on what actually "
     "distinguishes the real thing (a specific sender domain, an order or invoice number, "
     "a subject token), then note what you tightened and why."
+)
+
+
+# Appended to a scheduled/triggered run whose todo has notify_on_run set. Without
+# it the run cannot tell whether anyone reads its answer, so it pings the user
+# with send_notification to be safe and the result arrives twice.
+DELIVERED_RESULT_GUIDANCE = (
+    "DELIVERY: when this run ends, your final message is sent to the user on their chat "
+    "app automatically. Write it for them, in GAIA's voice: the outcome, and anything "
+    "they have to decide. No internal narration, and never promise to message them "
+    "again later, because nothing keeps running after this run ends. Write like a "
+    "person texting an update: short, varied sentences, plain words, straight to what "
+    "happened. No throat-clearing, no filler, and no forced slang or quirks either. "
+    "If nothing changed, one line saying so is the whole message. Do NOT call "
+    "send_notification to announce this result, because that delivers it twice. "
+    "Notify only for something genuinely separate and urgent that cannot wait. "
+    "If a todo's runs are usually not worth a message, turn its delivery off with "
+    "update_tracked_todo(notify_on_run=False) rather than sending noise every run."
+)
+
+# The counterpart for a silent todo: nothing is delivered, so a result the user
+# needs has to be sent deliberately or it is lost in the canvas.
+SILENT_RUN_GUIDANCE = (
+    "DELIVERY: this todo is silent, so your final message is NOT sent to the user. "
+    "Record the outcome in the todo's files. If something genuinely needs them, "
+    "send_notification is the only way to reach them."
+)
+
+# The maintenance sweep asks for a verdict and sends the resulting message
+# itself; a run that also notifies makes the user's phone buzz twice for one todo.
+HEALTH_CHECK_VERDICT_ONLY = (
+    "Return the verdict only. Do not act on the todo and do not notify the user: "
+    "whoever asked for this check sends the message."
 )

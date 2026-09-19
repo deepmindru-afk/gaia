@@ -23,6 +23,7 @@ from app.models.notification.notification_models import (
     NotificationType,
     NotificationView,
 )
+from app.models.user_models import AuthenticatedUser
 from app.services.analytics_service import AnalyticsEvents
 
 NOTIF_BASE = "/api/v1/notifications"
@@ -46,7 +47,7 @@ FAKE_USER_ID = "507f1f77bcf86cd799439011"
 
 
 def _make_view(notification_id: str = "n1", title: str = "Hello") -> NotificationView:
-    """The flattened shape ``get_user_notifications`` / ``get_notification`` return."""
+    """Build the flattened shape get_user_notifications / get_notification return."""
     return NotificationView(
         id=notification_id,
         user_id=FAKE_USER_ID,
@@ -61,7 +62,7 @@ def _make_view(notification_id: str = "n1", title: str = "Hello") -> Notificatio
 def _make_record(
     notification_id: str = "n1", status: NotificationStatus = NotificationStatus.READ
 ) -> NotificationRecord:
-    """The stored record ``mark_as_read`` returns (not the flattened view)."""
+    """Build the stored record mark_as_read returns (not the flattened view)."""
     return NotificationRecord(
         id=notification_id,
         user_id=FAKE_USER_ID,
@@ -81,8 +82,12 @@ def _make_record(
 # ---------------------------------------------------------------------------
 
 
+from app.models.notification.notification_models import NotificationListFilters, NotificationStatus
+from tests.conftest import FAKE_USER
+
+
 class TestGetNotifications:
-    """GET /api/v1/notifications"""
+    """GET /api/v1/notifications."""
 
     @patch(
         "app.api.v1.endpoints.notification.notification_service.get_user_notifications_count",
@@ -124,8 +129,15 @@ class TestGetNotifications:
     ):
         mock_get.return_value = []
         mock_count.return_value = 0
-        response = await client.get(f"{NOTIF_BASE}?status=read")
+        response = await client.get(f"{NOTIF_BASE}?status=read&channel_type=inapp&limit=7&offset=3")
         assert response.status_code == 200
+        # The whole query string reaches the service as one query object.
+        mock_get.assert_awaited_once_with(
+            FAKE_USER.user_id,
+            filters=NotificationListFilters(
+                status=NotificationStatus.READ, channel_type="inapp", limit=7, offset=3
+            ),
+        )
         data = response.json()
         assert data["total"] == 0
 
@@ -174,7 +186,7 @@ class TestGetNotifications:
         mock_get.side_effect = Exception("db error")
         response = await client.get(NOTIF_BASE)
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to get notifications"
+        assert response.json()["message"] == "Failed to get notifications"
 
     async def test_get_notifications_unauthed(self, unauthed_client: AsyncClient):
         response = await unauthed_client.get(NOTIF_BASE)
@@ -191,7 +203,7 @@ class TestGetNotifications:
 
 
 class TestGetChannelPreferences:
-    """GET /api/v1/notifications/preferences/channels"""
+    """GET /api/v1/notifications/preferences/channels."""
 
     @patch(
         "app.api.v1.endpoints.notification.fetch_channel_preferences",
@@ -220,7 +232,7 @@ class TestGetChannelPreferences:
         mock_fetch.side_effect = Exception("db fail")
         response = await client.get(f"{NOTIF_BASE}/preferences/channels")
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to get channel preferences"
+        assert response.json()["message"] == "Failed to get channel preferences"
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +241,7 @@ class TestGetChannelPreferences:
 
 
 class TestUpdateChannelPreferences:
-    """PUT /api/v1/notifications/preferences/channels"""
+    """PUT /api/v1/notifications/preferences/channels."""
 
     @patch(
         "app.api.v1.endpoints.notification.fetch_channel_preferences",
@@ -282,7 +294,7 @@ class TestUpdateChannelPreferences:
             json={"telegram": True},
         )
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to update channel preferences"
+        assert response.json()["message"] == "Failed to update channel preferences"
 
 
 class TestNotificationAnalytics:
@@ -331,7 +343,7 @@ class TestNotificationAnalytics:
 
 
 class TestExecuteAction:
-    """POST /api/v1/notifications/{id}/actions/{aid}/execute"""
+    """POST /api/v1/notifications/{id}/actions/{aid}/execute."""
 
     @patch(
         "app.api.v1.endpoints.notification.notification_service.execute_action",
@@ -368,7 +380,7 @@ class TestExecuteAction:
         mock_exec.side_effect = Exception("boom")
         response = await client.post(f"{NOTIF_BASE}/n1/actions/a1/execute")
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to execute action"
+        assert response.json()["message"] == "Failed to execute action"
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +389,7 @@ class TestExecuteAction:
 
 
 class TestMarkAsRead:
-    """POST /api/v1/notifications/{id}/read"""
+    """POST /api/v1/notifications/{id}/read."""
 
     @patch(
         "app.api.v1.endpoints.notification.notification_service.mark_as_read",
@@ -409,7 +421,7 @@ class TestMarkAsRead:
         mock_mark.side_effect = Exception("boom")
         response = await client.post(f"{NOTIF_BASE}/n1/read")
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to mark notification as read"
+        assert response.json()["message"] == "Failed to mark notification as read"
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +430,7 @@ class TestMarkAsRead:
 
 
 class TestBulkActions:
-    """POST /api/v1/notifications/bulk-actions"""
+    """POST /api/v1/notifications/bulk-actions."""
 
     @patch(
         "app.api.v1.endpoints.notification.notification_service.bulk_actions",
@@ -462,7 +474,7 @@ class TestBulkActions:
             json={"notification_ids": ["n1"], "action": "mark_read"},
         )
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to perform bulk actions"
+        assert response.json()["message"] == "Failed to perform bulk actions"
         mock_log.error.assert_called_once_with(
             f"{LogTag.NOTIFICATION} Failed to perform bulk actions",
             user_id=FAKE_USER_ID,
@@ -478,7 +490,7 @@ class TestBulkActions:
 
 
 class TestMarkAllRead:
-    """POST /api/v1/notifications/mark-all-read"""
+    """POST /api/v1/notifications/mark-all-read."""
 
     @patch("app.api.v1.endpoints.notification.log")
     @patch(
@@ -539,7 +551,7 @@ class TestMarkAllRead:
         response = await client.post(f"{NOTIF_BASE}/mark-all-read")
 
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to mark all notifications as read"
+        assert response.json()["message"] == "Failed to mark all notifications as read"
         mock_log.error.assert_called_once_with(
             f"{LogTag.NOTIFICATION} Failed to mark all notifications as read",
             user_id=FAKE_USER_ID,
@@ -550,7 +562,7 @@ class TestMarkAllRead:
     async def test_mark_all_read_no_user_id(self, test_app: FastAPI) -> None:
         """Missing user_id yields 401 with the exact detail string."""
         original = test_app.dependency_overrides.get(get_current_user)
-        test_app.dependency_overrides[get_current_user] = lambda: {"user_id": None}
+        test_app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(user_id="")
         try:
             transport = ASGITransport(app=test_app, raise_app_exceptions=False)
             async with AsyncClient(transport=transport, base_url="http://test") as ac:  # NOSONAR
@@ -562,7 +574,7 @@ class TestMarkAllRead:
                 test_app.dependency_overrides[get_current_user] = original
 
         assert response.status_code == 401
-        assert response.json()["detail"] == "User not authenticated or user_id not found"
+        assert response.json()["message"] == "User not authenticated or user_id not found"
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +583,7 @@ class TestMarkAllRead:
 
 
 class TestRegisterDevice:
-    """POST /api/v1/notifications/register-device"""
+    """POST /api/v1/notifications/register-device."""
 
     @patch("app.api.v1.endpoints.notification.get_device_token_service")
     async def test_register_device_success(self, mock_svc_factory: MagicMock, client: AsyncClient):
@@ -587,7 +599,7 @@ class TestRegisterDevice:
             },
         )
         assert response.status_code == 200
-        assert response.json()["success"] is True
+        assert response.json() == {"success": True, "message": "Device registered successfully"}
 
     async def test_register_device_invalid_token(self, client: AsyncClient):
         response = await client.post(
@@ -632,7 +644,7 @@ class TestRegisterDevice:
             },
         )
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to register device token"
+        assert response.json()["message"] == "Failed to register device token"
 
     @patch("app.api.v1.endpoints.notification.get_device_token_service")
     async def test_register_device_exception(
@@ -649,7 +661,7 @@ class TestRegisterDevice:
             },
         )
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to register device token"
+        assert response.json()["message"] == "Failed to register device token"
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +670,7 @@ class TestRegisterDevice:
 
 
 class TestUnregisterDevice:
-    """POST /api/v1/notifications/unregister-device"""
+    """POST /api/v1/notifications/unregister-device."""
 
     @patch("app.api.v1.endpoints.notification.get_device_token_service")
     async def test_unregister_device_success(
@@ -672,7 +684,7 @@ class TestUnregisterDevice:
             json={"token": "ExponentPushToken[abc123]"},
         )
         assert response.status_code == 200
-        assert response.json()["success"] is True
+        assert response.json() == {"success": True, "message": "Device unregistered successfully"}
 
     @patch("app.api.v1.endpoints.notification.get_device_token_service")
     async def test_unregister_device_not_found(
@@ -686,7 +698,7 @@ class TestUnregisterDevice:
             json={"token": "ExponentPushToken[abc123]"},
         )
         assert response.status_code == 200
-        assert response.json()["success"] is False
+        assert response.json() == {"success": False, "message": "Device token not found"}
 
     @patch("app.api.v1.endpoints.notification.get_device_token_service")
     async def test_unregister_device_error(self, mock_svc_factory: MagicMock, client: AsyncClient):
@@ -698,7 +710,7 @@ class TestUnregisterDevice:
             json={"token": "ExponentPushToken[abc123]"},
         )
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to unregister device token"
+        assert response.json()["message"] == "Failed to unregister device token"
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +719,7 @@ class TestUnregisterDevice:
 
 
 class TestGetNotification:
-    """GET /api/v1/notifications/{id}"""
+    """GET /api/v1/notifications/{id}."""
 
     @patch(
         "app.api.v1.endpoints.notification.notification_service.get_notification",
@@ -739,7 +751,7 @@ class TestGetNotification:
         mock_get.side_effect = Exception("boom")
         response = await client.get(f"{NOTIF_BASE}/n1")
         assert response.status_code == 500
-        assert response.json()["detail"] == "Failed to get notification"
+        assert response.json()["message"] == "Failed to get notification"
 
     async def test_get_notification_unauthed(self, unauthed_client: AsyncClient):
         response = await unauthed_client.get(f"{NOTIF_BASE}/n1")

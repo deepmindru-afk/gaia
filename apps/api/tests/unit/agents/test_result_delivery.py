@@ -1,5 +1,4 @@
-"""Unit tests for the run-free proactive-delivery primitive
-(app.agents.core.background.result_delivery.deliver_message_to_conversation).
+"""Unit tests for deliver_message_to_conversation, the run-free proactive-delivery primitive.
 
 Pins the surface-aware routing (bot platform vs web WebSocket), the checkpoint
 record that lets a later turn remember what was delivered, and the guards
@@ -14,6 +13,7 @@ from fastapi import HTTPException
 
 from app.agents.core.background.result_delivery import deliver_message_to_conversation
 from app.models.chat_models import ConversationSource
+from app.models.user_models import AuthenticatedUser
 
 MODULE = "app.agents.core.background.result_delivery"
 
@@ -32,7 +32,7 @@ async def test_web_source_broadcasts_over_websocket_and_records() -> None:
     ):
         source = await deliver_message_to_conversation(
             conversation_id="conv-1",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             text="time to drink water",
             origin="reminder (id r1)",
         )
@@ -66,7 +66,7 @@ async def test_bot_source_delivers_to_platform_and_records() -> None:
     ):
         source = await deliver_message_to_conversation(
             conversation_id="conv-2",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             text="ping",
             origin="reminder (id r1)",
         )
@@ -85,7 +85,7 @@ async def test_blank_text_delivers_nothing() -> None:
         patch(f"{MODULE}.record_platform_delivery", new_callable=AsyncMock) as record,
     ):
         source = await deliver_message_to_conversation(
-            conversation_id="c", user={"user_id": "u"}, text="   ", origin="x"
+            conversation_id="c", user=AuthenticatedUser(user_id="u"), text="   ", origin="x"
         )
 
     assert source is None
@@ -106,7 +106,7 @@ async def test_deleted_conversation_returns_none_and_skips_record() -> None:
         patch(f"{MODULE}.deliver_message_to_platform", new_callable=AsyncMock) as to_platform,
     ):
         source = await deliver_message_to_conversation(
-            conversation_id="gone", user={"user_id": "u"}, text="hi", origin="x"
+            conversation_id="gone", user=AuthenticatedUser(user_id="u"), text="hi", origin="x"
         )
 
     assert source is None
@@ -115,11 +115,8 @@ async def test_deleted_conversation_returns_none_and_skips_record() -> None:
 
 
 async def test_websocket_path_builds_exact_target_message_and_verdict() -> None:
-    # Pin the argument contract deliver_message_to_conversation hands to its
-    # collaborators on the web path: the saved MessageModel, the delivery target
-    # (all the client-keying fields it must leave off for a proactive message),
-    # and the verdict it logs. Spying the seams catches value drift the rendered
-    # WebSocket event can't — a target flag behind a skipped branch still differs.
+    # Pins the saved MessageModel, the delivery target (client-keying fields left
+    # off for a proactive message), and the logged verdict.
     convo_repo = MagicMock()
     convo_repo.get_source = AsyncMock(return_value=ConversationSource.WEB)
     with (
@@ -132,7 +129,7 @@ async def test_websocket_path_builds_exact_target_message_and_verdict() -> None:
     ):
         source = await deliver_message_to_conversation(
             conversation_id="conv-1",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             text="drink water",
             origin="reminder (id r1)",
         )
@@ -150,7 +147,7 @@ async def test_websocket_path_builds_exact_target_message_and_verdict() -> None:
     assert saved.response == "drink water"
     assert saved.date is not None and saved.date.endswith("+00:00")
     UUID(saved.message_id)  # raises for None / "None"
-    assert save.await_args.kwargs["user"] == {"user_id": "user-1"}
+    assert save.await_args.kwargs["user"] == AuthenticatedUser(user_id="user-1")
 
     # The delivery target: owner + conversation set, every client-keying field off
     # because a proactive message has no placeholder to replace and no reply quote.
@@ -187,7 +184,7 @@ async def test_platform_path_logs_platform_transport_and_delivery() -> None:
     ):
         source = await deliver_message_to_conversation(
             conversation_id="conv-2",
-            user={"user_id": "user-1"},
+            user=AuthenticatedUser(user_id="user-1"),
             text="ping",
             origin="reminder (id r1)",
         )
@@ -215,7 +212,7 @@ async def test_missing_user_id_defaults_to_empty_string() -> None:
         patch(f"{MODULE}.conversation_repository", convo_repo),
     ):
         await deliver_message_to_conversation(
-            conversation_id="conv-3", user={}, text="ping", origin="x"
+            conversation_id="conv-3", user=AuthenticatedUser(user_id=""), text="ping", origin="x"
         )
 
     to_platform.assert_awaited_once_with(

@@ -1,6 +1,6 @@
 """The section bodies behind the context table.
 
-Every one of these degrades to ``""`` rather than raising, so the failure path
+Every one of these degrades to "" rather than raising, so the failure path
 is the important half: a recall timeout must cost the user a thinner prompt, not
 their whole turn. Each also declines to render at all when the context it needs
 is absent — that precondition lives with the read rather than at the call site,
@@ -8,9 +8,10 @@ so no caller can forget it.
 """
 
 import asyncio
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from tests._harness.context_sources import knowledge, memory
@@ -18,6 +19,7 @@ from tests.helpers import captured_wide_event
 
 from app.agents.context import fetchers
 from app.agents.context.fetchers import (
+    NEW_USER_CONVERSATION_LIMIT,
     _dedupe_by_provider,
     _split_core_context,
     _split_off_section,
@@ -28,6 +30,7 @@ from app.agents.context.fetchers import (
     build_core_memory_block,
     build_gaia_knowledge_block,
     build_memory_recall_block,
+    build_new_user_guidance_block,
     build_tracked_todos_block,
     build_workspace_session_banner,
     format_active_todo_banner,
@@ -39,12 +42,21 @@ from app.agents.context.text import (
     MEMORY_RECALL_HEADER,
 )
 from app.agents.context.tiers import AgentTier
+from app.agents.prompts.new_user_prompts import (
+    NEED_PLAYBOOKS,
+    NEW_USER_GUIDANCE_TEMPLATE,
+    SEEDED_CHIPS_RULE,
+    TARGET_REPLY_EXAMPLE,
+    build_new_user_guidance,
+)
 from app.agents.workspace.paths import session_dir
 from app.constants.todos import GAIA_TRACKED_LABEL
 from app.db.repositories.todos import todo_repository
 from app.memory.context import AGENDA_HEADING, RECENT_ACTIVITY_HEADING
 from app.models.memory_models import MemorySearchResult
 from app.models.todo_models import TodoDocument
+from app.models.user_models import NEEDS_MAX_SELECTION, OnboardingNeed, OnboardingPreferences
+from app.services.onboarding.first_question import FirstQuestion, first_question_cache_key
 from app.utils.artifact_utils import artifact_url_base
 
 
@@ -54,27 +66,25 @@ def ctx(
     query: str | None = "q",
     active_todo_id: str | None = None,
     execution_mode: ExecutionMode = "interactive",
+    user_preferences: dict[str, Any] | None = None,
+    source: str | None = None,
 ) -> SectionContext:
-    """A comms context carrying everything these sections read, minus overrides."""
+    """Build a comms context carrying everything these sections read, minus overrides."""
     return SectionContext(
         tier=AgentTier.COMMS,
         user_id=user_id,
         query=query,
         active_todo_id=active_todo_id,
         execution_mode=execution_mode,
+        user_preferences=user_preferences,
+        source=source,
     )
 
 
 @pytest.mark.unit
 class TestMemoryRecallBlock:
     async def test_renders_every_memory_with_its_date(self) -> None:
-        """Dated, not raw: temporal reasoning ("how long ago", "which first")
-        has to be answerable from the injected text without another tool call.
-
-        Asserted as the exact block rather than substrings — the header names
-        what the dates mean, and the ``- `` bullets are what keep two memories
-        from reading as one sentence. A substring check sees none of that.
-        """
+        """Asserted as the exact block, not substrings — the header and bullets are what keep two memories from reading as one sentence."""
         results = MemorySearchResult(
             memories=[
                 memory("User likes coffee", mentioned="2026-01-05"),
@@ -92,8 +102,7 @@ class TestMemoryRecallBlock:
         )
 
     async def test_it_recalls_against_this_turn_for_this_user(self) -> None:
-        """Recalling on the wrong user or ignoring the query returns someone
-        else's memories, or this user's least relevant ones."""
+        """Recalling on the wrong user or ignoring the query returns someone else's memories."""
         recall = AsyncMock(return_value=MemorySearchResult(memories=[], total_count=0))
         with patch("app.memory.engine.memory_engine.recall", recall):
             await build_memory_recall_block(ctx(user_id="user-7", query="what did I promise?"))
@@ -182,9 +191,7 @@ class TestCoreMemoryBlock:
 @pytest.mark.unit
 class TestGaiaKnowledgeBlock:
     async def test_renders_each_result(self) -> None:
-        """Two results, not one: with a single item the ``\\n`` joining them is
-        unobservable, so a separator that stopped separating would read as two
-        capabilities run together into one sentence and no test would notice."""
+        """Two results, not one: with a single item the \\n joining them would be unobservable."""
         with patch(
             "app.services.gaia_knowledge_service.gaia_knowledge_service.search_knowledge",
             AsyncMock(
@@ -242,8 +249,80 @@ class TestGaiaKnowledgeBlock:
         ]
 
 
+def _tool(name: str) -> MagicMock:
+    tool = MagicMock()
+    tool.name = name
+    return tool
+
+
 @pytest.mark.unit
 class TestConnectedIntegrationsManifest:
+    @pytest.fixture(autouse=True)
+    def no_tools_by_default(self) -> Iterator[AsyncMock]:
+        """Pin the bare shape; the tool summary has its own tests."""
+        with patch(
+            "app.agents.context.fetchers.get_integration_tool_list", AsyncMock(return_value=[])
+        ) as lister:
+            yield lister
+
+    async def test_a_row_names_what_the_connection_is_for(
+        self, no_tools_by_default: AsyncMock
+    ) -> None:
+        """The row GitHub (github) tells the model nothing it can act on — the tool count and sample turn it into something actionable."""
+        no_tools_by_default.return_value = [
+            _tool("GITHUB_CREATE_AN_ISSUE"),
+            _tool("GITHUB_LIST_PULL_REQUESTS"),
+            _tool("GITHUB_GET_A_COMMIT"),
+        ]
+        with patch(
+            "app.agents.context.fetchers.get_connected_integrations_named",
+            AsyncMock(return_value=[{"id": "github", "name": "GitHub"}]),
+        ):
+            manifest = await build_connected_integrations_manifest("u1", header="HEADER:")
+
+        assert manifest == (
+            "HEADER:\n- GitHub (github): 3 tools, e.g. create an issue, list pull requests, "
+            "get a commit"
+        )
+        no_tools_by_default.assert_awaited_once_with("github")
+
+    async def test_the_sample_is_capped_but_the_count_is_not(
+        self, no_tools_by_default: AsyncMock
+    ) -> None:
+        no_tools_by_default.return_value = [_tool(f"GITHUB_ACTION_{i}") for i in range(12)]
+        with patch(
+            "app.agents.context.fetchers.get_connected_integrations_named",
+            AsyncMock(return_value=[{"id": "github", "name": "GitHub"}]),
+        ):
+            manifest = await build_connected_integrations_manifest("u1", header="HEADER:")
+
+        assert manifest == (
+            "HEADER:\n- GitHub (github): 12 tools, e.g. action 0, action 1, action 2, action 3, action 4"
+        )
+
+    async def test_a_tool_listing_failure_keeps_the_bare_row_and_is_logged(
+        self, no_tools_by_default: AsyncMock
+    ) -> None:
+        no_tools_by_default.side_effect = RuntimeError("registry cold")
+        with (
+            patch(
+                "app.agents.context.fetchers.get_connected_integrations_named",
+                AsyncMock(return_value=[{"id": "github", "name": "GitHub"}]),
+            ),
+            patch("app.agents.context.fetchers.log") as mock_log,
+        ):
+            manifest = await build_connected_integrations_manifest("u1", header="HEADER:")
+
+        assert manifest == "HEADER:\n- GitHub (github)"
+        assert mock_log.warning.call_args.args == (
+            "Could not list tools for a connected integration; manifest row stays bare",
+        )
+        assert mock_log.warning.call_args.kwargs == {
+            "integration_id": "github",
+            "error": "registry cold",
+            "error_type": "RuntimeError",
+        }
+
     async def test_one_line_per_integration_with_its_handoff_id(self) -> None:
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named",
@@ -263,8 +342,7 @@ class TestConnectedIntegrationsManifest:
         assert manifest == "HEADER:\n- notion-mcp"
 
     async def test_no_integrations_yields_no_manifest_not_a_bare_header(self) -> None:
-        """A lone header would tell the agent it has a list and that the list is
-        empty in a way that reads like a fetch failure."""
+        """A lone header would read like a fetch failure, not an empty list."""
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named",
             AsyncMock(return_value=[]),
@@ -279,9 +357,7 @@ class TestConnectedIntegrationsManifest:
             assert await build_connected_integrations_manifest("u1", header="HEADER:") == ""
 
     async def test_a_connected_task_provider_does_not_mask_the_builtin_todo_list(self) -> None:
-        """The prod failure: with Todoist connected and the built-in todos only a
-        parenthetical in the header, the executor read "the user's todo list" as
-        Todoist and reported eight GAIA todos as "8 tasks created (Todoist)"."""
+        """Prod bug: with Todoist connected, the executor read "the user's todo list" as Todoist and reported GAIA todos as done in Todoist."""
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named",
             AsyncMock(return_value=[{"id": "todoist", "name": "Todoist"}]),
@@ -307,8 +383,7 @@ class TestConnectedIntegrationsManifest:
         assert "- Todos: GAIA's own todo list, not Google Tasks or Todoist (todos)" in manifest
 
     async def test_no_overlapping_provider_means_no_builtin_row(self) -> None:
-        """The list stays a list of connected accounts; a built-in is spelled out
-        only where something connected could be mistaken for it."""
+        """A built-in is spelled out only where something connected could be mistaken for it."""
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named",
             AsyncMock(return_value=[{"id": "gmail", "name": "Gmail"}]),
@@ -318,8 +393,7 @@ class TestConnectedIntegrationsManifest:
         assert manifest == "HEADER:\n- Gmail (gmail)"
 
     async def test_two_ids_for_one_provider_render_once_under_the_resolved_name(self) -> None:
-        """A stale ``google_calendar`` beside today's ``googlecalendar`` rendered
-        both — one of them a bare id that resolves to no subagent at all."""
+        """A stale google_calendar beside today's googlecalendar rendered both, one a bare id resolving to no subagent."""
         with patch(
             "app.agents.context.fetchers.get_connected_integrations_named",
             AsyncMock(
@@ -339,8 +413,7 @@ class TestDedupeByProvider:
     def test_a_real_name_already_held_is_never_displaced_by_an_id_named_duplicate(
         self,
     ) -> None:
-        """A later id-only entry for the same provider must not clobber an
-        earlier one that already resolved to a display name."""
+        """A later id-only entry for the same provider must not clobber an earlier resolved display name."""
         items = [
             {"id": "slack", "name": "Slack Workspace"},
             {"id": "sl_ack", "name": "sl_ack"},
@@ -357,9 +430,7 @@ class TestDedupeByProvider:
         assert _dedupe_by_provider(items) == [{"id": "sl_ack", "name": "Slack Workspace"}]
 
     def test_the_first_real_name_wins_over_a_second_equally_real_name(self) -> None:
-        """Once a provider has resolved to ANY display name, a second row for
-        the same provider must not overwrite it — even when the second row
-        also carries a real name, not just an id."""
+        """Once a provider has resolved to ANY display name, a second row for it must not overwrite it, even with another real name."""
         items = [
             {"id": "calendar", "name": "Calendar One"},
             {"id": "cal_endar", "name": "Calendar Two"},
@@ -380,8 +451,7 @@ class TestDedupeByProvider:
 @pytest.mark.unit
 class TestTrackedTodosBlock:
     async def test_the_requesting_user_and_bound_todo_reach_the_summary(self) -> None:
-        """The summary is read for this user and this run's binding is passed
-        through so the service can pin it — a dropped id pins nothing."""
+        """The user and this run's bound todo reach the summary; a dropped id pins nothing."""
         summary = AsyncMock(return_value="Tracked: ship the refactor")
         with patch(
             "app.services.tracked_todo_service.tracked_todo_service.get_active_tracked_summary",
@@ -421,11 +491,11 @@ def _tracked_doc(todo_id: str, title: str) -> TodoDocument:
 
 @pytest.fixture
 def repo_reads() -> AsyncMock:
-    """The repository's Mongo read, with the ``cached_query`` cache seams faked.
+    """Fake the repository's Mongo read with the cached_query cache seams faked.
 
     The active-tracked finder is generation-cached; these fakes stand in for the
     two Redis round trips (generation + query store) so the real decorator runs
-    without Redis. Returns the ``_find`` spy — its await count is the Mongo reads.
+    without Redis. Returns the _find spy, whose await count is the Mongo reads.
     """
     find = AsyncMock(return_value=[])
     generation = {"value": 1}
@@ -455,9 +525,10 @@ def repo_reads() -> AsyncMock:
 
 @pytest.mark.unit
 class TestTrackedTodosListIsTheCachedRead:
-    """The active-tracked docs list is cached at the repository layer, so a bound
-    turn reads Mongo once per generation instead of once per assembly — and the
-    bound todo is still pinned in memory after the (possibly cached) fetch.
+    """Pin that the active-tracked list is the cached read.
+
+    A bound turn reads Mongo once per generation instead of once per assembly, and
+    the bound todo is still pinned in memory after the (possibly cached) fetch.
     """
 
     async def test_two_bound_turns_read_mongo_once_and_still_pin(
@@ -499,9 +570,10 @@ async def _never_finishes() -> str:
 
 @pytest.mark.unit
 class TestCoreContextSingleFlight:
-    """The two core-memory sections run in the same ``asyncio.gather``, so they
-    share one in-flight core fetch instead of racing two; a task bound to a dead
-    loop is never awaited cross-loop.
+    """Pin that the two core-memory sections share one in-flight core fetch.
+
+    They run in the same asyncio.gather, so they share rather than race; a task
+    bound to a dead loop is never awaited cross-loop.
     """
 
     async def test_both_core_sections_share_one_fetch(self) -> None:
@@ -525,8 +597,7 @@ class TestCoreContextSingleFlight:
         )
 
     async def test_different_users_do_not_share_a_fetch(self) -> None:
-        """Keyed by user, not just by loop: an entry keyed on the loop alone would
-        hand one user's core context to another running at the same time."""
+        """Keyed by user, not just by loop, so one user's core never reaches another."""
         seen: list[str] = []
 
         async def _core(user_id: str) -> str:
@@ -545,8 +616,7 @@ class TestCoreContextSingleFlight:
         assert "docs-for-user-b" in block_b
 
     async def test_sequential_assemblies_each_read_afresh(self) -> None:
-        """No TTL is smuggled in: once the in-flight fetch resolves it is gone, so
-        the next assembly reads the core again rather than serving a stale one."""
+        """Once the in-flight fetch resolves it is gone, so the next assembly reads afresh."""
         calls = 0
 
         async def _core(user_id: str) -> str:
@@ -560,9 +630,26 @@ class TestCoreContextSingleFlight:
 
         assert calls == 2
 
+    async def test_cancelling_one_waiter_leaves_the_shared_fetch_running(self) -> None:
+        """A cancelled assembly must not abort the sibling awaiting the same core fetch."""
+        started = asyncio.Event()
+
+        async def _core(user_id: str) -> str:
+            started.set()
+            await asyncio.sleep(0.05)
+            return "Docs."
+
+        with patch("app.memory.engine.memory_engine.get_core_context", _core):
+            first = asyncio.ensure_future(build_core_memory_block(ctx()))
+            second = asyncio.ensure_future(build_core_memory_block(ctx()))
+            await started.wait()
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert await second == f"{CORE_MEMORY_HEADER}\nDocs."
+
     async def test_the_inflight_entry_is_evicted_on_completion(self) -> None:
-        """Eviction is what bounds the registry — a leak would retain every user's
-        core context in memory forever."""
+        """Eviction bounds the registry; a leak would keep every user's core context forever."""
 
         async def _core(user_id: str) -> str:
             return "Docs."
@@ -573,9 +660,7 @@ class TestCoreContextSingleFlight:
         assert fetchers._inflight_core == {}
 
     def test_a_task_from_a_previous_loop_is_never_awaited(self) -> None:
-        """Event loops are per-test (and per reload); a pending task left by a dead
-        loop must be ignored, not awaited cross-loop. Keying by the running loop is
-        what makes the current loop start its own fetch."""
+        """A pending task left by a dead loop is ignored, never awaited cross-loop."""
         other_loop = asyncio.new_event_loop()
         stale = other_loop.create_task(_never_finishes())
         fetchers._inflight_core[(other_loop, "user1")] = stale
@@ -598,11 +683,326 @@ class TestCoreContextSingleFlight:
 
 
 @pytest.mark.unit
+class TestNewUserGuidanceBlock:
+    """The first-conversation playbooks: present only while the user is new, carrying only the needs they picked."""
+
+    #: A ceiling, not a measurement — an edit that doubles the block should fail
+    #: here rather than show up as a bill. Raised 3,400 -> 4,700 -> 6,600 -> 7,500
+    #: as playbooks, persona-eval writing rules, and the connect-handoff line were added.
+    MAX_BLOCK_CHARS = 7_500
+
+    @staticmethod
+    def _count(value: int) -> AsyncMock:
+        return AsyncMock(return_value=value)
+
+    def _patch_count(self, counter: AsyncMock) -> Any:
+        return patch(
+            "app.agents.context.fetchers.conversation_repository.count_non_onboarding", counter
+        )
+
+    async def test_renders_the_picked_needs_and_the_profession(self) -> None:
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Founder", "needs": ["inbox"]})
+            )
+        assert NEED_PLAYBOOKS[OnboardingNeed.INBOX] in block
+        assert "Founder" in block
+
+    async def test_a_need_they_did_not_pick_never_reaches_the_model(self) -> None:
+        """A user who ticked one box carries one playbook, not the catalogue they'd have to be told to ignore."""
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Student", "needs": ["calendar"]})
+            )
+        assert NEED_PLAYBOOKS[OnboardingNeed.CALENDAR] in block
+        assert NEED_PLAYBOOKS[OnboardingNeed.INBOX] not in block
+
+    async def test_one_need_alone_is_enough_to_render(self) -> None:
+        with self._patch_count(self._count(0)):
+            assert await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Founder", "needs": ["grunt_work"]})
+            )
+
+    async def test_the_typed_need_reaches_the_model_in_their_words(self) -> None:
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(
+                ctx(
+                    user_preferences={
+                        "profession": "Founder",
+                        "needs": ["inbox"],
+                        "other_need": "chasing invoices",
+                    }
+                )
+            )
+        assert '"chasing invoices"' in block
+        assert NEED_PLAYBOOKS[OnboardingNeed.INBOX] in block
+
+    async def test_a_typed_need_alone_is_enough_to_render(self) -> None:
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Founder", "other_need": "chasing invoices"})
+            )
+        assert block == build_new_user_guidance("Founder", [], "chasing invoices")
+
+    async def test_a_non_string_typed_need_is_ignored(self) -> None:
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Founder", "needs": ["inbox"], "other_need": 7})
+            )
+        assert block == build_new_user_guidance("Founder", [OnboardingNeed.INBOX])
+
+    async def test_a_non_string_typed_need_is_passed_as_none_not_empty(self) -> None:
+        """The playbook builder gets None, so it never renders an empty quote."""
+        with (
+            self._patch_count(self._count(1)),
+            patch(
+                "app.agents.context.fetchers.build_new_user_guidance", return_value="block"
+            ) as build,
+        ):
+            await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Founder", "needs": ["inbox"], "other_need": 7})
+            )
+        build.assert_called_once_with("Founder", [OnboardingNeed.INBOX], None, [])
+
+    async def test_the_block_stops_once_the_user_is_no_longer_new(self) -> None:
+        with self._patch_count(self._count(NEW_USER_CONVERSATION_LIMIT + 1)):
+            assert (
+                await build_new_user_guidance_block(
+                    ctx(user_preferences={"profession": "Founder", "needs": ["inbox"]})
+                )
+                == ""
+            )
+
+    async def test_the_last_new_conversation_still_renders(self) -> None:
+        """Pins the boundary: an off-by-one here silently drops the block a conversation early."""
+        with self._patch_count(self._count(NEW_USER_CONVERSATION_LIMIT)):
+            assert await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Founder", "needs": ["inbox"]})
+            )
+
+    async def test_no_needs_means_no_block_and_no_lookup(self) -> None:
+        """Users who predate the signup questions must not pay for the count."""
+        counter = self._count(0)
+        with self._patch_count(counter):
+            assert (
+                await build_new_user_guidance_block(ctx(user_preferences={"profession": "Founder"}))
+                == ""
+            )
+        counter.assert_not_awaited()
+
+    async def test_no_preferences_at_all_means_no_block(self) -> None:
+        assert await build_new_user_guidance_block(ctx()) == ""
+
+    async def test_an_unknown_need_is_skipped_rather_than_dropping_the_block(self) -> None:
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Founder", "needs": ["telepathy", "reminders"]})
+            )
+        assert NEED_PLAYBOOKS[OnboardingNeed.REMINDERS] in block
+
+    async def test_a_skipped_need_names_itself_in_the_wide_event(self) -> None:
+        """The warning is the only trace that a rename left users unserved — silently dropping looks identical to never picking it."""
+        async with captured_wide_event() as event:
+            with self._patch_count(self._count(1)):
+                await build_new_user_guidance_block(
+                    ctx(
+                        user_preferences={
+                            "profession": "Founder",
+                            "needs": ["telepathy", "reminders"],
+                        }
+                    )
+                )
+
+        assert event["warnings"] == [
+            {"msg": "Unknown onboarding need in preferences", "need": "telepathy"}
+        ]
+
+    async def test_a_user_with_no_profession_still_gets_their_playbooks(self) -> None:
+        """The profession is optional; its absence must not leak a placeholder into the prompt."""
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(ctx(user_preferences={"needs": ["inbox"]}))
+        assert block == build_new_user_guidance("", [OnboardingNeed.INBOX])
+
+    async def test_a_failed_count_yields_no_block(self) -> None:
+        with self._patch_count(AsyncMock(side_effect=RuntimeError("mongo down"))):
+            assert (
+                await build_new_user_guidance_block(
+                    ctx(user_preferences={"profession": "Founder", "needs": ["inbox"]})
+                )
+                == ""
+            )
+
+    async def test_a_failed_count_is_visible_in_the_wide_event(self) -> None:
+        async with captured_wide_event() as event:
+            with self._patch_count(AsyncMock(side_effect=RuntimeError("mongo down"))):
+                await build_new_user_guidance_block(
+                    ctx(
+                        user_id="user-9",
+                        user_preferences={"profession": "Founder", "needs": ["inbox"]},
+                    )
+                )
+
+        assert event["warnings"] == [
+            {
+                "msg": "Error counting conversations for new-user guidance",
+                "error": "mongo down",
+                "error_type": "RuntimeError",
+                "user_id": "user-9",
+            }
+        ]
+
+    async def test_the_conversation_count_is_scoped_to_this_user(self) -> None:
+        """Counting someone else's conversations would keep the block alive past the point this user stopped being new."""
+        counter = self._count(1)
+        with self._patch_count(counter):
+            await build_new_user_guidance_block(
+                ctx(
+                    user_id="user-9", user_preferences={"profession": "Founder", "needs": ["inbox"]}
+                )
+            )
+        counter.assert_awaited_once_with("user-9")
+
+    async def test_every_need_has_a_playbook(self) -> None:
+        assert set(NEED_PLAYBOOKS) == set(OnboardingNeed)
+
+    async def test_each_playbook_is_its_own_bullet_line(self) -> None:
+        """Two needs are two lines; run together, the model reads one malformed bullet instead of two instructions."""
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(
+                ctx(user_preferences={"profession": "Founder", "needs": ["inbox", "reminders"]})
+            )
+        assert (
+            f"- {NEED_PLAYBOOKS[OnboardingNeed.INBOX]}\n- {NEED_PLAYBOOKS[OnboardingNeed.REMINDERS]}"
+            in block
+        )
+
+    async def test_a_user_who_skipped_the_profession_is_addressed_as_a_person(self) -> None:
+        """The template interpolates the profession three times; an unset Q1 must render a plain noun, not an empty hole."""
+        with self._patch_count(self._count(1)):
+            block = await build_new_user_guidance_block(ctx(user_preferences={"needs": ["inbox"]}))
+        assert block.startswith("FIRST CONVERSATIONS (you just met this person)")
+        assert "do for a person" in block
+        assert "the way a person talks" in block
+
+    async def test_no_needs_renders_nothing_rather_than_a_headerless_block(self) -> None:
+        """A block with an empty playbook list is the generic coaching this section exists to replace, so it must be empty string."""
+        assert build_new_user_guidance("Founder", []) == ""
+
+    async def test_the_chips_rule_names_the_chips_that_were_offered(self) -> None:
+        """The model has to see the exact words it offered, or a one-word first message reads as a fragment."""
+        block = build_new_user_guidance("Founder", [OnboardingNeed.INBOX], None, ["My mornings"])
+        assert '"My mornings"' in block
+
+    async def test_no_chips_renders_no_chips_rule(self) -> None:
+        """An expired cache must not tell the model a choice was offered."""
+        block = build_new_user_guidance("Founder", [OnboardingNeed.INBOX], None, [])
+        assert "You already asked them a question" not in block
+
+    async def test_the_chips_are_looked_up_under_this_user_and_these_exact_answers(
+        self,
+    ) -> None:
+        """The chips live under a key built from the user id and the three answers; any going astray silently loses the chips rule."""
+        with (
+            self._patch_count(self._count(1)),
+            patch("app.agents.context.fetchers.seeded_chips", AsyncMock(return_value=[])) as chips,
+        ):
+            await build_new_user_guidance_block(
+                ctx(
+                    user_id="user-9",
+                    user_preferences={
+                        "profession": "Founder",
+                        "needs": ["inbox"],
+                        "other_need": "chasing invoices",
+                    },
+                )
+            )
+
+        chips.assert_awaited_once_with(
+            "user-9",
+            OnboardingPreferences(
+                profession="Founder",
+                needs=[OnboardingNeed.INBOX],
+                other_need="chasing invoices",
+            ),
+        )
+
+    async def test_the_chips_the_seeded_turn_offered_reach_the_model(self) -> None:
+        """End to end through the real cache-key derivation: what the seeded conversation wrote is what the block quotes back."""
+        cached = FirstQuestion(question="What should we start with?", chips=["My mornings"])
+        preferences = OnboardingPreferences(
+            profession="Founder",
+            needs=[OnboardingNeed.INBOX],
+            other_need="chasing invoices",
+        )
+        with (
+            self._patch_count(self._count(1)),
+            patch(
+                "app.services.onboarding.first_question.redis_cache.get",
+                AsyncMock(return_value=cached),
+            ) as cache_get,
+        ):
+            block = await build_new_user_guidance_block(
+                ctx(
+                    user_id="user-9",
+                    user_preferences={
+                        "profession": "Founder",
+                        "needs": ["inbox"],
+                        "other_need": "chasing invoices",
+                    },
+                )
+            )
+
+        assert cache_get.await_args.args[0] == first_question_cache_key("user-9", preferences)
+        assert '"My mornings"' in block
+
+    async def test_the_block_is_the_template_filled_with_every_one_of_its_slots(self) -> None:
+        """Asserted whole rather than by substring: a slot filled with the wrong value still renders a plausible-looking block."""
+        block = build_new_user_guidance(
+            "Founder", [OnboardingNeed.INBOX], None, ["My mornings", "Growth"]
+        )
+
+        assert block == NEW_USER_GUIDANCE_TEMPLATE.format(
+            profession="Founder",
+            playbooks=f"- {NEED_PLAYBOOKS[OnboardingNeed.INBOX]}",
+            target=TARGET_REPLY_EXAMPLE,
+            chips_rule=SEEDED_CHIPS_RULE.format(chips='"My mornings", "Growth"'),
+        )
+
+    async def test_two_chips_are_quoted_and_comma_separated(self) -> None:
+        """The model has to read them as two distinct offers, not one nonsense phrase run together."""
+        block = build_new_user_guidance(
+            "Founder", [OnboardingNeed.INBOX], None, ["My mornings", "Late payers"]
+        )
+
+        assert '"My mornings", "Late payers"' in block
+
+    async def test_a_user_offered_no_chips_gets_the_slot_closed_up_entirely(self) -> None:
+        """The empty case is a slot filled with nothing, not a placeholder — any residue reads to the model as an instruction."""
+        block = build_new_user_guidance("Founder", [OnboardingNeed.INBOX], None, [])
+
+        assert block == NEW_USER_GUIDANCE_TEMPLATE.format(
+            profession="Founder",
+            playbooks=f"- {NEED_PLAYBOOKS[OnboardingNeed.INBOX]}",
+            target=TARGET_REPLY_EXAMPLE,
+            chips_rule="",
+        )
+
+    async def test_the_worst_case_block_stays_within_budget(self) -> None:
+        """The two longest playbooks (the API caps picks at two), plus four seeded chips and a typed need, is the largest case."""
+        longest = sorted(OnboardingNeed, key=lambda n: len(NEED_PLAYBOOKS[n]), reverse=True)
+        block = build_new_user_guidance(
+            "Founder",
+            longest[:NEEDS_MAX_SELECTION],
+            "chasing invoices",
+            ["Find investors", "Fix my marketing", "Hire someone", "Write my pitch"],
+        )
+        assert len(block) <= self.MAX_BLOCK_CHARS, f"guidance block grew to {len(block)} chars"
+
+
+@pytest.mark.unit
 class TestWorkspaceSessionBanner:
     async def test_states_both_the_directory_and_the_public_url(self) -> None:
-        """The agent needs the directory to write where the watcher scans, and
-        the URL base to link what it wrote. Missing either makes it guess — and
-        a wrong path is the silent failure, so both are pinned exactly."""
+        """Missing either the directory or the URL base makes the agent guess, and a wrong path is a silent failure."""
         banner = await build_workspace_session_banner(
             SectionContext(tier=AgentTier.EXECUTOR, vfs_session_id="sess-1")
         )
@@ -614,8 +1014,7 @@ class TestWorkspaceSessionBanner:
         )
 
     async def test_no_vfs_session_id_never_guesses_a_directory(self) -> None:
-        """A fallback to ``thread_id`` would name ``executor_<conv>``, sending
-        deliverables outside the directory the artifact watcher scans."""
+        """A fallback to thread_id would name executor_<conv>, outside the directory the artifact watcher scans."""
         banner = await build_workspace_session_banner(
             SectionContext(tier=AgentTier.EXECUTOR, vfs_session_id=None)
         )
@@ -626,10 +1025,7 @@ class TestWorkspaceSessionBanner:
 @pytest.mark.unit
 class TestActiveTodoBanner:
     async def test_it_states_the_binding_the_write_target_and_the_escape_hatch(self) -> None:
-        """Every line here is an instruction the agent acts on: which todo the
-        run is bound to, the exact file paths that are its default write target,
-        what goes in which file, and that another todo needs an explicit id.
-        Asserting two substrings left the rest free to rot into nonsense unnoticed."""
+        """Asserting only two substrings let the rest rot into nonsense unnoticed."""
         todo = TodoDocument(
             id="66f838cc8829054e5f10e407", user_id="user1", title="Ship the refactor"
         )
@@ -653,8 +1049,7 @@ class TestActiveTodoBanner:
         )
 
     def test_an_untitled_todo_still_renders_a_usable_banner(self) -> None:
-        """A blank title would leave the line dangling; the agent still needs
-        the id, which is the part it acts on."""
+        """A blank title would leave the line dangling; the agent still needs the id, the part it acts on."""
         banner = format_active_todo_banner(TodoDocument(id="todo-9", user_id="user1", title=""))
 
         assert "   id: todo-9\n" in banner
@@ -705,16 +1100,7 @@ class TestBackgroundBanner:
 
 @pytest.mark.unit
 class TestASectionDeclinesWhenItsContextIsAbsent:
-    """The precondition lives with the read, not at the call site, so a section
-    registered directly against a fetcher cannot be given a context it needs and
-    render a header over nothing.
-
-    Every source below is patched to return real content on purpose. Left
-    unpatched, a broken precondition would reach a store that is not there,
-    raise, and be swallowed into the same ``""`` these tests assert — so they
-    would pass whether the guard worked or not. Pinned this way, dropping the
-    guard renders the content and the test goes red.
-    """
+    """Every source below is patched to return real content on purpose: left unpatched, a broken precondition would raise and be swallowed into the same "" these tests assert, passing whether the guard worked or not."""
 
     async def test_no_user_means_no_core_memory(self) -> None:
         with patch(
@@ -764,18 +1150,14 @@ class TestSplitOffSection:
         assert body == "\n- ship it"
 
     def test_a_heading_that_opens_the_core_leaves_nothing_stable(self) -> None:
-        """A user with no consolidated documents starts at a churning section.
-        Requiring the blank line ahead of the heading filed that section as
-        stable — putting per-turn bytes in the prefix for exactly those users."""
+        """Requiring the blank line ahead of the heading previously filed a churning first section as stable."""
         before, body = _split_off_section(f"{AGENDA_HEADING}\n- ship it", AGENDA_HEADING)
 
         assert before == ""
         assert body == "\n- ship it"
 
     def test_a_heading_quoted_again_inside_the_body_splits_at_the_first_one(self) -> None:
-        """Section bodies are user memory text and can repeat a heading. The
-        split takes the first occurrence and leaves every later one inside the
-        body — the section must not lose its head, nor the split blow up."""
+        """Section bodies are user memory text and can repeat a heading; the split takes the first occurrence only."""
         before, body = _split_off_section(
             f"Loves espresso.\n\n{AGENDA_HEADING}\n- ship it\n\n{AGENDA_HEADING}\n- and again",
             AGENDA_HEADING,
@@ -793,10 +1175,7 @@ class TestSplitOffSection:
 
 @pytest.mark.unit
 class TestTheMemoryCoreSplit:
-    """``get_core_context`` renders documents, agenda and journal as one string.
-    Only the documents are byte-stable; the other two are rewritten every turn,
-    so they are two sections in two different slots.
-    """
+    """get_core_context renders documents, agenda and journal as one string; only the documents are byte-stable, so the three split across two slots."""
 
     @staticmethod
     def _core(core: str) -> Any:
@@ -827,18 +1206,13 @@ class TestTheMemoryCoreSplit:
         )
 
     async def test_a_core_with_no_documents_still_yields_its_volatile_half(self) -> None:
-        """The stable slot holds the documents or nothing. Filling it from
-        "whatever came first" put a churning section in the cached prefix for
-        every user who has not been consolidated yet."""
+        """Filling the stable slot from "whatever came first" put a churning section in the cached prefix for unconsolidated users."""
         with self._core(f"{RECENT_ACTIVITY_HEADING}\n- reviewed a PR"):
             assert await build_core_memory_block(ctx()) == ""
             assert "- reviewed a PR" in await build_agenda_and_activity_block(ctx())
 
     def test_the_agenda_does_not_swallow_the_journal(self) -> None:
-        """Split from the back. ``get_core_context`` emits the agenda before the
-        journal, so splitting on the agenda first hands back the journal as part
-        of "the agenda" and leaves the journal's own split with nothing to
-        match — the two sections stop being two sections."""
+        """Split from the back: get_core_context emits the agenda before the journal, so splitting on the agenda first would swallow the journal into it."""
         core = (
             "Loves espresso."
             f"\n\n{AGENDA_HEADING}\n- ship the cache work"
@@ -852,8 +1226,7 @@ class TestTheMemoryCoreSplit:
         assert activity == "\n- reviewed a PR"
 
     async def test_the_stable_documents_are_never_capped(self) -> None:
-        """Truncating them would churn the cached prefix every time the core grew
-        — the exact failure the split exists to prevent."""
+        """Truncating them would churn the cached prefix every time the core grew."""
         documents = "\n".join(f"- fact {i}" for i in range(500))
         with self._core(documents):
             block = await build_core_memory_block(ctx())
@@ -869,18 +1242,13 @@ class TestTheMemoryCoreSplit:
             assert await build_agenda_and_activity_block(ctx()) == ""
 
     async def test_an_empty_core_yields_no_blocks_at_all(self) -> None:
-        """No core document at all is not the same as an empty-looking one —
-        both halves of the split come back empty rather than one manufacturing
-        a header over nothing."""
+        """Both halves of the split come back empty, rather than one manufacturing a header over nothing."""
         with self._core(""):
             assert await build_core_memory_block(ctx()) == ""
             assert await build_agenda_and_activity_block(ctx()) == ""
 
     async def test_a_long_agenda_and_journal_both_survive_whole(self) -> None:
-        """No section is clipped. Capping these to a few hundred characters hid
-        commitments and journal entries the model was then asked about, and
-        bought nothing: what a provider caches is decided by where the volatile
-        block SITS, not by how long it is."""
+        """No section is clipped: what a provider caches is decided by where the volatile block sits, not by how long it is."""
         agenda = "\n".join(f"- commitment {i}" for i in range(200))
         journal = "\n".join(f"- did thing {i}" for i in range(200))
         core = (
@@ -894,10 +1262,7 @@ class TestTheMemoryCoreSplit:
 
 @pytest.mark.unit
 class TestNoVolatileSectionIsClipped:
-    """Every fetched section reaches the model whole. The prompt cache is won by
-    slot ordering, not by shortening what the agent is allowed to see, so a cap
-    here only costs answers.
-    """
+    """Every fetched section reaches the model whole — the prompt cache is won by slot ordering, not by shortening what the agent sees."""
 
     async def test_a_long_recall_keeps_every_memory(self) -> None:
         memories = [memory("m" * 200, mentioned="2026-02-01") for _ in range(10)]

@@ -6,3 +6,9 @@
 # floor. The current file no longer carries a high-entropy literal, but gitleaks
 # scans the PR's commits, so the original one stays reachable in history.
 d57c64207d2a4275bbd922fc7fe898a4419298a6:apps/api/tests/integration/api/test_share_download_flow.py:generic-api-key:46
+
+# generic-api-key scores a run of keyword arguments on an AuthenticatedUser
+# constructed in a parametrized test at entropy 3.69. No credential is on the
+# line and there is no value to rotate. The literal is deliberately not quoted
+# here: reproducing it makes this file itself a finding.
+b93f415acf402c230a5692af29d55ae49c486337:apps/api/tests/unit/api/test_oauth_dependencies.py:generic-api-key:176

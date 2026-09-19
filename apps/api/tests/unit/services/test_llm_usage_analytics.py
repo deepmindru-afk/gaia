@@ -1,8 +1,7 @@
 """Unit tests for app/services/llm_usage_analytics.py.
 
-The PostHog client is mocked, never ``capture_event`` itself: a wrong
-``distinct_id`` is the failure mode that matters, and mocking the helper
-would hide it.
+The PostHog client is mocked, never capture_event itself: a wrong distinct_id
+is the failure mode that matters, and mocking the helper would hide it.
 """
 
 import ast
@@ -55,7 +54,7 @@ def test_a_subagent_is_integration_spend() -> None:
 
 
 def test_a_subagent_inside_a_workflow_is_still_workflow_spend() -> None:
-    """``agent_name`` still records which subagent ran, so nothing is lost."""
+    """agent_name still records which subagent ran, so nothing is lost."""
     assert llm_feature("gmail_agent", "wf-9") is AIFeature.WORKFLOW
 
 
@@ -86,7 +85,7 @@ def test_an_unset_source_reports_background() -> None:
 
 
 def test_a_mapped_label_resolves_to_its_feature() -> None:
-    assert feature_for_label("onboarding_clarify") is AIFeature.ONBOARDING
+    assert feature_for_label("onboarding_inbox_triage") is AIFeature.ONBOARDING
     assert feature_for_label("workflow_prompt") is AIFeature.WORKFLOW_GENERATION
 
 
@@ -104,13 +103,11 @@ _METERED_CALLS = {"ainvoke_llm", "ainvoke_structured", "ainvoke_structured_gemin
 
 
 def _label_taking_functions(trees: dict[Path, ast.Module]) -> set[str]:
-    """Functions that forward their own ``label`` argument into a metered call.
+    """Find the functions that forward their own label argument into a metered call.
 
-    Three call sites pass a variable or an f-string rather than a literal
-    (``describe_image``, the playbook runner's helper, and memory's
-    ``f"memory:{operation}"``). Scanning only literal ``label=`` at the metered
-    call would silently skip whatever their callers pass, which is exactly where
-    a new unmapped label would hide.
+    Three call sites pass a variable or an f-string rather than a literal, so
+    scanning only literal label= at the metered call would skip whatever their
+    callers pass - exactly where a new unmapped label would hide.
     """
     forwarding: set[str] = set()
     for tree in trees.values():
@@ -132,8 +129,7 @@ def _label_taking_functions(trees: dict[Path, ast.Module]) -> set[str]:
 
 
 def test_every_label_the_codebase_passes_has_a_feature() -> None:
-    """Walks the real call sites, including those reaching a metered call
-    through a forwarding helper, so an unmapped label fails here."""
+    """Walk the real call sites, forwarding helpers included, so an unmapped label fails here."""
     app = Path(__file__).resolve().parents[3] / "app"
     trees: dict[Path, ast.Module] = {}
     for path in app.rglob("*.py"):
@@ -264,8 +260,7 @@ def test_a_priced_model_is_not_flagged_as_estimated(posthog: Any) -> None:
 
 
 def test_a_model_missing_from_the_rate_card_is_flagged(posthog: Any) -> None:
-    """An unpriced model is charged DEFAULT_PRICING rather than raising, so the
-    figure looks plausible and is wrong."""
+    """An unpriced model falls back to DEFAULT_PRICING, so the figure is plausible and wrong."""
     _capture(model_name="some/model-nobody-priced")
     assert _captured(posthog)["properties"]["cost_estimated"] is True
 
@@ -296,12 +291,7 @@ def test_the_event_carries_no_message_content(posthog: Any) -> None:
 
 
 def test_every_feature_is_reachable() -> None:
-    """No ``AIFeature`` member may exist with no way to produce it.
-
-    Owning its own labels does not by itself make a member producible: one
-    declared with none, reached by no graph rule, reads on a chart as zero
-    spend rather than as the wiring bug it is. This caught ``IMAGE``.
-    """
+    """A member reached by no label and no graph rule charts as zero spend, not as a bug."""
     graph_reachable = {
         llm_feature("comms_agent", None),
         llm_feature("gmail_agent", None),
