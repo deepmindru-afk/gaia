@@ -24,6 +24,7 @@ from app.constants.browser import (
     BROWSER_GUIDANCE_PAGE_TEXT_MAX_CHARS,
     BROWSER_GUIDANCE_RECENT_ACTIONS,
     BROWSER_RUN_BLOCKED_SUMMARY,
+    JEV_DONE_REASK_BUDGET,
     JEV_MIN_DONE_CONFIDENCE,
     JEV_TEXT_HELPER_RECENT_ACTIONS,
     JEV_TEXT_VALUE_MAX_CHARS,
@@ -113,7 +114,7 @@ class JevChatModel:
         self._last_fingerprint: str | None = None
         self._steps = 0
         self._viewport: dict[int, ViewportBox] = {}
-        self._done_suppressed = False
+        self._done_reasks_left = JEV_DONE_REASK_BUDGET
         self._guidance_allowed: GuidanceGate | None = None
         self._observation: JevObservation | None = None
         #: One-shot: guidance just arrived, so this next step may not give up on it.
@@ -253,17 +254,16 @@ class JevChatModel:
     async def _choose(
         self, observation: JevObservation, goal: str, offered: frozenset[JevOperation]
     ) -> JevDecision:
-        """Ask Jev for this step, re-asking once without DONE when it finishes unconfidently.
+        """Ask Jev for this step, re-asking without DONE while the run's re-ask budget holds.
 
         A DONE under the floor ends the run on whatever page is showing, and the
         closing summary then reads like a confident answer to a goal never met.
         """
         decision = await choose(self._client, observation, goal, self._history, offered)
-        suppressed, self._done_suppressed = self._done_suppressed, False
         if (
             decision.operation is not JevOperation.DONE
             or decision.confidence >= JEV_MIN_DONE_CONFIDENCE
-            or suppressed
+            or self._done_reasks_left <= 0
             or not offered - _TERMINAL_OPERATIONS
         ):
             return decision
@@ -272,7 +272,7 @@ class JevChatModel:
             step=self._steps,
             confidence=round(decision.confidence, 3),
         )
-        self._done_suppressed = True
+        self._done_reasks_left -= 1
         return await choose(
             self._client, observation, goal, self._history, offered - {JevOperation.DONE}
         )

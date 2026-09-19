@@ -22,7 +22,11 @@ from browser_use.tools.views import (
 from pydantic import BaseModel, RootModel, create_model
 import pytest
 
-from app.constants.browser import BROWSER_RUN_BLOCKED_SUMMARY, JevOperation
+from app.constants.browser import (
+    BROWSER_RUN_BLOCKED_SUMMARY,
+    JEV_DONE_REASK_BUDGET,
+    JevOperation,
+)
 from app.constants.log_tags import LogTag
 from app.services.browser.exceptions import BrowserUnavailableError
 from app.services.browser.jev import chat_model as chat_model_mod
@@ -433,16 +437,34 @@ async def test_a_confident_done_is_never_re_asked(flights_state) -> None:
     assert len(gateway.requests) == 1
 
 
-async def test_a_second_unconfident_done_in_a_row_is_accepted(flights_state) -> None:
-    """Suppressing DONE forever would loop; one suppressed step is the whole budget."""
+async def test_a_later_unconfident_done_is_re_asked_too_while_the_budget_holds(
+    flights_state,
+) -> None:
+    """Regression: a re-ask on step 4 made step 5's DONE at p=0.52 acceptable and it shipped."""
     model, _, _, _ = _model(
         flights_state,
-        [("DONE", None), ("CLICK", "4"), ("DONE", None)],
+        [("DONE", None), ("CLICK", "4"), ("DONE", None), ("CLICK", "4")],
         [{"text": "The article says 2008."}],
         confidence=0.49,
     )
 
     await model.ainvoke([], _agent_output())
+    result = await model.ainvoke([], _agent_output())
+
+    assert _action(result.completion) == {"click": {"index": 40}}
+
+
+async def test_an_unconfident_done_is_accepted_once_the_re_ask_budget_is_spent(
+    flights_state,
+) -> None:
+    """Re-asking forever would loop; the budget is per run, not per consecutive step."""
+    script = [("DONE", None), ("CLICK", "4")] * JEV_DONE_REASK_BUDGET + [("DONE", None)]
+    model, _, _, _ = _model(
+        flights_state, script, [{"text": "The article says 2008."}], confidence=0.49
+    )
+
+    for _ in range(JEV_DONE_REASK_BUDGET):
+        await model.ainvoke([], _agent_output())
     result = await model.ainvoke([], _agent_output())
 
     assert _action(result.completion)["done"] == {
