@@ -304,6 +304,15 @@ class JevNoteSource(StrEnum):
     AGENT = "agent"
 
 
+# A step that shows nothing for this long gets one line saying so. The Berlin
+# article measured 40 to 71 s of clean render with no error left to caption.
+BROWSER_STALL_NOTE_AFTER_SECONDS = 25.0
+BROWSER_STALL_NOTE = "Still waiting on the page, it's a slow one."
+
+# How a decision taken on the handoff card is written into the agent's thread,
+# so the reply it later voices knows the user changed course.
+BROWSER_HANDOFF_CARD_DECISION = "[From the browser handoff card] {decision}"
+
 # The user's own request rides along with the executor's task text, clipped to
 # this many characters; the executor rewrote "tick the second checkbox" into an
 # invented label twice and the browser skipped the step both times.

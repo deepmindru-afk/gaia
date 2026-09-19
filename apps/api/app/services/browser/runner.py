@@ -21,6 +21,8 @@ from app.constants.browser import (
     BROWSER_AGENT_GUIDANCE_MAX,
     BROWSER_RUN_BLOCKED_SUMMARY,
     BROWSER_RUN_HANDOFF_TIMED_OUT,
+    BROWSER_STALL_NOTE,
+    BROWSER_STALL_NOTE_AFTER_SECONDS,
     BROWSER_TASK_FAILED_PREFIX,
     HANDOFF_AUTORESOLVED_NOTE,
     MAX_HANDOFFS_PER_TASK,
@@ -58,10 +60,14 @@ from shared.py.wide_events import log
 if TYPE_CHECKING:
     from browser_use.llm.base import BaseChatModel
 
+# How often the stall watcher looks; a fraction of the note delay, not a knob.
+_STALL_POLL_SECONDS = 1.0
+
 EmitFn = Callable[[BrowserCardSnapshot], Awaitable[None]]
 RequestHandoffFn = Callable[[HandoffRequest], Awaitable[HandoffOutcome]]
 IsCancelledFn = Callable[[], Awaitable[bool]]
 RequestGuidanceFn = Callable[[AgentGuidanceRequest], Awaitable[HandoffOutcome]]
+NoteFn = Callable[[str], Awaitable[None]]
 AgentJoinedFn = Callable[[], Awaitable[bool]]
 
 __all__ = [
@@ -84,6 +90,8 @@ class BrowserRunnerCallbacks:
     #: ask it. Absent on a run nothing can reach back to, which then ends blocked.
     agent_joined: AgentJoinedFn | None = None
     request_guidance: RequestGuidanceFn | None = None
+    #: One plain line to the user when a step has shown nothing for a while.
+    note: NoteFn | None = None
 
 
 class BrowserTaskRunner:
@@ -106,6 +114,7 @@ class BrowserTaskRunner:
         self._is_cancelled = callbacks.is_cancelled
         self._action_results = callbacks.action_results
         self._agent_joined = callbacks.agent_joined
+        self._note = callbacks.note
         self._request_guidance = callbacks.request_guidance
         self._config = config
         self._task_timeout = config.task_timeout_seconds
@@ -135,6 +144,10 @@ class BrowserTaskRunner:
         # set lets _finish() flush them before the result (see _record_step / _finish).
         self._emit_lock = asyncio.Lock()
         self._emit_tasks: set[asyncio.Task[Any]] = set()
+        self._last_frame_at = perf_counter()
+        self._stall_noted = False
+        # Waiting on the user or the agent is not a stall; the watcher stands down.
+        self._waiting_on_someone = False
         self._agent_run = self._build_agent_run()
 
     def _build_agent_run(self) -> BrowserAgentRun:
@@ -165,42 +178,46 @@ class BrowserTaskRunner:
             )
         )
 
+        stall_watch = spawn_background_task(self._watch_for_stalls(), name="browser_stall_watch")
         try:
-            outcome = await asyncio.wait_for(
-                self._agent_run.execute(task), timeout=self._wall_clock_timeout
-            )
-        except (BrowserHandoffCancelled, InterruptedError):
-            return await self._finish_from_handoff()
-        except TimeoutError:
-            self._agent_run.stop()
-            return await self._finish(
-                BrowserSessionStatus.FAILED,
-                False,
-                f"Browser task timed out after {self._task_timeout}s.",
-            )
-        except (ConnectionError, OSError) as exc:
-            # The host created the session but the agent couldn't attach over CDP —
-            # almost always the host's CDP proxy websocket isn't reachable from here.
-            raise BrowserUnavailableError(
-                f"Could not attach to the browser over CDP at {self._session.cdp_url}: {exc}. "
-                "Check that the browser host is reachable from the API at BROWSER_HOST_URL."
-            ) from exc
-        except Exception as exc:
-            # Any unexpected agent/runtime failure must not leave the card stuck in
-            # RUNNING: emit a terminal FAILED result with an honest reason.
-            # CancelledError is BaseException, so it is never caught here.
-            log.error(
-                f"{LogTag.BROWSER} Browser agent failed unexpectedly",
-                error_type=type(exc).__name__,
-                browser={"session_id": self._session.session_id},
-            )
-            return await self._finish(
-                BrowserSessionStatus.FAILED,
-                False,
-                f"{BROWSER_TASK_FAILED_PREFIX}{exc}",
-            )
+            try:
+                outcome = await asyncio.wait_for(
+                    self._agent_run.execute(task), timeout=self._wall_clock_timeout
+                )
+            except (BrowserHandoffCancelled, InterruptedError):
+                return await self._finish_from_handoff()
+            except TimeoutError:
+                self._agent_run.stop()
+                return await self._finish(
+                    BrowserSessionStatus.FAILED,
+                    False,
+                    f"Browser task timed out after {self._task_timeout}s.",
+                )
+            except (ConnectionError, OSError) as exc:
+                # The host created the session but the agent couldn't attach over CDP —
+                # almost always the host's CDP proxy websocket isn't reachable from here.
+                raise BrowserUnavailableError(
+                    f"Could not attach to the browser over CDP at {self._session.cdp_url}: {exc}. "
+                    "Check that the browser host is reachable from the API at BROWSER_HOST_URL."
+                ) from exc
+            except Exception as exc:
+                # Any unexpected agent/runtime failure must not leave the card stuck in
+                # RUNNING: emit a terminal FAILED result with an honest reason.
+                # CancelledError is BaseException, so it is never caught here.
+                log.error(
+                    f"{LogTag.BROWSER} Browser agent failed unexpectedly",
+                    error_type=type(exc).__name__,
+                    browser={"session_id": self._session.session_id},
+                )
+                return await self._finish(
+                    BrowserSessionStatus.FAILED,
+                    False,
+                    f"{BROWSER_TASK_FAILED_PREFIX}{exc}",
+                )
 
-        return await self._finish_after_execute(outcome)
+            return await self._finish_after_execute(outcome)
+        finally:
+            stall_watch.cancel()
 
     async def _finish_from_handoff(self) -> BrowserResultSnapshot:
         """Judge a run the handoff ended: blocked with no guidance, expired, completed by the user, or stopped."""
@@ -262,7 +279,12 @@ class BrowserTaskRunner:
         except ValueError:
             cat = SensitiveCategory.IRREVERSIBLE
 
-        outcome = await self._request_handoff(HandoffRequest(category=cat, reason=reason))
+        self._waiting_on_someone = True
+        try:
+            outcome = await self._request_handoff(HandoffRequest(category=cat, reason=reason))
+        finally:
+            self._waiting_on_someone = False
+            self._last_frame_at = perf_counter()
         if outcome.status == HandoffStatus.COMPLETED:
             self._handed_off = True
             log.info(f"{LogTag.BROWSER} Browser takeover completed by user; agent continuing.")
@@ -290,7 +312,12 @@ class BrowserTaskRunner:
         if self._request_guidance is None:
             raise BrowserHandoffCancelled("no-guidance-channel")
         self._guidances += 1
-        outcome = await self._request_guidance(request)
+        self._waiting_on_someone = True
+        try:
+            outcome = await self._request_guidance(request)
+        finally:
+            self._waiting_on_someone = False
+            self._last_frame_at = perf_counter()
         instruction = (outcome.message or "").strip()
         if outcome.status == HandoffStatus.COMPLETED and instruction:
             log.info(f"{LogTag.BROWSER} Browser run guided by the agent that started it")
@@ -302,6 +329,21 @@ class BrowserTaskRunner:
         log.info(f"{LogTag.BROWSER} Browser guidance ended the run", status=outcome.status.value)
         raise BrowserHandoffCancelled(outcome.status.value)
 
+    async def _watch_for_stalls(self) -> None:
+        """Say once, per silence, that the page is slow when no frame has shown for a while."""
+        while True:
+            await asyncio.sleep(_STALL_POLL_SECONDS)
+            quiet_for = perf_counter() - self._last_frame_at
+            if (
+                self._note is None
+                or self._waiting_on_someone
+                or self._stall_noted
+                or quiet_for < BROWSER_STALL_NOTE_AFTER_SECONDS
+            ):
+                continue
+            self._stall_noted = True
+            await self._note(BROWSER_STALL_NOTE)
+
     def _record_step(self, frame: StepFrame) -> None:
         """Emit one executed step off the agent loop's critical path.
 
@@ -310,6 +352,8 @@ class BrowserTaskRunner:
         keeps emits ordered and _finish() flushes them before the result.
         """
         self._last_step = frame.index
+        self._last_frame_at = perf_counter()
+        self._stall_noted = False
         task = spawn_background_task(self._emit_step(frame), name="browser_step_emit")
         self._emit_tasks.add(task)
         task.add_done_callback(self._emit_tasks.discard)

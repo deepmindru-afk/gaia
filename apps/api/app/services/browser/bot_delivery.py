@@ -61,7 +61,7 @@ class BotProgressDelivery:
         # only exists once the session is allocated, which is exactly now.
         if not snapshot.session_id:
             return
-        await self._text(f"On it. Watch along live here:\n{await self._link(snapshot.session_id)}")
+        await self.note(f"On it. Watch along live here:\n{await self._link(snapshot.session_id)}")
 
     async def _link(self, session_id: str) -> str:
         """One live-view link per session: every mint is a different code for the same browser, and a second link reads as a second browser."""
@@ -101,7 +101,7 @@ class BotProgressDelivery:
             )
             if sent:
                 return
-        await self._text(caption)
+        await self.note(caption)
 
     async def handoff(self, snapshot: BrowserHandoffSnapshot) -> None:
         # Only PENDING needs a message: resolution is already acked in-chat and
@@ -122,7 +122,7 @@ class BotProgressDelivery:
         if snapshot.session_id:
             lines.append(f"Open the live browser: {await self._link(snapshot.session_id)}")
         lines.append('Reply "done" when you\'ve finished, or "stop" to cancel.')
-        await self._text("\n".join(lines))
+        await self.note("\n".join(lines))
 
     async def result(self, snapshot: BrowserResultSnapshot) -> None:
         """Emit the final task result to the conversation."""
@@ -139,9 +139,10 @@ class BotProgressDelivery:
             msg = f"⚠️ Couldn't finish that: {reason}" if reason else "⚠️ Couldn't finish that."
         if snapshot.replay_url:
             msg += f"\n\n📽 Here's a recap of the run: {snapshot.replay_url}"
-        await self._text(msg)
+        await self.note(msg)
 
-    async def _text(self, message: str) -> None:
+    async def note(self, message: str) -> None:
+        """Send one plain message to the user."""
         await publish_outbound_message(self._platform, self._user_id, [message])
 
 

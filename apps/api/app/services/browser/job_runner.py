@@ -320,6 +320,11 @@ class ProgressEmitter:
         # history frame — it would render as a permanently broken image.
         self.step_shots: dict[int, str] = {}
 
+    async def note(self, text: str) -> None:
+        """Send one plain line to a bot user; the web card has the live view to watch."""
+        if self._bot_delivery is not None:
+            await self._bot_delivery.note(text)
+
     async def emit(self, snapshot: BrowserCardSnapshot) -> None:
         await self._publish({BROWSER_TASK_EVENT: snapshot.model_dump(mode="json")})
         await self._thread_mirror.mirror(snapshot)
@@ -546,6 +551,7 @@ async def execute_browser_job(request: BrowserJobRequest) -> BrowserResultSnapsh
                     is_cancelled=partial(_is_cancelled, request),
                     action_results=thread_mirror.results,
                     agent_joined=partial(joiner_lease_held, request.job_id),
+                    note=emitter.note,
                     request_guidance=partial(
                         _run_guidance,
                         job_id=request.job_id,

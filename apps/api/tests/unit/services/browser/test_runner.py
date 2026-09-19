@@ -25,12 +25,17 @@ from app.constants.browser import (
     HandoffStatus,
 )
 from app.constants.log_tags import LogTag
-from app.schemas.browser import HandoffOutcome
+from app.schemas.browser import HandoffOutcome, HandoffRequest
 from app.services.browser import agent_run, runner as runner_mod
 from app.services.browser.agent_run import outcome_from_history
 from app.services.browser.jev.chat_model import JevChatModel
 from app.services.browser.jev.policy import JevHistoryEntry
-from app.services.browser.run_contract import ActionResultsFn, BrowserRunConfig, StepFrame
+from app.services.browser.run_contract import (
+    ActionResultsFn,
+    BrowserRunConfig,
+    RunOutcome,
+    StepFrame,
+)
 from app.services.browser.runner import BrowserRunnerCallbacks, BrowserTaskRunner
 from app.services.browser.session import BrowserHostSession
 from app.services.llm_metering import LLMCallContext, TokenUsage
@@ -1758,3 +1763,50 @@ async def test_a_blocked_finish_reads_as_a_sentence(patch_browser) -> None:
     await _drain(runner)
 
     assert events[-1].goal == "Could not find a way forward on this page"
+
+
+async def test_a_step_that_shows_nothing_for_a_while_gets_one_line_saying_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Berlin article rendered cleanly for 40 to 71 s with no error left to caption."""
+    from app.constants.browser import BROWSER_STALL_NOTE
+    from app.services.browser import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "BROWSER_STALL_NOTE_AFTER_SECONDS", 0.05)
+    monkeypatch.setattr(runner_mod, "_STALL_POLL_SECONDS", 0.01)
+    note = AsyncMock()
+    runner = _make_runner(emit=AsyncMock())
+    runner._note = note
+
+    async def slow_run(task: str) -> RunOutcome:
+        await asyncio.sleep(0.3)
+        return RunOutcome(success=True, summary="done", steps=1)
+
+    runner._agent_run = SimpleNamespace(execute=slow_run, stop=lambda: None)
+    await runner.run("read the page")
+
+    note.assert_awaited_once_with(BROWSER_STALL_NOTE)
+
+
+async def test_waiting_on_the_user_is_not_a_stall(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.browser import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "BROWSER_STALL_NOTE_AFTER_SECONDS", 0.05)
+    monkeypatch.setattr(runner_mod, "_STALL_POLL_SECONDS", 0.01)
+    note = AsyncMock()
+
+    async def a_slow_human(request: HandoffRequest) -> HandoffOutcome:
+        await asyncio.sleep(0.3)
+        return HandoffOutcome(status=HandoffStatus.COMPLETED)
+
+    runner = _make_runner(emit=AsyncMock(), request_handoff=a_slow_human)
+    runner._note = note
+
+    async def run_that_hands_off(task: str) -> RunOutcome:
+        await runner._handle_takeover("sign in", "credentials")
+        return RunOutcome(success=True, summary="done", steps=1)
+
+    runner._agent_run = SimpleNamespace(execute=run_that_hands_off, stop=lambda: None)
+    await runner.run("sign in and read")
+
+    note.assert_not_awaited()
