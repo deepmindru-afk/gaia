@@ -10422,7 +10422,10 @@ export interface components {
             /** @description The onboarding phase to transition to */
             phase: components["schemas"]["OnboardingPhase"];
         };
-        /** OnboardingPhaseUpdateResponse */
+        /**
+         * OnboardingPhaseUpdateResponse
+         * @description Response body for an onboarding phase update.
+         */
         OnboardingPhaseUpdateResponse: {
             /** Message */
             message: string;
@@ -10487,7 +10490,10 @@ export interface components {
              */
             timezone?: string | null;
         };
-        /** OnboardingResetResponse */
+        /**
+         * OnboardingResetResponse
+         * @description Response body for the onboarding reset endpoint.
+         */
         OnboardingResetResponse: {
             /** Conversation Deleted */
             conversation_deleted: number;
@@ -10677,7 +10683,10 @@ export interface components {
             user_bio: string;
             writing_style: components["schemas"]["PersonalizationWritingStyle"] | null;
         };
-        /** PersonalizationTodo */
+        /**
+         * PersonalizationTodo
+         * @description A suggested todo as rendered by the onboarding cards.
+         */
         PersonalizationTodo: {
             /** Description */
             description: string | null;
@@ -10702,7 +10711,10 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** PersonalizationWritingStyle */
+        /**
+         * PersonalizationWritingStyle
+         * @description The learned writing style as rendered by the onboarding cards.
+         */
         PersonalizationWritingStyle: {
             example: components["schemas"]["WritingStyleExampleBlocks"] | null;
             /** Style Summary */
@@ -11422,7 +11434,10 @@ export interface components {
              */
             reason?: string | null;
         };
-        /** RegenerateWritingStyleExampleResponse */
+        /**
+         * RegenerateWritingStyleExampleResponse
+         * @description Response body for regenerating the writing-style example.
+         */
         RegenerateWritingStyleExampleResponse: {
             example: components["schemas"]["WritingStyleExampleBlocks"] | null;
         };
@@ -11595,14 +11610,20 @@ export interface components {
              */
             success: boolean;
         };
-        /** SaveSocialProfilesResponse */
+        /**
+         * SaveSocialProfilesResponse
+         * @description Response body for confirming social profiles, carrying how many were kept.
+         */
         SaveSocialProfilesResponse: {
             /** Saved */
             saved: number;
             /** Success */
             success: boolean;
         };
-        /** SaveWritingStyleResponse */
+        /**
+         * SaveWritingStyleResponse
+         * @description Response body for saving a user-edited writing style.
+         */
         SaveWritingStyleResponse: {
             /** Success */
             success: boolean;
@@ -12145,7 +12166,10 @@ export interface components {
              */
             trigger_name: "slack_new_message";
         };
-        /** SocialProfile */
+        /**
+         * SocialProfile
+         * @description One social account belonging to the user, as stored and sent to the client.
+         */
         SocialProfile: {
             /** Platform */
             platform: string;
@@ -14500,7 +14524,10 @@ export interface components {
             /** Edited Summary */
             edited_summary: string;
         };
-        /** WritingStyleExampleBlocks */
+        /**
+         * WritingStyleExampleBlocks
+         * @description An example email split into the parts the onboarding card renders separately.
+         */
         WritingStyleExampleBlocks: {
             /**
              * Body
